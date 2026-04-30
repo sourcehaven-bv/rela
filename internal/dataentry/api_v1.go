@@ -294,8 +294,29 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	entities := listFromStoreByTypes(a.Services(), []string{typeName})
 
-	// Apply filters
 	query := r.URL.Query()
+
+	// Free-text search: intersect with hits from the searcher when ?q=... is
+	// present. Bleve scores are discarded — the list's configured sort wins
+	// over relevance ranking, same approach SearchView uses for filtering.
+	// Backend errors surface as HTTP 500 rather than rendering an empty list
+	// and pretending the search succeeded.
+	searchResult, err := a.freeTextIDsForType(r.Context(), query.Get("q"), typeName)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		return
+	}
+	if searchResult.HasFilter {
+		filtered := entities[:0]
+		for _, e := range entities {
+			if _, hit := searchResult.IDs[e.ID]; hit {
+				filtered = append(filtered, e)
+			}
+		}
+		entities = filtered
+	}
+
+	// Apply filters
 	entities = a.applyV1Filters(entities, query, typeName)
 
 	// Apply sorting

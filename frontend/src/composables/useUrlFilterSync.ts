@@ -1,5 +1,6 @@
 /**
- * Bidirectional sync between Vue Router query params and a FilterState ref.
+ * Bidirectional sync between Vue Router query params and a FilterState ref
+ * (plus an optional free-text `q` ref).
  *
  * - On setup, seeds the filter state from the current URL synchronously (so the
  *   first list fetch already includes URL-supplied filters — no second fetch).
@@ -13,8 +14,13 @@
  * - Static filters (from `data-entry.yaml` `filters:`) take precedence over URL
  *   filters; collisions log a warning and the URL filter is dropped (silent
  *   zero-result traps are worse than a console warning).
+ *
+ * `q` is treated separately from FilterState because it isn't a property
+ * filter — it's a free-text query that hits the searcher. It rides the same
+ * URL/echo mechanism so a single watcher can drive a single fetch when both
+ * change in the same tick.
  */
-import { ref, watch } from 'vue'
+import { ref, watch, readonly, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   parseFilterQueryParams,
@@ -32,10 +38,20 @@ export interface UseUrlFilterSyncOptions {
   staticFilterProperties: () => Set<string>
 }
 
+function readQParam(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const last = value[value.length - 1]
+    return typeof last === 'string' ? last : ''
+  }
+  return ''
+}
+
 export function useUrlFilterSync(opts: UseUrlFilterSyncOptions) {
   const route = useRoute()
   const router = useRouter()
   const filters = ref<FilterState>({})
+  const q = ref<string>('')
 
   // Signature of the most recent query we wrote ourselves. Used to ignore the
   // immediate route watcher echo from our own router.replace call.
@@ -60,27 +76,45 @@ export function useUrlFilterSync(opts: UseUrlFilterSyncOptions) {
       }
     }
     filters.value = fromUrl
+    q.value = readQParam(route.query.q)
   }
 
   // Seed synchronously so the caller's first fetch sees URL filters.
   readFromQuery()
 
-  function writeToQuery(newFilters: FilterState) {
+  function writeToQuery(newFilters: FilterState, newQ?: string) {
     filters.value = newFilters
-    const newQuery = buildQueryWithFilters(route.query, newFilters)
-    lastWrittenSig = stringifyFilterQuery(newQuery)
-    router.replace({ query: newQuery })
+    const baseQuery = buildQueryWithFilters(route.query, newFilters)
+    if (newQ !== undefined) {
+      q.value = newQ
+      if (newQ === '') {
+        delete baseQuery.q
+      } else {
+        baseQuery.q = newQ
+      }
+    }
+    lastWrittenSig = stringifyFilterQuery(baseQuery)
+    router.replace({ query: baseQuery })
   }
 
   // React to external navigation (back/forward, deep links). Self-writes are
   // detected via signature comparison and skipped.
   watch(
     () => route.query,
-    (q) => {
-      if (stringifyFilterQuery(q) === lastWrittenSig) return
+    (newQuery) => {
+      if (stringifyFilterQuery(newQuery) === lastWrittenSig) return
       readFromQuery()
     },
   )
 
-  return { filters, writeToQuery, readFromQuery }
+  // Returning q as a readonly ref enforces the invariant: the only
+  // sanctioned write path is writeToQuery, which keeps the URL and the
+  // local mirror in lockstep. A direct q.value mutation would silently
+  // diverge from the URL until the next route change.
+  return {
+    filters,
+    q: readonly(q) as Readonly<Ref<string>>,
+    writeToQuery,
+    readFromQuery,
+  }
 }

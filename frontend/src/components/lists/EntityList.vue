@@ -12,6 +12,8 @@ import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/uti
 import type { Entity, ListMeta, ListParams, FilterState, ActionConfig } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
+import SearchBox from './SearchBox.vue'
+import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
@@ -75,8 +77,10 @@ function staticFilterProperties(): Set<string> {
   return set
 }
 
-// User-selected filters synced bidirectionally with the URL.
-const { filters, writeToQuery } = useUrlFilterSync({ staticFilterProperties })
+// User-selected filters and free-text search synced bidirectionally with the URL.
+const { filters, q: searchQuery, writeToQuery } = useUrlFilterSync({ staticFilterProperties })
+const searchBoxRef = ref<InstanceType<typeof SearchBox> | null>(null)
+const filterMenuRef = ref<InstanceType<typeof AdHocFilterMenu> | null>(null)
 
 // Sort specs: array of { property, direction } for multi-field sorting
 interface SortSpec {
@@ -132,6 +136,12 @@ const { selectedIndex, clearSelection } = useListKeyboard({
       handlePageChange(meta.value.page + 1)
     }
   },
+  onFocusSearch: () => {
+    searchBoxRef.value?.focus()
+  },
+  onOpenFilter: () => {
+    filterMenuRef.value?.open()
+  },
 })
 
 // Computed
@@ -180,6 +190,11 @@ const queryParams = computed((): ListParams => {
   const paramsRecord = params as Record<string, string | number | undefined>
   for (const [key, value] of Object.entries(userParams)) {
     paramsRecord[key] = value
+  }
+
+  // Free-text search: backend intersects ?q= results with the typed list.
+  if (searchQuery.value) {
+    paramsRecord.q = searchQuery.value
   }
 
   // Add sorting - supports multi-field sorting
@@ -303,6 +318,50 @@ function handleFilter(newFilters: FilterState) {
   writeToQuery(newFilters)
 }
 
+function handleSearchUpdate(value: string) {
+  // Watcher on searchQuery resets page and re-fetches.
+  writeToQuery(filters.value, value)
+}
+
+// Properties hidden from the AdHocFilterMenu — already covered by the
+// FilterBar's static widgets (filter_controls), already pinned by the list's
+// `filters:` config, or already active as an ad-hoc chip. Including all three
+// in one set so the menu never offers a duplicate.
+const lockedAdHocProperties = computed(() => {
+  const set = new Set<string>(staticFilterProperties())
+  for (const fc of listConfig.value?.filter_controls || []) {
+    if (fc.property) set.add(fc.property)
+    if (fc.relation) set.add(fc.relation)
+  }
+  for (const prop of Object.keys(filters.value)) set.add(prop)
+  return set
+})
+
+function handleAdHocApply(property: string, value: string) {
+  writeToQuery({ ...filters.value, [property]: { value } })
+}
+
+function removeAdHocFilter(property: string) {
+  const next = { ...filters.value }
+  delete next[property]
+  writeToQuery(next)
+}
+
+// Filters added via the ad-hoc menu are rendered as chips. We treat any
+// active filter that isn't covered by FilterBar (filter_controls) and isn't
+// a static-pinned config filter as ad-hoc.
+const adHocFilterChips = computed(() => {
+  const filterControlKeys = new Set<string>()
+  for (const fc of listConfig.value?.filter_controls || []) {
+    if (fc.property) filterControlKeys.add(fc.property)
+    if (fc.relation) filterControlKeys.add(fc.relation)
+  }
+  const pinned = staticFilterProperties()
+  return Object.entries(filters.value)
+    .filter(([prop]) => !filterControlKeys.has(prop) && !pinned.has(prop))
+    .map(([property, fv]) => ({ property, value: fv.value }))
+})
+
 function handlePageChange(page: number) {
   meta.value.page = page
   scheduleFetch()
@@ -351,6 +410,13 @@ function navigateToEntity(entity: Entity) {
     } else {
       query[key] = value
     }
+  }
+
+  // Forward search query so the back-button to a searched list keeps the
+  // search state. Scope navigation (prev/next within a search result set)
+  // is a known v1 limitation — useScopeNavigation does not yet honor q.
+  if (searchQuery.value) {
+    query.q = searchQuery.value
   }
 
   // Check for column-level link first (use first column with link)
@@ -446,6 +512,14 @@ watch(filters, () => {
   scheduleFetch()
 }, { deep: true })
 
+// Re-fetch on free-text search changes. Same coalescing path as filters; the
+// scheduleFetch microtask debounces a search-edit + filter-edit pair into a
+// single network call.
+watch(searchQuery, () => {
+  meta.value.page = 1
+  scheduleFetch()
+})
+
 // Lifecycle
 onMounted(() => {
   scheduleFetch()
@@ -478,6 +552,40 @@ onMounted(() => {
       </span>
     </div>
 
+    <div class="search-row">
+      <SearchBox
+        ref="searchBoxRef"
+        :model-value="searchQuery"
+        :placeholder="`Search ${listConfig.entity}s...`"
+        @update:model-value="handleSearchUpdate"
+      />
+      <AdHocFilterMenu
+        ref="filterMenuRef"
+        mode="list"
+        :entity-type="entityType"
+        :locked-properties="lockedAdHocProperties"
+        @apply="handleAdHocApply"
+      />
+    </div>
+
+    <div v-if="adHocFilterChips.length" class="adhoc-filter-chips">
+      <span
+        v-for="chip in adHocFilterChips"
+        :key="chip.property"
+        class="filter-chip removable"
+      >
+        {{ chip.property }}: {{ chip.value }}
+        <button
+          type="button"
+          class="chip-remove"
+          :title="`Remove ${chip.property} filter`"
+          @click="removeAdHocFilter(chip.property)"
+        >
+          &times;
+        </button>
+      </span>
+    </div>
+
     <div class="list-content">
       <FilterBar
         v-if="listConfig.filter_controls?.length"
@@ -492,8 +600,21 @@ onMounted(() => {
       </div>
 
       <div v-else-if="entities.length === 0" class="empty-state">
-        <p>No {{ listConfig.entity }}s found.</p>
-        <router-link v-if="listConfig.create_form" :to="`/form/${listConfig.create_form}`" class="btn btn-secondary">
+        <p v-if="searchQuery">No matches for &ldquo;{{ searchQuery }}&rdquo;.</p>
+        <p v-else>No {{ listConfig.entity }}s found.</p>
+        <button
+          v-if="searchQuery"
+          type="button"
+          class="btn btn-secondary"
+          @click="handleSearchUpdate('')"
+        >
+          Clear search
+        </button>
+        <router-link
+          v-else-if="listConfig.create_form"
+          :to="`/form/${listConfig.create_form}`"
+          class="btn btn-secondary"
+        >
           Create one
         </router-link>
       </div>
@@ -753,7 +874,7 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .filter-chip {
@@ -765,6 +886,43 @@ onMounted(() => {
   border-radius: 16px;
   font-size: 12px;
   color: var(--text-color);
+}
+
+.filter-chip.removable {
+  gap: 6px;
+  padding-right: 4px;
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
+  color: var(--accent-color);
+}
+
+.chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.chip-remove:hover {
+  opacity: 1;
+}
+
+.search-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.adhoc-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .list-content {

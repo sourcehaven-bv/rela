@@ -38,12 +38,18 @@ async function loadSidebar() {
   }
 }
 
-// Keyboard shortcut for search
+// Keyboard shortcut for search.
+//
+// Defers to a list view's in-place search box when one is rendered — list
+// views own their own search affordance now (TKT-603FQ), and jumping to the
+// standalone /search page would surprise users mid-list. The fallback
+// behavior (push /search) still applies on routes without a search box.
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
-    e.preventDefault()
-    router.push('/search')
-  }
+  if (e.key !== '/') return
+  if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
+  if (document.querySelector('.entity-list .search-box')) return
+  e.preventDefault()
+  router.push('/search')
 }
 
 // Close mobile sidebar on route change

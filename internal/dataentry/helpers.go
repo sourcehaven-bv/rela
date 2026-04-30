@@ -452,14 +452,12 @@ func (a *App) executeQuery(query string) []*entity.Entity {
 		return nil
 	}
 
-	const maxSearchResults = 1000
-
 	svc := a.Services()
 	var candidates []*entity.Entity
 	if sq.HasFreeText() {
 		// Searcher returns entities in relevance order. Scores are dropped
 		// because executeQuery never sorted by them.
-		candidates = runFreeTextSearch(svc, sq, maxSearchResults)
+		candidates = runFreeTextSearch(svc, sq, maxFreeTextSearchResults)
 	} else {
 		candidates = listFromStoreByTypes(svc, sq.EntityTypes)
 	}
@@ -480,11 +478,67 @@ func (a *App) executeQuery(query string) []*entity.Entity {
 	return results
 }
 
+// freeTextIDsForTypeResult is what freeTextIDsForType returns: the set of
+// matching ids when the searcher succeeded, plus a flag distinguishing
+// "empty / non-free-text query, skip intersection" from "real result."
+type freeTextIDsForTypeResult struct {
+	IDs       map[string]struct{}
+	HasFilter bool
+}
+
+// freeTextIDsForType runs a free-text search constrained to the given entity
+// type and returns the matching ids. Empty / whitespace queries (and queries
+// like `prop:status=open` that have no free-text words) return HasFilter=false
+// so the caller skips intersection entirely. Searcher errors are surfaced —
+// the list handler converts them to HTTP 500 rather than rendering an empty
+// list and pretending the search succeeded.
+//
+// Used by the list endpoint to support `?q=` without going through the full
+// executeQuery path: a list is already type-scoped, so any `type:` token from
+// the query string is intentionally ignored — we always pin the type to the
+// list's type to keep the surface predictable.
+func (a *App) freeTextIDsForType(ctx context.Context, query, typeName string) (freeTextIDsForTypeResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return freeTextIDsForTypeResult{}, nil
+	}
+	sq := searchparser.ParseQuery(query)
+	if sq.IsEmpty() || !sq.HasFreeText() {
+		return freeTextIDsForTypeResult{}, nil
+	}
+	sq.EntityTypes = []string{typeName}
+
+	hits, err := runFreeTextSearchE(ctx, a.Services(), sq, maxFreeTextSearchResults)
+	if err != nil {
+		return freeTextIDsForTypeResult{}, err
+	}
+	ids := make(map[string]struct{}, len(hits))
+	for _, e := range hits {
+		ids[e.ID] = struct{}{}
+	}
+	return freeTextIDsForTypeResult{IDs: ids, HasFilter: true}, nil
+}
+
+// maxFreeTextSearchResults caps the number of hits the searcher is asked to
+// return. Hoisted to a package constant so executeQuery and the list-search
+// path stay in lockstep on the bound.
+const maxFreeTextSearchResults = 1000
+
 // runFreeTextSearch issues a Searcher query from a parsed SearchQuery and
 // loads the full entity bodies from the store. Phrases are re-quoted so the
 // searcher's text layer can rebuild the same fuzzy-words + exact-phrases
 // compound query the dataentry UI used to build upstream.
+//
+// Errors are swallowed (returns nil) — callers that need to surface them
+// should use runFreeTextSearchE instead.
 func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []*entity.Entity {
+	out, _ := runFreeTextSearchE(context.Background(), svc, sq, limit)
+	return out
+}
+
+// runFreeTextSearchE is the error-returning variant of runFreeTextSearch.
+// New callers should use this so backend failures surface to the client.
+func runFreeTextSearchE(ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int) ([]*entity.Entity, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
 	for _, p := range sq.FreeTextPhrases {
@@ -495,19 +549,21 @@ func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []
 		Types: sq.EntityTypes,
 		Limit: limit,
 	}
-	ctx := context.Background()
 	out := make([]*entity.Entity, 0)
 	for hit, err := range svc.Searcher.Search(ctx, q) {
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("free-text search: %w", err)
 		}
 		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
 		if getErr != nil {
+			// Stale index hit (entity deleted between Bleve query and store
+			// read). Skip silently — the list still returns a coherent set
+			// of currently-existing entities.
 			continue
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, nil
 }
 
 // listFromStoreByTypes loads all entities matching the given types (or every

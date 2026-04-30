@@ -98,8 +98,15 @@ export function useKeyboardShortcuts() {
       return
     }
 
-    // / = focus search (go to search page if not there)
+    // / = focus search.
+    //
+    // List views own their own search box (TKT-603FQ), so when one is
+    // visible we let useListKeyboard handle the keystroke instead of jumping
+    // to the standalone /search page. Without this guard, the global handler
+    // would race with the per-list handler and the user would lose their
+    // list context on every `/`.
     if (e.key === '/') {
+      if (document.querySelector('.entity-list .search-box')) return
       e.preventDefault()
       if (!isSearchPage()) {
         router.push('/search')
