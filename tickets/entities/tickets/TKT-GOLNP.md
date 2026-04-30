@@ -5,7 +5,7 @@ title: Extract stubEntityManager to shared test helper package
 kind: refactor
 priority: low
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
