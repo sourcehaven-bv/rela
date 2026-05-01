@@ -90,6 +90,19 @@ export class BasePage {
     }
   }
 
+  /** Click a form's save/submit button and wait for the SPA to navigate
+   *  away from the current edit form. The form save path issues an entity
+   *  PATCH followed by per-relation POST/DELETE/PATCH calls and ends in a
+   *  router.push back to the entity detail; both FormPage and
+   *  RelationCardsPage share that same contract, so this helper is the
+   *  single source of truth for the navigation predicate. */
+  async submitFormAndWaitForNavigation(submitButton: Locator) {
+    await Promise.all([
+      this.page.waitForURL((url) => !url.pathname.includes('/form/'), { timeout: 10000 }),
+      submitButton.click(),
+    ]);
+  }
+
   async confirmDialog() {
     this.page.once('dialog', dialog => dialog.accept());
   }

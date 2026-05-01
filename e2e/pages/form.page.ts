@@ -97,20 +97,17 @@ export class FormPage extends BasePage {
   }
 
   async addRelation(relationName: string, targetId: string) {
-    // Find the relation picker for this relation
+    // Legacy <select> path (kept for any form that still renders one) —
+    // for the default RelationPicker widget we delegate to
+    // `pickInRelationPicker` so both helpers share the same combobox-
+    // scoped selector strategy.
     const relationSection = this.page.locator('.relation-field, .form-field').filter({ hasText: relationName });
     const select = relationSection.locator('select');
-
     if (await select.isVisible().catch(() => false)) {
       await select.selectOption(targetId);
       return;
     }
-    // Default RelationPicker widget: a "Search <targetType>" text input that
-    // surfaces matches as .dropdown-item. Type the id (which is the most
-    // unambiguous search key) and click the first match.
-    const search = relationSection.locator('input[placeholder^="Search "]').first();
-    await search.fill(targetId);
-    await this.page.locator(`.dropdown-item:has-text("${targetId}")`).first().click();
+    await this.pickInRelationPicker(relationSection, targetId, targetId);
   }
 
   async submit() {
@@ -278,6 +275,30 @@ export class FormPage extends BasePage {
    *  entity's title (via `getEntityLabel`), so callers pass the title text. */
   pickerTileByText(picker: Locator, text: string): Locator {
     return picker.locator('.selected-entity', { hasText: text });
+  }
+
+  /** Type into the picker's combobox input and click the dropdown item
+   *  that contains `optionText`. Picker-scoped on both sides — the input
+   *  and the option are looked up inside `picker` — so it stays correct
+   *  when the form has multiple pickers open. Cards-widget callers want
+   *  `RelationCardsPage.linkTargetByIdWithSearch` instead; that path
+   *  surfaces a different (search-then-meta-form) UI. */
+  async pickInRelationPicker(picker: Locator, query: string, optionText: string) {
+    const search = picker.locator('input[role="combobox"]');
+    await expect(search).toBeVisible();
+    await search.fill(query);
+    const option = picker.locator('.dropdown-item', { hasText: optionText }).first();
+    await expect(option).toBeVisible();
+    await option.click();
+  }
+
+  /** Remove a selected entity tile from a relation picker. */
+  async removePickerTile(picker: Locator, tileText: string) {
+    await this.pickerTileByText(picker, tileText).locator('.remove-btn').click();
+  }
+
+  async saveAndWaitForNavigation() {
+    await this.submitFormAndWaitForNavigation(this.submitButton.first());
   }
 
   // --- Manual ID / prefix picker (TKT-E7NNM) ---

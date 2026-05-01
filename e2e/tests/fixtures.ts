@@ -63,6 +63,11 @@ export const SEED = {
   },
   tasks: {
     writeUnitTests: 'TASK-001',
+    /** Unlinked task. Used by reverse-relations.spec.ts as a candidate for
+     *  the non-cards "Implemented by" picker on FEAT-001 — the existing
+     *  TASK-001 already implements FEAT-001, so we need a second task that
+     *  the add-test can pick without colliding. */
+    refactorAuth: 'TASK-002',
   },
 } as const;
 
@@ -918,6 +923,18 @@ assignee: Alice
 ---
 
 Write unit tests for auth module.
+`,
+  // Unlinked task — reverse-relations.spec.ts picks this as a candidate when
+  // adding a new incoming-direction implements edge to FEAT-001 from the
+  // non-cards "Implemented by" picker on the feature edit form.
+  'entities/tasks/TASK-002.md': `---
+id: TASK-002
+type: task
+title: Refactor auth module
+status: draft
+---
+
+Refactor the auth module to extract token validation.
 `,
   // Seed a blocks relation with properties so relation-cards widget tests have
   // something rich to render. FEAT-001 blocks FEAT-003 with reason="test block",
