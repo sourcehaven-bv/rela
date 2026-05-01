@@ -4,7 +4,8 @@ type: ticket
 title: Extract stubEntityManager to shared test helper package
 kind: refactor
 priority: low
-status: backlog
+effort: s
+status: done
 ---
 
 ## Problem

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -20,37 +20,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
-
-// stubEntityManager lets us build a lua.WriteDeps that won't actually
-// mutate anything. Document scripts are read-only in practice but the
-// writer runtime requires a non-nil EntityManager.
-type docTestStubEM struct{}
-
-func (docTestStubEM) CreateEntity(context.Context, *entity.Entity,
-	entitymanager.CreateOptions) (*entitymanager.CreateResult, error) {
-	panic("not expected")
-}
-func (docTestStubEM) UpdateEntity(context.Context, *entity.Entity) (*entitymanager.UpdateResult, error) {
-	panic("not expected")
-}
-func (docTestStubEM) DeleteEntity(context.Context, string, bool) (*entitymanager.DeleteResult, error) {
-	panic("not expected")
-}
-func (docTestStubEM) RenameEntity(context.Context, string, string,
-	entitymanager.RenameOptions) (*entitymanager.RenameResult, error) {
-	panic("not expected")
-}
-func (docTestStubEM) CreateRelation(context.Context, string, string, string,
-	entitymanager.RelationOptions) (*entity.Relation, error) {
-	panic("not expected")
-}
-func (docTestStubEM) UpdateRelation(context.Context, string, string, string,
-	entitymanager.RelationOptions) (*entity.Relation, error) {
-	panic("not expected")
-}
-func (docTestStubEM) DeleteRelation(context.Context, string, string, string) error {
-	panic("not expected")
-}
 
 // fakeScriptEngine is a test double for documentScriptEngine. Each call
 // writes the fake's `stdout` string and records the invocation args so
@@ -397,7 +366,7 @@ print(got)
 				Tracer:      tracer.New(st),
 				ProjectRoot: projectRoot,
 			},
-			EntityManager: docTestStubEM{},
+			EntityManager: entitymanagertest.PanicOnUse{},
 		}
 	}
 	s := newDocumentService(st, kv, projectRoot, engine, deps)
