@@ -87,4 +87,53 @@ test.describe('Reverse relations', () => {
     await expect(picker).toBeVisible();
     await expect(form.pickerTileByText(picker, 'Write unit tests')).toBeVisible();
   });
+
+  test('non-cards picker add persists as peer --rel--> current entity', async ({ appPage, api }) => {
+    // Picking TASK-002 in the incoming "Implemented by" picker on FEAT-001
+    // must create the underlying edge `TASK-002 --implements--> FEAT-001`.
+    // The picker's incoming-changed event flows through DynamicForm's
+    // pending-cards bridge, and the save loop calls
+    // createRelation(..., direction: 'incoming') which the backend stores
+    // from the peer to the current entity.
+    const candidateTitle = 'Refactor auth module'; // matches TASK-002 in the seed
+    const form = new FormPage(appPage);
+    await form.navigateToEditForm('feature', SEED.features.authentication);
+    const picker = form.relationPickerByLabel('Implemented by');
+    await expect(picker).toBeVisible();
+
+    await form.pickInRelationPicker(picker, candidateTitle, candidateTitle);
+    await expect(form.pickerTileByText(picker, candidateTitle)).toBeVisible();
+    await form.saveAndWaitForNavigation();
+
+    // The canonical read path for the new edge is TASK-002's outgoing
+    // `implements` list — the edge MUST be readable from the source side
+    // for the reverse-direction save to be considered correct.
+    const fromSource = await api.listRelations('tasks', SEED.tasks.refactorAuth, 'implements');
+    expect(fromSource.map((r) => r.id)).toContain(SEED.features.authentication);
+  });
+
+  test('non-cards picker remove deletes the underlying edge', async ({ appPage, api }) => {
+    // Removing the TASK-001 tile from the "Implemented by" picker on
+    // FEAT-001 must delete `TASK-001 --implements--> FEAT-001`. Sanity-
+    // check the seeded edge first (length-1 — if the seed silently grows
+    // we want to know before the delete-assertion gives a false positive),
+    // then assert it's gone after save.
+    const tileTitle = 'Write unit tests'; // matches TASK-001 in the seed
+    const before = await api.listRelations('tasks', SEED.tasks.writeUnitTests, 'implements');
+    expect(before).toHaveLength(1);
+    expect(before[0].id).toBe(SEED.features.authentication);
+
+    const form = new FormPage(appPage);
+    await form.navigateToEditForm('feature', SEED.features.authentication);
+    const picker = form.relationPickerByLabel('Implemented by');
+    const tile = form.pickerTileByText(picker, tileTitle);
+    await expect(tile).toBeVisible();
+
+    await form.removePickerTile(picker, tileTitle);
+    await expect(tile).toHaveCount(0);
+    await form.saveAndWaitForNavigation();
+
+    const after = await api.listRelations('tasks', SEED.tasks.writeUnitTests, 'implements');
+    expect(after.map((r) => r.id)).not.toContain(SEED.features.authentication);
+  });
 });

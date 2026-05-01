@@ -116,10 +116,7 @@ export class RelationCardsPage extends BasePage {
   }
 
   async saveAndWaitForNavigation() {
-    await Promise.all([
-      this.page.waitForURL((url) => !url.pathname.includes('/form/'), { timeout: 10000 }),
-      this.saveButton.click(),
-    ]);
+    await this.submitFormAndWaitForNavigation(this.saveButton);
   }
 
   async save() {
