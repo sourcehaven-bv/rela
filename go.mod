@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/chromedp/chromedp v0.15.1
 	github.com/fatih/color v1.19.0
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.0
 	github.com/go-git/go-git/v5 v5.18.0
 	github.com/mark3labs/mcp-go v0.49.0
 	github.com/mattn/go-runewidth v0.0.23
