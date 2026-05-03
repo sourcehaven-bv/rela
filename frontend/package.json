@@ -46,7 +46,7 @@
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-vue": "^9.33.0",
-    "fast-check": "^4.6.0",
+    "fast-check": "^4.7.0",
     "globals": "^17.5.0",
     "happy-dom": "^14.7.1",
     "jscpd": "^4.0.8",
