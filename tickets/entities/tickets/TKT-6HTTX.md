@@ -5,7 +5,7 @@ title: MCP update_entity should support deleting properties
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem

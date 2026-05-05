@@ -2,7 +2,7 @@
 id: REV-6VU5W
 type: review-checklist
 title: 'Review: MCP update_entity should support deleting properties'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -79,8 +79,8 @@ RR-1JHC2, RR-CDGL1, RR-OXOIT, RR-8S190.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (Test, Lint, Coverage, Build, E2E, Frontend, Fuzz, Architecture, Demos, Docs, CodeQL, Vulnerability Check, Analyze (actions/go/javascript-typescript), Lint Markdown — all pass; Rela Tickets passes once this commit lands)
+- [x] PR URL documented below
 
-**PR:** TBD
+**PR:** https://github.com/sourcehaven-bv/rela/pull/645
