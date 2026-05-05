@@ -74,7 +74,7 @@ func (s *Server) handleCreateRelation(
 	toID = trimID(toID)
 
 	opts := entitymanager.RelationOptions{
-		Properties: s.extractProperties(request),
+		Properties: extractProperties(request),
 		Content:    request.GetString("content", ""),
 	}
 

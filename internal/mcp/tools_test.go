@@ -26,8 +26,9 @@ func makeTestServer(t *testing.T) *Server {
 				Label:    "Requirement",
 				IDPrefix: "REQ",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: "string", Required: true},
-					"status": {Type: "string"},
+					"title":    {Type: "string", Required: true},
+					"status":   {Type: "string"},
+					"priority": {Type: "string"},
 				},
 			},
 			"decision": {
@@ -255,6 +256,230 @@ func TestHandleUpdateEntity_NotFound(t *testing.T) {
 	}
 	if !isErrorResult(result) {
 		t.Error("expected error for nonexistent entity")
+	}
+}
+
+func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
+	s := makeTestServer(t)
+	// REQ-001 starts with status=accepted; null should remove it.
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"status": nil},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isErrorResult(result) {
+		t.Fatalf("expected success, got error: %s", getResultText(t, result))
+	}
+	updated, getErr := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if getErr != nil {
+		t.Fatalf("get entity: %v", getErr)
+	}
+	if _, present := updated.Properties["status"]; present {
+		t.Errorf("expected status to be removed, but it is still present: %v", updated.Properties["status"])
+	}
+}
+
+func TestHandleUpdateEntity_DeleteOnlyCallSurvivesGuard(t *testing.T) {
+	// AC 7: a delete-only call must NOT trigger the "no updates specified" guard.
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"status": nil},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isErrorResult(result) {
+		text := getResultText(t, result)
+		if strings.Contains(text, "no updates specified") {
+			t.Fatalf("delete-only call wrongly hit the no-updates-specified guard: %s", text)
+		}
+		t.Fatalf("unexpected error: %s", text)
+	}
+}
+
+func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
+	// `priority` is in the metamodel but not set on REQ-001; deleting it should be a no-op.
+	s := makeTestServer(t)
+	before, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if _, present := before.Properties["priority"]; present {
+		t.Fatalf("test setup: REQ-001 should not have a priority property")
+	}
+
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"priority": nil},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isErrorResult(result) {
+		t.Fatalf("expected success on no-op delete, got error: %s", getResultText(t, result))
+	}
+	after, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if _, present := after.Properties["priority"]; present {
+		t.Errorf("priority should remain absent")
+	}
+	if after.GetString("status") != before.GetString("status") {
+		t.Errorf("status changed unexpectedly: was %q, now %q", before.GetString("status"), after.GetString("status"))
+	}
+}
+
+func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
+	// `title` is required; attempting to delete it must surface an actionable error
+	// rather than silently producing a now-invalid entity.
+	s := makeTestServer(t)
+	before, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	beforeTitle := before.GetString("title")
+
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"title": nil},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Fatalf("expected error when deleting required property, got success")
+	}
+	if !strings.Contains(getResultText(t, result), "required") {
+		t.Errorf("expected 'required' in error message, got %s", getResultText(t, result))
+	}
+	// Entity must be unchanged.
+	after, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if after.GetString("title") != beforeTitle {
+		t.Errorf("entity must be unchanged after rejected delete: title was %q, now %q", beforeTitle, after.GetString("title"))
+	}
+}
+
+func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
+	// End-to-end check that the JSON-string `properties` fallback also supports null-as-delete.
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": `{"status": null}`,
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isErrorResult(result) {
+		t.Fatalf("expected success, got error: %s", getResultText(t, result))
+	}
+	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if _, present := updated.Properties["status"]; present {
+		t.Errorf("status should be removed when sent as JSON string with null")
+	}
+}
+
+func TestHandleUpdateEntity_DeleteUnknownPropertyRejected(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"unknown_prop": nil},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isErrorResult(result) {
+		t.Error("expected error for unknown property name")
+	}
+	if !strings.Contains(getResultText(t, result), "unknown properties") {
+		t.Errorf("expected 'unknown properties' error, got %s", getResultText(t, result))
+	}
+}
+
+func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"id": "REQ-001",
+		"properties": map[string]interface{}{
+			"status": nil,           // delete
+			"title":  "Renamed Req", // set
+		},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isErrorResult(result) {
+		t.Fatalf("expected success, got error: %s", getResultText(t, result))
+	}
+	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if _, present := updated.Properties["status"]; present {
+		t.Errorf("status should be removed")
+	}
+	if got := updated.GetString("title"); got != "Renamed Req" {
+		t.Errorf("expected title 'Renamed Req', got %q", got)
+	}
+}
+
+func TestHandleUpdateEntity_EmptyStringIsNoOp(t *testing.T) {
+	// AC 8: empty string is silently filtered, so it must NOT delete an existing value
+	// AND it must NOT itself satisfy the "no updates specified" guard alone.
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"status": ""},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Empty-string-only properties get filtered to an empty set, so the guard fires.
+	if !isErrorResult(result) {
+		t.Fatalf("expected 'no updates specified' since empty string is filtered, got success")
+	}
+	if !strings.Contains(getResultText(t, result), "no updates specified") {
+		t.Errorf("expected 'no updates specified', got %s", getResultText(t, result))
+	}
+	// And the existing status is untouched.
+	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if got := updated.GetString("status"); got != "accepted" {
+		t.Errorf("status should remain 'accepted', got %q", got)
+	}
+}
+
+func TestHandleUpdateEntity_SetAndOverwriteStillWorks(t *testing.T) {
+	// AC 3: regression guard for the existing positive set/overwrite path.
+	s := makeTestServer(t)
+	req := makeToolRequest(map[string]interface{}{
+		"id":         "REQ-001",
+		"properties": map[string]interface{}{"status": "rejected"},
+	})
+	result, err := s.handleUpdateEntity(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isErrorResult(result) {
+		t.Fatalf("expected success, got error: %s", getResultText(t, result))
+	}
+	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	if got := updated.GetString("status"); got != "rejected" {
+		t.Errorf("expected status 'rejected', got %q", got)
+	}
+}
+
+func TestUpdateEntityToolDescriptionMentionsNullDelete(t *testing.T) {
+	const phrase = "set a property to null"
+	tool := toolUpdateEntity()
+	if !strings.Contains(strings.ToLower(tool.Description), phrase) {
+		t.Errorf("tool description should mention %q, got: %q", phrase, tool.Description)
+	}
+	propsSchema, ok := tool.InputSchema.Properties["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties schema not found or wrong type: %#v", tool.InputSchema.Properties["properties"])
+	}
+	desc, _ := propsSchema["description"].(string)
+	if !strings.Contains(strings.ToLower(desc), phrase) {
+		t.Errorf("properties arg description should mention %q, got: %q", phrase, desc)
 	}
 }
 

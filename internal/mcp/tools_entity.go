@@ -153,7 +153,7 @@ func (s *Server) handleCreateEntity(
 	}
 
 	// Parse properties from the request
-	properties := s.extractProperties(request)
+	properties := extractProperties(request)
 
 	// Validate property names early for better error messages
 	if errResult := s.validatePropertyNames(resolvedType, properties); errResult != nil {
@@ -202,7 +202,7 @@ func (s *Server) handleUpdateEntity(
 		return mcp.NewToolResultError("entity not found: " + id), nil
 	}
 
-	properties := s.extractProperties(request)
+	properties := extractPropertiesAllowNil(request)
 	content := request.GetString("content", "")
 
 	if len(properties) == 0 && content == "" {
@@ -214,8 +214,12 @@ func (s *Server) handleUpdateEntity(
 		return errResult, nil
 	}
 
-	// Apply property updates
+	// Apply property updates: nil deletes, anything else sets/overwrites.
 	for k, v := range properties {
+		if v == nil {
+			delete(e.Properties, k)
+			continue
+		}
 		e.Properties[k] = v
 	}
 	if content != "" {

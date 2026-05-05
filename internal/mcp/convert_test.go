@@ -628,7 +628,6 @@ func TestConvertStoreEntity_WithProperties(t *testing.T) {
 }
 
 func TestExtractProperties_MapArgument(t *testing.T) {
-	s := &Server{}
 	req := makeToolRequest(map[string]interface{}{
 		"properties": map[string]interface{}{
 			"title":  "Test",
@@ -636,7 +635,7 @@ func TestExtractProperties_MapArgument(t *testing.T) {
 		},
 	})
 
-	props := s.extractProperties(req)
+	props := extractProperties(req)
 	if props == nil {
 		t.Fatal("expected non-nil properties")
 	}
@@ -649,12 +648,11 @@ func TestExtractProperties_MapArgument(t *testing.T) {
 }
 
 func TestExtractProperties_JSONString(t *testing.T) {
-	s := &Server{}
 	req := makeToolRequest(map[string]interface{}{
 		"properties": `{"title":"From JSON","priority":"high"}`,
 	})
 
-	props := s.extractProperties(req)
+	props := extractProperties(req)
 	if props == nil {
 		t.Fatal("expected non-nil properties from JSON string")
 	}
@@ -664,37 +662,125 @@ func TestExtractProperties_JSONString(t *testing.T) {
 }
 
 func TestExtractProperties_NoProperties(t *testing.T) {
-	s := &Server{}
 	req := makeToolRequest(map[string]interface{}{
 		"id": "REQ-001",
 	})
 
-	props := s.extractProperties(req)
+	props := extractProperties(req)
 	if props != nil {
 		t.Error("expected nil properties when key is missing")
 	}
 }
 
 func TestExtractProperties_InvalidJSON(t *testing.T) {
-	s := &Server{}
 	req := makeToolRequest(map[string]interface{}{
 		"properties": "not valid json",
 	})
 
-	props := s.extractProperties(req)
+	props := extractProperties(req)
 	if props != nil {
 		t.Error("expected nil properties for invalid JSON string")
 	}
 }
 
 func TestExtractProperties_UnsupportedType(t *testing.T) {
-	s := &Server{}
 	req := makeToolRequest(map[string]interface{}{
 		"properties": 42,
 	})
 
-	props := s.extractProperties(req)
+	props := extractProperties(req)
 	if props != nil {
 		t.Error("expected nil properties for unsupported type")
+	}
+}
+
+func TestExtractPropertiesAllowNil_PreservesNil(t *testing.T) {
+	req := makeToolRequest(map[string]interface{}{
+		"properties": map[string]interface{}{
+			"foo": nil,
+			"bar": "value",
+		},
+	})
+	props := extractPropertiesAllowNil(req)
+	if props == nil {
+		t.Fatal("expected non-nil map when nil entries are present")
+	}
+	if len(props) != 2 {
+		t.Errorf("expected 2 entries (nil counted), got %d: %v", len(props), props)
+	}
+	if v, ok := props["foo"]; !ok || v != nil {
+		t.Errorf("expected foo=nil to be preserved, got ok=%v v=%v", ok, v)
+	}
+	if props["bar"] != "value" {
+		t.Errorf("expected bar=value, got %v", props["bar"])
+	}
+}
+
+func TestExtractPropertiesAllowNil_OnlyNilEntriesStillReturnsMap(t *testing.T) {
+	// Critical: a delete-only call must yield len()>0 so the "no updates specified"
+	// guard does not reject it.
+	req := makeToolRequest(map[string]interface{}{
+		"properties": map[string]interface{}{"foo": nil},
+	})
+	props := extractPropertiesAllowNil(req)
+	if len(props) != 1 {
+		t.Fatalf("expected len=1 for nil-only map, got %d (props=%v)", len(props), props)
+	}
+}
+
+func TestExtractPropertiesAllowNil_StringJSONNullDeletes(t *testing.T) {
+	// JSON-string fallback must preserve null as nil entry.
+	req := makeToolRequest(map[string]interface{}{
+		"properties": `{"foo": null, "bar": "x"}`,
+	})
+	props := extractPropertiesAllowNil(req)
+	if props == nil {
+		t.Fatal("expected non-nil map from JSON string")
+	}
+	if v, ok := props["foo"]; !ok || v != nil {
+		t.Errorf("expected foo=nil from JSON string, got ok=%v v=%v", ok, v)
+	}
+	if props["bar"] != "x" {
+		t.Errorf("expected bar=x, got %v", props["bar"])
+	}
+}
+
+func TestExtractPropertiesAllowNil_FiltersEmptyString(t *testing.T) {
+	req := makeToolRequest(map[string]interface{}{
+		"properties": map[string]interface{}{"foo": ""},
+	})
+	props := extractPropertiesAllowNil(req)
+	if props != nil {
+		t.Errorf("expected nil for properties containing only empty string, got %v", props)
+	}
+}
+
+func TestExtractPropertiesAllowNil_NoArg(t *testing.T) {
+	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	props := extractPropertiesAllowNil(req)
+	if props != nil {
+		t.Errorf("expected nil when properties arg is missing, got %v", props)
+	}
+}
+
+func TestExtractPropertiesAllowNil_InvalidJSON(t *testing.T) {
+	req := makeToolRequest(map[string]interface{}{
+		"properties": "not valid json",
+	})
+	props := extractPropertiesAllowNil(req)
+	if props != nil {
+		t.Errorf("expected nil for invalid JSON string, got %v", props)
+	}
+}
+
+func TestExtractPropertiesAllowNil_JSONNullArg(t *testing.T) {
+	// JSON `null` as the entire properties value: ambiguous (no map to interpret).
+	// Treat as missing/malformed, not as an empty map.
+	req := makeToolRequest(map[string]interface{}{
+		"properties": "null",
+	})
+	props := extractPropertiesAllowNil(req)
+	if props != nil {
+		t.Errorf("expected nil for JSON 'null' as properties arg, got %v", props)
 	}
 }

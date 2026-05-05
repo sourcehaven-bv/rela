@@ -45,39 +45,66 @@ func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDe
 	return resolved, def, nil
 }
 
-func (s *Server) extractProperties(request mcp.CallToolRequest) map[string]interface{} {
-	args := request.GetArguments()
-	propsRaw, ok := args["properties"]
+// extractProperties parses the `properties` argument and filters out both nil
+// and empty-string entries (both treated as "no value"). Used by create paths.
+func extractProperties(request mcp.CallToolRequest) map[string]interface{} {
+	props, ok := parsePropertiesArg(request)
 	if !ok {
 		return nil
 	}
-
-	var props map[string]interface{}
-	switch p := propsRaw.(type) {
-	case map[string]interface{}:
-		props = p
-	case string:
-		// Try to parse as JSON
-		if err := json.Unmarshal([]byte(p), &props); err != nil {
-			return nil
-		}
-	default:
-		return nil
-	}
-
-	// Filter out nil and empty string values - they represent "no value"
-	return filterNilAndEmpty(props)
+	return filterProperties(props, false)
 }
 
-// filterNilAndEmpty removes nil and empty string values from a property map.
-// These values are semantically "no value" and should not be stored.
-func filterNilAndEmpty(props map[string]interface{}) map[string]interface{} {
+// extractPropertiesAllowNil parses the `properties` argument and preserves nil
+// entries so update_entity can use them as a delete sentinel. Empty strings are
+// still filtered (kept as a no-op for consistency with the create path).
+// Returns nil iff the argument is missing/malformed or contains only empty strings.
+func extractPropertiesAllowNil(request mcp.CallToolRequest) map[string]interface{} {
+	props, ok := parsePropertiesArg(request)
+	if !ok {
+		return nil
+	}
+	return filterProperties(props, true)
+}
+
+// parsePropertiesArg extracts the raw properties map from a tool request, handling
+// both the native map argument and the JSON-encoded string fallback. Returns
+// (nil, false) when the argument is missing, of an unsupported type, or malformed/null JSON.
+func parsePropertiesArg(request mcp.CallToolRequest) (map[string]interface{}, bool) {
+	args := request.GetArguments()
+	propsRaw, ok := args["properties"]
+	if !ok {
+		return nil, false
+	}
+
+	switch p := propsRaw.(type) {
+	case map[string]interface{}:
+		return p, true
+	case string:
+		var props map[string]interface{}
+		if err := json.Unmarshal([]byte(p), &props); err != nil {
+			return nil, false
+		}
+		// JSON `null` unmarshals into a nil map; treat as malformed/missing.
+		if props == nil {
+			return nil, false
+		}
+		return props, true
+	default:
+		return nil, false
+	}
+}
+
+// filterProperties removes empty-string values from a property map. When
+// keepNil is false, nil values are also removed. Returns nil if the resulting
+// map is empty.
+func filterProperties(props map[string]interface{}, keepNil bool) map[string]interface{} {
 	if props == nil {
 		return nil
 	}
 	filtered := make(map[string]interface{}, len(props))
 	for k, v := range props {
-		if v == nil {
+		if !keepNil && v == nil {
 			continue
 		}
 		if s, ok := v.(string); ok && s == "" {
@@ -91,7 +118,11 @@ func filterNilAndEmpty(props map[string]interface{}) map[string]interface{} {
 	return filtered
 }
 
-// validatePropertyNames checks if all property names exist in the metamodel for the given entity type.
+// validatePropertyNames checks property names against the metamodel for the given entity type.
+// Reports unknown property names and rejects nil values targeting required properties
+// (a nil value means "delete" in update_entity; deleting a required property would leave
+// the entity invalid, so we surface that as an actionable error rather than a misleading
+// success that analyze_validations later catches).
 func (s *Server) validatePropertyNames(entityType string, properties map[string]interface{}) *mcp.CallToolResult {
 	if properties == nil {
 		return nil
@@ -103,10 +134,15 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		return nil // Type validation will catch this
 	}
 
-	var unknown []string
-	for propName := range properties {
-		if _, exists := entityDef.Properties[propName]; !exists {
+	var unknown, requiredDeletes []string
+	for propName, v := range properties {
+		def, exists := entityDef.Properties[propName]
+		if !exists {
 			unknown = append(unknown, propName)
+			continue
+		}
+		if v == nil && def.Required {
+			requiredDeletes = append(requiredDeletes, propName)
 		}
 	}
 
@@ -118,6 +154,12 @@ func (s *Server) validatePropertyNames(entityType string, properties map[string]
 		return mcp.NewToolResultError(fmt.Sprintf(
 			"unknown properties for %s: %s (valid: %s)",
 			entityType, strings.Join(unknown, ", "), strings.Join(valid, ", ")))
+	}
+
+	if len(requiredDeletes) > 0 {
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"cannot delete required properties for %s: %s (set a new value instead)",
+			entityType, strings.Join(requiredDeletes, ", ")))
 	}
 
 	return nil
