@@ -162,14 +162,44 @@ func (g *Graph) RemoveNode(id string) bool {
 	return true
 }
 
-// AddEdge adds a relation to the graph
+// AddEdge adds a relation to the graph. If an edge with the same
+// (From, Type, To) tuple already exists, it is replaced — this matches
+// the disk invariant (one markdown file per (from, type, to)) and lets
+// callers use AddEdge as an upsert without first removing the old edge.
 func (g *Graph) AddEdge(relation *model.Relation) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	// Replace any existing edge with the same identity tuple in place.
+	for i, existing := range g.edges {
+		if existing.From == relation.From && existing.Type == relation.Type && existing.To == relation.To {
+			g.edges[i] = relation
+			// Rebuild adjacency for the affected endpoints to keep all
+			// pointers in sync.
+			g.outgoing[relation.From] = replaceInSlice(g.outgoing[relation.From], existing, relation)
+			g.incoming[relation.To] = replaceInSlice(g.incoming[relation.To], existing, relation)
+			return
+		}
+	}
+
 	g.edges = append(g.edges, relation)
 	g.outgoing[relation.From] = append(g.outgoing[relation.From], relation)
 	g.incoming[relation.To] = append(g.incoming[relation.To], relation)
+}
+
+// replaceInSlice replaces the first pointer-equal occurrence of `prev`
+// with `next`. Used to keep adjacency maps in sync with the edges slice
+// when AddEdge replaces an existing edge.
+func replaceInSlice(s []*model.Relation, prev, next *model.Relation) []*model.Relation {
+	for i, e := range s {
+		if e == prev {
+			s[i] = next
+			return s
+		}
+	}
+	// Not found — append (shouldn't happen if invariants hold, but
+	// defensive: better to add than to silently miss the new value).
+	return append(s, next)
 }
 
 // RemoveEdge removes a specific relation from the graph

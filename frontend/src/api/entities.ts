@@ -36,6 +36,50 @@ export async function updateEntity(
   return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag)
 }
 
+// JSON:API §5.2.1-shaped resource identifier with rela's per-edge upsert
+// semantics on meta and content. See TKT-K2VAA.
+export interface ResourceIdentifier {
+  type: string
+  id: string
+  // Meta merges into the existing relation's properties. Absent = leave
+  // existing meta untouched. Mirrors entity-level `properties`.
+  meta?: Record<string, unknown>
+  // Clears the named keys after the merge. Mirrors `properties_unset`.
+  meta_unset?: string[]
+  // Upserts the relation's markdown body. Absent = leave alone.
+  // "" = clear. Only meaningful for relation types declared with
+  // `Content: true` in the metamodel.
+  content?: string
+}
+
+// Wrapper for a single relation type's desired state. JSON:API §9 wire
+// shape: replacement at the list level. Absent relation type in the
+// outer map = leave alone. data: [] = remove all of that type.
+// data: null is equivalent to data: [].
+export interface RelationsUpdate {
+  data: ResourceIdentifier[]
+}
+
+// Full PATCH payload accepted by /api/v1/{plural}/{id}.
+export interface UpdateEntityPatch {
+  properties?: Record<string, unknown>
+  properties_unset?: string[]
+  content?: string
+  relations?: Record<string, RelationsUpdate>
+}
+
+// patchEntity is the unified PATCH for entity properties + content +
+// relations. Use this in preference to updateEntity when you need to
+// pass the new wire format (relations or properties_unset).
+export async function patchEntity(
+  type: string,
+  id: string,
+  patch: UpdateEntityPatch,
+  etag?: string
+): Promise<Entity> {
+  return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag)
+}
+
 export async function deleteEntity(type: string, id: string): Promise<void> {
   return api.delete(`/${getPlural(type)}/${id}`)
 }
