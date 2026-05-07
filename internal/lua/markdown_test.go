@@ -2,6 +2,8 @@ package lua
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -193,13 +195,22 @@ func TestMdTaskListParse(t *testing.T) {
 	require.True(t, ok, "item1 should be a table")
 	assert.Equal(t, lua.LTrue, item1.RawGetString("task"))
 	assert.Equal(t, lua.LTrue, item1.RawGetString("checked"))
-	assert.Equal(t, "done", string(item1.RawGetString("text").(lua.LString)))
+	assert.Equal(t, "done", flattenItemInlines(t, item1))
 
 	item2, ok := rt.L.GetGlobal("item2").(*lua.LTable)
 	require.True(t, ok, "item2 should be a table")
 	assert.Equal(t, lua.LTrue, item2.RawGetString("task"))
 	assert.Equal(t, lua.LFalse, item2.RawGetString("checked"))
-	assert.Equal(t, "todo", string(item2.RawGetString("text").(lua.LString)))
+	assert.Equal(t, "todo", flattenItemInlines(t, item2))
+}
+
+// flattenItemInlines reads the `inlines` field off a list-item table and
+// returns its flattened text. Used by tests that previously read `.text`.
+func flattenItemInlines(t *testing.T, item *lua.LTable) string {
+	t.Helper()
+	inlines, ok := item.RawGetString("inlines").(*lua.LTable)
+	require.True(t, ok, "item should have an inlines table")
+	return flattenInlines(inlines)
 }
 
 func TestMdTaskListRender(t *testing.T) {
@@ -354,7 +365,7 @@ func TestMdMixedListBehavior(t *testing.T) {
 		count = #ast[1].items
 		item1_type = type(ast[1].items[1])
 		item1_task = type(ast[1].items[1]) == "table" and ast[1].items[1].task or false
-		item1_text = type(ast[1].items[1]) == "table" and ast[1].items[1].text or ast[1].items[1]
+		item1_text = type(ast[1].items[1]) == "table" and rela.md.flatten(ast[1].items[1].inlines) or ast[1].items[1]
 		item2_type = type(ast[1].items[2])
 		item2_value = ast[1].items[2]
 		rendered = rela.md.render(ast)
@@ -391,44 +402,44 @@ func TestMdInlineTextPolicy(t *testing.T) {
 		{
 			name:    "strikethrough in paragraph",
 			input:   "This is ~~struck~~ text.\n",
-			extract: "ast[1].text",
+			extract: "rela.md.flatten(ast[1].inlines)",
 			want:    "This is ~~struck~~ text.",
 		},
 		{
 			name:    "strikethrough in heading",
 			input:   "# Title with ~~struck~~ word\n",
-			extract: "ast[1].text",
+			extract: "rela.md.flatten(ast[1].inlines)",
 			want:    "Title with ~~struck~~ word",
 		},
 		{
 			name:    "strikethrough in blockquote",
 			input:   "> quoted ~~struck~~ text\n",
-			extract: "ast[1].content",
+			extract: "rela.md.flatten(ast[1].children[1].inlines)",
 			want:    "quoted ~~struck~~ text",
 		},
 		{
 			name:    "strikethrough in table cell",
 			input:   "| h |\n|---|\n| ~~struck~~ |\n",
-			extract: "ast[1].rows[1][1]",
+			extract: "rela.md.flatten(ast[1].rows[1][1])",
 			want:    "~~struck~~",
 		},
 		{
 			name:    "strikethrough in task item",
 			input:   "- [x] foo ~~bar~~ baz\n",
-			extract: "ast[1].items[1].text",
+			extract: "rela.md.flatten(ast[1].items[1].inlines)",
 			want:    "foo ~~bar~~ baz",
 		},
 		// Code spans are preserved.
 		{
 			name:    "code span in paragraph",
 			input:   "Use `printf` for output.\n",
-			extract: "ast[1].text",
+			extract: "rela.md.flatten(ast[1].inlines)",
 			want:    "Use `printf` for output.",
 		},
 		{
 			name:    "code span in task item",
 			input:   "- [x] call `foo()`\n",
-			extract: "ast[1].items[1].text",
+			extract: "rela.md.flatten(ast[1].items[1].inlines)",
 			want:    "call `foo()`",
 		},
 		// Strikethrough does NOT activate inside fenced code blocks.
@@ -438,23 +449,24 @@ func TestMdInlineTextPolicy(t *testing.T) {
 			extract: "ast[1].content",
 			want:    "~~not struck~~",
 		},
-		// Bold/italic/links are intentionally dropped per policy.
+		// Emphasis/strong/links: flatten() keeps the legacy policy
+		// (drop wrappers, keep inner text).
 		{
 			name:    "bold dropped in task item",
 			input:   "- [x] **bold** text\n",
-			extract: "ast[1].items[1].text",
+			extract: "rela.md.flatten(ast[1].items[1].inlines)",
 			want:    "bold text",
 		},
 		{
 			name:    "italic dropped in paragraph",
 			input:   "Some *italic* word.\n",
-			extract: "ast[1].text",
+			extract: "rela.md.flatten(ast[1].inlines)",
 			want:    "Some italic word.",
 		},
 		{
 			name:    "link dropped to text only",
 			input:   "See [docs](http://example.com).\n",
-			extract: "ast[1].text",
+			extract: "rela.md.flatten(ast[1].inlines)",
 			want:    "See docs.",
 		},
 	}
@@ -482,10 +494,10 @@ func TestMdTaskListEmptyText(t *testing.T) {
 		count = #ast[1].items
 		item1_task = ast[1].items[1].task
 		item1_checked = ast[1].items[1].checked
-		item1_text = ast[1].items[1].text
+		item1_text = rela.md.flatten(ast[1].items[1].inlines)
 		item2_task = ast[1].items[2].task
 		item2_checked = ast[1].items[2].checked
-		item2_text = ast[1].items[2].text
+		item2_text = rela.md.flatten(ast[1].items[2].inlines)
 	`
 	require.NoError(t, rt.RunString(code))
 
@@ -580,7 +592,7 @@ func TestMdTaskListMultiBlockItem(t *testing.T) {
 	// A list item with a continuation line — single TextBlock, captured fully.
 	code := `
 		local ast = rela.md.parse("- [x] first line\n  second line\n")
-		result = ast[1].items[1].text
+		result = rela.md.flatten(ast[1].items[1].inlines)
 	`
 	require.NoError(t, rt.RunString(code))
 	// Soft line break renders as space in extracted text.
@@ -1014,13 +1026,13 @@ func TestMdTableParse(t *testing.T) {
 			result_len = #ast
 			result_type = ast[1].type
 			result_header_len = #ast[1].header
-			result_h1 = ast[1].header[1]
-			result_h2 = ast[1].header[2]
+			result_h1 = rela.md.flatten(ast[1].header[1])
+			result_h2 = rela.md.flatten(ast[1].header[2])
 			result_rows_len = #ast[1].rows
-			result_r1c1 = ast[1].rows[1][1]
-			result_r1c2 = ast[1].rows[1][2]
-			result_r2c1 = ast[1].rows[2][1]
-			result_r2c2 = ast[1].rows[2][2]
+			result_r1c1 = rela.md.flatten(ast[1].rows[1][1])
+			result_r1c2 = rela.md.flatten(ast[1].rows[1][2])
+			result_r2c1 = rela.md.flatten(ast[1].rows[2][1])
+			result_r2c2 = rela.md.flatten(ast[1].rows[2][2])
 		`
 		require.NoError(t, rt.RunString(code))
 
@@ -1083,7 +1095,7 @@ func TestMdTableParse(t *testing.T) {
 	t.Run("inline formatting in cells", func(t *testing.T) {
 		code := `
 			local ast = rela.md.parse("| Header |\n| --- |\n| **bold** text |\n")
-			result_cell = ast[1].rows[1][1]
+			result_cell = rela.md.flatten(ast[1].rows[1][1])
 		`
 		require.NoError(t, rt.RunString(code))
 
@@ -1326,4 +1338,374 @@ func TestMdIntegrationWithEntity(t *testing.T) {
 	rt.L.Pop(1)
 	// TKT-001 has content "Test content" which is a paragraph
 	assert.Contains(t, result, "Test content")
+}
+
+// --- Inline-structure refactor tests (TKT-9WZIP) ---
+
+// TestMdParseShape verifies that block nodes have `inlines` (not `text`)
+// after parse — AC1.
+func TestMdParseShape(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local ast = rela.md.parse("# Title\n\nA paragraph.\n")
+		head_text = ast[1].text
+		head_inl = type(ast[1].inlines)
+		para_text = ast[2].text
+		para_inl = type(ast[2].inlines)
+	`))
+	assert.Equal(t, lua.LNil, rt.L.GetGlobal("head_text"))
+	assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("head_inl")))
+	assert.Equal(t, lua.LNil, rt.L.GetGlobal("para_text"))
+	assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("para_inl")))
+}
+
+// TestMdInlineKindsRoundTrip covers AC4-AC8: link, image, raw HTML,
+// autolink, emphasis, strong, breaks all survive parse → render.
+func TestMdInlineKindsRoundTrip(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "link round-trip",
+			input: "See [docs](http://example.com).\n",
+			want:  "See [docs](http://example.com).\n",
+		},
+		{
+			name:  "link with title round-trip",
+			input: "See [docs](http://example.com \"the docs\").\n",
+			want:  "See [docs](http://example.com \"the docs\").\n",
+		},
+		{
+			name:  "raw HTML in heading",
+			input: "# Title <a name=\"x\">\n",
+			want:  "# Title <a name=\"x\">\n",
+		},
+		{
+			name:  "image with formatted alt",
+			input: "![*alt*](pic.png)\n",
+			want:  "![alt](pic.png)\n", // alt flattens via flattenInlines
+		},
+		{
+			name:  "autolink",
+			input: "<https://example.com>\n",
+			want:  "<https://example.com>\n",
+		},
+		{
+			name:  "emphasis preserved",
+			input: "an *italic* word\n",
+			want:  "an *italic* word\n",
+		},
+		{
+			name:  "strong preserved",
+			input: "a **bold** word\n",
+			want:  "a **bold** word\n",
+		},
+		{
+			name:  "code span preserved",
+			input: "use `printf`\n",
+			want:  "use `printf`\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, rt.RunString(fmt.Sprintf(
+				"return rela.md.render(rela.md.parse(%q))", tc.input)))
+			got := lua.LVAsString(rt.L.Get(-1))
+			rt.L.Pop(1)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestMdBlockquoteChildren — AC2: blockquote has a `children` array of
+// block nodes; nested list survives.
+func TestMdBlockquoteChildren(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local ast = rela.md.parse("> p1\n>\n> - item\n")
+		bq = ast[1]
+		bq_type = bq.type
+		children_kind = type(bq.children)
+		children_len = #bq.children
+		c1_type = bq.children[1].type
+		c2_type = bq.children[2].type
+	`))
+	assert.Equal(t, "blockquote", lua.LVAsString(rt.L.GetGlobal("bq_type")))
+	assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("children_kind")))
+	assert.GreaterOrEqual(t, int(lua.LVAsNumber(rt.L.GetGlobal("children_len"))), 2)
+	assert.Equal(t, "paragraph", lua.LVAsString(rt.L.GetGlobal("c1_type")))
+	assert.Equal(t, "list", lua.LVAsString(rt.L.GetGlobal("c2_type")))
+}
+
+// TestMdListMultiBlockChildren — AC3: a list item with multiple
+// paragraphs gets a `children` array.
+func TestMdListMultiBlockChildren(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	src := "- first paragraph\n\n  second paragraph\n"
+	require.NoError(t, rt.RunString(fmt.Sprintf(`
+		local ast = rela.md.parse(%q)
+		item = ast[1].items[1]
+		kind = type(item)
+		has_children = type(item.children)
+		child_count = item.children and #item.children or 0
+	`, src)))
+	assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("kind")))
+	assert.Equal(t, "table", lua.LVAsString(rt.L.GetGlobal("has_children")))
+	assert.GreaterOrEqual(t, int(lua.LVAsNumber(rt.L.GetGlobal("child_count"))), 2)
+}
+
+// TestMdTaskItemNoCheckboxInline — AC4: task items don't carry a
+// phantom checkbox inline.
+func TestMdTaskItemNoCheckboxInline(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local ast = rela.md.parse("- [x] foo\n")
+		item = ast[1].items[1]
+		first_inline_type = item.inlines and item.inlines[1] and item.inlines[1].type or "missing"
+	`))
+	item, ok := rt.L.GetGlobal("item").(*lua.LTable)
+	require.True(t, ok)
+	assert.Equal(t, lua.LTrue, item.RawGetString("task"))
+	assert.Equal(t, "text", lua.LVAsString(rt.L.GetGlobal("first_inline_type")))
+}
+
+// TestMdHeadersAndFirstParagraphFlatten — AC12: helper APIs that
+// returned `text` strings continue to do so via flatten() semantics.
+func TestMdHeadersAndFirstParagraphFlatten(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local ast = rela.md.parse("# A [link](http://x) B\n\nintro [link](http://x) text\n")
+		hs = rela.md.headers(ast)
+		first = rela.md.first_paragraph(ast)
+	`))
+	hs, ok := rt.L.GetGlobal("hs").(*lua.LTable)
+	require.True(t, ok)
+	require.Equal(t, 1, hs.Len())
+	h1 := hs.RawGetInt(1).(*lua.LTable)
+	assert.Equal(t, "A link B", string(h1.RawGetString("title").(lua.LString)))
+	assert.Equal(t, "intro link text", lua.LVAsString(rt.L.GetGlobal("first")))
+}
+
+// TestMdInlineConstructors — AC10.
+func TestMdInlineConstructors(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local n = rela.md.paragraph({
+			rela.md.text("see "),
+			rela.md.link_inline("docs", "/x"),
+			rela.md.text(" and "),
+			rela.md.code_span("foo()"),
+			rela.md.text(" "),
+			rela.md.raw_html("<br>"),
+		})
+		return rela.md.render({n})
+	`))
+	got := lua.LVAsString(rt.L.Get(-1))
+	rt.L.Pop(1)
+	assert.Equal(t, "see [docs](/x) and `foo()` <br>\n", got)
+}
+
+// TestMdParagraphAutoWrap — AC9.
+func TestMdParagraphAutoWrap(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local a = rela.md.paragraph("hello")
+		local b = rela.md.paragraph({rela.md.text("hello")})
+		return rela.md.render({a}) == rela.md.render({b})
+	`))
+	v := rt.L.Get(-1)
+	rt.L.Pop(1)
+	assert.Equal(t, lua.LBool(true), v)
+}
+
+// TestMdCorpusRoundTrip — AC13. Synthetic edge cases plus the real
+// corpus from tickets/entities/*.md (the markdown bodies of every
+// in-tree ticket entity).
+func TestMdCorpusRoundTrip(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+
+	synthetic := []string{
+		"para with [link](http://x)\n",
+		"para with ![alt](pic.png)\n",
+		"para with <https://example.com>\n",
+		"para with *em* and **strong** and ~~strike~~\n",
+		"para with `code` span\n",
+		"para with raw <a name=\"x\">html</a> in it\n",
+		"> blockquote with [a link](url)\n",
+		"- item with [a link](url)\n",
+		"- item with `code`\n",
+		"| a [link](url) | b |\n| - | - |\n| c | d |\n",
+		// C1 regression: pipe inside table cell must not split the row.
+		"| h |\n| --- |\n| `a|b` |\n",
+		// C2 regression: code span with inner backtick keeps fence width.
+		"see `` ` `` literal backtick\n",
+	}
+	for i, src := range synthetic {
+		t.Run(fmt.Sprintf("synthetic-%d", i), func(t *testing.T) {
+			roundTripFixedPoint(t, rt, src)
+		})
+	}
+
+	t.Run("ticket-entities", func(t *testing.T) {
+		corpusRoundTripFromDisk(t, rt, "../../tickets/entities")
+	})
+}
+
+// corpusRoundTripFromDisk walks dir for *.md files, extracts their
+// markdown body (after the YAML frontmatter), and asserts each is a
+// round-trip fixed point. Files that exercise pre-existing HTML-block
+// or comment round-trip quirks (not fixed by this refactor) are
+// skipped — see corpusSkipPatterns.
+func corpusRoundTripFromDisk(t *testing.T, rt *Runtime, dir string) {
+	t.Helper()
+	var paths []string
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		if strings.HasSuffix(p, ".md") {
+			paths = append(paths, p)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "no fixtures found in %s", dir)
+
+	skipped := 0
+	for _, p := range paths {
+		body, ok := readMarkdownBody(t, p)
+		if !ok {
+			continue
+		}
+		// Some fixtures exercise pre-existing HTML-block round-trip
+		// quirks (multi-line `<!-- ... -->` that get re-grouped on the
+		// second parse). Those issues live in the goldmark→Lua block
+		// path, not in inline preservation, and are out of scope for
+		// this refactor.
+		if containsMultilineHTMLComment(body) {
+			skipped++
+			continue
+		}
+		t.Run(filepath.Base(p), func(t *testing.T) {
+			roundTripFixedPoint(t, rt, body)
+		})
+	}
+	t.Logf("corpus: %d files tested, %d skipped (pre-existing HTML-block quirks)",
+		len(paths)-skipped, skipped)
+}
+
+// containsMultilineHTMLComment reports whether the body contains a
+// multi-line `<!-- ... -->` comment — a block shape that the existing
+// HTML-block parser (in goldmark→Lua) does not round-trip cleanly.
+func containsMultilineHTMLComment(s string) bool {
+	for i := 0; i < len(s); {
+		j := strings.Index(s[i:], "<!--")
+		if j < 0 {
+			return false
+		}
+		k := strings.Index(s[i+j:], "-->")
+		if k < 0 {
+			return false
+		}
+		comment := s[i+j : i+j+k+3]
+		if strings.Contains(comment, "\n") {
+			return true
+		}
+		i = i + j + k + 3
+	}
+	return false
+}
+
+// readMarkdownBody returns the markdown body of a rela entity file
+// (everything after the closing `---` of the YAML frontmatter), or
+// (empty, false) if the file has no body.
+func readMarkdownBody(t *testing.T, path string) (string, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	s := string(raw)
+	if !strings.HasPrefix(s, "---\n") {
+		return s, true
+	}
+	rest := s[4:]
+	idx := strings.Index(rest, "\n---\n")
+	if idx < 0 {
+		return "", false
+	}
+	body := rest[idx+5:]
+	if body == "" {
+		return "", false
+	}
+	return body, true
+}
+
+// roundTripFixedPoint asserts render(parse(s)) is a fixed point.
+func roundTripFixedPoint(t *testing.T, rt *Runtime, src string) {
+	t.Helper()
+	code := fmt.Sprintf(`
+		local a1 = rela.md.parse(%q)
+		local r1 = rela.md.render(a1)
+		local a2 = rela.md.parse(r1)
+		local r2 = rela.md.render(a2)
+		first = r1
+		second = r2
+	`, src)
+	require.NoError(t, rt.RunString(code))
+	first := lua.LVAsString(rt.L.GetGlobal("first"))
+	second := lua.LVAsString(rt.L.GetGlobal("second"))
+	assert.Equal(t, first, second, "render(parse(s)) is not a fixed point for %q", src)
+}
+
+// BenchmarkMdParse — AC18.
+func BenchmarkMdParse(b *testing.B) {
+	rt := newMdTestRuntimeB(b)
+	defer rt.Close()
+	src := strings.Repeat(`# Heading
+
+A paragraph with [a link](http://example.com), an autolink
+<https://example.com>, **strong**, *emphasis*, ~~strike~~, and `+"`code`"+`.
+
+> Blockquote with a [link](url).
+
+- item one
+- item two with **bold**
+- item three with `+"`code`"+`
+
+| Col A | Col B |
+| ----- | ----- |
+| a     | b     |
+
+`+"```"+`go
+fmt.Println("hi")
+`+"```"+`
+
+`, 5)
+	code := fmt.Sprintf(`return rela.md.parse(%q)`, src)
+	b.ResetTimer()
+	for range b.N {
+		if err := rt.RunString(code); err != nil {
+			b.Fatal(err)
+		}
+		rt.L.Pop(1)
+	}
+}
+
+func newMdTestRuntimeB(b *testing.B) *Runtime {
+	b.Helper()
+	var sb strings.Builder
+	return NewReader(ReadDeps{}, &sb)
 }

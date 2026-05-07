@@ -15,17 +15,42 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// Markdown node type constants.
-const (
-	nodeTypeHeading       = "heading"
-	nodeTypeParagraph     = "paragraph"
-	nodeTypeCodeBlock     = "code_block"
-	nodeTypeList          = "list"
-	nodeTypeBlockquote    = "blockquote"
-	nodeTypeThematicBreak = "thematic_break"
-	nodeTypeTable         = "table"
-	nodeTypeRaw           = "raw"
+// blockKind tags a block-level AST node by its `type` field.
+type blockKind string
 
+// inlineKind tags an inline AST node by its `type` field.
+type inlineKind string
+
+// Block node types.
+const (
+	nodeTypeHeading       blockKind = "heading"
+	nodeTypeParagraph     blockKind = "paragraph"
+	nodeTypeCodeBlock     blockKind = "code_block"
+	nodeTypeList          blockKind = "list"
+	nodeTypeBlockquote    blockKind = "blockquote"
+	nodeTypeThematicBreak blockKind = "thematic_break"
+	nodeTypeTable         blockKind = "table"
+	nodeTypeRaw           blockKind = "raw"
+)
+
+// Inline node types. Block leaves (paragraph, heading) and
+// inline-bearing containers (link, emphasis, strong, strikethrough,
+// image alt) carry arrays of these.
+const (
+	inlineTypeText          inlineKind = "text"
+	inlineTypeCodeSpan      inlineKind = "code_span"
+	inlineTypeRawHTML       inlineKind = "raw_html"
+	inlineTypeAutolink      inlineKind = "autolink"
+	inlineTypeSoftBreak     inlineKind = "soft_break"
+	inlineTypeHardBreak     inlineKind = "hard_break"
+	inlineTypeEmphasis      inlineKind = "emphasis"
+	inlineTypeStrong        inlineKind = "strong"
+	inlineTypeStrikethrough inlineKind = "strikethrough"
+	inlineTypeLink          inlineKind = "link"
+	inlineTypeImage         inlineKind = "image"
+)
+
+const (
 	alignLeft   = "left"
 	alignRight  = "right"
 	alignCenter = "center"
@@ -57,7 +82,7 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	// Composition functions
 	r.L.SetField(md, "concat", r.L.NewFunction(r.luaMdConcat))
 
-	// Node constructors
+	// Node constructors (block).
 	r.L.SetField(md, "heading", r.L.NewFunction(luaMdHeading))
 	r.L.SetField(md, "paragraph", r.L.NewFunction(luaMdParagraph))
 	r.L.SetField(md, "code_block", r.L.NewFunction(luaMdCodeBlock))
@@ -65,13 +90,86 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	r.L.SetField(md, "blockquote", r.L.NewFunction(luaMdBlockquote))
 	r.L.SetField(md, "list", r.L.NewFunction(luaMdList))
 
-	// Generation helpers
+	// Node constructors (inline).
+	r.L.SetField(md, "text", r.L.NewFunction(luaMdInlineText))
+	r.L.SetField(md, "code_span", r.L.NewFunction(luaMdInlineCodeSpan))
+	r.L.SetField(md, "link_inline", r.L.NewFunction(luaMdInlineLink))
+	r.L.SetField(md, "raw_html", r.L.NewFunction(luaMdInlineRawHTML))
+
+	// Inline-flatten helper for scripts.
+	r.L.SetField(md, "flatten", r.L.NewFunction(luaMdFlatten))
+
+	// Generation helpers (string-returning, predate the inline AST).
 	r.L.SetField(md, "link", r.L.NewFunction(luaMdLink))
 	r.L.SetField(md, "ref", r.L.NewFunction(luaMdRef))
 	r.L.SetField(md, "table", r.L.NewFunction(luaMdTable))
 	r.L.SetField(md, "entity_table", r.L.NewFunction(r.luaMdEntityTable))
 
 	r.L.SetField(rela, "md", md)
+}
+
+// --- Inline node constructors ---
+
+// luaMdInlineText: rela.md.text(s) -> {type="text", text=s}
+func luaMdInlineText(ls *lua.LState) int {
+	s := ls.CheckString(1)
+	t := ls.NewTable()
+	t.RawSetString("type", lua.LString(inlineTypeText))
+	t.RawSetString("text", lua.LString(s))
+	ls.Push(t)
+	return 1
+}
+
+// luaMdInlineCodeSpan: rela.md.code_span(s) -> {type="code_span", text=s}
+func luaMdInlineCodeSpan(ls *lua.LState) int {
+	s := ls.CheckString(1)
+	t := ls.NewTable()
+	t.RawSetString("type", lua.LString(inlineTypeCodeSpan))
+	t.RawSetString("text", lua.LString(s))
+	ls.Push(t)
+	return 1
+}
+
+// luaMdInlineRawHTML: rela.md.raw_html(s) -> {type="raw_html", text=s}
+func luaMdInlineRawHTML(ls *lua.LState) int {
+	s := ls.CheckString(1)
+	t := ls.NewTable()
+	t.RawSetString("type", lua.LString(inlineTypeRawHTML))
+	t.RawSetString("text", lua.LString(s))
+	ls.Push(t)
+	return 1
+}
+
+// luaMdInlineLink: rela.md.link_inline(text_or_inlines, url, title?) -> link inline.
+// Distinct from rela.md.link, which returns a string [text](url) (predates
+// the inline AST).
+func luaMdInlineLink(ls *lua.LState) int {
+	inlines := acceptInlinesArg(ls, 1)
+	url := ls.CheckString(2)
+	title := ls.OptString(3, "")
+
+	t := ls.NewTable()
+	t.RawSetString("type", lua.LString(inlineTypeLink))
+	t.RawSetString("url", lua.LString(url))
+	if title != "" {
+		t.RawSetString("title", lua.LString(title))
+	}
+	t.RawSetString("inlines", inlines)
+	ls.Push(t)
+	return 1
+}
+
+// luaMdFlatten: rela.md.flatten(inlines) -> string
+// Applies the legacy text-extraction policy to a Lua-side inlines array.
+func luaMdFlatten(ls *lua.LState) int {
+	v := ls.Get(1)
+	tbl, ok := v.(*lua.LTable)
+	if !ok {
+		ls.RaiseError("rela.md.flatten: expected an inlines table")
+		return 0
+	}
+	ls.Push(lua.LString(flattenInlines(tbl)))
+	return 1
 }
 
 // --- Core Functions ---
@@ -101,7 +199,7 @@ func (r *Runtime) luaMdRender(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
 
 	var sb strings.Builder
-	r.renderNodes(&sb, astTable)
+	renderNodes(&sb, astTable)
 
 	ls.Push(lua.LString(sb.String()))
 	return 1
@@ -232,7 +330,7 @@ func (r *Runtime) luaMdHeaders(ls *lua.LState) int {
 		if level >= minLvl && level <= maxLvl {
 			header := r.L.NewTable()
 			header.RawSetString("level", lua.LNumber(level))
-			header.RawSetString("title", node.RawGetString("text"))
+			header.RawSetString("title", lua.LString(headingTitleFlat(node)))
 			result.RawSetInt(resultIdx, header)
 			resultIdx++
 		}
@@ -317,16 +415,24 @@ func (r *Runtime) luaMdExtractSection(ls *lua.LState) int {
 	return 1
 }
 
-// getHeadingInfo extracts level and title from a heading node.
+// getHeadingInfo extracts level and a flat title from a heading node.
 func (r *Runtime) getHeadingInfo(node *lua.LTable) (level int, title string) {
 	level = 1
 	if l, ok := node.RawGetString("level").(lua.LNumber); ok {
 		level = int(l)
 	}
-	if t, ok := node.RawGetString("text").(lua.LString); ok {
-		title = string(t)
-	}
+	title = headingTitleFlat(node)
 	return
+}
+
+// headingTitleFlat reads the heading's flat title using the legacy
+// flatten policy (drops link wrappers, drops emphasis, preserves `~~`
+// and code spans). Falls back to a `text` field for hand-built nodes.
+func headingTitleFlat(node *lua.LTable) string {
+	if t := inlinesField(node, "inlines"); t != nil {
+		return flattenInlines(t)
+	}
+	return stringField(node, "text")
 }
 
 // luaMdFirstParagraph extracts the first paragraph text from the AST.
@@ -341,8 +447,13 @@ func (r *Runtime) luaMdFirstParagraph(ls *lua.LState) int {
 		if !ok {
 			continue
 		}
-		if nodeType := node.RawGetString("type"); nodeType == lua.LString(nodeTypeParagraph) {
-			ls.Push(node.RawGetString("text"))
+		if blockKindOf(node) == nodeTypeParagraph {
+			if inlines := inlinesField(node, "inlines"); inlines != nil {
+				ls.Push(lua.LString(flattenInlines(inlines)))
+			} else {
+				// Fallback for hand-built paragraphs carrying `text`.
+				ls.Push(lua.LString(stringField(node, "text")))
+			}
 			return 1
 		}
 	}
@@ -385,22 +496,22 @@ func (r *Runtime) luaMdConcat(ls *lua.LState) int {
 
 // luaMdHeading creates a heading node.
 // Usage: local node = rela.md.heading(2, "Section Title")
+//
+//	local node = rela.md.heading(2, {rela.md.text("a "), rela.md.code_span("b")})
 func luaMdHeading(ls *lua.LState) int {
 	level := ls.CheckInt(1)
-	headingText := ls.CheckString(2)
-
-	// Clamp level
 	if level < minHeaderLevel {
 		level = minHeaderLevel
 	}
 	if level > maxHeaderLevel {
 		level = maxHeaderLevel
 	}
+	inlines := acceptInlinesArg(ls, 2)
 
 	node := ls.NewTable()
 	node.RawSetString("type", lua.LString(nodeTypeHeading))
 	node.RawSetString("level", lua.LNumber(level))
-	node.RawSetString("text", lua.LString(headingText))
+	node.RawSetString("inlines", inlines)
 
 	ls.Push(node)
 	return 1
@@ -408,15 +519,39 @@ func luaMdHeading(ls *lua.LState) int {
 
 // luaMdParagraph creates a paragraph node.
 // Usage: local node = rela.md.paragraph("Some text content")
+//
+//	local node = rela.md.paragraph({rela.md.text("see "), rela.md.link_inline("link", "/x")})
 func luaMdParagraph(ls *lua.LState) int {
-	paragraphText := ls.CheckString(1)
+	inlines := acceptInlinesArg(ls, 1)
 
 	node := ls.NewTable()
 	node.RawSetString("type", lua.LString(nodeTypeParagraph))
-	node.RawSetString("text", lua.LString(paragraphText))
+	node.RawSetString("inlines", inlines)
 
 	ls.Push(node)
 	return 1
+}
+
+// acceptInlinesArg coerces argument idx to an inlines array. Accepts:
+//   - a string: wraps as {{type="text", text=s}}
+//   - a table: passes through verbatim (assumed to be an inlines array)
+func acceptInlinesArg(ls *lua.LState, idx int) *lua.LTable {
+	v := ls.Get(idx)
+	switch x := v.(type) {
+	case lua.LString:
+		out := ls.NewTable()
+		if string(x) != "" {
+			leaf := ls.NewTable()
+			leaf.RawSetString("type", lua.LString(inlineTypeText))
+			leaf.RawSetString("text", x)
+			out.RawSetInt(1, leaf)
+		}
+		return out
+	case *lua.LTable:
+		return x
+	}
+	ls.RaiseError("expected string or inlines table at argument %d", idx)
+	return nil
 }
 
 // luaMdCodeBlock creates a code block node.
@@ -446,12 +581,36 @@ func luaMdThematicBreak(ls *lua.LState) int {
 
 // luaMdBlockquote creates a blockquote node.
 // Usage: local node = rela.md.blockquote("Quoted text")
+//
+//	local node = rela.md.blockquote({rela.md.paragraph("p1"), rela.md.paragraph("p2")})
 func luaMdBlockquote(ls *lua.LState) int {
-	content := ls.CheckString(1)
-
+	v := ls.Get(1)
 	node := ls.NewTable()
 	node.RawSetString("type", lua.LString(nodeTypeBlockquote))
-	node.RawSetString("content", lua.LString(content))
+
+	switch x := v.(type) {
+	case lua.LString:
+		// String → wrap as a single paragraph child.
+		children := ls.NewTable()
+		para := ls.NewTable()
+		para.RawSetString("type", lua.LString(nodeTypeParagraph))
+		inlines := ls.NewTable()
+		if string(x) != "" {
+			leaf := ls.NewTable()
+			leaf.RawSetString("type", lua.LString(inlineTypeText))
+			leaf.RawSetString("text", x)
+			inlines.RawSetInt(1, leaf)
+		}
+		para.RawSetString("inlines", inlines)
+		children.RawSetInt(1, para)
+		node.RawSetString("children", children)
+	case *lua.LTable:
+		// Table → assumed to be a children array of block nodes.
+		node.RawSetString("children", x)
+	default:
+		ls.RaiseError("rela.md.blockquote: expected string or children table")
+		return 0
+	}
 
 	ls.Push(node)
 	return 1
@@ -528,11 +687,18 @@ func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
 	case *ast.Heading:
 		node.RawSetString("type", lua.LString(nodeTypeHeading))
 		node.RawSetString("level", lua.LNumber(n.Level))
-		node.RawSetString("text", lua.LString(r.extractText(n, source)))
+		node.RawSetString("inlines", r.extractInlines(n, source))
 
 	case *ast.Paragraph:
 		node.RawSetString("type", lua.LString(nodeTypeParagraph))
-		node.RawSetString("text", lua.LString(r.extractText(n, source)))
+		node.RawSetString("inlines", r.extractInlines(n, source))
+
+	case *ast.TextBlock:
+		// goldmark emits TextBlock for paragraph-equivalent content inside
+		// list items and other contexts. Treat as a paragraph for our
+		// purposes so block-level walkers don't have to special-case it.
+		node.RawSetString("type", lua.LString(nodeTypeParagraph))
+		node.RawSetString("inlines", r.extractInlines(n, source))
 
 	case *ast.FencedCodeBlock:
 		node.RawSetString("type", lua.LString(nodeTypeCodeBlock))
@@ -551,7 +717,7 @@ func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
 
 	case *ast.Blockquote:
 		node.RawSetString("type", lua.LString(nodeTypeBlockquote))
-		node.RawSetString("content", lua.LString(r.extractBlockquoteContent(n, source)))
+		node.RawSetString("children", r.extractBlockChildren(n, source))
 
 	case *ast.ThematicBreak:
 		node.RawSetString("type", lua.LString(nodeTypeThematicBreak))
@@ -572,67 +738,426 @@ func (r *Runtime) nodeToLua(n ast.Node, source []byte) *lua.LTable {
 	return node
 }
 
-// extractText extracts text content from inline children.
-func (r *Runtime) extractText(n ast.Node, source []byte) string {
+// extractInlines walks goldmark's inline children of an inline-bearing
+// block (paragraph, heading, table cell, etc.) and returns a Lua table
+// containing inline-node tables. The structure mirrors goldmark's AST:
+// emphasis/strong/strikethrough/link become container inlines with their
+// own `inlines` arrays; code spans and raw HTML become leaf inlines with a
+// `text` field; soft and hard line breaks are emitted as synthetic inline
+// nodes after the text whose flag is set; task checkboxes are skipped
+// (their state is captured separately by detectTaskCheckbox).
+func (r *Runtime) extractInlines(parent ast.Node, source []byte) *lua.LTable {
+	out := r.L.NewTable()
+	idx := 1
+	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+		idx = r.appendInlines(out, child, source, idx)
+	}
+	return out
+}
+
+// appendInlines emits Lua tables for the given goldmark inline node
+// (and any synthetic break that follows) into out, returning the next
+// index to use.
+func (r *Runtime) appendInlines(out *lua.LTable, n ast.Node, source []byte, idx int) int {
+	switch n := n.(type) {
+	case *ast.Text:
+		return r.appendTextInline(out, n, source, idx)
+	case *ast.String:
+		if s := string(n.Value); s != "" {
+			out.RawSetInt(idx, r.makeLeafInline(inlineTypeText, s))
+			return idx + 1
+		}
+		return idx
+	case *ast.CodeSpan:
+		var sb strings.Builder
+		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+			collectRawText(&sb, c, source)
+		}
+		out.RawSetInt(idx, r.makeLeafInline(inlineTypeCodeSpan, sb.String()))
+		// Note: the original fence width is not preserved on the AST.
+		// renderInlineNode uses the smallest safe fence (computed from
+		// the content) so a span whose content contains a backtick can
+		// still round-trip without shifting in meaning.
+		return idx + 1
+	case *ast.RawHTML:
+		var sb strings.Builder
+		segs := n.Segments
+		for i := range segs.Len() {
+			seg := segs.At(i)
+			sb.Write(seg.Value(source))
+		}
+		out.RawSetInt(idx, r.makeLeafInline(inlineTypeRawHTML, sb.String()))
+		return idx + 1
+	case *ast.AutoLink:
+		an := r.L.NewTable()
+		an.RawSetString("type", lua.LString(inlineTypeAutolink))
+		an.RawSetString("url", lua.LString(string(n.URL(source))))
+		out.RawSetInt(idx, an)
+		return idx + 1
+	case *ast.Link:
+		out.RawSetInt(idx, r.makeLinkInline(n.Destination, n.Title, n, source))
+		return idx + 1
+	case *ast.Image:
+		out.RawSetInt(idx, r.makeImageInline(n.Destination, n.Title, n, source))
+		return idx + 1
+	case *ast.Emphasis:
+		kind := inlineTypeEmphasis
+		if n.Level >= 2 {
+			kind = inlineTypeStrong
+		}
+		out.RawSetInt(idx, r.makeContainerInline(kind, n, source))
+		return idx + 1
+	case *east.Strikethrough:
+		out.RawSetInt(idx, r.makeContainerInline(inlineTypeStrikethrough, n, source))
+		return idx + 1
+	case *east.TaskCheckBox:
+		// State is captured separately by detectTaskCheckbox.
+		return idx
+	default:
+		// Unknown inline kind. Recurse to capture inner text.
+		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+			idx = r.appendInlines(out, c, source, idx)
+		}
+		return idx
+	}
+}
+
+// appendTextInline emits the text leaf and any soft/hard break following.
+func (r *Runtime) appendTextInline(out *lua.LTable, n *ast.Text, source []byte, idx int) int {
+	if seg := string(n.Segment.Value(source)); seg != "" {
+		out.RawSetInt(idx, r.makeLeafInline(inlineTypeText, seg))
+		idx++
+	}
+	switch {
+	case n.HardLineBreak():
+		b := r.L.NewTable()
+		b.RawSetString("type", lua.LString(inlineTypeHardBreak))
+		out.RawSetInt(idx, b)
+		idx++
+	case n.SoftLineBreak():
+		b := r.L.NewTable()
+		b.RawSetString("type", lua.LString(inlineTypeSoftBreak))
+		out.RawSetInt(idx, b)
+		idx++
+	}
+	return idx
+}
+
+// makeLeafInline constructs an inline node with `type` and `text` fields.
+func (r *Runtime) makeLeafInline(kind inlineKind, text string) *lua.LTable {
+	t := r.L.NewTable()
+	t.RawSetString("type", lua.LString(kind))
+	t.RawSetString("text", lua.LString(text))
+	return t
+}
+
+// makeContainerInline constructs an emphasis/strong/strikethrough/link
+// inline whose body is the inline tree of n's children.
+func (r *Runtime) makeContainerInline(kind inlineKind, n ast.Node, source []byte) *lua.LTable {
+	t := r.L.NewTable()
+	t.RawSetString("type", lua.LString(kind))
+	t.RawSetString("inlines", r.extractInlines(n, source))
+	return t
+}
+
+// makeLinkInline constructs a link inline.
+func (r *Runtime) makeLinkInline(dest, title []byte, n ast.Node, source []byte) *lua.LTable {
+	t := r.L.NewTable()
+	t.RawSetString("type", lua.LString(inlineTypeLink))
+	t.RawSetString("url", lua.LString(string(dest)))
+	if len(title) > 0 {
+		t.RawSetString("title", lua.LString(string(title)))
+	}
+	t.RawSetString("inlines", r.extractInlines(n, source))
+	return t
+}
+
+// makeImageInline constructs an image inline (alt content goes in
+// `alt_inlines`).
+func (r *Runtime) makeImageInline(dest, title []byte, n ast.Node, source []byte) *lua.LTable {
+	t := r.L.NewTable()
+	t.RawSetString("type", lua.LString(inlineTypeImage))
+	t.RawSetString("url", lua.LString(string(dest)))
+	if len(title) > 0 {
+		t.RawSetString("title", lua.LString(string(title)))
+	}
+	t.RawSetString("alt_inlines", r.extractInlines(n, source))
+	return t
+}
+
+// inlineKindOf reads the `type` field off an inline node table.
+func inlineKindOf(node *lua.LTable) inlineKind {
+	s, _ := node.RawGetString("type").(lua.LString)
+	return inlineKind(s)
+}
+
+// blockKindOf reads the `type` field off a block node table.
+func blockKindOf(node *lua.LTable) blockKind {
+	s, _ := node.RawGetString("type").(lua.LString)
+	return blockKind(s)
+}
+
+// collectRawText concatenates the raw text of leaf inline children. Used
+// for code spans, where the inner content is meant to be opaque.
+func collectRawText(sb *strings.Builder, n ast.Node, source []byte) {
+	switch n := n.(type) {
+	case *ast.Text:
+		sb.Write(n.Segment.Value(source))
+	case *ast.String:
+		sb.Write(n.Value)
+	default:
+		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+			collectRawText(sb, c, source)
+		}
+	}
+}
+
+// renderInlines walks an inlines array and produces a markdown string
+// preserving link/image/autolink/raw-HTML syntax. Used by block renderers
+// so parse → render is a fixed point on the corpus.
+func renderInlines(inlines *lua.LTable) string {
+	if inlines == nil {
+		return ""
+	}
 	var sb strings.Builder
-	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		r.extractInlineText(&sb, child, source)
+	for i := 1; i <= inlines.Len(); i++ {
+		v := inlines.RawGetInt(i)
+		switch x := v.(type) {
+		case lua.LString:
+			// Tolerate a raw string inline (script convenience).
+			sb.WriteString(string(x))
+		case *lua.LTable:
+			renderInlineNode(&sb, x)
+		}
 	}
 	return sb.String()
 }
 
-// extractInlineText recursively extracts text from inline nodes.
-//
-// Inline marker preservation policy (applies to all extracted text:
-// paragraphs, headings, blockquotes, list items, table cells):
-//
-//   - Strikethrough (~~...~~):  PRESERVED. The checklist validation layer
-//     uses strikethrough as the "skip" marker, so scripts that round-trip
-//     checklists must not silently strip it.
-//   - Code spans (`...`):       PRESERVED. Code spans are structural and
-//     scripts that read content with code references would otherwise mangle
-//     them on round-trip.
-//   - Emphasis (* / _ / ** / __): DROPPED. Inline emphasis is treated as
-//     formatting noise; only the inner text is captured.
-//   - Links ([text](url)):      DROPPED — only the link text is captured.
-//   - Autolinks, raw HTML:      DROPPED — only inner text is captured.
-//   - TaskCheckBox:             SKIPPED — state is captured separately by
-//     extractListItems via detectTaskCheckbox.
-//
-// This policy is intentionally conservative: anything that the checklist
-// layer treats as load-bearing (strikethrough) plus anything that has
-// distinct semantic meaning a script would mangle (code spans) is preserved.
-// Other inline formatting is dropped to keep extracted text simple. Future
-// iterations may broaden preservation; the current policy is documented and
-// pinned by tests.
-func (r *Runtime) extractInlineText(sb *strings.Builder, n ast.Node, source []byte) {
-	switch n := n.(type) {
-	case *ast.Text:
-		sb.Write(n.Segment.Value(source))
-		if n.SoftLineBreak() {
-			sb.WriteByte(' ')
-		}
-	case *ast.String:
-		sb.Write(n.Value)
-	case *east.Strikethrough:
+func renderInlineNode(sb *strings.Builder, node *lua.LTable) {
+	switch inlineKindOf(node) {
+	case inlineTypeText, inlineTypeRawHTML:
+		writeStringField(sb, node, "text")
+	case inlineTypeCodeSpan:
+		s, _ := node.RawGetString("text").(lua.LString)
+		writeCodeSpan(sb, string(s))
+	case inlineTypeAutolink:
+		sb.WriteByte('<')
+		writeStringField(sb, node, "url")
+		sb.WriteByte('>')
+	case inlineTypeSoftBreak:
+		sb.WriteByte('\n')
+	case inlineTypeHardBreak:
+		sb.WriteString("  \n")
+	case inlineTypeEmphasis:
+		sb.WriteByte('*')
+		writeInlinesOrFallback(sb, node, renderInlines)
+		sb.WriteByte('*')
+	case inlineTypeStrong:
+		sb.WriteString("**")
+		writeInlinesOrFallback(sb, node, renderInlines)
+		sb.WriteString("**")
+	case inlineTypeStrikethrough:
 		sb.WriteString("~~")
-		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-			r.extractInlineText(sb, child, source)
-		}
+		writeInlinesOrFallback(sb, node, renderInlines)
 		sb.WriteString("~~")
-	case *ast.CodeSpan:
-		sb.WriteString("`")
-		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-			r.extractInlineText(sb, child, source)
-		}
-		sb.WriteString("`")
-	case *east.TaskCheckBox:
-		// Skip: checkbox state is captured by the list-item extractor.
+	case inlineTypeLink:
+		renderLinkInline(sb, node)
+	case inlineTypeImage:
+		renderImageInline(sb, node)
 	default:
-		// Recurse into children for other inline types (emphasis, links, etc.)
-		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-			r.extractInlineText(sb, child, source)
+		// Unknown inline: emit `text` if present (defensive).
+		writeStringField(sb, node, "text")
+	}
+}
+
+// writeStringField writes node[field] as a string if it's a Lua string.
+func writeStringField(sb *strings.Builder, node *lua.LTable, field string) {
+	if s, ok := node.RawGetString(field).(lua.LString); ok {
+		sb.WriteString(string(s))
+	}
+}
+
+// inlinesField reads node[field] as an inlines/children table, returning
+// nil if the field is missing or not a table.
+func inlinesField(node *lua.LTable, field string) *lua.LTable {
+	t, _ := node.RawGetString(field).(*lua.LTable)
+	return t
+}
+
+// stringField reads node[field] as a Go string, returning "" if the
+// field is missing or not a string.
+func stringField(node *lua.LTable, field string) string {
+	s, _ := node.RawGetString(field).(lua.LString)
+	return string(s)
+}
+
+// writeCodeSpan emits a code span using the smallest backtick fence that
+// is longer than any run of backticks inside the content (CommonMark
+// 6.1). If the content starts or ends with a backtick, a single space is
+// added inside the fence on each side; the parser strips this space at
+// re-parse, so the round-trip is preserved.
+func writeCodeSpan(sb *strings.Builder, content string) {
+	// Find the longest run of backticks in content.
+	maxRun, run := 0, 0
+	for i := range len(content) {
+		if content[i] == '`' {
+			run++
+			if run > maxRun {
+				maxRun = run
+			}
+		} else {
+			run = 0
 		}
+	}
+	fenceLen := maxRun + 1
+	fence := strings.Repeat("`", fenceLen)
+	sb.WriteString(fence)
+	pad := content != "" && (content[0] == '`' || content[len(content)-1] == '`')
+	if pad {
+		sb.WriteByte(' ')
+	}
+	sb.WriteString(content)
+	if pad {
+		sb.WriteByte(' ')
+	}
+	sb.WriteString(fence)
+}
+
+// renderLinkInline emits "[text](url)" or "[text](url \"title\")".
+func renderLinkInline(sb *strings.Builder, node *lua.LTable) {
+	url, _ := node.RawGetString("url").(lua.LString)
+	title, _ := node.RawGetString("title").(lua.LString)
+	sb.WriteByte('[')
+	writeInlinesOrFallback(sb, node, renderInlines)
+	sb.WriteString("](")
+	writeLinkURLAndTitle(sb, string(url), string(title))
+	sb.WriteByte(')')
+}
+
+// renderImageInline emits "![alt](url)" or "![alt](url \"title\")".
+// Alt content uses flatten policy (no link/emphasis wrappers).
+func renderImageInline(sb *strings.Builder, node *lua.LTable) {
+	url, _ := node.RawGetString("url").(lua.LString)
+	title, _ := node.RawGetString("title").(lua.LString)
+	alt, _ := node.RawGetString("alt_inlines").(*lua.LTable)
+	sb.WriteString("![")
+	sb.WriteString(flattenInlines(alt))
+	sb.WriteString("](")
+	writeLinkURLAndTitle(sb, string(url), string(title))
+	sb.WriteByte(')')
+}
+
+// writeLinkURLAndTitle emits the destination + optional title portion of
+// a link or image. URLs that contain whitespace or unbalanced
+// parentheses are wrapped in angle brackets per CommonMark.
+func writeLinkURLAndTitle(sb *strings.Builder, url, title string) {
+	if needsAngleBrackets(url) {
+		sb.WriteByte('<')
+		sb.WriteString(url)
+		sb.WriteByte('>')
+	} else {
+		sb.WriteString(url)
+	}
+	if title != "" {
+		sb.WriteString(` "`)
+		sb.WriteString(title)
+		sb.WriteByte('"')
+	}
+}
+
+// needsAngleBrackets reports whether a URL must be wrapped in <...> to
+// be valid in a markdown link destination. Whitespace, control chars,
+// and unbalanced parens force the wrapper.
+func needsAngleBrackets(url string) bool {
+	depth := 0
+	for i := range len(url) {
+		c := url[i]
+		switch {
+		case c <= ' ':
+			return true
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth < 0 {
+				return true
+			}
+		}
+	}
+	return depth != 0
+}
+
+// flattenInlines applies the legacy text-extraction policy: strikethrough
+// and code spans are preserved as `~~...~~` / “ `...` “; emphasis,
+// strong, and link wrappers are dropped (only inner text); raw HTML is
+// emitted verbatim; autolinks render as the URL; soft/hard breaks render
+// as a single space (matching the pre-refactor behavior where soft
+// breaks became spaces and inline structure was condensed to text).
+//
+// Used by helpers that previously read `node.text`: `headers`,
+// `first_paragraph`, and the public `rela.md.flatten`.
+func flattenInlines(inlines *lua.LTable) string {
+	if inlines == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for i := 1; i <= inlines.Len(); i++ {
+		v := inlines.RawGetInt(i)
+		switch x := v.(type) {
+		case lua.LString:
+			sb.WriteString(string(x))
+		case *lua.LTable:
+			flattenInlineNode(&sb, x)
+		}
+	}
+	return sb.String()
+}
+
+func flattenInlineNode(sb *strings.Builder, node *lua.LTable) {
+	switch inlineKindOf(node) {
+	case inlineTypeText, inlineTypeRawHTML:
+		if s, ok := node.RawGetString("text").(lua.LString); ok {
+			sb.WriteString(string(s))
+		}
+	case inlineTypeCodeSpan:
+		s, _ := node.RawGetString("text").(lua.LString)
+		writeCodeSpan(sb, string(s))
+	case inlineTypeAutolink:
+		if s, ok := node.RawGetString("url").(lua.LString); ok {
+			sb.WriteString(string(s))
+		}
+	case inlineTypeSoftBreak, inlineTypeHardBreak:
+		sb.WriteByte(' ')
+	case inlineTypeStrikethrough:
+		sb.WriteString("~~")
+		writeInlinesOrFallback(sb, node, flattenInlines)
+		sb.WriteString("~~")
+	case inlineTypeEmphasis, inlineTypeStrong, inlineTypeLink:
+		// Drop wrapper, keep inner text.
+		writeInlinesOrFallback(sb, node, flattenInlines)
+	case inlineTypeImage:
+		// Image: emit alt text (no URL).
+		alt, _ := node.RawGetString("alt_inlines").(*lua.LTable)
+		sb.WriteString(flattenInlines(alt))
+	default:
+		if s, ok := node.RawGetString("text").(lua.LString); ok {
+			sb.WriteString(string(s))
+		}
+	}
+}
+
+// writeInlinesOrFallback writes the rendering of node.inlines via the
+// supplied renderer (renderInlines or flattenInlines). If the node has
+// no `inlines` field but has a legacy `text` value, that value is coerced
+// to a string and written verbatim (compat with hand-built script
+// tables, including numeric `text` values).
+func writeInlinesOrFallback(sb *strings.Builder, node *lua.LTable, render func(*lua.LTable) string) {
+	if t := inlinesField(node, "inlines"); t != nil {
+		sb.WriteString(render(t))
+		return
+	}
+	if v := node.RawGetString("text"); v != lua.LNil {
+		sb.WriteString(lua.LVAsString(v))
 	}
 }
 
@@ -660,16 +1185,23 @@ func (r *Runtime) extractLinesContent(n ast.Node, source []byte) string {
 	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-// extractListItems extracts list items as a Lua table.
+// extractListItems extracts list items as a Lua table. Each item is one
+// of:
 //
-// Task list items (with - [x] / - [ ] checkboxes) are represented as tables
-// with task=true, checked=bool, text=string fields. Plain items are strings.
+//   - lua.LString: a plain item whose body is a single paragraph
+//     containing only text (the simple case — matches the historical
+//     shape so simple bullet/numbered lists are ergonomic).
+//   - *lua.LTable with `inlines`: a plain item whose body is a single
+//     paragraph with formatting (links, code spans, etc.).
+//   - *lua.LTable with `children`: a multi-block item (e.g. an item
+//     containing a fenced code block, a nested list, or multiple
+//     paragraphs).
+//   - Task items: a *lua.LTable with `task=true`, `checked=bool`,
+//     plus `inlines` or `children` per the same rules.
 //
-// Limitation: only the first text block of a list item is captured. Items
-// containing multiple paragraphs, nested lists, or block content (e.g.,
-// fenced code blocks) lose everything after the first text block. This
-// matches goldmark's task list spec, which requires the checkbox in the
-// first text block, and avoids silently concatenating unrelated content.
+// Task-checkbox state is captured by detectTaskCheckbox; the inline
+// extractor skips the TaskCheckBox node so `inlines`/`children` do not
+// contain a phantom checkbox.
 func (r *Runtime) extractListItems(n ast.Node, source []byte) *lua.LTable {
 	items := r.L.NewTable()
 	idx := 1
@@ -679,27 +1211,120 @@ func (r *Runtime) extractListItems(n ast.Node, source []byte) *lua.LTable {
 		}
 		isTask, checked := detectTaskCheckbox(child)
 
-		// Capture only the first text block. See function comment.
-		var itemText string
-		for itemChild := child.FirstChild(); itemChild != nil; itemChild = itemChild.NextSibling() {
-			if itemChild.Kind() == ast.KindTextBlock || itemChild.Kind() == ast.KindParagraph {
-				itemText = strings.TrimLeft(r.extractText(itemChild, source), " \t")
-				break
-			}
+		// Count and classify the item's block children.
+		var blocks []ast.Node
+		for c := child.FirstChild(); c != nil; c = c.NextSibling() {
+			blocks = append(blocks, c)
 		}
 
-		if isTask {
+		switch {
+		case isTask:
 			item := r.L.NewTable()
 			item.RawSetString("task", lua.LBool(true))
 			item.RawSetString("checked", lua.LBool(checked))
-			item.RawSetString("text", lua.LString(itemText))
+			r.attachItemBody(item, blocks, source)
 			items.RawSetInt(idx, item)
-		} else {
-			items.RawSetInt(idx, lua.LString(itemText))
+		case len(blocks) == 1 && isParagraphLike(blocks[0]) && isSimpleTextOnly(blocks[0]):
+			// Plain item with simple text only — return as LString.
+			items.RawSetInt(idx, lua.LString(simpleParagraphText(blocks[0], source)))
+		case len(blocks) == 1 && isParagraphLike(blocks[0]):
+			// Single-paragraph plain item with formatting.
+			item := r.L.NewTable()
+			item.RawSetString("inlines", r.extractInlines(blocks[0], source))
+			items.RawSetInt(idx, item)
+		default:
+			// Multi-block item.
+			item := r.L.NewTable()
+			children := r.L.NewTable()
+			for i, b := range blocks {
+				if bn := r.nodeToLua(b, source); bn != nil {
+					children.RawSetInt(i+1, bn)
+				}
+			}
+			item.RawSetString("children", children)
+			items.RawSetInt(idx, item)
 		}
 		idx++
 	}
 	return items
+}
+
+// attachItemBody chooses between `inlines` (single-paragraph item) and
+// `children` (multi-block item) for a list-item table.
+func (r *Runtime) attachItemBody(item *lua.LTable, blocks []ast.Node, source []byte) {
+	if len(blocks) == 1 && isParagraphLike(blocks[0]) {
+		item.RawSetString("inlines", r.extractInlines(blocks[0], source))
+		return
+	}
+	children := r.L.NewTable()
+	idx := 1
+	for _, b := range blocks {
+		if bn := r.nodeToLua(b, source); bn != nil {
+			children.RawSetInt(idx, bn)
+			idx++
+		}
+	}
+	item.RawSetString("children", children)
+}
+
+// isParagraphLike reports whether a goldmark block node is a paragraph
+// or text block (the two block kinds that carry inline content directly).
+func isParagraphLike(n ast.Node) bool {
+	k := n.Kind()
+	return k == ast.KindParagraph || k == ast.KindTextBlock
+}
+
+// simpleParagraphText extracts the literal concatenated text of a
+// paragraph/text-block whose inline tree is all Text/String nodes (the
+// fast path for plain list items). Caller should already have verified
+// this via isSimpleTextOnly.
+func simpleParagraphText(n ast.Node, source []byte) string {
+	var sb strings.Builder
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		switch c := c.(type) {
+		case *ast.Text:
+			sb.Write(c.Segment.Value(source))
+		case *ast.String:
+			sb.Write(c.Value)
+		}
+	}
+	return strings.TrimLeft(sb.String(), " \t")
+}
+
+// isSimpleTextOnly reports whether a paragraph/text-block's inline tree
+// contains only Text nodes (no formatting, links, code spans, etc.). When
+// true the caller can compress the item to a single string.
+func isSimpleTextOnly(n ast.Node) bool {
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		switch c := c.(type) {
+		case *ast.Text:
+			if c.HardLineBreak() || c.SoftLineBreak() {
+				return false
+			}
+		case *ast.String:
+			// fine
+		case *east.TaskCheckBox:
+			// skipped by extractor; doesn't disqualify
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// extractBlockChildren walks the immediate block-level children of a
+// container (blockquote, list-item) and returns them as an array of
+// block-node Lua tables.
+func (r *Runtime) extractBlockChildren(parent ast.Node, source []byte) *lua.LTable {
+	out := r.L.NewTable()
+	idx := 1
+	for c := parent.FirstChild(); c != nil; c = c.NextSibling() {
+		if bn := r.nodeToLua(c, source); bn != nil {
+			out.RawSetInt(idx, bn)
+			idx++
+		}
+	}
+	return out
 }
 
 // detectTaskCheckbox returns whether the list item is a task item and its
@@ -722,20 +1347,6 @@ func detectTaskCheckbox(li ast.Node) (isTask, checked bool) {
 	return false, false
 }
 
-// extractBlockquoteContent extracts text from a blockquote.
-func (r *Runtime) extractBlockquoteContent(n ast.Node, source []byte) string {
-	var sb strings.Builder
-	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		if child.Kind() == ast.KindParagraph {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(r.extractText(child, source))
-		}
-	}
-	return sb.String()
-}
-
 // extractRawContent extracts raw source content for unsupported nodes.
 func (r *Runtime) extractRawContent(n ast.Node, source []byte) string {
 	// Try to get the lines if available
@@ -750,10 +1361,9 @@ func (r *Runtime) extractRawContent(n ast.Node, source []byte) string {
 	return ""
 }
 
-// extractTableData extracts header, rows, and alignments from a GFM table node.
-// Note: cell text is extracted as plain text via extractText(), which strips inline
-// formatting (bold, links, code spans). This is consistent with heading/paragraph
-// extraction but means rich inline content in cells is not preserved.
+// extractTableData extracts header, rows, and alignments from a GFM table
+// node. Each cell is an `inlines` array (preserving link/code/raw HTML
+// structure inside the cell).
 func (r *Runtime) extractTableData(table *east.Table, source []byte) (header, rows, alignments *lua.LTable) {
 	header = r.L.NewTable()
 	rows = r.L.NewTable()
@@ -775,23 +1385,22 @@ func (r *Runtime) extractTableData(table *east.Table, source []byte) (header, ro
 		alignments.RawSetInt(i+1, lua.LString(align))
 	}
 
-	// Walk children: TableHeader contains the header row, TableRows are data rows
+	// Walk children: TableHeader contains the header row, TableRows are data rows.
+	// Each cell becomes an inlines array (preserves links/code/raw HTML inside).
 	rowIdx := 1
 	for child := table.FirstChild(); child != nil; child = child.NextSibling() {
 		switch child.Kind() {
 		case east.KindTableHeader:
-			// Header has TableCell children directly
 			cellIdx := 1
 			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
-				header.RawSetInt(cellIdx, lua.LString(r.extractText(cell, source)))
+				header.RawSetInt(cellIdx, r.extractInlines(cell, source))
 				cellIdx++
 			}
 		case east.KindTableRow:
-			// Data row with cells
 			luaRow := r.L.NewTable()
 			cellIdx := 1
 			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
-				luaRow.RawSetInt(cellIdx, lua.LString(r.extractText(cell, source)))
+				luaRow.RawSetInt(cellIdx, r.extractInlines(cell, source))
 				cellIdx++
 			}
 			rows.RawSetInt(rowIdx, luaRow)
@@ -849,7 +1458,7 @@ func (r *Runtime) deepCopyTable(tbl *lua.LTable) *lua.LTable {
 }
 
 // renderNodes renders AST nodes to markdown.
-func (r *Runtime) renderNodes(sb *strings.Builder, nodes *lua.LTable) {
+func renderNodes(sb *strings.Builder, nodes *lua.LTable) {
 	// Use sequential access to preserve document order
 	for i := 1; i <= nodes.Len(); i++ {
 		v := nodes.RawGetInt(i)
@@ -860,62 +1469,63 @@ func (r *Runtime) renderNodes(sb *strings.Builder, nodes *lua.LTable) {
 		if i > 1 {
 			sb.WriteString("\n")
 		}
-		r.renderNode(sb, node)
+		renderNode(sb, node)
 	}
 }
 
 // renderNode renders a single AST node to markdown.
-func (r *Runtime) renderNode(sb *strings.Builder, node *lua.LTable) {
-	nodeType, _ := node.RawGetString("type").(lua.LString)
-
-	switch string(nodeType) {
+func renderNode(sb *strings.Builder, node *lua.LTable) {
+	switch blockKindOf(node) {
 	case nodeTypeHeading:
-		r.renderHeading(sb, node)
+		renderHeading(sb, node)
 	case nodeTypeParagraph:
-		r.renderParagraph(sb, node)
+		renderParagraph(sb, node)
 	case nodeTypeCodeBlock:
-		r.renderCodeBlock(sb, node)
+		renderCodeBlock(sb, node)
 	case nodeTypeList:
-		r.renderList(sb, node)
+		renderList(sb, node)
 	case nodeTypeBlockquote:
-		r.renderBlockquote(sb, node)
+		renderBlockquote(sb, node)
 	case nodeTypeThematicBreak:
 		sb.WriteString("---\n")
 	case nodeTypeTable:
-		r.renderTableNode(sb, node)
+		renderTableNode(sb, node)
 	case nodeTypeRaw:
-		r.renderRaw(sb, node)
+		renderRaw(sb, node)
 	}
 }
 
-// renderHeading renders a heading node.
-func (r *Runtime) renderHeading(sb *strings.Builder, node *lua.LTable) {
+// renderHeading renders a heading node. Headings can't contain hard or
+// soft breaks in CommonMark; if the inlines table contains break nodes
+// (e.g., a script copied them in from a paragraph), they are flattened
+// to spaces so the heading stays on one line.
+func renderHeading(sb *strings.Builder, node *lua.LTable) {
 	level := 1
 	if l, ok := node.RawGetString("level").(lua.LNumber); ok {
 		level = int(l)
 	}
-	title := ""
-	if t, ok := node.RawGetString("text").(lua.LString); ok {
-		title = string(t)
-	}
 	sb.WriteString(strings.Repeat("#", level))
-	sb.WriteString(" ")
-	sb.WriteString(title)
-	sb.WriteString("\n")
+	sb.WriteByte(' ')
+	if t := inlinesField(node, "inlines"); t != nil {
+		// Render breaks as spaces; otherwise full syntax preservation.
+		s := renderInlines(t)
+		s = strings.ReplaceAll(s, "  \n", " ")
+		s = strings.ReplaceAll(s, "\n", " ")
+		sb.WriteString(s)
+	} else if v := node.RawGetString("text"); v != lua.LNil {
+		sb.WriteString(lua.LVAsString(v))
+	}
+	sb.WriteByte('\n')
 }
 
 // renderParagraph renders a paragraph node.
-func (r *Runtime) renderParagraph(sb *strings.Builder, node *lua.LTable) {
-	content := ""
-	if t, ok := node.RawGetString("text").(lua.LString); ok {
-		content = string(t)
-	}
-	sb.WriteString(content)
-	sb.WriteString("\n")
+func renderParagraph(sb *strings.Builder, node *lua.LTable) {
+	writeInlinesOrFallback(sb, node, renderInlines)
+	sb.WriteByte('\n')
 }
 
 // renderCodeBlock renders a code block node.
-func (r *Runtime) renderCodeBlock(sb *strings.Builder, node *lua.LTable) {
+func renderCodeBlock(sb *strings.Builder, node *lua.LTable) {
 	language := ""
 	if l, ok := node.RawGetString("language").(lua.LString); ok {
 		language = string(l)
@@ -935,13 +1545,15 @@ func (r *Runtime) renderCodeBlock(sb *strings.Builder, node *lua.LTable) {
 }
 
 // renderList renders a list node. Items may be plain strings or tables.
-// Table items with task=true render as checkboxes (- [x] / - [ ]).
+// Tables with task=true render with [x] / [ ] checkboxes. Multi-block
+// items (with `children`) get continuation lines indented to align under
+// the marker.
 //
 // Items must be stored at sequential 1..N indices. Sparse tables (e.g.,
 // items[2] = nil to "delete" an item) will truncate at the first gap
 // because Lua's table length operator returns a "border", not a count.
 // Scripts that mutate items in place should compact the table afterwards.
-func (r *Runtime) renderList(sb *strings.Builder, node *lua.LTable) {
+func renderList(sb *strings.Builder, node *lua.LTable) {
 	ordered := false
 	if o, ok := node.RawGetString("ordered").(lua.LBool); ok {
 		ordered = bool(o)
@@ -950,81 +1562,139 @@ func (r *Runtime) renderList(sb *strings.Builder, node *lua.LTable) {
 	if !ok {
 		return
 	}
-	// Use sequential access to preserve order. Skip nil holes so that
-	// scripts which mutate items via `items[i] = nil` produce a compact
-	// rendering instead of empty bullets.
 	for i := 1; i <= items.Len(); i++ {
 		v := items.RawGetInt(i)
 		if v == lua.LNil {
 			continue
 		}
-
+		marker := "- "
 		if ordered {
-			fmt.Fprintf(sb, "%d. ", i)
-		} else {
-			sb.WriteString("- ")
+			marker = fmt.Sprintf("%d. ", i)
 		}
-
-		switch item := v.(type) {
-		case lua.LString:
-			sb.WriteString(string(item))
-		case *lua.LTable:
-			r.renderListItemTable(sb, item)
-		default:
-			// Unknown item type — render an empty bullet rather than crashing
-			// so a script bug produces visible (but inert) output.
-		}
-		sb.WriteString("\n")
+		renderListItem(sb, v, marker)
 	}
 }
 
+// renderListItem writes one list item using the given marker (e.g. "- "
+// or "1. "). It chooses the right rendering path based on the item's
+// shape (LString | table-with-inlines | table-with-children | task).
+func renderListItem(sb *strings.Builder, v lua.LValue, marker string) {
+	switch item := v.(type) {
+	case lua.LString:
+		sb.WriteString(marker)
+		sb.WriteString(string(item))
+		sb.WriteByte('\n')
+		return
+	case *lua.LTable:
+		taskPrefix := ""
+		if isTaskItem(item) {
+			checked := false
+			if c, ok := item.RawGetString("checked").(lua.LBool); ok {
+				checked = bool(c)
+			}
+			if checked {
+				taskPrefix = "[x] "
+			} else {
+				taskPrefix = "[ ] "
+			}
+		}
+
+		// Multi-block: render each child with continuation indent. Empty
+		// continuation lines get no indent — emitting whitespace-only
+		// lines would (a) trip "no trailing whitespace" linters and (b)
+		// risk the two-trailing-spaces hard-break interpretation.
+		if children := inlinesField(item, "children"); children != nil && children.Len() > 0 {
+			indent := strings.Repeat(" ", len(marker))
+			var inner strings.Builder
+			renderNodes(&inner, children)
+			rendered := inner.String()
+			lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+			for li, line := range lines {
+				switch {
+				case li == 0:
+					sb.WriteString(marker)
+					sb.WriteString(taskPrefix)
+					sb.WriteString(line)
+				case line == "":
+					// Empty continuation line: emit no indent.
+				default:
+					sb.WriteString(indent)
+					sb.WriteString(line)
+				}
+				sb.WriteByte('\n')
+			}
+			return
+		}
+
+		// Single-paragraph item with `inlines` (or legacy `text`).
+		sb.WriteString(marker)
+		sb.WriteString(taskPrefix)
+		writeInlinesOrFallback(sb, item, renderInlines)
+		sb.WriteByte('\n')
+		return
+	}
+	// Unknown item type — emit an empty bullet rather than crashing.
+	sb.WriteString(marker)
+	sb.WriteByte('\n')
+}
+
 // isTaskItem reports whether a list item table represents a task item.
-// Only an explicit lua.LBool(true) qualifies — strings, numbers, nil, and
-// LBool(false) are all treated as non-task (plain) items.
+// Only an explicit lua.LBool(true) qualifies.
 func isTaskItem(item *lua.LTable) bool {
 	v, ok := item.RawGetString("task").(lua.LBool)
 	return ok && bool(v)
 }
 
-// renderListItemTable renders a table-form list item (task or plain).
-// Task items emit "[x] text" or "[ ] text"; non-task items emit just text.
-// The text field is coerced via lua.LVAsString, so numbers and other
-// printable values render as their string form rather than disappearing
-// silently. Missing text renders as empty string.
-func (r *Runtime) renderListItemTable(sb *strings.Builder, item *lua.LTable) {
-	if isTaskItem(item) {
-		checked := false
-		if c, ok := item.RawGetString("checked").(lua.LBool); ok {
-			checked = bool(c)
+// renderBlockquote renders a blockquote node by recursively rendering its
+// block children and prefixing every output line with "> ".
+func renderBlockquote(sb *strings.Builder, node *lua.LTable) {
+	children := inlinesField(node, "children")
+	if children == nil {
+		// Compatibility: hand-built blockquote with `inlines` (single
+		// paragraph) or legacy `content` string.
+		var inner strings.Builder
+		writeInlinesOrFallback(&inner, node, renderInlines)
+		if c, ok := node.RawGetString("content").(lua.LString); ok && inner.Len() == 0 {
+			inner.WriteString(string(c))
 		}
-		if checked {
-			sb.WriteString("[x] ")
-		} else {
-			sb.WriteString("[ ] ")
-		}
+		prefixLines(sb, "> ", inner.String())
+		return
 	}
-	textVal := item.RawGetString("text")
-	if textVal != lua.LNil {
-		sb.WriteString(lua.LVAsString(textVal))
-	}
+	var inner strings.Builder
+	renderNodes(&inner, children)
+	prefixLines(sb, "> ", inner.String())
 }
 
-// renderBlockquote renders a blockquote node.
-func (r *Runtime) renderBlockquote(sb *strings.Builder, node *lua.LTable) {
-	content := ""
-	if c, ok := node.RawGetString("content").(lua.LString); ok {
-		content = string(c)
+// prefixLines writes lines from s to sb, prefixing each line with
+// prefix. A trailing newline in s does not produce an empty prefixed
+// line. Empty inner lines get the prefix with trailing whitespace
+// trimmed (so blockquote continuations don't emit "> " on blank lines,
+// and list-indent doesn't emit lines containing only spaces).
+func prefixLines(sb *strings.Builder, prefix, s string) {
+	if s == "" {
+		sb.WriteString(strings.TrimRight(prefix, " \t"))
+		sb.WriteByte('\n')
+		return
 	}
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		sb.WriteString("> ")
-		sb.WriteString(line)
-		sb.WriteString("\n")
+	end := len(s)
+	if strings.HasSuffix(s, "\n") {
+		end--
+	}
+	body := s[:end]
+	trimmed := strings.TrimRight(prefix, " \t")
+	for _, line := range strings.Split(body, "\n") {
+		if line == "" {
+			sb.WriteString(trimmed)
+		} else {
+			sb.WriteString(prefix)
+			sb.WriteString(line)
+		}
+		sb.WriteByte('\n')
 	}
 }
 
 // renderRaw renders a raw node.
-func (r *Runtime) renderRaw(sb *strings.Builder, node *lua.LTable) {
+func renderRaw(sb *strings.Builder, node *lua.LTable) {
 	content := ""
 	if c, ok := node.RawGetString("content").(lua.LString); ok {
 		content = string(c)
@@ -1035,8 +1705,10 @@ func (r *Runtime) renderRaw(sb *strings.Builder, node *lua.LTable) {
 	}
 }
 
-// renderTableNode renders a table AST node to GFM markdown with column-aligned padding.
-func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
+// renderTableNode renders a table AST node to GFM markdown with
+// column-aligned padding. Cells are inline arrays and are flattened to
+// rendered markdown via renderInlines (preserves links/code/raw HTML).
+func renderTableNode(sb *strings.Builder, node *lua.LTable) {
 	header, _ := node.RawGetString("header").(*lua.LTable)
 	rows, _ := node.RawGetString("rows").(*lua.LTable)
 	alignments, _ := node.RawGetString("alignments").(*lua.LTable)
@@ -1046,14 +1718,12 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 	}
 
 	numCols := header.Len()
-
-	// Collect all cell values and compute column widths
 	headerCells := make([]string, numCols)
 	colWidths := make([]int, numCols)
 	colAligns := make([]string, numCols)
 
 	for i := range numCols {
-		headerCells[i] = lua.LVAsString(header.RawGetInt(i + 1))
+		headerCells[i] = renderTableCell(header.RawGetInt(i + 1))
 		colWidths[i] = runewidth.StringWidth(headerCells[i])
 		colAligns[i] = alignNone
 		if alignments != nil {
@@ -1072,7 +1742,7 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 			}
 			cells := make([]string, numCols)
 			for j := range numCols {
-				cells[j] = lua.LVAsString(row.RawGetInt(j + 1))
+				cells[j] = renderTableCell(row.RawGetInt(j + 1))
 				if runewidth.StringWidth(cells[j]) > colWidths[j] {
 					colWidths[j] = runewidth.StringWidth(cells[j])
 				}
@@ -1116,6 +1786,48 @@ func (r *Runtime) renderTableNode(sb *strings.Builder, node *lua.LTable) {
 		}
 		sb.WriteString("\n")
 	}
+}
+
+// renderTableCell coerces a cell value to its rendered markdown form.
+// Cells are normally inline arrays (post-refactor); accept LStrings as a
+// compatibility shim for hand-built tables. Pipes are escaped and
+// newlines collapsed because GFM tables are line-based: an unescaped
+// pipe splits the row, and a newline terminates it.
+func renderTableCell(v lua.LValue) string {
+	var s string
+	switch x := v.(type) {
+	case *lua.LTable:
+		s = renderInlines(x)
+	case lua.LString:
+		s = string(x)
+	default:
+		s = lua.LVAsString(v)
+	}
+	return escapeTableCell(s)
+}
+
+// escapeTableCell escapes characters that would corrupt a GFM table
+// row: `|` → `\|`, and any embedded newline → space (GFM does not allow
+// multi-line cells; the alternative is `<br>` but that requires the
+// renderer to know whether HTML is acceptable).
+func escapeTableCell(s string) string {
+	if !strings.ContainsAny(s, "|\n\r") {
+		return s
+	}
+	const slack = 4 // small headroom for escaped pipes
+	var b strings.Builder
+	b.Grow(len(s) + slack)
+	for _, r := range s {
+		switch r {
+		case '|':
+			b.WriteString(`\|`)
+		case '\n', '\r':
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // padCell pads a cell value to the given width based on alignment.
