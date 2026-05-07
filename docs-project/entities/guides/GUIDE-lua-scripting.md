@@ -990,6 +990,114 @@ rela.update_entity("TKT-001", {}, rela.md.render(ast))
   (mostly plain prose) the gap is smaller. If a hot-path script feels
   slow, consider parsing once and reusing the AST.
 
+### Resolving Entity-ID References
+
+When a Lua script composes a document from one or more entities, the
+body text often mentions other entities by ID. Two helpers turn those
+mentions into proper markdown links:
+
+- `rela.md.resolve_refs(ast, replacements) → ast` — walks the AST and
+  rewrites entity-ID code spans to caller-supplied markdown.
+- `rela.md.entity_refs(opts?) → table` — builds the `replacements` map
+  for the common case of "link every entity (or every entity of these
+  types)".
+
+#### The matching rule: code spans only
+
+The matcher targets **code spans** whose entire content is an entity
+ID. A code span is the GFM inline form `` `TKT-1` `` (backticks). Bare
+prose mentions like `see TKT-1 here` are left untouched — the
+ambiguous-boundary problem in prose is hard, and authors already use
+backticks to flag identifiers in entity bodies. Opt in to a link by
+writing the ID as a code span; leave the backticks off and it stays
+text.
+
+This rule means:
+
+- `` see `TKT-1` here `` → `see [Title](#anchor) here`
+- `see TKT-1 here` → unchanged (no opt-in)
+- ` ```fenced\n`TKT-1`\n``` ` → unchanged (code blocks are skipped)
+- `` see [`TKT-1`](url) `` → the code span inside the link is
+  rewritten; the surrounding link wrapper stays
+- `` see [TKT-1](url) `` → unchanged (only code spans are matched)
+- `` `TKT-99` `` (not in map) → unchanged
+
+#### `rela.md.entity_refs(opts?)`
+
+Returns a `{[id] = "<markdown>"}` table covering some or all entities
+in the project. Pass the result to `resolve_refs`.
+
+Options (all optional):
+
+- `types`: list of entity-type names to include. Unknown names raise
+  an error. Default: every entity type in the metamodel.
+- `style`: `"title-slug"` (default) or `"id"`. Controls the anchor in
+  the default replacement value.
+  - `"title-slug"` produces `[Title](#title-slug)` where the slug is
+    the title lowercased (Unicode-aware), with non-alphanumeric runs
+    collapsed to `-` and trailing `-` trimmed. Matches the
+    auto-heading-id rules used by Pandoc, goldmark's
+    auto-heading-id extension, and markdown-it-anchor.
+  - `"id"` produces `[Title](#tkt-123)` (lowercased ID). For docs
+    that emit their own ID-based anchors.
+- `format`: `function(entity) → string`. Overrides `style` entirely.
+  The callback runs once per entity and must return a string with no
+  newlines. The entity table has the usual fields plus a top-level
+  `title` convenience.
+
+Default-form replacement values escape `[`, `]`, and `\` in entity
+titles so a malicious or unusual title cannot break out of the
+link-text slot. Custom format callbacks remain responsible for their
+own escaping.
+
+```lua
+-- Common case: link every entity-ID code span to its title-slug anchor.
+local refs = rela.md.entity_refs()
+local ast  = rela.md.parse(entity.content)
+ast = rela.md.resolve_refs(ast, refs)
+print(rela.md.render(ast))
+
+-- Restrict to tickets and bugs, ID-based anchors:
+local refs = rela.md.entity_refs({
+  types = {"ticket", "bug"},
+  style = "id",
+})
+
+-- Fully custom format:
+local refs = rela.md.entity_refs({
+  format = function(e)
+    return "[" .. e.title .. " (" .. e.id .. ")](/x/" .. e.id .. ")"
+  end,
+})
+```
+
+#### `rela.md.resolve_refs(ast, replacements)`
+
+Walks a deep-copied AST and rewrites code-span entity-ID tokens in
+block text using the provided map. Returns the new AST; the input is
+not modified.
+
+The `replacements` argument is a `{[id] = "<markdown>"}` table:
+
+- Keys are exact code-span content. Values are inline markdown
+  fragments to splice in. The fragments are parsed as inline content,
+  so `[Title](url)` becomes a structured `link` inline (not opaque
+  text) — link URLs survive a subsequent `render` round-trip cleanly.
+- Values must not contain `\n` or `\r` (would break paragraph
+  structure).
+- Hand-built tables can carry any string keys — only the ones whose
+  content matches a code span will rewrite.
+
+What the walker visits and what it skips:
+
+| inline kind | behavior |
+| --- | --- |
+| `code_span` | matched against keys; replaced if a hit |
+| `link`, `emphasis`, `strong`, `strikethrough` | recurse into `inlines` |
+| `image` | recurse into `alt_inlines` |
+| `text`, `raw_html`, `autolink`, breaks | left untouched |
+| inside `code_block` or `raw` block | left untouched (parser doesn't emit code-span inlines there) |
+
 ## Entity Structure
 
 Entities returned by query functions have this structure:

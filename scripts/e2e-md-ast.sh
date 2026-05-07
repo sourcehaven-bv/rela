@@ -162,6 +162,31 @@ do
     eq("code-span.backtick-fixed-point", r2, r1)
 end
 
+-- 11. resolve_refs: code-span ID is replaced with a link.
+do
+    local ast = rela.md.parse("see `TKT-1` here\n")
+    local out = rela.md.render(rela.md.resolve_refs(ast,
+        {["TKT-1"] = "[Fix login](#tkt-1)"}))
+    eq("resolve_refs.code-span", out, "see [Fix login](#tkt-1) here\n")
+end
+
+-- 12. resolve_refs: bare-prose ID is left alone (only code spans match).
+do
+    local ast = rela.md.parse("see TKT-1 here\n")
+    local out = rela.md.render(rela.md.resolve_refs(ast,
+        {["TKT-1"] = "[Fix login](#tkt-1)"}))
+    eq("resolve_refs.bare-prose", out, "see TKT-1 here\n")
+end
+
+-- 13. resolve_refs: ID inside a fenced code block is NOT replaced.
+do
+    local src = "```\n`TKT-1`\n```\n"
+    local ast = rela.md.parse(src)
+    local out = rela.md.render(rela.md.resolve_refs(ast,
+        {["TKT-1"] = "[X](#x)"}))
+    eq("resolve_refs.code-block-skipped", out, src)
+end
+
 if fails > 0 then
     error(string.format("%d assertion(s) failed", fails), 0)
 end
