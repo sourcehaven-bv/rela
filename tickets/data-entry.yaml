@@ -712,7 +712,6 @@ lists:
         widget: select
     create_form: create_idea
     edit_form: edit_idea
-    detail_view: idea_detail
     page_size: 25
   active_ideas:
     entity_type: idea
@@ -784,7 +783,6 @@ lists:
         widget: select
     create_form: create_future_concept
     edit_form: edit_future_concept
-    detail_view: future_concept_detail
     page_size: 25
   # ─────────────────────────────────────────────────
   # Features
@@ -810,7 +808,6 @@ lists:
         widget: select
     create_form: create_feature
     edit_form: edit_feature
-    detail_view: feature_detail
     page_size: 25
   # ─────────────────────────────────────────────────
   # Tickets & Bugs
@@ -911,7 +908,6 @@ lists:
         widget: select
     create_form: create_concept
     edit_form: edit_concept
-    detail_view: concept_detail
     page_size: 50
   all_decisions:
     entity_type: decision
@@ -933,6 +929,15 @@ lists:
     create_form: create_decision
     edit_form: edit_decision
     page_size: 25
+entity_views:
+  concept:
+    detail_view: concept_detail
+  feature:
+    detail_view: feature_detail
+  future-concept:
+    detail_view: future_concept_detail
+  idea:
+    detail_view: idea_detail
 # ══════════════════════════════════════════════════
 # Views (detail pages)
 # ══════════════════════════════════════════════════

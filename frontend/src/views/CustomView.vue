@@ -12,6 +12,7 @@ import { getEditFormId } from '@/types'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import { renderMarkdown } from '@/utils/markdown'
+import { entityDetailHref, type EntityRef } from '@/utils/entityRoute'
 import Badge from '@/components/common/Badge.vue'
 import LinkExistingModal from '@/components/forms/LinkExistingModal.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
@@ -123,15 +124,37 @@ function editEntry() {
 }
 
 // Navigation
-function navigateToEntity(entityId: string) {
-  router.push({ name: 'entity', params: { id: entityId } })
+//
+// Entity links in custom-view sections used to call
+// router.push({ name: 'entity', params: { id } }), but that route requires
+// :type/:id — the push silently failed and clicks did nothing (issue #647).
+// Now we resolve the path via entityDetailHref so right-click /
+// cmd-click / middle-click open in a new tab through the real <a href>,
+// and we attach return_to so the EntityView back-button returns here.
+//
+// NOTE: relation-column cells in tables show *related* entities but the
+// click navigates to the row entity (pre-existing behavior). The backend
+// would need to expose related-entity types per cell to navigate to the
+// related target — out of scope for this fix.
+function entityHref(entity: EntityRef, cellLink?: string): string {
+  return entityDetailHref(entity, schemaStore.getEntityDetailView, { cellLink })
+}
+
+function navigateToEntity(entity: EntityRef, cellLink?: string) {
+  const path = entityHref(entity, cellLink)
+  if (!path) return
+  const returnTo = `/view/${props.id}/${props.entityId}`
+  router.push({ path, query: { return_to: returnTo } })
 }
 
 function navigateToEdit(formId: string, entityId: string) {
   router.push({ name: 'form-edit', params: { id: formId, entityId } })
 }
 
-function navigateToCreate(formId: string, relationInfo?: { relation: string; linkAs: string; peerId: string }) {
+function navigateToCreate(
+  formId: string,
+  relationInfo?: { relation: string; linkAs: string; peerId: string }
+) {
   const query: Record<string, string> = {}
   if (relationInfo) {
     query.linkRelation = relationInfo.relation
@@ -142,7 +165,10 @@ function navigateToCreate(formId: string, relationInfo?: { relation: string; lin
 }
 
 // Link existing modal
-function openLinkExisting(linkInfo: { relation: string; linkAs: 'from' | 'to'; peerId: string; entityTypes: string[] }, section: { entities?: Array<{ id: string }>, rows?: Array<{ entityId: string }> }) {
+function openLinkExisting(
+  linkInfo: { relation: string; linkAs: 'from' | 'to'; peerId: string; entityTypes: string[] },
+  section: { entities?: Array<{ id: string }>; rows?: Array<{ entityId: string }> }
+) {
   // Collect already-linked IDs from this section to exclude them
   const excludeIds: string[] = []
   if (section.entities) {
@@ -199,7 +225,7 @@ onMounted(() => loadView())
   <div class="custom-view">
     <!-- Loading state -->
     <div v-if="loading" class="loading">
-      <div class="spinner"/>
+      <div class="spinner" />
       <p>Loading view...</p>
     </div>
 
@@ -217,21 +243,13 @@ onMounted(() => loadView())
       <div v-if="backTarget || scopeNav" class="scope-nav">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <button
-            v-if="scopeNav.prevId"
-            class="scope-nav-btn"
-            @click="navigateScope('prev')"
-          >
+          <button v-if="scopeNav.prevId" class="scope-nav-btn" @click="navigateScope('prev')">
             ← Prev <kbd>P</kbd>
           </button>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <button
-            v-if="scopeNav.nextId"
-            class="scope-nav-btn"
-            @click="navigateScope('next')"
-          >
+          <button v-if="scopeNav.nextId" class="scope-nav-btn" @click="navigateScope('next')">
             Next → <kbd>N</kbd>
           </button>
           <span v-else class="scope-nav-btn disabled">Next →</span>
@@ -257,7 +275,7 @@ onMounted(() => loadView())
       <!-- Jump bar -->
       <nav v-if="viewData.sections.length > 1" class="jump-bar">
         <button
-          v-for="section in viewData.sections.filter(s => s.heading)"
+          v-for="section in viewData.sections.filter((s) => s.heading)"
           :key="section.sectionId"
           class="jump-link"
           @click="scrollToSection(section.sectionId)"
@@ -288,22 +306,28 @@ onMounted(() => loadView())
           />
 
           <!-- Content display (single) -->
-          <div v-else-if="section.display === 'content' && section.hasContent" class="content-block">
-            <div class="markdown-content" v-html="renderMarkdown(section.content || '')"/>
+          <div
+            v-else-if="section.display === 'content' && section.hasContent"
+            class="content-block"
+          >
+            <div class="markdown-content" v-html="renderMarkdown(section.content || '')" />
           </div>
 
           <!-- Content display (collection) -->
-          <div v-else-if="section.display === 'content' && section.entities?.length" class="content-cards">
-            <article
-              v-for="entity in section.entities"
-              :key="entity.id"
-              class="content-card"
-            >
-              <header class="card-header" @click="navigateToEntity(entity.id)">
+          <div
+            v-else-if="section.display === 'content' && section.entities?.length"
+            class="content-cards"
+          >
+            <article v-for="entity in section.entities" :key="entity.id" class="content-card">
+              <header class="card-header" @click="navigateToEntity(entity)">
                 <span class="entity-type">{{ entity.type }}</span>
                 <span class="entity-title">{{ entity.title }}</span>
               </header>
-              <div v-if="entity.hasContent" class="markdown-content" v-html="renderMarkdown(entity.content || '')"/>
+              <div
+                v-if="entity.hasContent"
+                class="markdown-content"
+                v-html="renderMarkdown(entity.content || '')"
+              />
             </article>
           </div>
 
@@ -313,7 +337,7 @@ onMounted(() => loadView())
               v-for="entity in section.entities"
               :key="entity.id"
               class="entity-card"
-              @click="navigateToEntity(entity.id)"
+              @click="navigateToEntity(entity)"
             >
               <header class="card-header">
                 <span class="entity-type">{{ entity.type }}</span>
@@ -346,12 +370,13 @@ onMounted(() => loadView())
 
           <!-- List display -->
           <ul v-else-if="section.display === 'list'" class="entity-list">
-            <li
-              v-for="entity in section.entities"
-              :key="entity.id"
-              class="list-item"
-            >
-              <a class="list-link" @click="navigateToEntity(entity.id)">
+            <li v-for="entity in section.entities" :key="entity.id" class="list-item">
+              <a
+                v-if="entityHref(entity)"
+                class="list-link"
+                :href="entityHref(entity)"
+                @click.prevent="navigateToEntity(entity)"
+              >
                 <span class="entity-type">{{ entity.type }}</span>
                 <span class="entity-title">{{ entity.title }}</span>
               </a>
@@ -380,7 +405,7 @@ onMounted(() => loadView())
                       <th v-for="col in section.columns" :key="col.property || col.relation">
                         {{ col.label || col.property || col.relation }}
                       </th>
-                      <th class="actions-col"/>
+                      <th class="actions-col" />
                     </tr>
                   </thead>
                   <tbody>
@@ -389,7 +414,9 @@ onMounted(() => loadView())
                         <a
                           v-if="cell.link"
                           :href="cell.link"
-                          @click.prevent="navigateToEntity(cell.entityId || row.entityId)"
+                          @click.prevent="
+                            navigateToEntity({ id: row.entityId, type: row.entityType }, cell.link)
+                          "
                         >
                           <template v-for="(val, vidx) in cell.values" :key="vidx">
                             <Badge
@@ -436,7 +463,7 @@ onMounted(() => loadView())
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
-                  <th class="actions-col"/>
+                  <th class="actions-col" />
                 </tr>
               </thead>
               <tbody>
@@ -445,7 +472,9 @@ onMounted(() => loadView())
                     <a
                       v-if="cell.link"
                       :href="cell.link"
-                      @click.prevent="navigateToEntity(cell.entityId || row.entityId)"
+                      @click.prevent="
+                        navigateToEntity({ id: row.entityId, type: row.entityType }, cell.link)
+                      "
                     >
                       <template v-for="(val, vidx) in cell.values" :key="vidx">
                         <Badge
@@ -491,11 +520,13 @@ onMounted(() => loadView())
                 v-for="target in section.addInfo.targets"
                 :key="target.entityType"
                 class="btn btn-add"
-                @click="navigateToCreate(target.formId, {
-                  relation: section.addInfo!.relation,
-                  linkAs: section.addInfo!.linkAs,
-                  peerId: section.addInfo!.peerId
-                })"
+                @click="
+                  navigateToCreate(target.formId, {
+                    relation: section.addInfo!.relation,
+                    linkAs: section.addInfo!.linkAs,
+                    peerId: section.addInfo!.peerId,
+                  })
+                "
               >
                 + Add {{ target.label }}
               </button>
@@ -826,10 +857,20 @@ onMounted(() => loadView())
   gap: 8px;
   cursor: pointer;
   flex: 1;
+  /* Real <a href>: suppress UA underline + visited color so the visual
+   * matches the existing affordance, while keyboard a11y is preserved. */
+  text-decoration: none;
+  color: inherit;
 }
 
 .list-link:hover .entity-title {
   color: var(--accent-color);
+}
+
+.list-link:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .list-fields {

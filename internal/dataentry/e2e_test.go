@@ -76,9 +76,9 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 // the rendered HTML contains markers produced by the Lua script plus
 // a rewritten form link. Exercises the full chain:
 //
-//   HTTP handler → documentService.Render → script.Engine.ExecuteDocument
-//   → Lua VM (with rela.document + rela.url bindings) → goldmark → link
-//   rewriter (adds return_to to form routes) → DOMPurify in browser
+//	HTTP handler → documentService.Render → script.Engine.ExecuteDocument
+//	→ Lua VM (with rela.document + rela.url bindings) → goldmark → link
+//	rewriter (adds return_to to form routes) → DOMPurify in browser
 //
 // The prototype ships `scripts/docs/category_report.lua` wired as the
 // `category_overview` document for entity_type `category`. The `backend`

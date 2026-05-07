@@ -132,17 +132,18 @@ type V1CustomType struct {
 
 // V1Config is the JSON representation of the UI config.
 type V1Config struct {
-	App        V1AppConfig                               `json:"app"`
-	Styles     map[string]map[string]string              `json:"styles"`
-	Forms      map[string]dataentryconfig.Form           `json:"forms"`
-	Lists      map[string]dataentryconfig.List           `json:"lists"`
-	Views      map[string]dataentryconfig.ViewConfig     `json:"views"`
-	Kanbans    map[string]dataentryconfig.Kanban         `json:"kanbans"`
-	Dashboard  *dataentryconfig.DashboardConfig          `json:"dashboard,omitempty"`
-	Actions    map[string]dataentryconfig.Action         `json:"actions,omitempty"`
-	Navigation []dataentryconfig.NavigationEntry         `json:"navigation"`
-	Documents  map[string]dataentryconfig.DocumentConfig `json:"documents,omitempty"`
-	Palette    *dataentryconfig.ResolvedPalette          `json:"palette,omitempty"`
+	App         V1AppConfig                                 `json:"app"`
+	Styles      map[string]map[string]string                `json:"styles"`
+	Forms       map[string]dataentryconfig.Form             `json:"forms"`
+	Lists       map[string]dataentryconfig.List             `json:"lists"`
+	Views       map[string]dataentryconfig.ViewConfig       `json:"views"`
+	EntityViews map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
+	Kanbans     map[string]dataentryconfig.Kanban           `json:"kanbans"`
+	Dashboard   *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
+	Actions     map[string]dataentryconfig.Action           `json:"actions,omitempty"`
+	Navigation  []dataentryconfig.NavigationEntry           `json:"navigation"`
+	Documents   map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
+	Palette     *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
 }
 
 // V1AppConfig is the JSON representation of the app config.
@@ -1014,16 +1015,17 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Name:        s.Cfg.App.Name,
 			Description: s.Cfg.App.Description,
 		},
-		Styles:     s.StyleMap,
-		Forms:      forms,
-		Lists:      s.Cfg.Lists,
-		Views:      s.Cfg.Views,
-		Kanbans:    s.Cfg.Kanbans,
-		Dashboard:  s.Cfg.Dashboard,
-		Actions:    s.Cfg.Actions,
-		Navigation: s.Cfg.Navigation,
-		Documents:  s.Cfg.Documents,
-		Palette:    s.Palette,
+		Styles:      s.StyleMap,
+		Forms:       forms,
+		Lists:       s.Cfg.Lists,
+		Views:       s.Cfg.Views,
+		EntityViews: s.Cfg.EntityViews,
+		Kanbans:     s.Cfg.Kanbans,
+		Dashboard:   s.Cfg.Dashboard,
+		Actions:     s.Cfg.Actions,
+		Navigation:  s.Cfg.Navigation,
+		Documents:   s.Cfg.Documents,
+		Palette:     s.Palette,
 	}
 
 	writeV1JSON(w, http.StatusOK, config)

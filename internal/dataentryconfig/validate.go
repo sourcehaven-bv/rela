@@ -14,20 +14,21 @@ import (
 
 // Valid top-level keys in data-entry.yaml
 var validTopLevelKeys = map[string]bool{
-	"version":    true,
-	"app":        true,
-	"git":        true,
-	"styles":     true,
-	"forms":      true,
-	"lists":      true,
-	"views":      true,
-	"kanbans":    true,
-	"documents":  true,
-	"dashboard":  true,
-	"commands":   true,
-	"actions":    true,
-	"navigation": true,
-	"palette":    true,
+	"version":      true,
+	"app":          true,
+	"git":          true,
+	"styles":       true,
+	"forms":        true,
+	"lists":        true,
+	"views":        true,
+	"entity_views": true,
+	"kanbans":      true,
+	"documents":    true,
+	"dashboard":    true,
+	"commands":     true,
+	"actions":      true,
+	"navigation":   true,
+	"palette":      true,
 }
 
 // Known typos with suggestions
@@ -114,6 +115,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateForms(cfg, meta)...)
 	errs = append(errs, validateLists(cfg, meta)...)
 	errs = append(errs, validateViews(cfg, meta)...)
+	errs = append(errs, validateEntityViews(cfg, meta)...)
 	errs = append(errs, validateKanbans(cfg, meta)...)
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
@@ -316,6 +318,36 @@ func GetValidEnumValues(propDef metamodel.PropertyDef, meta *metamodel.Metamodel
 		return customType.Values
 	}
 	return nil
+}
+
+// validateEntityViews validates entity_views entries: each key must be a known
+// entity type, and each detail_view must reference an existing view.
+func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for entityType, ev := range cfg.EntityViews {
+		if _, ok := meta.GetEntityDef(entityType); !ok {
+			errs = append(errs, fmt.Sprintf(
+				"entity_views: unknown entity type %q", entityType))
+		}
+		if ev.DetailView == "" {
+			errs = append(errs, fmt.Sprintf(
+				"entity_views[%q]: detail_view is empty (omit the entry instead)", entityType))
+			continue
+		}
+		if _, ok := cfg.Views[ev.DetailView]; ok {
+			continue
+		}
+		if suggestion := suggestView(ev.DetailView, cfg); suggestion != "" {
+			errs = append(errs, fmt.Sprintf(
+				"entity_views[%q]: references unknown view %q in detail_view (did you mean %q?)",
+				entityType, ev.DetailView, suggestion))
+		} else {
+			errs = append(errs, fmt.Sprintf(
+				"entity_views[%q]: references unknown view %q in detail_view",
+				entityType, ev.DetailView))
+		}
+	}
+	return errs
 }
 
 // validateLists validates list definitions.
