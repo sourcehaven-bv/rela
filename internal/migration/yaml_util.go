@@ -181,6 +181,38 @@ func GetDocumentRoot(doc *yaml.Node) *yaml.Node {
 	return doc
 }
 
+// InsertMapKeyAfter inserts a new key/value pair into a mapping node directly
+// after the entry whose key is `anchor`. If the anchor key isn't present, the
+// new pair is appended at the end. If the new key already exists in the
+// mapping, the call is a no-op (use SetMapValue if you want to overwrite).
+func InsertMapKeyAfter(node *yaml.Node, anchor, key string, value *yaml.Node) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return
+	}
+	// No-op if the key is already present.
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			return
+		}
+	}
+	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
+	// Find anchor key index.
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value != anchor {
+			continue
+		}
+		// Insert directly after the (key, value) pair at index i (i.e. at i+2).
+		pos := i + 2
+		node.Content = append(node.Content, nil, nil)
+		copy(node.Content[pos+2:], node.Content[pos:])
+		node.Content[pos] = keyNode
+		node.Content[pos+1] = value
+		return
+	}
+	// Anchor not found — append at end.
+	node.Content = append(node.Content, keyNode, value)
+}
+
 // DeleteMapKey removes a key-value pair from a mapping node by key name.
 // Returns true if the key was found and deleted.
 func DeleteMapKey(node *yaml.Node, key string) bool {

@@ -279,7 +279,6 @@ lists:
         widget: select
     create_form: create_ticket
     edit_form: edit_ticket
-    detail_view: ticket_report
     page_size: 25
     actions: [resolve-ticket, close-ticket]
   open_tickets:
@@ -343,8 +342,12 @@ lists:
       - property: name
         direction: asc
     create_form: create_category
-    detail_view: category_report
     page_size: 50
+entity_views:
+  category:
+    detail_view: category_report
+  ticket:
+    detail_view: ticket_report
 # ──────────────────────────────────────────────
 # Views: read-only detail views with graph traversal
 # ──────────────────────────────────────────────

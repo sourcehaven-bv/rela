@@ -1447,3 +1447,101 @@ func TestValidateNavigation_KnownAction(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestValidateEntityViews_Valid(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Views: map[string]ViewConfig{
+			"ticket_detail": {Entry: ViewEntry{Type: "ticket"}},
+		},
+		EntityViews: map[string]EntityViewConfig{
+			"ticket": {DetailView: "ticket_detail"},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEntityViews_AbsentIsValid(t *testing.T) {
+	// The pre-migration baseline: no entity_views key at all must validate.
+	meta := testMetamodel()
+	cfg := &Config{}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEntityViews_UnknownEntityType(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Views: map[string]ViewConfig{
+			"any_view": {Entry: ViewEntry{Type: "ticket"}},
+		},
+		EntityViews: map[string]EntityViewConfig{
+			"unknown_type": {DetailView: "any_view"},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), `entity_views: unknown entity type "unknown_type"`) {
+		t.Errorf("expected unknown entity type error, got: %v", err)
+	}
+}
+
+func TestValidateEntityViews_EmptyDetailViewIsError(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		EntityViews: map[string]EntityViewConfig{
+			"ticket": {DetailView: ""},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), "detail_view is empty") {
+		t.Errorf("expected empty detail_view error, got: %v", err)
+	}
+}
+
+func TestValidateEntityViews_UnknownDetailView(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Views: map[string]ViewConfig{
+			"ticket_detail": {Entry: ViewEntry{Type: "ticket"}},
+		},
+		EntityViews: map[string]EntityViewConfig{
+			"ticket": {DetailView: "nonexistent_view"},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), `references unknown view "nonexistent_view"`) {
+		t.Errorf("expected unknown view error, got: %v", err)
+	}
+}
+
+func TestValidateConfig_UnknownTopLevelKey_EntityViewsAccepted(t *testing.T) {
+	// Regression: entity_views: must be in validTopLevelKeys.
+	meta := testMetamodel()
+	yamlData := []byte(`
+version: "1.0"
+entity_views:
+  ticket:
+    detail_view: ticket_detail
+views:
+  ticket_detail:
+    entry:
+      type: ticket
+`)
+	cfg := &Config{
+		Views: map[string]ViewConfig{
+			"ticket_detail": {Entry: ViewEntry{Type: "ticket"}},
+		},
+		EntityViews: map[string]EntityViewConfig{
+			"ticket": {DetailView: "ticket_detail"},
+		},
+	}
+	err := ValidateConfig(yamlData, cfg, meta)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}

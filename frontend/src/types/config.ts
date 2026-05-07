@@ -14,11 +14,21 @@ export interface Config {
   forms: Record<string, FormConfig>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
+  entity_views?: Record<string, EntityViewConfig>
   kanbans: Record<string, KanbanConfig>
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   documents?: Record<string, DocumentConfig>
+}
+
+// EntityViewConfig declares UX bindings for a metamodel entity type.
+// detail_view names the canonical view used to display an entity of this type
+// — consumed by the SPA when an entity link needs to be rendered (entity-list
+// rows, custom-view sections). Missing detail_view falls back to
+// /entity/:type/:id.
+export interface EntityViewConfig {
+  detail_view?: string
 }
 
 export interface ActionConfig {
@@ -121,7 +131,10 @@ export interface ListConfig {
 }
 
 // Helper to get edit form for an entity type
-export function getEditFormId(schemaStore: { forms: Map<string, FormConfig> }, entityType: string): string | undefined {
+export function getEditFormId(
+  schemaStore: { forms: Map<string, FormConfig> },
+  entityType: string
+): string | undefined {
   for (const [formId, config] of schemaStore.forms) {
     if (config.entity === entityType && config.mode === 'edit') {
       return formId

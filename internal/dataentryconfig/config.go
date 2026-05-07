@@ -63,20 +63,30 @@ func (d Direction) IsIncoming() bool {
 
 // Config is the top-level configuration for a data entry application.
 type Config struct {
-	Version    string                       `yaml:"version"`
-	App        AppConfig                    `yaml:"app"`
-	Git        *git.Config                  `yaml:"git,omitempty"`
-	Palette    *PaletteConfig               `yaml:"palette,omitempty"`
-	Styles     map[string]map[string]string `yaml:"styles"`
-	Forms      map[string]Form              `yaml:"forms"`
-	Lists      map[string]List              `yaml:"lists"`
-	Views      map[string]ViewConfig        `yaml:"views"`
-	Kanbans    map[string]Kanban            `yaml:"kanbans"`
-	Documents  map[string]DocumentConfig    `yaml:"documents,omitempty"`
-	Dashboard  *DashboardConfig             `yaml:"dashboard,omitempty"`
-	Commands   map[string]CommandConfig     `yaml:"commands,omitempty"`
-	Actions    map[string]Action            `yaml:"actions,omitempty"`
-	Navigation []NavigationEntry            `yaml:"navigation"`
+	Version     string                       `yaml:"version"`
+	App         AppConfig                    `yaml:"app"`
+	Git         *git.Config                  `yaml:"git,omitempty"`
+	Palette     *PaletteConfig               `yaml:"palette,omitempty"`
+	Styles      map[string]map[string]string `yaml:"styles"`
+	Forms       map[string]Form              `yaml:"forms"`
+	Lists       map[string]List              `yaml:"lists"`
+	Views       map[string]ViewConfig        `yaml:"views"`
+	EntityViews map[string]EntityViewConfig  `yaml:"entity_views,omitempty" json:"entity_views,omitempty"`
+	Kanbans     map[string]Kanban            `yaml:"kanbans"`
+	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
+	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
+	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
+	Actions     map[string]Action            `yaml:"actions,omitempty"`
+	Navigation  []NavigationEntry            `yaml:"navigation"`
+}
+
+// EntityViewConfig declares UX bindings for a metamodel entity type.
+// detail_view names the canonical view used to display an entity of this type
+// — consumed by the SPA when an entity link needs to be rendered (entity-list
+// rows, custom-view sections). Missing detail_view falls back to
+// /entity/:type/:id.
+type EntityViewConfig struct {
+	DetailView string `yaml:"detail_view,omitempty" json:"detail_view,omitempty"`
 }
 
 // Action defines an operation that can be triggered from the UI.

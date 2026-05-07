@@ -558,9 +558,14 @@ lists:
 
     create_form: create_ticket
     edit_form: edit_ticket
-    detail_view: ticket_report
     page_size: 25
 ```
+
+> **Where does a click on a row go?** That's configured at entity-type
+> granularity in the top-level `entity_views:` block — see
+> [Entity Views](#entity-views) below. Per-list `detail_view` is no longer
+> used; if you have one in an existing config, run `rela migrate` and it
+> will be moved automatically.
 
 ### List Fields
 
@@ -575,7 +580,6 @@ lists:
 | `filter_controls` | list   | Interactive filter controls shown to the user               |
 | `create_form`     | string | Form name for the "New" button                              |
 | `edit_form`       | string | Form name for the row edit action                           |
-| `detail_view`     | string | View name for the row detail action                         |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
 
@@ -816,8 +820,8 @@ entry:
 ```
 
 When a user opens a view, the entry entity is determined by the URL. For example,
-clicking a list row that references `detail_view: ticket_report` opens the view for that
-specific ticket entity.
+clicking a list row whose `entity_type` has `entity_views.ticket.detail_view: ticket_report`
+opens the view for that specific ticket entity.
 
 ### Traverse Rules
 
@@ -950,6 +954,51 @@ sections:
 **`properties`** is best for the entry entity's metadata. **`content`** renders the markdown body.
 **`table`** works well for collections with many items. **`cards`** provides a visual layout for
 smaller collections. **`list`** is the most compact.
+
+## Entity Views
+
+`entity_views` declares the canonical detail view for each entity type — the
+view that opens when a user clicks on an entity reference anywhere in the
+data-entry app (a list row, a custom view's `display: list` section, a card,
+a table cell). Without an entry, the SPA falls back to a generic
+`/entity/<type>/<id>` page.
+
+```yaml
+entity_views:
+  ticket:
+    detail_view: ticket_detail
+  decision:
+    detail_view: decision_detail
+```
+
+### Fields
+
+| Field         | Type   | Description                                                       |
+| ------------- | ------ | ----------------------------------------------------------------- |
+| `detail_view` | string | View name (must reference a key under `views:`) used for entities of this type |
+
+### How navigation resolves
+
+For each clickable entity reference, the SPA picks the destination URL using
+the following priority:
+
+1. A column-level `link:` on a list (server-resolved, e.g. `link: detail` or
+   `link: document/<name>`).
+2. `entity_views.<type>.detail_view` (the canonical detail view for the
+   type) → `/view/<viewId>/<id>`.
+3. Fallback: `/entity/<type>/<id>` (a generic detail page).
+
+This means you only configure the destination *once* per entity type, and
+every consumer (lists, view sections, table rows) routes consistently.
+
+### Migration from list-level `detail_view`
+
+Earlier versions accepted `detail_view` directly on each list. That field is
+now deprecated; the canonical home is `entity_views.<type>.detail_view`. Run
+`rela migrate` to lift existing list-level values into the new section
+automatically. If two lists for the same entity type set conflicting
+`detail_view` values, the migration leaves them in place — resolve the
+conflict by hand and run `rela migrate` again.
 
 ## Dashboard
 
@@ -1757,7 +1806,6 @@ lists:
         widget: select
     create_form: create_ticket
     edit_form: edit_ticket
-    detail_view: ticket_detail
     actions: [resolve-ticket, close-ticket]
     page_size: 25
 
@@ -1797,6 +1845,10 @@ lists:
     create_form: create_ticket
     edit_form: edit_ticket
     page_size: 25
+
+entity_views:
+  ticket:
+    detail_view: ticket_detail
 
 views:
   ticket_detail:

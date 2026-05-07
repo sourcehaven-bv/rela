@@ -8,6 +8,7 @@ import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
+import { entityDetailHref } from '@/utils/entityRoute'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
@@ -442,16 +443,15 @@ function navigateToEntity(entity: Entity) {
     ? resolveLinkTarget(columnWithLink.link, entity.type, entity.id)
     : ''
 
-  // Priority: column link > detail_view > entity detail page
-  let path: string
-  if (columnLink) {
-    path = columnLink
-  } else if (listConfig.value?.detail_view) {
-    path = `/view/${listConfig.value.detail_view}/${entity.id}`
-  } else {
-    path = `/entity/${entity.type}/${entity.id}`
-  }
-
+  // Priority: column link > entity_views.<type>.detail_view > /entity/:type/:id
+  // Source of truth is the entity_views config; per-list detail_view was
+  // migrated to that location (see internal/migration/detail_view_to_entity_views.go).
+  const path = entityDetailHref(
+    { id: entity.id, type: entity.type },
+    schemaStore.getEntityDetailView,
+    { cellLink: columnLink },
+  )
+  if (!path) return
   router.push({ path, query })
 }
 
