@@ -56,6 +56,21 @@ export interface ResourceIdentifier {
 // shape: replacement at the list level. Absent relation type in the
 // outer map = leave alone. data: [] = remove all of that type.
 // data: null is equivalent to data: [].
+//
+// ⚠️ DATA-LOSS FOOTGUN: sending `data: []` deletes EVERY edge of this
+// relation type from the entity. If you build PATCH bodies via object
+// spread on a not-yet-fetched form state — where the default empty
+// form value would naturally be `{ data: [] }` — your first auto-save
+// fire silently wipes the entity's edges of that type.
+//
+// Mitigations:
+// - Fetch entity state BEFORE constructing the first auto-save PATCH.
+// - If the user hasn't touched the relation type, OMIT it from the
+//   request body entirely (absent = leave alone is the safe default).
+// - The server rejects `{ "tagged": {} }` (data field absent) with a
+//   400 to catch the most common malformed-body case.
+//
+// See docs/data-entry/api-reference.md for the full contract.
 export interface RelationsUpdate {
   data: ResourceIdentifier[]
 }

@@ -253,9 +253,10 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 						"ETag": {Description: "New entity version tag", Schema: StringSchema()},
 					},
 				},
+				"400": {Description: "Malformed request body (e.g. missing required field, invalid JSON, data field absent on a relation update)", Content: jsonContent(Ref("Error"))},
 				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
 				"412": {Description: "Precondition failed (ETag mismatch)", Content: jsonContent(Ref("Error"))},
-				"422": {Description: "Validation failed", Content: jsonContent(Ref("Error"))},
+				"422": {Description: "Validation failed (metamodel violation, e.g. unknown relation type, target type mismatch, schema-violating meta value)", Content: jsonContent(Ref("Error"))},
 			},
 		},
 		Delete: &Operation{

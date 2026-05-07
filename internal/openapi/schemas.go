@@ -163,23 +163,81 @@ func (g *Generator) buildCreateEntitySchema(typeName string, def metamodel.Entit
 }
 
 // buildUpdateEntitySchema builds the request body schema for updating an entity.
+//
+// Wire format spans three concerns:
+//   - properties / properties_unset / content: entity-level upsert
+//     semantics (mirrors PATCH semantics for entity fields).
+//   - relations: JSON:API §9-shaped — `{<type>: {data: [{type, id,
+//     meta?, meta_unset?, content?}]}}`. Replacement at the list level;
+//     upsert at the per-edge level. See the data-entry API reference
+//     for the full contract (omit-vs-empty rules, propagation, etc.).
 func (g *Generator) buildUpdateEntitySchema(typeName string, def metamodel.EntityDef) *Schema {
 	props := make(map[string]*Schema)
 
-	// Properties (partial update)
+	// Properties (partial update — upsert).
 	propSchema := g.buildPropertiesSchema(def)
 	props["properties"] = propSchema
 
-	// Content
+	// properties_unset: explicit clear list.
+	props["properties_unset"] = &Schema{
+		Type:        "array",
+		Items:       &Schema{Type: "string"},
+		Description: "Property names to clear (delete the key). Must reference declared properties on this entity type.",
+	}
+
 	props["content"] = &Schema{
 		Type:        "string",
-		Description: "Markdown body content",
+		Description: "Markdown body content (upsert; absent leaves existing content alone).",
+	}
+
+	// relations: JSON:API §9-shaped per-relation-type wrapper.
+	resourceIdentifier := &Schema{
+		Type:        "object",
+		Description: "JSON:API §5.2.1-shaped resource identifier with rela's per-edge upsert semantics.",
+		Properties: map[string]*Schema{
+			"type": {Type: "string", Description: "Target entity type (required)."},
+			"id":   {Type: "string", Description: "Target entity ID (required)."},
+			"meta": {
+				Type:                 "object",
+				AdditionalProperties: &Schema{},
+				Description:          "Per-edge properties to merge into existing meta (upsert). Keys must be declared on the relation type.",
+			},
+			"meta_unset": {
+				Type:        "array",
+				Items:       &Schema{Type: "string"},
+				Description: "Per-edge property keys to clear after the merge.",
+			},
+			"content": {
+				Type:        "string",
+				Description: "Per-edge markdown body. Only meaningful for relation types declared with content: true.",
+			},
+		},
+		Required: []string{"type", "id"},
+	}
+	relationsUpdate := &Schema{
+		Type:        "object",
+		Description: "Wrapper for a single relation type's desired state. data field is required when this object appears.",
+		Properties: map[string]*Schema{
+			"data": {
+				Type:        "array",
+				Items:       resourceIdentifier,
+				Description: "Full desired set of edges of this type. Empty array removes all; null is treated as empty.",
+			},
+		},
+		Required: []string{"data"},
+	}
+	props["relations"] = &Schema{
+		Type:                 "object",
+		AdditionalProperties: relationsUpdate,
+		Description: "Per-relation-type updates, keyed by relation type. Omitting a relation type leaves its edges untouched. " +
+			"`data: []` removes all edges of that type. WARNING: clients should fetch entity state before constructing a PATCH body — " +
+			"sending `data: []` from an unfetched form silently deletes all edges.",
 	}
 
 	return &Schema{
 		Type:        "object",
 		Title:       "Update" + typeName,
-		Description: "Request body for updating a " + def.Label + " (PATCH - partial update)",
+		Description: "Request body for updating a " + def.Label + " (PATCH - partial update). See the data-entry API reference for full semantics.",
 		Properties:  props,
 	}
 }

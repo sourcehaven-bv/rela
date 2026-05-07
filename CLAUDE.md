@@ -413,6 +413,50 @@ via the Settings page in the web UI.
 - `handleCreate` / `handleInlineCreate`: user defaults fill empty properties and create default relations
 - `handleSettings` / `handleSaveSettings`: Settings page renders metamodel-aware widgets and persists to YAML
 
+### Unified PATCH endpoint
+
+`PATCH /api/v1/{plural}/{id}` accepts entity properties + content + relations
+in a single atomic request. Wire format borrows JSON:API §9 resource
+identifiers at the list level; per-edge data uses rela's existing
+`properties` / `properties_unset` / `content` upsert convention.
+
+```json
+{
+  "properties": { "title": "x" },
+  "properties_unset": ["assignee"],
+  "content": "...",
+  "relations": {
+    "tagged": { "data": [
+      { "type": "label", "id": "L-001",
+        "meta": { "weight": 5 },
+        "meta_unset": ["added_by"],
+        "content": "edge body" }
+    ]}
+  }
+}
+```
+
+Key semantics:
+
+- **List replacement, edge upsert.** `data: []` removes all edges of that
+  type; absent relation type leaves alone. Per-edge `meta`/`content` upsert
+  mirrors entity-level fields.
+- **Symmetric/inverse propagation** is automatic. Counterparties get their
+  own `entity:updated` SSE events.
+- **No-op suppression** (auto-save friendly). PATCH-ing identical state
+  writes zero files, fires zero events.
+- **Cardinality remains advisory.** Min/max outgoing/incoming declarations
+  are surfaced by `analyze_cardinality` but NOT enforced at write time —
+  consistent with rela's "tolerate temporarily invalid data" philosophy.
+- **`data: []` is a data-loss footgun.** Auto-save clients must guard
+  against sending `relations` keys before the initial fetch completes.
+  See `docs/data-entry/api-reference.md` for the full contract.
+
+The handler runs inside `Workspace.WithTx` so the diff/validate/commit
+sequence is serialized against file-watcher reloads. Pre-existing
+graph-mutation-on-422 hazard is fixed: the live entity is cloned before
+mutation, so a validation failure leaves no in-memory state corruption.
+
 ## Migration System
 
 The migration system (`internal/migration/`) handles schema evolution for project files like

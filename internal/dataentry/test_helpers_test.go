@@ -3,6 +3,7 @@ package dataentry
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -95,7 +96,7 @@ func newHandlerTestApp(t *testing.T) *App {
 
 	ws := workspace.NewWithGraph(repo, meta, g)
 
-	app := &App{ws: ws}
+	app := &App{ws: ws, em: entitymanager.New(ws)}
 	app.state.Store(&AppState{
 		Cfg:         cfg,
 		Meta:        meta,

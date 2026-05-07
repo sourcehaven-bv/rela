@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -456,9 +457,53 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 type V1RelationsUpdate struct {
 	// Data is the full desired set of edges of this relation type.
 	// Replacement semantics: edges in the list are kept/upserted; edges
-	// absent from the list are removed. data: null is treated as data: []
-	// (per JSON:API §9.2.1) — both mean "remove all of this type".
-	Data []V1ResourceIdentifier `json:"data"`
+	// absent from the list are removed. `data: null` is treated as
+	// `data: []` (per JSON:API §9.2.1) — both mean "remove all of this
+	// type".
+	//
+	// Custom JSON unmarshalling distinguishes three cases:
+	//   - `data` field ABSENT (e.g., `{"tagged": {}}`) → DataPresent=false → 400
+	//   - `data: null` or `data: []` → DataPresent=true, Data=[] → remove all
+	//   - `data: [{...}]` → DataPresent=true, Data=[...] → upsert
+	//
+	// CAUTION FOR CLIENTS: sending `data: []` removes every edge of
+	// this relation type from the entity. Make sure your form state
+	// has been fetched before issuing the first PATCH; building the
+	// body via object spread on an unfetched form will silently
+	// delete data.
+	Data        []V1ResourceIdentifier `json:"-"`
+	DataPresent bool                   `json:"-"`
+}
+
+// UnmarshalJSON implements custom decoding so we can distinguish
+// "data field absent" from "data is null/empty array" at the wire
+// level. See the V1RelationsUpdate.Data comment for the three cases.
+//
+// Sibling keys other than "data" are rejected with an error so a
+// typo'd `"datas":[...]` doesn't silently look like a missing-data
+// (which becomes a "remove all" 400 — confusing if your real intent
+// was to upsert).
+func (u *V1RelationsUpdate) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	for k := range raw {
+		if k != "data" {
+			return fmt.Errorf("unknown field %q (only \"data\" is accepted)", k)
+		}
+	}
+	dataRaw, present := raw["data"]
+	u.DataPresent = present
+	if !present {
+		return nil
+	}
+	// `data: null` → empty slice (per JSON:API §9.2.1).
+	if string(dataRaw) == "null" {
+		u.Data = nil
+		return nil
+	}
+	return json.Unmarshal(dataRaw, &u.Data)
 }
 
 // V1ResourceIdentifier identifies a related entity, JSON:API §5.2.1-shaped,
@@ -485,24 +530,6 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.State().Graph.GetNode(entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	// Check If-Match for optimistic locking. ETag is computed against
-	// the live entity; relation-only changes don't mint their own ETags.
-	ifMatch := r.Header.Get("If-Match")
-	if ifMatch != "" {
-		currentETag := a.computeEntityETag(entity)
-		if ifMatch != currentETag {
-			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
-				"Entity has been modified", "ETag mismatch")
-			return
-		}
-	}
-
 	var req struct {
 		Properties      map[string]interface{}       `json:"properties,omitempty"`
 		PropertiesUnset []string                     `json:"properties_unset,omitempty"`
@@ -515,380 +542,116 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	// Shape errors (missing required fields on resource identifiers, etc.)
-	// — these are 400, not 422, because they're malformed-request issues
-	// detectable without consulting the metamodel.
+	// Shape errors (request structure issues) — these are 400, not 422,
+	// because they're malformed-request issues detectable without
+	// consulting the metamodel.
 	for relType, update := range req.Relations {
+		if !update.DataPresent {
+			writeV1Error(w, r, http.StatusBadRequest, "invalid_request",
+				fmt.Sprintf("/relations/%q/data: required field missing", relType), "")
+			return
+		}
 		for i, ref := range update.Data {
 			if ref.Type == "" {
 				writeV1Error(w, r, http.StatusBadRequest, "invalid_request",
-					fmt.Sprintf("/relations/%s/data/%d/type: type field required", relType, i), "")
+					fmt.Sprintf("/relations/%q/data/%d/type: type field required", relType, i), "")
 				return
 			}
 			if ref.ID == "" {
 				writeV1Error(w, r, http.StatusBadRequest, "invalid_request",
-					fmt.Sprintf("/relations/%s/data/%d/id: id field required", relType, i), "")
+					fmt.Sprintf("/relations/%q/data/%d/id: id field required", relType, i), "")
 				return
 			}
 		}
 	}
 
-	// Stage all changes inside a single WithTx so reloadMu serializes the
-	// diff/validate/commit sequence with file-watcher reloads. The handler
-	// never mutates the live entity pointer; we clone, validate the clone,
-	// and stage writes on success.
-	type relationDiff struct {
-		// adds is relations to write (covers both add and update-meta).
-		adds []*model.Relation
-		// removes is (from, type, to) tuples to delete.
-		removes []struct{ from, relType, to string }
-		// counterparties is the set of entity IDs whose outgoing
-		// relations were touched via symmetric/inverse propagation.
-		// Used for SSE event broadcasting.
-		counterparties map[string]struct{}
+	managerReq := entitymanager.UpdateWithRelationsRequest{
+		EntityID:        entityID,
+		ExpectedType:    typeName,
+		Properties:      req.Properties,
+		PropertiesUnset: req.PropertiesUnset,
+		Content:         req.Content,
+		Relations:       toManagerRelations(req.Relations),
+		IfMatch:         r.Header.Get("If-Match"),
+		ETagFn:          a.computeEntityETag,
 	}
 
-	var (
-		staged    *model.Entity
-		newRels   []*model.Relation
-		diff      relationDiff
-		hadWrites bool
-	)
-	diff.counterparties = make(map[string]struct{})
-
-	txErr := a.ws.WithTx(func(tx *workspace.Tx) error {
-		meta := tx.Meta()
-		staged = entity.Clone()
-
-		// Apply property changes to the clone.
-		for k, v := range req.Properties {
-			staged.Properties[k] = v
-		}
-		for _, k := range req.PropertiesUnset {
-			delete(staged.Properties, k)
-		}
-		if req.Content != nil {
-			staged.Content = *req.Content
-		}
-
-		// Compute the relation diff per relation type appearing in
-		// req.Relations. Relation types not present in req are not
-		// touched (omit = leave alone).
-		for relType, update := range req.Relations {
-			relDef, ok := meta.GetRelationDef(relType)
-			if !ok {
-				return validationErrorf(
-					"relations[%q]: unknown relation type", relType)
-			}
-
-			// Reject content on relation types that don't support it.
-			if !relDef.Content {
-				for i, ref := range update.Data {
-					if ref.Content != nil {
-						return validationErrorf(
-							"/relations/%s/data/%d/content: relation type %q does not support content body",
-							relType, i, relType)
-					}
-				}
-			}
-
-			// Build the desired set keyed by target ID.
-			desired := make(map[string]V1ResourceIdentifier, len(update.Data))
-			for _, ref := range update.Data {
-				desired[ref.ID] = ref
-			}
-
-			// Walk the current outgoing edges of this relation type.
-			currentByTarget := map[string]*model.Relation{}
-			for _, edge := range tx.OutgoingEdges(entityID) {
-				if edge.Type != relType {
-					continue
-				}
-				currentByTarget[edge.To] = edge
-			}
-
-			// For each desired entry, classify and stage.
-			for _, ref := range update.Data {
-				targetEntity, exists := tx.GetEntity(ref.ID)
-				if !exists {
-					return validationErrorf(
-						"/relations/%s/data/*/id: target %q does not exist", relType, ref.ID)
-				}
-				if targetEntity.Type != ref.Type {
-					return validationErrorf(
-						"/relations/%s/data/*/type: expected %q, got %q for target %q",
-						relType, targetEntity.Type, ref.Type, ref.ID)
-				}
-				if err := meta.ValidateRelation(relType, entity.Type, targetEntity.Type); err != nil {
-					return validationErrorf(
-						"relations[%q]: %v", relType, err)
-				}
-
-				// Compute the final relation: existing meta merged with
-				// ref.Meta minus ref.MetaUnset, content upserted.
-				finalProps := map[string]interface{}{}
-				if existing, ok := currentByTarget[ref.ID]; ok {
-					for k, v := range existing.Properties {
-						finalProps[k] = v
-					}
-				}
-				for k, v := range ref.Meta {
-					finalProps[k] = v
-				}
-				for _, k := range ref.MetaUnset {
-					delete(finalProps, k)
-				}
-
-				// Reject unknown meta keys against the closed schema.
-				if len(relDef.Properties) > 0 || len(ref.Meta) > 0 || len(ref.MetaUnset) > 0 {
-					for k := range ref.Meta {
-						if _, ok := relDef.Properties[k]; !ok {
-							return validationErrorf(
-								"/relations/%s/data/*/meta/%s: unknown property for relation type %q",
-								relType, k, relType)
-						}
-					}
-					for _, k := range ref.MetaUnset {
-						if _, ok := relDef.Properties[k]; !ok {
-							return validationErrorf(
-								"/relations/%s/data/*/meta_unset: unknown property %q for relation type %q",
-								relType, k, relType)
-						}
-					}
-				}
-
-				finalContent := ""
-				if existing, ok := currentByTarget[ref.ID]; ok {
-					finalContent = existing.Content
-				}
-				if ref.Content != nil {
-					finalContent = *ref.Content
-				}
-
-				// No-op suppression: if existing edge equals final state
-				// in every dimension, skip the write entirely.
-				if existing, ok := currentByTarget[ref.ID]; ok {
-					if relationsEqual(existing.Properties, finalProps) && existing.Content == finalContent {
-						continue
-					}
-				}
-
-				rel := model.NewRelation(entityID, relType, ref.ID)
-				rel.Properties = finalProps
-				rel.Content = finalContent
-				if errs := meta.ValidateRelationProperties(rel); len(errs) > 0 {
-					return validationErrorf(
-						"/relations/%s/data/*/meta: %s", relType, errs[0].Message)
-				}
-				diff.adds = append(diff.adds, rel)
-			}
-
-			// For each existing edge not in desired, remove.
-			for targetID := range currentByTarget {
-				if _, kept := desired[targetID]; kept {
-					continue
-				}
-				diff.removes = append(diff.removes, struct{ from, relType, to string }{entityID, relType, targetID})
-			}
-		}
-
-		// Symmetric / inverse propagation. For each add/remove, stage the
-		// counterparty edge in the same transaction. Counterparty IDs are
-		// collected for SSE broadcasting after commit.
-		propagated := computeRelationPropagation(meta, diff.adds, diff.removes)
-		for _, rel := range propagated.adds {
-			diff.adds = append(diff.adds, rel)
-			diff.counterparties[rel.From] = struct{}{}
-		}
-		for _, rem := range propagated.removes {
-			diff.removes = append(diff.removes, struct{ from, relType, to string }{rem.from, rem.relType, rem.to})
-			diff.counterparties[rem.from] = struct{}{}
-		}
-
-		// Validate the staged entity.
-		if errs := meta.ValidateEntity(staged); len(errs) > 0 {
-			return validationErrorf("validation: %s", errs[0].Message)
-		}
-
-		// Determine whether anything actually changed.
-		entityChanged := !entitiesEqual(entity, staged)
-		if !entityChanged && len(diff.adds) == 0 && len(diff.removes) == 0 {
-			// Pure no-op: no writes, no SSE event, no ETag bump.
-			return nil
-		}
-		hadWrites = true
-
-		// Stage entity write (only if it actually changed).
-		if entityChanged {
-			if err := tx.WriteEntity(staged); err != nil {
-				return err
-			}
-		}
-
-		// Stage relation writes. tx.WriteRelation overwrites the disk file
-		// (idempotent on (from, type, to)). For updates, we also need the
-		// in-memory graph to reflect the new state — graph.AddEdge appends
-		// without dedup, so we explicitly remove the existing edge from
-		// the graph after the tx commits (handled by the deferred graph
-		// rewrite below).
-		for _, rel := range diff.adds {
-			if err := tx.WriteRelation(rel); err != nil {
-				return err
-			}
-			newRels = append(newRels, rel)
-		}
-		for _, rem := range diff.removes {
-			if err := tx.DeleteRelation(rem.from, rem.relType, rem.to); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-
-	if txErr != nil {
-		var ve *validationError
-		if errors.As(txErr, &ve) {
-			writeV1Error(w, r, ve.status, "validation_failed", "Validation failed", ve.detail)
-			return
-		}
-		writeV1Error(w, r, http.StatusInternalServerError, "commit_failed", "Failed to commit changes", txErr.Error())
+	result, err := a.em.UpdateWithRelations(managerReq)
+	if err != nil {
+		writeUpdateError(w, r, err)
 		return
 	}
 
-	// On no-op, return the existing entity unchanged with a 200, no SSE.
-	if !hadWrites {
-		result := a.entityToV1(entity, plural, true, false)
-		etag := a.computeEntityETag(entity)
-		w.Header().Set("ETag", etag)
-		writeV1JSON(w, http.StatusOK, result)
+	if result.NoOp {
+		v1 := a.entityToV1(result.Entity, plural, true, false)
+		w.Header().Set("ETag", a.computeEntityETag(result.Entity))
+		writeV1JSON(w, http.StatusOK, v1)
 		return
 	}
 
-	// Use the staged entity (now committed) for the response.
-	result := a.entityToV1(staged, plural, true, false)
-	newETag := a.computeEntityETag(staged)
-	w.Header().Set("ETag", newETag)
+	v1 := a.entityToV1(result.Entity, plural, true, false)
+	w.Header().Set("ETag", a.computeEntityETag(result.Entity))
 
-	// Broadcast entity update event for the PATCHed entity.
 	a.broker.broadcastEntityEvent("updated", typeName, entityID)
-	// Plus one per affected counterparty (symmetric/inverse propagation).
-	for cpID := range diff.counterparties {
-		if cpID == entityID {
-			continue
-		}
+	for _, cpID := range result.Counterparties {
 		if cp, ok := a.State().Graph.GetNode(cpID); ok {
 			a.broker.broadcastEntityEvent("updated", cp.Type, cpID)
 		}
 	}
 
-	writeV1JSON(w, http.StatusOK, result)
+	writeV1JSON(w, http.StatusOK, v1)
 }
 
-// validationError is a sentinel error type the WithTx callback uses to
-// convey 4xx-class errors. The status code is preserved for the HTTP
-// response (defaults to 422).
-type validationError struct {
-	status int
-	detail string
-}
-
-func (e *validationError) Error() string { return e.detail }
-
-func validationErrorf(format string, args ...interface{}) error {
-	return &validationError{status: http.StatusUnprocessableEntity, detail: fmt.Sprintf(format, args...)}
-}
-
-// relationsEqual returns true if two property maps represent the same
-// state. Used by the no-op suppression check.
-func relationsEqual(a, b map[string]interface{}) bool {
-	if len(a) != len(b) {
-		return false
+// toManagerRelations translates the wire-format map into the
+// EntityManager's neutral request type. Only relation types whose
+// `data` field was present in the request appear in the output —
+// absent keys must mean "leave alone" all the way through.
+func toManagerRelations(in map[string]V1RelationsUpdate) map[string]entitymanager.RelationDesiredState {
+	if len(in) == 0 {
+		return nil
 	}
-	for k, v := range a {
-		bv, ok := b[k]
-		if !ok || !propsValueEqual(v, bv) {
-			return false
-		}
-	}
-	return true
-}
-
-func propsValueEqual(a, b interface{}) bool {
-	// Cheap equality for the scalar types YAML produces. For the small
-	// data we deal with this is sufficient; pathological cases (deeply
-	// nested maps in meta) just produce a false negative, which means an
-	// unnecessary write but no incorrect behavior.
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
-}
-
-// entitiesEqual returns true if two entities have identical persisted
-// state (properties + content). Used by no-op suppression.
-func entitiesEqual(a, b *model.Entity) bool {
-	if a.Content != b.Content {
-		return false
-	}
-	return relationsEqual(a.Properties, b.Properties)
-}
-
-// propagationResult captures the symmetric/inverse counterparty changes
-// implied by a primary diff.
-type propagationResult struct {
-	adds    []*model.Relation
-	removes []struct{ from, relType, to string }
-}
-
-// computeRelationPropagation walks the primary diff and stages the inverse
-// edges required by Symmetric / Inverse relation type declarations.
-//
-// Rules:
-//   - Symmetric: true → add(A,T,B) implies add(B,T,A); remove implies remove.
-//   - Inverse: {Name: T'} → add(A,T,B) implies add(B,T',A); remove implies remove.
-//   - Self-loops (A==B) on Symmetric relations: no propagation needed
-//     (the back-edge is the same edge).
-func computeRelationPropagation(meta *metamodel.Metamodel, adds []*model.Relation,
-	removes []struct{ from, relType, to string }) propagationResult {
-	var out propagationResult
-	for _, rel := range adds {
-		def, ok := meta.GetRelationDef(rel.Type)
-		if !ok {
-			continue
-		}
-		if def.Symmetric {
-			if rel.From == rel.To {
-				continue // self-loop: no propagation
+	out := make(map[string]entitymanager.RelationDesiredState, len(in))
+	for relType, update := range in {
+		edges := make([]entitymanager.RelationRef, len(update.Data))
+		for i, ref := range update.Data {
+			edges[i] = entitymanager.RelationRef{
+				Type:      ref.Type,
+				ID:        ref.ID,
+				Meta:      ref.Meta,
+				MetaUnset: ref.MetaUnset,
+				Content:   ref.Content,
 			}
-			back := model.NewRelation(rel.To, rel.Type, rel.From)
-			// Symmetric edges share meta and content with their primary.
-			back.Properties = rel.Properties
-			back.Content = rel.Content
-			out.adds = append(out.adds, back)
 		}
-		if def.Inverse != nil && def.Inverse.ID != "" {
-			back := model.NewRelation(rel.To, def.Inverse.ID, rel.From)
-			// Inverse edges typically have their own properties. For now
-			// we mirror the primary's meta — projects that need different
-			// semantics can use the legacy per-edge endpoints.
-			back.Properties = rel.Properties
-			back.Content = rel.Content
-			out.adds = append(out.adds, back)
-		}
-	}
-	for _, rem := range removes {
-		def, ok := meta.GetRelationDef(rem.relType)
-		if !ok {
-			continue
-		}
-		if def.Symmetric {
-			if rem.from == rem.to {
-				continue
-			}
-			out.removes = append(out.removes, struct{ from, relType, to string }{rem.to, rem.relType, rem.from})
-		}
-		if def.Inverse != nil && def.Inverse.ID != "" {
-			out.removes = append(out.removes, struct{ from, relType, to string }{rem.to, def.Inverse.ID, rem.from})
-		}
+		out[relType] = entitymanager.RelationDesiredState{Edges: edges}
 	}
 	return out
+}
+
+// writeUpdateError maps an EntityManager error to an HTTP response.
+// Typed errors land on specific status codes; everything else is a 500.
+func writeUpdateError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, entitymanager.ErrEntityNotFound):
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	case errors.Is(err, entitymanager.ErrETagMismatch):
+		writeV1Error(w, r, http.StatusPreconditionFailed,
+			"precondition_failed", "Entity has been modified", "")
+		return
+	}
+	var rse *entitymanager.RequestShapeError
+	if errors.As(err, &rse) {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", rse.Detail, "")
+		return
+	}
+	var ve *entitymanager.ValidationError
+	if errors.As(err, &ve) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity,
+			"validation_failed", "Validation failed", ve.Detail)
+		return
+	}
+	writeV1Error(w, r, http.StatusInternalServerError,
+		"commit_failed", "Failed to commit changes", err.Error())
 }
 
 func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {

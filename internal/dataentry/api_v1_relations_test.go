@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -78,6 +80,14 @@ func newRelationsTestApp(t *testing.T) *App {
 				Inverse: &metamodel.InverseDef{
 					ID: "assessed-by",
 				},
+			},
+			// Inverse pair declaration: `assesses` propagates to
+			// `assessed-by`; both must exist in the metamodel for
+			// the back-edge to validate. (RR-VFX8P)
+			"assessed-by": {
+				Label: "assessed by",
+				From:  []string{"category"},
+				To:    []string{"ticket"},
 			},
 			"notes": {
 				Label:   "notes",
@@ -162,7 +172,7 @@ func newRelationsTestApp(t *testing.T) *App {
 		}
 	}
 
-	app := &App{ws: ws, broker: newEventBroker()}
+	app := &App{ws: ws, em: entitymanager.New(ws), broker: newEventBroker()}
 	app.state.Store(&AppState{
 		Cfg:   cfg,
 		Meta:  meta,
@@ -822,18 +832,18 @@ done:
 	}
 }
 
-// failOnNthRenameFS wraps an FS and fails the Nth Rename call. Used to
-// inject Phase 1 commit failures (per AC #20).
-type failOnNthRenameFS struct {
+// failOnPathRenameFS wraps an FS and fails any Rename whose target
+// path contains the given marker. Path-based injection is robust to
+// changes in the number of fixture writes (RR-MNQ4B). Used to inject
+// Phase 1 commit failures (AC #20).
+type failOnPathRenameFS struct {
 	storage.FS
-	n     int
-	count int
+	failPathMarker string
 }
 
-func (f *failOnNthRenameFS) Rename(oldpath, newpath string) error {
-	f.count++
-	if f.count == f.n {
-		return fmt.Errorf("injected rename failure on call %d", f.n)
+func (f *failOnPathRenameFS) Rename(oldpath, newpath string) error {
+	if strings.Contains(newpath, f.failPathMarker) {
+		return fmt.Errorf("injected rename failure on path containing %q", f.failPathMarker)
 	}
 	return f.FS.Rename(oldpath, newpath)
 }
@@ -869,25 +879,22 @@ func TestV1Patch_AtomicityOnCommitFailure(t *testing.T) {
 	for _, dir := range []string{ctx.CacheDir, ctx.EntitiesDir, ctx.RelationsDir, ctx.EntitiesDir + "/tickets", ctx.EntitiesDir + "/categorys"} {
 		_ = memfs.MkdirAll(dir, 0o755)
 	}
-	// Use the wrapped FS that fails the 2nd rename. The first rename
-	// will be the entity write (a property change that causes the
-	// staged entity to differ from live); the second rename will be
-	// the relation write — and we want THAT to fail.
-	failFS := &failOnNthRenameFS{FS: memfs, n: 2}
+	// Use the wrapped FS that fails on a specific path marker. We
+	// target the relation write (path contains "belongs-to") so the
+	// entity write succeeds in Phase 1 but the relation rename fails
+	// — exercising the rollback path. (RR-MNQ4B: path-based injection
+	// is robust to fixture changes; count-based was fragile.)
+	failFS := &failOnPathRenameFS{FS: memfs, failPathMarker: "belongs-to"}
 	repo := repository.New(failFS, ctx)
 	ws := workspace.NewWithGraph(repo, meta, g)
 
-	// Pre-write entities so the entity-write step has something to
-	// rename. (This bypasses our injection — the pre-write uses the
-	// underlying memfs directly and counts as 0 so far... actually no,
-	// the failFS is the FS the repo uses, so its counter ticks. Let's
-	// reset.)
+	// Pre-write entities — these don't contain "belongs-to" in the
+	// path, so the failFS lets them through.
 	for _, e := range g.AllNodes() {
 		if err := repo.WriteEntity(e, meta); err != nil {
 			t.Fatalf("pre-write: %v", err)
 		}
 	}
-	failFS.count = 0 // reset after fixture setup
 
 	cfg := &dataentryconfig.Config{
 		App:     dataentryconfig.AppConfig{Name: "T"},
@@ -896,7 +903,7 @@ func TestV1Patch_AtomicityOnCommitFailure(t *testing.T) {
 		Views:   make(map[string]dataentryconfig.ViewConfig),
 		Kanbans: make(map[string]dataentryconfig.Kanban),
 	}
-	app := &App{ws: ws, broker: newEventBroker()}
+	app := &App{ws: ws, em: entitymanager.New(ws), broker: newEventBroker()}
 	app.state.Store(&AppState{Cfg: cfg, Meta: meta, Graph: g})
 
 	// PATCH: change title (1st rename) AND add a relation (2nd rename
@@ -917,5 +924,351 @@ func TestV1Patch_AtomicityOnCommitFailure(t *testing.T) {
 	}
 	if _, ok := app.Graph().GetEdge("TKT-001", "belongs-to", "CAT-001"); ok {
 		t.Errorf("relation was added despite commit failure")
+	}
+}
+
+// countingFS wraps an FS and counts Rename calls. Used to verify
+// no-op suppression actually skips disk writes (RR-AOQ0P).
+type countingFS struct {
+	storage.FS
+	renames int
+}
+
+func (f *countingFS) Rename(oldpath, newpath string) error {
+	f.renames++
+	return f.FS.Rename(oldpath, newpath)
+}
+
+// RR-AOQ0P / AC #17: PATCH with relations matching current state must
+// write zero relation files. Verified via a counting FS wrapper.
+func TestV1Patch_NoOpSuppressionWritesZeroFiles(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Label: "Ticket", IDPrefix: "TKT", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+			"label":  {Label: "Label", IDPrefix: "LBL", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"tagged": {
+				Label: "tagged", From: []string{"ticket"}, To: []string{"label"},
+				Properties: map[string]metamodel.PropertyDef{"weight": {Type: "integer"}},
+			},
+		},
+	}
+	g := graph.New()
+	g.AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	g.AddNode(&model.Entity{ID: "LBL-001", Type: "label", Properties: map[string]interface{}{"title": "L"}})
+
+	memfs := storage.NewMemFS()
+	root := "/p"
+	ctx := &project.Context{Root: root, CacheDir: root + "/.rela", EntitiesDir: root + "/entities", RelationsDir: root + "/relations"}
+	for _, dir := range []string{ctx.CacheDir, ctx.EntitiesDir, ctx.RelationsDir, ctx.EntitiesDir + "/tickets", ctx.EntitiesDir + "/labels"} {
+		_ = memfs.MkdirAll(dir, 0o755)
+	}
+	counting := &countingFS{FS: memfs}
+	repo := repository.New(counting, ctx)
+	ws := workspace.NewWithGraph(repo, meta, g)
+	for _, e := range g.AllNodes() {
+		_ = repo.WriteEntity(e, meta)
+	}
+	rel := model.NewRelation("TKT-001", "tagged", "LBL-001")
+	rel.Properties = map[string]interface{}{"weight": 5}
+	_ = repo.WriteRelation(rel)
+	g.AddEdge(rel)
+
+	cfg := &dataentryconfig.Config{App: dataentryconfig.AppConfig{Name: "T"}, Forms: map[string]dataentryconfig.Form{}, Lists: map[string]dataentryconfig.List{}, Views: map[string]dataentryconfig.ViewConfig{}, Kanbans: map[string]dataentryconfig.Kanban{}}
+	app := &App{ws: ws, em: entitymanager.New(ws), broker: newEventBroker()}
+	app.state.Store(&AppState{Cfg: cfg, Meta: meta, Graph: g})
+
+	// Reset the counter — fixture setup wrote 3 files (2 entities + 1
+	// relation), but those are pre-PATCH writes we don't want to count.
+	counting.renames = 0
+
+	// PATCH back the exact same state.
+	body := `{"relations":{"tagged":{"data":[{"type":"label","id":"LBL-001","meta":{"weight":5}}]}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if counting.renames != 0 {
+		t.Errorf("expected 0 renames on no-op PATCH, got %d", counting.renames)
+	}
+}
+
+// RR-LR7ON: `relations: {tagged: {}}` (data field absent) is a 400
+// shape error, NOT a silent delete-all.
+func TestV1Patch_DataFieldAbsentIs400(t *testing.T) {
+	app := newRelationsTestApp(t)
+	addRelation(t, app, "TKT-001", "tagged", "LBL-001", nil, "")
+
+	body := `{"relations":{"tagged":{}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 (data absent), got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	// Sanity: the relation must still exist.
+	if _, ok := app.Graph().GetEdge("TKT-001", "tagged", "LBL-001"); !ok {
+		t.Errorf("data-absent should be a 400; tagged was incorrectly deleted")
+	}
+}
+
+// RR-LMVF7 / RR-EU9HW: a meta value that fails schema validation must
+// NEVER be silently suppressed as a "no-op", even if its surface
+// representation matches the existing one. With validate-before-suppress
+// (RR-EU9HW), an invalid value triggers 422 — not a silent 200.
+//
+// `weight` is integer in the schema; the validator accepts string-coerced
+// integers like "5", so we use a clearly-invalid string ("not-a-number")
+// to exercise the validation path.
+func TestV1Patch_InvalidMetaTypeIsNotNoOp(t *testing.T) {
+	app := newRelationsTestApp(t)
+	addRelation(t, app, "TKT-001", "tagged", "LBL-001", map[string]interface{}{"weight": 5}, "")
+
+	body := `{"relations":{"tagged":{"data":[{"type":"label","id":"LBL-001","meta":{"weight":"not-a-number"}}]}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 (invalid meta), got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// RR-VFX8P: propagated edges are validated. An Inverse pointing at a
+// non-existent relation type must be rejected.
+func TestV1Patch_InverseToUnknownRelationTypeRejected(t *testing.T) {
+	// Build a fixture where `assesses` declares Inverse: ghost-rel
+	// but `ghost-rel` is NOT defined in the metamodel.
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket":   {Label: "Ticket", IDPrefix: "TKT", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+			"category": {Label: "Category", IDPrefix: "CAT", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"assesses": {
+				Label: "assesses", From: []string{"ticket"}, To: []string{"category"},
+				Inverse: &metamodel.InverseDef{ID: "ghost-rel"},
+			},
+		},
+	}
+	g := graph.New()
+	g.AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	g.AddNode(&model.Entity{ID: "CAT-001", Type: "category", Properties: map[string]interface{}{"title": "C"}})
+
+	memfs := storage.NewMemFS()
+	root := "/p"
+	ctx := &project.Context{Root: root, CacheDir: root + "/.rela", EntitiesDir: root + "/entities", RelationsDir: root + "/relations"}
+	for _, dir := range []string{ctx.CacheDir, ctx.EntitiesDir, ctx.RelationsDir, ctx.EntitiesDir + "/tickets", ctx.EntitiesDir + "/categorys"} {
+		_ = memfs.MkdirAll(dir, 0o755)
+	}
+	repo := repository.New(memfs, ctx)
+	ws := workspace.NewWithGraph(repo, meta, g)
+	for _, e := range g.AllNodes() {
+		_ = repo.WriteEntity(e, meta)
+	}
+
+	cfg := &dataentryconfig.Config{App: dataentryconfig.AppConfig{Name: "T"}, Forms: map[string]dataentryconfig.Form{}, Lists: map[string]dataentryconfig.List{}, Views: map[string]dataentryconfig.ViewConfig{}, Kanbans: map[string]dataentryconfig.Kanban{}}
+	app := &App{ws: ws, em: entitymanager.New(ws), broker: newEventBroker()}
+	app.state.Store(&AppState{Cfg: cfg, Meta: meta, Graph: g})
+
+	body := `{"relations":{"assesses":{"data":[{"type":"category","id":"CAT-001"}]}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 (inverse points to unknown relation), got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	// Primary edge must NOT have been written either.
+	if _, ok := app.Graph().GetEdge("TKT-001", "assesses", "CAT-001"); ok {
+		t.Errorf("primary edge was written despite invalid inverse")
+	}
+}
+
+// RR-VSPKK: symmetric back-edge meta is deep-copied, not aliased.
+// Mutating the primary's properties must not affect the back-edge.
+func TestV1Patch_SymmetricMetaIsDeepCopied(t *testing.T) {
+	app := newRelationsTestApp(t)
+
+	body := `{"relations":{"linked-to":{"data":[{"type":"ticket","id":"TKT-002"}]}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	primary, _ := app.Graph().GetEdge("TKT-001", "linked-to", "TKT-002")
+	back, _ := app.Graph().GetEdge("TKT-002", "linked-to", "TKT-001")
+	if primary == nil || back == nil {
+		t.Fatal("expected both edges")
+	}
+	// Properties maps must be DIFFERENT pointers — even if both empty.
+	// The aliasing bug would have them point to the same underlying map.
+	if primary.Properties != nil && back.Properties != nil {
+		// Use reflect to test identity.
+		primaryAddr := reflect.ValueOf(primary.Properties).Pointer()
+		backAddr := reflect.ValueOf(back.Properties).Pointer()
+		if primaryAddr == backAddr {
+			t.Errorf("symmetric back-edge aliases primary's Properties map (same pointer)")
+		}
+	}
+}
+
+// RR-E8VBI: properties_unset for an unknown entity property must 422.
+func TestV1Patch_PropertiesUnsetUnknownKey(t *testing.T) {
+	app := newRelationsTestApp(t)
+	body := `{"properties_unset":["nonexistent_property"]}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 (unknown property in properties_unset), got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// RR-IYG87: entity-update automation runs synchronously on PATCH.
+// Validates that property-set automations (the common case) fire.
+func TestV1Patch_AutomationFiresOnPropertyChange(t *testing.T) {
+	// Build a fixture with an automation: when status becomes "done",
+	// set completed_at to "AUTO".
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label: "Ticket", IDPrefix: "TKT",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":        {Type: "string", Required: true},
+					"status":       {Type: "string"},
+					"completed_at": {Type: "string"},
+				},
+			},
+		},
+		Automations: []metamodel.AutomationDef{
+			{
+				Name: "set-completed-on-done",
+				On: metamodel.AutomationTrigger{
+					Entity:   metamodel.StringOrSlice{"ticket"},
+					Property: "status",
+					Becomes:  "done",
+				},
+				Do: []metamodel.AutomationAction{
+					{Set: "completed_at", Value: "AUTO"},
+				},
+			},
+		},
+	}
+	g := graph.New()
+	g.AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T", "status": "open"}})
+
+	memfs := storage.NewMemFS()
+	root := "/p"
+	ctx := &project.Context{Root: root, CacheDir: root + "/.rela", EntitiesDir: root + "/entities", RelationsDir: root + "/relations"}
+	for _, dir := range []string{ctx.CacheDir, ctx.EntitiesDir, ctx.RelationsDir, ctx.EntitiesDir + "/tickets"} {
+		_ = memfs.MkdirAll(dir, 0o755)
+	}
+	repo := repository.New(memfs, ctx)
+	ws := workspace.NewWithGraph(repo, meta, g)
+	for _, e := range g.AllNodes() {
+		_ = repo.WriteEntity(e, meta)
+	}
+
+	cfg := &dataentryconfig.Config{App: dataentryconfig.AppConfig{Name: "T"}, Forms: map[string]dataentryconfig.Form{}, Lists: map[string]dataentryconfig.List{}, Views: map[string]dataentryconfig.ViewConfig{}, Kanbans: map[string]dataentryconfig.Kanban{}}
+	app := &App{ws: ws, em: entitymanager.New(ws), broker: newEventBroker()}
+	app.state.Store(&AppState{Cfg: cfg, Meta: meta, Graph: g})
+
+	body := `{"properties":{"status":"done"}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	live, _ := app.Graph().GetNode("TKT-001")
+	if live.Properties["completed_at"] != "AUTO" {
+		t.Errorf("automation didn't fire: completed_at = %v, want AUTO", live.Properties["completed_at"])
+	}
+}
+
+// RR-X4ODW: self-loops on symmetric relations don't propagate (no
+// duplicate-edge attempt, no panic).
+func TestV1Patch_SymmetricSelfLoop(t *testing.T) {
+	app := newRelationsTestApp(t)
+
+	// Pre-existing self-loop on a symmetric relation.
+	addRelation(t, app, "TKT-001", "linked-to", "TKT-001", nil, "")
+
+	// PATCH: remove the self-loop. No back-edge propagation since
+	// from == to.
+	body := `{"relations":{"linked-to":{"data":[]}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := app.Graph().GetEdge("TKT-001", "linked-to", "TKT-001"); ok {
+		t.Errorf("self-loop should be removed")
+	}
+}
+
+// RR-X4ODW: self-loops on inverse relations are skipped on the inverse
+// branch, just like the symmetric branch. Without this, an A.assesses → A
+// PATCH would stage a A.assessed-by → A back-edge, which the metamodel
+// may or may not allow — and either way it's not behavior the user
+// asked for.
+func TestV1Patch_InverseSelfLoopSkipped(t *testing.T) {
+	// Custom fixture: ticket can self-loop on assesses (To: ticket),
+	// inverse declared as assessed-by.
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Label: "Ticket", IDPrefix: "TKT", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string", Required: true}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"assesses": {
+				Label: "assesses", From: []string{"ticket"}, To: []string{"ticket"},
+				Inverse: &metamodel.InverseDef{ID: "assessed-by"},
+			},
+			"assessed-by": {
+				Label: "assessed by", From: []string{"ticket"}, To: []string{"ticket"},
+			},
+		},
+	}
+	g := graph.New()
+	g.AddNode(&model.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+
+	memfs := storage.NewMemFS()
+	root := "/p"
+	ctx := &project.Context{Root: root, CacheDir: root + "/.rela", EntitiesDir: root + "/entities", RelationsDir: root + "/relations"}
+	for _, dir := range []string{ctx.CacheDir, ctx.EntitiesDir, ctx.RelationsDir, ctx.EntitiesDir + "/tickets"} {
+		_ = memfs.MkdirAll(dir, 0o755)
+	}
+	repo := repository.New(memfs, ctx)
+	ws := workspace.NewWithGraph(repo, meta, g)
+	for _, e := range g.AllNodes() {
+		_ = repo.WriteEntity(e, meta)
+	}
+	cfg := &dataentryconfig.Config{App: dataentryconfig.AppConfig{Name: "T"}, Forms: map[string]dataentryconfig.Form{}, Lists: map[string]dataentryconfig.List{}, Views: map[string]dataentryconfig.ViewConfig{}, Kanbans: map[string]dataentryconfig.Kanban{}}
+	app := &App{ws: ws, em: entitymanager.New(ws), broker: newEventBroker()}
+	app.state.Store(&AppState{Cfg: cfg, Meta: meta, Graph: g})
+
+	body := `{"relations":{"assesses":{"data":[{"type":"ticket","id":"TKT-001"}]}}}`
+	req := patchRequest(body)
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	// Primary self-loop edge exists.
+	if _, ok := app.Graph().GetEdge("TKT-001", "assesses", "TKT-001"); !ok {
+		t.Errorf("primary self-loop assesses should exist")
+	}
+	// Inverse self-loop edge was NOT created — propagation skipped it.
+	if _, ok := app.Graph().GetEdge("TKT-001", "assessed-by", "TKT-001"); ok {
+		t.Errorf("inverse self-loop assessed-by was incorrectly propagated")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -2166,6 +2167,7 @@ func newTestAppV1(t *testing.T) *App {
 
 	app := newAppFromParts(cfg, meta, g)
 	app.ws = ws
+	app.em = entitymanager.New(ws)
 	return app
 }
 

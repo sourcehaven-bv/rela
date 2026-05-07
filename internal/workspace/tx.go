@@ -1,6 +1,9 @@
 package workspace
 
 import (
+	"log/slog"
+
+	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/model"
@@ -128,6 +131,81 @@ func (tx *Tx) DeleteRelation(from, relType, to string) error {
 	return nil
 }
 
+// RunEntityUpdateAutomation runs the synchronous `entity:updated`
+// automation hooks against `staged`, applying any returned property
+// changes to staged in place. Returns the result so the caller can
+// invoke ApplyAutomationSideEffectsAfterCommit after the Tx commits
+// (relation / entity / Lua side effects are deferred so they don't
+// break the transaction's atomicity contract).
+//
+// If the workspace has no automation engine configured, returns a nil
+// result and no error.
+//
+// Most callers should use github.com/Sourcehaven-BV/rela/internal/entitymanager.Manager
+// instead, which owns the full update lifecycle (transaction +
+// automation + side effects) so callers don't have to orchestrate
+// the two phases themselves. This method exists for entitymanager's
+// implementation and for advanced callers that have a strong reason
+// to drive the transaction directly.
+func (tx *Tx) RunEntityUpdateAutomation(staged, oldEntity *model.Entity) *automation.Result {
+	if tx.base.automation == nil || oldEntity == nil {
+		return nil
+	}
+	res := tx.base.automation.Process(automation.Event{
+		Type:      automation.EventEntityUpdated,
+		Entity:    staged,
+		OldEntity: oldEntity,
+	})
+	for prop, val := range res.PropertiesSet {
+		staged.SetString(prop, val)
+	}
+	return res
+}
+
+// AutomationSideEffects describes what an automation side-effect run
+// produced. Returned from ApplyAutomationSideEffectsAfterCommit so the
+// caller can surface warnings/errors and report created entities or
+// relations.
+type AutomationSideEffects struct {
+	RelationsCreated []*model.Relation
+	EntitiesCreated  []*model.Entity
+	Errors           []string
+	Warnings         []string
+}
+
+// ApplyAutomationSideEffectsAfterCommit is a convenience used by callers
+// that drove a Tx-based update: invoke this AFTER WithTx returns
+// successfully so that automation-driven side effects (create_relation,
+// create_entity, Lua actions) see the just-committed entity state on
+// disk and in the graph.
+//
+// We can't run it inside the WithTx callback because the side-effect
+// path does its own writes outside the staged transaction; doing so
+// would break atomicity (a primary commit followed by a side-effect
+// failure would leave the disk inconsistent).
+//
+// Returns nil when result is nil (the caller passed no automation
+// result to apply); otherwise always returns a non-nil
+// AutomationSideEffects describing what happened.
+//
+// Most callers should use entitymanager.Manager instead — it owns
+// both phases of the update so callers don't have to remember to
+// invoke this after WithTx returns.
+func (w *Workspace) ApplyAutomationSideEffectsAfterCommit(
+	staged, oldEntity *model.Entity, result *automation.Result,
+) *AutomationSideEffects {
+	if result == nil {
+		return nil
+	}
+	internal := w.applyAutomationSideEffects(staged, oldEntity, result)
+	return &AutomationSideEffects{
+		RelationsCreated: internal.RelationsCreated,
+		EntitiesCreated:  internal.EntitiesCreated,
+		Errors:           internal.Errors,
+		Warnings:         internal.Warnings,
+	}
+}
+
 // applyGraphMutations applies all pending graph mutations to the live
 // graph and updates the search index to match. Called by
 // Workspace.WithTx after the repository transaction has committed
@@ -139,27 +217,30 @@ func (tx *Tx) DeleteRelation(from, relType, to string) error {
 //
 // Note that graph.RemoveNode also removes any incident edges as a side
 // effect, so an explicit removeEdges entry that targets a node about
-// to be removed is harmless. Operations are best-effort: a removeEdges
-// or removeNodes entry that doesn't match anything in the live graph
-// is silently dropped (the disk transaction already committed, so we
-// can't bail out).
+// to be removed is harmless. Drift between the staged disk writes and
+// the live graph (a removeEdges or removeNodes entry that targets
+// something the graph doesn't know about) is logged via slog.Warn —
+// it usually indicates a file-watcher reload that observed the disk
+// commit before this method ran, but it can also indicate corruption.
 func (tx *Tx) applyGraphMutations() {
 	g := tx.base.graph
 
-	// Remove edges first, then nodes.
 	for _, e := range tx.removeEdges {
-		g.RemoveEdge(e.from, e.relType, e.to)
+		if !g.RemoveEdge(e.from, e.relType, e.to) {
+			slog.Warn("staged edge removal targeted a missing edge in live graph",
+				"from", e.from, "type", e.relType, "to", e.to)
+		}
 	}
 	for _, id := range tx.removeNodes {
-		g.RemoveNode(id)
-		// Keep the search index in sync with the graph.
+		if !g.RemoveNode(id) {
+			slog.Warn("staged node removal targeted a missing node in live graph",
+				"id", id)
+		}
 		tx.ws.removeFromIndex(id)
 	}
 
-	// Add nodes, then edges.
 	for _, n := range tx.addNodes {
 		g.AddNode(n)
-		// Keep the search index in sync with the graph.
 		tx.ws.indexEntity(n)
 	}
 	for _, r := range tx.addEdges {

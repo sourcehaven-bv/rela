@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/graph"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -81,6 +82,7 @@ const userPaletteFile = "palette.yaml"
 // reloadMu coordinates the reload itself with the mutation path.
 type App struct {
 	ws *workspace.Workspace
+	em *entitymanager.Manager
 
 	// state holds the current reloadable snapshot. Readers: a.State().
 	// Writers: onReload rebuilds and publishes a new state after file
@@ -198,6 +200,7 @@ func NewApp(ws *workspace.Workspace) (*App, error) {
 
 	app := &App{
 		ws:     ws,
+		em:     entitymanager.New(ws),
 		broker: newEventBroker(),
 	}
 
