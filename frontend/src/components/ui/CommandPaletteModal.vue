@@ -177,6 +177,20 @@ function moveHighlight(delta: number): void {
     return
   }
   highlightedIndex.value = (highlightedIndex.value + delta + len) % len
+  scrollHighlightedIntoView()
+}
+
+// Keep the highlighted option in view as the user arrow-keys through long
+// result lists. `block: 'nearest'` no-ops when the option is already visible,
+// so the listbox doesn't jiggle on every move — only on actual overshoot.
+// Called from keyboard handlers only; mouseenter sets highlightedIndex
+// directly without scrolling so hovering doesn't fight with the user's mouse.
+function scrollHighlightedIntoView(): void {
+  void nextTick(() => {
+    const entity = results.value[highlightedIndex.value]
+    if (!entity) return
+    document.getElementById(optionId(entity))?.scrollIntoView({ block: 'nearest' })
+  })
 }
 
 function handleKeydown(e: KeyboardEvent): void {

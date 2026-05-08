@@ -450,6 +450,22 @@ describe('CommandPaletteModal', () => {
       wrapper.unmount()
     })
 
+    it('scrolls the highlighted option into view on arrow navigation', async () => {
+      const { wrapper, entities } = await setupWithResults(20)
+      const target = entities[5]
+      const scrollSpy = vi.spyOn(
+        document.getElementById(`cmdk-option-${target.id}`)!,
+        'scrollIntoView'
+      )
+      // Press ArrowDown 5 times to land on `target`.
+      for (let i = 0; i < 5; i++) pressKey('ArrowDown')
+      await flushPromises()
+
+      expect(scrollSpy).toHaveBeenCalled()
+      expect(scrollSpy).toHaveBeenLastCalledWith({ block: 'nearest' })
+      wrapper.unmount()
+    })
+
     it('Enter navigates to the highlighted entity and emits close', async () => {
       const { wrapper, entities } = await setupWithResults(2)
       pressKey('ArrowDown')
