@@ -40,15 +40,21 @@ export async function deleteEntity(type: string, id: string): Promise<void> {
   return api.delete(`/${getPlural(type)}/${id}`)
 }
 
+/**
+ * Searches entities by query text, optionally filtered by type.
+ * Pass an AbortSignal to cancel an in-flight request — the command palette
+ * uses this to abort superseded searches as the user types.
+ */
 export async function searchEntities(
   query: string,
-  type?: string
+  type?: string,
+  signal?: AbortSignal
 ): Promise<ListResponse<Entity>> {
   const params: Record<string, string> = { q: query }
   if (type) {
     params.type = type
   }
-  return api.get<ListResponse<Entity>>('/_search', params)
+  return api.get<ListResponse<Entity>>('/_search', params, signal)
 }
 
 export async function analyze(): Promise<AnalyzeResult> {

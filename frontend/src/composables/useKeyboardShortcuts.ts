@@ -1,6 +1,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isInputFocused } from '@/utils/dom'
+import { isAnyModalOpen } from './modalStack'
 
 /**
  * Shared state for keyboard shortcuts modal.
@@ -11,6 +12,10 @@ import { isInputFocused } from '@/utils/dom'
  * 3. Multiple components may need to check/toggle this state
  */
 export const shortcutsModalOpen = ref(false)
+
+// Module-level ref so the global Cmd+K handler can flip it and the App-level
+// CommandPaletteModal can react. Same single-instance rationale as above.
+export const paletteOpen = ref(false)
 
 /**
  * Global keyboard shortcuts composable.
@@ -34,12 +39,20 @@ export function useKeyboardShortcuts() {
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    // Cmd/Ctrl+K: reserved for command palette (future)
+    // Cmd/Ctrl+K opens the command palette. Bypasses isInputFocused and
+    // isAnyModalOpen on purpose — users expect the palette to open from
+    // anywhere, including form fields and on top of other modals.
+    // Idempotent: already-open is a no-op.
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault()
-      // TODO: implement command palette
+      paletteOpen.value = true
       return
     }
+
+    // Stand down while any modal is open. The modal owns its own keyboard
+    // semantics (Escape to close, etc.); we must not double-handle Escape
+    // and accidentally trigger router.back() on a form page underneath.
+    if (isAnyModalOpen()) return
 
     // Escape: close shortcuts modal first
     if (e.key === 'Escape') {
@@ -126,5 +139,6 @@ export function useKeyboardShortcuts() {
 
   return {
     shortcutsModalOpen,
+    paletteOpen,
   }
 }
