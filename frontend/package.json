@@ -21,7 +21,7 @@
     "dupes": "jscpd src --ignore \"**/*.test.ts\" --reporters console"
   },
   "dependencies": {
-    "axios": "^1.6.7",
+    "axios": "^1.15.2",
     "dompurify": "^3.3.3",
     "easymde": "^2.20.0",
     "marked": "^17.0.4",
