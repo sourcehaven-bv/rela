@@ -85,10 +85,16 @@ func toolCreateEntity() mcp.Tool {
 }
 
 func toolUpdateEntity() mcp.Tool {
+	const propsDesc = "Properties to set or update. Set a property to null to remove it from the entity. " +
+		"Empty string is treated as no value (silently ignored — use null to delete). " +
+		"Required properties cannot be deleted."
 	return mcp.NewTool("update_entity",
-		mcp.WithDescription("Update an existing entity's properties or content"),
+		mcp.WithDescription("Update an existing entity's properties or content. "+
+			"Set a property to null in `properties` to remove it from the entity. "+
+			"Empty string is treated as no value (silently ignored — use null to delete). "+
+			"Required properties cannot be deleted."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to update")),
-		mcp.WithObject("properties", mcp.Description("Properties to set or update")),
+		mcp.WithObject("properties", mcp.Description(propsDesc)),
 		mcp.WithString("content", mcp.Description("New markdown body content")),
 	)
 }
