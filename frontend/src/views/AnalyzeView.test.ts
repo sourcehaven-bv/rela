@@ -14,7 +14,7 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {}, path: '/analyze' }),
 }))
 
-const analyzeMock = vi.fn<[], Promise<AnalyzeResult>>()
+const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
 vi.mock('@/api', () => ({
   analyze: () => analyzeMock(),
 }))

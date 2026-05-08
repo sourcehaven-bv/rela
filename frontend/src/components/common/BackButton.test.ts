@@ -5,7 +5,7 @@ import BackButton from './BackButton.vue'
 import type { BackTarget } from '@/composables/useBackTarget'
 
 // Mock schemaStore.getList. Each test sets the return value for its case.
-const mockGetList = vi.fn<[string], { title?: string } | undefined>()
+const mockGetList = vi.fn<(id: string) => { title?: string } | undefined>()
 vi.mock('@/stores', () => ({
   useSchemaStore: () => ({
     getList: mockGetList,

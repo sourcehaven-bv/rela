@@ -53,20 +53,20 @@ describe('CommandModal confirm integration', () => {
   beforeEach(() => {
     _resetModalStack()
     _resetConfirmForTest()
-    originalFetch = global.fetch
+    originalFetch = globalThis.fetch
     // Resolve immediately with an empty body so runCommand finishes quickly
     // when it does fire.
     fetchSpy = vi.fn().mockResolvedValue(
       new Response(null, { status: 200 })
     )
-    global.fetch = fetchSpy as never
+    globalThis.fetch = fetchSpy as never
   })
 
   afterEach(() => {
     document.body.innerHTML = ''
     _resetModalStack()
     _resetConfirmForTest()
-    global.fetch = originalFetch
+    globalThis.fetch = originalFetch
   })
 
   it('skips the confirm modal when cmd.confirm is empty', async () => {
