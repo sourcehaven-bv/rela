@@ -370,6 +370,16 @@ jobs:
             "${demo}"
           done
 
+      - name: Run shell-level e2e tests
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for e2e in scripts/e2e-*.sh; do
+            echo ""
+            echo "==> ${e2e}"
+            "${e2e}"
+          done
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

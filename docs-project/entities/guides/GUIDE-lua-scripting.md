@@ -668,7 +668,7 @@ script runs in a specialized mode with extra context exposed:
 | `rela.document.entry_id` | The ID of the entity being rendered |
 
 The script's stdout is captured and used as the rendered document's
-markdown (after goldmark → HTML conversion). Use `print()` to produce
+markdown (which is then converted to HTML). Use `print()` to produce
 output.
 
 ```lua
@@ -832,77 +832,125 @@ Lua numbers are 64-bit floats. Integer IDs larger than 2^53 cannot round-trip
 through any Lua value — this is a Lua limitation, not a cache one, but worth
 keeping in mind if you cache things keyed by raw integer IDs.
 
-### Markdown AST: Task Lists
+### Markdown AST
 
 The `rela.md` module exposes a markdown AST API for parsing and rendering
-content. This section documents the task list (checkbox) support; the rest
-of the `rela.md` surface is documented inline in the Go source.
+content. The AST is structure-preserving: links, code spans, raw HTML,
+images, autolinks, line breaks, multi-paragraph blockquotes, and
+multi-block list items all keep their structure on the Lua side.
+Flattening to plain strings happens at render time and in helper APIs
+(`headers`, `first_paragraph`, the public `flatten`), never at parse
+time.
 
-Use `rela.md.parse(content)` to turn a markdown string into an AST table,
-and `rela.md.render(ast)` to serialize it back. Task list items (`- [x]`
-and `- [ ]`) round-trip through the AST as Lua tables.
+Use `rela.md.parse(content)` to turn a markdown string into an AST table
+and `rela.md.render(ast)` to serialize it back. The pair is a fixed point
+on a representative corpus of GFM input.
 
-#### Task item shape
-
-A task list item is represented as a Lua table with three fields:
-
-```lua
-{task = true, checked = <bool>, text = <string>}
-```
-
-- `task = true` marks the item as a checkbox item. Only an explicit Lua
-  boolean `true` qualifies — strings, numbers, `nil`, and `false` all fall
-  through to plain rendering.
-- `checked` is the checkbox state (`true` for `[x]`, `false` for `[ ]`).
-- `text` is the item's text content.
-
-Plain (non-task) list items are still represented as bare strings, so
-existing scripts continue to work without changes.
-
-#### Reading checkbox state
+#### Block node shapes
 
 ```lua
-local ast = rela.md.parse([[
-- [x] write the code
-- [ ] write the tests
-- [x] ~~obsolete item~~
-]])
+-- Inline-bearing leaves carry an `inlines` array.
+{ type = "paragraph", inlines = { ... } }
+{ type = "heading",   level = 2, inlines = { ... } }
 
-for _, item in ipairs(ast[1].items) do
-    if type(item) == "table" and item.task then
-        local mark = item.checked and "DONE" or "TODO"
-        print(mark, item.text)
-    end
-end
--- Output:
--- DONE  write the code
--- TODO  write the tests
--- DONE  ~~obsolete item~~
+-- Block containers carry `children` (an array of block nodes).
+{ type = "blockquote", children = { ... } }
+
+-- Lists hold items; each item is one of:
+--   * a string (a plain item containing only text)
+--   * a table with `inlines` (single-paragraph item with formatting)
+--   * a table with `children` (multi-block item; e.g. an item
+--     containing a fenced code block or nested list)
+--   * a task table with `task=true`, `checked=<bool>`, and either
+--     `inlines` or `children` per the same rules above
+{ type = "list", ordered = false, items = { ... } }
+
+-- Tables: each cell is an `inlines` array (link/code/raw HTML inside
+-- a cell round-trips correctly).
+{ type = "table",
+  header = { cell, cell, ... },              -- each cell is an inlines array
+  rows   = { { cell, cell }, ... },
+  alignments = { "left", "center", "right" } }
+
+-- Leaves that don't carry inline content keep a `content: string`.
+{ type = "code_block", language = "go", content = "fmt.Println()" }
+{ type = "thematic_break" }
+{ type = "raw", content = "<unknown block>" }
 ```
 
-#### Building a task list
+#### Inline node shapes
 
 ```lua
-local ast = {
-    rela.md.list({
-        {task = true, checked = true,  text = "design API"},
-        {task = true, checked = false, text = "implement"},
-        {task = true, checked = false, text = "write docs"},
-    }),
-}
-print(rela.md.render(ast))
--- - [x] design API
--- - [ ] implement
--- - [ ] write docs
+-- Leaves with a `text` field:
+{ type = "text",         text = "hello" }
+{ type = "code_span",    text = "x = 1" }
+{ type = "raw_html",     text = "<br>" }
+{ type = "soft_break" }                   -- a soft line break in the source
+{ type = "hard_break" }                   -- two-trailing-space line break
+
+-- Autolinks have a `url` (no inner text):
+{ type = "autolink",     url  = "https://example.com" }
+
+-- Containers wrap further inlines:
+{ type = "emphasis",     inlines = { ... } }   -- *text*
+{ type = "strong",       inlines = { ... } }   -- **text**
+{ type = "strikethrough",inlines = { ... } }   -- ~~text~~
+{ type = "link",         url  = "/x", title = nil, inlines = { ... } }
+
+-- Images store alt content as a separate inlines array (preserves
+-- formatting inside `![**bold**](url)`):
+{ type = "image",        url, title = nil, alt_inlines = { ... } }
 ```
 
-`rela.md.list(items, ordered?)` accepts plain strings, task tables, or a
-mix. Pass `true` as the second argument for an ordered list.
+#### Constructors
 
-#### Mutating an existing checklist
+Block constructors accept either a string (auto-wrapped to a single text
+leaf) or an inlines/children table:
 
-A common pattern is to read a ticket's checklist, flip a checkbox, and
-write it back:
+```lua
+rela.md.paragraph("hello")
+rela.md.paragraph({rela.md.text("see "), rela.md.link_inline("docs", "/x")})
+rela.md.heading(2, "Section")
+rela.md.heading(2, {rela.md.text("Section "), rela.md.code_span("X")})
+rela.md.blockquote("a single paragraph")
+rela.md.blockquote({rela.md.paragraph("p1"), rela.md.paragraph("p2")})
+```
+
+Inline constructors:
+
+```lua
+rela.md.text(s)                              -- {type="text", text=s}
+rela.md.code_span(s)                         -- {type="code_span", text=s}
+rela.md.raw_html(s)                          -- {type="raw_html", text=s}
+rela.md.link_inline(text_or_inlines, url, title?)
+                                             -- {type="link", url, [title], inlines={...}}
+```
+
+`rela.md.link_inline` is distinct from `rela.md.link(text, url) → string`,
+which predates the inline AST and is still available for scripts that
+build markdown by string concatenation.
+
+#### Flattening to text
+
+When you want a plain string instead of an inline tree, call
+`rela.md.flatten(inlines)`. It applies a conservative policy:
+
+- **Strikethrough** (`~~...~~`) — preserved as `~~text~~`. The
+  checklist-validation layer treats strikethrough as the "skip" marker.
+- **Code spans** (`` `...` ``) — preserved with their backticks.
+- **Raw HTML** — preserved verbatim.
+- **Autolinks** — render as the URL.
+- **Soft and hard breaks** — render as a single space (matching the
+  pre-refactor flat-text behaviour).
+- **Emphasis, strong, link** — wrapper dropped, only the inner content
+  is kept (so `[See docs](url)` flattens to `See docs`).
+- **Images** — render as the flattened alt content (no URL).
+
+`rela.md.headers(ast)` and `rela.md.first_paragraph(ast)` use this
+policy automatically, so existing scripts that read `header.title` or
+the first-paragraph string see no behaviour change for typical content.
+
+#### Worked example: reading and mutating a checklist
 
 ```lua
 local ticket = rela.get_entity("TKT-001")
@@ -911,8 +959,11 @@ local ast = rela.md.parse(ticket.content)
 for _, node in ipairs(ast) do
     if node.type == "list" then
         for _, item in ipairs(node.items) do
-            if type(item) == "table" and item.task and item.text == "implement" then
-                item.checked = true
+            if type(item) == "table" and item.task then
+                local label = rela.md.flatten(item.inlines)
+                if label == "implement" then
+                    item.checked = true
+                end
             end
         end
     end
@@ -921,46 +972,23 @@ end
 rela.update_entity("TKT-001", {}, rela.md.render(ast))
 ```
 
-#### Inline marker preservation policy
-
-When `rela.md.parse` extracts the text of a list item (or paragraph,
-heading, blockquote, or table cell), the following inline markers are
-**preserved**:
-
-- **Strikethrough** (`~~...~~`) — load-bearing because the checklist
-  validation layer treats strikethrough as the "skip" marker for items
-  that are intentionally not done.
-- **Code spans** (`` `...` ``) — preserved because identifiers and code
-  references are structural and round-tripping should not mangle them.
-
-The following inline markers are **dropped** (only the inner text is
-captured):
-
-- Bold (`**...**`), italic (`*...*` or `_..._`)
-- Links (`[text](url)` becomes just `text`)
-- Autolinks and raw HTML
-
-This policy is intentional and pinned by tests in
-`internal/lua/markdown_test.go` (`TestMdInlineTextPolicy`). If you need
-to round-trip content with full inline fidelity, do not pass it through
-`rela.md.parse`/`render` — read and write the raw `entity.content`
-string instead.
-
 #### Limitations
 
-- **First text block only.** A list item that contains multiple
-  paragraphs, nested lists, or fenced code blocks will only have its
-  first text block captured in `text`. This matches the GFM task list
-  spec, which requires the checkbox in the first text block.
 - **Mixed lists.** A list mixing task and plain items may not be
-  symmetrically re-parseable: goldmark only classifies an item as a
-  task if it carries its own checkbox. The renderer always emits
-  checkbox syntax for items with `task = true`.
+  symmetrically re-parseable: only items that carry their own
+  checkbox in the source are classified as task items on parse, but
+  the renderer always emits checkbox syntax for items with
+  `task = true`.
 - **Sparse item tables.** Scripts that delete items via
   `items[i] = nil` will get a compact rendering (the renderer skips
   `nil` holes), but they should compact the table explicitly if they
   rely on `#items` afterwards — Lua's length operator returns a
   "border", not a count.
+- **Performance.** Parsing now allocates a Lua table per inline node.
+  On a kitchen-sink fixture this is ~2.5–3× the allocations of the
+  pre-refactor flat-string representation. For real-world content
+  (mostly plain prose) the gap is smaller. If a hot-path script feels
+  slow, consider parsing once and reusing the AST.
 
 ## Entity Structure
 
