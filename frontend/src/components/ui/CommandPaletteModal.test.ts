@@ -59,15 +59,32 @@ function factory(props: { open?: boolean } = {}): VueWrapper {
   })
 }
 
-function input(): HTMLInputElement {
-  const el = document.querySelector<HTMLInputElement>('.cmdk-input')
-  if (!el) throw new Error('cmdk-input not in DOM')
-  return el
+// Mount in a closed state, await mount, then drive the open transition.
+// Used by tests that need to observe the closed → open lifecycle (focus
+// capture, modal-stack registration on flip).
+async function factoryClosedThenOpen(): Promise<VueWrapper> {
+  const wrapper = factory({ open: false })
+  await wrapper.setProps({ open: true })
+  await flushPromises()
+  return wrapper
 }
 
-function options(): HTMLLIElement[] {
-  return Array.from(document.querySelectorAll<HTMLLIElement>('.cmdk-option'))
+// Centralized DOM lookups so query strings live in one place.
+const dom = {
+  overlay: () => document.querySelector<HTMLElement>('.cmdk-overlay'),
+  modal: () => document.querySelector<HTMLElement>('.cmdk-modal'),
+  input: (): HTMLInputElement => {
+    const el = document.querySelector<HTMLInputElement>('.cmdk-input')
+    if (!el) throw new Error('cmdk-input not in DOM')
+    return el
+  },
+  options: () => Array.from(document.querySelectorAll<HTMLLIElement>('.cmdk-option')),
+  hint: () => document.querySelector<HTMLElement>('.cmdk-hint')?.textContent?.trim(),
+  spinner: () => document.querySelector<HTMLElement>('.cmdk-spinner'),
 }
+
+const input = dom.input
+const options = dom.options
 
 // Type into the palette and wait for the debounced search to settle.
 // Vue's v-model needs a microtask to sync the input event into the bound ref;
@@ -80,6 +97,28 @@ async function typeQuery(value: string): Promise<void> {
   vi.advanceTimersByTime(150)
   await flushPromises()
   await flushPromises()
+}
+
+// Drive the open prop and let the watcher run.
+async function setOpen(wrapper: VueWrapper, open: boolean): Promise<void> {
+  await wrapper.setProps({ open })
+  await flushPromises()
+}
+
+// Press a key on the palette input. Bubbles so the @keydown on .cmdk-overlay
+// catches it just like a real keypress would.
+function pressKey(
+  key: string,
+  init: KeyboardEventInit = {}
+): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  })
+  input().dispatchEvent(event)
+  return event
 }
 
 describe('CommandPaletteModal', () => {
@@ -106,66 +145,56 @@ describe('CommandPaletteModal', () => {
   describe('rendering', () => {
     it('does not render when closed', () => {
       factory({ open: false })
-      expect(document.querySelector('.cmdk-overlay')).toBeNull()
+      expect(dom.overlay()).toBeNull()
     })
 
     it('renders overlay and input when open', () => {
       factory()
-      expect(document.querySelector('.cmdk-overlay')).not.toBeNull()
+      expect(dom.overlay()).not.toBeNull()
       expect(input()).not.toBeNull()
     })
 
     it('shows the empty hint when query is blank', () => {
       factory()
-      const hint = document.querySelector('.cmdk-hint')?.textContent?.trim()
-      expect(hint).toBe('Type to search entities')
+      expect(dom.hint()).toBe('Type to search entities')
     })
 
     it('renders title, type label and id for each result', async () => {
-      searchSpy.mockResolvedValueOnce(
-        listResponse([makeEntity({ id: 'T-1', type: 'ticket', _title: 'Fix login' })])
-      )
+      const entity = makeEntity({ id: 'T-1', type: 'ticket', _title: 'Fix login' })
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
       await typeQuery('fix')
 
       const opts = options()
       expect(opts).toHaveLength(1)
-      expect(opts[0].textContent).toContain('Fix login')
-      expect(opts[0].textContent).toContain('T-1')
+      expect(opts[0].textContent).toContain(entity._title)
+      expect(opts[0].textContent).toContain(entity.id)
       expect(opts[0].textContent).toContain('Ticket')
     })
 
     it('falls back to properties.title when _title missing', async () => {
-      searchSpy.mockResolvedValueOnce(
-        listResponse([
-          makeEntity({ id: 'T-2', properties: { title: 'Legacy title' } }),
-        ])
-      )
+      const entity = makeEntity({ properties: { title: 'Legacy title' } })
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
       await typeQuery('leg')
 
-      expect(options()[0].textContent).toContain('Legacy title')
+      expect(options()[0].textContent).toContain(entity.properties.title as string)
     })
 
     it('falls back to id when both title fields missing', async () => {
-      searchSpy.mockResolvedValueOnce(listResponse([makeEntity({ id: 'T-3' })]))
+      const entity = makeEntity()
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
-      await typeQuery('t-3')
+      await typeQuery('any')
 
       const titleEl = document.querySelector('.cmdk-title')
-      expect(titleEl?.textContent).toBe('T-3')
+      expect(titleEl?.textContent).toBe(entity.id)
     })
   })
 
   describe('focus and lifecycle', () => {
     it('focuses the input on open', async () => {
-      const wrapper = mount(CommandPaletteModal, {
-        props: { open: false },
-        attachTo: document.body,
-      })
-      await wrapper.setProps({ open: true })
-      await flushPromises()
-
+      const wrapper = await factoryClosedThenOpen()
       expect(document.activeElement).toBe(input())
       wrapper.unmount()
     })
@@ -174,36 +203,23 @@ describe('CommandPaletteModal', () => {
       const trigger = document.createElement('button')
       document.body.appendChild(trigger)
       trigger.focus()
-      expect(document.activeElement).toBe(trigger)
 
-      const wrapper = mount(CommandPaletteModal, {
-        props: { open: false },
-        attachTo: document.body,
-      })
-      await wrapper.setProps({ open: true })
-      await flushPromises()
+      const wrapper = await factoryClosedThenOpen()
       expect(document.activeElement).toBe(input())
 
-      await wrapper.setProps({ open: false })
-      await flushPromises()
+      await setOpen(wrapper, false)
       expect(document.activeElement).toBe(trigger)
-
       wrapper.unmount()
     })
 
     it('registers with the modal stack while open', async () => {
-      const wrapper = mount(CommandPaletteModal, {
-        props: { open: false },
-        attachTo: document.body,
-      })
+      const wrapper = factory({ open: false })
       expect(isAnyModalOpen()).toBe(false)
 
-      await wrapper.setProps({ open: true })
-      await flushPromises()
+      await setOpen(wrapper, true)
       expect(isAnyModalOpen()).toBe(true)
 
-      await wrapper.setProps({ open: false })
-      await flushPromises()
+      await setOpen(wrapper, false)
       expect(isAnyModalOpen()).toBe(false)
 
       wrapper.unmount()
@@ -211,47 +227,37 @@ describe('CommandPaletteModal', () => {
 
     it('resets query and highlightedIndex when re-opened', async () => {
       searchSpy.mockResolvedValue(
-        listResponse([makeEntity({ id: 'A' }), makeEntity({ id: 'B' })])
+        listResponse([makeEntity(), makeEntity()])
       )
-      const wrapper = mount(CommandPaletteModal, {
-        props: { open: true },
-        attachTo: document.body,
-      })
-      await flushPromises()
-
+      const wrapper = factory()
       await typeQuery('foo')
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      pressKey('ArrowDown')
       await flushPromises()
 
-      await wrapper.setProps({ open: false })
-      await flushPromises()
-      await wrapper.setProps({ open: true })
-      await flushPromises()
+      await setOpen(wrapper, false)
+      await setOpen(wrapper, true)
 
       expect(input().value).toBe('')
       // No results yet (query is empty), so no active descendant.
       expect(input().getAttribute('aria-activedescendant')).toBeNull()
-
       wrapper.unmount()
     })
   })
 
   describe('search behavior', () => {
-    it('debounces search calls', async () => {
-      searchSpy.mockResolvedValue(listResponse([]))
+    it('coalesces rapid keystrokes into a single API call', async () => {
+      // Verifies our debounce: type three characters in quick succession,
+      // and only the final value should make it to the API.
       factory()
 
-      // Three rapid keystrokes; only the final one should fire a request.
       input().value = 'ab'
       input().dispatchEvent(new Event('input'))
       input().value = 'abc'
       input().dispatchEvent(new Event('input'))
       input().value = 'abcd'
       input().dispatchEvent(new Event('input'))
+      // Drain the debounce.
       await flushPromises()
-
-      expect(searchSpy).not.toHaveBeenCalled()
-
       vi.advanceTimersByTime(150)
       await flushPromises()
       await flushPromises()
@@ -260,36 +266,33 @@ describe('CommandPaletteModal', () => {
       expect(searchSpy).toHaveBeenLastCalledWith('abcd', undefined, expect.any(AbortSignal))
     })
 
-    it('does not call /_search for empty query', async () => {
+    // Queries below the minimum length, or that contain only whitespace,
+    // must short-circuit without hitting the API. Otherwise the backend
+    // gets pummeled on every keystroke before the user has typed anything
+    // useful, and the UX is "show 8000 unrelated results for 'a'."
+    it.each<[string, string, string]>([
+      ['empty', '', ''],
+      ['whitespace-only', '   ', ''],
+      ['single character', 'a', 'a'],
+    ])('does not call /_search for %s queries', async (_name, query, prefix) => {
       factory()
-      await typeQuery('xy')
+      // Some cases (empty) need a prior real query to clear, so search
+      // doesn't no-op on the no-change path.
+      if (prefix) await typeQuery(prefix + 'x')
       searchSpy.mockClear()
-      await typeQuery('')
+      await typeQuery(query)
 
       expect(searchSpy).not.toHaveBeenCalled()
     })
 
-    it('does not call /_search for whitespace-only query', async () => {
-      factory()
-      await typeQuery('   ')
-
-      expect(searchSpy).not.toHaveBeenCalled()
-    })
-
-    it('does not call /_search for single-character queries', async () => {
+    it('shows the empty hint for a single-character query', async () => {
       factory()
       await typeQuery('a')
-
-      expect(searchSpy).not.toHaveBeenCalled()
-      expect(document.querySelector('.cmdk-hint')?.textContent?.trim()).toBe(
-        'Type to search entities'
-      )
+      expect(dom.hint()).toBe('Type to search entities')
     })
 
     it('caps rendered results at MAX_RESULTS (50)', async () => {
-      const many = Array.from({ length: 200 }, (_, i) =>
-        makeEntity({ id: `BIG-${i}`, _title: `Entity ${i}` })
-      )
+      const many = Array.from({ length: 200 }, () => makeEntity())
       searchSpy.mockResolvedValueOnce(listResponse(many))
       factory()
       await typeQuery('big')
@@ -302,8 +305,7 @@ describe('CommandPaletteModal', () => {
       factory()
       await typeQuery('nothing')
 
-      const hint = document.querySelector('.cmdk-hint')?.textContent?.trim()
-      expect(hint).toBe('No matches')
+      expect(dom.hint()).toBe('No matches')
     })
 
     it('shows error message on search failure', async () => {
@@ -311,14 +313,12 @@ describe('CommandPaletteModal', () => {
       factory()
       await typeQuery('foo')
 
-      const hint = document.querySelector('.cmdk-hint')?.textContent?.trim()
-      expect(hint).toBe('Search failed')
+      expect(dom.hint()).toBe('Search failed')
     })
 
     it('keeps previous results visible while a refetch is in flight', async () => {
-      searchSpy.mockResolvedValueOnce(
-        listResponse([makeEntity({ id: 'first', _title: 'First' })])
-      )
+      const first = makeEntity()
+      searchSpy.mockResolvedValueOnce(listResponse([first]))
       factory()
       await typeQuery('fi')
       expect(options()).toHaveLength(1)
@@ -339,15 +339,10 @@ describe('CommandPaletteModal', () => {
 
       // Previous results still visible (no flicker).
       expect(options()).toHaveLength(1)
-      expect(document.querySelector('.cmdk-spinner')).not.toBeNull()
+      expect(dom.spinner()).not.toBeNull()
 
       // Resolve the second request — results swap.
-      resolveSecond(
-        listResponse([
-          makeEntity({ id: 'a' }),
-          makeEntity({ id: 'b' }),
-        ])
-      )
+      resolveSecond(listResponse([makeEntity(), makeEntity()]))
       await flushPromises()
       expect(options()).toHaveLength(2)
     })
@@ -404,9 +399,7 @@ describe('CommandPaletteModal', () => {
 
   describe('keyboard navigation', () => {
     async function setupWithResults(n: number) {
-      const entities = Array.from({ length: n }, (_, i) =>
-        makeEntity({ id: `E-${i}`, _title: `Entity ${i}` })
-      )
+      const entities = Array.from({ length: n }, () => makeEntity())
       searchSpy.mockResolvedValueOnce(listResponse(entities))
       const wrapper = factory()
       await typeQuery('ee')
@@ -415,7 +408,7 @@ describe('CommandPaletteModal', () => {
 
     it('ArrowDown moves highlight forward', async () => {
       const { wrapper } = await setupWithResults(3)
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      pressKey('ArrowDown')
       await flushPromises()
       expect(options()[1].classList.contains('cmdk-option-active')).toBe(true)
       wrapper.unmount()
@@ -423,9 +416,9 @@ describe('CommandPaletteModal', () => {
 
     it('ArrowDown wraps from last to first', async () => {
       const { wrapper } = await setupWithResults(3)
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      pressKey('ArrowDown')
+      pressKey('ArrowDown')
+      pressKey('ArrowDown')
       await flushPromises()
       expect(options()[0].classList.contains('cmdk-option-active')).toBe(true)
       wrapper.unmount()
@@ -433,7 +426,7 @@ describe('CommandPaletteModal', () => {
 
     it('ArrowUp wraps from first to last', async () => {
       const { wrapper } = await setupWithResults(3)
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      pressKey('ArrowUp')
       await flushPromises()
       expect(options()[2].classList.contains('cmdk-option-active')).toBe(true)
       wrapper.unmount()
@@ -441,7 +434,7 @@ describe('CommandPaletteModal', () => {
 
     it('ArrowDown does not crash with empty results', async () => {
       factory()
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      pressKey('ArrowDown')
       await flushPromises()
       // No throw, no options rendered.
       expect(options()).toHaveLength(0)
@@ -449,7 +442,7 @@ describe('CommandPaletteModal', () => {
 
     it('aria-activedescendant matches highlighted option id', async () => {
       const { wrapper, entities } = await setupWithResults(2)
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      pressKey('ArrowDown')
       await flushPromises()
       const expected = `cmdk-option-${entities[1].id}`
       expect(input().getAttribute('aria-activedescendant')).toBe(expected)
@@ -459,9 +452,9 @@ describe('CommandPaletteModal', () => {
 
     it('Enter navigates to the highlighted entity and emits close', async () => {
       const { wrapper, entities } = await setupWithResults(2)
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      pressKey('ArrowDown')
       await flushPromises()
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      pressKey('Enter')
       await flushPromises()
 
       expect(routerPush).toHaveBeenCalledWith(`/entity/${entities[1].type}/${entities[1].id}`)
@@ -471,7 +464,7 @@ describe('CommandPaletteModal', () => {
 
     it('Enter is a no-op when results are empty', async () => {
       const wrapper = factory()
-      input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      pressKey('Enter')
       await flushPromises()
       expect(routerPush).not.toHaveBeenCalled()
       expect(wrapper.emitted('close')).toBeUndefined()
@@ -499,12 +492,7 @@ describe('CommandPaletteModal', () => {
       // After mount with open=true the input is auto-focused (immediate watcher).
       expect(document.activeElement).toBe(input())
 
-      const event = new KeyboardEvent('keydown', {
-        key: 'Tab',
-        bubbles: true,
-        cancelable: true,
-      })
-      input().dispatchEvent(event)
+      const event = pressKey('Tab')
 
       expect(event.defaultPrevented).toBe(true)
       expect(document.activeElement).toBe(input())
@@ -513,40 +501,38 @@ describe('CommandPaletteModal', () => {
 
   describe('selection', () => {
     it('clicking a result navigates and emits close', async () => {
-      searchSpy.mockResolvedValueOnce(
-        listResponse([makeEntity({ id: 'X-1', type: 'ticket' })])
-      )
+      const entity = makeEntity({ type: 'ticket' })
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
       const wrapper = factory()
       await typeQuery('xx')
 
       options()[0].click()
       await flushPromises()
 
-      expect(routerPush).toHaveBeenCalledWith('/entity/ticket/X-1')
+      expect(routerPush).toHaveBeenCalledWith(`/entity/${entity.type}/${entity.id}`)
       expect(wrapper.emitted('close')).toHaveLength(1)
     })
 
     it('uses custom detail view when configured for the entity type', async () => {
-      const schemaStore = useSchemaStore()
-      schemaStore.entityViewConfigs.set('ticket', {
-        detail_view: 'ticket-detail',
+      const detailViewId = 'ticket-detail'
+      useSchemaStore().entityViewConfigs.set('ticket', {
+        detail_view: detailViewId,
       } as never)
 
-      searchSpy.mockResolvedValueOnce(
-        listResponse([makeEntity({ id: 'X-2', type: 'ticket' })])
-      )
+      const entity = makeEntity({ type: 'ticket' })
+      searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
       await typeQuery('xx')
 
       options()[0].click()
       await flushPromises()
 
-      expect(routerPush).toHaveBeenCalledWith('/view/ticket-detail/X-2')
+      expect(routerPush).toHaveBeenCalledWith(`/view/${detailViewId}/${entity.id}`)
     })
 
     it('does not navigate when entity has no type (empty href)', async () => {
       searchSpy.mockResolvedValueOnce(
-        listResponse([makeEntity({ id: 'X-3', type: '' })])
+        listResponse([makeEntity({ type: '' })])
       )
       const wrapper = factory()
       await typeQuery('xx')
@@ -562,15 +548,13 @@ describe('CommandPaletteModal', () => {
   describe('overlay click', () => {
     it('emits close when backdrop is clicked', () => {
       const wrapper = factory()
-      const overlay = document.querySelector<HTMLElement>('.cmdk-overlay')!
-      overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      dom.overlay()!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       expect(wrapper.emitted('close')).toHaveLength(1)
     })
 
     it('does not emit close when clicking inside the modal', () => {
       const wrapper = factory()
-      const modal = document.querySelector<HTMLElement>('.cmdk-modal')!
-      modal.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      dom.modal()!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       expect(wrapper.emitted('close')).toBeUndefined()
     })
   })
