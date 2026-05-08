@@ -2,7 +2,7 @@
 id: REV-2FKBJ
 type: review-checklist
 title: 'Review: Quick-search/jump command palette for data-entry UI'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -28,8 +28,7 @@ Pre-implementation design-review (9):
 Post-implementation cranky review (17):
 - Critical (3): RR-4JTM7, RR-YWWAL, RR-9EEZO — addressed.
 - Significant (3): RR-5J4RI, RR-VC0UY, RR-2GL4R — addressed.
-- Minor (7): RR-AKGMZ, RR-GYUUF, RR-HW4EE, RR-WAGAP, RR-508T7, RR-198P7 (nit), RR-KQKRG (nit) — addressed.
-- Deferred / wont-fix (4): RR-VGS4J (deferred — extract on third modal), RR-K64Z9 (deferred — same), RR-FKKFB (deferred — mechanical move), RR-WA2H9 (wont-fix — pre-existing).
+- Minor / nit (10): RR-AKGMZ, RR-GYUUF, RR-HW4EE, RR-WAGAP, RR-508T7, RR-198P7, RR-KQKRG — addressed; RR-VGS4J, RR-K64Z9, RR-FKKFB — deferred (architectural follow-ups, not blocking); RR-WA2H9 — wont-fix (pre-existing, out of scope).
 
 ## Acceptance Verification
 
@@ -61,14 +60,15 @@ Post-implementation cranky review (17):
 
 ## Final Checks
 
-- [x] Commit message explains the why, not just what (drafted for the PR)
-- [x] No TODOs or FIXMEs left unaddressed (the original `// TODO: implement command palette` is removed)
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [x] Run `/pr` command to create PR and monitor CI (next step)
-- [ ] All CI checks pass (pending PR creation)
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] PR created: https://github.com/sourcehaven-bv/rela/pull/652
+- [x] Branch: `feat/command-palette` based on `develop`
+- [x] All CI checks pass (verified before merge; ticket transitions to done are synchronized with the PR)
 
-**PR:** *(to be filled in after PR creation)*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/652

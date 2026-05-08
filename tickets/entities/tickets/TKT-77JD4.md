@@ -5,7 +5,7 @@ title: Quick-search/jump command palette for data-entry UI
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
