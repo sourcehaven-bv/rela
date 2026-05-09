@@ -18,6 +18,7 @@ const shortcuts = computed(() => [
     items: [
       { keys: '?', description: 'Show keyboard shortcuts' },
       { keys: '/', description: 'Focus search' },
+      { keys: `${mod.value} + K`, description: 'Quick jump' },
       { keys: 'Esc', description: 'Close modal / cancel' },
     ],
   },

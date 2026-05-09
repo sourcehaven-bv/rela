@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
-import { shortcutsModalOpen, useKeyboardShortcuts } from './useKeyboardShortcuts'
+import { paletteOpen, shortcutsModalOpen, useKeyboardShortcuts } from './useKeyboardShortcuts'
+import { _resetModalStack, registerModal } from './modalStack'
 
 // Helper to create a keyboard event
 function createKeyEvent(key: string, options: Partial<KeyboardEvent> = {}): KeyboardEvent {
@@ -24,6 +25,8 @@ describe('useKeyboardShortcuts', () => {
   beforeEach(() => {
     // Reset modal state
     shortcutsModalOpen.value = false
+    paletteOpen.value = false
+    _resetModalStack()
 
     // Create router with routes
     router = createRouter({
@@ -208,8 +211,8 @@ describe('useKeyboardShortcuts', () => {
     })
   })
 
-  describe('meta key shortcuts', () => {
-    it('handles Cmd+K (reserved for command palette)', async () => {
+  describe('command palette (Cmd/Ctrl+K)', () => {
+    it('opens the palette on Cmd+K', async () => {
       await mountWithRouter()
 
       const event = createKeyEvent('k', { metaKey: true })
@@ -218,9 +221,10 @@ describe('useKeyboardShortcuts', () => {
       document.dispatchEvent(event)
 
       expect(preventDefaultSpy).toHaveBeenCalled()
+      expect(paletteOpen.value).toBe(true)
     })
 
-    it('handles Ctrl+K (reserved for command palette)', async () => {
+    it('opens the palette on Ctrl+K', async () => {
       await mountWithRouter()
 
       const event = createKeyEvent('k', { ctrlKey: true })
@@ -229,6 +233,67 @@ describe('useKeyboardShortcuts', () => {
       document.dispatchEvent(event)
 
       expect(preventDefaultSpy).toHaveBeenCalled()
+      expect(paletteOpen.value).toBe(true)
+    })
+
+    it('opens even when an input is focused (bypasses isInputFocused)', async () => {
+      await mountWithRouter()
+
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+
+      document.dispatchEvent(createKeyEvent('k', { metaKey: true }))
+
+      expect(paletteOpen.value).toBe(true)
+
+      document.body.removeChild(input)
+    })
+
+    it('is idempotent when palette is already open', async () => {
+      await mountWithRouter()
+
+      document.dispatchEvent(createKeyEvent('k', { metaKey: true }))
+      expect(paletteOpen.value).toBe(true)
+
+      // Second press: still open, no flip-flop.
+      document.dispatchEvent(createKeyEvent('k', { metaKey: true }))
+      expect(paletteOpen.value).toBe(true)
+    })
+
+    it('opens even when another modal is registered (Cmd+K bypasses the modal-stack gate)', async () => {
+      await mountWithRouter()
+      registerModal(Symbol('confirm'))
+
+      document.dispatchEvent(createKeyEvent('k', { metaKey: true }))
+      expect(paletteOpen.value).toBe(true)
+    })
+  })
+
+  describe('modal-stack gate', () => {
+    it('global handlers stand down while any modal is registered', async () => {
+      await mountWithRouter()
+      await router.push({ name: 'form-create', params: { id: 'test' } })
+      await nextTick()
+      registerModal(Symbol('palette'))
+
+      const backSpy = vi.spyOn(router, 'back')
+      const pushSpy = vi.spyOn(router, 'push')
+
+      // Escape on a form route — without the modal-stack gate this would
+      // call router.back(). With the gate it must not.
+      document.dispatchEvent(createKeyEvent('Escape'))
+      expect(backSpy).not.toHaveBeenCalled()
+
+      // ? would normally open the shortcuts modal. The gate suppresses it
+      // because another modal is already on the stack.
+      document.dispatchEvent(createKeyEvent('?'))
+      expect(shortcutsModalOpen.value).toBe(false)
+
+      // g-prefix nav also stands down.
+      document.dispatchEvent(createKeyEvent('g'))
+      document.dispatchEvent(createKeyEvent('d'))
+      expect(pushSpy).not.toHaveBeenCalled()
     })
   })
 

@@ -1,5 +1,5 @@
 /* v8 ignore start - re-exports only */
-export { useKeyboardShortcuts, shortcutsModalOpen } from './useKeyboardShortcuts'
+export { useKeyboardShortcuts, shortcutsModalOpen, paletteOpen } from './useKeyboardShortcuts'
 export { useListKeyboard } from './useListKeyboard'
 export { useEvents } from './useEvents'
 export type { SSEEventType, EntityEventData, SSEConnectionState } from './useEvents'

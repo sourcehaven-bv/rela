@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { useKeyboardShortcuts, shortcutsModalOpen, useEvents } from '@/composables'
+import { useKeyboardShortcuts, shortcutsModalOpen, paletteOpen, useEvents } from '@/composables'
 import { useConfirmHost } from '@/composables/useConfirm'
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
 import ScriptErrorDialog from '@/components/common/ScriptErrorDialog.vue'
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
+import CommandPaletteModal from '@/components/ui/CommandPaletteModal.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 
 const schemaStore = useSchemaStore()
@@ -118,6 +119,10 @@ watch(
       @close="shortcutsModalOpen = false"
     />
   </div>
+
+  <!-- Mounted unconditionally so Cmd+K works during schema loading and on
+       the error screen, mirroring the ConfirmModal hoist below. -->
+  <CommandPaletteModal :open="paletteOpen" @close="paletteOpen = false" />
 
   <!-- Mounted unconditionally (outside the loading/error/loaded branches) so
        any caller of useConfirm() resolves to a rendered modal even during
