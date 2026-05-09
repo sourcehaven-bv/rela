@@ -165,7 +165,7 @@ func (g *Generator) computeMetamodelHash() string {
 		// Hash entity metadata
 		h.Write([]byte(def.Label))
 		h.Write([]byte(def.Description))
-		h.Write([]byte(def.GetDirPlural(typeName)))
+		h.Write([]byte(def.GetPlural(typeName)))
 
 		// Hash properties (sorted)
 		propNames := make([]string, 0, len(def.Properties))

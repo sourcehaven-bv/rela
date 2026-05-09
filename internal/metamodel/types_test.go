@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestEntityDef_GetDirPlural(t *testing.T) {
+func TestEntityDef_GetPlural(t *testing.T) {
 	tests := []struct {
 		name     string
 		def      EntityDef
@@ -43,9 +43,9 @@ func TestEntityDef_GetDirPlural(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.GetDirPlural(tt.typeName)
+			got := tt.def.GetPlural(tt.typeName)
 			if got != tt.want {
-				t.Errorf("GetDirPlural() = %q, want %q", got, tt.want)
+				t.Errorf("GetPlural() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -877,7 +877,7 @@ func TestPropertyDef_GetDateFormat(t *testing.T) {
 	}
 }
 
-func TestEntityDef_GetPlural(t *testing.T) {
+func TestEntityDef_GetLabelPlural(t *testing.T) {
 	tests := []struct {
 		name string
 		def  EntityDef
@@ -902,9 +902,9 @@ func TestEntityDef_GetPlural(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.def.GetPlural()
+			got := tt.def.GetLabelPlural()
 			if got != tt.want {
-				t.Errorf("GetPlural() = %q, want %q", got, tt.want)
+				t.Errorf("GetLabelPlural() = %q, want %q", got, tt.want)
 			}
 		})
 	}

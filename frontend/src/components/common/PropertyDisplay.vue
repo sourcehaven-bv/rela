@@ -11,6 +11,8 @@ export interface PropertyItem {
   values?: string[] // For enum type detection
   propType?: string // For badge styling lookup (used by CustomView)
   isLongText?: boolean
+  inaccessible?: boolean // Property exists but value is unreadable (e.g. encrypted)
+  inaccessibleReason?: string // Reason marker (e.g. "git-crypt") shown in tooltip
 }
 
 defineProps<{
@@ -44,6 +46,16 @@ function isLong(prop: PropertyItem): boolean {
   const val = String(prop.value || '')
   return val.length > 60
 }
+
+function inaccessibleTooltip(prop: PropertyItem): string {
+  if (prop.inaccessibleReason === 'git-crypt') {
+    return 'git-crypt encrypted (run `git-crypt unlock` to read)'
+  }
+  if (prop.inaccessibleReason) {
+    return `inaccessible (${prop.inaccessibleReason})`
+  }
+  return 'inaccessible'
+}
 </script>
 
 <template>
@@ -56,7 +68,12 @@ function isLong(prop: PropertyItem): boolean {
     >
       <dt>{{ prop.label }}</dt>
       <dd>
-        <div v-if="shouldUseBadge(prop)" class="badge-row">
+        <span
+          v-if="prop.inaccessible"
+          class="property-inaccessible"
+          :title="inaccessibleTooltip(prop)"
+        >🔒 inaccessible</span>
+        <div v-else-if="shouldUseBadge(prop)" class="badge-row">
           <Badge
             v-for="badgeValue in getBadgeValues(prop)"
             :key="badgeValue"
@@ -107,5 +124,11 @@ function isLong(prop: PropertyItem): boolean {
 .property-item.property-long dd {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.property-inaccessible {
+  color: var(--muted-text);
+  font-style: italic;
+  cursor: help;
 }
 </style>

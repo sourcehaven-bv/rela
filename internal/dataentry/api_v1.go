@@ -29,15 +29,24 @@ import (
 
 // V1Entity is the JSON representation of an entity for API v1.
 type V1Entity struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Title      string                 `json:"_title,omitempty"`
-	Properties map[string]interface{} `json:"properties"`
-	Content    string                 `json:"content,omitempty"`
-	Relations  map[string][]string    `json:"relations,omitempty"`
-	Included   map[string]V1Entity    `json:"included,omitempty"`
-	Self       string                 `json:"_self,omitempty"`
-	Actions    *V1Actions             `json:"_actions,omitempty"`
+	ID           string                 `json:"id"`
+	Type         string                 `json:"type"`
+	Title        string                 `json:"_title,omitempty"`
+	Properties   map[string]interface{} `json:"properties"`
+	Content      string                 `json:"content,omitempty"`
+	Relations    map[string][]string    `json:"relations,omitempty"`
+	Included     map[string]V1Entity    `json:"included,omitempty"`
+	Self         string                 `json:"_self,omitempty"`
+	Actions      *V1Actions             `json:"_actions,omitempty"`
+	Inaccessible []V1InaccessibleField  `json:"inaccessible,omitempty"`
+}
+
+// V1InaccessibleField describes a property that is known to exist but
+// whose value is unreadable by the holder of the entity (e.g. the file
+// is git-crypt encrypted and the key is not present locally).
+type V1InaccessibleField struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // V1Actions describes available actions for an entity.
@@ -228,7 +237,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 	// Find entity type by plural
 	var typeName string
 	for name, def := range a.State().Meta.Entities {
-		if def.GetDirPlural(name) == plural {
+		if def.GetPlural(name) == plural {
 			typeName = name
 			break
 		}
@@ -509,6 +518,15 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	entity, found := a.getEntity(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	// Refuse to write through an inaccessible entity. The on-disk file
+	// is unreadable (e.g. git-crypt encrypted, no key locally) — writing
+	// would replace the ciphertext with whatever the SPA had on hand.
+	if entity.IsLocked() {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "encrypted_inaccessible",
+			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
 		return
 	}
 
@@ -859,7 +877,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 	newEntity := cloneResult.Entity
 
 	entityDef := s.Meta.Entities[typeName]
-	plural := entityDef.GetDirPlural(typeName)
+	plural := entityDef.GetPlural(typeName)
 	result := a.entityToV1(newEntity, plural, false, false)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
@@ -884,7 +902,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	for name, def := range s.Meta.Entities {
 		et := V1EntityType{
 			Label:       def.Label,
-			Plural:      def.GetDirPlural(name),
+			Plural:      def.GetPlural(name),
 			Description: def.Description,
 			Primary:     def.GetPrimaryProperty(),
 			IDType:      def.GetIDType(),
@@ -955,7 +973,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		et := V1EntityType{
 			Label:       def.Label,
-			Plural:      def.GetDirPlural(typeName),
+			Plural:      def.GetPlural(typeName),
 			Description: def.Description,
 			Primary:     def.GetPrimaryProperty(),
 			IDType:      def.GetIDType(),
@@ -1058,7 +1076,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	data := make([]V1Entity, 0, len(entities))
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
-		plural := entityDef.GetDirPlural(e.Type)
+		plural := entityDef.GetPlural(e.Type)
 		data = append(data, a.entityToV1(e, plural, false, false))
 	}
 
@@ -1133,6 +1151,16 @@ func (a *App) entityToV1(e *entityPkg.Entity, plural string, includeRelations, i
 		v1.Properties[k] = v
 	}
 
+	if e.IsLocked() {
+		v1.Inaccessible = make([]V1InaccessibleField, 0, len(e.Inaccessible))
+		for _, f := range e.Inaccessible {
+			v1.Inaccessible = append(v1.Inaccessible, V1InaccessibleField{
+				Name:   f.Name,
+				Reason: string(f.Reason),
+			})
+		}
+	}
+
 	if includeRelations {
 		v1.Relations = make(map[string][]string)
 		for _, edge := range a.outgoingRelations(e.ID) {
@@ -1189,7 +1217,7 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 				continue
 			}
 			entityDef := s.Meta.Entities[target.Type]
-			plural := entityDef.GetDirPlural(target.Type)
+			plural := entityDef.GetPlural(target.Type)
 			included[target.ID] = a.entityToV1(target, plural, false, false)
 		}
 		// Include all incoming relations
@@ -1199,7 +1227,7 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 				continue
 			}
 			entityDef := s.Meta.Entities[source.Type]
-			plural := entityDef.GetDirPlural(source.Type)
+			plural := entityDef.GetPlural(source.Type)
 			included[source.ID] = a.entityToV1(source, plural, false, false)
 		}
 		return included
@@ -1225,7 +1253,7 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 				continue
 			}
 			entityDef := s.Meta.Entities[target.Type]
-			plural := entityDef.GetDirPlural(target.Type)
+			plural := entityDef.GetPlural(target.Type)
 			included[target.ID] = a.entityToV1(target, plural, false, false)
 
 			// Handle nested includes
@@ -2439,7 +2467,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
-	plural := entityDef.GetDirPlural(result.Entry.Type)
+	plural := entityDef.GetPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
 		Entry:    a.entityToV1(result.Entry, plural, true, false),

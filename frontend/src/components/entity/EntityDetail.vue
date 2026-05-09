@@ -108,6 +108,19 @@ const commands = ref<Command[]>([])
 const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
 const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
 
+// inaccessibleByName maps each inaccessible field's name to its reason
+// (e.g. 'git-crypt'), letting consumers render per-property tooltips
+// without re-walking the array.
+const inaccessibleByName = computed<Map<string, string>>(() => {
+  const m = new Map<string, string>()
+  for (const f of entity.value?.inaccessible || []) {
+    m.set(f.name, f.reason)
+  }
+  return m
+})
+
+const isInaccessible = computed(() => (entity.value?.inaccessible?.length ?? 0) > 0)
+
 const properties = computed(() => {
   if (!entity.value || !typeDef.value) return []
 
@@ -116,7 +129,10 @@ const properties = computed(() => {
   const form = formId ? schemaStore.getForm(formId) : null
   const formFieldOrder = form?.fields?.map((f) => f.property).filter(Boolean) as string[] || []
 
-  // Build properties list
+  // Build properties list. Inaccessible properties carry a marker so the
+  // PropertyDisplay component can render a lock indicator instead of the
+  // (absent) value, plus the reason for the tooltip.
+  const inaccessible = inaccessibleByName.value
   const props = Object.entries(typeDef.value.properties).map(([name, def]) => ({
     name,
     label: name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
@@ -124,6 +140,8 @@ const properties = computed(() => {
     type: def.type,
     values: def.values,
     isLongText: def.type === 'string' && String(entity.value?.properties[name] || '').length > 60,
+    inaccessible: inaccessible.has(name),
+    inaccessibleReason: inaccessible.get(name),
   }))
 
   // Sort by form field order, then alphabetically for any not in form
@@ -218,6 +236,7 @@ async function loadEntity() {
 }
 
 function editEntity() {
+  if (isInaccessible.value) return
   if (editFormId.value) {
     router.push(`/form/${editFormId.value}/${props.entityId}`)
   } else {
@@ -408,7 +427,11 @@ onMounted(() => loadEntity())
           >
             {{ cmd.label }}
           </button>
-          <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
+          <button
+            v-if="editFormId && !isInaccessible"
+            class="btn btn-secondary"
+            @click="editEntity"
+          >
             Edit <kbd>E</kbd>
           </button>
           <button class="btn btn-danger" @click="requestDelete">
@@ -418,7 +441,11 @@ onMounted(() => loadEntity())
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div class="header-actions mobile-actions">
-          <button v-if="editFormId" class="btn btn-secondary" @click="editEntity">
+          <button
+            v-if="editFormId && !isInaccessible"
+            class="btn btn-secondary"
+            @click="editEntity"
+          >
             Edit
           </button>
           <button class="btn btn-danger mobile-delete-btn" aria-label="Delete" @click="requestDelete">
@@ -448,6 +475,28 @@ onMounted(() => loadEntity())
           </div>
         </div>
       </header>
+
+      <!-- Inaccessible (encrypted) banner -->
+      <aside
+        v-if="entity.inaccessible && entity.inaccessible.length > 0"
+        class="inaccessible-banner"
+      >
+        <span class="inaccessible-banner-icon" aria-hidden="true">🔒</span>
+        <div>
+          <strong>This entity is git-crypt encrypted.</strong>
+          <p>
+            The file is stored as ciphertext and cannot be read with the
+            current configuration. Run
+            <code>git-crypt unlock</code>
+            in the project root to decrypt it, then reload this page.
+            <a
+              href="https://github.com/AGWA/git-crypt#readme"
+              target="_blank"
+              rel="noopener noreferrer"
+            >Learn more about git-crypt.</a>
+          </p>
+        </div>
+      </aside>
 
       <!-- Properties Section -->
       <section class="detail-section">
@@ -504,6 +553,36 @@ onMounted(() => loadEntity())
 <style scoped>
 .entity-detail {
   max-width: 900px;
+}
+
+.inaccessible-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-border, #ccc);
+  border-left: 4px solid var(--color-warning, #d9970e);
+  border-radius: 4px;
+  background: var(--color-surface, #fafafa);
+}
+
+.inaccessible-banner-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.inaccessible-banner p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.inaccessible-banner code {
+  padding: 1px 4px;
+  background: var(--color-code-bg, #eee);
+  border-radius: 3px;
+  font-family: var(--font-mono, monospace);
 }
 
 /* Uses global .loading-state, .error-state, .spinner from App.vue */

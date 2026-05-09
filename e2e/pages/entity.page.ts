@@ -92,6 +92,23 @@ export class EntityPage extends BasePage {
     return this.editButton.isVisible();
   }
 
+  /** True when the inaccessible (encrypted) banner is rendered. */
+  get inaccessibleBanner(): Locator {
+    return this.page.locator('.inaccessible-banner');
+  }
+
+  async expectInaccessibleBanner() {
+    await expect(this.inaccessibleBanner).toBeVisible();
+    await expect(this.inaccessibleBanner).toContainText(/git-crypt/i);
+  }
+
+  /** Count of property values rendered as locked placeholders in the
+   *  detail view. Each schema property of a fully-encrypted entity
+   *  produces one such marker. */
+  async lockedPropertyCount(): Promise<number> {
+    return this.detailContainer.locator('.property-inaccessible').count();
+  }
+
   async containsText(text: string): Promise<boolean> {
     return this.page.getByText(text).first().isVisible();
   }

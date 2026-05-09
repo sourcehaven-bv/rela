@@ -53,8 +53,18 @@ type Config struct {
 	EntitiesKey    string
 	RelationsKey   string
 	AttachmentsKey string
-	CacheKey       string                            // for fsstore-index.json
-	Schemas        map[string]store.EntityTypeSchema // type → plural + property order
+	CacheKey       string // for fsstore-index.json
+	// Schemas maps every entity type the metamodel declares to its
+	// storage-relevant configuration (plural directory name + property
+	// order). fsstore relies on this map being complete: directories
+	// whose plural does not resolve to a known type are skipped at scan
+	// time, and inaccessible-entity shells use the schema's
+	// PropertyOrder to enumerate fields. Empty maps are rejected by
+	// [New].
+	//
+	// In production this is built by app.buildSchemas from the loaded
+	// metamodel.
+	Schemas map[string]store.EntityTypeSchema
 	// Observers are notified synchronously on entity writes (create, update,
 	// delete, rename). They are NOT populated from existing entity files on
 	// startup — callers that need that behavior can iterate ListEntities
@@ -161,8 +171,13 @@ func New(cfg Config) (*FSStore, error) {
 	if cfg.RelationsKey == "" {
 		return nil, errors.New("fsstore: Config.RelationsKey must not be empty")
 	}
-	if cfg.Schemas == nil {
-		cfg.Schemas = make(map[string]store.EntityTypeSchema)
+	// Schemas must be populated from the loaded metamodel. Without it,
+	// fsstore cannot map plural directory names back to entity types
+	// reliably, and inaccessible-entity shells (for git-crypt encrypted
+	// files) cannot enumerate their schema-declared properties. An
+	// empty map always indicates a bootstrap-ordering bug.
+	if len(cfg.Schemas) == 0 {
+		return nil, errors.New("fsstore: Config.Schemas must be populated from the metamodel; an empty map indicates a bootstrap-ordering bug")
 	}
 
 	s := &FSStore{

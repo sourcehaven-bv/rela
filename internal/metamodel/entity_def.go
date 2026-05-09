@@ -2,20 +2,22 @@ package metamodel
 
 import "fmt"
 
-// GetPlural returns the plural label for an entity type
-func (e *EntityDef) GetPlural() string {
+// GetLabelPlural returns the human-readable plural label for an entity
+// type (used in UI strings, e.g. "List of Features").
+func (e *EntityDef) GetLabelPlural() string {
 	if e.LabelPlural != "" {
 		return e.LabelPlural
 	}
 	return e.Label + "s"
 }
 
-// GetDirPlural returns the plural form to use for directory names
-func (e *EntityDef) GetDirPlural(typeName string) string {
+// GetPlural returns the slug-form plural for an entity type (used as
+// URL segments, fsstore directory names, OpenAPI paths). Falls back to
+// naive pluralization of the type name when not explicitly set.
+func (e *EntityDef) GetPlural(typeName string) string {
 	if e.Plural != "" {
 		return e.Plural
 	}
-	// Fall back to naive pluralization of the type name
 	return typeName + "s"
 }
 

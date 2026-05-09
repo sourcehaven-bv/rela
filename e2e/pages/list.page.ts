@@ -67,6 +67,15 @@ export class ListPage extends BasePage {
     ).toBeVisible();
   }
 
+  /** Count of cells in the row marked as inaccessible (rendered with
+   *  the lock indicator). Used by git-crypt.spec.ts to assert that
+   *  encrypted entities lock every visible column. */
+  async lockedCellsInRow(id: string): Promise<number> {
+    return this.page
+      .locator(`.entity-row[data-entity-id="${id}"] .inaccessible-cell`)
+      .count();
+  }
+
   async expectRowNotVisible(text: string) {
     await expect(
       this.page.locator('.entity-row, tbody tr').filter({ hasText: text }),

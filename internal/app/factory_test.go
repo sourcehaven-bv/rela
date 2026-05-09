@@ -56,12 +56,18 @@ func TestFSFactoryOpenStoreReturnsIndependentStores(t *testing.T) {
 		CacheDir:     filepath.Join(root, ".rela"),
 	}
 
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"policy": {Plural: "policies"},
+		},
+	}
+
 	factory := &app.FSFactory{FS: fs, Paths: paths}
-	s1, err := factory.OpenStore(nil)
+	s1, err := factory.OpenStore(meta)
 	require.NoError(t, err)
 	defer s1.Close()
 
-	s2, err := factory.OpenStore(nil)
+	s2, err := factory.OpenStore(meta)
 	require.NoError(t, err)
 	defer s2.Close()
 

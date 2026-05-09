@@ -16,8 +16,23 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
 
+// defaultTestSchemas covers the entity types used across fsstore_test
+// files. fsstore.New rejects an empty Schemas map, so every test that
+// constructs a store needs something here. Adding a new type? Add it
+// here once.
+var defaultTestSchemas = map[string]store.EntityTypeSchema{
+	"requirement": {Plural: "requirements", PropertyOrder: []string{"title", "status", "description"}},
+	"solution":    {Plural: "solutions", PropertyOrder: []string{"title", "status"}},
+	"artifact":    {Plural: "artifacts", PropertyOrder: []string{"title", "status"}},
+	"document":    {Plural: "documents", PropertyOrder: []string{"title"}},
+	"thing":       {Plural: "things", PropertyOrder: []string{"title"}},
+	"ticket":      {Plural: "tickets", PropertyOrder: []string{"title", "status"}},
+	"decision":    {Plural: "decisions", PropertyOrder: []string{"title", "status"}},
+}
+
 // newConfig builds an fsstore Config for the given in-memory FS
-// rooted at "/". Shared across fsstore_test files.
+// rooted at "/". Shared across fsstore_test files. Pre-populates
+// Schemas with the common test entity types.
 func newConfig(fs *storage.MemFS) fsstore.Config {
 	rooted, err := storage.NewRootedFS(fs, "/")
 	if err != nil {
@@ -30,6 +45,7 @@ func newConfig(fs *storage.MemFS) fsstore.Config {
 		RelationsKey:   "relations",
 		AttachmentsKey: "attachments",
 		CacheKey:       ".rela",
+		Schemas:        defaultTestSchemas,
 	}
 }
 

@@ -149,6 +149,13 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 }
 
 // loadCandidates loads entities of the given type from the store.
+//
+// Entities whose body is unreadable (e.g. git-crypt encrypted, no key
+// in the local working tree) are skipped: their property values are not
+// available, so applying property-driven rules to them would produce
+// false-positive "required field missing" violations. They remain
+// visible to other consumers (search, data-entry); only the validator
+// cannot meaningfully evaluate rules against them.
 func (v *GenericValidator) loadCandidates(ctx context.Context, entityType string) ([]*entity.Entity, error) {
 	q := store.EntityQuery{}
 	if entityType != "" {
@@ -159,6 +166,9 @@ func (v *GenericValidator) loadCandidates(ctx context.Context, entityType string
 	for e, err := range v.r.ListEntities(ctx, q) {
 		if err != nil {
 			return nil, err
+		}
+		if e.IsLocked() {
+			continue
 		}
 		out = append(out, e)
 	}

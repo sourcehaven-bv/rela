@@ -142,7 +142,7 @@ func (a *App) handleAPIEntityTypes(w http.ResponseWriter, _ *http.Request) {
 	for name, def := range s.Meta.Entities {
 		apiType := APIEntityType{
 			Name:       name,
-			Plural:     def.GetPlural(),
+			Plural:     def.GetLabelPlural(),
 			Primary:    def.GetPrimaryProperty(),
 			Properties: make(map[string]APIProperty),
 		}

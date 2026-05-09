@@ -120,3 +120,40 @@ func TestRelationClone(t *testing.T) {
 	clone.Properties["weight"] = 99
 	assert.Equal(t, 1, r.Properties["weight"])
 }
+
+func TestIsLocked(t *testing.T) {
+	e := entity.New("T-1", "ticket")
+	assert.False(t, e.IsLocked(), "new entity has empty Inaccessible")
+
+	e.Inaccessible = []entity.InaccessibleField{
+		{Name: "title", Reason: entity.InaccessibleReasonGitCrypt},
+	}
+	assert.True(t, e.IsLocked())
+
+	r := entity.NewRelation("A", "links", "B")
+	assert.False(t, r.IsLocked())
+	r.Inaccessible = []entity.InaccessibleField{
+		{Name: "*", Reason: entity.InaccessibleReasonGitCrypt},
+	}
+	assert.True(t, r.IsLocked())
+}
+
+func TestCloneInaccessibleIsolation(t *testing.T) {
+	// Regression: Clone must deep-copy Inaccessible so consumers can
+	// mutate without aliasing the original. RR-VOYW.
+	e := entity.New("T-1", "ticket")
+	e.Inaccessible = []entity.InaccessibleField{
+		{Name: "title", Reason: entity.InaccessibleReasonGitCrypt},
+	}
+	clone := e.Clone()
+	clone.Inaccessible[0].Name = "mutated"
+	assert.Equal(t, "title", e.Inaccessible[0].Name, "mutating clone must not affect original")
+
+	r := entity.NewRelation("A", "links", "B")
+	r.Inaccessible = []entity.InaccessibleField{
+		{Name: "*", Reason: entity.InaccessibleReasonGitCrypt},
+	}
+	rclone := r.Clone()
+	rclone.Inaccessible[0].Name = "mutated"
+	assert.Equal(t, "*", r.Inaccessible[0].Name)
+}
