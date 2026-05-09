@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // newMdTestRuntime creates a minimal runtime for markdown tests (no workspace needed).
@@ -1708,4 +1710,338 @@ func newMdTestRuntimeB(b *testing.B) *Runtime {
 	b.Helper()
 	var sb strings.Builder
 	return NewReader(ReadDeps{}, &sb)
+}
+
+// --- resolve_refs / entity_refs (TKT-LXYHQ) ---
+
+// resolveAndRender runs parse → resolve_refs(map) → render and returns
+// the rendered markdown. Used by the table-driven resolve_refs tests.
+func resolveAndRender(t *testing.T, input string, refs map[string]string) string {
+	t.Helper()
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	var b strings.Builder
+	b.WriteString("local refs = {}\n")
+	for k, v := range refs {
+		fmt.Fprintf(&b, "refs[%q] = %q\n", k, v)
+	}
+	fmt.Fprintf(&b,
+		"return rela.md.render(rela.md.resolve_refs(rela.md.parse(%q), refs))\n", input)
+	require.NoError(t, rt.RunString(b.String()))
+	out := lua.LVAsString(rt.L.Get(-1))
+	rt.L.Pop(1)
+	return out
+}
+
+func TestMdResolveRefs(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		refs  map[string]string
+		want  string
+	}{
+		{
+			name:  "code-span entity ID is replaced",
+			input: "see `TKT-1` here",
+			refs:  map[string]string{"TKT-1": "[Title](#tkt-1)"},
+			want:  "see [Title](#tkt-1) here\n",
+		},
+		{
+			name:  "bare-prose ID is left alone",
+			input: "see TKT-1 here",
+			refs:  map[string]string{"TKT-1": "[Title](#tkt-1)"},
+			want:  "see TKT-1 here\n",
+		},
+		{
+			name:  "manual ID inside code span",
+			input: "see `lua-scripting` here",
+			refs:  map[string]string{"lua-scripting": "[Lua Scripting](#lua-scripting)"},
+			want:  "see [Lua Scripting](#lua-scripting) here\n",
+		},
+		{
+			name:  "ID inside fenced code block is NOT rewritten",
+			input: "```\n`TKT-1`\n```\n",
+			refs:  map[string]string{"TKT-1": "[X](#x)"},
+			want:  "```\n`TKT-1`\n```\n",
+		},
+		{
+			name:  "ID not in map is left as code span",
+			input: "see `TKT-99` here",
+			refs:  map[string]string{"TKT-1": "[X](#x)"},
+			want:  "see `TKT-99` here\n",
+		},
+		{
+			name:  "multiple IDs in one paragraph",
+			input: "see `TKT-1` and `TKT-2`",
+			refs:  map[string]string{"TKT-1": "[A](#a)", "TKT-2": "[B](#b)"},
+			want:  "see [A](#a) and [B](#b)\n",
+		},
+		{
+			name:  "ID in heading",
+			input: "# About `TKT-1`\n",
+			refs:  map[string]string{"TKT-1": "[Title](#t)"},
+			want:  "# About [Title](#t)\n",
+		},
+		{
+			name:  "ID in blockquote",
+			input: "> see `TKT-1` here\n",
+			refs:  map[string]string{"TKT-1": "[T](#t)"},
+			want:  "> see [T](#t) here\n",
+		},
+		{
+			name:  "ID in list item",
+			input: "- see `TKT-1` here\n",
+			refs:  map[string]string{"TKT-1": "[T](#t)"},
+			want:  "- see [T](#t) here\n",
+		},
+		{
+			name:  "ID in table cell",
+			input: "| col |\n| --- |\n| `TKT-1` |\n",
+			refs:  map[string]string{"TKT-1": "[T](#t)"},
+			// renderer pads cells; just assert the link is present
+			want: "",
+		},
+		{
+			name:  "code span containing different content is left alone",
+			input: "use `printf`",
+			refs:  map[string]string{"TKT-1": "[X](#x)"},
+			want:  "use `printf`\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveAndRender(t, tc.input, tc.refs)
+			if tc.want != "" {
+				assert.Equal(t, tc.want, got)
+			} else {
+				// For the table case, just check the link survived.
+				assert.Contains(t, got, "[T](#t)")
+			}
+		})
+	}
+}
+
+func TestMdResolveRefs_PreExistingLinkUntouched(t *testing.T) {
+	// A pre-existing markdown link whose text is NOT a code span should
+	// not be re-linked even when its content matches a key in the map —
+	// the rule is "only code spans".
+	got := resolveAndRender(t,
+		"see [TKT-1](http://example.com)",
+		map[string]string{"TKT-1": "[X](#x)"})
+	assert.Equal(t, "see [TKT-1](http://example.com)\n", got)
+}
+
+func TestMdResolveRefs_LinkContainingCodeSpan(t *testing.T) {
+	// A link whose inline text contains a code span — the code span
+	// inside the link gets rewritten; the surrounding link stays.
+	got := resolveAndRender(t,
+		"see [`TKT-1` link](http://example.com)",
+		map[string]string{"TKT-1": "[X](#x)"})
+	// The link wrapper survives; the code span inside becomes the splice.
+	assert.Contains(t, got, "[")
+	assert.Contains(t, got, "[X](#x)")
+}
+
+func TestMdResolveRefs_DeepCopy(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local ast = rela.md.parse("see `+"`TKT-1`"+` here")
+		local _ = rela.md.resolve_refs(ast, {["TKT-1"] = "[X](#x)"})
+		return rela.md.render(ast)
+	`))
+	got := lua.LVAsString(rt.L.Get(-1))
+	rt.L.Pop(1)
+	// Input AST is unchanged; original code span survives.
+	assert.Equal(t, "see `TKT-1` here\n", got)
+}
+
+func TestMdResolveRefs_EmptyMap(t *testing.T) {
+	rt := newMdTestRuntime(t)
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local ast = rela.md.parse("see `+"`TKT-1`"+` here")
+		return rela.md.render(rela.md.resolve_refs(ast, {}))
+	`))
+	got := lua.LVAsString(rt.L.Get(-1))
+	rt.L.Pop(1)
+	assert.Equal(t, "see `TKT-1` here\n", got)
+}
+
+func TestMdResolveRefs_NegativeInput(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+	}{
+		{
+			name: "non-table ast",
+			code: `rela.md.resolve_refs("notatable", {})`,
+		},
+		{
+			name: "non-table replacements",
+			code: `rela.md.resolve_refs(rela.md.parse(""), "notatable")`,
+		},
+		{
+			name: "value with newline",
+			code: `rela.md.resolve_refs(rela.md.parse(""), {["TKT-1"] = "a\nb"})`,
+		},
+		{
+			name: "empty key",
+			code: `rela.md.resolve_refs(rela.md.parse(""), {[""] = "x"})`,
+		},
+		{
+			name: "non-string value",
+			code: `rela.md.resolve_refs(rela.md.parse(""), {["TKT-1"] = 42})`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
+			err := rt.RunString(tc.code)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "rela.md.resolve_refs:")
+		})
+	}
+}
+
+func TestMdEntityRefs(t *testing.T) {
+	t.Run("default style is title-slug", func(t *testing.T) {
+		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
+		defer rt.Close()
+		require.NoError(t, rt.RunString(`
+			local refs = rela.md.entity_refs()
+			result = refs["TKT-001"]
+		`))
+		// Test fixture: TKT-001 has title="Test Ticket"
+		assert.Equal(t, lua.LString("[Test Ticket](#test-ticket)"),
+			rt.L.GetGlobal("result"))
+	})
+
+	t.Run("style=id", func(t *testing.T) {
+		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
+		defer rt.Close()
+		require.NoError(t, rt.RunString(`
+			local refs = rela.md.entity_refs({style = "id"})
+			result = refs["TKT-001"]
+		`))
+		assert.Equal(t, lua.LString("[Test Ticket](#tkt-001)"),
+			rt.L.GetGlobal("result"))
+	})
+
+	t.Run("types restricts to the listed types", func(t *testing.T) {
+		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
+		defer rt.Close()
+		require.NoError(t, rt.RunString(`
+			local refs = rela.md.entity_refs({types = {"ticket"}})
+			result = {tkt = refs["TKT-001"], feat = refs["FEAT-001"]}
+		`))
+		result := rt.L.GetGlobal("result").(*lua.LTable)
+		assert.Equal(t, lua.LString("[Test Ticket](#test-ticket)"),
+			result.RawGetString("tkt"))
+		assert.Equal(t, lua.LNil, result.RawGetString("feat"))
+	})
+
+	t.Run("unknown type errors", func(t *testing.T) {
+		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
+		defer rt.Close()
+		err := rt.RunString(`rela.md.entity_refs({types = {"unknown"}})`)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `unknown entity type "unknown"`)
+	})
+
+	t.Run("custom format callback", func(t *testing.T) {
+		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
+		defer rt.Close()
+		require.NoError(t, rt.RunString(`
+			local refs = rela.md.entity_refs({
+				format = function(e) return "[" .. e.title .. "](/x/" .. e.id .. ")" end,
+			})
+			result = refs["TKT-001"]
+		`))
+		assert.Equal(t, lua.LString("[Test Ticket](/x/TKT-001)"),
+			rt.L.GetGlobal("result"))
+	})
+
+	t.Run("nil deps produces a clean error, not a panic", func(t *testing.T) {
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
+		err := rt.RunString(`return rela.md.entity_refs()`)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "rela.md.entity_refs:")
+	})
+}
+
+func TestMdEntityRefs_TitleInjection(t *testing.T) {
+	mw := newMockWorkspace(t)
+	mw.seedEntity(&entity.Entity{
+		ID:         "TKT-EVIL",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": `]"](javascript:alert(1))[evil`},
+	})
+	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local refs = rela.md.entity_refs()
+		local rendered = rela.md.render(rela.md.parse(refs["TKT-EVIL"]))
+		result = rendered
+	`))
+	got := rt.L.GetGlobal("result").String()
+	assert.Contains(t, got, `\[`)
+	assert.Contains(t, got, `\]`)
+	assert.NotContains(t, got, "<javascript:")
+}
+
+func TestMdEntityRefs_UnicodeTitle(t *testing.T) {
+	mw := newMockWorkspace(t)
+	mw.seedEntity(&entity.Entity{
+		ID:         "TKT-EU",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "Café Résumé"},
+	})
+	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local refs = rela.md.entity_refs()
+		result = refs["TKT-EU"]
+	`))
+	assert.Equal(t, lua.LString("[Café Résumé](#café-résumé)"),
+		rt.L.GetGlobal("result"))
+}
+
+func TestMdEntityRefs_IntegrationWithResolveRefs(t *testing.T) {
+	mw := testWorkspace(t)
+	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
+	defer rt.Close()
+	require.NoError(t, rt.RunString(`
+		local refs = rela.md.entity_refs()
+		local ast = rela.md.parse("Linked: `+"`TKT-001`"+` here")
+		result = rela.md.render(rela.md.resolve_refs(ast, refs))
+	`))
+	got := lua.LVAsString(rt.L.GetGlobal("result"))
+	assert.Equal(t, "Linked: [Test Ticket](#test-ticket) here\n", got)
+}
+
+func TestTitleSlug(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"Hello World", "hello-world"},
+		{"Trim - dashes -", "trim-dashes"},
+		{"Multiple    spaces", "multiple-spaces"},
+		{"Punct! ?? Heavy", "punct-heavy"},
+		{"already-slug", "already-slug"},
+		{"  leading", "leading"},
+		{"", ""},
+		{"!!!", ""},
+		{"123 abc", "123-abc"},
+		{"Café Résumé", "café-résumé"},
+		{"東京", "東京"},
+		{"hello 世界", "hello-世界"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			assert.Equal(t, tc.want, titleSlug(tc.in))
+		})
+	}
 }

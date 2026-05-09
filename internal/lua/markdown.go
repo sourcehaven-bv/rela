@@ -3,8 +3,11 @@
 package lua
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/mattn/go-runewidth"
 	"github.com/yuin/goldmark"
@@ -13,6 +16,9 @@ import (
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // blockKind tags a block-level AST node by its `type` field.
@@ -104,6 +110,10 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	r.L.SetField(md, "ref", r.L.NewFunction(luaMdRef))
 	r.L.SetField(md, "table", r.L.NewFunction(luaMdTable))
 	r.L.SetField(md, "entity_table", r.L.NewFunction(r.luaMdEntityTable))
+
+	// Reference resolution: rewrite code-span entity-ID tokens to links.
+	r.L.SetField(md, "resolve_refs", r.L.NewFunction(r.luaMdResolveRefs))
+	r.L.SetField(md, "entity_refs", r.L.NewFunction(r.luaMdEntityRefs))
 
 	r.L.SetField(rela, "md", md)
 }
@@ -2040,4 +2050,470 @@ func (r *Runtime) evalColumnSpec(ls *lua.LState, col, entity *lua.LTable) string
 	default:
 		return ""
 	}
+}
+
+// --- Reference Resolution ---
+//
+// resolve_refs and entity_refs work together to turn entity-ID code spans
+// in markdown content into links. The match rule is deliberately narrow:
+// only `` `<id>` `` literals (i.e. inline code spans whose entire content
+// is an entity ID) are rewritten. Bare prose mentions like `see TKT-1`
+// are left alone because the boundary semantics are ambiguous and
+// false-positive prone. Authors opt in by writing the ID as a code span,
+// which is the existing convention for "this is an identifier, not
+// prose."
+
+// luaMdResolveRefs implements rela.md.resolve_refs(ast, replacements) -> ast.
+//
+// Walks the AST and replaces every `code_span` inline whose text matches
+// a key in the `replacements` map with the rendered splice value.
+// Splices are parsed as inline markdown so the replacement integrates
+// structurally (a `[Title](url)` splice becomes a `link` inline, not a
+// raw text fragment).
+func (r *Runtime) luaMdResolveRefs(ls *lua.LState) int {
+	astTable, ok := ls.Get(1).(*lua.LTable)
+	if !ok {
+		ls.RaiseError("rela.md.resolve_refs: ast must be a table")
+		return 0
+	}
+	mapTable, ok := ls.Get(2).(*lua.LTable)
+	if !ok {
+		ls.RaiseError("rela.md.resolve_refs: replacements must be a table")
+		return 0
+	}
+
+	replacements, err := r.collectRefReplacements(mapTable)
+	if err != nil {
+		ls.RaiseError("%s", err.Error())
+		return 0
+	}
+
+	out := r.deepCopyAST(astTable)
+	if len(replacements) > 0 {
+		r.rewriteCodeSpanRefs(out, replacements)
+	}
+	ls.Push(out)
+	return 1
+}
+
+// collectRefReplacements validates the replacements map. Keys must be
+// non-empty strings, values must be strings without `\n`/`\r`. Pre-parses
+// each value's inline tree so we don't re-parse N times during the walk.
+func (r *Runtime) collectRefReplacements(mapTable *lua.LTable) (map[string]*lua.LTable, error) {
+	replacements := make(map[string]*lua.LTable)
+	var validationErr error
+	mapTable.ForEach(func(k, v lua.LValue) {
+		if validationErr != nil {
+			return
+		}
+		ks, ok := k.(lua.LString)
+		if !ok {
+			validationErr = errors.New("rela.md.resolve_refs: replacement keys must be strings")
+			return
+		}
+		key := string(ks)
+		if key == "" {
+			validationErr = errors.New("rela.md.resolve_refs: replacement keys must be non-empty")
+			return
+		}
+		vs, ok := v.(lua.LString)
+		if !ok {
+			validationErr = fmt.Errorf(
+				"rela.md.resolve_refs: replacement for %q must be a string", key)
+			return
+		}
+		val := string(vs)
+		if strings.ContainsAny(val, "\n\r") {
+			validationErr = fmt.Errorf(
+				"rela.md.resolve_refs: replacement for %q contains a newline; "+
+					"use only inline markdown in replacement values", key)
+			return
+		}
+		// Pre-parse the splice as inline markdown. The splice is a
+		// single-paragraph fragment; we extract its inlines for direct
+		// substitution into the AST.
+		replacements[key] = r.parseInlineSplice(val)
+	})
+	if validationErr != nil {
+		return nil, validationErr
+	}
+	return replacements, nil
+}
+
+// parseInlineSplice parses a markdown fragment as inline content and
+// returns the resulting `inlines` array. If the fragment doesn't parse
+// to a single paragraph, returns a single text inline as a fallback so
+// the splice never silently disappears.
+func (r *Runtime) parseInlineSplice(s string) *lua.LTable {
+	source := []byte(s)
+	md := goldmark.New(goldmark.WithExtensions(
+		extension.NewTable(),
+		extension.TaskList,
+		extension.Strikethrough,
+	))
+	doc := md.Parser().Parse(text.NewReader(source))
+	for child := doc.FirstChild(); child != nil; child = child.NextSibling() {
+		if child.Kind() == ast.KindParagraph {
+			return r.extractInlines(child, source)
+		}
+	}
+	// Fallback: wrap as a single text inline.
+	out := r.L.NewTable()
+	out.RawSetInt(1, r.makeLeafInline(inlineTypeText, s))
+	return out
+}
+
+// rewriteCodeSpanRefs walks every block in the AST and rewrites
+// code-span inlines whose text matches a key in replacements.
+func (r *Runtime) rewriteCodeSpanRefs(nodes *lua.LTable, replacements map[string]*lua.LTable) {
+	for i := 1; i <= nodes.Len(); i++ {
+		node, ok := nodes.RawGetInt(i).(*lua.LTable)
+		if !ok {
+			continue
+		}
+		r.rewriteCodeSpanRefsInBlock(node, replacements)
+	}
+}
+
+// rewriteCodeSpanRefsInBlock dispatches on block kind: paragraph,
+// heading, blockquote, list, table. Each visits the inline arrays
+// hanging off the block.
+func (r *Runtime) rewriteCodeSpanRefsInBlock(node *lua.LTable, replacements map[string]*lua.LTable) {
+	switch blockKindOf(node) {
+	case nodeTypeParagraph, nodeTypeHeading:
+		if t := inlinesField(node, "inlines"); t != nil {
+			r.rewriteCodeSpansInInlines(node, "inlines", t, replacements)
+		}
+	case nodeTypeBlockquote:
+		if children := inlinesField(node, "children"); children != nil {
+			r.rewriteCodeSpanRefs(children, replacements)
+		}
+	case nodeTypeList:
+		r.rewriteCodeSpanRefsInList(node, replacements)
+	case nodeTypeTable:
+		r.rewriteCodeSpanRefsInTable(node, replacements)
+	default:
+		// code_block, thematic_break, raw — no inline content to rewrite.
+	}
+}
+
+func (r *Runtime) rewriteCodeSpanRefsInList(node *lua.LTable, replacements map[string]*lua.LTable) {
+	items := inlinesField(node, "items")
+	if items == nil {
+		return
+	}
+	for i := 1; i <= items.Len(); i++ {
+		item, ok := items.RawGetInt(i).(*lua.LTable)
+		if !ok {
+			// Plain string list items contain only text — no code spans
+			// to rewrite.
+			continue
+		}
+		if t := inlinesField(item, "inlines"); t != nil {
+			r.rewriteCodeSpansInInlines(item, "inlines", t, replacements)
+		}
+		if children := inlinesField(item, "children"); children != nil {
+			r.rewriteCodeSpanRefs(children, replacements)
+		}
+	}
+}
+
+func (r *Runtime) rewriteCodeSpanRefsInTable(node *lua.LTable, replacements map[string]*lua.LTable) {
+	if header := inlinesField(node, "header"); header != nil {
+		for i := 1; i <= header.Len(); i++ {
+			if cell, ok := header.RawGetInt(i).(*lua.LTable); ok {
+				r.rewriteCodeSpansInTableCell(header, i, cell, replacements)
+			}
+		}
+	}
+	rows := inlinesField(node, "rows")
+	if rows == nil {
+		return
+	}
+	for ri := 1; ri <= rows.Len(); ri++ {
+		row, ok := rows.RawGetInt(ri).(*lua.LTable)
+		if !ok {
+			continue
+		}
+		for ci := 1; ci <= row.Len(); ci++ {
+			if cell, ok := row.RawGetInt(ci).(*lua.LTable); ok {
+				r.rewriteCodeSpansInTableCell(row, ci, cell, replacements)
+			}
+		}
+	}
+}
+
+// rewriteCodeSpansInInlines rewrites code-span entries in a parent
+// inlines array. The walk is in-place: matched code spans are spliced
+// out and replaced with the (possibly multi-element) inlines from the
+// replacement value. Container inlines (link, emphasis, strong,
+// strikethrough) are recursed into.
+func (r *Runtime) rewriteCodeSpansInInlines(
+	parent *lua.LTable, field string, inlines *lua.LTable,
+	replacements map[string]*lua.LTable,
+) {
+	out := r.L.NewTable()
+	idx := 1
+	for i := 1; i <= inlines.Len(); i++ {
+		v := inlines.RawGetInt(i)
+		child, ok := v.(*lua.LTable)
+		if !ok {
+			out.RawSetInt(idx, v)
+			idx++
+			continue
+		}
+		switch inlineKindOf(child) {
+		case inlineTypeCodeSpan:
+			text, _ := child.RawGetString("text").(lua.LString)
+			if splice, hit := replacements[string(text)]; hit {
+				// Append cloned splice inlines.
+				for j := 1; j <= splice.Len(); j++ {
+					if sn, ok := splice.RawGetInt(j).(*lua.LTable); ok {
+						out.RawSetInt(idx, r.deepCopyTable(sn))
+						idx++
+					}
+				}
+				continue
+			}
+			out.RawSetInt(idx, child)
+			idx++
+		case inlineTypeLink, inlineTypeEmphasis, inlineTypeStrong, inlineTypeStrikethrough:
+			if t := inlinesField(child, "inlines"); t != nil {
+				r.rewriteCodeSpansInInlines(child, "inlines", t, replacements)
+			}
+			out.RawSetInt(idx, child)
+			idx++
+		case inlineTypeImage:
+			if t := inlinesField(child, "alt_inlines"); t != nil {
+				r.rewriteCodeSpansInInlines(child, "alt_inlines", t, replacements)
+			}
+			out.RawSetInt(idx, child)
+			idx++
+		default:
+			out.RawSetInt(idx, child)
+			idx++
+		}
+	}
+	parent.RawSetString(field, out)
+}
+
+// rewriteCodeSpansInTableCell handles a single table cell. Cells live in
+// an int-indexed slot on their row table; the helper builds a fresh
+// inlines array and re-attaches it via RawSetInt.
+func (r *Runtime) rewriteCodeSpansInTableCell(
+	parent *lua.LTable, idx int, cell *lua.LTable,
+	replacements map[string]*lua.LTable,
+) {
+	out := r.L.NewTable()
+	pos := 1
+	for i := 1; i <= cell.Len(); i++ {
+		v := cell.RawGetInt(i)
+		child, ok := v.(*lua.LTable)
+		if !ok {
+			out.RawSetInt(pos, v)
+			pos++
+			continue
+		}
+		if inlineKindOf(child) == inlineTypeCodeSpan {
+			text, _ := child.RawGetString("text").(lua.LString)
+			if splice, hit := replacements[string(text)]; hit {
+				for j := 1; j <= splice.Len(); j++ {
+					if sn, ok := splice.RawGetInt(j).(*lua.LTable); ok {
+						out.RawSetInt(pos, r.deepCopyTable(sn))
+						pos++
+					}
+				}
+				continue
+			}
+		}
+		// Recurse for containers.
+		switch inlineKindOf(child) {
+		case inlineTypeLink, inlineTypeEmphasis, inlineTypeStrong, inlineTypeStrikethrough:
+			if t := inlinesField(child, "inlines"); t != nil {
+				r.rewriteCodeSpansInInlines(child, "inlines", t, replacements)
+			}
+		default:
+			// Other inline kinds (text, raw_html, autolink, breaks,
+			// image, code_span — already handled above) have no nested
+			// inlines we need to recurse into here.
+		}
+		out.RawSetInt(pos, child)
+		pos++
+	}
+	parent.RawSetInt(idx, out)
+}
+
+// deepCopyAST deep-copies the top-level array of node tables. Non-table
+// entries are passed through (defensive — should not normally occur).
+func (r *Runtime) deepCopyAST(astTable *lua.LTable) *lua.LTable {
+	out := r.L.NewTable()
+	for i := 1; i <= astTable.Len(); i++ {
+		v := astTable.RawGetInt(i)
+		if t, ok := v.(*lua.LTable); ok {
+			out.RawSetInt(i, r.deepCopyNode(t))
+		} else {
+			out.RawSetInt(i, v)
+		}
+	}
+	return out
+}
+
+// --- entity_refs ---
+
+// luaMdEntityRefs implements rela.md.entity_refs(opts?) -> {[id] = string}.
+//
+// Builds a replacement map covering some or all entities in the project
+// for use with resolve_refs. Iterates the store per entity type because
+// store.ListEntities requires a non-empty Type.
+func (r *Runtime) luaMdEntityRefs(ls *lua.LState) int {
+	if r.deps.Meta == nil || r.deps.Store == nil {
+		ls.RaiseError("rela.md.entity_refs: requires a runtime with metamodel and store")
+		return 0
+	}
+	opts, err := r.parseEntityRefsOpts(ls)
+	if err != nil {
+		ls.RaiseError("%s", err.Error())
+		return 0
+	}
+	typeNames := opts.types
+	if len(typeNames) == 0 && opts.useAllTypes {
+		typeNames = r.deps.Meta.EntityTypes()
+	}
+
+	out := r.L.NewTable()
+	ctx := context.Background()
+	for _, t := range typeNames {
+		for e, listErr := range r.deps.Store.ListEntities(ctx, store.EntityQuery{Type: t}) {
+			if listErr != nil {
+				ls.RaiseError(
+					"rela.md.entity_refs: list entities of type %q: %s", t, listErr.Error())
+				return 0
+			}
+			value, valErr := r.buildEntityRefValue(ls, e, opts)
+			if valErr != nil {
+				ls.RaiseError("%s", valErr.Error())
+				return 0
+			}
+			out.RawSetString(e.ID, lua.LString(value))
+		}
+	}
+	ls.Push(out)
+	return 1
+}
+
+type entityRefsOpts struct {
+	types       []string
+	useAllTypes bool
+	style       string
+	formatFn    *lua.LFunction
+}
+
+func (r *Runtime) parseEntityRefsOpts(ls *lua.LState) (entityRefsOpts, error) {
+	opts := entityRefsOpts{style: "title-slug", useAllTypes: true}
+	if ls.GetTop() < 1 || ls.Get(1) == lua.LNil {
+		return opts, nil
+	}
+	t := ls.CheckTable(1)
+
+	if v := t.RawGetString("types"); v != lua.LNil {
+		tbl, ok := v.(*lua.LTable)
+		if !ok {
+			return opts, errors.New("rela.md.entity_refs: opts.types must be a table")
+		}
+		opts.useAllTypes = false
+		for i := 1; i <= tbl.Len(); i++ {
+			name, ok := tbl.RawGetInt(i).(lua.LString)
+			if !ok {
+				return opts, errors.New("rela.md.entity_refs: opts.types must contain only strings")
+			}
+			if _, found := r.deps.Meta.GetEntityDef(string(name)); !found {
+				return opts, fmt.Errorf("rela.md.entity_refs: unknown entity type %q", string(name))
+			}
+			opts.types = append(opts.types, string(name))
+		}
+	}
+
+	if v := t.RawGetString("style"); v != lua.LNil {
+		s, ok := v.(lua.LString)
+		if !ok {
+			return opts, errors.New("rela.md.entity_refs: opts.style must be a string")
+		}
+		opts.style = string(s)
+		if opts.style != "title-slug" && opts.style != "id" {
+			return opts, fmt.Errorf(
+				"rela.md.entity_refs: opts.style must be \"title-slug\" or \"id\", got %q", opts.style)
+		}
+	}
+
+	if v := t.RawGetString("format"); v != lua.LNil {
+		fn, ok := v.(*lua.LFunction)
+		if !ok {
+			return opts, errors.New("rela.md.entity_refs: opts.format must be a function")
+		}
+		opts.formatFn = fn
+	}
+
+	return opts, nil
+}
+
+func (r *Runtime) buildEntityRefValue(ls *lua.LState, e *entity.Entity, opts entityRefsOpts) (string, error) {
+	if opts.formatFn != nil {
+		entityTbl := EntityToTable(ls, e)
+		entityTbl.RawSetString("title", lua.LString(e.Title()))
+		ls.Push(opts.formatFn)
+		ls.Push(entityTbl)
+		if perr := ls.PCall(1, 1, nil); perr != nil {
+			return "", fmt.Errorf("rela.md.entity_refs: format callback failed: %s", perr.Error())
+		}
+		ret := ls.Get(-1)
+		ls.Pop(1)
+		rs, ok := ret.(lua.LString)
+		if !ok {
+			return "", fmt.Errorf(
+				"rela.md.entity_refs: format callback must return a string for entity %q", e.ID)
+		}
+		value := string(rs)
+		if strings.ContainsAny(value, "\n\r") {
+			return "", fmt.Errorf(
+				"rela.md.entity_refs: format callback returned a newline for entity %q", e.ID)
+		}
+		return value, nil
+	}
+	title := escapeMarkdownLinkText(e.Title())
+	anchor := titleSlug(e.Title())
+	if opts.style == "id" {
+		anchor = strings.ToLower(e.ID)
+	}
+	return "[" + title + "](#" + anchor + ")", nil
+}
+
+// titleSlug derives a Pandoc-style anchor from a title: lowercase, runs
+// of non-alphanumeric Unicode collapsed to '-', leading/trailing '-'
+// trimmed. Letters and digits include non-ASCII so anchors line up with
+// auto-heading-id renderers (Pandoc, goldmark, markdown-it-anchor).
+func titleSlug(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	prevDash := true
+	for _, r := range strings.ToLower(s) {
+		if isSlugLetterOrDigit(r) {
+			b.WriteRune(r)
+			prevDash = false
+		} else if !prevDash {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
+}
+
+func isSlugLetterOrDigit(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// escapeMarkdownLinkText escapes characters that would break out of a
+// markdown link's text slot.
+func escapeMarkdownLinkText(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`)
+	return r.Replace(s)
 }
