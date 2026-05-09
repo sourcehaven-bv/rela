@@ -176,10 +176,25 @@ func (g *Generator) buildUpdateEntitySchema(typeName string, def metamodel.Entit
 		Description: "Markdown body content",
 	}
 
+	// Relations: each relation type's value is one of two shapes —
+	// the legacy IDs-only array, or the JSON:API §9-shaped wrapper
+	// with per-edge meta + content. See Layer 1 of TKT-6WLSW.
+	props["relations"] = &Schema{
+		Type: "object",
+		AdditionalProperties: &Schema{
+			OneOf: []*Schema{
+				ArraySchema(StringSchema()),
+				Ref("RelationsUpdate"),
+			},
+			Description: "Either a legacy array of target IDs OR a JSON:API §9 wrapper {data: [...]}",
+		},
+		Description: "Outgoing relations by relation type. Mixing legacy and JSON:API shapes in one body returns 400.",
+	}
+
 	return &Schema{
 		Type:        "object",
 		Title:       "Update" + typeName,
-		Description: "Request body for updating a " + def.Label + " (PATCH - partial update)",
+		Description: "Request body for updating a " + def.Label + " (PATCH - partial update). See docs/data-entry/api-reference.md for the full contract.",
 		Properties:  props,
 	}
 }
@@ -221,9 +236,47 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 				Type:                 "object",
 				AdditionalProperties: ArraySchema(StringSchema()),
 			},
-			"_self": {Type: "string", Format: "uri-reference"},
+			"_self":    {Type: "string", Format: "uri-reference"},
+			"warnings": ArraySchema(Ref("Warning")),
 		},
 		Required: []string{"id", "type"},
+	}
+
+	// JSON:API §9-shaped wrapper for one relation type's desired state.
+	spec.Components.Schemas["RelationsUpdate"] = &Schema{
+		Type: "object",
+		Description: "Desired state for one relation type. " +
+			"Sending data: [] removes every edge of this relation type — see the data-loss " +
+			"footgun callout in docs/data-entry/api-reference.md.",
+		Properties: map[string]*Schema{
+			"data": ArraySchema(Ref("ResourceIdentifier")),
+		},
+		Required: []string{"data"},
+	}
+
+	// Per-edge resource identifier with rela's upsert convention.
+	spec.Components.Schemas["ResourceIdentifier"] = &Schema{
+		Type: "object",
+		Properties: map[string]*Schema{
+			"type":       {Type: "string", Description: "Target entity type"},
+			"id":         {Type: "string", Description: "Target entity ID"},
+			"meta":       {Type: "object", AdditionalProperties: &Schema{}, Description: "Per-edge meta properties (upsert)"},
+			"meta_unset": ArraySchema(StringSchema()),
+			"content":    {Type: "string", Description: "Per-edge body (only for relation types with content: true)"},
+		},
+		Required: []string{"type", "id"},
+	}
+
+	// Soft-condition warning surfaced inline in successful PATCH responses.
+	// Code values match the corresponding analyze_* finding codes.
+	spec.Components.Schemas["Warning"] = &Schema{
+		Type: "object",
+		Properties: map[string]*Schema{
+			"code":   {Type: "string", Description: "Stable warning code, matching analyze_* finding codes"},
+			"path":   {Type: "string", Description: "RFC 6901 JSON Pointer to the offending field"},
+			"detail": {Type: "string", Description: "Human-readable explanation"},
+		},
+		Required: []string{"code"},
 	}
 
 	// List response wrapper

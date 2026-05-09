@@ -68,10 +68,27 @@ type RenameResult struct {
 	RelationsUpdated int
 }
 
-// RelationOptions configure relation creation.
+// RelationOptions configure relation creation and updates.
+//
+// CreateRelation: Properties is the initial property map. MetaUnset is
+// ignored (no existing values to clear). If Content is non-nil, the body
+// is set to *Content (including the empty string); if nil, the body is
+// empty.
+//
+// UpdateRelation: Properties MERGES into the existing relation's
+// properties (an Update with empty Properties does NOT clear existing
+// keys — use MetaUnset for that). After the merge, MetaUnset removes
+// the named keys. If Content is non-nil, the body is replaced with
+// *Content (including the empty string clears the body); if nil, the
+// existing body is left untouched.
+//
+// The pointer-vs-string distinction on Content is the only way to
+// express "leave the body alone" vs "set the body to empty"; callers
+// that want to clear must pass a pointer to "".
 type RelationOptions struct {
 	Properties map[string]interface{}
-	Content    string
+	MetaUnset  []string
+	Content    *string
 }
 
 // EntityManager provides the high-level write API for entities and relations.

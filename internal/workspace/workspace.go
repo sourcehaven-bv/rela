@@ -1340,10 +1340,13 @@ func (w *Workspace) writeRelationCore(rel *entity.Relation) error {
 	return nil
 }
 
-// CreateRelationOptions configures optional settings for relation creation.
+// CreateRelationOptions configures optional settings for relation creation
+// and updates. See entitymanager.RelationOptions for the full contract; this
+// type is the workspace-internal mirror.
 type CreateRelationOptions struct {
-	Properties map[string]interface{} // property values for the relation
-	Content    string                 // markdown body content for the relation
+	Properties map[string]interface{}
+	MetaUnset  []string
+	Content    *string
 }
 
 // CreateRelation validates both endpoints exist, checks for duplicates,
@@ -1382,6 +1385,7 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 	}
 
 	// Apply caller-provided properties and content (override template defaults).
+	// MetaUnset is ignored on Create — there are no existing values to clear.
 	if len(opts) > 0 {
 		if len(opts[0].Properties) > 0 && rel.Properties == nil {
 			rel.Properties = make(map[string]interface{})
@@ -1389,8 +1393,8 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 		for k, v := range opts[0].Properties {
 			rel.Properties[k] = v
 		}
-		if opts[0].Content != "" {
-			rel.Content = opts[0].Content
+		if opts[0].Content != nil {
+			rel.Content = *opts[0].Content
 		}
 	}
 
@@ -1401,22 +1405,39 @@ func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelat
 	return rel, nil
 }
 
-// UpdateRelation updates properties on an existing relation.
+// updateRelation updates an existing relation's properties and content
+// using merge-then-unset semantics:
+//
+//  1. opts.Properties MERGES into the existing relation's properties.
+//     Keys absent from opts.Properties are NOT cleared by this call;
+//     callers that want to clear keys must list them in MetaUnset.
+//  2. opts.MetaUnset removes the named keys from the merged map. A key
+//     in MetaUnset that is not present is a silent no-op.
+//  3. If opts.Content is non-nil, the relation's body is replaced with
+//     *opts.Content (including the empty string clears the body). If
+//     opts.Content is nil, the existing body is left untouched.
+//
+// The store-level UpdateRelation always performs a full-replacement
+// write of the relation; the merge-and-unset logic lives here at the
+// workspace boundary so that automations and validation see the
+// post-merge state.
 func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelationOptions) (*entity.Relation, error) {
 	rel, err := w.Store().GetRelation(context.Background(), from, relType, to)
 	if err != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
 	}
 
-	// Merge properties
-	if rel.Properties == nil {
+	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
 		rel.Properties = make(map[string]interface{})
 	}
 	for k, v := range opts.Properties {
 		rel.Properties[k] = v
 	}
-	if opts.Content != "" {
-		rel.Content = opts.Content
+	for _, k := range opts.MetaUnset {
+		delete(rel.Properties, k)
+	}
+	if opts.Content != nil {
+		rel.Content = *opts.Content
 	}
 
 	if err := w.writeRelationCore(rel); err != nil {

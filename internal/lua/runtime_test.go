@@ -217,9 +217,13 @@ func (m *mockManager) RenameEntity(
 func (m *mockManager) CreateRelation(
 	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
+	content := ""
+	if opts.Content != nil {
+		content = *opts.Content
+	}
 	var data *store.RelationData
-	if len(opts.Properties) > 0 || opts.Content != "" {
-		data = &store.RelationData{Properties: opts.Properties, Content: opts.Content}
+	if len(opts.Properties) > 0 || content != "" {
+		data = &store.RelationData{Properties: opts.Properties, Content: content}
 	}
 	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
 }
@@ -227,8 +231,12 @@ func (m *mockManager) CreateRelation(
 func (m *mockManager) UpdateRelation(
 	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
+	content := ""
+	if opts.Content != nil {
+		content = *opts.Content
+	}
 	return m.ws.store.UpdateRelation(ctx, from, relType, to, store.RelationData{
-		Properties: opts.Properties, Content: opts.Content,
+		Properties: opts.Properties, Content: content,
 	})
 }
 

@@ -2,7 +2,7 @@
 id: PLAN-MXQKI
 type: planning-checklist
 title: 'Planning: Extend PATCH /entities/{id} relations to carry per-edge meta + content'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
