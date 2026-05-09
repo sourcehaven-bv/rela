@@ -150,8 +150,8 @@ type ResolvedPalette struct {
 	DarkDisabled bool              `json:"darkDisabled,omitempty"`
 }
 
-// Built-in default colors for light mode. Derived from sourcehaven.nl —
-// cream paper surface, harbor-navy sidebar, blue accent.
+// Built-in default colors for light mode: cream paper surface,
+// harbor-navy sidebar, blue accent.
 var defaultLightColors = PaletteColors{
 	Base:    "#164155",
 	Surface: "#f3f2ef",

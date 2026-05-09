@@ -142,9 +142,9 @@ watch(
 </template>
 
 <style>
-/* Sourcehaven theme — derived from sourcehaven.nl
-   Light: cream paper bg, deep harbour-navy sidebar, blue accent, warm peach highlights.
-   Dark:  same harbour-navy as the dominant surface, cream-tinted text, lifted accent. */
+/* Default theme.
+   Light: cream paper bg, deep harbor-navy sidebar, blue accent, warm peach highlights.
+   Dark:  same harbor-navy as the dominant surface, cream-tinted text, lifted accent. */
 :root {
   --sidebar-bg: #164155;
   --sidebar-text: #f3f2ef;
