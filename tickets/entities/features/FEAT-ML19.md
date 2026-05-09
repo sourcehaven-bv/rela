@@ -24,4 +24,4 @@ OFL 1.1 explicitly permits redistribution.
 - `just ci` passes locally.
 - Verified at runtime via puppeteer: zero off-origin requests on page load, Open Sans woff2 served from rela's `/assets/`.
 
-Shipped via PR #670.
+Shipped via PR #671.
