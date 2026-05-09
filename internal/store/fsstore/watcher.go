@@ -190,7 +190,7 @@ func (s *FSStore) reconcileEntityPath(path string) {
 		return // self-echo
 	}
 
-	e, err := parseEntityFromPath(rawData, path)
+	e, err := s.parseEntityFromPath(rawData, path)
 	if err != nil {
 		return
 	}
@@ -251,6 +251,28 @@ func (s *FSStore) entityIDFromPath(path string) (string, bool) {
 	return strings.TrimSuffix(base, ".md"), true
 }
 
+// entityIdentityFromPath extracts both the entity ID and entity type
+// from a file path under entitiesDir/<plural>/<id>.md. The plural
+// directory name is mapped back to the entity type via the configured
+// schemas. Returns ok=false if the path doesn't have the expected shape
+// or the plural directory doesn't map to a known type.
+func (s *FSStore) entityIdentityFromPath(path string) (id, entityType string, ok bool) {
+	id, ok = s.entityIDFromPath(path)
+	if !ok {
+		return "", "", false
+	}
+	parent := filepath.Base(filepath.Dir(path))
+	if parent == "" {
+		return "", "", false
+	}
+	pluralToType := s.buildPluralToTypeMap()
+	entityType = s.resolveEntityType(parent, pluralToType)
+	if entityType == "" {
+		return "", "", false
+	}
+	return id, entityType, true
+}
+
 // reconcileRelationPath handles a change event for a relation file. Must
 // be called under mu.Lock.
 func (s *FSStore) reconcileRelationPath(path string) {
@@ -273,6 +295,9 @@ func (s *FSStore) reconcileRelationPath(path string) {
 	if s.echoes.IsEcho(path, data) {
 		return
 	}
+	// Encrypted relation files participate in the index by filename
+	// but their bodies are unreadable; the reconcile path is otherwise
+	// identical because we don't index per-property values for relations.
 	s.echoes.Recorded(path, data)
 
 	_, known := s.relations[key]
@@ -301,10 +326,20 @@ func (s *FSStore) handleRelationRemoval(path, key, from, relType, to string) {
 	s.emit(store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to})
 }
 
-// parseEntityFromPath parses raw markdown content and returns an entity
-// with ID/type/content/properties populated. The file path is used only
-// for error context.
-func parseEntityFromPath(data []byte, path string) (*entity.Entity, error) {
+// parseEntityFromPath parses raw bytes from a watcher event into an
+// entity. Encrypted files are recognized at this boundary and returned
+// as inaccessible-entity shells, mirroring the regular read path
+// (readEntityFile) so the watcher does not have to know about
+// git-crypt directly.
+func (s *FSStore) parseEntityFromPath(data []byte, path string) (*entity.Entity, error) {
+	if isGitCryptEncrypted(data) {
+		id, entityType, ok := s.entityIdentityFromPath(path)
+		if !ok {
+			return nil, errors.New("encrypted entity file: cannot derive id/type from path")
+		}
+		key := s.entityFileKey(entityType, id)
+		return s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
+	}
 	doc, err := parseDocument(string(data))
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)

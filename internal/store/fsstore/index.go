@@ -186,6 +186,14 @@ func (s *FSStore) scanEntityDirs() error {
 		go func(idx int, dirName string) {
 			defer wg.Done()
 			entityType := s.resolveEntityType(dirName, pluralToType)
+			if entityType == "" {
+				// Directory does not map to a metamodel-declared type.
+				// Skipping prevents indexing files for types we cannot
+				// reason about (no schema, no property order, no
+				// reliable inaccessible-shell). Schema drift sees the
+				// orphan directory as invisible until cleaned up.
+				return
+			}
 			files, readErr := s.rooted.ReadDir(path.Join(s.entitiesKey, dirName))
 			if readErr != nil {
 				return
@@ -278,12 +286,17 @@ func (s *FSStore) buildPluralToTypeMap() map[string]string {
 }
 
 // resolveEntityType maps a plural directory name back to the entity type.
-// Uses the schema's plural mapping if available, otherwise strips trailing "s".
+// Returns "" when the directory does not map to any metamodel-declared
+// type — callers skip such directories.
+//
+// The schema's Plural field is canonical: app.buildSchemas resolves it
+// via metamodel.EntityDef.GetPlural so fsstore does not have to
+// re-guess via "+s" at call time.
 func (s *FSStore) resolveEntityType(dirName string, pluralToType map[string]string) string {
 	if typ, ok := pluralToType[dirName]; ok {
 		return typ
 	}
-	return strings.TrimSuffix(dirName, "s")
+	return ""
 }
 
 // newestEntityFileMtime returns the newest mtime across all entity files.

@@ -76,6 +76,10 @@ export interface EntityResponse {
   type: string;
   properties: Record<string, unknown>;
   relations?: Record<string, string[]>;
+  /** Set when fsstore could not read the file (today: git-crypt
+   *  encrypted, no key locally). Each entry names a schema property —
+   *  or the special "content" sentinel — that exists but is unreadable. */
+  inaccessible?: Array<{ name: string; reason: string }>;
 }
 
 export interface PaginatedResponse<T = EntityResponse> {

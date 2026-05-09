@@ -33,6 +33,10 @@ func newStores() (store.Store, store.Store) {
 		RelationsKey:   "relations",
 		AttachmentsKey: "attachments",
 		CacheKey:       ".rela",
+		Schemas: map[string]store.EntityTypeSchema{
+			"a": {Plural: "as", PropertyOrder: []string{"x"}},
+			"b": {Plural: "bs", PropertyOrder: []string{"x"}},
+		},
 	})
 	if err != nil {
 		panic(err)

@@ -324,10 +324,18 @@ func isSpecialLine(line string) bool {
 // --- entity I/O ---
 
 // readEntityFile reads and parses an entity from a markdown file key.
-func (s *FSStore) readEntityFile(key string) (*entity.Entity, error) {
+//
+// id and entityType are caller-supplied (the caller already knows them
+// from the index); they are used to populate the resulting entity if the
+// file is git-crypt encrypted and its frontmatter cannot be read.
+func (s *FSStore) readEntityFile(key, id, entityType string) (*entity.Entity, error) {
 	data, err := s.readDataFile(key)
 	if err != nil {
 		return nil, err
+	}
+
+	if isGitCryptEncrypted(data) {
+		return s.buildInaccessibleEntity(key, id, entityType, entity.InaccessibleReasonGitCrypt), nil
 	}
 
 	doc, err := parseDocument(string(data))
@@ -335,10 +343,10 @@ func (s *FSStore) readEntityFile(key string) (*entity.Entity, error) {
 		return nil, err
 	}
 
-	id := doc.getString("id")
-	entityType := doc.getString("type")
+	docID := doc.getString("id")
+	docType := doc.getString("type")
 
-	e := entity.New(id, entityType)
+	e := entity.New(docID, docType)
 	e.Content = doc.content
 
 	if info, err := s.rooted.Stat(key); err == nil {
@@ -352,6 +360,35 @@ func (s *FSStore) readEntityFile(key string) (*entity.Entity, error) {
 	}
 
 	return e, nil
+}
+
+// buildInaccessibleEntity constructs a stand-in entity for a file whose
+// content cannot be read. The ID and type are caller-supplied; every
+// property declared by the entity type's schema is listed in
+// [entity.Entity.Inaccessible] along with the magic "content" field
+// that names the markdown body, so consumers know exactly which fields
+// exist but are unreadable.
+//
+// Invariant: entityType is always present in s.schemas. [New] rejects
+// stores constructed without a populated Schemas map, and unknown-type
+// directories are skipped at scan time and in the watcher path. The
+// resulting Inaccessible slice always has at least one entry (the
+// content marker), so every IsLocked() guard fires reliably.
+func (s *FSStore) buildInaccessibleEntity(key, id, entityType string, reason entity.InaccessibleReason) *entity.Entity {
+	e := entity.New(id, entityType)
+	if info, err := s.rooted.Stat(key); err == nil {
+		e.UpdatedAt = info.ModTime()
+	}
+	props := s.propertyOrder(entityType)
+	e.Inaccessible = make([]entity.InaccessibleField, 0, len(props)+1)
+	for _, name := range props {
+		e.Inaccessible = append(e.Inaccessible, entity.InaccessibleField{Name: name, Reason: reason})
+	}
+	e.Inaccessible = append(e.Inaccessible, entity.InaccessibleField{
+		Name:   entity.InaccessibleFieldContent,
+		Reason: reason,
+	})
+	return e
 }
 
 // formatEntity formats an entity as markdown with YAML frontmatter.
@@ -390,10 +427,18 @@ func (s *FSStore) writeEntityFile(e *entity.Entity) error {
 // --- relation I/O ---
 
 // readRelationFile reads and parses a relation from a markdown file key.
-func (s *FSStore) readRelationFile(key string) (*entity.Relation, error) {
+//
+// from, relType, to are caller-supplied (derived from the filename); they
+// are used to populate the resulting relation if the file is git-crypt
+// encrypted and its frontmatter cannot be read.
+func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relation, error) {
 	data, err := s.readDataFile(key)
 	if err != nil {
 		return nil, err
+	}
+
+	if isGitCryptEncrypted(data) {
+		return s.buildInaccessibleRelation(key, from, relType, to, entity.InaccessibleReasonGitCrypt), nil
 	}
 
 	doc, err := parseDocument(string(data))
@@ -422,6 +467,24 @@ func (s *FSStore) readRelationFile(key string) (*entity.Relation, error) {
 	}
 
 	return r, nil
+}
+
+// buildInaccessibleRelation constructs a stand-in relation for a file
+// whose content cannot be read. The endpoints are caller-supplied. The
+// relation has no metamodel-declared properties (unlike entities), so
+// the sole inaccessible entry names the markdown body.
+func (s *FSStore) buildInaccessibleRelation(
+	key, from, relType, to string,
+	reason entity.InaccessibleReason,
+) *entity.Relation {
+	r := entity.NewRelation(from, relType, to)
+	if info, err := s.rooted.Stat(key); err == nil {
+		r.UpdatedAt = info.ModTime()
+	}
+	r.Inaccessible = []entity.InaccessibleField{
+		{Name: entity.InaccessibleFieldContent, Reason: reason},
+	}
+	return r
 }
 
 // formatRelation formats a relation as markdown with YAML frontmatter.

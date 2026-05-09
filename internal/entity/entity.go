@@ -11,13 +11,65 @@ import (
 	"time"
 )
 
+// InaccessibleReason explains why a property's value is unreadable.
+//
+// Today only [InaccessibleReasonGitCrypt] is produced; the type is an
+// enum so future sources of redaction (SOPS-style field encryption,
+// Lua-driven access control) can extend it without changing the shape.
+type InaccessibleReason string
+
+const (
+	// InaccessibleReasonGitCrypt indicates the file is git-crypt encrypted
+	// and the key is not present in the local working tree.
+	InaccessibleReasonGitCrypt InaccessibleReason = "git-crypt"
+)
+
+// InaccessibleFieldContent is the reserved Name used in
+// [InaccessibleField] to mark the entity or relation's markdown body
+// as inaccessible (as distinct from any schema-declared property).
+const InaccessibleFieldContent = "content"
+
+// InaccessibleField marks a single field as known-to-exist but not
+// readable by the holder of the entity. The Name is either a property
+// name or the [InaccessibleFieldContent] sentinel naming the markdown
+// body. A property name appears in [Entity.Properties] OR in
+// [Entity.Inaccessible], never both.
+type InaccessibleField struct {
+	Name   string             `json:"name"`
+	Reason InaccessibleReason `json:"reason"`
+}
+
 // Entity represents any architecture entity (requirement, decision, etc.).
 type Entity struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
-	Content    string                 `json:"content,omitempty"`
-	UpdatedAt  time.Time              `json:"updated_at,omitempty"`
+	ID           string                 `json:"id"`
+	Type         string                 `json:"type"`
+	Properties   map[string]interface{} `json:"properties,omitempty"`
+	Content      string                 `json:"content,omitempty"`
+	UpdatedAt    time.Time              `json:"updated_at,omitempty"`
+	Inaccessible []InaccessibleField    `json:"inaccessible,omitempty"`
+}
+
+// IsInaccessible reports whether the named property is in [Entity.Inaccessible].
+func (e *Entity) IsInaccessible(name string) bool {
+	for _, f := range e.Inaccessible {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// IsLocked reports whether the entity has any field marked unreadable.
+// True for any entity returned from a load that could not produce
+// readable property values (today: git-crypt encrypted files; future:
+// SOPS field encryption, Lua-driven access control).
+//
+// Write paths must reject operations on locked entities — the
+// underlying file is unreadable, so writing through the in-memory
+// representation would replace whatever it contains (typically
+// ciphertext) with cleartext form data.
+func (e *Entity) IsLocked() bool {
+	return len(e.Inaccessible) > 0
 }
 
 // New creates a new entity with the given ID and type.
@@ -121,6 +173,10 @@ func (e *Entity) Clone() *Entity {
 	for k, v := range e.Properties {
 		clone.Properties[k] = CloneValue(v)
 	}
+	if len(e.Inaccessible) > 0 {
+		clone.Inaccessible = make([]InaccessibleField, len(e.Inaccessible))
+		copy(clone.Inaccessible, e.Inaccessible)
+	}
 	return clone
 }
 
@@ -150,12 +206,29 @@ func CloneValue(v interface{}) interface{} {
 
 // Relation represents a directed relationship between two entities.
 type Relation struct {
-	From       string                 `json:"from"`
-	Type       string                 `json:"relation"`
-	To         string                 `json:"to"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
-	Content    string                 `json:"content,omitempty"`
-	UpdatedAt  time.Time              `json:"updated_at,omitempty"`
+	From         string                 `json:"from"`
+	Type         string                 `json:"relation"`
+	To           string                 `json:"to"`
+	Properties   map[string]interface{} `json:"properties,omitempty"`
+	Content      string                 `json:"content,omitempty"`
+	UpdatedAt    time.Time              `json:"updated_at,omitempty"`
+	Inaccessible []InaccessibleField    `json:"inaccessible,omitempty"`
+}
+
+// IsInaccessible reports whether the named property is in [Relation.Inaccessible].
+func (r *Relation) IsInaccessible(name string) bool {
+	for _, f := range r.Inaccessible {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// IsLocked reports whether the relation has any field marked unreadable.
+// See [Entity.IsLocked] for semantics.
+func (r *Relation) IsLocked() bool {
+	return len(r.Inaccessible) > 0
 }
 
 // NewRelation creates a new relation.
@@ -186,6 +259,10 @@ func (r *Relation) Clone() *Relation {
 		for k, v := range r.Properties {
 			clone.Properties[k] = CloneValue(v)
 		}
+	}
+	if len(r.Inaccessible) > 0 {
+		clone.Inaccessible = make([]InaccessibleField, len(r.Inaccessible))
+		copy(clone.Inaccessible, r.Inaccessible)
 	}
 	return clone
 }

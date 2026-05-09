@@ -8,6 +8,16 @@ export interface Entity {
   included?: Record<string, Entity>
   _self?: string
   _actions?: EntityActions
+  inaccessible?: InaccessibleField[]
+}
+
+// InaccessibleField marks a property whose value is known to exist but is
+// unreadable by the holder of the entity (e.g. the file is git-crypt
+// encrypted and the key is not present locally). The SPA renders such
+// fields with a lock indicator instead of an editable widget.
+export interface InaccessibleField {
+  name: string
+  reason: string
 }
 
 export interface EntityActions {

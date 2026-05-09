@@ -460,6 +460,15 @@ function isEnumColumn(column: { property?: string }): boolean {
   return isEnumPropertyDef(entityType.value.properties[column.property])
 }
 
+// isCellInaccessible reports whether the cell's underlying property is
+// listed in the entity's inaccessible array (e.g. git-crypt encrypted).
+// Such cells render a lock indicator instead of the value.
+function isCellInaccessible(entity: Entity, column: { property?: string }): boolean {
+  if (!entity.inaccessible || entity.inaccessible.length === 0) return false
+  if (!column.property) return false
+  return entity.inaccessible.some((f) => f.name === column.property)
+}
+
 function getFormattedCellValue(entity: Entity, column: { property?: string; relation?: string }): string {
   // For relation columns, resolve IDs to titles using included entities
   if (column.relation) {
@@ -662,8 +671,13 @@ onMounted(() => {
               class="mobile-card-field"
             >
               <span class="mobile-card-label">{{ column.label || column.property || column.relation }}</span>
+              <span
+                v-if="isCellInaccessible(entity, column)"
+                class="inaccessible-cell"
+                title="inaccessible"
+              >🔒</span>
               <div
-                v-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
+                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
                 class="badge-row"
               >
                 <Badge
@@ -754,8 +768,13 @@ onMounted(() => {
               v-for="column in listConfig.columns"
               :key="column.property || column.relation"
             >
+              <span
+                v-if="isCellInaccessible(entity, column)"
+                class="inaccessible-cell"
+                title="inaccessible"
+              >🔒</span>
               <div
-                v-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
+                v-else-if="isEnumColumn(column) && asArray(getCellValue(entity, column)).length > 0"
                 class="badge-row"
               >
                 <Badge
@@ -803,6 +822,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.inaccessible-cell {
+  color: var(--color-text-muted, #888);
+  font-style: italic;
+  cursor: help;
+}
+
 .entity-list {
   max-width: 1200px;
 }

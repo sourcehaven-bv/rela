@@ -5,6 +5,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -30,7 +31,13 @@ var _ store.Factory = (*FSFactory)(nil)
 // Files on disk are plain bytes; confidentiality at the sync boundary
 // is the responsibility of git-crypt (or an equivalent tool) rather
 // than this process.
+//
+// meta must be non-nil and declare at least one entity type — fsstore
+// rejects an empty Schemas map.
 func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
+	if meta == nil {
+		return nil, errors.New("app: FSFactory.OpenStore requires a non-nil metamodel")
+	}
 	rooted, err := storage.NewRootedFS(f.FS, f.Paths.Root)
 	if err != nil {
 		return nil, fmt.Errorf("app: rooted fs for fsstore: %w", err)
@@ -47,7 +54,9 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 }
 
 // buildSchemas translates metamodel entity-type definitions into the
-// store-facing EntityTypeSchema map used by fsstore.
+// store-facing EntityTypeSchema map used by fsstore. Plural is always
+// resolved here (via GetPlural) so fsstore can rely on it being
+// non-empty and skip the trim-trailing-"s" guesswork at call time.
 func buildSchemas(meta *metamodel.Metamodel) map[string]store.EntityTypeSchema {
 	if meta == nil {
 		return nil
@@ -55,7 +64,7 @@ func buildSchemas(meta *metamodel.Metamodel) map[string]store.EntityTypeSchema {
 	out := make(map[string]store.EntityTypeSchema, len(meta.Entities))
 	for name, et := range meta.Entities {
 		out[name] = store.EntityTypeSchema{
-			Plural:        et.Plural,
+			Plural:        et.GetPlural(name),
 			PropertyOrder: et.PropertyOrder,
 		}
 	}

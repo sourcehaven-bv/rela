@@ -23,6 +23,10 @@ func newTestStore(t *testing.T) (*FSStore, *storage.MemFS) {
 		EntitiesKey:  "entities",
 		RelationsKey: "relations",
 		CacheKey:     ".rela",
+		Schemas: map[string]store.EntityTypeSchema{
+			"requirement": {Plural: "requirements", PropertyOrder: []string{"title", "status"}},
+			"solution":    {Plural: "solutions", PropertyOrder: []string{"title"}},
+		},
 	})
 	require.NoError(t, err)
 	// Mirror production wiring: subscribe the store's RecordWrite to

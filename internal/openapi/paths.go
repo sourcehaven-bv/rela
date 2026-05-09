@@ -161,7 +161,7 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 //
 //nolint:funlen // Long function is acceptable for declarative spec building
 func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.EntityDef) {
-	plural := def.GetDirPlural(typeName)
+	plural := def.GetPlural(typeName)
 	tag := def.Label
 	basePath := "/api/v1/" + plural
 

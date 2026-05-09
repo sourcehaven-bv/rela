@@ -41,10 +41,10 @@ func removeEntityFromCache(cache map[string]map[string]int, e *entity.Entity) {
 
 // loadEntity reads a single entity from disk.
 func (s *FSStore) loadEntity(id, entityType string) (*entity.Entity, error) {
-	return s.readEntityFile(s.entityFileKey(entityType, id))
+	return s.readEntityFile(s.entityFileKey(entityType, id), id, entityType)
 }
 
 // loadRelation reads a single relation from disk.
 func (s *FSStore) loadRelation(from, relType, to string) (*entity.Relation, error) {
-	return s.readRelationFile(s.relationFileKey(from, relType, to))
+	return s.readRelationFile(s.relationFileKey(from, relType, to), from, relType, to)
 }

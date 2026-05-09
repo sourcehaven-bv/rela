@@ -22,7 +22,7 @@ func (w *Workspace) RenameEntityType(oldType, newType, newPlural string) (int, e
 	if !ok {
 		return 0, fmt.Errorf("unknown entity type: %s", oldType)
 	}
-	oldPlural := oldDef.GetDirPlural(oldType)
+	oldPlural := oldDef.GetPlural(oldType)
 
 	// 1. Update metamodel.yaml
 	if err := metamodel.RenameEntityType(paths.MetamodelPath, oldType, newType, fs); err != nil {

@@ -102,7 +102,7 @@ func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
 		return nil, fmt.Errorf("entity type %q already exists in metamodel", newType)
 	}
 
-	oldPlural := oldDef.GetDirPlural(resolvedOld)
+	oldPlural := oldDef.GetPlural(resolvedOld)
 	newPlural := renamePlural
 	if newPlural == "" {
 		newPlural = newType + "s"
