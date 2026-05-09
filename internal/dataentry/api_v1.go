@@ -1691,10 +1691,18 @@ type V1SidePanelSection struct {
 // Values is always an array so that list-typed properties retain per-item
 // structure; scalar properties become a one-element array. Empty fields emit
 // an empty array (omitted via omitempty when nil).
+//
+// Property carries the raw property name so consumers can correlate the
+// field with metamodel data (e.g. inaccessibility lookup); Label is the
+// human-readable rendering. Inaccessible is true when the underlying entity
+// is git-crypt encrypted — the field is known to exist in the schema but
+// its value cannot be read.
 type V1SectionField struct {
-	Label    string   `json:"label"`
-	Values   []string `json:"values,omitempty"`
-	PropType string   `json:"propType,omitempty"`
+	Property     string   `json:"property,omitempty"`
+	Label        string   `json:"label"`
+	Values       []string `json:"values,omitempty"`
+	PropType     string   `json:"propType,omitempty"`
+	Inaccessible bool     `json:"inaccessible,omitempty"`
 }
 
 // V1SidePanelEntity represents an entity in a side panel section.

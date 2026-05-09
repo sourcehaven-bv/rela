@@ -3,9 +3,15 @@ import type { Entity } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
+  // Raw property name (e.g. "title") — used to correlate with the entry's
+  // inaccessible[] for tooltip reasons.
+  property?: string
   label: string
   values?: string[]
   propType?: string
+  // True when the underlying entity is git-crypt encrypted; PropertyDisplay
+  // renders a lock indicator instead of the (absent) value.
+  inaccessible?: boolean
 }
 
 // Entity data for view sections
@@ -101,7 +107,9 @@ export interface ViewResponse {
   sections: ViewSection[]
 }
 
-// Fetch executed view data
-export async function fetchView(viewId: string, entityId: string): Promise<ViewResponse> {
-  return api.get<ViewResponse>(`/_views/${viewId}/${entityId}`)
+// Fetch executed view data for an entity. The backend looks up the
+// configured ViewConfig by entry.type, or synthesizes a default when
+// none is registered.
+export async function fetchView(entityType: string, entityId: string): Promise<ViewResponse> {
+  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`)
 }

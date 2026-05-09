@@ -1,18 +1,23 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
-import BackButton from '@/components/common/BackButton.vue'
 import { isCancelledFetch } from '@/composables/usePageData'
-import type { Entity, Command } from '@/types'
+import { fetchView, getCommands, toggleCheckbox } from '@/api'
+import type { ViewResponse, ViewSectionField } from '@/api'
+import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
+import { entityDetailHref } from '@/utils/entityRoute'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import { renderMarkdown, renderMermaidDiagrams, getCheckboxStats } from '@/utils/markdown'
-import { getCommands, toggleCheckbox } from '@/api'
+import BackButton from '@/components/common/BackButton.vue'
+import Badge from '@/components/common/Badge.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
+import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
+import LinkExistingModal from '@/components/forms/LinkExistingModal.vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
@@ -24,163 +29,83 @@ const props = defineProps<{
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
-const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+const { confirm } = useConfirm()
 
-// Scope navigation (prev/next within a list) and generic back affordance
-// (return_to / from precedence). Kept as two parallel concerns: scope-nav
-// walks a list; backTarget answers "where do I go back to." When both
-// exist the user gets both affordances in the same bar.
+// Scope navigation (prev/next within a list) and back affordance
+// (return_to / from precedence). Two parallel concerns: scope-nav walks
+// a list; backTarget answers "where do I go back to". Both can be active
+// at once.
 const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(
   () => props.entityType,
-  () => props.entityId
+  () => props.entityId,
 )
 const backTarget = useBackTarget()
 
-// Command modal ref
-const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
-
-function handleKeydown(e: KeyboardEvent) {
-  if (isInputFocused()) return
-  // Don't handle shortcuts while any modal is open — the modal owns Escape,
-  // and Delete/Backspace must not reopen a second confirmation.
-  if (isAnyModalOpen()) return
-  if (document.querySelector('.shortcuts-overlay')) return
-  if (e.key === 'e' || e.key === 'E') {
-    e.preventDefault()
-    editEntity()
-  }
-  // Delete / Backspace: open delete confirmation modal. Only active once the
-  // entity has loaded — otherwise Backspace during initial load would both
-  // hijack browser back-nav and render a modal referencing a null entity.
-  // preventDefault stops the browser back-nav side effect of Backspace.
-  if ((e.key === 'Delete' || e.key === 'Backspace') && entity.value) {
-    e.preventDefault()
-    void requestDelete()
-  }
-  // Scope navigation: p/n for prev/next
-  if (e.key === 'p' && scopeNav.value?.prevId) {
-    e.preventDefault()
-    navigateScope('prev')
-  }
-  if (e.key === 'n' && scopeNav.value?.nextId) {
-    e.preventDefault()
-    navigateScope('next')
-  }
-  // Escape to go back. Uses the back-target precedence (return_to > from);
-  // no-op when neither is present.
-  if (e.key === 'Escape' && backTarget.value) {
-    e.preventDefault()
-    router.push(backTarget.value.to)
-  }
-}
-
-onMounted(() => {
-  document.addEventListener('keydown', handleKeydown)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', handleKeydown)
-  // Cancel any in-flight loadCommands fetch so its resolution doesn't
-  // race with this component being torn down. Firefox surfaces the
-  // cancelled fetch as a console error if we let it complete after
-  // unmount; AbortController + isCancel suppression silences that.
-  commandsAbort?.abort()
-})
-
 // State
-const entity = ref<Entity | null>(null)
 const loading = ref(true)
-const showOverflowMenu = ref(false)
-const { confirm } = useConfirm()
-
-function closeOverflow() { showOverflowMenu.value = false }
-watch(showOverflowMenu, (open) => {
-  if (open) document.addEventListener('click', closeOverflow)
-  else document.removeEventListener('click', closeOverflow)
-})
-onUnmounted(() => document.removeEventListener('click', closeOverflow))
-
-// Commands state
+const error = ref<string | null>(null)
+const viewData = ref<ViewResponse | null>(null)
 const commands = ref<Command[]>([])
+const showOverflowMenu = ref(false)
+
+// Link-existing modal state — per-section button.
+const showLinkModal = ref(false)
+const linkModalInfo = ref<{
+  relation: string
+  linkAs: 'from' | 'to'
+  peerId: string
+  entityTypes: string[]
+  excludeIds: string[]
+} | null>(null)
+
+const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
+const contentRef = ref<HTMLElement | null>(null)
 
 // Computed
 const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
 const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
 
+const entry = computed(() => viewData.value?.entry || null)
+const entryTitle = computed(() => {
+  if (!entry.value) return props.entityId
+  return (entry.value.properties.title as string) || entry.value.id
+})
+
 // inaccessibleByName maps each inaccessible field's name to its reason
 // (e.g. 'git-crypt'), letting consumers render per-property tooltips
-// without re-walking the array.
+// without re-walking the array. Sourced from the view-rendered entry —
+// the backend's entityToV1 (api_v1.go) attaches inaccessible[] when the
+// underlying entity is locked.
 const inaccessibleByName = computed<Map<string, string>>(() => {
   const m = new Map<string, string>()
-  for (const f of entity.value?.inaccessible || []) {
+  for (const f of entry.value?.inaccessible || []) {
     m.set(f.name, f.reason)
   }
   return m
 })
 
-const isInaccessible = computed(() => (entity.value?.inaccessible?.length ?? 0) > 0)
+const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) > 0)
 
-const properties = computed(() => {
-  if (!entity.value || !typeDef.value) return []
-
-  // Get property order from edit form if available, otherwise use metamodel order
-  const formId = editFormId.value
-  const form = formId ? schemaStore.getForm(formId) : null
-  const formFieldOrder = form?.fields?.map((f) => f.property).filter(Boolean) as string[] || []
-
-  // Build properties list. Inaccessible properties carry a marker so the
-  // PropertyDisplay component can render a lock indicator instead of the
-  // (absent) value, plus the reason for the tooltip.
-  const inaccessible = inaccessibleByName.value
-  const props = Object.entries(typeDef.value.properties).map(([name, def]) => ({
-    name,
-    label: name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-    value: entity.value?.properties[name],
-    type: def.type,
-    values: def.values,
-    isLongText: def.type === 'string' && String(entity.value?.properties[name] || '').length > 60,
-    inaccessible: inaccessible.has(name),
-    inaccessibleReason: inaccessible.get(name),
-  }))
-
-  // Sort by form field order, then alphabetically for any not in form
-  return props.sort((a, b) => {
-    const aIdx = formFieldOrder.indexOf(a.name)
-    const bIdx = formFieldOrder.indexOf(b.name)
-    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx
-    if (aIdx !== -1) return -1
-    if (bIdx !== -1) return 1
-    return a.name.localeCompare(b.name)
-  })
-})
-
-const relations = computed(() => {
-  if (!entity.value?.relations) return []
-
-  return Object.entries(entity.value.relations).map(([type, targets]) => ({
-    type,
-    targets,
-    label:
-      schemaStore.getRelationType(type)?.label ||
-      type.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-  }))
-})
-
-const contentRef = ref<HTMLElement | null>(null)
-
-const renderedContent = computed(() => {
-  if (!entity.value?.content) return ''
-  return renderMarkdown(entity.value.content)
+// The entry's content section gets a custom renderer (mermaid + interactive
+// checkboxes) instead of the generic section render-path. Other content
+// sections — content cards from configured views — use the generic path.
+const entryContentSection = computed(() => {
+  const sections = viewData.value?.sections
+  if (!sections) return null
+  return sections.find((s) => s.display === 'content' && s.hasContent && !!s.content) || null
 })
 
 const checkboxStats = computed(() => {
-  if (!entity.value?.content) return null
-  return getCheckboxStats(entity.value.content)
+  const c = entryContentSection.value?.content
+  return c ? getCheckboxStats(c) : null
 })
 
-// Render mermaid diagrams and setup checkbox handlers after content is mounted
-watch(renderedContent, async () => {
+const renderedEntryContent = computed(() =>
+  entryContentSection.value ? renderMarkdown(entryContentSection.value.content || '') : '',
+)
+
+watch(renderedEntryContent, async () => {
   await nextTick()
   if (contentRef.value) {
     await renderMermaidDiagrams(contentRef.value)
@@ -190,13 +115,10 @@ watch(renderedContent, async () => {
 
 function setupCheckboxHandlers() {
   if (!contentRef.value) return
-
   const checkboxes = contentRef.value.querySelectorAll('input[type="checkbox"][data-cb-idx]')
   checkboxes.forEach((cb) => {
     const checkbox = cb as HTMLInputElement
-    // Remove any existing handler
     checkbox.onclick = null
-    // Add click handler
     checkbox.addEventListener('click', async (e) => {
       e.preventDefault()
       const idx = parseInt(checkbox.dataset.cbIdx || '0', 10)
@@ -206,107 +128,66 @@ function setupCheckboxHandlers() {
 }
 
 async function handleCheckboxToggle(index: number) {
-  if (!entity.value) return
-
+  if (!entry.value) return
   try {
-    await toggleCheckbox(entity.value.id, index)
-    // Reload entity to get updated content
-    entity.value = await entitiesStore.fetchEntity(props.entityType, props.entityId, true)
+    await toggleCheckbox(entry.value.id, index)
+    await loadView()
   } catch (err) {
     uiStore.error('Failed to toggle checkbox')
     console.error(err)
   }
 }
 
-// Methods
-async function loadEntity() {
-  loading.value = true
-  try {
-    entity.value = await entitiesStore.fetchEntity(props.entityType, props.entityId, true)
-    await Promise.all([loadCommands(), loadScopeNav()])
-  } catch (err) {
-    // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V and src/composables/usePageData.ts).
-    if (isCancelledFetch(err)) return
-    uiStore.error(`Failed to load ${props.entityType}`)
-    console.error(err)
-  } finally {
-    loading.value = false
+// Keyboard shortcuts
+function handleKeydown(e: KeyboardEvent) {
+  if (isInputFocused()) return
+  if (isAnyModalOpen()) return
+  if (document.querySelector('.shortcuts-overlay')) return
+
+  if (e.key === 'e' || e.key === 'E') {
+    e.preventDefault()
+    editEntity()
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && entry.value) {
+    e.preventDefault()
+    void requestDelete()
+  }
+  if (e.key === 'p' && scopeNav.value?.prevId) {
+    e.preventDefault()
+    navigateScope('prev')
+  }
+  if (e.key === 'n' && scopeNav.value?.nextId) {
+    e.preventDefault()
+    navigateScope('next')
+  }
+  if (e.key === 'Escape' && backTarget.value) {
+    e.preventDefault()
+    router.push(backTarget.value.to)
   }
 }
 
-function editEntity() {
-  if (isInaccessible.value) return
-  if (editFormId.value) {
-    router.push(`/form/${editFormId.value}/${props.entityId}`)
-  } else {
-    uiStore.error('No edit form configured for this entity type')
-  }
+function closeOverflow() {
+  showOverflowMenu.value = false
 }
+watch(showOverflowMenu, (open) => {
+  if (open) document.addEventListener('click', closeOverflow)
+  else document.removeEventListener('click', closeOverflow)
+})
 
-async function requestDelete() {
-  if (!entity.value) return
-  // useConfirm runs onConfirm with the modal in busy state; resolves true on
-  // success (and only then), keeps the modal open with busy cleared if
-  // onConfirm throws so the user can retry or cancel.
-  const ok = await confirm({
-    title: 'Delete Entity?',
-    message: `Are you sure you want to delete '${props.entityId}'? This action cannot be undone.`,
-    confirmLabel: 'Delete',
-    danger: true,
-    onConfirm: withConfirmError(
-      () => entitiesStore.remove(props.entityType, props.entityId),
-      'Failed to delete entity',
-      uiStore,
-    ),
-  })
-  if (!ok) return
-  uiStore.success('Entity deleted successfully')
-  router.push(backTargetAfterDelete())
-}
-
-// Determine where to navigate after deleting this entity.
-// Priority:
-//   1. The back target for this view (return_to > from precedence)
-//   2. A list configured for this entity type
-//   3. The dashboard
-function backTargetAfterDelete(): string {
-  if (backTarget.value) return backTarget.value.to
-  const listId = schemaStore.findListIdForEntityType(props.entityType)
-  if (listId) return `/list/${listId}`
-  return '/'
-}
-
-// Commands
-//
-// In-flight AbortController for the loadCommands fetch. Aborted in
-// onBeforeUnmount and at the start of any new loadCommands call so a
-// rapid navigation between entity-detail pages cannot leave a stale
-// fetch resolving against an unmounted component. axios.isCancel
-// recognises both AbortController-driven aborts and the legacy
-// CancelToken API. See BUG-6C3V.
+// Commands — separate fetch, abortable to survive rapid navigation
+// (BUG-6C3V: a stale fetch resolving against an unmounted component).
 let commandsAbort: AbortController | null = null
 
 async function loadCommands() {
   commandsAbort?.abort()
   commandsAbort = new AbortController()
-  // Snapshot the controller into the local closure so the catch block
-  // checks the signal from THIS call, not whatever a later loadCommands
-  // call replaced it with.
   const localAbort = commandsAbort
   try {
     commands.value = await getCommands(
-      {
-        pageType: 'entity',
-        entityType: props.entityType,
-      },
+      { pageType: 'entity', entityType: props.entityType },
       localAbort.signal,
     )
   } catch (err) {
-    // Suppress both kinds of cancellation:
-    //   - we aborted via commandsAbort.abort() in onBeforeUnmount
-    //   - Firefox aborted the underlying fetch on navigation
-    // See BUG-6C3V and src/composables/usePageData.ts.
     if (localAbort.signal.aborted) return
     if (isCancelledFetch(err)) return
     console.error('Failed to load commands:', err)
@@ -318,62 +199,148 @@ function runCommand(cmd: Command) {
   commandModalRef.value?.runCommand(cmd)
 }
 
-function getRelationTitle(targetId: string): string {
-  const included = entity.value?.included?.[targetId]
-  if (included?._title && included._title !== targetId) {
-    return `${included._title} (${targetId})`
+async function loadView() {
+  loading.value = true
+  error.value = null
+  try {
+    viewData.value = await fetchView(props.entityType, props.entityId)
+    await Promise.all([loadCommands(), loadScopeNav()])
+  } catch (err) {
+    if (isCancelledFetch(err)) return
+    error.value = err instanceof Error ? err.message : 'Failed to load entity'
+    console.error('Failed to load entity view:', err)
+  } finally {
+    loading.value = false
   }
-  return targetId
 }
 
-function navigateToRelation(relationType: string, targetId: string) {
-  // First, try to use the relation type definition to determine target type
-  const relDef = schemaStore.getRelationType(relationType)
-  if (relDef && relDef.to.length > 0) {
-    // If the relation type specifies a single target type, use it
-    if (relDef.to.length === 1) {
-      router.push(`/entity/${relDef.to[0]}/${targetId}`)
-      return
-    }
-    // Multiple possible target types - try to match by ID prefix within those types
-    for (const typeName of relDef.to) {
-      const typeDef = schemaStore.getEntityType(typeName)
-      if (typeDef?.id_prefix && targetId.startsWith(typeDef.id_prefix)) {
-        router.push(`/entity/${typeName}/${targetId}`)
-        return
-      }
-    }
-    // No prefix match - just use the first valid target type
-    router.push(`/entity/${relDef.to[0]}/${targetId}`)
+// Actions
+function editEntity() {
+  // The backend refuses to write through inaccessible (git-crypt encrypted)
+  // entities; bail out client-side so the Edit shortcut is also a no-op.
+  if (isInaccessible.value) return
+  if (!editFormId.value) {
+    uiStore.error('No edit form configured for this entity type')
     return
   }
-
-  // Fallback: try to determine target type from ID prefix (for unknown relation types)
-  for (const [typeName, typeDef] of schemaStore.entityTypeList) {
-    if (typeDef.id_prefix && targetId.startsWith(typeDef.id_prefix)) {
-      router.push(`/entity/${typeName}/${targetId}`)
-      return
-    }
-  }
-  // Last resort: try matching type name from ID prefix
-  const prefix = targetId.split('-')[0].toUpperCase()
-  for (const [typeName] of schemaStore.entityTypeList) {
-    if (typeName.toUpperCase().startsWith(prefix)) {
-      router.push(`/entity/${typeName}/${targetId}`)
-      return
-    }
-  }
-  uiStore.warning(`Could not determine entity type for ${targetId}`)
+  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: props.entityId } })
 }
 
-// Watchers
-watch(
-  () => [props.entityType, props.entityId],
-  () => loadEntity()
-)
+async function requestDelete() {
+  if (!entry.value) return
+  const ok = await confirm({
+    title: 'Delete Entity?',
+    message: `Are you sure you want to delete '${props.entityId}'? This action cannot be undone.`,
+    confirmLabel: 'Delete',
+    danger: true,
+    onConfirm: withConfirmError(
+      async () => {
+        // Use the entity API directly — entitiesStore.remove is the
+        // canonical CRUD path; keep using it.
+        const { useEntitiesStore } = await import('@/stores')
+        const entitiesStore = useEntitiesStore()
+        await entitiesStore.remove(props.entityType, props.entityId)
+      },
+      'Failed to delete entity',
+      uiStore,
+    ),
+  })
+  if (!ok) return
+  uiStore.success('Entity deleted successfully')
+  router.push(backTargetAfterDelete())
+}
+
+function backTargetAfterDelete(): string {
+  if (backTarget.value) return backTarget.value.to
+  const listId = schemaStore.findListIdForEntityType(props.entityType)
+  if (listId) return `/list/${listId}`
+  return '/'
+}
+
+// Section navigation helpers
+function navigateToEntity(entity: { id: string; type: string }, cellLink?: string) {
+  const path = entityDetailHref(entity, { cellLink })
+  if (!path) return
+  router.push(path)
+}
+
+function navigateToEdit(formId: string, entityId: string) {
+  router.push({ name: 'form-edit', params: { id: formId, entityId } })
+}
+
+function navigateToCreate(
+  formId: string,
+  relationInfo?: { relation: string; linkAs: string; peerId: string },
+) {
+  const query: Record<string, string> = {}
+  if (relationInfo) {
+    query.linkRelation = relationInfo.relation
+    query.linkAs = relationInfo.linkAs
+    query.linkPeer = relationInfo.peerId
+  }
+  router.push({ name: 'form-create', params: { id: formId }, query })
+}
+
+function openLinkExisting(
+  linkInfo: { relation: string; linkAs: 'from' | 'to'; peerId: string; entityTypes: string[] },
+  section: { entities?: Array<{ id: string }>; rows?: Array<{ entityId: string }> },
+) {
+  const excludeIds: string[] = []
+  if (section.entities) excludeIds.push(...section.entities.map((e) => e.id))
+  if (section.rows) excludeIds.push(...section.rows.map((r) => r.entityId))
+  linkModalInfo.value = { ...linkInfo, excludeIds }
+  showLinkModal.value = true
+}
+
+function handleLinked() {
+  loadView()
+}
+
+function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
+  if (!fields) return []
+  return fields.map((field) => {
+    // PropertyDisplay's `name` is used as a vue list key; favor the raw
+    // property name when available and fall back to a slugged label so
+    // older shapes still render.
+    const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
+    return {
+      name,
+      label: field.label,
+      value: field.values ?? [],
+      propType: field.propType,
+      inaccessible: field.inaccessible ?? false,
+      inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
+    }
+  })
+}
+
+function shouldUseBadge(value: string, propType?: string): boolean {
+  return !!propType && !!value
+}
+
+function scrollToSection(sectionId: string) {
+  const el = document.getElementById(sectionId)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 // Lifecycle
-onMounted(() => loadEntity())
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+  loadView()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleKeydown)
+  commandsAbort?.abort()
+})
+
+onUnmounted(() => document.removeEventListener('click', closeOverflow))
+
+// Watch for route changes
+watch(
+  () => [props.entityType, props.entityId],
+  () => loadView(),
+)
 </script>
 
 <template>
@@ -383,29 +350,24 @@ onMounted(() => loadEntity())
       <span>Loading...</span>
     </div>
 
-    <template v-else-if="entity">
-      <!-- Back affordance + optional scope (prev/next) navigation. The bar
-           renders when either a back target exists (?return_to or ?from)
-           or the user is in a list-scoped context (?from drives scopeNav).
-           Both can be present simultaneously. -->
+    <div v-else-if="error" class="error-state">
+      <h2>Error</h2>
+      <p>{{ error }}</p>
+      <button class="btn btn-primary" @click="loadView">Retry</button>
+    </div>
+
+    <template v-else-if="entry">
+      <!-- Back affordance + optional scope (prev/next) navigation. -->
       <div v-if="backTarget || scopeNav" class="scope-nav">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <button
-            v-if="scopeNav.prevId"
-            class="scope-nav-btn"
-            @click="navigateScope('prev')"
-          >
+          <button v-if="scopeNav.prevId" class="scope-nav-btn" @click="navigateScope('prev')">
             ← Prev <kbd>P</kbd>
           </button>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <button
-            v-if="scopeNav.nextId"
-            class="scope-nav-btn"
-            @click="navigateScope('next')"
-          >
+          <button v-if="scopeNav.nextId" class="scope-nav-btn" @click="navigateScope('next')">
             Next → <kbd>N</kbd>
           </button>
           <span v-else class="scope-nav-btn disabled">Next →</span>
@@ -415,7 +377,7 @@ onMounted(() => loadEntity())
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
-          <h1>{{ entity.properties.title || entity.id }}</h1>
+          <h1>{{ entryTitle }}</h1>
         </div>
         <!-- Desktop actions -->
         <div class="header-actions desktop-actions">
@@ -476,11 +438,10 @@ onMounted(() => loadEntity())
         </div>
       </header>
 
-      <!-- Inaccessible (encrypted) banner -->
-      <aside
-        v-if="entity.inaccessible && entity.inaccessible.length > 0"
-        class="inaccessible-banner"
-      >
+      <!-- Inaccessible (git-crypt encrypted) banner. Sits above the
+           sections so it dominates the visual hierarchy when the entity
+           cannot be read with the current key. -->
+      <aside v-if="isInaccessible" class="inaccessible-banner">
         <span class="inaccessible-banner-icon" aria-hidden="true">🔒</span>
         <div>
           <strong>This entity is git-crypt encrypted.</strong>
@@ -498,45 +459,287 @@ onMounted(() => loadEntity())
         </div>
       </aside>
 
-      <!-- Properties Section -->
-      <section class="detail-section">
-        <h2>Properties</h2>
-        <PropertyDisplay :properties="properties" :entity-type="typeDef" />
-      </section>
+      <!-- Jump bar (only when there's enough to jump between) -->
+      <nav v-if="viewData && viewData.sections.length > 1" class="jump-bar">
+        <button
+          v-for="section in viewData.sections.filter((s) => s.heading)"
+          :key="section.sectionId"
+          class="jump-link"
+          @click="scrollToSection(section.sectionId)"
+        >
+          {{ section.heading }}
+        </button>
+      </nav>
 
-      <!-- Relations Section -->
-      <section v-if="relations.length" class="detail-section">
-        <h2>Relations</h2>
-        <div class="relations-list">
-          <div v-for="rel in relations" :key="rel.type" class="relation-group">
-            <h3>{{ rel.label }}</h3>
-            <div class="relation-targets">
-              <button
-                v-for="target in rel.targets"
-                :key="target"
-                class="relation-link"
-                @click="navigateToRelation(rel.type, target)"
-              >
-                {{ getRelationTitle(target) }}
-              </button>
-            </div>
+      <!-- Sections -->
+      <div v-if="viewData" class="sections">
+        <section
+          v-for="section in viewData.sections"
+          :id="section.sectionId"
+          :key="section.sectionId"
+          class="view-section"
+        >
+          <h2 v-if="section.heading" class="section-heading">
+            {{ section.heading }}
+            <span
+              v-if="section === entryContentSection && checkboxStats"
+              class="cb-stats"
+            >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span>
+          </h2>
+
+          <div v-if="section.isEmpty" class="section-empty">
+            {{ section.emptyMessage || 'No items' }}
           </div>
-        </div>
-      </section>
 
-      <!-- Documents Section -->
+          <PropertyDisplay
+            v-else-if="section.display === 'properties'"
+            :properties="mapFieldsToProperties(section.fields)"
+          />
+
+          <!-- Entry content with mermaid + interactive checkboxes.
+               Function ref instead of string ref because this template lives
+               inside a v-for: Vue would otherwise collect template-refs of
+               the same name into an array per iteration. -->
+          <div
+            v-else-if="section === entryContentSection"
+            :ref="(el) => { contentRef = el as HTMLElement | null }"
+            class="content-body"
+            v-html="renderedEntryContent"
+          />
+
+          <!-- Other content sections (e.g. content cards from a configured view). -->
+          <div v-else-if="section.display === 'content' && section.hasContent" class="content-block">
+            <div class="markdown-content" v-html="renderMarkdown(section.content || '')"/>
+          </div>
+
+          <div v-else-if="section.display === 'content' && section.entities?.length" class="content-cards">
+            <article
+              v-for="ent in section.entities"
+              :key="ent.id"
+              :data-entity-id="ent.id"
+              class="content-card"
+            >
+              <header class="card-header" @click="navigateToEntity(ent)">
+                <span class="entity-type">{{ ent.type }}</span>
+                <span class="entity-title">{{ ent.title }}</span>
+                <span class="entity-id">{{ ent.id }}</span>
+              </header>
+              <div v-if="ent.hasContent" class="markdown-content" v-html="renderMarkdown(ent.content || '')"/>
+            </article>
+          </div>
+
+          <div v-else-if="section.display === 'cards'" class="cards-grid">
+            <article
+              v-for="ent in section.entities"
+              :key="ent.id"
+              :data-entity-id="ent.id"
+              class="entity-card"
+              @click="navigateToEntity(ent)"
+            >
+              <header class="card-header">
+                <span class="entity-type">{{ ent.type }}</span>
+                <span class="entity-title">{{ ent.title }}</span>
+                <span class="entity-id">{{ ent.id }}</span>
+                <button
+                  v-if="ent.editFormId"
+                  class="edit-btn"
+                  title="Edit"
+                  @click.stop="navigateToEdit(ent.editFormId, ent.id)"
+                >
+                  &times;
+                </button>
+              </header>
+              <div v-if="ent.fields?.length" class="card-fields">
+                <div v-for="field in ent.fields" :key="field.label" class="card-field">
+                  <span class="field-label">{{ field.label }}:</span>
+                  <div v-if="field.propType && field.values?.length" class="badge-row">
+                    <Badge
+                      v-for="v in field.values"
+                      :key="v"
+                      :value="v"
+                      :property="field.propType"
+                    />
+                  </div>
+                  <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <ul v-else-if="section.display === 'list'" class="entity-list">
+            <li
+              v-for="ent in section.entities"
+              :key="ent.id"
+              :data-entity-id="ent.id"
+              class="list-item"
+            >
+              <a class="list-link" @click="navigateToEntity(ent)">
+                <span class="entity-type">{{ ent.type }}</span>
+                <span class="entity-title">{{ ent.title }}</span>
+                <span class="entity-id">{{ ent.id }}</span>
+              </a>
+              <span v-if="ent.fields?.length" class="list-fields">
+                <template v-for="field in ent.fields" :key="field.label">
+                  <Badge
+                    v-for="v in field.values ?? []"
+                    :key="`${field.label}-${v}`"
+                    :value="v"
+                    :property="field.propType"
+                  />
+                </template>
+              </span>
+            </li>
+          </ul>
+
+          <div v-else-if="section.display === 'table'" class="table-wrapper">
+            <template v-if="section.isGrouped && section.groups?.length">
+              <div v-for="group in section.groups" :key="group.groupName" class="table-group">
+                <h3 class="group-heading">{{ group.groupName }}</h3>
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th v-for="col in section.columns" :key="col.property || col.relation">
+                        {{ col.label || col.property || col.relation }}
+                      </th>
+                      <th class="actions-col"/>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in group.rows" :key="row.entityId">
+                      <td v-for="(cell, idx) in row.cells" :key="idx">
+                        <a
+                          v-if="cell.link"
+                          :href="cell.link"
+                          @click.prevent="navigateToEntity(
+                            { id: cell.entityId || row.entityId, type: cell.entityType || row.entityType },
+                            cell.link,
+                          )"
+                        >
+                          <template v-for="(val, vidx) in cell.values" :key="vidx">
+                            <Badge
+                              v-if="shouldUseBadge(val, cell.propType)"
+                              :value="val"
+                              :property="cell.propType"
+                            />
+                            <span v-else>{{ val }}</span>
+                            <span v-if="vidx < cell.values.length - 1">, </span>
+                          </template>
+                        </a>
+                        <template v-else>
+                          <template v-for="(val, vidx) in cell.values" :key="vidx">
+                            <Badge
+                              v-if="shouldUseBadge(val, cell.propType)"
+                              :value="val"
+                              :property="cell.propType"
+                            />
+                            <span v-else>{{ val }}</span>
+                            <span v-if="vidx < cell.values.length - 1">, </span>
+                          </template>
+                        </template>
+                      </td>
+                      <td class="actions-cell">
+                        <button
+                          v-if="row.editFormId"
+                          class="icon-btn"
+                          title="Edit"
+                          @click="navigateToEdit(row.editFormId, row.entityId)"
+                        >
+                          &#9998;
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <table v-else class="data-table">
+              <thead>
+                <tr>
+                  <th v-for="col in section.columns" :key="col.property || col.relation">
+                    {{ col.label || col.property || col.relation }}
+                  </th>
+                  <th class="actions-col"/>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in section.rows" :key="row.entityId">
+                  <td v-for="(cell, idx) in row.cells" :key="idx">
+                    <a
+                      v-if="cell.link"
+                      :href="cell.link"
+                      @click.prevent="navigateToEntity(
+                        { id: cell.entityId || row.entityId, type: cell.entityType || row.entityType },
+                        cell.link,
+                      )"
+                    >
+                      <template v-for="(val, vidx) in cell.values" :key="vidx">
+                        <Badge
+                          v-if="shouldUseBadge(val, cell.propType)"
+                          :value="val"
+                          :property="cell.propType"
+                        />
+                        <span v-else>{{ val }}</span>
+                        <span v-if="vidx < cell.values.length - 1">, </span>
+                      </template>
+                    </a>
+                    <template v-else>
+                      <template v-for="(val, vidx) in cell.values" :key="vidx">
+                        <Badge
+                          v-if="shouldUseBadge(val, cell.propType)"
+                          :value="val"
+                          :property="cell.propType"
+                        />
+                        <span v-else>{{ val }}</span>
+                        <span v-if="vidx < cell.values.length - 1">, </span>
+                      </template>
+                    </template>
+                  </td>
+                  <td class="actions-cell">
+                    <button
+                      v-if="row.editFormId"
+                      class="icon-btn"
+                      title="Edit"
+                      @click="navigateToEdit(row.editFormId, row.entityId)"
+                    >
+                      &#9998;
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Per-section Add / Link Existing affordances -->
+          <div v-if="section.addInfo || section.linkInfo" class="section-actions">
+            <template v-if="section.addInfo">
+              <button
+                v-for="target in section.addInfo.targets"
+                :key="target.entityType"
+                class="btn btn-add"
+                @click="navigateToCreate(target.formId, {
+                  relation: section.addInfo!.relation,
+                  linkAs: section.addInfo!.linkAs,
+                  peerId: section.addInfo!.peerId,
+                })"
+              >
+                + Add {{ target.label }}
+              </button>
+            </template>
+            <button
+              v-if="section.linkInfo"
+              class="btn btn-link-existing"
+              @click="openLinkExisting(section.linkInfo!, section)"
+            >
+              &#128279; Link Existing
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <!-- External documents (renders only when configured for this type). -->
       <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
 
-      <!-- Content Section -->
-      <section v-if="entity.content" class="detail-section">
-        <h2>
-          Content
-          <span v-if="checkboxStats" class="cb-stats">({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span>
-        </h2>
-        <div ref="contentRef" class="content-body" v-html="renderedContent"/>
-      </section>
-
-      <!-- Command Execution Modal -->
       <CommandModal ref="commandModalRef" :entity-id="entityId" />
     </template>
 
@@ -547,12 +750,25 @@ onMounted(() => loadEntity())
         Back to list
       </router-link>
     </div>
+
+    <LinkExistingModal
+      v-if="linkModalInfo"
+      :show="showLinkModal"
+      :relation="linkModalInfo.relation"
+      :link-as="linkModalInfo.linkAs"
+      :peer-id="linkModalInfo.peerId"
+      :entity-types="linkModalInfo.entityTypes"
+      :exclude-ids="linkModalInfo.excludeIds"
+      @close="showLinkModal = false"
+      @linked="handleLinked"
+    />
   </div>
 </template>
 
 <style scoped>
 .entity-detail {
-  max-width: 900px;
+  max-width: 1200px;
+  padding: 0 0 24px;
 }
 
 .inaccessible-banner {
@@ -587,10 +803,12 @@ onMounted(() => loadEntity())
 
 /* Uses global .loading-state, .error-state, .spinner from App.vue */
 
+/* Header */
 .detail-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 16px;
   margin-bottom: 24px;
 }
 
@@ -611,6 +829,9 @@ onMounted(() => loadEntity())
 
 .header-info h1 {
   margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-color);
 }
 
 .header-actions {
@@ -618,59 +839,173 @@ onMounted(() => loadEntity())
   gap: 8px;
 }
 
-/* Uses global .btn, .btn-secondary, .btn-danger from App.vue */
+.header-actions kbd {
+  padding: 2px 5px;
+  font-size: 10px;
+  background: var(--border-color);
+  border-radius: 3px;
+  font-family: monospace;
+  margin-left: 4px;
+}
 
-.detail-section {
+.btn-command {
+  background: var(--accent-color, #3b82f6);
+  color: white;
+}
+
+.btn-command:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* Mobile-responsive header. .desktop-actions and .mobile-actions are
+ * toggled by media queries in App.vue's global styles. */
+.mobile-actions {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .desktop-actions {
+    display: none;
+  }
+  .mobile-actions {
+    display: flex;
+    align-items: center;
+  }
+}
+
+.mobile-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+}
+
+.overflow-menu-wrapper {
+  position: relative;
+}
+
+.mobile-overflow-btn {
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 12px;
+}
+
+.overflow-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 24px;
-  margin-bottom: 24px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  min-width: 160px;
+  z-index: 50;
 }
 
-.detail-section h2 {
-  margin: 0 0 16px;
-  font-size: 18px;
-  color: var(--text-color);
-}
-
-.relations-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.relation-group h3 {
-  margin: 0 0 8px;
+.overflow-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  text-align: left;
   font-size: 14px;
-  font-weight: 600;
-  color: var(--muted-text);
-  text-transform: capitalize;
+  color: var(--text-color);
+  cursor: pointer;
 }
 
-.relation-targets {
+.overflow-menu-item:hover {
+  background: var(--hover-bg);
+}
+
+/* Scope Navigation Bar
+ * .scope-nav-btn styles live in src/styles/back-button.css — see TKT-JIEKC. */
+.scope-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.scope-nav-progress {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+  font-family: monospace;
+}
+
+.scope-nav-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+/* Jump bar */
+.jump-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 24px;
 }
 
-.relation-link {
+.jump-link {
   padding: 6px 12px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 13px;
-  font-family: monospace;
-  color: var(--accent-color);
+  color: var(--text-color);
   cursor: pointer;
   transition: all 0.15s;
 }
 
-.relation-link:hover {
-  filter: brightness(0.95);
+.jump-link:hover {
+  background: var(--accent-color);
   border-color: var(--accent-color);
+  color: white;
 }
 
+/* Sections */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.view-section {
+  scroll-margin-top: 20px;
+}
+
+.section-heading {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-color);
+}
+
+.cb-stats {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted-text);
+  margin-left: 8px;
+}
+
+.section-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted-text);
+  background: var(--hover-bg);
+  border-radius: 6px;
+  font-style: italic;
+}
+
+/* Entry content body — fuller markdown styling for interactive checkboxes
+ * and mermaid diagrams. Generic .markdown-content (used by content-card
+ * snippets) gets a tighter treatment. */
 .content-body {
   font-size: 15px;
   line-height: 1.7;
@@ -684,17 +1019,9 @@ onMounted(() => loadEntity())
   color: var(--text-color);
 }
 
-.content-body :deep(h1) {
-  font-size: 24px;
-}
-
-.content-body :deep(h2) {
-  font-size: 20px;
-}
-
-.content-body :deep(h3) {
-  font-size: 16px;
-}
+.content-body :deep(h1) { font-size: 24px; }
+.content-body :deep(h2) { font-size: 20px; }
+.content-body :deep(h3) { font-size: 16px; }
 
 .content-body :deep(p) {
   margin: 0 0 12px;
@@ -733,165 +1060,270 @@ onMounted(() => loadEntity())
   cursor: pointer;
 }
 
-.cb-stats {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--muted-text);
-  margin-left: 8px;
-}
-
-/* Uses global .modal-overlay, .modal, .modal-actions from App.vue */
-
-.btn-command {
-  background: var(--accent-color, #3b82f6);
-  color: white;
-}
-
-.btn-command:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-/* Scope Navigation Bar
- * .scope-nav-btn styles live in src/styles/back-button.css — see
- * TKT-JIEKC. The bar layout (.scope-nav) + progress/label stay here. */
-.scope-nav {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.scope-nav-progress {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-color);
-  font-family: monospace;
-}
-
-.scope-nav-label {
-  flex: 1;
-  font-size: 13px;
-  color: var(--muted-text);
-}
-
-/* Mobile actions — hidden on desktop */
-.mobile-actions {
-  display: none;
-}
-
-.mobile-delete-btn {
-  padding: 8px 12px;
-}
-
-.overflow-menu-wrapper {
-  position: relative;
-}
-
-.mobile-overflow-btn {
-  font-size: 18px;
-  letter-spacing: 2px;
-  padding: 8px 14px;
-}
-
-.overflow-menu {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  margin-top: 4px;
+/* Generic content (collected entities, configured-view content sections). */
+.content-block {
+  padding: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  min-width: 180px;
-  z-index: 20;
-  overflow: hidden;
+  border-radius: 6px;
 }
 
-.overflow-menu-item {
-  display: block;
-  width: 100%;
-  padding: 12px 16px;
+.markdown-content {
+  line-height: 1.6;
+}
+
+.content-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.content-card {
+  padding: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.content-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+
+.content-card .card-header:hover .entity-title {
+  color: var(--accent-color);
+}
+
+/* Cards grid (relation sections etc.) */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.entity-card {
+  padding: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.entity-card:hover {
+  border-color: var(--accent-color);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.entity-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--muted-text);
+  background: var(--border-color);
+  padding: 2px 4px;
+  border-radius: 2px;
+}
+
+.entity-title {
+  font-weight: 500;
+  color: var(--text-color);
+  flex: 1;
+}
+
+.entity-id {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--muted-text);
+}
+
+.edit-btn {
   background: none;
   border: none;
-  text-align: left;
-  font-size: 14px;
-  color: var(--text-color);
+  color: var(--muted-text);
+  font-size: 16px;
   cursor: pointer;
-  font-family: inherit;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
-.overflow-menu-item:hover {
+.edit-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.field-label {
+  color: var(--muted-text);
+}
+
+.field-value {
+  color: var(--text-color);
+}
+
+/* Entity list */
+.entity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.list-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.list-link:hover .entity-title {
+  color: var(--accent-color);
+}
+
+.list-fields {
+  display: flex;
+  gap: 6px;
+}
+
+/* Table */
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.table-group {
+  margin-bottom: 24px;
+}
+
+.group-heading {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted-text);
+  margin: 0 0 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.data-table th {
+  font-weight: 500;
+  color: var(--muted-text);
   background: var(--hover-bg);
 }
 
-.overflow-menu-item + .overflow-menu-item {
-  border-top: 1px solid var(--border-color);
+.data-table td {
+  color: var(--text-color);
 }
 
-@media (max-width: 768px) {
-  /* Native-style mobile nav bar — sits in the hamburger area */
-  .scope-nav {
-    position: sticky;
-    top: -60px; /* pull up into main-content padding-top (60px) */
-    z-index: 102; /* above hamburger (101) */
-    background: var(--bg-color);
-    margin: -60px -16px 12px -16px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-color);
-    gap: 0;
-    flex-wrap: nowrap;
-    justify-content: space-between;
-  }
+.data-table tbody tr:hover {
+  background: var(--hover-bg);
+}
 
-  .scope-nav-label {
-    display: none;
-  }
+.data-table a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
 
-  .scope-nav-progress {
-    font-size: 13px;
-    color: var(--muted-text);
-    flex: 1;
-    text-align: center;
-  }
+.data-table a:hover {
+  text-decoration: underline;
+}
 
-  /* .scope-nav-btn mobile overrides live in src/styles/back-button.css. */
+.actions-col {
+  width: 60px;
+}
 
-  .detail-header {
-    flex-direction: column;
-    gap: 12px;
-  }
+.actions-cell {
+  text-align: center;
+}
 
-  .desktop-actions {
-    display: none;
-  }
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--muted-text);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+  border-radius: 4px;
+}
 
-  .mobile-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
+.icon-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
 
-  .mobile-actions .btn {
-    min-height: 44px;
-  }
+/* Section actions */
+.section-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
-  .mobile-actions .btn-secondary {
-    flex: 1;
-  }
+.btn-add,
+.btn-link-existing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  background: var(--hover-bg);
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  color: var(--accent-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
 
-  .header-info h1 {
-    font-size: 22px;
-  }
-
-  .detail-section {
-    background: none;
-    border: none;
-    box-shadow: none;
-    border-radius: 0;
-    padding: 0;
-    margin-bottom: 20px;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 16px;
-  }
+.btn-add:hover,
+.btn-link-existing:hover {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
 }
 </style>
