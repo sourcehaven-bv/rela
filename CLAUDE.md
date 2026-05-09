@@ -87,6 +87,34 @@ The store is the source of truth. `search` maintains a derived index as a
 derived state. `entitymanager` is the "human intent" write path that runs
 automations and validation on top of the store.
 
+### Validation policy for write APIs
+
+rela's storage format is permissive: markdown + YAML frontmatter, edited
+freely by external tools alongside the API. The philosophy is **tolerate
+temporarily invalid data**; the `analyze_*` tools surface inconsistencies
+that the storage layer doesn't reject.
+
+Write-time checks split into three classes (DEC-HWZHA):
+
+| Class | When | HTTP |
+|---|---|---|
+| **Hard 400 — malformed wire format** | Request structure is broken, detectable without the metamodel | 400 |
+| **Hard 422 — structural impossibilities** | Storage layer literally cannot persist this | 422 |
+| **Write-with-warnings (200 + warnings)** | Soft conditions: target type mismatch, missing target, unknown meta keys, required-meta unset, meta type mismatches | 200 |
+
+The 200-with-warnings path performs the requested write and returns
+warnings in the response body so UIs surface them non-blockingly. Each
+warning is `{code, path, detail}` where `code` matches the corresponding
+`analyze_*` finding code so UIs can de-duplicate against analyze runs.
+
+Resist drift toward hard rejection on soft conditions. JSON:API and
+similar wire formats bring a "validate-then-422" mental model from
+REST-over-database stacks where wire and storage share a closed schema;
+rela's storage is intentionally more permissive than that. If you find
+yourself adding a 422 on a write path, ask: "could a hand-editor produce
+this state in a markdown file? If yes, it's a soft condition — warn,
+don't reject."
+
 ### Packages
 
 Entry points: `cmd/rela`, `cmd/rela-server`, `cmd/rela-desktop`.
