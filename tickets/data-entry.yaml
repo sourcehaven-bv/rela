@@ -929,20 +929,11 @@ lists:
     create_form: create_decision
     edit_form: edit_decision
     page_size: 25
-entity_views:
-  concept:
-    detail_view: concept_detail
-  feature:
-    detail_view: feature_detail
-  future-concept:
-    detail_view: future_concept_detail
-  idea:
-    detail_view: idea_detail
 # ══════════════════════════════════════════════════
 # Views (detail pages)
 # ══════════════════════════════════════════════════
 views:
-  idea_detail:
+  idea:
     title: "Idea"
     entry:
       type: idea
@@ -1003,7 +994,7 @@ views:
         fields:
           - property: status
         empty_message: "Not yet promoted"
-  future_concept_detail:
+  future-concept:
     title: "Future Concept"
     entry:
       type: future-concept
@@ -1080,7 +1071,7 @@ views:
         fields:
           - property: status
         empty_message: "No blockers"
-  feature_detail:
+  feature:
     title: "Feature"
     entry:
       type: feature
@@ -1150,7 +1141,7 @@ views:
           - property: category
           - property: status
         empty_message: "No linked ideas"
-  concept_detail:
+  concept:
     title: "Concept"
     entry:
       type: concept
