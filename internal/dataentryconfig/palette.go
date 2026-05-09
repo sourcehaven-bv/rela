@@ -150,27 +150,52 @@ type ResolvedPalette struct {
 	DarkDisabled bool              `json:"darkDisabled,omitempty"`
 }
 
-// Built-in default colors for light mode.
+// Built-in default colors for light mode: cream paper surface,
+// harbor-navy sidebar, blue accent.
 var defaultLightColors = PaletteColors{
-	Base:    "#1a1a2e",
-	Surface: "#f8fafc",
-	Accent:  "#6366f1",
-	Text:    "#1e293b",
-	Success: "#10b981",
-	Error:   "#ef4444",
-	Warning: "#f59e0b",
-	Info:    "#3b82f6",
+	Base:    "#164155",
+	Surface: "#f3f2ef",
+	Accent:  "#4772fb",
+	Text:    "#191919",
+	Success: "#06ce90",
+	Error:   "#e5484d",
+	Warning: "#f4aa83",
+	Info:    "#4772fb",
+}
+
+// Built-in default colors for dark mode. Same hue family as the light
+// defaults — harbor-navy surface, cream-tinted text, lifted blue accent.
+var defaultDarkColors = PaletteColors{
+	Base:    "#091821",
+	Surface: "#0f1f28",
+	Accent:  "#6f93ff",
+	Text:    "#ece9e0",
+	Success: "#34d39c",
+	Error:   "#f87171",
+	Warning: "#f9d975",
+	Info:    "#6f93ff",
 }
 
 // Built-in default badge colors.
 var defaultBadgeColors = map[string]string{
-	"blue":   "#3b82f6",
+	"blue":   "#4772fb",
 	"purple": "#8b5cf6",
-	"green":  "#22c55e",
+	"green":  "#06ce90",
 	"gray":   "#6b7280",
-	"red":    "#ef4444",
-	"orange": "#f97316",
-	"yellow": "#eab308",
+	"red":    "#e5484d",
+	"orange": "#f4aa83",
+	"yellow": "#f9d975",
+}
+
+// Built-in default badge colors for dark mode.
+var defaultDarkBadges = map[string]string{
+	"blue":   "#6f93ff",
+	"purple": "#c4b5fd",
+	"green":  "#34d39c",
+	"gray":   "#8fa4b0",
+	"red":    "#f87171",
+	"orange": "#f4aa83",
+	"yellow": "#f9d975",
 }
 
 // ValidateHexColor checks that a string is a valid hex color.
@@ -261,13 +286,12 @@ func mergeColors(dst, src *PaletteColors) {
 // produces a ResolvedPalette containing the fully derived CSS
 // variable map.
 //
-// Dark mode is opt-in and explicit: if neither project nor user
-// supplied a dark configuration, dark mode is reported as disabled.
-// Auto-derivation lives in the frontend (Settings → Derive Dark) and
-// produces a fully-populated PaletteColors object that arrives here
-// via the user palette. Empty fields in an explicit dark palette
-// inherit from the resolved light palette so that partial overrides
-// compose cleanly with the user's chosen light theme.
+// Dark mode is on by default — when neither project nor user supplied
+// a dark configuration, the built-in defaultDarkColors palette is
+// used. To turn dark mode off, a project or user palette must
+// explicitly set `dark: false`. Empty fields in an explicit dark
+// palette inherit from the resolved light palette so that partial
+// overrides compose cleanly with the user's chosen light theme.
 func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	// Start with defaults.
 	light := defaultLightColors
@@ -286,9 +310,12 @@ func ResolvePalette(project, user *PaletteConfig) *ResolvedPalette {
 	}
 
 	// Determine dark mode. The user palette wins if it specifies
-	// anything; otherwise the project palette; otherwise dark is
-	// disabled by default.
-	darkMode := DarkMode{Disabled: true}
+	// anything; otherwise the project palette; otherwise dark mode
+	// uses the built-in default dark palette.
+	darkMode := DarkMode{Explicit: &DarkPalette{
+		PaletteColors: defaultDarkColors,
+		Badges:        copyBadges(defaultDarkBadges),
+	}}
 	if project != nil && (project.Dark.Disabled || project.Dark.Explicit != nil) {
 		darkMode = project.Dark
 	}

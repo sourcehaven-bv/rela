@@ -142,52 +142,55 @@ watch(
 </template>
 
 <style>
+/* Default theme.
+   Light: cream paper bg, deep harbor-navy sidebar, blue accent, warm peach highlights.
+   Dark:  same harbor-navy as the dominant surface, cream-tinted text, lifted accent. */
 :root {
-  --sidebar-bg: #1a1a2e;
-  --sidebar-text: #e8e8e8;
-  --accent-color: #6366f1;
-  --bg-color: #f8fafc;
-  --text-color: #1e293b;
-  --border-color: #e2e8f0;
-  --success-color: #10b981;
-  --error-color: #ef4444;
-  --warning-color: #f59e0b;
-  --info-color: #3b82f6;
+  --sidebar-bg: #164155;
+  --sidebar-text: #f3f2ef;
+  --accent-color: #4772fb;
+  --bg-color: #f3f2ef;
+  --text-color: #191919;
+  --border-color: #e0ddd5;
+  --success-color: #06ce90;
+  --error-color: #e5484d;
+  --warning-color: #f4aa83;
+  --info-color: #4772fb;
   --card-bg: #ffffff;
   --input-bg: #ffffff;
-  --hover-bg: #f1f5f9;
-  --muted-text: #64748b;
-  --badge-blue: #3b82f6;
+  --hover-bg: #ebe9e4;
+  --muted-text: #6b7280;
+  --badge-blue: #4772fb;
   --badge-purple: #8b5cf6;
-  --badge-green: #22c55e;
+  --badge-green: #06ce90;
   --badge-gray: #6b7280;
-  --badge-red: #ef4444;
-  --badge-orange: #f97316;
-  --badge-yellow: #eab308;
+  --badge-red: #e5484d;
+  --badge-orange: #f4aa83;
+  --badge-yellow: #f9d975;
 }
 
 :root.dark {
-  --sidebar-bg: #0f0f1a;
-  --sidebar-text: #e8e8e8;
-  --accent-color: #818cf8;
-  --bg-color: #121218;
-  --text-color: #e2e8f0;
-  --border-color: #2d2d3a;
-  --success-color: #34d399;
+  --sidebar-bg: #091821;
+  --sidebar-text: #ece9e0;
+  --accent-color: #6f93ff;
+  --bg-color: #0f1f28;
+  --text-color: #ece9e0;
+  --border-color: #264454;
+  --success-color: #34d39c;
   --error-color: #f87171;
-  --warning-color: #fbbf24;
-  --info-color: #60a5fa;
-  --card-bg: #1a1a24;
-  --input-bg: #1e1e28;
-  --hover-bg: #252530;
-  --muted-text: #94a3b8;
-  --badge-blue: #60a5fa;
+  --warning-color: #f9d975;
+  --info-color: #6f93ff;
+  --card-bg: #162a35;
+  --input-bg: #1b3140;
+  --hover-bg: #1f3848;
+  --muted-text: #8fa4b0;
+  --badge-blue: #6f93ff;
   --badge-purple: #c4b5fd;
-  --badge-green: #4ade80;
-  --badge-gray: #6b7280;
+  --badge-green: #34d39c;
+  --badge-gray: #8fa4b0;
   --badge-red: #f87171;
-  --badge-orange: #fb923c;
-  --badge-yellow: #fde047;
+  --badge-orange: #f4aa83;
+  --badge-yellow: #f9d975;
 }
 
 * {
@@ -197,7 +200,7 @@ watch(
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: var(--bg-color);
   color: var(--text-color);
   line-height: 1.5;

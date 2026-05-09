@@ -233,13 +233,14 @@ func TestDarkModeJSON(t *testing.T) {
 }
 
 func TestResolvePalette(t *testing.T) {
-	t.Run("nil palettes return defaults with dark disabled", func(t *testing.T) {
+	t.Run("nil palettes return defaults with dark enabled", func(t *testing.T) {
 		r := ResolvePalette(nil, nil)
 		require.NotNil(t, r)
 		assert.Equal(t, defaultLightColors.Accent, r.Light["--accent-color"])
 		assert.Equal(t, defaultBadgeColors["blue"], r.Light["--badge-blue"])
-		assert.True(t, r.DarkDisabled, "dark should be disabled when no explicit dark configured")
-		assert.Empty(t, r.Dark)
+		assert.False(t, r.DarkDisabled, "dark should be enabled by default with built-in dark palette")
+		assert.Equal(t, defaultDarkColors.Accent, r.Dark["--accent-color"])
+		assert.Equal(t, defaultDarkBadges["blue"], r.Dark["--badge-blue"])
 	})
 
 	t.Run("partial project palette merges with defaults", func(t *testing.T) {
@@ -328,16 +329,25 @@ func TestResolvePalette(t *testing.T) {
 		}
 	})
 
-	t.Run("21 light variables when dark disabled", func(t *testing.T) {
+	t.Run("21 variables in each theme when dark enabled by default", func(t *testing.T) {
 		r := ResolvePalette(nil, nil)
 		assert.Len(t, r.Light, 21) // 8 base + 6 derived + 7 badges
+		assert.Len(t, r.Dark, 21)
+	})
+
+	t.Run("dark explicitly disabled by project skips built-in dark", func(t *testing.T) {
+		project := &PaletteConfig{Dark: DarkMode{Disabled: true}}
+		r := ResolvePalette(project, nil)
+		assert.True(t, r.DarkDisabled)
 		assert.Empty(t, r.Dark)
 	})
 
-	t.Run("zero-value DarkMode (from JSON null) is treated as disabled", func(t *testing.T) {
+	t.Run("zero-value DarkMode (from JSON null) falls through to default dark", func(t *testing.T) {
 		// JSON `null` decoded into DarkMode produces a zero value:
-		// neither Disabled nor Explicit set. Without the defensive
-		// check this would panic on `*darkMode.Explicit`.
+		// neither Disabled nor Explicit set. The user palette
+		// contributes no dark preference, so the built-in default
+		// dark palette wins. The defensive nil check still prevents
+		// a panic on `*darkMode.Explicit`.
 		var p PaletteConfig
 		require.NoError(t, json.Unmarshal([]byte(`{"accent":"#ffcd75","dark":null}`), &p))
 		assert.False(t, p.Dark.IsDisabled())
@@ -345,7 +355,8 @@ func TestResolvePalette(t *testing.T) {
 
 		require.NotPanics(t, func() {
 			r := ResolvePalette(nil, &p)
-			assert.True(t, r.DarkDisabled)
+			assert.False(t, r.DarkDisabled)
+			assert.Equal(t, defaultDarkColors.Accent, r.Dark["--accent-color"])
 		})
 	})
 }
