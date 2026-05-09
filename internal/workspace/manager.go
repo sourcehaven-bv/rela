@@ -137,6 +137,7 @@ func (m *wsEntityManager) CreateRelation(
 ) (*entity.Relation, error) {
 	return m.w.createRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
+		MetaUnset:  opts.MetaUnset,
 		Content:    opts.Content,
 	})
 }
@@ -146,6 +147,7 @@ func (m *wsEntityManager) UpdateRelation(
 ) (*entity.Relation, error) {
 	return m.w.updateRelation(from, relType, to, CreateRelationOptions{
 		Properties: opts.Properties,
+		MetaUnset:  opts.MetaUnset,
 		Content:    opts.Content,
 	})
 }

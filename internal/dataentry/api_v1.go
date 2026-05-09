@@ -39,6 +39,11 @@ type V1Entity struct {
 	Self         string                 `json:"_self,omitempty"`
 	Actions      *V1Actions             `json:"_actions,omitempty"`
 	Inaccessible []V1InaccessibleField  `json:"inaccessible,omitempty"`
+	// Warnings lists soft-condition findings surfaced by the write
+	// path. Populated only by mutation responses (PATCH); read paths
+	// leave it nil. Each warning has a stable `code`, an RFC 6901
+	// JSON Pointer `path`, and a human-readable `detail`.
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // V1InaccessibleField describes a property that is known to exist but
@@ -545,27 +550,47 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	var req struct {
 		Properties map[string]interface{} `json:"properties,omitempty"`
 		Content    *string                `json:"content,omitempty"`
-		Relations  map[string][]string    `json:"relations,omitempty"`
+		Relations  V1RelationsField       `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// V1RelationsField's UnmarshalJSON returns *wireError for
+		// shape errors; surface them as 400 with the structured code.
+		var werr *wireError
+		if errors.As(err, &werr) {
+			writeV1Error(w, r, http.StatusBadRequest, werr.Code,
+				werr.Detail, werr.Path)
+			return
+		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
 		return
 	}
 
+	// Phase A: validate relations (no writes). Returns warnings (will
+	// be merged into the success response) and err (hard 400/422).
+	// Validation runs BEFORE entity update so a structural relation
+	// error doesn't leave the entity half-written. (DEC-HWZHA atomicity.)
+	var warnings []Warning
+	if req.Relations.Modern != nil {
+		ws, err := a.validateRelationsModern(r.Context(), entityID, entity.Type, req.Relations.Modern)
+		if err != nil {
+			a.writeRelationsValidationError(w, r, err)
+			return
+		}
+		warnings = ws
+	}
+
+	// Phase B: entity update. Skipped when only relations changed,
+	// to avoid bumping the file mtime and broadcasting a misleading
+	// "entity updated" SSE event with no byte-level change.
 	if req.Properties != nil {
 		for k, v := range req.Properties {
 			entity.Properties[k] = v
 		}
 	}
-
 	if req.Content != nil {
 		entity.Content = *req.Content
 	}
-
-	// Skip UpdateEntity when the PATCH only touches relations: otherwise we
-	// rewrite the entity file, bump mtime, re-run validation, and broadcast
-	// a misleading "entity updated" SSE event with no byte-level change.
 	entityChanged := req.Properties != nil || req.Content != nil
 	if entityChanged {
 		if _, err := a.entityManager.UpdateEntity(r.Context(), entity); err != nil {
@@ -574,19 +599,67 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	if err := a.reconcileOutgoingRelations(r.Context(), entityID, req.Relations); err != nil {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to update relations", reconcileDetail(err))
-		return
+	// Phase C: relation writes. Modern reconciler is dispatched when
+	// the modern shape was used; legacy reconciler otherwise. Both
+	// produce warnings on soft conditions and structured errors on
+	// hard failures.
+	switch {
+	case req.Relations.Modern != nil:
+		ws, err := a.applyRelationsModern(r.Context(), entityID, req.Relations.Modern)
+		warnings = append(warnings, ws...)
+		if err != nil {
+			a.writeRelationsApplyError(w, r, err)
+			return
+		}
+	case req.Relations.Legacy != nil:
+		if err := a.reconcileOutgoingRelations(r.Context(), entityID, req.Relations.Legacy); err != nil {
+			writeV1Error(w, r, http.StatusUnprocessableEntity,
+				"relation_failed", "Failed to update relations", reconcileDetail(err))
+			return
+		}
 	}
 
 	result := a.entityToV1(entity, plural, true, false)
+	if len(warnings) > 0 {
+		result.Warnings = warnings
+	}
 	newETag := a.computeEntityETag(entity)
 	w.Header().Set("ETag", newETag)
 
-	// Broadcast entity update event
-	a.broker.broadcastEntityEvent("updated", typeName, entityID)
+	// Broadcast entity update event when the entity itself changed.
+	// Relation-only changes don't fire an entity:updated event today.
+	if entityChanged {
+		a.broker.broadcastEntityEvent("updated", typeName, entityID)
+	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// writeRelationsValidationError maps a Phase A validation error from
+// the modern reconciler to the corresponding HTTP response. wireError
+// → 400 (caller bug); structuralError → 422 (storage can't represent).
+func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Request, err error) {
+	var werr *wireError
+	if errors.As(err, &werr) {
+		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
+		return
+	}
+	if se, ok := asStructuralError(err); ok {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, se.Code, se.Detail, se.Path)
+		return
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity,
+		"relation_failed", "Failed to validate relations", err.Error())
+}
+
+// writeRelationsApplyError maps a Phase C write error to a 500 — the
+// entity may already have been updated, so a partial state is on disk.
+// This is the documented atomicity gap.
+func (a *App) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
+	writeV1Error(w, r, http.StatusInternalServerError,
+		"relation_write_failed",
+		"Failed to apply relation changes after entity update; the entity may have been updated",
+		reconcileDetail(err))
 }
 
 func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {

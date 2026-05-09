@@ -73,9 +73,13 @@ func (s *Server) handleCreateRelation(
 	}
 	toID = trimID(toID)
 
+	// Treat an empty `content` string from the MCP request as "leave alone"
+	// rather than "set body to empty". MCP clients can omit the field or
+	// pass null to mean the same; an explicit "" today never reaches a
+	// no-content-meant-empty case in practice.
 	opts := entitymanager.RelationOptions{
 		Properties: extractProperties(request),
-		Content:    request.GetString("content", ""),
+		Content:    nilIfEmpty(request.GetString("content", "")),
 	}
 
 	if _, createErr := s.ws.EntityManager().CreateRelation(ctx, fromID, relType, toID, opts); createErr != nil {
@@ -117,4 +121,14 @@ func (s *Server) handleDeleteRelation(
 
 	return mcp.NewToolResultText(
 		fmt.Sprintf("Removed link: %s --%s--> %s", fromID, relType, toID)), nil
+}
+
+// nilIfEmpty returns nil when s is empty, else &s. Used to translate
+// "absent / empty string" inputs from the MCP layer into the
+// leave-alone semantic of entitymanager.RelationOptions.Content.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

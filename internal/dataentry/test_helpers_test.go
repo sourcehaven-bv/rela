@@ -172,8 +172,15 @@ func reseedStore(dst, src store.Store) {
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 	app := &App{scriptEngine: script.NewEngine()}
 	if meta != nil {
-		ws := workspace.NewForTest(meta)
-		rebindApp(app, nil, &project.Context{}, ws)
+		// Use an in-memory FS + project context so the workspace's
+		// templater has paths it can dereference. Without this,
+		// CreateRelation panics inside RelationTemplate when it tries
+		// to compute a path against a nil *project.Context.
+		fs := storage.NewMemFS()
+		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
+		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+		ws := workspace.NewForTest(meta, workspace.WithFS(fs, ctx))
+		rebindApp(app, fs, ctx, ws)
 		seedFromFixture(app.store, f)
 	}
 	if cfg == nil {
