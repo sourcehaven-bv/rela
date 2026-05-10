@@ -368,14 +368,14 @@ For enhancements: identify what documentation needs updating.
 **Documentation Impact:**
 
 - [x] User guide / reference docs — add a "Custom logo" subsection under data-entry settings docs.
-- [ ] CLI help text — N/A.
-- [ ] CLAUDE.md — N/A for this PR specifically (the `<img>`-only-for-user-SVG note is a reasonable addition but can wait until PR 3 lands and we do a CLAUDE.md pass for the whole theme system).
-- [ ] README.md — N/A.
+- [x] ~~CLI help text~~ (N/A: no CLI surface).
+- [x] ~~CLAUDE.md~~ (N/A: deferred to PR 3 when the broader theme system lands).
+- [x] ~~README.md~~ (N/A: feature is internal to data-entry, not project-level).
 - [x] API docs — document `/api/v1/_theme/logo` (GET / PUT / DELETE) alongside `_palette` docs.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (used `/crit:crit` instead — interactive plan review with the human reviewer; the umbrella plan PLAN-KZ5H went through 4 crit rounds before this PR was scoped out, and PLAN-65IV got an `approved: true` on round 1).
+- [x] All critical/significant findings addressed in plan — none surfaced during plan review; cranky-code-reviewer findings on the implementation are tracked under TKT-WN7O has-review-response.
 
-**Design Review Findings:** <!-- List review-response IDs -->
+**Design Review Findings:** None at plan stage; implementation review yielded RR-290V, RR-DIL7, RR-4OMU, RR-OXZF (significant) + RR-KOIB, RR-NSKU, RR-YBW8, RR-LUEU, RR-8B67, RR-LQXY (minor/nit) — all addressed.
