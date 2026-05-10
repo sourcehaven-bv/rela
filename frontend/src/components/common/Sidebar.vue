@@ -21,9 +21,11 @@ const actionInFlight = ref<Set<string>>(new Set())
 // Sidebar data from API
 const sidebarGroups = ref<SidebarGroup[]>([])
 const sidebarAppName = ref('')
-const logoUrl = ref<string | null>(null)
 
 const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
+// Logo lives on the schema store so SettingsView can update it after
+// upload/remove without a sidebar refetch.
+const logoUrl = computed(() => schemaStore.logoUrl)
 
 // Load sidebar data
 async function loadSidebar() {
@@ -31,7 +33,7 @@ async function loadSidebar() {
     const data = await getSidebar()
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
-    logoUrl.value = data.logoUrl ?? null
+    schemaStore.setLogoUrl(data.logoUrl ?? null)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).

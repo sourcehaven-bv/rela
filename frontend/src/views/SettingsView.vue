@@ -47,11 +47,12 @@ const paletteColors = ref<Record<string, string>>({})
 const paletteBadges = ref<Record<string, string>>({})
 const savingPalette = ref(false)
 
-// Logo state. The current saved URL comes from getSettings(); the staged
-// file is what the user has picked but not yet uploaded. The preview
-// blob URL is created on demand and revoked on unmount or replacement
-// to avoid leaking object URLs.
-const logoUrl = ref<string | null>(null)
+// Logo state. The current saved URL is owned by the schema store so the
+// Sidebar can react to changes without a page reload; the staged file
+// is what the user has picked but not yet uploaded. The preview blob
+// URL is created on demand and revoked on unmount or replacement to
+// avoid leaking object URLs.
+const logoUrl = computed(() => schemaStore.logoUrl)
 const logoFileInput = ref<HTMLInputElement | null>(null)
 const stagedLogo = ref<File | null>(null)
 const stagedLogoPreviewUrl = ref<string | null>(null)
@@ -98,7 +99,7 @@ async function handleLogoUpload() {
   uploadingLogo.value = true
   try {
     const result = await uploadLogo(stagedLogo.value)
-    logoUrl.value = result.logoUrl
+    schemaStore.setLogoUrl(result.logoUrl)
     revokeStagedPreview()
     stagedLogo.value = null
     if (logoFileInput.value) logoFileInput.value.value = ''
@@ -119,7 +120,7 @@ async function handleLogoRemove() {
   removingLogo.value = true
   try {
     await removeLogo()
-    logoUrl.value = null
+    schemaStore.setLogoUrl(null)
     revokeStagedPreview()
     stagedLogo.value = null
     if (logoFileInput.value) logoFileInput.value.value = ''
@@ -274,7 +275,7 @@ async function loadSettings() {
       relationDefaults: { ...o.relationDefaults },
     }))
 
-    logoUrl.value = data.logoUrl ?? null
+    schemaStore.setLogoUrl(data.logoUrl ?? null)
 
     // Load palette. Pass `schemaStore.darkDisabled` so that a user
     // with no `dark` field in their palette overlay still sees
