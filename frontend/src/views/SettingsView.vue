@@ -252,6 +252,33 @@ function applyImportedPalette(palette: PaletteConfig) {
   paletteBadges.value = state.badges
   paletteDarkColors.value = state.dark
   paletteDarkBadges.value = state.darkBadges
+
+  // Apply the imported palette as live CSS variables so the sidebar
+  // (and the rest of the app chrome) updates immediately, matching
+  // what the preview pane shows. The user still needs to click Save
+  // Palette to persist the colors — this is purely visual feedback,
+  // not persistence.
+  applyPaletteToDocument()
+}
+
+/** Apply the current editor state to live CSS vars. Mirrors the
+ *  previewVars logic but writes to :root via uiStore.applyPalette so
+ *  the whole app updates, not just the preview pane. */
+function applyPaletteToDocument() {
+  // Light mode (or Regular mode) — apply the light derivation.
+  const light = deriveTheme(paletteColors.value, paletteBadges.value)
+
+  if (paletteMode.value === 'regular') {
+    uiStore.applyPalette(light)
+    return
+  }
+
+  // Light+Dark mode: pick whichever the user is currently viewing
+  // (uiStore.darkMode), with empty dark slots inheriting from light.
+  const mergedColors = { ...paletteColors.value, ...stripEmpty(paletteDarkColors.value) }
+  const mergedBadges = { ...paletteBadges.value, ...stripEmpty(paletteDarkBadges.value) }
+  const dark = deriveTheme(mergedColors, mergedBadges)
+  uiStore.applyPalette(uiStore.isDark ? dark : light)
 }
 
 const paletteRoles = [
