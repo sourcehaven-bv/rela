@@ -136,9 +136,9 @@ export default tseslint.config(
     },
   },
 
-  // Config files - Node environment (vite.config.js etc.)
+  // Config files and Node scripts - Node environment (vite.config.js etc.)
   {
-    files: ['*.config.js', '*.config.ts'],
+    files: ['*.config.js', '*.config.ts', 'scripts/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.node,
