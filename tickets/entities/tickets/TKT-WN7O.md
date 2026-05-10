@@ -5,7 +5,7 @@ title: Custom logo upload for data-entry sidebar branding
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Add an optional user-uploaded logo to the data-entry app, displayed in the

@@ -2,7 +2,7 @@
 id: REV-YZCX
 type: review-checklist
 title: 'Review: Custom logo upload for data-entry sidebar branding'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -72,8 +72,8 @@ self-documented via the test suite + this checklist.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI — created PR #672 manually via `gh pr create`; equivalent flow.
+- [x] All CI checks pass — all jobs green after the PLAN-65IV checklist N/A fix; pre-fix the only failure was `Rela Tickets` flagging the unticked Documentation Impact items (now strikethrough'd with reasons).
+- [x] PR URL documented below.
 
-**PR:** <!-- to be added by /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/672
