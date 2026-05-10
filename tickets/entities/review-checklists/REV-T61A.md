@@ -74,8 +74,8 @@ in data-entry" story is ready for a docs pass.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI — created PR #691 via `gh pr create`.
+- [x] All CI checks pass — required jobs all green (Test, E2E, Lint, Frontend, Architecture, Build, CodeQL, Vulnerability Check, Rela Tickets, Fuzz, Lint Markdown, Analyze ×3, Docs).
+- [x] PR URL documented below.
 
-**PR:** <!-- to be added after `gh pr create` -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/691
