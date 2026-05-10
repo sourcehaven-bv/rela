@@ -13,7 +13,7 @@ src/composables/useScopeNavigation.ts;46;46
 src/composables/useUrlFilterSync.ts;35;33
 src/stores/entities.ts;75;75
 src/stores/git.ts;57;56
-src/stores/schema.ts;95;90
+src/stores/schema.ts;97;91
 src/stores/scriptError.ts;10;10
 src/stores/ui.ts;48;47
 src/types/config.ts;7;7
