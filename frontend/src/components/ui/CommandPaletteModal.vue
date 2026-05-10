@@ -158,7 +158,7 @@ function entityTypeLabel(type: string): string {
 }
 
 function selectEntity(entity: Entity): void {
-  const href = entityDetailHref(entity, (t) => schemaStore.getEntityDetailView(t))
+  const href = entityDetailHref(entity)
   if (!href) return
   router.push(href)
   emit('close')

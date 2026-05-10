@@ -78,9 +78,13 @@ export class EntityPage extends BasePage {
   }
 
   async clickRelationLink(targetId: string) {
-    const link = this.page.locator('button.relation-link').filter({ hasText: targetId });
-    await expect(link).toBeVisible();
-    await link.click();
+    // Detail screens render related entities as cards / list items with a
+    // data-entity-id attribute on the row root and a clickable header
+    // (cards) or anchor (list).
+    const item = this.page.locator(`[data-entity-id="${targetId}"]`).first();
+    await expect(item).toBeVisible();
+    const trigger = item.locator('.card-header, .list-link').first();
+    await trigger.click();
   }
 
   async expectTypeBadge(type: string | RegExp) {

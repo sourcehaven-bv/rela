@@ -43,12 +43,6 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
-    path: '/view/:id/:entityId',
-    name: 'view',
-    component: () => import('@/views/CustomView.vue'),
-    props: true,
-  },
-  {
     path: '/kanban/:id',
     name: 'kanban',
     component: () => import('@/views/KanbanView.vue'),

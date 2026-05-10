@@ -343,16 +343,11 @@ lists:
         direction: asc
     create_form: create_category
     page_size: 50
-entity_views:
-  category:
-    detail_view: category_report
-  ticket:
-    detail_view: ticket_report
 # ──────────────────────────────────────────────
 # Views: read-only detail views with graph traversal
 # ──────────────────────────────────────────────
 views:
-  category_report:
+  category:
     title: "Category Report"
     entry:
       type: category
@@ -406,7 +401,7 @@ views:
         fields:
           - property: name
         empty_message: "No labels applied"
-  ticket_report:
+  ticket:
     title: "Ticket Report"
     entry:
       type: ticket

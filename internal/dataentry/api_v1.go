@@ -1692,10 +1692,18 @@ type V1SidePanelSection struct {
 // Values is always an array so that list-typed properties retain per-item
 // structure; scalar properties become a one-element array. Empty fields emit
 // an empty array (omitted via omitempty when nil).
+//
+// Property carries the raw property name so consumers can correlate the
+// field with metamodel data (e.g. inaccessibility lookup); Label is the
+// human-readable rendering. Inaccessible is true when the underlying entity
+// is git-crypt encrypted — the field is known to exist in the schema but
+// its value cannot be read.
 type V1SectionField struct {
-	Label    string   `json:"label"`
-	Values   []string `json:"values,omitempty"`
-	PropType string   `json:"propType,omitempty"`
+	Property     string   `json:"property,omitempty"`
+	Label        string   `json:"label"`
+	Values       []string `json:"values,omitempty"`
+	PropType     string   `json:"propType,omitempty"`
+	Inaccessible bool     `json:"inaccessible,omitempty"`
 }
 
 // V1SidePanelEntity represents an entity in a side panel section.
@@ -2510,28 +2518,44 @@ type V1ViewLinkInfo struct {
 	EntityTypes []string `json:"entityTypes"`
 }
 
-// handleV1Views handles GET /api/v1/_views/{viewId}/{entityId}.
+// handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.
 // Returns JSON with executed view data including entry and sections.
+//
+// View configs are looked up by entry.type. When no explicit ViewConfig
+// is registered for entityType, a default is synthesized from the
+// metamodel (see buildDefaultViewConfig) and executed through the same
+// pipeline so the response shape is identical.
 func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 
-	// Parse path: /api/v1/_views/{viewId}/{entityId}
+	// Parse path: /api/v1/_views/{entityType}/{entityId}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_views/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_views/{viewId}/{entityId}", "")
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_views/{entityType}/{entityId}", "")
 		return
 	}
 
-	viewID, entityID := parts[0], parts[1] // Get view config
+	entityType, entityID := parts[0], parts[1]
 	s := a.State()
-	viewCfg, ok := s.Cfg.Views[viewID]
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "view_not_found", "View not found", "")
+
+	if _, ok := s.Meta.GetEntityDef(entityType); !ok {
+		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
 		return
+	}
+
+	viewCfg, ok := findViewByEntityType(s.Cfg.Views, entityType)
+	if !ok {
+		viewCfg, ok = buildDefaultViewConfig(s.Meta, entityType)
+		if !ok {
+			// Cannot happen — entity type already validated above —
+			// but handled defensively to keep the contract clear.
+			writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
+			return
+		}
 	}
 
 	// Execute view

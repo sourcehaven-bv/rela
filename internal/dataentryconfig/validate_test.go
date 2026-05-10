@@ -441,6 +441,29 @@ func TestValidateConfig_ViewUnknownEntryType(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_ViewsDuplicateEntryType(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Views: map[string]ViewConfig{
+			"ticket_a": {Entry: ViewEntry{Type: "ticket"}},
+			"ticket_b": {Entry: ViewEntry{Type: "ticket"}},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for duplicate view entry types")
+	}
+	msg := err.Error()
+	// Both view IDs must appear so the project owner can locate them.
+	if !strings.Contains(msg, "ticket_a") || !strings.Contains(msg, "ticket_b") {
+		t.Errorf("expected error to list both duplicate view IDs, got: %v", err)
+	}
+	if !strings.Contains(msg, `entity type "ticket"`) {
+		t.Errorf("expected error to name the conflicting entity type, got: %v", err)
+	}
+}
+
 func TestValidateConfig_ViewTraverseUnknownCollection(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

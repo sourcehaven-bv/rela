@@ -2663,6 +2663,10 @@ func newTestAppV1(t *testing.T) *App {
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string"},
 				},
+				// PropertyOrder is populated at YAML-load time in
+				// production; set it explicitly here so tests exercise
+				// the same code paths the runtime hits.
+				PropertyOrder: []string{"title", "status"},
 			},
 			"feature": {
 				Label:    "Feature",
@@ -2670,6 +2674,7 @@ func newTestAppV1(t *testing.T) *App {
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
+				PropertyOrder: []string{"title"},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -3755,5 +3760,143 @@ func TestValidateCreateIDOpts(t *testing.T) {
 				t.Errorf("got error %q, want containing %q", got, tt.wantErr)
 			}
 		})
+	}
+}
+
+// --- handleV1Views (entity-type-keyed) ---
+
+func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp V1ViewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Entry.ID != "TKT-001" || resp.Entry.Type != "ticket" {
+		t.Errorf("entry: want TKT-001/ticket, got %+v", resp.Entry)
+	}
+	if len(resp.Sections) == 0 {
+		t.Fatal("expected at least one section in default view")
+	}
+	// First section must be properties (the synthesizer always emits it
+	// when the type has any properties — ticket has title and status).
+	if resp.Sections[0].Display != "properties" {
+		t.Errorf("section[0].display: want properties, got %q", resp.Sections[0].Display)
+	}
+}
+
+func TestV1Views_ConfiguredViewForType(t *testing.T) {
+	app := newTestAppV1(t)
+	// Register an explicit view for ticket — replaces the default.
+	state := app.State()
+	state.Cfg.Views["ticket_detail"] = ViewConfig{
+		Title: "Ticket",
+		Entry: ViewEntry{Type: "ticket"},
+		Sections: []ViewSection{
+			{Heading: "Just Title", Source: "entry", Display: "properties",
+				Fields: []ViewSectionField{{Property: "title"}}},
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp V1ViewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Configured view has a single section with heading "Just Title" —
+	// distinguishes it from the synthesized default.
+	if len(resp.Sections) != 1 {
+		t.Fatalf("expected 1 section from explicit config, got %d: %+v", len(resp.Sections), resp.Sections)
+	}
+	if resp.Sections[0].Heading != "Just Title" {
+		t.Errorf("heading: want Just Title, got %q", resp.Sections[0].Heading)
+	}
+}
+
+func TestV1Views_UnknownEntityType(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/nonexistent/X-1", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: want 404, got %d", rec.Code)
+	}
+}
+
+func TestV1Views_UnknownEntityID(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/MISSING", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status: want 422 for missing entity, got %d", rec.Code)
+	}
+}
+
+func TestV1Views_BadPath(t *testing.T) {
+	app := newTestAppV1(t)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"missing entity id", "/api/v1/_views/ticket"},
+		{"empty entity type", "/api/v1/_views//TKT-001"},
+		{"trailing slash only", "/api/v1/_views/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
+			rec := httptest.NewRecorder()
+			app.handleV1Views(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status: want 400, got %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestV1Views_MethodNotAllowed(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: want 405, got %d", rec.Code)
 	}
 }

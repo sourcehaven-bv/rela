@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -440,6 +441,25 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 // validateViews validates view definitions with their traversal rules and sections.
 func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
+
+	// At most one view may target a given entity type. The detail screen
+	// looks up views by entity type, so duplicates would be ambiguous.
+	byType := map[string][]string{}
+	for viewID, view := range cfg.Views {
+		if view.Entry.Type == "" {
+			continue
+		}
+		byType[view.Entry.Type] = append(byType[view.Entry.Type], viewID)
+	}
+	for entityType, viewIDs := range byType {
+		if len(viewIDs) <= 1 {
+			continue
+		}
+		sort.Strings(viewIDs)
+		errs = append(errs, fmt.Sprintf(
+			"multiple views target entity type %q: %s — at most one view per entity type is allowed",
+			entityType, strings.Join(viewIDs, ", ")))
+	}
 
 	for viewID, view := range cfg.Views {
 		// Validate entry type

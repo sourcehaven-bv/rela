@@ -529,23 +529,6 @@ describe('CommandPaletteModal', () => {
       expect(wrapper.emitted('close')).toHaveLength(1)
     })
 
-    it('uses custom detail view when configured for the entity type', async () => {
-      const detailViewId = 'ticket-detail'
-      useSchemaStore().entityViewConfigs.set('ticket', {
-        detail_view: detailViewId,
-      } as never)
-
-      const entity = makeEntity({ type: 'ticket' })
-      searchSpy.mockResolvedValueOnce(listResponse([entity]))
-      factory()
-      await typeQuery('xx')
-
-      options()[0].click()
-      await flushPromises()
-
-      expect(routerPush).toHaveBeenCalledWith(`/view/${detailViewId}/${entity.id}`)
-    })
-
     it('does not navigate when entity has no type (empty href)', async () => {
       searchSpy.mockResolvedValueOnce(
         listResponse([makeEntity({ type: '' })])
