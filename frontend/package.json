@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@fontsource/open-sans": "^5.2.7",
-    "axios": "^1.15.2",
+    "axios": "^1.16.0",
     "dompurify": "^3.3.3",
     "easymde": "^2.20.0",
     "marked": "^17.0.4",
