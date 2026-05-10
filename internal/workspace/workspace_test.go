@@ -431,16 +431,31 @@ func countEntities(t *testing.T, ws *Workspace) int {
 	return n
 }
 
-func TestCreateEntity_ValidationError(t *testing.T) {
+// TestCreateEntity_RequiredMissingSurfacesWarning verifies AC8/AC1
+// from TKT-QETTR: a required-property-missing condition no longer
+// hard-rejects the create — it succeeds with a warning per DEC-HWZHA.
+func TestCreateEntity_RequiredMissingSurfacesWarning(t *testing.T) {
 	ws := setupTestWorkspace(t)
 
-	// title is required but not provided
-	_, _, err := ws.createEntity("requirement", CreateOptions{})
-	if err == nil {
-		t.Fatal("expected validation error")
+	// title is required but not provided — soft condition per DEC-HWZHA.
+	created, result, err := ws.createEntity("requirement", CreateOptions{})
+	if err != nil {
+		t.Fatalf("createEntity should succeed with warning, got error: %v", err)
 	}
-	if !IsValidationError(err) {
-		t.Errorf("expected ValidationError, got %T: %v", err, err)
+	if created == nil {
+		t.Fatal("expected created entity")
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("expected at least one warning for required-field-missing")
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if w.Code == "required_property_unset" && w.Path == "/properties/title" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected required_property_unset warning at /properties/title, got %v", result.Warnings)
 	}
 }
 

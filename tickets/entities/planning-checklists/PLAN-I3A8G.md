@@ -2,7 +2,7 @@
 id: PLAN-I3A8G
 type: planning-checklist
 title: 'Planning: Soften workspace write validation per DEC-HWZHA'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

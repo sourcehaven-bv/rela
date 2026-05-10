@@ -47,6 +47,7 @@ func (m *wsEntityManager) CreateEntity(
 		EntitiesCreated:    result.EntitiesCreated,
 		AutomationWarnings: result.AutomationWarnings,
 		AutomationErrors:   result.AutomationErrors,
+		Warnings:           result.Warnings,
 	}, nil
 }
 
@@ -82,6 +83,7 @@ func (m *wsEntityManager) UpdateEntity(
 		EntitiesCreated:    result.EntitiesCreated,
 		AutomationWarnings: result.AutomationWarnings,
 		AutomationErrors:   result.AutomationErrors,
+		Warnings:           result.Warnings,
 	}, nil
 }
 

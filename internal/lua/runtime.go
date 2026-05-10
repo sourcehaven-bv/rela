@@ -1263,7 +1263,16 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 	return 1
 }
 
-// luaCreateEntity implements rela.create_entity(type, properties, content?, id?) -> table
+// luaCreateEntity implements rela.create_entity(type, properties, content?, id?) -> (entity, warnings).
+//
+// Multi-return contract follows string.gsub semantics (NOT io.open):
+// both return values can be non-nil simultaneously. The first value
+// is the created entity; the second is a Lua array of DEC-HWZHA soft
+// validation warnings, or nil when there are none. Hard errors
+// (unknown entity type, bad ID prefix) still raise via RaiseError.
+//
+// Existing scripts that do `local e = rela.create_entity(...)`
+// continue to work unchanged — the second return is silently dropped.
 func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 	entityType := ls.CheckString(1)
 	if entityType == "" {
@@ -1291,10 +1300,21 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 	}
 
 	ls.Push(EntityToTable(ls, result.Entity))
-	return 1
+	ls.Push(WarningsToTable(ls, result.Warnings))
+	return 2
 }
 
-// luaUpdateEntity implements rela.update_entity(id, properties, content?) -> table
+// luaUpdateEntity implements rela.update_entity(id, properties, content?) -> (entity, warnings).
+//
+// Multi-return contract follows string.gsub semantics (NOT io.open):
+// both return values can be non-nil simultaneously. The first value
+// is the updated entity; the second is a Lua array of DEC-HWZHA soft
+// validation warnings, or nil when there are none. Hard errors
+// (entity not found, unknown type, bad ID prefix) still raise via
+// RaiseError.
+//
+// Existing scripts that do `local e = rela.update_entity(...)`
+// continue to work unchanged — the second return is silently dropped.
 func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
 	if id == "" {
@@ -1336,7 +1356,33 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	}
 
 	ls.Push(EntityToTable(ls, result.Entity))
-	return 1
+	ls.Push(WarningsToTable(ls, result.Warnings))
+	return 2
+}
+
+// WarningsToTable converts a slice of entitymanager.Warning to a Lua
+// table of {code, path, detail} sub-tables. Returns lua.LNil (NOT
+// an empty table) when the slice is empty so scripts can use the
+// `for _, w in ipairs(warnings or {})` pattern idiomatically and
+// simple `if warnings then` truthiness checks work.
+//
+// This is the second return value of rela.update_entity and
+// rela.create_entity, following string.gsub's "(value, count)"
+// pattern — both returns can be non-nil simultaneously, and the
+// second is additional success information, NOT an error indicator.
+func WarningsToTable(ls *lua.LState, warnings []entitymanager.Warning) lua.LValue {
+	if len(warnings) == 0 {
+		return lua.LNil
+	}
+	tbl := ls.NewTable()
+	for _, w := range warnings {
+		wt := ls.NewTable()
+		ls.SetField(wt, "code", lua.LString(w.Code))
+		ls.SetField(wt, "path", lua.LString(w.Path))
+		ls.SetField(wt, "detail", lua.LString(w.Detail))
+		tbl.Append(wt)
+	}
+	return tbl
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean

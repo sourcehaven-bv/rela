@@ -73,9 +73,19 @@ func toolSearchEntities() mcp.Tool {
 	)
 }
 
+// warningsConvention is appended to tool descriptions whose handlers
+// surface DEC-HWZHA soft-validation warnings as a leading section in
+// the result text. Documenting this in the description primes AI
+// agents to look for the prefix programmatically.
+const warningsConvention = " The result text begins with `WARNINGS (n):` " +
+	"when soft validation issues occurred (required field missing, " +
+	"value out of enum, type mismatch, etc.). The write still " +
+	"succeeded; warnings are advisory. Hard errors (unknown entity " +
+	"type, bad ID prefix) still come back via the standard error channel."
+
 func toolCreateEntity() mcp.Tool {
 	return mcp.NewTool("create_entity",
-		mcp.WithDescription("Create a new entity of the specified type"),
+		mcp.WithDescription("Create a new entity of the specified type."+warningsConvention),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Entity type (e.g. requirement, decision)")),
 		mcp.WithObject("properties", mcp.Required(),
 			mcp.Description("Property map (e.g. {\"title\": \"...\", \"status\": \"draft\"})")),
@@ -87,12 +97,13 @@ func toolCreateEntity() mcp.Tool {
 func toolUpdateEntity() mcp.Tool {
 	const propsDesc = "Properties to set or update. Set a property to null to remove it from the entity. " +
 		"Empty string is treated as no value (silently ignored — use null to delete). " +
-		"Required properties cannot be deleted."
+		"Clearing a required property succeeds with a warning per DEC-HWZHA; the " +
+		"entity persists in a temporarily invalid state."
 	return mcp.NewTool("update_entity",
 		mcp.WithDescription("Update an existing entity's properties or content. "+
 			"Set a property to null in `properties` to remove it from the entity. "+
 			"Empty string is treated as no value (silently ignored — use null to delete). "+
-			"Required properties cannot be deleted."),
+			"Clearing a required property succeeds with a warning per DEC-HWZHA."+warningsConvention),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Entity ID to update")),
 		mcp.WithObject("properties", mcp.Description(propsDesc)),
 		mcp.WithString("content", mcp.Description("New markdown body content")),

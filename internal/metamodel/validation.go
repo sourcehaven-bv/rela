@@ -31,6 +31,33 @@ func (e *ValidationError) Error() string {
 	return e.Message
 }
 
+// IsSoft reports whether the error describes a soft condition per
+// DEC-HWZHA — a state a hand-edited markdown file can produce that
+// the API should tolerate at write time and surface as a warning
+// rather than reject with a 422.
+//
+// Property-level mistakes (required-field-missing, type mismatch,
+// invalid value such as out-of-enum / bad date / bad RRULE) are soft:
+// the file already on disk likely contains them after a hand-edit, so
+// rejecting them on the next API write would create a hostile
+// asymmetry. Entity-level structural problems (unknown entity type,
+// ID prefix that doesn't match the type) are hard: the storage layer
+// can't construct a path to persist the entity at all.
+//
+// The categorization lives next to the error type so every consumer
+// (workspace, future per-edge endpoints, MCP, etc.) gets a single
+// authoritative answer.
+func (e *ValidationError) IsSoft() bool {
+	//exhaustive:ignore // Default-false fall-through is the intent.
+	switch e.Type {
+	case ValidationErrorRequired,
+		ValidationErrorInvalidType,
+		ValidationErrorInvalidValue:
+		return true
+	}
+	return false
+}
+
 // ValidateProperties validates a properties map against a PropertySchema.
 // This is shared between entity and relation validation.
 func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema PropertySchema) []*ValidationError {

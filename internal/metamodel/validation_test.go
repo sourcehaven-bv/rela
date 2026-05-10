@@ -1044,3 +1044,29 @@ func TestValidateRelationProperties(t *testing.T) {
 		}
 	})
 }
+
+// TestValidationError_IsSoft enumerates every error category and pins
+// the DEC-HWZHA classification in place. Adding a new category MUST
+// either be added to one of the cases below or explicitly fall through
+// to false — silent drift is a policy regression.
+func TestValidationError_IsSoft(t *testing.T) {
+	cases := []struct {
+		name string
+		typ  ValidationErrorType
+		soft bool
+	}{
+		{"required-property-missing", ValidationErrorRequired, true},
+		{"property-type-mismatch", ValidationErrorInvalidType, true},
+		{"property-value-invalid", ValidationErrorInvalidValue, true},
+		{"unknown-entity-type", ValidationErrorUnknownType, false},
+		{"id-prefix-mismatch", ValidationErrorIDPrefix, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &ValidationError{Type: tc.typ}
+			if got := e.IsSoft(); got != tc.soft {
+				t.Errorf("(%s).IsSoft() = %v, want %v", tc.typ, got, tc.soft)
+			}
+		})
+	}
+}

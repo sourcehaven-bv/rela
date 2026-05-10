@@ -457,6 +457,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	result := a.entityToV1(created, plural, true, false)
+	// DEC-HWZHA: surface entity-level soft validation findings (e.g.
+	// required-field-missing) as warnings on the 201 response.
+	if len(createResult.Warnings) > 0 {
+		result.Warnings = append(result.Warnings, createResult.Warnings...)
+	}
 
 	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
@@ -593,9 +598,16 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 	entityChanged := req.Properties != nil || req.Content != nil
 	if entityChanged {
-		if _, err := a.entityManager.UpdateEntity(r.Context(), entity); err != nil {
+		updateResult, err := a.entityManager.UpdateEntity(r.Context(), entity)
+		if err != nil {
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 			return
+		}
+		// DEC-HWZHA: soft validation findings ride on the result as
+		// warnings. Merge them into the response alongside any
+		// relation warnings already collected.
+		if updateResult != nil {
+			warnings = append(warnings, updateResult.Warnings...)
 		}
 	}
 

@@ -146,6 +146,16 @@ non-blockingly. Each warning is `{code, path, detail}` where:
 
 Warning codes:
 
+**Entity-level** (TKT-QETTR — soft conditions on the entity itself):
+
+| Code | When |
+|---|---|
+| `required_property_unset` | Required entity property is missing or empty after the write |
+| `property_type_mismatch` | Entity property value has the wrong primitive type (e.g. integer expected, string supplied) |
+| `property_value_invalid` | Entity property value is the right type but outside the declared constraint (enum value not allowlisted, malformed date, bad RRULE, regex mismatch) |
+
+**Relation-level** (TKT-6WLSW — soft conditions on a relation edge):
+
 | Code | When |
 |---|---|
 | `target_not_found` | Target ID doesn't exist in the graph |
@@ -158,6 +168,14 @@ Warning codes:
 
 A read of `analyze_orphans` / `analyze_validations` will surface the same
 findings; clients may de-duplicate by `code`.
+
+Entity-level warnings reflect the **post-write entity state** — if the
+saved entity has a missing required field even after this PATCH (because
+the field was already missing on disk), the warning surfaces on every
+write. This is by design: API contract is "what's wrong with this entity
+right now," not "what this PATCH broke." UI surfaces (auto-save, etc.)
+are responsible for warning-fatigue mitigation if that becomes a UX
+problem.
 
 ## Atomicity
 

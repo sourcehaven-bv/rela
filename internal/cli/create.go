@@ -22,6 +22,7 @@ var (
 	createProperties []string
 	createBody       string
 	createBodyFile   string
+	createStrict     bool
 )
 
 var createCmd = &cobra.Command{
@@ -101,6 +102,11 @@ Examples:
 		}
 		entity := result.Entity
 
+		// DEC-HWZHA: print soft validation findings to stderr in a stable
+		// format. Default exits 0 (the create succeeded); --strict elevates
+		// any warning to exit 1.
+		printValidationWarnings(result.Warnings)
+
 		// Show automation feedback
 		for _, warning := range result.AutomationWarnings {
 			out.WriteWarning("Automation: %s", warning)
@@ -119,6 +125,9 @@ Examples:
 			}
 		}
 
+		if createStrict && len(result.Warnings) > 0 {
+			return errStrictWarnings
+		}
 		return nil
 	},
 }
@@ -176,6 +185,7 @@ func init() {
 	createCmd.Flags().StringArrayVarP(&createProperties, "property", "P", nil, "Set a property (format: key=value, can be repeated)")
 	createCmd.Flags().StringVarP(&createBody, "body", "b", "", "Markdown body content for the entity")
 	createCmd.Flags().StringVarP(&createBodyFile, "body-file", "B", "", "Read body content from file (use - for stdin)")
+	createCmd.Flags().BoolVar(&createStrict, "strict", false, "Exit with status 1 if soft validation warnings are surfaced")
 
 	rootCmd.AddCommand(createCmd)
 }
