@@ -204,6 +204,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
 	mux.HandleFunc("/api/v1/_palette", a.handleAPIPaletteCRUD)
+	mux.HandleFunc("/api/v1/_theme/logo", a.handleAPIThemeLogo)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
@@ -1840,6 +1841,11 @@ type V1SidebarGroup struct {
 type V1SidebarResponse struct {
 	App        V1AppConfig      `json:"app"`
 	Navigation []V1SidebarGroup `json:"navigation"`
+	// LogoURL is the cache-busted URL of the user-uploaded sidebar logo,
+	// or nil when no logo is set. Included here (rather than in
+	// `_settings`) so the SPA can render the logo on first paint without
+	// blocking on a settings fetch.
+	LogoURL *string `json:"logoUrl,omitempty"`
 }
 
 // handleV1Sidebar returns denormalized sidebar data with entity counts.
@@ -1899,6 +1905,7 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		},
 		Navigation: navigation,
 	}
+	resp.LogoURL = s.LogoURL()
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

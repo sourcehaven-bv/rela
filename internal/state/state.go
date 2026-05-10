@@ -8,6 +8,9 @@ package state
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -23,6 +26,11 @@ type KV interface {
 
 	// Put writes data at key, creating any intermediate structure.
 	Put(ctx context.Context, key string, data []byte) error
+
+	// Delete removes the value at key. Deleting a missing key is not an
+	// error — callers using Delete to clear optional state shouldn't have
+	// to special-case "already gone."
+	Delete(ctx context.Context, key string) error
 }
 
 // FSKV stores state under a root directory on a filesystem. Key
@@ -46,4 +54,11 @@ func (s *FSKV) Get(_ context.Context, key string) ([]byte, error) {
 
 func (s *FSKV) Put(_ context.Context, key string, data []byte) error {
 	return s.fs.WriteFile(key, data, 0o644)
+}
+
+func (s *FSKV) Delete(_ context.Context, key string) error {
+	if err := s.fs.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

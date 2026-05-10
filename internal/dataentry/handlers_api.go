@@ -682,6 +682,10 @@ type APISettingsData struct {
 	AllProperties []APIPropertyDef               `json:"allProperties"`
 	AllRelations  []APIRelationDef               `json:"allRelations"`
 	EntityTypes   []string                       `json:"entityTypes"`
+	// LogoURL is the cache-busted URL of the user-uploaded sidebar logo,
+	// or nil when no logo is set. The SPA reads this on boot to render
+	// the sidebar branding.
+	LogoURL *string `json:"logoUrl,omitempty"`
 }
 
 // APIUserDefaults is the JSON representation of user defaults.
@@ -833,6 +837,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 		AllRelations:  allRelations,
 		EntityTypes:   s.Meta.EntityTypes(),
 	}
+	data.LogoURL = s.LogoURL()
 
 	writeJSON(w, data)
 }

@@ -79,3 +79,31 @@ func TestFSKV_Get_RejectsInvalidKey(t *testing.T) {
 		t.Fatal("expected error for invalid key")
 	}
 }
+
+func TestFSKV_Delete_RemovesKey(t *testing.T) {
+	kv := newTestKV(t)
+	ctx := context.Background()
+	if err := kv.Put(ctx, "cache.json", []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := kv.Delete(ctx, "cache.json"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := kv.Get(ctx, "cache.json"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected ErrNotExist after Delete, got %v", err)
+	}
+}
+
+func TestFSKV_Delete_MissingKeyIsNotError(t *testing.T) {
+	kv := newTestKV(t)
+	if err := kv.Delete(context.Background(), "never-existed.json"); err != nil {
+		t.Fatalf("Delete on missing key should be a no-op, got %v", err)
+	}
+}
+
+func TestFSKV_Delete_RejectsInvalidKey(t *testing.T) {
+	kv := newTestKV(t)
+	if err := kv.Delete(context.Background(), ".."); err == nil {
+		t.Fatal("expected error for invalid key")
+	}
+}

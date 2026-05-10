@@ -21,6 +21,7 @@ const actionInFlight = ref<Set<string>>(new Set())
 // Sidebar data from API
 const sidebarGroups = ref<SidebarGroup[]>([])
 const sidebarAppName = ref('')
+const logoUrl = ref<string | null>(null)
 
 const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
 
@@ -30,6 +31,7 @@ async function loadSidebar() {
     const data = await getSidebar()
     sidebarAppName.value = data.app.name
     sidebarGroups.value = data.navigation
+    logoUrl.value = data.logoUrl ?? null
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
@@ -136,8 +138,9 @@ async function handleAction(item: SidebarItem, ev?: Event) {
     :class="{ collapsed: uiStore.sidebarCollapsed, 'mobile-open': uiStore.sidebarMobileOpen }"
   >
     <div class="sidebar-header">
-      <RouterLink to="/" class="logo">
-        {{ appName }}
+      <RouterLink to="/" class="logo" :aria-label="appName">
+        <img v-if="logoUrl" :src="logoUrl" :alt="appName" class="logo-img" />
+        <span v-else>{{ appName }}</span>
       </RouterLink>
       <button class="collapse-btn" @click="uiStore.toggleSidebar">
         {{ uiStore.sidebarCollapsed ? '→' : '←' }}
@@ -281,6 +284,16 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   font-size: 18px;
   color: inherit;
   text-decoration: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.logo-img {
+  max-height: 28px;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .collapse-btn {
