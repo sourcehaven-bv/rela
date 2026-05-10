@@ -2,7 +2,7 @@
 id: REV-T61A
 type: review-checklist
 title: 'Review: Theme packages: export/install bundled palette + logo as .relatheme zip'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

@@ -5,7 +5,7 @@ title: 'Theme packages: export/install bundled palette + logo as .relatheme zip'
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Bundle the existing palette + logo into a portable `.relatheme` zip so users can
