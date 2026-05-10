@@ -34,7 +34,7 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^10.0.1",
     "@pinia/testing": "^0.1.6",
     "@testing-library/vue": "^8.0.3",
     "@types/dompurify": "^3.0.5",
