@@ -566,6 +566,10 @@ func (nopState) Put(context.Context, string, []byte) error {
 	return errors.New("workspace: no repository configured")
 }
 
+func (nopState) Delete(context.Context, string) error {
+	return errors.New("workspace: no repository configured")
+}
+
 // FindOrphanedTempFiles returns paths of leftover .new temp files in
 // the entities/ and relations/ directories. These can arise from
 // interrupted writes.

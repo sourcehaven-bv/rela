@@ -39,6 +39,10 @@ export const useSchemaStore = defineStore('schema', () => {
   const paletteLight = ref<Record<string, string>>({})
   const paletteDark = ref<Record<string, string>>({})
   const darkDisabled = ref(false)
+  // Sidebar logo. Fed initially by Sidebar's `_sidebar` fetch on mount,
+  // then mutated by SettingsView's upload/remove handlers so the
+  // sidebar updates without a page reload.
+  const logoUrl = ref<string | null>(null)
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -140,6 +144,10 @@ export const useSchemaStore = defineStore('schema', () => {
     await load()
   }
 
+  function setLogoUrl(url: string | null) {
+    logoUrl.value = url
+  }
+
   return {
     // State
     entityTypes,
@@ -159,6 +167,7 @@ export const useSchemaStore = defineStore('schema', () => {
     paletteLight,
     paletteDark,
     darkDisabled,
+    logoUrl,
     loaded,
     loading,
     error,
@@ -179,5 +188,6 @@ export const useSchemaStore = defineStore('schema', () => {
     // Actions
     load,
     reload,
+    setLogoUrl,
   }
 })

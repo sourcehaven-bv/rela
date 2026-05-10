@@ -65,6 +65,9 @@ export interface SettingsData {
   allProperties: SettingsPropertyDef[]
   allRelations: SettingsRelationDef[]
   entityTypes: string[]
+  /** URL of the user-uploaded sidebar logo (with cache-busting query
+   *  parameter), or null/undefined when no logo is set. */
+  logoUrl?: string | null
 }
 
 export async function getSettings(): Promise<SettingsData> {

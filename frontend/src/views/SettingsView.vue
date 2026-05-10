@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { getSettings, saveSettings, savePalette } from '@/api'
+import { getSettings, saveSettings, savePalette, uploadLogo, removeLogo } from '@/api'
 import type {
   SettingsData,
   SettingsPropertyDef,
@@ -46,6 +46,93 @@ const overrides = ref<DefaultOverride[]>([])
 const paletteColors = ref<Record<string, string>>({})
 const paletteBadges = ref<Record<string, string>>({})
 const savingPalette = ref(false)
+
+// Logo state. The current saved URL is owned by the schema store so the
+// Sidebar can react to changes without a page reload; the staged file
+// is what the user has picked but not yet uploaded. The preview blob
+// URL is created on demand and revoked on unmount or replacement to
+// avoid leaking object URLs.
+const logoUrl = computed(() => schemaStore.logoUrl)
+const logoFileInput = ref<HTMLInputElement | null>(null)
+const stagedLogo = ref<File | null>(null)
+const stagedLogoPreviewUrl = ref<string | null>(null)
+const uploadingLogo = ref(false)
+const removingLogo = ref(false)
+
+const logoPreviewSrc = computed(() => stagedLogoPreviewUrl.value ?? logoUrl.value)
+
+const ACCEPT_LOGO_TYPES = 'image/png,image/jpeg,image/svg+xml,image/webp'
+
+// Soft client-side ceiling used to short-circuit obviously oversized
+// picks before they hit the network. The authoritative limit lives on
+// the server; the 413 response carries `maxBytes` so the toast can
+// surface the real number when this default is wrong.
+const SOFT_MAX_LOGO_BYTES = 256 * 1024
+
+function revokeStagedPreview() {
+  if (stagedLogoPreviewUrl.value) {
+    URL.revokeObjectURL(stagedLogoPreviewUrl.value)
+    stagedLogoPreviewUrl.value = null
+  }
+}
+
+function handleLogoPicked(ev: Event) {
+  const target = ev.target as HTMLInputElement
+  const file = target.files?.[0] ?? null
+  revokeStagedPreview()
+  if (!file) {
+    stagedLogo.value = null
+    return
+  }
+  if (file.size > SOFT_MAX_LOGO_BYTES) {
+    uiStore.error(`Logo too large: max ${SOFT_MAX_LOGO_BYTES / 1024} KiB`)
+    target.value = ''
+    stagedLogo.value = null
+    return
+  }
+  stagedLogo.value = file
+  stagedLogoPreviewUrl.value = URL.createObjectURL(file)
+}
+
+async function handleLogoUpload() {
+  if (!stagedLogo.value || uploadingLogo.value) return
+  uploadingLogo.value = true
+  try {
+    const result = await uploadLogo(stagedLogo.value)
+    schemaStore.setLogoUrl(result.logoUrl)
+    revokeStagedPreview()
+    stagedLogo.value = null
+    if (logoFileInput.value) logoFileInput.value.value = ''
+    uiStore.success('Logo updated')
+  } catch (err) {
+    // Server may report the authoritative size cap on 413 — prefer that
+    // over the soft client-side number so the toast doesn't lie if the
+    // server limit moves.
+    const msg = err instanceof Error ? err.message : 'Failed to upload logo'
+    uiStore.error(msg)
+  } finally {
+    uploadingLogo.value = false
+  }
+}
+
+async function handleLogoRemove() {
+  if (removingLogo.value) return
+  removingLogo.value = true
+  try {
+    await removeLogo()
+    schemaStore.setLogoUrl(null)
+    revokeStagedPreview()
+    stagedLogo.value = null
+    if (logoFileInput.value) logoFileInput.value.value = ''
+    uiStore.success('Logo removed')
+  } catch (err) {
+    uiStore.error(err instanceof Error ? err.message : 'Failed to remove logo')
+  } finally {
+    removingLogo.value = false
+  }
+}
+
+onBeforeUnmount(revokeStagedPreview)
 
 const paletteRoles = [
   { key: 'base', label: 'Base', description: 'Sidebar & navigation background' },
@@ -187,6 +274,8 @@ async function loadSettings() {
       defaults: { ...o.defaults },
       relationDefaults: { ...o.relationDefaults },
     }))
+
+    schemaStore.setLogoUrl(data.logoUrl ?? null)
 
     // Load palette. Pass `schemaStore.darkDisabled` so that a user
     // with no `dark` field in their palette overlay still sees
@@ -1059,6 +1148,56 @@ onMounted(() => {
         </div>
       </div>
 
+      <!-- Logo -->
+      <div class="settings-card">
+        <h3>Logo</h3>
+        <p class="description">
+          Upload an image to replace the sidebar app name. PNG, JPEG, SVG,
+          or WebP. Max 256 KiB.
+        </p>
+        <p class="file-path">.rela/theme/logo</p>
+
+        <div class="logo-preview-row">
+          <div class="logo-preview-frame">
+            <img
+              v-if="logoPreviewSrc"
+              :src="logoPreviewSrc"
+              alt="Logo preview"
+              class="logo-preview-img"
+            />
+            <span v-else class="logo-preview-empty">No logo set</span>
+          </div>
+          <div class="logo-actions">
+            <input
+              ref="logoFileInput"
+              type="file"
+              :accept="ACCEPT_LOGO_TYPES"
+              class="file-input-hidden"
+              @change="handleLogoPicked"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              :disabled="uploadingLogo || removingLogo"
+              @click="logoFileInput?.click()"
+            >Choose image</button>
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!stagedLogo || uploadingLogo"
+              @click="handleLogoUpload"
+            >{{ uploadingLogo ? 'Uploading...' : 'Upload' }}</button>
+            <button
+              v-if="logoUrl"
+              type="button"
+              class="btn btn-danger btn-sm"
+              :disabled="removingLogo"
+              @click="handleLogoRemove"
+            >{{ removingLogo ? 'Removing...' : 'Remove' }}</button>
+          </div>
+        </div>
+      </div>
+
       <!-- App Info -->
       <div class="settings-card">
         <h3>Application Info</h3>
@@ -1533,6 +1672,44 @@ h1 {
 
 .file-input-hidden {
   display: none;
+}
+
+.logo-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.logo-preview-frame {
+  width: 160px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg, transparent);
+  overflow: hidden;
+}
+
+.logo-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.logo-preview-empty {
+  color: var(--muted-text);
+  font-size: 13px;
+}
+
+.logo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* --- Palette grid (CSS grid; replaces the older flex .color-row) --- */

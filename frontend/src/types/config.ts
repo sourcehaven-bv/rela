@@ -290,6 +290,9 @@ export interface SidebarGroup {
 export interface SidebarData {
   app: AppConfig
   navigation: SidebarGroup[]
+  /** URL of the user-uploaded sidebar logo (with cache-busting query
+   *  parameter), or null/undefined when no logo is set. */
+  logoUrl?: string | null
 }
 
 // Document config for external rendering via shell commands

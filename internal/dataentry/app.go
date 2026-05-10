@@ -56,6 +56,14 @@ type AppState struct {
 	Palette      *ResolvedPalette
 	UserPalette  *PaletteConfig
 	OpenAPIGen   *openapi.Generator
+
+	// User-uploaded sidebar logo. Empty UserLogoExt means "no logo
+	// configured"; UserLogoBytes/UserLogoHash are populated together.
+	// Bytes live in-memory (≤256 KiB) so GET /_theme/logo doesn't hit
+	// disk on every request.
+	UserLogoBytes []byte
+	UserLogoExt   string
+	UserLogoHash  string
 }
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -347,17 +355,31 @@ func NewApp(
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
 
+	logoBytes, logoExt, logoErr := app.loadUserLogo()
+	if logoErr != nil {
+		// Same policy as palette: surface read errors so a corrupt
+		// .rela/theme/ doesn't get silently overwritten on next save.
+		return nil, fmt.Errorf("load user logo: %w", logoErr)
+	}
+	var logoHash string
+	if logoExt != "" {
+		logoHash = hashLogoBytes(logoBytes)
+	}
+
 	// Build and publish the initial AppState snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep
 	// in sync.
 	app.state.Store(&AppState{
-		Cfg:          &cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: userDefaults,
-		Palette:      ResolvePalette(cfg.Palette, userPalette),
-		UserPalette:  userPalette,
+		Cfg:           &cfg,
+		Meta:          meta,
+		StyleMap:      styleMap,
+		StyledTypes:   styledTypes,
+		UserDefaults:  userDefaults,
+		Palette:       ResolvePalette(cfg.Palette, userPalette),
+		UserPalette:   userPalette,
+		UserLogoBytes: logoBytes,
+		UserLogoExt:   logoExt,
+		UserLogoHash:  logoHash,
 		OpenAPIGen: openapi.New(meta, openapi.Config{
 			Title:       cfg.App.Name + " API",
 			Description: cfg.App.Description,
