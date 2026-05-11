@@ -87,6 +87,216 @@ describe('markdown', () => {
       expect(result).toContain('<strong>')
       expect(result).toContain('<em>')
     })
+
+    describe('refResolver (entity-ID code spans)', () => {
+      // A reusable resolver covering the seed below; each test passes only
+      // the IDs it expects to hit, mirroring the server-side mentions map.
+      function makeResolver(map: Record<string, { type: string; title: string; inaccessible?: boolean; inaccessibleReason?: string }>) {
+        return (id: string) => map[id] ?? null
+      }
+
+      it('rewrites a known-ID code span into a titled link', () => {
+        const resolver = makeResolver({
+          'TKT-LXYHQ': { type: 'ticket', title: 'Resolve refs' },
+        })
+        const result = renderMarkdown('see `TKT-LXYHQ` for details', resolver)
+        expect(result).toContain('href="/entity/ticket/TKT-LXYHQ"')
+        expect(result).toContain('Resolve refs')
+        // The code span should be gone (collapsed into the link).
+        expect(result).not.toMatch(/<code>TKT-LXYHQ<\/code>/)
+      })
+
+      it('rewrites a manual-ID code span into a titled link', () => {
+        const resolver = makeResolver({
+          'data-entry-ui': { type: 'concept', title: 'Data Entry Web UI' },
+        })
+        const result = renderMarkdown('covered by `data-entry-ui`', resolver)
+        expect(result).toContain('href="/entity/concept/data-entry-ui"')
+        expect(result).toContain('Data Entry Web UI')
+      })
+
+      it('leaves unknown-ID code spans as <code>', () => {
+        const resolver = makeResolver({})
+        const result = renderMarkdown('`TKT-NOPE` is unknown', resolver)
+        expect(result).toContain('<code>TKT-NOPE</code>')
+        expect(result).not.toContain('href=')
+      })
+
+      it('does not rewrite multi-token code spans (exact-match only)', () => {
+        const resolver = makeResolver({
+          'TKT-LXYHQ': { type: 'ticket', title: 'Resolve refs' },
+        })
+        const result = renderMarkdown('`TKT-LXYHQ and FEAT-010`', resolver)
+        expect(result).toContain('<code>TKT-LXYHQ and FEAT-010</code>')
+        expect(result).not.toContain('href=')
+      })
+
+      it('does not rewrite IDs inside fenced code blocks', () => {
+        const resolver = makeResolver({
+          'TKT-LXYHQ': { type: 'ticket', title: 'Resolve refs' },
+        })
+        const result = renderMarkdown('```\nTKT-LXYHQ on a code line\n```', resolver)
+        expect(result).not.toContain('href="/entity/ticket/TKT-LXYHQ"')
+      })
+
+      it('does not rewrite IDs inside existing link text', () => {
+        const resolver = makeResolver({
+          'TKT-LXYHQ': { type: 'ticket', title: 'Resolve refs' },
+        })
+        const result = renderMarkdown('see [TKT-LXYHQ](https://example.com)', resolver)
+        expect(result).toContain('href="https://example.com"')
+        expect(result).not.toContain('href="/entity/ticket/TKT-LXYHQ"')
+      })
+
+      it('renders dangerous titles as escaped text without breaking the link', () => {
+        const resolver = makeResolver({
+          'TKT-EVIL': { type: 'ticket', title: '<img src=x onerror=alert(1)>' },
+        })
+        const result = renderMarkdown('see `TKT-EVIL`', resolver)
+        // Parse the result to assert against actual DOM structure rather
+        // than substring-matching escaped-text payloads.
+        const doc = new DOMParser().parseFromString(`<div>${result}</div>`, 'text/html')
+        // No live <img> element was injected — only an <a> with text.
+        expect(doc.querySelector('img')).toBeNull()
+        const a = doc.querySelector('a[href="/entity/ticket/TKT-EVIL"]')
+        expect(a).not.toBeNull()
+        // The payload survives as text content, never as live markup.
+        expect(a?.textContent).toBe('<img src=x onerror=alert(1)>')
+        // Defensive: the link node itself carries no event handlers.
+        expect(a?.getAttributeNames().some((n) => n.startsWith('on'))).toBe(false)
+      })
+
+      it('renders inaccessible targets with a lock affordance and tooltip', () => {
+        const resolver = makeResolver({
+          'TKT-LOCKED': {
+            type: 'ticket',
+            title: '',
+            inaccessible: true,
+            inaccessibleReason: 'git-crypt',
+          },
+        })
+        const result = renderMarkdown('locked: `TKT-LOCKED`', resolver)
+        expect(result).toContain('href="/entity/ticket/TKT-LOCKED"')
+        // Lock emoji rendered as link text alongside the ID (the title
+        // was empty, so the renderer falls back to the bare ID).
+        expect(result).toContain('TKT-LOCKED 🔒')
+        // Tooltip mirrors PropertyDisplay's inaccessibleTooltip copy.
+        expect(result).toContain('title="git-crypt encrypted (run `git-crypt unlock` to read)"')
+      })
+
+      it('keeps the readable title alongside the lock when one is supplied', () => {
+        // Server may report inaccessible=true while still being able to
+        // produce a display title (e.g. the title property is readable
+        // but the body is encrypted). The renderer should keep the title
+        // as link text and only add the lock affordance afterwards.
+        const resolver = makeResolver({
+          'TKT-PARTIAL': {
+            type: 'ticket',
+            title: 'Encrypted Body',
+            inaccessible: true,
+            inaccessibleReason: 'git-crypt',
+          },
+        })
+        const result = renderMarkdown('locked: `TKT-PARTIAL`', resolver)
+        expect(result).toContain('href="/entity/ticket/TKT-PARTIAL"')
+        expect(result).toContain('Encrypted Body 🔒')
+        // The bare ID is NOT the visible text in this case.
+        expect(result).not.toContain('>TKT-PARTIAL 🔒<')
+      })
+
+      it('falls back to "inaccessible" tooltip when reason is missing', () => {
+        const resolver = makeResolver({
+          'TKT-OPAQUE': { type: 'ticket', title: '', inaccessible: true },
+        })
+        const result = renderMarkdown('`TKT-OPAQUE`', resolver)
+        expect(result).toContain('title="inaccessible"')
+      })
+
+      it('produces only same-origin entity hrefs (no javascript: or data: URLs)', () => {
+        // The href is derived entirely from server-validated (type, id)
+        // pairs — there is no path for a resolver to inject a foreign
+        // URL scheme. This test guards that invariant against future
+        // refactors that might widen the rewriter's input surface.
+        const resolver = makeResolver({
+          // Pathological type strings would still produce a same-origin
+          // path; DOMPurify sanitizes the resulting <a> anyway.
+          'TKT-OK': { type: 'ticket', title: 'Fine' },
+        })
+        const result = renderMarkdown('`TKT-OK`', resolver)
+        const doc = new DOMParser().parseFromString(`<div>${result}</div>`, 'text/html')
+        const a = doc.querySelector('a')
+        expect(a).not.toBeNull()
+        const href = a?.getAttribute('href') ?? ''
+        // Same-origin path only.
+        expect(href.startsWith('/entity/')).toBe(true)
+        expect(href).not.toMatch(/^javascript:/i)
+        expect(href).not.toMatch(/^data:/i)
+        // No on* event handlers on the link.
+        const handlerAttrs = a?.getAttributeNames().filter((n) => n.startsWith('on')) ?? []
+        expect(handlerAttrs).toEqual([])
+      })
+
+      it('cannot inject script via a malicious inaccessible-reason tooltip', () => {
+        // Inaccessible tooltip is built from the reason string. Verify a
+        // payload in the reason cannot break out of the attribute and
+        // inject markup — the worst case is a stripped `title` attribute
+        // (DOMPurify's choice), which is still safe.
+        const resolver = makeResolver({
+          'TKT-EVIL-TIP': {
+            type: 'ticket',
+            title: '',
+            inaccessible: true,
+            inaccessibleReason: 'x"><script>alert(1)</script>',
+          },
+        })
+        const result = renderMarkdown('`TKT-EVIL-TIP`', resolver)
+        const doc = new DOMParser().parseFromString(`<div>${result}</div>`, 'text/html')
+        // No script element survived.
+        expect(doc.querySelector('script')).toBeNull()
+        // The link is still rendered safely with the lock affordance.
+        const a = doc.querySelector('a[href="/entity/ticket/TKT-EVIL-TIP"]')
+        expect(a).not.toBeNull()
+        expect(a?.textContent).toContain('🔒')
+      })
+
+      it('swallows resolver exceptions and leaves the code span intact', () => {
+        const resolver = () => {
+          throw new Error('boom')
+        }
+        const result = renderMarkdown('`TKT-WHATEVER`', resolver)
+        expect(result).toContain('<code>TKT-WHATEVER</code>')
+      })
+
+      it('handles mixed known + unknown spans in the same paragraph', () => {
+        const resolver = makeResolver({
+          'TKT-LXYHQ': { type: 'ticket', title: 'Resolve refs' },
+        })
+        const result = renderMarkdown(
+          '`TKT-LXYHQ` is real, `TKT-NOPE` is not',
+          resolver,
+        )
+        expect(result).toContain('href="/entity/ticket/TKT-LXYHQ"')
+        expect(result).toContain('<code>TKT-NOPE</code>')
+      })
+
+      it('behaves like today when no resolver is supplied', () => {
+        const result = renderMarkdown('see `TKT-LXYHQ`')
+        expect(result).toContain('<code>TKT-LXYHQ</code>')
+        expect(result).not.toContain('href=')
+      })
+
+      it('rewrites a self-reference like any other entity link', () => {
+        // The renderer is symmetric: self-references resolve through the
+        // same path. The destination route is a no-op navigation but the
+        // affordance is harmless and matches the Lua-side semantics.
+        const resolver = makeResolver({
+          'TKT-SELF': { type: 'ticket', title: 'Mirror' },
+        })
+        const result = renderMarkdown('this is `TKT-SELF`', resolver)
+        expect(result).toContain('href="/entity/ticket/TKT-SELF"')
+        expect(result).toContain('Mirror')
+      })
+    })
   })
 
   describe('getCheckboxStats', () => {

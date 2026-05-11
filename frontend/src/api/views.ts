@@ -76,10 +76,30 @@ export interface ViewSection {
   hasContent: boolean
 }
 
+// Mention is the resolved target of an entity-ID code span found inside
+// any markdown body the response carries (entry content + section
+// content). Mirrors the server-side `Mention` Go struct (TKT-747O); the
+// SPA's `renderMarkdown` consumes this map to rewrite bare-ID code spans
+// into titled in-app links. `inaccessible` flags targets whose display
+// title is unreadable (e.g. git-crypt encrypted) so the renderer can
+// show a lock affordance.
+//
+// `inaccessible_reason` carries the matching `entity.InaccessibleReason`
+// value as a bare string. Today only `"git-crypt"` is produced; the SPA
+// treats unknown reasons as opaque and falls back to a generic tooltip,
+// so adding new reasons server-side never breaks the client.
+export interface Mention {
+  type: string
+  title: string
+  inaccessible?: boolean
+  inaccessible_reason?: string
+}
+
 // Full view API response
 export interface ViewResponse {
   entry: Entity
   sections: ViewSection[]
+  mentions?: Record<string, Mention>
 }
 
 // Fetch executed view data for an entity. The backend looks up the

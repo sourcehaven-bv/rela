@@ -2440,9 +2440,22 @@ func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 // --- Views API ---
 
 // V1ViewResponse contains the executed view data.
+//
+// Mentions carries the implicit-relation set discovered by scanning the
+// entry and section markdown contents for bare-content entity-ID code
+// spans (see collectMentions). The SPA's markdown renderer consumes this
+// map to rewrite those code spans into titled in-app links. Mirrors the
+// Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
+// that don't go through the Lua document path.
+//
+// Wire stability: `mentions` is part of the public v1 API. The set of
+// `inaccessible_reason` values may grow as new locking mechanisms are
+// added (today: `git-crypt`); clients must treat unknown reasons as
+// opaque rather than enumerating them.
 type V1ViewResponse struct {
-	Entry    V1Entity        `json:"entry"`
-	Sections []V1ViewSection `json:"sections"`
+	Entry    V1Entity           `json:"entry"`
+	Sections []V1ViewSection    `json:"sections"`
+	Mentions map[string]Mention `json:"mentions,omitempty"`
 }
 
 // V1ViewSection represents a section with resolved data.
@@ -2689,5 +2702,39 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		resp.Sections = append(resp.Sections, v1Sec)
 	}
 
+	resp.Mentions = collectMentions(r.Context(), a.store, s.Meta, viewContentBlobs(result.Entry, sections)...)
+
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// viewContentBlobs gathers every markdown body that will be rendered by
+// the SPA for a single view response: the entry's content, every section's
+// own content, and every entity card's content (sections with display
+// "content"/"cards" surface related entities, each carrying its own
+// `Content` markdown that EntityDetail.vue renders with the same
+// `refResolver`). Used to scope the mentions scan to text the user
+// actually sees on this screen.
+func viewContentBlobs(entry *entityPkg.Entity, sections []SectionData) []string {
+	blobs := make([]string, 0, 1+len(sections))
+	if entry != nil && entry.Content != "" {
+		blobs = append(blobs, entry.Content)
+	}
+	for _, sec := range sections {
+		if sec.HasContent && sec.Content != "" {
+			blobs = append(blobs, sec.Content)
+		}
+		for _, ent := range sec.Entities {
+			if ent.HasContent && ent.Content != "" {
+				blobs = append(blobs, ent.Content)
+			}
+		}
+		for _, grp := range sec.Groups {
+			for _, ent := range grp.Entities {
+				if ent.HasContent && ent.Content != "" {
+					blobs = append(blobs, ent.Content)
+				}
+			}
+		}
+	}
+	return blobs
 }
