@@ -336,7 +336,11 @@ func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType stri
 	return a.buildSections(panel.Sections, result)
 }
 
-// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo using full view config.
+// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on
+// side-panel sections. The side panel is the only mutation surface that
+// carries these affordances; the read-only entity-detail view path does
+// not call this. The `viewConfig` parameter is a synthetic ViewConfig
+// hand-built from a form's SidePanel config — it is not a generic view.
 func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *entity.Entity) {
 	s := a.State()
 	for i, sec := range viewConfig.Sections {

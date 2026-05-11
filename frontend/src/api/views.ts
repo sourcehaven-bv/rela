@@ -59,29 +59,6 @@ export interface ViewGroup {
   entities?: ViewEntity[]
 }
 
-// Add button target
-export interface ViewAddTarget {
-  entityType: string
-  formId: string
-  label: string
-}
-
-// Add button info
-export interface ViewAddInfo {
-  relation: string
-  linkAs: 'from' | 'to'
-  peerId: string
-  targets: ViewAddTarget[]
-}
-
-// Link existing button info
-export interface ViewLinkInfo {
-  relation: string
-  linkAs: 'from' | 'to'
-  peerId: string
-  entityTypes: string[]
-}
-
 // View section with all display types
 export interface ViewSection {
   heading: string
@@ -97,8 +74,6 @@ export interface ViewSection {
   isGrouped: boolean
   content?: string
   hasContent: boolean
-  addInfo?: ViewAddInfo
-  linkInfo?: ViewLinkInfo
 }
 
 // Full view API response

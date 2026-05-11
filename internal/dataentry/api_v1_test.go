@@ -3842,6 +3842,110 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 	}
 }
 
+// assertViewSectionsLackKeys decodes a view response body and asserts that
+// none of its sections contain any of the named JSON keys. Decoding via
+// map[string]json.RawMessage so a future re-introduction that renamed the
+// Go field would still get caught.
+func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
+	t.Helper()
+	var raw struct {
+		Sections []map[string]json.RawMessage `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i, sec := range raw.Sections {
+		for _, k := range keys {
+			if _, ok := sec[k]; ok {
+				t.Errorf("section[%d]: %q must not be present in view responses", i, k)
+			}
+		}
+	}
+}
+
+// View responses must not carry add/link affordances. The view path is
+// strictly read-only; mutations live on the form/side-panel path. This guards
+// against re-introducing addInfo / linkInfo on V1ViewSection across every
+// shape that historically emitted them: outgoing/incoming traversals,
+// cards/list/table displays, and the variant where the target type has no
+// create-form configured (which previously emitted only linkInfo).
+func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
+	type variant struct {
+		name     string
+		traverse ViewTraverse
+		display  string
+		// withCreateForm seeds a Forms entry so createFormForType resolves
+		// — exercising the path that pre-change emitted both addInfo and
+		// linkInfo. Without it, only linkInfo was emitted historically.
+		withCreateForm bool
+	}
+	variants := []variant{
+		{"outgoing-cards-with-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "cards", true},
+		{"outgoing-list-with-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "list", true},
+		{"outgoing-table-with-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "table", true},
+		{"incoming-cards-with-form", ViewTraverse{From: "entry", FollowIncoming: "implements", CollectAs: "tickets"}, "cards", true},
+		{"outgoing-cards-no-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "cards", false},
+	}
+
+	for _, v := range variants {
+		t.Run(v.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			state := app.State()
+			if v.withCreateForm {
+				// Wire forms for both ends so the variant works regardless
+				// of traversal direction (the resolver picks createFormForType
+				// against `relDef.From` for incoming, `relDef.To` for outgoing).
+				state.Cfg.Forms["create_feature"] = dataentryconfig.Form{EntityType: "feature"}
+				state.Cfg.Forms["create_ticket"] = dataentryconfig.Form{EntityType: "ticket"}
+			}
+
+			// The view's entry type depends on traversal direction so the
+			// FollowIncoming variant has a sensible from-side entity to
+			// land on.
+			entryType := "ticket"
+			entryID := "TKT-001"
+			otherType := "feature"
+			otherID := "FEAT-001"
+			if v.traverse.FollowIncoming != "" {
+				entryType, otherType = otherType, entryType
+				entryID, otherID = otherID, entryID
+			}
+
+			columns := []ListColumn{}
+			if v.display == "table" {
+				columns = []ListColumn{{Property: "title", Label: "Title"}}
+			}
+			state.Cfg.Views["v"] = ViewConfig{
+				Entry:    ViewEntry{Type: entryType},
+				Traverse: []ViewTraverse{v.traverse},
+				Sections: []ViewSection{{
+					Heading: "Section", Source: v.traverse.CollectAs, Display: v.display, Columns: columns,
+				}},
+			}
+
+			seedEntity(app, &entity.Entity{
+				ID: entryID, Type: entryType,
+				Properties: map[string]interface{}{"title": "entry"},
+			})
+			seedEntity(app, &entity.Entity{
+				ID: otherID, Type: otherType,
+				Properties: map[string]interface{}{"title": "other"},
+			})
+			// Edge always points TKT → FEAT regardless of which is entry.
+			seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/"+entryType+"/"+entryID, http.NoBody)
+			rec := httptest.NewRecorder()
+			app.handleV1Views(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+			}
+			assertViewSectionsLackKeys(t, rec.Body.Bytes(), "addInfo", "linkInfo")
+		})
+	}
+}
+
 func TestV1Views_UnknownEntityType(t *testing.T) {
 	app := newTestAppV1(t)
 
