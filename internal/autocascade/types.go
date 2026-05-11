@@ -49,16 +49,13 @@ type Request struct {
 	LuaDeps lua.WriteDeps
 }
 
-// Outcome is the cumulative result of a cascade. Field order mirrors
-// workspace.automationSideEffects: RelationsCreated, EntitiesCreated,
-// Errors, Warnings.
+// Outcome is the cumulative result of a cascade.
 //
-// Errors is intentionally []string rather than []error. Today no
-// consumer branches on the underlying type; UpdateResult.AutomationErrors
-// is read only as text by the API layer. Promote to []error
-// (preserving *lua.ScriptError) when a future surface needs typed
-// access — at which point formatAutomationError's stringification
-// goes away.
+// Errors is []string for wire-format symmetry with the existing
+// EntityManager result types (UpdateResult.AutomationErrors etc.),
+// which the API layer reads as text. A typed []error variant
+// preserving *lua.ScriptError will arrive when a consumer needs
+// structured access; until then, accept the stringification.
 type Outcome struct {
 	RelationsCreated []*entity.Relation
 	EntitiesCreated  []*entity.Entity

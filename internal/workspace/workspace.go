@@ -22,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -39,22 +38,15 @@ type ChangeEvent = storage.ChangeEvent
 // ChangeOp is re-exported from storage for the same reason as ChangeEvent.
 type ChangeOp = storage.ChangeOp
 
-// ScriptExecutor runs automation scripts with entity context.
-//
-// The interface itself lives in [script.Executor] alongside the
-// engine implementation. This alias preserves backwards compatibility
-// for existing callers (CLI commands, tests, etc.) that named the
-// type as workspace.ScriptExecutor before the move. New code should
-// reference script.Executor directly.
-//
-// For production, pass script.NewEngine(). For tests, pass
-// [NopScriptExecutor] (aliased to [script.NopExecutor]).
-type ScriptExecutor = script.Executor
+// ScriptExecutor is a re-export of [autocascade.Executor] for callers
+// (CLI commands, tests) that named the type as workspace.ScriptExecutor
+// before the decomposition. New code should reference
+// autocascade.Executor directly.
+type ScriptExecutor = autocascade.Executor
 
-// NopScriptExecutor is the no-op [ScriptExecutor] for tests, aliased
-// from script.NopExecutor. New code should reference the script
-// package directly.
-var NopScriptExecutor = script.NopExecutor
+// NopScriptExecutor is a re-export of [autocascade.NopExecutor]. New
+// code should reference the autocascade package directly.
+var NopScriptExecutor = autocascade.NopExecutor
 
 // Workspace is a stateful domain session that ties together the store
 // (persistence), metamodel (schema), automation engine, and search index.
@@ -160,7 +152,10 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 	if openErr != nil {
 		return nil, fmt.Errorf("open store: %w", openErr)
 	}
-	ws := newWorkspace(fs, paths, meta, exec, opts...)
+	ws, err := newWorkspace(fs, paths, meta, exec, opts...)
+	if err != nil {
+		return nil, err
+	}
 	ws.store = s
 	ws.storeFactory = factory
 
@@ -223,7 +218,14 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
 		opt(cfg)
 	}
 
-	ws := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	ws, err := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	if err != nil {
+		// NewForTest is panicy by design (it has no error return);
+		// callers that want a builder that fails gracefully should
+		// use New. This matches the existing convention for
+		// indexStoreEntities failures below.
+		panic(fmt.Sprintf("NewForTest: %v", err))
+	}
 	if cfg.store != nil {
 		ws.store = cfg.store
 		if ws.searchIdx != nil {
@@ -269,7 +271,7 @@ func WithStoreFactory(f store.Factory) Option {
 func newWorkspace(
 	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, scriptExec ScriptExecutor,
 	opts ...Option,
-) *Workspace {
+) (*Workspace, error) {
 	var autoEngine *automation.Engine
 	var cascadeRunner *autocascade.Runner
 	if len(meta.Automations) > 0 {
@@ -278,16 +280,21 @@ func newWorkspace(
 		// is what executes automation results' side effects;
 		// workspace.createEntity / updateEntity invoke it via
 		// runner.Process. Workspace itself satisfies autocascade.Host
-		// (see host_forwarder.go).
-		if r, err := autocascade.New(autocascade.Deps{
+		// (see autocascade_host.go).
+		//
+		// Per CLAUDE.md "Constructors reject nil required fields",
+		// propagate failure rather than silently disabling
+		// automation — a project with automations in its metamodel
+		// but a broken runner is a fail-fast condition, not a
+		// degraded mode.
+		r, err := autocascade.New(autocascade.Deps{
 			Engine:  autoEngine,
 			Scripts: scriptExec,
-		}); err == nil {
-			cascadeRunner = r
-		} else {
-			slog.Warn("failed to construct autocascade runner; automation cascades disabled", "error", err)
-			autoEngine = nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build autocascade runner: %w", err)
 		}
+		cascadeRunner = r
 	}
 
 	// Create an empty search index — callers that use a real store
@@ -328,7 +335,7 @@ func newWorkspace(
 	for _, opt := range opts {
 		opt(ws)
 	}
-	return ws
+	return ws, nil
 }
 
 // indexStoreEntities (re)indexes every entity in the store into the
@@ -1002,8 +1009,13 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 // FindExistingRelationTarget finds an existing entity of the given
 // type that is the target of a relation from the source entity with
 // the given relation type. Returns nil if no such entity exists.
-// Satisfies [autocascade.Host]; was previously private as
-// findExistingRelationTarget.
+//
+// Exported because it satisfies [autocascade.Host] directly (rather
+// than via a forwarder in autocascade_host.go like the other Host
+// methods) — the underlying logic was always here as
+// findExistingRelationTarget; promoting in place is cheaper than
+// introducing a forwarder for a query method whose name is already
+// fine for both audiences.
 func (w *Workspace) FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
 	ctx := context.Background()
 	st := w.Store()

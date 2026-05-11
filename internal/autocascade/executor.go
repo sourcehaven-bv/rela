@@ -1,23 +1,20 @@
-package script
+package autocascade
 
 import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
-// Executor is the interface satisfied by [Engine] for running
-// automation Lua. It exists here (rather than in the consumer package
-// per the project's "interfaces at the call site" rule) because
-// arch-lint prevents the consumer's package (internal/autocascade)
-// from importing every package whose types it would otherwise need.
+// Executor is the interface Runner uses to execute automation Lua
+// scripts. Defined here, at the consumer, per CLAUDE.md
+// "Consumer-side interfaces for callbacks and cycles". In production
+// the implementation is *script.Engine, which satisfies it
+// structurally; in tests, callers pass [NopExecutor] or a stub.
 //
-// The interface is identical in shape to workspace.ScriptExecutor —
-// which is retained as a type alias for backwards-compatibility with
-// callers that named the type before the move. New code should
-// reference script.Executor directly.
-//
-// Deliberate transgression of the consumer-side rule: documented in
-// PLAN-V6UR Decisions #5 and in autocascade's package doc.
+// Executor lives in autocascade because that's where it's *consumed*.
+// The script package implements it without importing autocascade
+// (Go's structural typing makes this work) — there is no package
+// cycle and no need for the script package to know about autocascade.
 type Executor interface {
 	// ExecuteCode runs inline script code with entity context.
 	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
@@ -41,11 +38,11 @@ var NopExecutor Executor = nopExecutor{}
 type nopExecutor struct{}
 
 func (nopExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	panic("script.NopExecutor: Lua execution not expected in this context")
+	panic("autocascade.NopExecutor: Lua execution not expected in this context")
 }
 
 func (nopExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	panic("script.NopExecutor: Lua execution not expected in this context")
+	panic("autocascade.NopExecutor: Lua execution not expected in this context")
 }
 
 func (nopExecutor) LuaCache() *lua.Cache { return nil }

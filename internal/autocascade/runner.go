@@ -9,7 +9,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // Runner executes the side effects of an automation cascade.
@@ -21,7 +20,7 @@ import (
 // (which holds Runner and satisfies Host).
 type Runner struct {
 	engine  *automation.Engine
-	scripts script.Executor
+	scripts Executor
 }
 
 // Deps is the constructor input for [New]. Using a struct keeps the
@@ -33,9 +32,10 @@ type Deps struct {
 	Engine *automation.Engine
 
 	// Scripts is the script executor used for automation Lua
-	// actions. In production this is *script.Engine; in tests it
-	// can be a stub or script.NopExecutor.
-	Scripts script.Executor
+	// actions. In production this is *script.Engine (which
+	// satisfies Executor structurally); in tests it can be a stub
+	// or [NopExecutor].
+	Scripts Executor
 }
 
 // New constructs a Runner. Required collaborators (Engine, Scripts)
@@ -75,6 +75,9 @@ func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, 
 	if req.Result == nil {
 		return Outcome{}, nil
 	}
+	if req.Trigger == nil {
+		return Outcome{}, errors.New("autocascade: Process: req.Trigger is required")
+	}
 
 	var outcome Outcome
 
@@ -99,7 +102,7 @@ func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, 
 		r.executeLuaActions(item.trigger, req.OldTrigger, item.autoResult.LuaToExecute, req.LuaDeps, &outcome)
 
 		// Process relations for this trigger.
-		r.applyRelationCreations(host, item.trigger, item.autoResult.RelationsToCreate, &outcome)
+		r.applyRelationCreations(ctx, host, item.trigger, item.autoResult.RelationsToCreate, &outcome)
 
 		// Collect warnings/errors from this automation result.
 		outcome.Warnings = append(outcome.Warnings, item.autoResult.Warnings...)
@@ -210,6 +213,7 @@ func (r *Runner) runCreatedEntityAutomation(
 // the (from-type, type, to-type) tuple is validated against the
 // metamodel before persisting.
 func (r *Runner) applyRelationCreations(
+	ctx context.Context,
 	host Host,
 	triggerEntity *entity.Entity,
 	relations []*entity.Relation,
@@ -220,7 +224,7 @@ func (r *Runner) applyRelationCreations(
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
 
-		targetEntity, err := host.Store().GetEntity(context.Background(), rel.To)
+		targetEntity, err := host.Store().GetEntity(ctx, rel.To)
 		if err != nil {
 			outcome.Errors = append(outcome.Errors,
 				"automation relation target not found: "+rel.To)

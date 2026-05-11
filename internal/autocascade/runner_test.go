@@ -12,7 +12,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -22,7 +21,7 @@ import (
 func TestNew_RejectsNilEngine(t *testing.T) {
 	if _, err := autocascade.New(autocascade.Deps{
 		Engine:  nil,
-		Scripts: script.NopExecutor,
+		Scripts: autocascade.NopExecutor,
 	}); err == nil {
 		t.Fatal("expected error for nil Engine, got nil")
 	}
@@ -88,12 +87,17 @@ func (h *stubHost) CreateEntityNoCascade(entityType string, opts autocascade.Cre
 
 func (h *stubHost) WriteEntity(e *entity.Entity) error {
 	h.Calls = append(h.Calls, "WriteEntity:"+e.ID)
-	if h.store != nil {
-		// CreateEntity errors if the entity already exists; for the
-		// stub's "upsert" semantics, fall back to UpdateEntity.
-		if err := h.store.CreateEntity(context.Background(), e); err != nil {
-			return h.store.UpdateEntity(context.Background(), e)
+	if h.store == nil {
+		return nil
+	}
+	// WriteEntity is an upsert in workspace; reproduce that here by
+	// trying Create first, then Update if-and-only-if the failure is
+	// store.ErrConflict. Any other error propagates.
+	if err := h.store.CreateEntity(context.Background(), e); err != nil {
+		if !errors.Is(err, store.ErrConflict) {
+			return err
 		}
+		return h.store.UpdateEntity(context.Background(), e)
 	}
 	return nil
 }
@@ -125,13 +129,13 @@ func (h *stubHost) FindExistingRelationTarget(sourceID, relationType, targetType
 
 // newRunner constructs a Runner with a freshly built no-rules Engine.
 // Tests that need automation rules build the engine inline.
-func newRunner(t *testing.T, engine *automation.Engine, scripts script.Executor) *autocascade.Runner {
+func newRunner(t *testing.T, engine *automation.Engine, scripts autocascade.Executor) *autocascade.Runner {
 	t.Helper()
 	if engine == nil {
 		engine = automation.NewEngine(nil)
 	}
 	if scripts == nil {
-		scripts = script.NopExecutor
+		scripts = autocascade.NopExecutor
 	}
 	r, err := autocascade.New(autocascade.Deps{Engine: engine, Scripts: scripts})
 	if err != nil {
