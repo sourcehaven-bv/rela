@@ -63,8 +63,10 @@ test.describe('Entity reference resolution', () => {
     await entity.navigateToEntity('feature', originId!);
 
     await entity.clickContentEntityRef('feature', targetId!);
-    // The target's title appears on the destination page.
-    expect(await entity.containsText('Resolved Target')).toBeTruthy();
+    // Wait for the destination page to finish hydrating before asserting
+    // on its content — the SPA transitions in two phases (route change,
+    // then loadView), and the heading isn't visible until the second.
+    await entity.expectHeadingText('Resolved Target');
   });
 
   test('unknown-ID code spans remain as <code> (no link)', async ({ api, appPage }) => {
