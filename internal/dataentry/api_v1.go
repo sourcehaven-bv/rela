@@ -205,6 +205,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
 	mux.HandleFunc("/api/v1/_palette", a.handleAPIPaletteCRUD)
 	mux.HandleFunc("/api/v1/_theme/logo", a.handleAPIThemeLogo)
+	mux.HandleFunc("/api/v1/_theme/export", a.handleAPIThemeExport)
+	mux.HandleFunc("/api/v1/_theme/import", a.handleAPIThemeImport)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)

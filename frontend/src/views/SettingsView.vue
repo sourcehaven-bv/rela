@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { getSettings, saveSettings, savePalette, uploadLogo, removeLogo } from '@/api'
+import { useConfirm } from '@/composables/useConfirm'
+import { getSettings, saveSettings, savePalette, uploadLogo, removeLogo, exportTheme, importTheme } from '@/api'
 import type {
   SettingsData,
   SettingsPropertyDef,
   SettingsRelationDef,
   UserDefaults,
   DefaultOverride,
+  PaletteConfig,
 } from '@/api/settings'
 import TagSelect from '@/components/ui/TagSelect.vue'
 import {
@@ -27,6 +29,7 @@ const HEX_INPUT_RE = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+const { confirm } = useConfirm()
 
 // State
 const loading = ref(true)
@@ -133,6 +136,150 @@ async function handleLogoRemove() {
 }
 
 onBeforeUnmount(revokeStagedPreview)
+
+// Theme package state. Export downloads the current palette + logo as
+// a .relatheme zip; install reads one and stages the palette into the
+// existing palette editor (logo is persisted immediately, matching
+// the direct logo upload path).
+const themeFileInput = ref<HTMLInputElement | null>(null)
+const exportingTheme = ref(false)
+const importingTheme = ref(false)
+
+async function handleThemeExport() {
+  if (exportingTheme.value) return
+  exportingTheme.value = true
+  try {
+    await exportTheme()
+    uiStore.success('Theme exported')
+  } catch (err) {
+    uiStore.error(err instanceof Error ? err.message : 'Failed to export theme')
+  } finally {
+    exportingTheme.value = false
+  }
+}
+
+async function handleThemePicked(ev: Event) {
+  const target = ev.target as HTMLInputElement
+  const file = target.files?.[0] ?? null
+  if (!file) return
+  // Always reset the input value so picking the same file twice in a
+  // row still fires @change.
+  const reset = () => { target.value = '' }
+
+  // If the user has unsaved palette edits, confirm before stomping
+  // them. The saved palette in palette.yaml is untouched either way;
+  // this is purely about the in-editor draft.
+  if (isPaletteEditorDirty()) {
+    const ok = await confirm({
+      title: 'Replace your unsaved palette draft?',
+      message:
+        'Installing a theme will replace the colors in the palette editor. ' +
+        'Your previously saved palette on disk is not affected, but any ' +
+        'unsaved edits in the editor will be lost.',
+      confirmLabel: 'Replace draft',
+      danger: true,
+    })
+    if (!ok) {
+      reset()
+      return
+    }
+  }
+
+  importingTheme.value = true
+  try {
+    const result = await importTheme(file)
+    if (result.logoUrl !== undefined) {
+      schemaStore.setLogoUrl(result.logoUrl ?? null)
+    }
+    // Stage the imported palette into the existing editor refs. The
+    // user clicks the existing Save palette button to persist colors.
+    applyImportedPalette(result.palette)
+    uiStore.success('Theme installed. Click Save palette to apply colors.')
+  } catch (err) {
+    uiStore.error(err instanceof Error ? err.message : 'Failed to install theme')
+  } finally {
+    importingTheme.value = false
+    reset()
+  }
+}
+
+/** Detect whether the palette editor holds unsaved edits relative to
+ *  the saved palette. The saved baseline lives in schemaStore (light /
+ *  dark / disabled-flag); editor refs (paletteColors / paletteBadges /
+ *  paletteDarkColors / paletteDarkBadges) are the working copy. */
+function isPaletteEditorDirty(): boolean {
+  const editorLight = stripEmptyMap(paletteColors.value)
+  const savedLight = stripEmptyMap(schemaStore.paletteLight)
+  if (!shallowEqualMap(editorLight, savedLight)) return true
+
+  const editorBadges = stripEmptyMap(paletteBadges.value)
+  // Saved badges live alongside the role colors; the schemaStore's
+  // paletteLight contains derived CSS vars rather than the source
+  // badges map, so we only diff the badges editor against itself
+  // having values — any user-set badge is a draft until Save persists
+  // it. Conservative: treat any non-empty badge as potential dirt.
+  if (Object.keys(editorBadges).length > 0) return true
+
+  const editorDark = stripEmptyMap(paletteDarkColors.value)
+  const savedDark = stripEmptyMap(schemaStore.paletteDark)
+  if (!shallowEqualMap(editorDark, savedDark)) return true
+
+  if (Object.keys(stripEmptyMap(paletteDarkBadges.value)).length > 0) return true
+  return false
+}
+
+function stripEmptyMap(m: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(m)) if (v) out[k] = v
+  return out
+}
+
+function shallowEqualMap(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const k of aKeys) if (a[k] !== b[k]) return false
+  return true
+}
+
+function applyImportedPalette(palette: PaletteConfig) {
+  const state = loadPaletteState(
+    palette,
+    paletteRoles.map((r) => r.key),
+    schemaStore.darkDisabled,
+  )
+  paletteMode.value = state.mode
+  paletteColors.value = state.light
+  paletteBadges.value = state.badges
+  paletteDarkColors.value = state.dark
+  paletteDarkBadges.value = state.darkBadges
+
+  // Apply the imported palette as live CSS variables so the sidebar
+  // (and the rest of the app chrome) updates immediately, matching
+  // what the preview pane shows. The user still needs to click Save
+  // Palette to persist the colors — this is purely visual feedback,
+  // not persistence.
+  applyPaletteToDocument()
+}
+
+/** Apply the current editor state to live CSS vars. Mirrors the
+ *  previewVars logic but writes to :root via uiStore.applyPalette so
+ *  the whole app updates, not just the preview pane. */
+function applyPaletteToDocument() {
+  // Light mode (or Regular mode) — apply the light derivation.
+  const light = deriveTheme(paletteColors.value, paletteBadges.value)
+
+  if (paletteMode.value === 'regular') {
+    uiStore.applyPalette(light)
+    return
+  }
+
+  // Light+Dark mode: pick whichever the user is currently viewing
+  // (uiStore.darkMode), with empty dark slots inheriting from light.
+  const mergedColors = { ...paletteColors.value, ...stripEmpty(paletteDarkColors.value) }
+  const mergedBadges = { ...paletteBadges.value, ...stripEmpty(paletteDarkBadges.value) }
+  const dark = deriveTheme(mergedColors, mergedBadges)
+  uiStore.applyPalette(uiStore.isDark ? dark : light)
+}
 
 const paletteRoles = [
   { key: 'base', label: 'Base', description: 'Sidebar & navigation background' },
@@ -1198,6 +1345,40 @@ onMounted(() => {
         </div>
       </div>
 
+      <!-- Theme package -->
+      <div class="settings-card">
+        <h3>Theme package</h3>
+        <p class="description">
+          Bundle the current palette and logo into a portable
+          <code>.relatheme</code> file, or install one shared by someone
+          else. Installing applies the logo immediately and stages the
+          palette in the editor above — click <strong>Save Palette</strong>
+          to persist colors.
+        </p>
+
+        <div class="theme-package-actions">
+          <input
+            ref="themeFileInput"
+            type="file"
+            accept=".relatheme,application/zip"
+            class="file-input-hidden"
+            @change="handleThemePicked"
+          />
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            :disabled="exportingTheme"
+            @click="handleThemeExport"
+          >{{ exportingTheme ? 'Exporting...' : 'Export' }}</button>
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="importingTheme"
+            @click="themeFileInput?.click()"
+          >{{ importingTheme ? 'Installing...' : 'Install' }}</button>
+        </div>
+      </div>
+
       <!-- App Info -->
       <div class="settings-card">
         <h3>Application Info</h3>
@@ -1710,6 +1891,14 @@ h1 {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.theme-package-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
 }
 
 /* --- Palette grid (CSS grid; replaces the older flex .color-row) --- */

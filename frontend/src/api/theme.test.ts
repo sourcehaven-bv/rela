@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { uploadLogo, removeLogo } from './theme'
+import { uploadLogo, removeLogo, exportTheme, importTheme } from './theme'
 
 describe('theme api', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>
@@ -69,6 +69,80 @@ describe('theme api', () => {
         }),
       )
       await expect(removeLogo()).rejects.toThrow('kaboom')
+    })
+  })
+
+  describe('exportTheme', () => {
+    it('GETs the export endpoint and triggers a download', async () => {
+      const blob = new Blob([new Uint8Array([0x50, 0x4b])], { type: 'application/zip' })
+      fetchSpy.mockResolvedValue(
+        new Response(blob, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': 'attachment; filename="my-theme.relatheme"',
+          },
+        }),
+      )
+      const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
+      const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+      await exportTheme()
+
+      expect(fetchSpy).toHaveBeenCalledWith('/api/v1/_theme/export', { method: 'GET' })
+      expect(createSpy).toHaveBeenCalledOnce()
+      // Revoke is deferred via setTimeout so Safari doesn't drop the
+      // download — wait one macrotask before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(revokeSpy).toHaveBeenCalledWith('blob:mock')
+
+      createSpy.mockRestore()
+      revokeSpy.mockRestore()
+    })
+
+    it('throws with the server error message on failure', async () => {
+      fetchSpy.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'no palette' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      await expect(exportTheme()).rejects.toThrow('no palette')
+    })
+  })
+
+  describe('importTheme', () => {
+    it('POSTs multipart with the file in the "file" field', async () => {
+      const fakePalette = { accent: '#abcdef' }
+      fetchSpy.mockResolvedValue(
+        new Response(JSON.stringify({ palette: fakePalette, logoUrl: '/api/v1/_theme/logo?v=ab' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+
+      const file = new File([new Uint8Array([0x50, 0x4b])], 'theme.relatheme', { type: 'application/zip' })
+      const result = await importTheme(file)
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+      expect(url).toBe('/api/v1/_theme/import')
+      expect(init.method).toBe('POST')
+      expect(init.body).toBeInstanceOf(FormData)
+      expect((init.body as FormData).get('file')).toBe(file)
+      expect(result.palette).toEqual(fakePalette)
+      expect(result.logoUrl).toBe('/api/v1/_theme/logo?v=ab')
+    })
+
+    it('throws with the server error message on rejection', async () => {
+      fetchSpy.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'invalid theme manifest: ...' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      const file = new File([new Uint8Array([0])], 'broken.relatheme', { type: 'application/zip' })
+      await expect(importTheme(file)).rejects.toThrow('invalid theme manifest')
     })
   })
 })

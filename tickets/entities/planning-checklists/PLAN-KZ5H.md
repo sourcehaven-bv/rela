@@ -1,8 +1,8 @@
 ---
 id: PLAN-KZ5H
 type: planning-checklist
-title: 'Planning: Theme packages: export and install bundled colors, font, and logo in data-entry'
-status: in-progress
+title: 'Planning: Theme packages: export and install bundled palette + logo as .relatheme zip'
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -15,41 +15,38 @@ status: in-progress
 
 **Scope:**
 
-**In scope:**
+**In scope (TKT-WPKW, builds on the merged logo PR TKT-WN7O):**
 
-- New `.relatheme` zip package format containing manifest + optional logo + optional font.
-- Backend persistence under `.rela/theme/` (via existing `kv` abstraction, like `.rela/palette.yaml`).
-- Backend HTTP routes for theme export, install, and serving the assets to the SPA.
-- Settings UI additions: Logo upload + preview, Font upload + preview, Export button, Install button.
-- Apply the bundled font as the UI font via a CSS `@font-face` declaration loaded from the asset URL.
-- Apply the bundled logo as the sidebar branding image (replacing/supplementing the current text-only `appName`).
-- Reuse the existing palette validation, save flow, and `kv` storage — no new abstractions.
-- Install flow: matches the existing palette flow — populates the editor; user clicks the existing Save buttons to apply.
+- New `.relatheme` zip format containing a YAML manifest plus an optional logo image.
+- Backend endpoints under `/api/v1/_theme`:
+  - `GET /api/v1/_theme/export` → returns a `.relatheme` zip download.
+  - `POST /api/v1/_theme/import` → accepts a `.relatheme` upload, persists the logo (if present), and returns the parsed palette JSON for the editor (does NOT auto-save the palette).
+- Manifest type: `ThemeManifest` defined alongside `dataentryconfig.PaletteConfig` (palette fields embedded; adds `name`, `version`, `author`, optional `logo` filename reference).
+- Frontend: Settings → Appearance gains a Theme package sub-section with **Export** and **Install** buttons.
+- Install flow: persists the logo bytes immediately (matches PR 1's PUT behaviour), stages the palette into the existing palette editor for an explicit Save.
+- Standard library zip (`archive/zip`) — no new third-party Go dependency.
+- No browser-side zip parsing — server handles both zip directions, frontend uses `fetch` + `Blob`.
 
-**Out of scope:**
+**Out of scope (deferred):**
 
-- Multi-theme libraries / switching between several saved themes (one active theme only).
-- Project-level theme defaults baked into the binary (project ships `data-entry.yaml` palette already; this ticket is purely user-side).
-- Web fonts loaded over HTTP (only locally-bundled font files).
-- Per-component icon packs, animations, sound packs, etc.
-- Cryptographic signing or trust verification for theme packages.
-- Drag-and-drop install (use a standard `<input type=file>`).
-- Theme registry / discoverability (themes are just files).
-- Multi-resolution raster logo bundles (`srcset` / `<picture>` / `@2x`
-  variants). Vector marks are covered by SVG, which is in the allowlist;
-  raster bundles would require a richer `logo` manifest object and additional
-  asset slots. The manifest can grow `logo: string` → `logo: object` later
-  without breaking existing themes.
+- **Custom UI fonts** — the font slot is omitted from the manifest entirely. Adding it later is non-breaking (manifest can grow).
+- **Custom CSS overrides** — explicit non-goal; large attack surface, no concrete user need.
+- **Multi-resolution rasters** (`srcset` / `<picture>` / `@2x`).
+- **Multi-theme libraries** / switching between several saved themes.
+- **Theme registries / discoverability** — themes are just files.
+- **Cryptographic signing or trust verification** for theme packages.
+- **Drag-and-drop install** — standard `<input type="file">` only.
+- **Project-level theme defaults baked into the binary** — already covered by `data-entry.yaml`.
 
 **Acceptance Criteria:**
 
-1. **Settings page exposes Logo upload, Font upload, and Theme Export buttons.** Test: open Settings → Appearance, verify three new affordances are visible alongside existing palette controls.
-2. **Theme Export produces a `.relatheme` zip downloadable by the browser.** Test: with palette + logo + font set, click Export; verify a `.relatheme` file downloads and unzipping reveals `theme.yaml`, `logo.<ext>`, `font.<ext>`.
-3. **Theme Install accepts a `.relatheme` zip and stages colors / logo / font into the editor.** Test: click Install, choose a `.relatheme` file; verify color inputs populate, logo preview updates, font preview updates. The user then clicks Save palette / Save logo / Save font (existing pattern) to persist.
-4. **Bundled fonts load via @font-face and apply to data-entry text.** Test: install a theme with a recognizable font; after Save, the sidebar / form labels render in that font.
-5. **Bundled logos replace the existing branding text in the sidebar.** Test: install a theme with a logo; after Save, the sidebar shows an `<img>` instead of the text `appName`. When no logo is set, sidebar falls back to text (current behavior).
-6. **Invalid / corrupt theme files surface a clear error to the user; existing theme is preserved.** Test cases: not-a-zip, zip without `theme.yaml`, manifest with invalid YAML, manifest with bad hex colors, font file too large, image file too large, font with disallowed mime, image with disallowed mime → each produces a clear toast error and leaves all current settings unchanged.
-7. **Theme persistence reuses the existing settings system.** Implementation review: changes only extend `palette.yaml` (or co-located files in `.rela/theme/`); no new repo / transaction / store abstractions introduced.
+1. **Settings page exposes Export and Install buttons in the Appearance section.** Test: Vitest mount of `SettingsView` asserts the Theme package sub-section has both buttons.
+2. **Theme Export produces a `.relatheme` zip containing `theme.yaml` plus `logo.<ext>` when set.** Test (Go): set up an app with a palette + logo, hit `/api/v1/_theme/export`, parse response as zip, assert `theme.yaml` parses cleanly and `logo.<ext>` is present with byte-identical content.
+3. **Theme Export with no logo set produces a zip containing only `theme.yaml`.** Test (Go): same as above with logo unset; assert `theme.yaml` exists and there is no `logo.*` entry.
+4. **Theme Install accepts a `.relatheme` zip, stages palette into the editor.** Test (e2e Playwright): export from one app instance, install into a fresh app instance, verify color inputs in the editor match the source. Click Save palette; verify persistence.
+5. **Theme Install persists the bundled logo immediately and the sidebar updates without reload.** Test (e2e): install a theme containing a logo, observe `<img>` in sidebar without a page reload (uses the live-update mechanism added during PR 1's review fixup).
+6. **Invalid / corrupt theme files surface a clear toast error and leave existing settings unchanged.** Test cases (Go table): not-a-zip, zip without `theme.yaml`, manifest with malformed YAML, manifest with bad hex colors, logo entry referenced but missing, oversized logo, total zip > 5 MiB. Each row asserts the response code and that `AppState.UserPalette` / `AppState.UserLogoBytes` are unchanged.
+7. **Theme persistence reuses existing storage patterns.** Implementation review + `just arch-lint`: no new repo / transaction abstractions; palette stays in `palette.yaml`; logo stays at `theme/logo` + sidecar.
 
 ## Research
 
@@ -60,40 +57,47 @@ status: in-progress
 
 **Existing Solutions:**
 
-- **Zip archive in Go:** stdlib `archive/zip` — chosen, no third-party dep needed. Read via `zip.NewReader(bytes.NewReader, size)`; write via `zip.NewWriter(w)`.
-- **Existing palette plumbing (`internal/dataentryconfig/palette.go`):** `PaletteConfig`, `ValidatePalette`, `ResolvePalette` — the theme manifest will reuse `PaletteConfig` directly so light/dark/badge logic is unchanged.
-- **Existing `kv` abstraction in `internal/dataentry/app.go`:** already used for `user-defaults.yaml`, `palette.yaml`, `ui-state.json`. Reuse for `theme/manifest.yaml`, `theme/logo.<ext>`, `theme/font.<ext>` (separate files inside a sub-key, since the manifest lives next to existing files).
-- **Existing palette save flow (`SettingsView.handleSavePalette`):** Edit → Save button → POST → schemaStore.reload(). Theme install will follow this — populate editor, user clicks existing Save buttons.
-- **Reference: VS Code theme zips (.vsix), Obsidian theme dirs:** both decoupled palette + (optional) assets via manifest. We mirror the manifest pattern with a single `theme.yaml`.
-- **Reference: `data-entry.yaml` `app.name` (handled in `schemaStore.app.name`, used by `Sidebar.vue:25`):** there is no existing image-based logo pipeline in the SPA. The Sidebar renders `appName` as text only. This ticket adds an optional image to the same slot.
-- **Existing dependencies** (`frontend/package.json`): no zip library yet client-side. Use the **JSZip** library (small, MIT) — it is the de-facto standard. Alternative: hand-roll with the browser-native `CompressionStream` (only zlib, not zip container). Verdict: JSZip.
+- **Stdlib `archive/zip`** — fully sufficient. Read via `zip.NewReader(bytes.NewReader, size)`; write via `zip.NewWriter(w)`. No third-party dep.
+- **Existing palette plumbing** (`internal/dataentryconfig/palette.go`):
+  - `PaletteConfig` (line 24) — exported struct already used by the `_palette` API.
+  - `ValidatePalette(p *PaletteConfig) error` (line 210) — central validator; we reuse it on the imported manifest's color fields.
+  - `ResolvePalette(project, user *PaletteConfig) *ResolvedPalette` (line 295) — used at app boot. Not needed by import (we don't auto-save palette).
+- **Logo plumbing** (merged via TKT-WN7O):
+  - `internal/dataentry/theme_logo.go`:
+    - `userLogoFile` (`"theme/logo"`) and `userLogoExtFile` (sidecar) — same storage we re-use for imports.
+    - `MaxUserLogoBytes` (256 KiB), `allowedLogoExts`, `logoExtForMime`, `logoContentType` — all reusable.
+    - `loadUserLogo`, `saveUserLogo`, `deleteUserLogo`, `hashLogoBytes`, `(*AppState).LogoURL()` — ready to call.
+  - `internal/dataentry/handlers_theme.go`:
+    - `sniffLogoMime`, `looksLikeSVG`, `writeLogoTooLarge`, `logoURLForHash` — reuse where they fit; do not extend gratuitously.
+- **Existing settings save flow** (`SettingsView.handleSavePalette`, `handleAPISavePalette`): this is the pattern install must blend into. Stage the palette via `loadPaletteState` / setting the editor refs; user clicks the existing **Save Palette** button to commit.
+- **Existing live logo update** (added during PR 1 review): `schemaStore.setLogoUrl(url)` causes the Sidebar to swap to the new image without a page reload. Install pushes the URL through this same setter.
+- **Reference packagings:** VS Code `.vsix` (zip + JSON manifest), Obsidian theme dirs, Sketch `.sketchpalette`. The pattern of "manifest + asset files inside a zip" is standard; we mirror it.
+- **No third-party deps needed.** JSZip was considered when I thought we'd parse zips client-side; rejected — server-side parsing is simpler and reuses the existing trust boundary.
 
-**Files to modify (preliminary, may grow during implementation):**
+**Files to modify:**
 
 Backend (Go):
 
-- `internal/dataentryconfig/palette.go` (or new `theme.go` next to it): add `ThemeManifest` type with embedded `PaletteConfig` + optional `Logo` + `Font` filename pointers. Add `ValidateThemeManifest`.
-- `internal/dataentry/app.go`: add `loadUserTheme` / `saveUserTheme` (manifest), `loadUserLogo` / `saveUserLogo`, `loadUserFont` / `saveUserFont`. Add `UserTheme`, `UserLogoFilename`, `UserFontFilename` fields to `AppState`.
-- `internal/dataentry/handlers_api.go`:
-  - `GET /api/v1/_theme/logo` → serve bytes (with proper Content-Type, ETag, Cache-Control: no-store while editing).
-  - `GET /api/v1/_theme/font` → serve bytes.
-  - `PUT /api/v1/_theme/logo` (multipart) → save logo.
-  - `PUT /api/v1/_theme/font` (multipart) → save font.
-  - `DELETE /api/v1/_theme/logo` → remove logo.
-  - `DELETE /api/v1/_theme/font` → remove font.
-  - `GET /api/v1/_theme/export` → produces a `.relatheme` zip with the current user palette + logo + font.
-  - `POST /api/v1/_theme/import` (multipart, `.relatheme`) → unpacks; returns the parsed `PaletteConfig` + the saved logo/font URLs (does NOT persist palette, only stages logo/font and returns palette JSON for the editor).
-- `internal/dataentry/api_v1.go`: register the new routes.
+- `internal/dataentryconfig/theme.go` (new): defines `ThemeManifest`. Embeds `PaletteConfig`. Adds:
+  - `Name string` (required, 1–100 chars).
+  - `Version string` (required, any non-empty 1–32 char string for v1 — no semver enforcement).
+  - `Author string` (optional, ≤100 chars).
+  - `Logo string` (optional, references zip entry filename like `"logo.png"`).
+- `internal/dataentryconfig/theme.go`: `ValidateThemeManifest(m *ThemeManifest) error` — calls `ValidatePalette(&m.PaletteConfig)`, then validates name/version/author/logo length and shape.
+- `internal/dataentry/handlers_theme.go`:
+  - `handleAPIThemeExport(w, r)` — reads `AppState`, builds a `ThemeManifest`, writes a zip to `bytes.Buffer`, sets `Content-Type: application/zip` + `Content-Disposition: attachment; filename="<safe-name>.relatheme"`.
+  - `handleAPIThemeImport(w, r)` — multipart receive (single `file` field); calls a pure helper `parseThemePackage(bytes []byte) (*ThemeManifest, *ImportedAsset, error)`; on success, persists logo via `saveUserLogo`, returns `{palette: PaletteConfig, logoUrl: string|null}`.
+- `internal/dataentry/theme_package.go` (new): `parseThemePackage(bytes []byte) (*ThemeManifest, *ImportedAsset, error)` — pure helper, no `App` access, easy to unit test. Caps zip size, expansion ratio, entry name set, asset size.
+- `internal/dataentry/api_v1.go`: register `/api/v1/_theme/export` and `/api/v1/_theme/import`.
 
 Frontend (Vue/TS):
 
-- `frontend/package.json`: add `jszip` runtime dep.
-- `frontend/src/api/theme.ts` (new): typed clients for `getLogoUrl()`, `uploadLogo(file)`, `uploadFont(file)`, `deleteLogo()`, `deleteFont()`, `exportTheme()`, `importTheme(file): Promise<{palette, logoUrl?, fontUrl?}>`.
-- `frontend/src/views/SettingsView.vue`: add three new sub-sections in Appearance: Logo (upload + remove), Font (upload + remove), Theme package (Export, Install).
-- `frontend/src/components/common/Sidebar.vue`: render `<img class="logo-img" :src=logoUrl />` when a logo is set; fall back to text otherwise.
-- `frontend/src/stores/ui.ts` or `frontend/src/stores/schema.ts`: track `logoUrl`, `fontFamily` reactively; `applyFont(url)` injects a `@font-face` rule and sets `--ui-font` CSS var on `:root`.
-- `frontend/src/App.vue`: declare `--ui-font` CSS variable and use it in the global `font-family` rule (replacing/wrapping the existing system-font stack so we keep the fallback chain).
-- `frontend/src/utils/theme-package.ts` (new): pure helpers to build/parse the zip in-browser using JSZip. Used for client-side export and to *show* the manifest contents during install before round-tripping to the server.
+- `frontend/src/api/theme.ts`: add `exportTheme()` (returns `Blob`, triggers a download via `URL.createObjectURL` + anchor click) and `importTheme(file: File)` (returns `{palette, logoUrl}`).
+- `frontend/src/views/SettingsView.vue`: new sub-section under the existing Logo card titled **"Theme package"**. Two buttons: Export + Install. Install reuses the file-input pattern with `accept=".relatheme,application/zip"`. After import: `schemaStore.setLogoUrl(result.logoUrl)` (so sidebar updates live); call `loadPaletteState(result.palette, ...)` to populate the existing palette editor. Toast: "Theme installed. Click Save palette to apply colors."
+- No store changes — logo flows through the existing `setLogoUrl`; palette flows through the existing editor refs.
+
+Total surface area: **~3 new backend files + 2 modified backend files + 2
+modified frontend files**. Effort `m` (already set).
 
 ## Approach
 
@@ -110,63 +114,140 @@ A standard zip archive with these entries:
 
 ```text
 theme.yaml          # required: ThemeManifest (YAML)
-logo.<ext>          # optional: PNG / JPEG / SVG / WebP
-font.<ext>          # optional: WOFF2 / WOFF / TTF / OTF
+logo.<ext>          # optional: PNG / JPEG / SVG / WebP, exists iff manifest.logo is set
 ```
 
-`theme.yaml` shape (a superset of `palette.yaml`, so existing palettes are valid
-manifests with name/version added):
+`theme.yaml` shape (a superset of `palette.yaml`):
 
 ```yaml
 name: "My Theme"            # required, 1-100 chars
-version: "1.0.0"            # required, semver-ish (any non-empty string for now)
-author: "..."               # optional
+version: "1.0.0"            # required, 1-32 chars (any non-empty)
+author: "..."               # optional, 1-100 chars
 # colors: identical shape to existing palette.yaml
 base: "#1a1a2e"
 surface: "#f8fafc"
 accent: "#6366f1"
-# ... (all 8 role keys, badges, dark — same as PaletteConfig)
+# ... (all PaletteConfig fields: 8 role keys, badges, dark)
 logo: "logo.png"            # optional, references zip entry
-font:                       # optional
-  filename: "font.woff2"    # references zip entry
-  family: "MyFont"          # required if font block present (used in @font-face)
 ```
+
+The author of `theme.yaml` always uses the literal entry name `logo.<ext>` so a
+parser doesn't need to discover the extension by directory listing.
 
 ### Backend export flow
 
-1. `GET /api/v1/_theme/export` reads the current user palette, logo bytes, font bytes from `kv`.
-2. Composes a `ThemeManifest` (palette fields + name defaulting to `app.name`, version `1.0.0`, logo/font entries if present).
-3. Writes a zip to `bytes.Buffer` using `archive/zip`; returns it with `Content-Type: application/zip` and `Content-Disposition: attachment; filename="<safe-name>.relatheme"`.
+1. `GET /api/v1/_theme/export` reads `AppState`. If a user palette is set use it; otherwise fall back to `cfg.Palette` (the project palette).
+2. Compose a `ThemeManifest`:
+   - `Name`: defaults to `cfg.App.Name` if not set on the palette/somewhere else.
+   - `Version`: `"1.0.0"` (constant for v1).
+   - `Author`: empty unless we add a setting later.
+   - Palette fields: copied from the source palette.
+   - `Logo`: `"logo." + UserLogoExt` if a logo is set, otherwise empty.
+3. Marshal to YAML.
+4. Build a zip in `bytes.Buffer`:
+   - Always write `theme.yaml`.
+   - If `UserLogoExt` is set, write `logo.<ext>` containing `UserLogoBytes`.
+5. Response headers:
+   - `Content-Type: application/zip`
+   - `Content-Disposition: attachment; filename="<safeName>.relatheme"` where `safeName` is `Name` with `[^A-Za-z0-9_-]` replaced by `_`, capped to 64 chars; falls back to `theme` if empty.
+6. Body = the zip bytes.
 
 ### Backend install flow
 
-1. `POST /api/v1/_theme/import` accepts `multipart/form-data` with a single file (`.relatheme`).
-2. Validates: zip parses; `theme.yaml` exists, parses, validates as `ThemeManifest`; logo/font entries (if referenced) exist in zip and pass mime-type allowlist + size limit (logo ≤ 256 KiB, font ≤ 2 MiB).
-3. **Persists logo and font bytes** to `.rela/theme/logo.<ext>`, `.rela/theme/font.<ext>` via `kv`. (Reasoning: assets need a stable URL the browser can fetch; staging only in memory wouldn't survive page reload.)
-4. **Does NOT persist the palette.** Returns the parsed palette JSON in the response so the SPA stages it in the existing palette editor; user clicks "Save palette" to commit, matching the current pattern.
+1. `POST /api/v1/_theme/import` accepts `multipart/form-data` with one file (`file` field, must end in `.relatheme` or `.zip` — content-type sniffed in code).
+2. `MaxBytesReader` capped at **5 MiB total** (room for manifest + a 256 KiB logo + headroom).
+3. Read the body; parse as zip via `zip.NewReader`.
+4. Pass to `parseThemePackage(bytes []byte)`:
+   - Reject zips whose **uncompressed total** > 5 MiB or whose **expansion ratio** (declared uncompressed / actual compressed) > 100×.
+   - Reject any entry whose normalized name contains `/`, `\`, or `..`. Only flat-file entries with the literal names `theme.yaml` and `logo.<ext>` are accepted; everything else is ignored (so themes with `README.md`, `.DS_Store`, or future entries don't fail).
+   - Read `theme.yaml`, parse YAML, run `ValidateThemeManifest`.
+   - If `manifest.Logo` is set:
+     - Locate the entry `logo.<ext>` exactly. If missing → 400 `"logo referenced in manifest but not present in archive"`.
+     - Read up to `MaxUserLogoBytes` + 1 bytes; reject if larger.
+     - `sniffLogoMime(bytes)` → must produce one of the allowlist mimes; map back to `ext`. If the sniffed ext doesn't match the manifest's claimed extension we *trust the sniff* and use that.
+   - Return `(*ThemeManifest, *ImportedAsset{ext, bytes}, nil)`.
+5. Under `mutateState`:
+   - If asset present: write logo bytes via `saveUserLogo(bytes, ext)`, recompute hash, update AppState fields.
+   - **Do not touch the palette.**
+6. Response: `{palette: PaletteConfig, logoUrl: string|null}`.
 
-Trade-off: this means logo/font are committed atomically on install, but palette
-is not. That mismatch is acceptable because logo/font are bytes (you can't
-reasonably "stage" them without a temp store) and the user can still un-install
-via the Remove button. Alternative considered: tempfile staging with a "commit"
-endpoint — rejected as overengineered for an MVP.
+Why logo persists immediately but palette doesn't: bytes need a stable URL the
+browser can fetch, so staging-only would require a tempfile mechanism that
+doesn't exist. Palette is JSON, easy to round-trip through the editor; the
+existing palette UX already requires explicit Save.
+
+### Manifest type
+
+```go
+package dataentryconfig
+
+type ThemeManifest struct {
+    Name    string `yaml:"name"`
+    Version string `yaml:"version"`
+    Author  string `yaml:"author,omitempty"`
+    Logo    string `yaml:"logo,omitempty"`
+    PaletteConfig `yaml:",inline"`
+}
+
+func ValidateThemeManifest(m *ThemeManifest) error {
+    if m == nil {
+        return errors.New("manifest is nil")
+    }
+    if l := len(m.Name); l < 1 || l > 100 {
+        return fmt.Errorf("name must be 1-100 chars (got %d)", l)
+    }
+    if l := len(m.Version); l < 1 || l > 32 {
+        return fmt.Errorf("version must be 1-32 chars (got %d)", l)
+    }
+    if l := len(m.Author); l > 100 {
+        return fmt.Errorf("author must be 0-100 chars (got %d)", l)
+    }
+    if m.Logo != "" {
+        // Logo entry must be a flat filename matching logo.<ext>.
+        if strings.ContainsAny(m.Logo, "/\\") || !strings.HasPrefix(m.Logo, "logo.") {
+            return fmt.Errorf(`logo entry must be "logo.<ext>"`)
+        }
+    }
+    return ValidatePalette(&m.PaletteConfig)
+}
+```
 
 ### Frontend install UX
 
-- Click "Install theme" → file picker (`accept=".relatheme,application/zip"`).
-- POST file to `/api/v1/_theme/import`. Backend persists logo/font and returns the palette.
-- On response, call existing palette load functions to populate the editor with the returned palette (just like the current "Reset palette" path), then call `schemaStore.reload()` to pick up the new logo/font URLs.
-- Toast: "Theme installed. Click Save to persist colors."
+```vue
+<section class="settings-card">
+  <h3>Theme package</h3>
+  <p class="description">
+    Bundle the current palette and logo into a portable <code>.relatheme</code>
+    file, or install one shared by someone else.
+  </p>
+  <div class="theme-package-actions">
+    <input ref="themeFileInput" type="file"
+           accept=".relatheme,application/zip"
+           class="file-input-hidden"
+           @change="handleThemePicked" />
+    <button class="btn btn-secondary btn-sm" @click="handleExport">Export</button>
+    <button class="btn btn-primary btn-sm" @click="themeFileInput?.click()">Install</button>
+  </div>
+</section>
+```
 
-### Logo wiring in Sidebar
+Export handler builds an anchor tag, sets `download` to `<safeName>.relatheme`,
+clicks it, revokes the object URL.
 
-- `schemaStore` exposes `logoUrl` (computed): `userTheme?.logo ? '/api/v1/_theme/logo?v=<hash>' : null`.
-- `Sidebar.vue`: `<img v-if="logoUrl" :src="logoUrl" />` else `{{ appName }}`. Cache-bust query param uses content hash so updates are immediate.
+Install handler POSTs the file, then:
 
-### Font wiring
+```ts
+const result = await importTheme(file)
+schemaStore.setLogoUrl(result.logoUrl)        // sidebar updates live
+applyImportedPalette(result.palette)           // populate the editor refs
+uiStore.success('Theme installed. Click Save palette to apply colors.')
+```
 
-- On schemaStore load (or after install), if `userTheme?.font`, inject a `<style>` in `<head>`: `@font-face { font-family: "<family>"; src: url("/api/v1/_theme/font?v=<hash>") }` and set `:root { --ui-font: "<family>", -apple-system, ... }`.
-- `App.vue` global `font-family` rule already uses a system stack — change it to `var(--ui-font, -apple-system, BlinkMacSystemFont, ...)`.
+`applyImportedPalette` calls the existing `loadPaletteState(result.palette,
+paletteRoles.map(r=>r.key), schemaStore.darkDisabled)` and copies the result
+into `paletteMode`, `paletteColors`, `paletteBadges`, etc. The same code path
+that runs on Settings page mount already does this; install just re-uses it.
 
 ### Persistence layout
 
@@ -175,23 +256,24 @@ endpoint — rejected as overengineered for an MVP.
   palette.yaml         # existing, unchanged
   user-defaults.yaml   # existing, unchanged
   theme/
-    manifest.yaml      # name, version, author, font.family — metadata only
-    logo.<ext>         # bytes
-    font.<ext>         # bytes
+    logo               # logo bytes (existing PR 1)
+    logo.ext           # sidecar (existing PR 1)
 ```
 
-The manifest under `theme/` carries metadata (name / version / author / font
-family) that isn't part of `palette.yaml`. We deliberately keep the palette in
-its existing `palette.yaml` location rather than denormalising it into the theme
-manifest, so users who only edit colors don't need to know about themes.
+`.rela/theme/manifest.yaml` is **not** persisted. The manifest exists only
+inside `.relatheme` zips at export time; on import, only the colors and logo
+flow into existing storage. This keeps the install side perfectly aligned with
+the existing logo + palette stories.
 
 **Alternatives considered:**
 
-1. **Embed assets as base64 in `palette.yaml`.** Rejected: bloats the YAML, awkward for binary, and violates the "permissive markdown + YAML" philosophy in CLAUDE.md.
-2. **Browser-only theme storage (localStorage).** Rejected: doesn't match the existing settings system; loses the theme on cache clear; user picked the disk-backed option.
-3. **Apply theme immediately on install (no Save step).** Rejected per user clarification — the current palette flow requires explicit Save, themes should match.
-4. **Use only browser-native `CompressionStream` (no JSZip).** Rejected: only handles zlib, not zip container format.
-5. **Sign theme packages.** Rejected: out of scope; no trust model in rela today.
+1. **Persist a `theme/manifest.yaml` on import** to capture name/version/author. Rejected: those fields have no display purpose in the SPA today (no "current theme name" UI). When a future ticket needs them, persist then.
+2. **Browser-side zip parsing with JSZip.** Rejected: doubles the trust boundary surface area, requires bundling a runtime dep, and brings no UX benefit (server is already handling the upload). Server-side parsing reuses the existing logo/palette validators.
+3. **Auto-save palette on import.** Rejected per the user's earlier guidance and consistent with the existing palette UX (explicit Save).
+4. **Single endpoint `/api/v1/_theme` with method-based dispatch.** Rejected for clarity: `/_theme/export` (GET) and `/_theme/import` (POST) read more naturally than `GET /_theme` returning a download.
+5. **Versioned manifest (`schemaVersion: 1`).** Rejected for v1; defer until we have a second version. The current `version` field is the *theme's* user-facing version, not the schema version.
+6. **Reject themes whose manifest references a logo extension we don't allow.** Already covered: `parseThemePackage` always sniffs the actual bytes via `sniffLogoMime`, which is the trust boundary. The manifest's claimed extension is informational only.
+7. **Validate that `safeName` matches the user's intent.** Not necessary; download filename is purely cosmetic. Browser's "Save as..." prompt lets users override.
 
 **Files to modify:** see Research section above.
 
@@ -206,21 +288,20 @@ manifest, so users who only edit colors don't need to know about themes.
 
 | Input | Source | Validation |
 |---|---|---|
-| `.relatheme` upload | Multipart from logged-in user | Size cap on entire upload (≤ 5 MiB). Must parse as zip. Must contain `theme.yaml`. |
-| `theme.yaml` content | Inside zip | YAML parse + `ValidateThemeManifest` (allowlist of keys; reuse `ValidatePalette` for color fields; require name 1–100 chars; font.family 1–64 chars matching `[A-Za-z0-9 _-]`). |
-| Logo bytes | Inside zip | Mime-sniff allowlist: `image/png`, `image/jpeg`, `image/svg+xml`, `image/webp`. Size ≤ 256 KiB. **SVG: also strip `<script>`, `on*=` attributes, and `xlink:href` to non-data URIs** (or reject SVG entirely if sanitization is judged risky in review — both options on the table). |
-| Font bytes | Inside zip | Magic-byte check for WOFF2 (`wOF2`), WOFF (`wOFF`), TTF (`\x00\x01\x00\x00` / `OTTO`), OTF. Size ≤ 2 MiB. |
-| Logo upload (separate) | Multipart | Same allowlist + size as above. |
-| Font upload (separate) | Multipart | Same allowlist + size as above. |
+| `.relatheme` upload | Logged-in user via POST | `MaxBytesReader` 5 MiB. Must parse as zip via `zip.NewReader`. Total uncompressed > 5 MiB → reject; expansion ratio > 100× → reject. |
+| `theme.yaml` content | Inside zip | YAML parse + `ValidateThemeManifest` (length-bounded name/version/author; logo entry name pattern; embedded `ValidatePalette`). |
+| Logo entry inside zip | Inside zip | Entry name is exactly `logo.<sniffed-ext>` flat (no `/`, `\`, `..`). Bytes ≤ `MaxUserLogoBytes` (256 KiB). `sniffLogoMime` must return one of the allowlist mimes — same trust boundary as the direct PUT path. |
+| Zip entry names beyond allowlist | Inside zip | Ignored (not enumerated, not extracted). Future themes can add files we don't know about without breaking import. |
+| Filename of upload | Multipart header | Ignored. Never reflected in HTML or filenames. |
 
 **Security-Sensitive Operations:**
 
-- **Zip path traversal:** parse zip entries by name only (`logo.<ext>`, `font.<ext>`); never use `entry.Name` to construct a filesystem path. Reject any entry whose normalized name contains `/`, `\`, or `..`.
-- **Zip-bomb protection:** uncompressed-size cap per entry + total cap. Reject zip with declared/observed expansion ratio > 100×.
-- **Stored XSS via SVG logo:** the `<img src>` attribute renders SVGs as images, which DOES NOT execute scripts (browsers sandbox `<img>`-loaded SVGs). Confirm we never inline the SVG. For belt-and-braces, serve with `Content-Security-Policy: sandbox`.
-- **Stored XSS via filename:** never reflect the uploaded filename into HTML; we always rename to `logo.<ext>` / `font.<ext>` based on sniffed type.
-- **Authn:** these endpoints inherit the existing data-entry auth (none today; localhost-only). No new attack surface beyond what `_palette` already has.
-- **Error messages:** report failure category (`"unsupported font format"`, `"manifest missing 'name' field"`) without echoing back input bytes, file headers, or stack traces.
+- **Zip path traversal:** entry names are checked against an allowlist of literal patterns (`theme.yaml`, `logo.*`); anything containing `/`, `\`, or `..` is rejected on the spot. Even allowlist-matching entries are read via `zip.File.Open()` and never used to construct a filesystem path — we hand the bytes to the existing `saveUserLogo` flow which writes to fixed `theme/logo` + `theme/logo.ext` keys.
+- **Zip-bomb:** uncompressed-total cap (5 MiB) and per-entry expansion ratio (100×). Both checked before reading entry bodies into memory. The ratio is computed using `zip.File.UncompressedSize64` against the request body length.
+- **Stored XSS via SVG logo:** the import path goes through the same logo storage as the merged `_theme/logo` PUT, so the GET path serves bytes with the same `nosniff` + `Content-Security-Policy: sandbox; frame-ancestors 'none'` + `X-Frame-Options: DENY` headers. No new attack surface.
+- **YAML deserialization:** `gopkg.in/yaml.v3` (already used) does not execute arbitrary types. We unmarshal into a typed struct; unknown fields are ignored.
+- **Authn:** inherits the existing data-entry origin allowlist middleware; same surface as `_palette` / `_theme/logo`.
+- **Error responses:** JSON `{error: "<short category>"}`. Categories: `payload_too_large`, `not_a_zip`, `missing_manifest`, `invalid_manifest`, `unsupported_format`, `logo_too_large`, `internal`. No raw bytes / file contents / stack traces in the response.
 
 ## Test Plan
 
@@ -233,47 +314,54 @@ manifest, so users who only edit colors don't need to know about themes.
 
 | AC | How tested |
 |---|---|
-| 1. Settings exposes Logo / Font / Export buttons | `SettingsView` mount test (Vitest) — verify the three new controls are present. |
-| 2. Export produces valid `.relatheme` | Go test for `/api/v1/_theme/export`: set up app with palette + logo + font, hit endpoint, parse response as zip, assert `theme.yaml` parses and `logo.png` / `font.woff2` are present with the expected bytes. |
-| 3. Install populates editor + applies after Save | E2E (Playwright in `/e2e/`): export from one app, install into a fresh app, verify editor populated; click Save; reload; verify persisted. |
-| 4. Font applied via @font-face | E2E: install theme with `Lobster.woff2`; assert `getComputedStyle(sidebar).fontFamily` includes `Lobster`. |
-| 5. Logo replaces sidebar text | E2E: install theme with logo; assert `<img>` present in sidebar header; remove logo; assert text fallback. |
-| 6. Invalid theme files | Go table-driven test for `/api/v1/_theme/import`: each row is a malformed zip, assert 400 + specific error code. Vitest test for client-side rejection (file > 5MB before upload). |
-| 7. No new abstractions | Code review checks; `just arch-lint` must pass. |
+| 1. Settings shows Export/Install buttons | Vitest mount of `SettingsView`: assert the new card and both buttons are present. |
+| 2. Export with palette + logo | Go test in `handlers_theme_package_test.go`: set up app with palette + logo, hit `handleAPIThemeExport`, parse response as zip, assert manifest YAML round-trips and `logo.<ext>` matches the source bytes. |
+| 3. Export with no logo | Go test: same setup minus the logo upload; assert the zip has only `theme.yaml`. |
+| 4. Install round-trip | Go test: build a zip with `parseThemePackage`-friendly inputs, POST to `handleAPIThemeImport`, assert the response carries the expected palette and logo URL, and that `AppState.UserLogoBytes` was updated. Plus a Playwright e2e: export from one app, install into a fresh app, assert palette editor populated and Save persists. |
+| 5. Live sidebar update on install | Playwright e2e: install a theme with a logo, observe `<img>` in sidebar without page reload. |
+| 6. Validation matrix | Go table-driven on `parseThemePackage` (pure helper, easy to drive): rows for each error category. Each row asserts the returned error and that no app state was mutated. |
+| 7. No new abstractions | Code review + `just arch-lint`. |
 
 **Edge Cases:**
 
-- Manifest with palette ONLY (no logo, no font) — valid; round-trips through export/import.
-- Manifest with logo only / font only.
-- Light-only palette vs light+dark palette in the manifest.
-- Zip with extra unrelated entries (`README.md`, `.DS_Store`) — ignore unknown entries with no error.
-- Logo file referenced in manifest but missing in zip → reject manifest at install.
-- Empty zip → reject.
-- Non-UTF8 bytes in `theme.yaml` → YAML parser surfaces error.
-- Extension mismatch (logo says `logo.png`, bytes are JPEG) — accept on sniffed type, normalize stored filename to sniffed extension.
-- Unicode characters in name / family.
-- Concurrent imports from two browser tabs — last write wins (matches existing `palette.yaml` behavior; `mutateState` serializes).
-- Reload while font is loading — `<style>` re-injection is idempotent.
-- Removing a logo when none is set → 204, no error.
+- Manifest with palette ONLY (no logo) — round-trips through export/import.
+- Manifest with logo only — palette fields omitted resolve to defaults via `ValidatePalette` (palette is permissive on missing fields).
+- Light-only palette vs light+dark palette — both round-trip.
+- Zip with extra unrelated entries (`README.md`, `.DS_Store`) — ignored, no error.
+- Logo file referenced in manifest but missing in zip → reject with `missing_logo`.
+- Logo bytes present in zip but manifest doesn't reference them → ignored (manifest is the source of truth).
+- Manifest claims `logo: logo.png` but the actual bytes are SVG → trust the sniff, store as `.svg`.
+- Empty zip → reject `missing_manifest`.
+- Zip without `theme.yaml` → reject `missing_manifest`.
+- `theme.yaml` is a directory entry → reject `invalid_manifest`.
+- Non-UTF8 bytes in `theme.yaml` → YAML parser surfaces error → reject `invalid_manifest`.
+- Concurrent imports from two browser tabs — last write wins; `mutateState` serializes the writes.
+- Two imports in quick succession with the same logo bytes → second hash equals first; no disk thrash.
+- 256 KiB logo + 4 MiB of comments in the manifest → zip-total cap (5 MiB) catches it.
+- Compressed entry that decompresses to 30 MiB → expansion ratio cap rejects.
+- Entry name `../../../etc/passwd` → path-traversal check rejects.
+- Entry name `LOGO.PNG` (uppercase) → not matched (case-sensitive); manifest `logo: LOGO.PNG` would similarly fail the pattern check.
 
 **Negative Tests:**
 
-- Upload non-zip → 400 "not a valid zip".
-- Upload zip without `theme.yaml` → 400 "missing theme.yaml".
-- `theme.yaml` with malformed YAML → 400 with parse error category.
-- `theme.yaml` with bad hex color → 400 "invalid color".
-- Logo file > 256 KiB → 400 "logo too large".
-- Font file > 2 MiB → 400 "font too large".
-- Total zip size > 5 MiB → 400.
-- Logo with disallowed mime (e.g. `application/octet-stream`) → 400.
-- Font that fails magic-byte check → 400.
-- Zip-bomb (entry with 100× expansion) → 400 "compressed entry too large".
-- Path-traversal entry name (`../foo`) → 400 "invalid zip entry".
+- Upload a non-zip → 400 `not_a_zip`.
+- Upload zip without `theme.yaml` → 400 `missing_manifest`.
+- `theme.yaml` with malformed YAML → 400 `invalid_manifest`.
+- `theme.yaml` with name = "" → 400 `invalid_manifest`.
+- `theme.yaml` with name = 200 chars → 400 `invalid_manifest`.
+- `theme.yaml` with bad hex color → 400 `invalid_manifest`.
+- `theme.yaml` with `logo: ../foo` → 400 `invalid_manifest`.
+- Logo entry > 256 KiB → 400 `logo_too_large`.
+- Total zip > 5 MiB → 413.
+- Zip-bomb (single entry with 100×+ expansion) → 400 `payload_too_large` (or 413 if reaching the body cap first).
+- Logo with disallowed mime (e.g. GIF in the zip) → 400 `unsupported_format`.
+- GET `/_theme/export` while no palette and no logo → 200 with manifest containing project defaults; this matches the natural "I want a baseline theme" use case.
 
 **Integration test approach:**
 
-- New Go integration test in `internal/dataentry/handlers_api_test.go` that drives export then import end-to-end against an in-memory `kv`, asserting that the round-trip preserves palette + logo bytes + font bytes byte-for-byte.
-- Playwright e2e in `/e2e/` that exercises the full UI flow.
+- Pure-helper Go tests against `parseThemePackage` for the validation matrix (fast, no HTTP layer).
+- HTTP-level Go tests against `handleAPIThemeExport` + `handleAPIThemeImport` for the round-trip (export with state X, import the result, assert state still matches).
+- Playwright e2e for the user-facing flow: export from one in-process app, install into a second, verify visible state changes.
 
 ## Risk Assessment
 
@@ -285,16 +373,16 @@ manifest, so users who only edit colors don't need to know about themes.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| SVG XSS via logo | Medium | High | `<img>`-only rendering (no inline SVG); CSP sandbox header; test with known-malicious SVG fixture. If sanitization adds significant complexity, drop SVG from the allowlist for v1 and add it later. |
-| Font file licensing user error | High | Low | Out of our control (user's responsibility); add a one-line warning under the font upload control: "Only upload fonts you are licensed to redistribute". |
-| Logo / font bloats `.rela/` directory in git | Medium | Low | Document that `.rela/theme/` should be gitignored (it follows the same convention as `.rela/user-defaults.yaml` per CLAUDE.md). |
-| Browser caches old logo after replacement | High | Low | Cache-bust query param using a content hash. |
-| Zip parsing CPU on large file | Low | Medium | 5 MiB upper bound; `archive/zip` reader is O(n) with no decompression on file listing. |
-| `appName` text already accommodates long strings; image will require new CSS | Low | Low | Add `.logo-img { max-height: ...; max-width: 100%; object-fit: contain; }` and visually verify. |
+| YAML embedding via `yaml:",inline"` causes name/palette field collisions | Low | Medium | `PaletteConfig` field tags are well-defined; explicitly write tests asserting that `name`/`version`/`author`/`logo` are top-level YAML keys distinct from any palette key. |
+| Zip-bomb defenses too tight, reject legitimate palettes with long author strings | Low | Low | 5 MiB total + 100× ratio is generous: a manifest is ~2 KB; logos are ≤256 KiB. Real headroom is >19×. |
+| Logo size cap differs between `parseThemePackage` and direct PUT | Low | Medium | Both paths reuse `MaxUserLogoBytes` constant. A test asserts both reject at the same boundary. |
+| Browser caches an old export | Low | Low | We don't cache exports — `Cache-Control: no-store` on the export response. |
+| Import succeeds at logo persist but palette response shape changes downstream | Low | Medium | The palette response shape mirrors the existing `userPalette` field returned by `/api/v1/_settings`. Type-shared: extend `frontend/src/api/theme.ts` to re-use `PaletteConfig`. |
+| User imports a theme on a workspace where colors are project-locked | Low | Low | Out of scope for this PR — the same constraint exists for the direct palette PUT today. The install simply stages; user can't save if locked. |
 
-**Effort:** **m** (already set on the ticket). Backend: ~4 new endpoints +
-manifest type + tests. Frontend: ~3 UI controls + ~2 stores updates + JSZip
-integration + tests + e2e. Realistic estimate 1.5–2 working days.
+**Effort:** **m** — already set on TKT-WPKW. Backend ~250 LOC + tests; frontend
+~80 LOC + tests; one new Go file (`theme_package.go`) and one new manifest type.
+Realistic estimate: 1 working day.
 
 ## Documentation Planning
 
@@ -305,15 +393,15 @@ For enhancements: identify what documentation needs updating.
 
 **Documentation Impact:**
 
-- [x] User guide / reference docs — add a "Theme packages" section to the data-entry user docs explaining export/import format.
-- [ ] CLI help text — N/A (no CLI surface).
-- [x] CLAUDE.md — add a brief note in the "Don't do this" list reminding future contributors not to embed binary assets in YAML.
-- [ ] README.md — N/A.
-- [x] API docs — document the new `/api/v1/_theme/*` endpoints alongside the existing `_palette` docs.
+- [x] User guide / reference docs — add a "Theme packages" subsection under data-entry settings docs explaining export/import format.
+- [x] ~~CLI help text~~ (N/A: no CLI surface).
+- [x] ~~CLAUDE.md~~ (N/A: no new architecture concept).
+- [x] ~~README.md~~ (N/A: feature is internal to data-entry).
+- [x] API docs — document `/api/v1/_theme/export` and `/api/v1/_theme/import` alongside `_palette` and `_theme/logo`.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation — used `/crit:crit`. Plan went through one round; the only inline question (font/CSS scope) was addressed by the prior umbrella restructuring before this rewrite, so no plan-stage review responses were filed.
+- [x] All critical/significant findings addressed in plan — none surfaced at plan stage; implementation review yielded RR-84YM, RR-YEVY, RR-0PTF, RR-5QTT, RR-U2S9 (significant) + RR-MP1R, RR-7P3O (minor) + RR-5EHQ, RR-YMSC, RR-OMEN (nit) — all addressed.
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** None at plan stage. Implementation findings tracked under TKT-WPKW has-review-response.
