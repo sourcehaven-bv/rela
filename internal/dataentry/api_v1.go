@@ -2458,8 +2458,6 @@ type V1ViewSection struct {
 	IsGrouped    bool             `json:"isGrouped"`
 	Content      string           `json:"content,omitempty"`
 	HasContent   bool             `json:"hasContent"`
-	AddInfo      *V1ViewAddInfo   `json:"addInfo,omitempty"`
-	LinkInfo     *V1ViewLinkInfo  `json:"linkInfo,omitempty"`
 }
 
 // V1ViewEntity represents an entity in a view section.
@@ -2507,7 +2505,11 @@ type V1ViewGroup struct {
 	Entities  []V1ViewEntity `json:"entities,omitempty"`
 }
 
-// V1ViewAddInfo describes an add button configuration.
+// V1ViewAddInfo describes an add button configuration. Despite the "View"
+// prefix this is now used only by V1SidePanelSection — see TKT-6ETQ for
+// the rename to V1SidePanelAddInfo. Do not reach for this type from a new
+// view-related response: the read-only-view invariant established by
+// TKT-651W means no view section should carry add affordances.
 type V1ViewAddInfo struct {
 	Relation string            `json:"relation"`
 	LinkAs   string            `json:"linkAs"`
@@ -2516,6 +2518,7 @@ type V1ViewAddInfo struct {
 }
 
 // V1ViewAddTarget represents a possible target for add action.
+// Side-panel-only post TKT-651W; see TKT-6ETQ for the rename plan.
 type V1ViewAddTarget struct {
 	EntityType string `json:"entityType"`
 	FormID     string `json:"formId"`
@@ -2523,6 +2526,7 @@ type V1ViewAddTarget struct {
 }
 
 // V1ViewLinkInfo describes a link existing button configuration.
+// Side-panel-only post TKT-651W; see TKT-6ETQ for the rename plan.
 type V1ViewLinkInfo struct {
 	Relation    string   `json:"relation"`
 	LinkAs      string   `json:"linkAs"`
@@ -2579,9 +2583,6 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 	// Build sections
 	sections := a.buildSections(viewCfg.Sections, result)
-
-	// Resolve add/link info for sections
-	a.resolveSectionButtonsWithTraverse(viewCfg, sections, result.Entry)
 
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
@@ -2681,27 +2682,6 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				v1Grp.Entities = append(v1Grp.Entities, v1Ent)
 			}
 			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
-		}
-
-		// Convert add/link info
-		if sec.AddInfo != nil {
-			v1Sec.AddInfo = &V1ViewAddInfo{
-				Relation: sec.AddInfo.Relation,
-				LinkAs:   sec.AddInfo.LinkAs,
-				PeerID:   sec.AddInfo.PeerID,
-			}
-			for _, t := range sec.AddInfo.Targets {
-				v1Sec.AddInfo.Targets = append(v1Sec.AddInfo.Targets, V1ViewAddTarget(t))
-			}
-		}
-
-		if sec.LinkInfo != nil {
-			v1Sec.LinkInfo = &V1ViewLinkInfo{
-				Relation:    sec.LinkInfo.Relation,
-				LinkAs:      sec.LinkInfo.LinkAs,
-				PeerID:      sec.LinkInfo.PeerID,
-				EntityTypes: sec.LinkInfo.EntityTypes,
-			}
 		}
 
 		resp.Sections = append(resp.Sections, v1Sec)
