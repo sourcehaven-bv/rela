@@ -5,7 +5,7 @@ title: Extract automation.Runner with consumer-side Host interface
 kind: refactor
 priority: high
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Summary

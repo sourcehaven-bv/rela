@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -38,15 +39,41 @@ type ChangeEvent = storage.ChangeEvent
 // ChangeOp is re-exported from storage for the same reason as ChangeEvent.
 type ChangeOp = storage.ChangeOp
 
-// ScriptExecutor is a re-export of [autocascade.Executor] for callers
-// (CLI commands, tests) that named the type as workspace.ScriptExecutor
-// before the decomposition. New code should reference
-// autocascade.Executor directly.
-type ScriptExecutor = autocascade.Executor
+// ScriptExecutor is what Workspace requires from a script executor:
+// the Lua-execution surface needed by automation cascades plus
+// LuaCache() access for callers that build Lua runtimes directly
+// (validation rules, MCP lua_eval, CLI flow).
+//
+// It composes [autocascade.Executor] (which Runner needs) with the
+// cache-accessor that workspace exposes via [Workspace.LuaCache] for
+// process-wide cache sharing. *script.Engine satisfies both halves
+// structurally.
+type ScriptExecutor interface {
+	autocascade.Executor
 
-// NopScriptExecutor is a re-export of [autocascade.NopExecutor]. New
-// code should reference the autocascade package directly.
-var NopScriptExecutor = autocascade.NopExecutor
+	// LuaCache returns the executor's shared Lua cache, or nil if
+	// the executor does not provide one. Callers that build Lua
+	// runtimes directly pass this via lua.WithCache so every runtime
+	// in the process shares cache state.
+	LuaCache() *lua.Cache
+}
+
+// NopScriptExecutor is the no-op [ScriptExecutor] for tests that
+// don't exercise Lua. Calling its Execute* methods panics — see
+// [autocascade.NopExecutor].
+var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
+
+type nopScriptExecutor struct{}
+
+func (nopScriptExecutor) ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
+	return autocascade.NopExecutor.ExecuteCode(code, deps, newEntity, oldEntity)
+}
+
+func (nopScriptExecutor) ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
+	return autocascade.NopExecutor.ExecuteFile(path, deps, newEntity, oldEntity)
+}
+
+func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
 
 // Workspace is a stateful domain session that ties together the store
 // (persistence), metamodel (schema), automation engine, and search index.

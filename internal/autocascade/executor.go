@@ -15,19 +15,17 @@ import (
 // The script package implements it without importing autocascade
 // (Go's structural typing makes this work) — there is no package
 // cycle and no need for the script package to know about autocascade.
+//
+// The interface is intentionally narrow: only the two methods Runner
+// invokes. Other consumers of *script.Engine (validation rules, MCP
+// lua_eval, CLI flow) that need additional methods like LuaCache()
+// should depend on a bundle they declare themselves.
 type Executor interface {
 	// ExecuteCode runs inline script code with entity context.
 	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 
 	// ExecuteFile runs a script file from the scripts/ directory.
 	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
-
-	// LuaCache returns the executor's shared Lua cache, or nil if
-	// the executor does not provide one. Callers that build Lua
-	// runtimes directly (validation rules, lua_eval, flow, etc.)
-	// pass this via lua.WithCache so every runtime in the process
-	// shares cache state.
-	LuaCache() *lua.Cache
 }
 
 // NopExecutor is a no-op [Executor] for tests that don't trigger Lua
@@ -44,5 +42,3 @@ func (nopExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) e
 func (nopExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
 	panic("autocascade.NopExecutor: Lua execution not expected in this context")
 }
-
-func (nopExecutor) LuaCache() *lua.Cache { return nil }
