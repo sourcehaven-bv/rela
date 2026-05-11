@@ -1,0 +1,9 @@
+---
+id: RR-ZQYG
+type: review-response
+title: XSS test asserts no <img>, missed broader attack surface (javascript:, data:, autolink coercion)
+finding: 'frontend/src/utils/markdown.test.ts lines 151-167 is the only XSS-class assertion for the new code path. It feeds a malicious title (`<img src=x onerror=alert(1)>`) and uses DOMParser to confirm no live <img> survives. That''s a fine assertion as far as it goes — but it only covers the link-TEXT path. Missing assertions: (1) `javascript:`/`data:` href — since href is built from `/entity/${hit.type}/${token.text}`, and hit.type comes from the server, a compromised type field (''javascript:alert(1)'' or ''data:text/html,...'') could in principle land in href. Marked''s cleanUrl runs encodeURI which percent-escapes the colon (`%3A`), neutralizing javascript: URIs — but no test confirms this. (2) Title escaping for the tooltip path — inaccessibleTooltipFor builds ''inaccessible (REASON)'' with the reason interpolated raw. If reason were ever `" onmouseover=...` marked''s renderer would escape via O(t), but a test should pin that down rather than rely on marked-internal behavior. (3) Autolink edge: what if a code span text happens to look like a URL? The walkTokens hook only inspects codespan tokens (good), but a sanity test would catch a refactor that broadened the match. Add a `describe(''XSS surface'')` block covering these.'
+severity: minor
+resolution: 'Two new tests: (a) ''produces only same-origin entity hrefs'' parses output with DOMParser, asserts href.startsWith(''/entity/'') and no on* handlers; (b) ''cannot inject script via a malicious inaccessible-reason tooltip'' puts a payload in inaccessibleReason and confirms no <script> element survives -- DOMPurify drops the title entirely, which is safe.'
+status: addressed
+---

@@ -12,7 +12,12 @@ import { getEditFormId } from '@/types'
 import { entityDetailHref } from '@/utils/entityRoute'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
-import { renderMarkdown, renderMermaidDiagrams, getCheckboxStats } from '@/utils/markdown'
+import {
+  renderMarkdown,
+  renderMermaidDiagrams,
+  getCheckboxStats,
+  type EntityRefResolver,
+} from '@/utils/markdown'
 import BackButton from '@/components/common/BackButton.vue'
 import Badge from '@/components/common/Badge.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
@@ -101,8 +106,29 @@ const checkboxStats = computed(() => {
   return c ? getCheckboxStats(c) : null
 })
 
+// refResolver wires the server-supplied mentions map into the markdown
+// renderer so bare-ID code spans become titled in-app links. Null when
+// the response carries no mentions; renderMarkdown then behaves exactly
+// as before (no resolver, no rewrite).
+const refResolver = computed<EntityRefResolver | undefined>(() => {
+  const mentions = viewData.value?.mentions
+  if (!mentions) return undefined
+  return (id) => {
+    const m = mentions[id]
+    if (!m) return null
+    return {
+      type: m.type,
+      title: m.title,
+      inaccessible: m.inaccessible,
+      inaccessibleReason: m.inaccessible_reason,
+    }
+  }
+})
+
 const renderedEntryContent = computed(() =>
-  entryContentSection.value ? renderMarkdown(entryContentSection.value.content || '') : '',
+  entryContentSection.value
+    ? renderMarkdown(entryContentSection.value.content || '', refResolver.value)
+    : '',
 )
 
 watch(renderedEntryContent, async () => {
@@ -509,7 +535,7 @@ watch(
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
           <div v-else-if="section.display === 'content' && section.hasContent" class="content-block">
-            <div class="markdown-content" v-html="renderMarkdown(section.content || '')"/>
+            <div class="markdown-content" v-html="renderMarkdown(section.content || '', refResolver)"/>
           </div>
 
           <div v-else-if="section.display === 'content' && section.entities?.length" class="content-cards">
@@ -524,7 +550,7 @@ watch(
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
               </header>
-              <div v-if="ent.hasContent" class="markdown-content" v-html="renderMarkdown(ent.content || '')"/>
+              <div v-if="ent.hasContent" class="markdown-content" v-html="renderMarkdown(ent.content || '', refResolver)"/>
             </article>
           </div>
 
@@ -1053,6 +1079,18 @@ watch(
   border-radius: 4px;
   font-size: 13px;
   color: var(--text-color);
+}
+
+.content-body :deep(a),
+.markdown-content :deep(a) {
+  color: var(--accent-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.content-body :deep(a:hover),
+.markdown-content :deep(a:hover) {
+  text-decoration-thickness: 2px;
 }
 
 .content-body :deep(input[type="checkbox"]) {

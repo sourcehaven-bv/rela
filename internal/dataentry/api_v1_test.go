@@ -3900,3 +3900,70 @@ func TestV1Views_MethodNotAllowed(t *testing.T) {
 		t.Errorf("status: want 405, got %d", rec.Code)
 	}
 }
+
+func TestV1Views_MentionsPopulated(t *testing.T) {
+	app := newTestAppV1(t)
+	target := &entity.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Target Ticket",
+			"status": "open",
+		},
+	}
+	seedEntity(app, target)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Origin Ticket",
+			"status": "open",
+		},
+		Content: "see `TKT-002` for the dependency; `TKT-NOPE` is unknown",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp V1ViewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := resp.Mentions["TKT-002"]; got.Type != target.Type || got.Title != target.Title() {
+		t.Errorf("mentions[TKT-002]: want {%q,%q}, got %+v", target.Type, target.Title(), got)
+	}
+	if _, ok := resp.Mentions["TKT-NOPE"]; ok {
+		t.Errorf("mentions must not include unknown ID TKT-NOPE; got %+v", resp.Mentions)
+	}
+}
+
+func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Plain Ticket",
+			"status": "open",
+		},
+		Content: "no entity references here",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", rec.Code)
+	}
+	// Assert the JSON omits the mentions key entirely; the SPA treats a
+	// missing key the same as an empty map, but `omitempty` is the
+	// documented wire contract.
+	if strings.Contains(rec.Body.String(), `"mentions"`) {
+		t.Errorf("response must omit mentions when none collected; body: %s", rec.Body.String())
+	}
+}
