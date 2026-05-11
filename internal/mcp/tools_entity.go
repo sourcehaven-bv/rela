@@ -184,7 +184,8 @@ func (s *Server) handleCreateEntity(
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Created %s %s\n\n%s", resolvedType, created.ID, text)), nil
+	body := fmt.Sprintf("Created %s %s\n\n%s", resolvedType, created.ID, text)
+	return mcp.NewToolResultText(prefixWarnings(result.Warnings) + body), nil
 }
 
 func (s *Server) handleUpdateEntity(
@@ -226,20 +227,49 @@ func (s *Server) handleUpdateEntity(
 		e.Content = content
 	}
 
-	if _, updateErr := s.ws.EntityManager().UpdateEntity(ctx, e); updateErr != nil {
+	updateResult, updateErr := s.ws.EntityManager().UpdateEntity(ctx, e)
+	if updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
 
 	updated, _ := st.GetEntity(ctx, id)
 	if updated == nil {
-		return mcp.NewToolResultText("Updated " + id), nil
+		return mcp.NewToolResultText(prefixWarnings(updateResult.Warnings) + "Updated " + id), nil
 	}
 
 	text, convertErr := convertStoreEntity(updated, st, true)
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Updated %s\n\n%s", id, text)), nil
+	body := fmt.Sprintf("Updated %s\n\n%s", id, text)
+	return mcp.NewToolResultText(prefixWarnings(updateResult.Warnings) + body), nil
+}
+
+// prefixWarnings formats DEC-HWZHA soft-validation warnings as a
+// leading section in MCP tool result text. Returns the empty string
+// when there are no warnings (caller concatenates unconditionally).
+//
+// Format:
+//
+//	WARNINGS (n):
+//	  <code>: <detail> (<path>)
+//	  ...
+//	---
+//
+// AI agents reading the tool result can detect warnings by checking
+// for the literal "WARNINGS (" prefix without parsing the body. The
+// tool's registered description documents this convention.
+func prefixWarnings(warnings []entitymanager.Warning) string {
+	if len(warnings) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "WARNINGS (%d):\n", len(warnings))
+	for _, w := range warnings {
+		fmt.Fprintf(&sb, "  %s: %s (%s)\n", w.Code, w.Detail, w.Path)
+	}
+	sb.WriteString("---\n")
+	return sb.String()
 }
 
 func (s *Server) handleDeleteEntity(

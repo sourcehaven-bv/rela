@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -761,6 +762,11 @@ type CreateResult struct {
 	AutomationErrors   []string
 	RelationsCreated   []*entity.Relation
 	EntitiesCreated    []*entity.Entity
+	// Warnings collects DEC-HWZHA soft validation findings on the
+	// post-write entity (required-field-missing, type mismatches,
+	// invalid values). Sorted by Path for stable client-facing
+	// ordering. Nil when there are none.
+	Warnings []entitymanager.Warning
 }
 
 // CreateEntity generates an ID (unless provided), applies templates and
@@ -822,6 +828,15 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity
 		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
 	}
 
+	// Compute soft-condition warnings against the post-write entity
+	// state (post-automation). Per DEC-HWZHA, warnings reflect what's
+	// wrong with the entity as persisted, not what the request itself
+	// touched. Hard structural errors would have been caught by
+	// createEntityCore above.
+	if errs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
+		_, result.Warnings = partitionValidationErrors(errs)
+	}
+
 	return entity, result, nil
 }
 
@@ -831,14 +846,31 @@ type UpdateResult struct {
 	AutomationErrors   []string
 	RelationsCreated   []*entity.Relation
 	EntitiesCreated    []*entity.Entity
+	// Warnings collects DEC-HWZHA soft validation findings on the
+	// post-write entity (required-field-missing, type mismatches,
+	// invalid values). Sorted by Path for stable client-facing
+	// ordering. Nil when there are none.
+	Warnings []entitymanager.Warning
 }
 
 // UpdateEntity validates and writes an existing entity, runs automation,
 // and persists to the authoritative store.
+//
+// Per DEC-HWZHA, validation errors split into two classes: hard
+// structural errors (unknown entity type, ID prefix mismatch — the
+// storage layer can't construct the file path) abort the write with
+// (nil, *ValidationError). Soft conditions (required-field-missing,
+// type mismatch, invalid value) ride on the result as Warnings; the
+// write proceeds. See partitionValidationErrors for the rule.
 func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResult, error) {
-	// Validate.
-	if errs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
-		return nil, newValidationError(errs)
+	// Validate. Hard errors (unknown type, bad ID prefix) abort; soft
+	// errors (required-missing, type mismatch, invalid value) are
+	// re-computed AFTER automation runs (since automation may set or
+	// modify properties) and surfaced as warnings on the result.
+	allErrs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
+	hardErrs, _ := partitionValidationErrors(allErrs)
+	if len(hardErrs) > 0 {
+		return nil, newValidationError(hardErrs)
 	}
 
 	result := &UpdateResult{}
@@ -856,6 +888,13 @@ func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResul
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
+	}
+
+	// Re-compute soft-condition warnings against the post-automation
+	// entity state. Per DEC-HWZHA, warnings reflect what's wrong with
+	// the entity as it will be persisted.
+	if errs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
+		_, result.Warnings = partitionValidationErrors(errs)
 	}
 
 	// Write to store BEFORE side effects. This ensures Lua scripts can
@@ -990,9 +1029,12 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 		e.SetString("status", entityDef.GetDefaultStatus(meta))
 	}
 
-	// Validate.
-	if errs := meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
-		return nil, newValidationError(errs)
+	// Validate. Hard errors abort; soft errors are returned as
+	// warnings via the outer createEntity wrapper.
+	allErrs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	hardErrs, _ := partitionValidationErrors(allErrs)
+	if len(hardErrs) > 0 {
+		return nil, newValidationError(hardErrs)
 	}
 
 	// Persist to the authoritative store (disk via fsstore in production).

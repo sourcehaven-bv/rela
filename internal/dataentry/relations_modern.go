@@ -13,15 +13,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Warning is a non-blocking finding surfaced to the caller alongside
-// a successful PATCH response. Code values match the corresponding
-// `analyze_*` finding codes so the UI can de-duplicate against
-// analyze runs. Path is an RFC 6901 JSON Pointer.
-type Warning struct {
-	Code   string `json:"code"`
-	Path   string `json:"path,omitempty"`
-	Detail string `json:"detail,omitempty"`
-}
+// Warning is a type alias for entitymanager.Warning so that handlers
+// in this package can write `dataentry.Warning` without importing the
+// entitymanager package at every call site. Behavior is identical.
+type Warning = entitymanager.Warning
 
 // validateRelationsModern runs the validation phase of the modern
 // reconciler without performing any writes. It returns:
