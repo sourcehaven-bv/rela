@@ -80,58 +80,64 @@ having to know which concrete type satisfies it.
    concrete type that *also* depends on A. The wiring is straightforward
    because both types exist by the time the wiring code runs.
 
-**Worked example — what the pattern looks like.** Imagine `Runner` (a
-cascade-execution service in package `automation`) needs to make
-`CreateEntity` calls during cascades, and `EntityManager` (in package
-`entitymanager`) holds a `Runner` to invoke after each write.
+**Worked example — what the pattern looks like.** The
+`autocascade.Runner` service (in `internal/autocascade`) needs entity-
+and relation-creating callbacks during automation cascades. Today
+`Workspace` satisfies its `Host` interface; once `entitymanager.Manager`
+exists, that will satisfy it instead. Both can hold the Runner without
+a constructor cycle because Host is supplied per-call.
 
 ```go
-// internal/automation/runner.go
-package automation
+// internal/autocascade/host.go
+package autocascade
 
 // Host is what Runner needs from its caller. Defined here, at the
-// consumer, naming only the methods Runner invokes. Three methods —
-// not the full EntityManager surface.
+// consumer, naming only the methods Runner invokes — not the full
+// EntityManager / Workspace surface.
 type Host interface {
-    GetEntity(id string) (*entity.Entity, bool)
-    CreateEntity(ctx context.Context, e *entity.Entity) (*entity.Entity, error)
-    CreateRelation(ctx context.Context, r *entity.Relation) (*entity.Relation, error)
+    Meta() *metamodel.Metamodel
+    Store() store.Store
+    CreateEntityNoCascade(entityType string, opts CreateEntityOptions) (*entity.Entity, error)
+    WriteEntity(e *entity.Entity) error
+    WriteRelation(r *entity.Relation) error
+    DeleteEntity(ctx context.Context, entityType, id string, cascade bool) error
+    FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity
 }
 
 type Runner struct {
-    engine  *Engine
-    scripts ScriptRuntime
+    engine  *automation.Engine
+    scripts script.Executor
     // No Host field — Host is per-call.
 }
 
 // Process accepts Host on the call, not at construction.
-func (r *Runner) Process(ctx context.Context, host Host, ev WriteEvent) (Result, error) {
-    // ... uses host.CreateEntity, host.GetEntity as needed ...
+func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, error) {
+    // ... uses host.CreateEntityNoCascade, host.WriteRelation, etc. ...
 }
 ```
 
 ```go
-// internal/entitymanager/manager.go
+// internal/entitymanager/manager.go (future — TKT-QTNX)
 package entitymanager
 
 type Manager struct {
-    store   store.Store
-    runner  *automation.Runner   // Manager holds Runner.
+    store  store.Store
+    runner *autocascade.Runner // Manager holds Runner.
     // ... no late-binding back-reference; no setter; no cycle ...
 }
 
 func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity) (*Result, error) {
     // ... validate, write to store ...
-    cascade, err := m.runner.Process(ctx, m, WriteEvent{Op: "create", Entity: e})
-    //                                  ^ m satisfies automation.Host implicitly
-    // ... merge cascade, return ...
+    outcome, err := m.runner.Process(ctx, m, autocascade.Request{Trigger: e, ...})
+    //                                  ^ m satisfies autocascade.Host implicitly
+    // ... merge outcome, return ...
 }
 ```
 
-`Manager` satisfies `automation.Host` *structurally* — there is no import
-of `automation.Host` in `entitymanager`, no declaration of "implements,"
-nothing. The cycle disappears because `Runner` doesn't hold a reference;
-it borrows one for the duration of `Process`.
+`Manager` satisfies `autocascade.Host` *structurally* — there is no
+import of `autocascade.Host` in `entitymanager`, no declaration of
+"implements," nothing. The cycle disappears because `Runner` doesn't
+hold a reference; it borrows one for the duration of `Process`.
 
 **When to use which form:**
 
