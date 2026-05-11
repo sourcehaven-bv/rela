@@ -39,6 +39,7 @@ components:
   workspace:        { in: internal/workspace }
 
   # Domain services
+  autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
@@ -260,6 +261,7 @@ deps:
   workspace:
     mayDependOn:
       - app
+      - autocascade
       - automation
       - config
       - dataentryconfig
@@ -271,6 +273,7 @@ deps:
       - project
       - rename
       - schema
+      - script
       - search
       - searchparser
       - state
@@ -282,6 +285,13 @@ deps:
       - validator
 
   # Domain services
+  autocascade:
+    mayDependOn:
+      - automation
+      - lua
+      - metamodel
+      - script
+      - store
   automation:
     mayDependOn:
       - filter

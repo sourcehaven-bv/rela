@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -1104,7 +1105,7 @@ automations:
 // --- Automation recursion depth limit tests ---
 
 func TestCreateEntity_AutomationDepthLimit(t *testing.T) {
-	// This test verifies that recursive automations are limited to maxAutomationDepth.
+	// This test verifies that recursive automations are limited to autocascade.MaxDepth.
 	// Creating a "starter" triggers creation of "chain" entities recursively.
 	metamodelYAML := `version: "1.0"
 entities:
@@ -1164,10 +1165,10 @@ automations:
 		t.Fatalf("CreateEntity error = %v", err)
 	}
 
-	// Should have created multiple chain entities (limited by maxAutomationDepth).
+	// Should have created multiple chain entities (limited by autocascade.MaxDepth).
 	// At depth 0: starter created, automation creates chain at depth 1
 	// At depth 1: chain created, automation creates chain at depth 2
-	// ... up to maxAutomationDepth
+	// ... up to autocascade.MaxDepth
 	chainCount := 0
 	for _, e := range result.EntitiesCreated {
 		if e.Type == "chain" {
@@ -1175,11 +1176,11 @@ automations:
 		}
 	}
 
-	// We should have exactly maxAutomationDepth chain entities.
+	// We should have exactly autocascade.MaxDepth chain entities.
 	// Depth 0 creates at depth 1, depth 1 creates at depth 2, etc.
-	// So entities are created at depths 1 through maxAutomationDepth.
-	if chainCount != maxAutomationDepth {
-		t.Errorf("expected %d chain entities (depth limit), got %d", maxAutomationDepth, chainCount)
+	// So entities are created at depths 1 through autocascade.MaxDepth.
+	if chainCount != autocascade.MaxDepth {
+		t.Errorf("expected %d chain entities (depth limit), got %d", autocascade.MaxDepth, chainCount)
 	}
 
 	// Should have a warning about iteration limit being reached.
@@ -1196,8 +1197,8 @@ automations:
 
 	// Verify store is consistent - all entities should be present.
 	allNodes := collectEntities(ws.Store(), store.EntityQuery{})
-	// 1 starter + maxAutomationDepth chains
-	expectedTotal := 1 + maxAutomationDepth
+	// 1 starter + autocascade.MaxDepth chains
+	expectedTotal := 1 + autocascade.MaxDepth
 	if len(allNodes) != expectedTotal {
 		t.Errorf("expected %d total entities, got %d", expectedTotal, len(allNodes))
 	}
