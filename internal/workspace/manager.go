@@ -58,7 +58,7 @@ func (m *wsEntityManager) UpdateEntity(
 	}
 
 	// Find current state for oldEntity.
-	current, ok := m.w.GetEntity(e.ID)
+	current, ok := m.w.lookupEntity(e.ID)
 	if !ok {
 		return nil, &entityNotFoundError{ID: e.ID}
 	}
@@ -89,7 +89,7 @@ func (m *wsEntityManager) DeleteEntity(
 	_ context.Context, id string, cascade bool,
 ) (*entitymanager.DeleteResult, error) {
 	// Workspace.DeleteEntity needs entity type; look it up.
-	current, ok := m.w.GetEntity(id)
+	current, ok := m.w.lookupEntity(id)
 	if !ok {
 		return nil, &entityNotFoundError{ID: id}
 	}
@@ -115,7 +115,7 @@ func (m *wsEntityManager) DeleteEntity(
 func (m *wsEntityManager) RenameEntity(
 	_ context.Context, oldID, newID string, opts entitymanager.RenameOptions,
 ) (*entitymanager.RenameResult, error) {
-	current, ok := m.w.GetEntity(oldID)
+	current, ok := m.w.lookupEntity(oldID)
 	if !ok {
 		return nil, &entityNotFoundError{ID: oldID}
 	}

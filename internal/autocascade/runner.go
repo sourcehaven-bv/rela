@@ -129,8 +129,10 @@ func (r *Runner) processEntityCreations(
 			continue
 		}
 
-		// Create entity (no automation yet).
-		created, createErr := host.CreateEntityNoCascade(toCreate.Type, CreateEntityOptions{
+		// Create entity. Runner takes responsibility for the
+		// follow-up cascade evaluation on the result; Host.CreateEntity
+		// must not fire automations itself (see Host doc).
+		created, createErr := host.CreateEntity(toCreate.Type, CreateEntityOptions{
 			TemplateVariant: toCreate.Template,
 			Properties:      toCreate.Properties,
 		})
@@ -208,18 +210,16 @@ func (r *Runner) applyRelationCreations(
 	relations []*entity.Relation,
 	outcome *Outcome,
 ) {
-	meta := host.Meta()
-
 	for _, rel := range relations {
 		rel.From = triggerEntity.ID
 
-		targetEntity, err := host.Store().GetEntity(ctx, rel.To)
+		targetEntity, err := host.GetEntity(ctx, rel.To)
 		if err != nil {
 			outcome.Errors = append(outcome.Errors,
 				"automation relation target not found: "+rel.To)
 			continue
 		}
-		if err := meta.ValidateRelation(rel.Type, triggerEntity.Type, targetEntity.Type); err != nil {
+		if err := host.ValidateRelation(rel.Type, triggerEntity.Type, targetEntity.Type); err != nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("automation relation invalid: %v", err))
 			continue
@@ -345,9 +345,7 @@ func (r *Runner) createTriggerRelation(
 	relationType string,
 	outcome *Outcome,
 ) {
-	meta := host.Meta()
-
-	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
+	if err := host.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
 		outcome.Errors = append(outcome.Errors,
 			fmt.Sprintf("automation relation invalid: %v", err))
 		return

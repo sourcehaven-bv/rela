@@ -17,10 +17,12 @@ import (
 // touching the Host contract.
 var _ autocascade.Host = (*Workspace)(nil)
 
-// CreateEntityNoCascade creates an entity without running automations
-// on it. Runner invokes this for each automation.EntityToCreate;
-// Runner itself manages the cascade depth and follow-up evaluation.
-func (w *Workspace) CreateEntityNoCascade(
+// CreateEntity satisfies [autocascade.Host.CreateEntity]. It
+// delegates to the existing createEntityCore path, which performs ID
+// generation, template application, validation, and persistence
+// without firing automation cascades — exactly what the Host
+// contract requires.
+func (w *Workspace) CreateEntity(
 	entityType string, opts autocascade.CreateEntityOptions,
 ) (*entity.Entity, error) {
 	return w.createEntityCore(entityType, createEntityCoreOpts{
@@ -33,16 +35,26 @@ func (w *Workspace) CreateEntityNoCascade(
 }
 
 // WriteEntity satisfies [autocascade.Host.WriteEntity] by forwarding
-// to the existing writeEntity private method.
+// to the existing writeEntity private method (bare upsert, no
+// validation or automation).
 func (w *Workspace) WriteEntity(e *entity.Entity) error {
 	return w.writeEntity(e)
 }
+
+// (GetEntity lives in query.go to consolidate the entity-lookup
+// surface; it satisfies [autocascade.Host.GetEntity].)
 
 // WriteRelation satisfies [autocascade.Host.WriteRelation] by
 // forwarding to writeRelationCore (which adds the error-context
 // wrapping the older dispatch code expected).
 func (w *Workspace) WriteRelation(r *entity.Relation) error {
 	return w.writeRelationCore(r)
+}
+
+// ValidateRelation satisfies [autocascade.Host.ValidateRelation] by
+// delegating to the active metamodel's validator.
+func (w *Workspace) ValidateRelation(relType, fromType, toType string) error {
+	return w.meta.ValidateRelation(relType, fromType, toType)
 }
 
 // DeleteEntity satisfies [autocascade.Host.DeleteEntity]. The first

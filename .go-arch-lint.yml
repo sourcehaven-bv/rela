@@ -288,8 +288,6 @@ deps:
   autocascade:
     mayDependOn:
       - automation
-      - metamodel
-      - store
   automation:
     mayDependOn:
       - filter

@@ -38,8 +38,8 @@ type stubHost struct {
 	store store.Store
 
 	// Programmed behavior.
-	createErr      error // returned by CreateEntityNoCascade
-	writeRelErr    error // returned by WriteRelation
+	createErr      error // returned by Host.CreateEntity
+	writeRelErr    error // returned by Host.WriteRelation
 	existingTarget *entity.Entity
 	createCounter  int // suffix for unique auto-IDs
 
@@ -47,11 +47,8 @@ type stubHost struct {
 	Calls []string
 }
 
-func (h *stubHost) Meta() *metamodel.Metamodel { return h.meta }
-func (h *stubHost) Store() store.Store         { return h.store }
-
-func (h *stubHost) CreateEntityNoCascade(entityType string, opts autocascade.CreateEntityOptions) (*entity.Entity, error) {
-	h.Calls = append(h.Calls, "CreateEntityNoCascade:"+entityType)
+func (h *stubHost) CreateEntity(entityType string, opts autocascade.CreateEntityOptions) (*entity.Entity, error) {
+	h.Calls = append(h.Calls, "CreateEntity:"+entityType)
 	if h.createErr != nil {
 		return nil, h.createErr
 	}
@@ -105,6 +102,20 @@ func (h *stubHost) WriteRelation(r *entity.Relation) error {
 func (h *stubHost) DeleteEntity(_ context.Context, entityType, id string, cascade bool) error {
 	h.Calls = append(h.Calls, fmt.Sprintf("DeleteEntity:%s:%s:%v", entityType, id, cascade))
 	return nil
+}
+
+func (h *stubHost) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	if h.store == nil {
+		return nil, errors.New("stubHost.GetEntity: no store configured")
+	}
+	return h.store.GetEntity(ctx, id)
+}
+
+func (h *stubHost) ValidateRelation(relType, fromType, toType string) error {
+	if h.meta == nil {
+		return nil // permissive by default; tests opt in by setting meta
+	}
+	return h.meta.ValidateRelation(relType, fromType, toType)
 }
 
 func (h *stubHost) FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
@@ -206,7 +217,7 @@ func TestRunnerDepthLimit(t *testing.T) {
 }
 
 // TestRunnerIfExistsSkip — existing target found, IfExistsSkip: no
-// CreateEntityNoCascade.
+// CreateEntity.
 func TestRunnerIfExistsSkip(t *testing.T) {
 	r := newRunner(t, nil)
 	existing := entity.New("EXISTING-1", "checklist")
@@ -238,8 +249,8 @@ func TestRunnerIfExistsSkip(t *testing.T) {
 	}
 
 	for _, c := range host.Calls {
-		if strings.HasPrefix(c, "CreateEntityNoCascade:") {
-			t.Errorf("unexpected CreateEntityNoCascade call: %v", host.Calls)
+		if strings.HasPrefix(c, "CreateEntity:") {
+			t.Errorf("unexpected CreateEntity call: %v", host.Calls)
 		}
 	}
 }
@@ -276,7 +287,7 @@ func TestRunnerIfExistsError(t *testing.T) {
 	}
 }
 
-// TestRunnerEntityCreateError — CreateEntityNoCascade returns error:
+// TestRunnerEntityCreateError — CreateEntity returns error:
 // recorded, cascade continues.
 func TestRunnerEntityCreateError(t *testing.T) {
 	r := newRunner(t, nil)
@@ -445,13 +456,13 @@ relations:
 		t.Errorf("expected 1 ScriptRunner.Run call, got %d", recordingScripts.runCalls)
 	}
 	if len(host.Calls) < 2 {
-		t.Fatalf("expected at least 2 host calls (WriteRelation, CreateEntityNoCascade), got %v", host.Calls)
+		t.Fatalf("expected at least 2 host calls (WriteRelation, CreateEntity), got %v", host.Calls)
 	}
 	if !strings.HasPrefix(host.Calls[0], "WriteRelation:") {
 		t.Errorf("expected WriteRelation first among host calls, got %v", host.Calls)
 	}
-	if !strings.HasPrefix(host.Calls[1], "CreateEntityNoCascade:") {
-		t.Errorf("expected CreateEntityNoCascade second among host calls, got %v", host.Calls)
+	if !strings.HasPrefix(host.Calls[1], "CreateEntity:") {
+		t.Errorf("expected CreateEntity second among host calls, got %v", host.Calls)
 	}
 }
 

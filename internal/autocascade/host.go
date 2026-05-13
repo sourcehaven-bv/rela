@@ -19,58 +19,56 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Host is what Runner needs from its caller to execute a cascade.
-// Each method documents where Runner invokes it.
-//
-// Method names describe the contract from Runner's perspective, not
-// the caller's implementation. For example, [Host.CreateEntityNoCascade]
-// names the property Runner relies on (no recursive automation
-// inside it — Runner manages cascade scheduling itself); the
-// implementer's own method may be called something else.
+// Each method documents where Runner invokes it. The interface is
+// narrow on purpose — only the operations Runner actually calls.
 type Host interface {
-	// Meta returns the active metamodel. Runner uses it to validate
-	// automation-generated relations against the schema before
-	// writing them.
-	Meta() *metamodel.Metamodel
-
-	// Store returns the authoritative store. Runner reads relation
-	// targets through it to check that automation-generated relations
-	// point at extant entities.
-	Store() store.Store
-
-	// CreateEntityNoCascade creates an entity *without* running
-	// automations on the newly created entity. Runner calls this for
-	// each automation.EntityToCreate; Runner is responsible for
-	// queueing follow-up automation evaluation on the result.
+	// CreateEntity creates a new entity from the supplied options
+	// (ID generation, template application, validation, persistence)
+	// and returns the result.
 	//
-	// The "NoCascade" name is load-bearing: if the implementer's
-	// version runs automations internally, the cascade depth limit
-	// will be enforced twice and entity ordering will drift.
-	CreateEntityNoCascade(entityType string, opts CreateEntityOptions) (*entity.Entity, error)
+	// **Contract:** the implementation must NOT fire follow-up
+	// automation cascades from within this call. Runner is the one
+	// that schedules cascade evaluation on the returned entity, and
+	// double-cascading would enforce [MaxDepth] twice and reorder
+	// entity creation. The bare write semantics are roughly
+	// "everything workspace.createEntityCore does, including
+	// validation, minus the post-write automation event."
+	CreateEntity(entityType string, opts CreateEntityOptions) (*entity.Entity, error)
 
-	// WriteEntity upserts the entity to the store without running
-	// automations or validation. Runner uses it when applying
-	// [automation.Result.PropertiesSet] to a cascaded entity (i.e.,
-	// the trigger of a follow-up automation event).
+	// WriteEntity upserts an *existing* entity to the store without
+	// any further processing (no ID generation, no template, no
+	// validation, no automation). Runner uses it to persist property
+	// changes from [automation.Result.PropertiesSet] onto an entity
+	// that already went through [Host.CreateEntity] earlier in the
+	// cascade.
 	WriteEntity(e *entity.Entity) error
+
+	// GetEntity reads an entity by ID. Runner uses it to verify that
+	// targets of automation-generated relations exist before
+	// validating the (from-type, type, to-type) tuple.
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 
 	// WriteRelation upserts the relation to the store. Runner uses
 	// it for entries in [automation.Result.RelationsToCreate] and
 	// for trigger relations attached to automation-created entities.
 	WriteRelation(r *entity.Relation) error
 
+	// ValidateRelation checks whether a relation of the given type
+	// from `fromType` to `toType` is admissible per the active
+	// metamodel. Runner calls it before persisting automation-
+	// generated relations.
+	ValidateRelation(relType, fromType, toType string) error
+
 	// DeleteEntity removes an entity, cascading to its relations
 	// when cascade is true. Runner calls this only via the
 	// IfExistsReplace path of [automation.EntityToCreate].
 	//
-	// entityType is informational — the implementer may ignore it
-	// (workspace.deleteEntity does today). It's in the signature so
-	// alternative implementations have the entity type available
-	// without re-fetching.
+	// entityType is informational — implementations may ignore it.
+	// It's in the signature so alternative implementations have the
+	// type at hand without re-fetching.
 	DeleteEntity(ctx context.Context, entityType, id string, cascade bool) error
 
 	// FindExistingRelationTarget returns the existing target entity
@@ -80,12 +78,10 @@ type Host interface {
 	FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity
 }
 
-// CreateEntityOptions configures a [Host.CreateEntityNoCascade] call.
-// Field names mirror workspace.createEntityCoreOpts so an implementer
-// satisfying both can use a simple forwarder.
+// CreateEntityOptions configures a [Host.CreateEntity] call.
 type CreateEntityOptions struct {
-	// ID is a caller-supplied ID. Empty means auto-generate via
-	// IDPrefix and the metamodel's prefix rules.
+	// ID is a caller-supplied ID. Empty means auto-generate from
+	// IDPrefix or the metamodel-defined default prefix for the type.
 	ID string
 
 	// IDPrefix overrides the default ID prefix from the metamodel.

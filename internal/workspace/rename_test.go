@@ -115,10 +115,10 @@ func TestRename_NoRelations(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 0", len(result.RelationsUpdated))
 	}
 
-	if _, ok := ws.GetEntity(oldID); ok {
+	if _, ok := ws.lookupEntity(oldID); ok {
 		t.Error("old ID should not exist in store")
 	}
-	if _, ok := ws.GetEntity(newID); !ok {
+	if _, ok := ws.lookupEntity(newID); !ok {
 		t.Error("new ID should exist in store")
 	}
 
@@ -307,10 +307,10 @@ func TestRename_DryRun(t *testing.T) {
 		t.Errorf("RelationsUpdated = %d, want 1", len(result.RelationsUpdated))
 	}
 
-	if _, ok := ws.GetEntity(oldReqID); !ok {
+	if _, ok := ws.lookupEntity(oldReqID); !ok {
 		t.Error("old ID should still exist in store (dry run)")
 	}
-	if _, ok := ws.GetEntity(newReqID); ok {
+	if _, ok := ws.lookupEntity(newReqID); ok {
 		t.Error("new ID should not exist in store (dry run)")
 	}
 
@@ -394,7 +394,7 @@ func TestRename_PreservesContent(t *testing.T) {
 		t.Fatalf("Rename() error = %v", err)
 	}
 
-	newEntity, ok := ws.GetEntity(newID)
+	newEntity, ok := ws.lookupEntity(newID)
 	if !ok {
 		t.Fatalf("GetEntity(%q) not found in store", newID)
 	}

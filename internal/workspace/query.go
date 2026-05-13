@@ -13,13 +13,22 @@ import (
 // here but were removed — no non-test code called them, and direct
 // store queries are clearer at call sites.
 
-// GetEntity returns an entity by ID.
-func (w *Workspace) GetEntity(id string) (*entity.Entity, bool) {
+// lookupEntity is a convenience wrapper over w.Store().GetEntity that
+// returns (nil, false) on any error. Used internally by the
+// wsEntityManager adapter. Kept lowercase because the public Host
+// contract owns the GetEntity name and uses the ctx+error shape.
+func (w *Workspace) lookupEntity(id string) (*entity.Entity, bool) {
 	e, err := w.Store().GetEntity(context.Background(), id)
 	if err != nil {
 		return nil, false
 	}
 	return e, true
+}
+
+// GetEntity satisfies [autocascade.Host.GetEntity] — a context-aware
+// lookup that propagates the underlying store error.
+func (w *Workspace) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return w.Store().GetEntity(ctx, id)
 }
 
 // GetRelation returns a relation by its endpoints and type.
