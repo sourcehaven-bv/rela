@@ -182,6 +182,105 @@ narrow interface — three methods to mock, not the full producer
 surface. Tests that ran with a real `Workspace` fixture in 30 lines of
 setup can run with a 5-line stub.
 
+#### Narrow on returns, not just methods
+
+If a consumer-side interface returns a broad type only so the caller
+can invoke one or two methods on it, declare those methods on the
+interface directly. Returning the wide type is a soft leak — it tells
+the implementer "I need everything this type can do" when in fact you
+only need a slice.
+
+```go
+// Wrong: leaks the whole metamodel + store surface for two narrow uses.
+type Host interface {
+    Meta() *metamodel.Metamodel  // only used for meta.ValidateRelation(...)
+    Store() store.Store          // only used for store.GetEntity(ctx, id)
+}
+
+// Right: declares the actual operations.
+type Host interface {
+    ValidateRelation(relType, fromType, toType string) error
+    GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+}
+```
+
+The narrow form's payoff is concrete: `autocascade.Host` collapsed
+its arch-lint footprint from `[automation, metamodel, store]` to
+`[automation]` once `Meta()` and `Store()` were replaced with the
+methods Runner actually invoked.
+
+The verification question is "where does the consumer call this?"
+If the answer is "in exactly one place to call exactly one method,"
+that's the method that should be on the interface.
+
+#### Names declare contracts; docs declare invariants
+
+Method names should describe *what's requested*. Behavioral
+constraints belong in the doc comment, not in the name.
+
+```go
+// Wrong: name encodes a "must not" into the contract surface.
+CreateEntityNoCascade(...) (*entity.Entity, error)
+
+// Right: name describes the operation; doc carries the constraint.
+//
+// CreateEntity creates a new entity from the supplied options.
+//
+// Contract: the implementation must NOT fire follow-up automation
+// cascades from within this call. Runner is the one that schedules
+// cascade evaluation on the returned entity; double-cascading would
+// enforce MaxDepth twice.
+CreateEntity(...) (*entity.Entity, error)
+```
+
+Behavioral negatives in names ("NoX", "WithoutY", "NonZ") are usually
+the author prescribing implementation strategy. The doc form is more
+honest — implementers are free to satisfy the constraint however they
+want.
+
+#### Transport-specific types belong at adapter layers
+
+If a consumer's interface references types from a specific runtime
+(`lua.WriteDeps`, `http.Request`, `*sql.Rows`), the consumer has
+absorbed knowledge it doesn't need. The package now imports the
+runtime's package, and every alternative implementation must speak
+that runtime's vocabulary.
+
+The fix: define an abstract interface in the consumer; build a
+per-request adapter at the wiring site that holds the transport-
+specific state.
+
+```go
+// Wrong: consumer's interface is shaped by Lua's API.
+type Executor interface {
+    ExecuteCode(code string, deps lua.WriteDeps, e, old *entity.Entity) error
+    ExecuteFile(path string, deps lua.WriteDeps, e, old *entity.Entity) error
+}
+
+// Right: consumer declares only what it needs to ask for; transport
+// lives in the adapter at the wiring site.
+type ScriptRunner interface {
+    Run(ctx context.Context, action ScriptAction) error
+}
+
+// In workspace (the wiring site), per-request:
+type luaScriptRunner struct {
+    exec script.Executor
+    deps lua.WriteDeps  // bound at this layer
+}
+func (l *luaScriptRunner) Run(ctx context.Context, a ScriptAction) error {
+    // engine-specific dispatch + error formatting lives here
+}
+```
+
+The cost is one adapter file per transport. The win is that the
+consumer's package doesn't import the transport's package and a
+second transport can plug in without touching the consumer. Concrete
+example: `autocascade` stopped importing `internal/lua` once the
+`ScriptRunner` adapter pattern landed; the cycle that would have
+blocked `entitymanager.Manager → autocascade → lua → entitymanager`
+dissolved at the same time.
+
 ### Don't do this
 
 - **Don't import `internal/graph` or `internal/model`** — both deleted.
