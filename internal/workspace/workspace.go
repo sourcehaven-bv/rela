@@ -40,16 +40,18 @@ type ChangeEvent = storage.ChangeEvent
 type ChangeOp = storage.ChangeOp
 
 // ScriptExecutor is what Workspace requires from a script executor:
-// the Lua-execution surface needed by automation cascades plus
-// LuaCache() access for callers that build Lua runtimes directly
-// (validation rules, MCP lua_eval, CLI flow).
+// the Lua-execution surface used by [luaScriptRunner] when wiring
+// automation cascades, plus LuaCache() access for callers that build
+// Lua runtimes directly (validation rules, MCP lua_eval, CLI flow).
 //
-// It composes [autocascade.Executor] (which Runner needs) with the
-// cache-accessor that workspace exposes via [Workspace.LuaCache] for
-// process-wide cache sharing. *script.Engine satisfies both halves
-// structurally.
+// *script.Engine satisfies this interface structurally; tests can
+// pass [NopScriptExecutor].
 type ScriptExecutor interface {
-	autocascade.Executor
+	// ExecuteCode runs inline script code with entity context.
+	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+
+	// ExecuteFile runs a script file from the scripts/ directory.
+	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 
 	// LuaCache returns the executor's shared Lua cache, or nil if
 	// the executor does not provide one. Callers that build Lua
@@ -59,18 +61,18 @@ type ScriptExecutor interface {
 }
 
 // NopScriptExecutor is the no-op [ScriptExecutor] for tests that
-// don't exercise Lua. Calling its Execute* methods panics — see
-// [autocascade.NopExecutor].
+// don't exercise Lua. Calling its Execute* methods panics, making
+// unexpected script execution loud.
 var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
 
 type nopScriptExecutor struct{}
 
-func (nopScriptExecutor) ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
-	return autocascade.NopExecutor.ExecuteCode(code, deps, newEntity, oldEntity)
+func (nopScriptExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
+	panic("workspace.NopScriptExecutor: Lua execution not expected in this context")
 }
 
-func (nopScriptExecutor) ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
-	return autocascade.NopExecutor.ExecuteFile(path, deps, newEntity, oldEntity)
+func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
+	panic("workspace.NopScriptExecutor: Lua execution not expected in this context")
 }
 
 func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
@@ -314,10 +316,10 @@ func newWorkspace(
 		// automation — a project with automations in its metamodel
 		// but a broken runner is a fail-fast condition, not a
 		// degraded mode.
-		r, err := autocascade.New(autocascade.Deps{
-			Engine:  autoEngine,
-			Scripts: scriptExec,
-		})
+		// Runner is script-runtime-agnostic; the per-call
+		// luaScriptRunner adapter (constructed at each dispatch
+		// site) carries the workspace's ScriptExecutor + lua.WriteDeps.
+		r, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
 		if err != nil {
 			return nil, fmt.Errorf("build autocascade runner: %w", err)
 		}
@@ -839,7 +841,7 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity
 			Trigger:    entity,
 			OldTrigger: nil,
 			Result:     autoResult,
-			LuaDeps:    w.LuaWriteDeps(),
+			Scripts:    newLuaScriptRunner(w.scriptExec, w.LuaWriteDeps()),
 		})
 		result.RelationsCreated = outcome.RelationsCreated
 		result.EntitiesCreated = outcome.EntitiesCreated
@@ -895,7 +897,7 @@ func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResul
 			Trigger:    entity,
 			OldTrigger: oldEntity,
 			Result:     autoResult,
-			LuaDeps:    w.LuaWriteDeps(),
+			Scripts:    newLuaScriptRunner(w.scriptExec, w.LuaWriteDeps()),
 		})
 		result.RelationsCreated = outcome.RelationsCreated
 		result.EntitiesCreated = outcome.EntitiesCreated

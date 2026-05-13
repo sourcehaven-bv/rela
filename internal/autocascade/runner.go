@@ -8,19 +8,18 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
 // Runner executes the side effects of an automation cascade.
 //
 // Runner is constructed once (typically per Workspace or
-// EntityManager) and invoked many times via [Runner.Process]. The
-// caller supplies a [Host] on each call; that decision is what
-// breaks the construction cycle between Runner and EntityManager
-// (which holds Runner and satisfies Host).
+// EntityManager) and invoked many times via [Runner.Process]. Each
+// call supplies a [Host] (for entity/relation callbacks) and a
+// [ScriptRunner] (for scripted-action execution) on the [Request];
+// the per-call passing is what dissolves the future constructor
+// cycle with EntityManager.
 type Runner struct {
-	engine  *automation.Engine
-	scripts Executor
+	engine *automation.Engine
 }
 
 // Deps is the constructor input for [New]. Using a struct keeps the
@@ -30,25 +29,15 @@ type Deps struct {
 	// Engine is the rule-evaluation engine. Runner calls
 	// engine.Process on each newly created entity in a cascade.
 	Engine *automation.Engine
-
-	// Scripts is the script executor used for automation Lua
-	// actions. In production this is *script.Engine (which
-	// satisfies Executor structurally); in tests it can be a stub
-	// or [NopExecutor].
-	Scripts Executor
 }
 
-// New constructs a Runner. Required collaborators (Engine, Scripts)
-// must be non-nil per the project's "constructors reject nil required
-// fields" rule.
+// New constructs a Runner. Required collaborators must be non-nil per
+// the project's "constructors reject nil required fields" rule.
 func New(d Deps) (*Runner, error) {
 	if d.Engine == nil {
 		return nil, errors.New("autocascade: New: Engine is required")
 	}
-	if d.Scripts == nil {
-		return nil, errors.New("autocascade: New: Scripts is required")
-	}
-	return &Runner{engine: d.Engine, scripts: d.Scripts}, nil
+	return &Runner{engine: d.Engine}, nil
 }
 
 // queueItem is one pending automation result to process during a BFS
@@ -60,14 +49,14 @@ type queueItem struct {
 
 // Process runs the BFS automation cascade. It interprets req.Result's
 // actions (set properties, create relations, create entities, run
-// Lua scripts), calling back into host for the structural operations
-// and into the script executor for the Lua actions. Newly created
-// entities are re-evaluated through the engine to discover further
-// cascades, bounded by [MaxDepth].
+// scripted actions), calling back into host for the structural
+// operations and into req.Scripts for the scripted actions. Newly
+// created entities are re-evaluated through the engine to discover
+// further cascades, bounded by [MaxDepth].
 //
-// Behavior is preserved verbatim from
+// Behavior is preserved verbatim from the original
 // workspace.applyAutomationSideEffects: the BFS order, the
-// per-iteration action order (Lua → relations → entities), the
+// per-iteration action order (scripts → relations → entities), the
 // error-continuation semantics across all action paths, and the
 // depth-limit warning wording. The existing workspace cascade tests
 // (AC3 in PLAN-V6UR) act as the regression check.
@@ -92,14 +81,14 @@ func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, 
 		queue = queue[1:]
 		iterations++
 
-		// Process Lua scripts for this trigger.
+		// Process scripted actions for this trigger.
 		//
 		// Note: req.OldTrigger is reused for every queue item, not
-		// just the initial one. This mirrors
-		// workspace.applyAutomationSideEffects (line 1067) — for
+		// just the initial one. This mirrors the pre-refactor
+		// workspace.applyAutomationSideEffects behavior — for
 		// cascaded entities the original trigger's old state flows
 		// through. Preserving the behavior; not "fixing" it here.
-		r.executeLuaActions(item.trigger, req.OldTrigger, item.autoResult.LuaToExecute, req.LuaDeps, &outcome)
+		r.executeScriptActions(ctx, req.Scripts, item.trigger, req.OldTrigger, item.autoResult.LuaToExecute, &outcome)
 
 		// Process relations for this trigger.
 		r.applyRelationCreations(ctx, host, item.trigger, item.autoResult.RelationsToCreate, &outcome)
@@ -245,14 +234,17 @@ func (r *Runner) applyRelationCreations(
 	}
 }
 
-// executeLuaActions executes Lua scripts from automation results.
-// Failures are appended to outcome.Errors and the loop continues —
-// one bad script does not abort the cascade.
-func (r *Runner) executeLuaActions(
+// executeScriptActions dispatches each automation-emitted script
+// action to the request's [ScriptRunner]. Failures are appended to
+// outcome.Errors and the loop continues — one bad script does not
+// abort the cascade. If req.Scripts is nil and any scripted action
+// is present, each one is recorded as an error.
+func (r *Runner) executeScriptActions(
+	ctx context.Context,
+	scripts ScriptRunner,
 	newEntity *entity.Entity,
 	oldEntity *entity.Entity,
 	luaActions []automation.LuaToExecute,
-	deps lua.WriteDeps,
 	outcome *Outcome,
 ) {
 	if len(luaActions) == 0 {
@@ -260,58 +252,44 @@ func (r *Runner) executeLuaActions(
 	}
 
 	for _, action := range luaActions {
-		var err error
-
-		switch {
-		case action.Code != "":
-			err = r.scripts.ExecuteCode(action.Code, deps, newEntity, oldEntity)
-		case action.FilePath != "":
-			err = r.scripts.ExecuteFile(action.FilePath, deps, newEntity, oldEntity)
-		default:
-			// Empty action — skip.
+		if action.Code == "" && action.FilePath == "" {
+			// Empty action — skip (matches pre-refactor behavior).
+			continue
+		}
+		if scripts == nil {
+			outcome.Errors = append(outcome.Errors,
+				fmt.Sprintf("automation %q: no ScriptRunner configured; cannot run scripted action",
+					action.AutomationName))
 			continue
 		}
 
-		if err != nil {
-			// Automations have no incoming HTTP request to
-			// correlate against, so the slog line uses the
-			// automation name + triggering entity id as the
-			// natural identity. Operators grep on those rather
-			// than a per-request hex.
-			triggerID := ""
-			if newEntity != nil {
-				triggerID = newEntity.ID
-			} else if oldEntity != nil {
-				triggerID = oldEntity.ID
-			}
-			slog.Warn("automation script failed",
-				"automation", action.AutomationName,
-				"entity", triggerID,
-				"error", err)
-			outcome.Errors = append(outcome.Errors, formatAutomationError(action, err))
+		err := scripts.Run(ctx, ScriptAction{
+			Code:      action.Code,
+			FilePath:  action.FilePath,
+			Name:      action.AutomationName,
+			NewEntity: newEntity,
+			OldEntity: oldEntity,
+		})
+		if err == nil {
+			continue
 		}
-	}
-}
 
-// formatAutomationError renders an automation Lua failure as a single
-// string for the existing []string Errors slice. For Lua failures the
-// engine has already wrapped err in *lua.ScriptError; we add the
-// automation identity (the engine doesn't know it) and use the typed
-// fields so the message includes a concrete script-or-automation name.
-//
-// Inline `lua: |` blocks have no FilePath, so the engine sees scriptPath
-// as "" and tags the envelope with "<inline>". We override that here
-// once we know the automation name.
-func formatAutomationError(action automation.LuaToExecute, err error) string {
-	var se *lua.ScriptError
-	if errors.As(err, &se) {
-		if action.FilePath == "" && action.AutomationName != "" {
-			se.Path = "automation:" + action.AutomationName
-			// Re-render Error() output reflects the new Path.
+		// Automations have no incoming HTTP request to correlate
+		// against, so the slog line uses the automation name +
+		// triggering entity id as the natural identity. Operators
+		// grep on those rather than a per-request hex.
+		triggerID := ""
+		if newEntity != nil {
+			triggerID = newEntity.ID
+		} else if oldEntity != nil {
+			triggerID = oldEntity.ID
 		}
-		return se.Error()
+		slog.Warn("automation script failed",
+			"automation", action.AutomationName,
+			"entity", triggerID,
+			"error", err)
+		outcome.Errors = append(outcome.Errors, err.Error())
 	}
-	return "script execution error: " + err.Error()
 }
 
 // handleIfExists checks if_exists behavior for entity creation.

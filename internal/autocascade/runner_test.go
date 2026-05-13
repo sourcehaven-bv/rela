@@ -10,7 +10,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -19,20 +18,8 @@ import (
 // --- New / construction tests ---
 
 func TestNew_RejectsNilEngine(t *testing.T) {
-	if _, err := autocascade.New(autocascade.Deps{
-		Engine:  nil,
-		Scripts: autocascade.NopExecutor,
-	}); err == nil {
+	if _, err := autocascade.New(autocascade.Deps{Engine: nil}); err == nil {
 		t.Fatal("expected error for nil Engine, got nil")
-	}
-}
-
-func TestNew_RejectsNilScripts(t *testing.T) {
-	if _, err := autocascade.New(autocascade.Deps{
-		Engine:  automation.NewEngine(nil),
-		Scripts: nil,
-	}); err == nil {
-		t.Fatal("expected error for nil Scripts, got nil")
 	}
 }
 
@@ -127,17 +114,15 @@ func (h *stubHost) FindExistingRelationTarget(sourceID, relationType, targetType
 
 // --- Helpers ---
 
-// newRunner constructs a Runner with a freshly built no-rules Engine.
-// Tests that need automation rules build the engine inline.
-func newRunner(t *testing.T, engine *automation.Engine, scripts autocascade.Executor) *autocascade.Runner {
+// newRunner constructs a Runner with a freshly built no-rules Engine
+// (or the engine supplied by the test). Tests that exercise script
+// execution pass a [autocascade.ScriptRunner] via Request.Scripts.
+func newRunner(t *testing.T, engine *automation.Engine) *autocascade.Runner {
 	t.Helper()
 	if engine == nil {
 		engine = automation.NewEngine(nil)
 	}
-	if scripts == nil {
-		scripts = autocascade.NopExecutor
-	}
-	r, err := autocascade.New(autocascade.Deps{Engine: engine, Scripts: scripts})
+	r, err := autocascade.New(autocascade.Deps{Engine: engine})
 	if err != nil {
 		t.Fatalf("autocascade.New: %v", err)
 	}
@@ -155,7 +140,7 @@ func emptyRequest(trigger *entity.Entity) autocascade.Request {
 // --- AC5 tests ---
 
 func TestRunnerEmptyResult(t *testing.T) {
-	r := newRunner(t, nil, nil)
+	r := newRunner(t, nil)
 	trigger := entity.New("REQ-001", "requirement")
 
 	host := &stubHost{t: t}
@@ -190,7 +175,7 @@ func TestRunnerDepthLimit(t *testing.T) {
 			},
 		},
 	}
-	r := newRunner(t, automation.NewEngine([]automation.Automation{auto}), nil)
+	r := newRunner(t, automation.NewEngine([]automation.Automation{auto}))
 	host := &stubHost{t: t, store: memstore.New()}
 
 	starter := entity.New("CHAIN-000", "chain")
@@ -223,7 +208,7 @@ func TestRunnerDepthLimit(t *testing.T) {
 // TestRunnerIfExistsSkip — existing target found, IfExistsSkip: no
 // CreateEntityNoCascade.
 func TestRunnerIfExistsSkip(t *testing.T) {
-	r := newRunner(t, nil, nil)
+	r := newRunner(t, nil)
 	existing := entity.New("EXISTING-1", "checklist")
 	host := &stubHost{t: t, existingTarget: existing}
 
@@ -262,7 +247,7 @@ func TestRunnerIfExistsSkip(t *testing.T) {
 // TestRunnerIfExistsError — existing target found, IfExistsError:
 // error recorded, no create.
 func TestRunnerIfExistsError(t *testing.T) {
-	r := newRunner(t, nil, nil)
+	r := newRunner(t, nil)
 	existing := entity.New("EXISTING-1", "checklist")
 	host := &stubHost{t: t, existingTarget: existing}
 
@@ -294,7 +279,7 @@ func TestRunnerIfExistsError(t *testing.T) {
 // TestRunnerEntityCreateError — CreateEntityNoCascade returns error:
 // recorded, cascade continues.
 func TestRunnerEntityCreateError(t *testing.T) {
-	r := newRunner(t, nil, nil)
+	r := newRunner(t, nil)
 	host := &stubHost{t: t, createErr: errors.New("simulated create failure"), store: memstore.New()}
 
 	trigger := entity.New("REQ-001", "requirement")
@@ -363,7 +348,7 @@ relations:
 		writeRelErr: errors.New("simulated write failure"),
 	}
 
-	r := newRunner(t, nil, nil)
+	r := newRunner(t, nil)
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
@@ -427,14 +412,15 @@ relations:
 		t.Fatalf("seed target: %v", seedErr)
 	}
 
-	recordingScripts := &recordingExecutor{}
-	r := newRunner(t, nil, recordingScripts)
+	recordingScripts := &recordingScriptRunner{}
+	r := newRunner(t, nil)
 
 	host := &stubHost{t: t, meta: meta, store: mem}
 
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
+		Scripts: recordingScripts,
 		Result: &automation.Result{
 			LuaToExecute: []automation.LuaToExecute{
 				{Code: "print('hi')", AutomationName: "test-lua"},
@@ -455,8 +441,8 @@ relations:
 		t.Fatalf("unexpected errors: %v", outcome.Errors)
 	}
 
-	if recordingScripts.executeCodeCalls != 1 {
-		t.Errorf("expected 1 ExecuteCode call, got %d", recordingScripts.executeCodeCalls)
+	if recordingScripts.runCalls != 1 {
+		t.Errorf("expected 1 ScriptRunner.Run call, got %d", recordingScripts.runCalls)
 	}
 	if len(host.Calls) < 2 {
 		t.Fatalf("expected at least 2 host calls (WriteRelation, CreateEntityNoCascade), got %v", host.Calls)
@@ -469,21 +455,19 @@ relations:
 	}
 }
 
-// TestRunnerLuaErrorPath pins lua.ScriptError.Path patching for inline
-// Lua code: should be overwritten with "automation:<name>".
-func TestRunnerLuaErrorPath(t *testing.T) {
-	scripts := &failingExecutor{
-		err: &lua.ScriptError{
-			Surface:    lua.SurfaceAutomation,
-			Path:       "", // empty: simulates inline `lua: |` block
-			LuaMessage: "boom",
-		},
-	}
-	r := newRunner(t, nil, scripts)
+// TestRunnerScriptError pins error-propagation from ScriptRunner.Run
+// into Outcome.Errors. The Runner appends the stringified error as-is
+// and continues — engine-specific formatting (e.g. lua.ScriptError
+// Path patching) is the adapter's responsibility and is tested at
+// the workspace layer.
+func TestRunnerScriptError(t *testing.T) {
+	scripts := &failingScriptRunner{err: errors.New("boom from runner")}
+	r := newRunner(t, nil)
 
 	trigger := entity.New("REQ-001", "requirement")
 	req := autocascade.Request{
 		Trigger: trigger,
+		Scripts: scripts,
 		Result: &automation.Result{
 			LuaToExecute: []automation.LuaToExecute{
 				{Code: "error('boom')", AutomationName: "my-automation"},
@@ -497,40 +481,55 @@ func TestRunnerLuaErrorPath(t *testing.T) {
 	if len(outcome.Errors) != 1 {
 		t.Fatalf("expected exactly one error, got %v", outcome.Errors)
 	}
-	if !strings.Contains(outcome.Errors[0], "automation:my-automation") {
-		t.Errorf("expected error to contain 'automation:my-automation', got %q", outcome.Errors[0])
+	if outcome.Errors[0] != "boom from runner" {
+		t.Errorf("expected error to be 'boom from runner', got %q", outcome.Errors[0])
 	}
 }
 
-// --- Script executor stubs ---
+// TestRunnerMissingScriptRunner — a Result with scripted actions but
+// no Request.Scripts records an error per action and continues.
+func TestRunnerMissingScriptRunner(t *testing.T) {
+	r := newRunner(t, nil)
 
-type recordingExecutor struct {
-	executeCodeCalls int
-	executeFileCalls int
+	trigger := entity.New("REQ-001", "requirement")
+	req := autocascade.Request{
+		Trigger: trigger,
+		// Scripts intentionally nil.
+		Result: &automation.Result{
+			LuaToExecute: []automation.LuaToExecute{
+				{Code: "noop()", AutomationName: "uncovered"},
+			},
+		},
+	}
+	outcome, err := r.Process(context.Background(), &stubHost{t: t}, req)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(outcome.Errors) != 1 {
+		t.Fatalf("expected exactly one error, got %v", outcome.Errors)
+	}
+	if !strings.Contains(outcome.Errors[0], "no ScriptRunner configured") {
+		t.Errorf("expected 'no ScriptRunner configured' error, got %q", outcome.Errors[0])
+	}
 }
 
-func (r *recordingExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	r.executeCodeCalls++
+// --- ScriptRunner stubs ---
+
+type recordingScriptRunner struct {
+	runCalls int
+	actions  []autocascade.ScriptAction
+}
+
+func (r *recordingScriptRunner) Run(_ context.Context, a autocascade.ScriptAction) error {
+	r.runCalls++
+	r.actions = append(r.actions, a)
 	return nil
 }
 
-func (r *recordingExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	r.executeFileCalls++
-	return nil
-}
-
-func (r *recordingExecutor) LuaCache() *lua.Cache { return nil }
-
-type failingExecutor struct {
+type failingScriptRunner struct {
 	err error
 }
 
-func (f *failingExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
+func (f *failingScriptRunner) Run(_ context.Context, _ autocascade.ScriptAction) error {
 	return f.err
 }
-
-func (f *failingExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	return f.err
-}
-
-func (f *failingExecutor) LuaCache() *lua.Cache { return nil }

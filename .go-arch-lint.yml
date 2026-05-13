@@ -288,7 +288,6 @@ deps:
   autocascade:
     mayDependOn:
       - automation
-      - lua
       - metamodel
       - store
   automation:

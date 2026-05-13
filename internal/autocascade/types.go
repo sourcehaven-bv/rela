@@ -3,7 +3,6 @@ package autocascade
 import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
 // MaxDepth is the cascade depth limit. When [Runner.Process] reaches
@@ -26,27 +25,26 @@ type Request struct {
 
 	// OldTrigger is the trigger's prior state (nil for creates).
 	//
-	// Note: OldTrigger is passed through to Lua scripts for every
-	// queue item, not just the initial one. Cascaded entities
-	// (created later in the cascade) therefore see the *original*
-	// trigger's old state, not their own (which would be nil
-	// anyway). This is pre-existing behavior preserved from
-	// workspace.applyAutomationSideEffects; see comment in
-	// runner.go's executeLuaActions for context.
+	// Note: OldTrigger is passed through to scripts for every queue
+	// item, not just the initial one. Cascaded entities (created
+	// later in the cascade) therefore see the *original* trigger's
+	// old state, not their own (which would be nil anyway). This is
+	// pre-existing behavior preserved from
+	// workspace.applyAutomationSideEffects.
 	OldTrigger *entity.Entity
 
 	// Result is the automation.Result produced by
 	// [automation.Engine.Process] for the initiating event.
 	Result *automation.Result
 
-	// LuaDeps is the WriteDeps bundle passed through to script
-	// execution. The caller materializes it; Runner just hands it
-	// to the script executor. Lives on Request rather than on Host
-	// because future cycle resolution (see TKT-Y0JU) may require
-	// callers to assemble it specially per-invocation; deferring
-	// that materialization to Host would entangle Host with a
-	// lua-imported type.
-	LuaDeps lua.WriteDeps
+	// Scripts is the per-call script execution adapter. The caller
+	// constructs one with any per-request state (capability
+	// bundles, audit context) already bound, so Runner does not
+	// need to know about the underlying engine. Optional: when nil,
+	// scripted automation actions are recorded as errors in the
+	// Outcome (rather than silently skipped) — production callers
+	// always supply one.
+	Scripts ScriptRunner
 }
 
 // Outcome is the cumulative result of a cascade.
