@@ -88,6 +88,50 @@ describe('markdown', () => {
       expect(result).toContain('<em>')
     })
 
+    // CommonMark soft-break semantics: single newlines in source are
+    // whitespace, not hard breaks. Entity content is hard-wrapped at
+    // ~80 chars in the .md source and that wrapping must not survive
+    // into HTML — otherwise paragraphs render with the source column
+    // width instead of reflowing with the viewport.
+    //
+    // We assert on the absence of `<br>` and on text equivalence after
+    // whitespace collapsing rather than on the exact softbreak character
+    // marked emits: CommonMark allows softbreaks to render as either a
+    // line ending or a space, so pinning to `\n` would couple the test
+    // to a marked.js implementation detail.
+    it('treats single newlines inside a paragraph as whitespace, not <br>', () => {
+      const result = renderMarkdown('foo\nbar')
+      const doc = new DOMParser().parseFromString(result, 'text/html')
+      const paragraphs = doc.querySelectorAll('p')
+      expect(paragraphs.length).toBe(1)
+      expect(paragraphs[0].querySelectorAll('br').length).toBe(0)
+      expect(paragraphs[0].textContent?.replace(/\s+/g, ' ').trim()).toBe('foo bar')
+    })
+
+    it('preserves CommonMark hard breaks (two trailing spaces)', () => {
+      const result = renderMarkdown('foo  \nbar')
+      const doc = new DOMParser().parseFromString(result, 'text/html')
+      const paragraphs = doc.querySelectorAll('p')
+      expect(paragraphs.length).toBe(1)
+      // Pin position: a single <br> must sit between "foo" and "bar",
+      // not merely be present somewhere in the paragraph.
+      const childTags = Array.from(paragraphs[0].childNodes).map((n) =>
+        n.nodeType === Node.ELEMENT_NODE ? (n as Element).tagName.toLowerCase() : '#text',
+      )
+      expect(childTags).toContain('br')
+      expect(paragraphs[0].querySelectorAll('br').length).toBe(1)
+      expect(paragraphs[0].innerHTML).toMatch(/foo\s*<br[^>]*>\s*bar/)
+    })
+
+    it('separates paragraphs split by a blank line', () => {
+      const result = renderMarkdown('first paragraph\n\nsecond paragraph')
+      const doc = new DOMParser().parseFromString(result, 'text/html')
+      const paragraphs = doc.querySelectorAll('p')
+      expect(paragraphs.length).toBe(2)
+      expect(paragraphs[0].textContent).toBe('first paragraph')
+      expect(paragraphs[1].textContent).toBe('second paragraph')
+    })
+
     describe('refResolver (entity-ID code spans)', () => {
       // A reusable resolver covering the seed below; each test passes only
       // the IDs it expects to hit, mirroring the server-side mentions map.

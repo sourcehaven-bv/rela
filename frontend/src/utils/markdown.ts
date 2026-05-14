@@ -47,7 +47,12 @@ export function renderMarkdown(content: string, refResolver?: EntityRefResolver)
 
   const rawHtml = marked.parse(content, {
     gfm: true,
-    breaks: true,
+    // Soft line breaks are whitespace (CommonMark default). Entity content
+    // is hard-wrapped at ~80 chars in source markdown; treating each newline
+    // as a <br> made HTML mirror the source's column width instead of
+    // reflowing to the viewport. Authors who want a hard break use the
+    // CommonMark two-trailing-spaces form ("foo  \n").
+    breaks: false,
     walkTokens: refResolver ? (token) => rewriteEntityRefToken(token, refResolver) : undefined,
   }) as string
 
