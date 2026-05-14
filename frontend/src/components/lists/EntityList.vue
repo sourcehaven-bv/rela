@@ -443,12 +443,11 @@ function navigateToEntity(entity: Entity) {
     ? resolveLinkTarget(columnWithLink.link, entity.type, entity.id)
     : ''
 
-  // Priority: column link > entity_views.<type>.detail_view > /entity/:type/:id
-  // Source of truth is the entity_views config; per-list detail_view was
-  // migrated to that location (see internal/migration/detail_view_to_entity_views.go).
+  // entityDetailHref returns columnLink when set, otherwise the
+  // entity-route path. Centralised so right-click / middle-click open
+  // through a real <a href> on the row markup elsewhere.
   const path = entityDetailHref(
     { id: entity.id, type: entity.type },
-    schemaStore.getEntityDetailView,
     { cellLink: columnLink },
   )
   if (!path) return

@@ -46,10 +46,17 @@ func propertyToStrings(v any) []string {
 // Values is always a list so that list-typed properties (list: true in the
 // metamodel) retain per-item structure; scalar properties become a 1-element
 // slice. Empty properties emit an empty slice.
+//
+// Property is the raw property name (e.g. "title"); Label is its
+// human-readable form. Inaccessible is true when the underlying entity is
+// git-crypt encrypted and the value cannot be read with the current key —
+// frontends render a lock indicator instead of the (absent) value.
 type SectionFieldData struct {
-	Label    string
-	Values   []string
-	PropType string
+	Property     string
+	Label        string
+	Values       []string
+	PropType     string
+	Inaccessible bool
 }
 
 // SectionEntityData holds a resolved entity for template rendering.
@@ -165,7 +172,8 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 						label = titleCase(f.Property)
 					}
 					sd.Fields = append(sd.Fields, SectionFieldData{
-						Label: label, Values: values, PropType: propType,
+						Property: f.Property, Label: label, Values: values, PropType: propType,
+						Inaccessible: e.IsInaccessible(f.Property),
 					})
 				}
 			case "content":
@@ -202,7 +210,8 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							label = titleCase(f.Property)
 						}
 						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Values: values, PropType: propType,
+							Property: f.Property, Label: label, Values: values, PropType: propType,
+							Inaccessible: e.IsInaccessible(f.Property),
 						})
 					}
 					sd.Entities = append(sd.Entities, sed)
@@ -290,7 +299,8 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							label = titleCase(f.Property)
 						}
 						sed.Fields = append(sed.Fields, SectionFieldData{
-							Label: label, Values: values, PropType: propType,
+							Property: f.Property, Label: label, Values: values, PropType: propType,
+							Inaccessible: e.IsInaccessible(f.Property),
 						})
 					}
 					sd.Entities = append(sd.Entities, sed)
@@ -326,7 +336,11 @@ func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType stri
 	return a.buildSections(panel.Sections, result)
 }
 
-// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo using full view config.
+// resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on
+// side-panel sections. The side panel is the only mutation surface that
+// carries these affordances; the read-only entity-detail view path does
+// not call this. The `viewConfig` parameter is a synthetic ViewConfig
+// hand-built from a form's SidePanel config — it is not a generic view.
 func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *entity.Entity) {
 	s := a.State()
 	for i, sec := range viewConfig.Sections {

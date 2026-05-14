@@ -19,6 +19,7 @@ var (
 	updateProperties  []string
 	updateBody        string
 	updateBodyFile    string
+	updateStrict      bool
 )
 
 var updateCmd = &cobra.Command{
@@ -102,6 +103,11 @@ Examples:
 			return err
 		}
 
+		// DEC-HWZHA: print soft validation findings to stderr in a stable
+		// format. Default exits 0 (the write succeeded); --strict elevates
+		// any warning to exit 1, mirroring `gcc -Werror` / `make -W`.
+		printValidationWarnings(result.Warnings)
+
 		// Show automation feedback
 		for _, warning := range result.AutomationWarnings {
 			out.WriteWarning("Automation: %s", warning)
@@ -115,6 +121,9 @@ Examples:
 
 		out.WriteSuccess("Updated %s", entityID)
 
+		if updateStrict && len(result.Warnings) > 0 {
+			return errStrictWarnings
+		}
 		return nil
 	},
 }
@@ -157,6 +166,7 @@ func init() {
 	updateCmd.Flags().StringArrayVarP(&updateProperties, "property", "P", nil, "Set a property (format: key=value, can be repeated)")
 	updateCmd.Flags().StringVarP(&updateBody, "body", "b", "", "Markdown body content for the entity")
 	updateCmd.Flags().StringVarP(&updateBodyFile, "body-file", "B", "", "Read body content from file (use - for stdin)")
+	updateCmd.Flags().BoolVar(&updateStrict, "strict", false, "Exit with status 1 if soft validation warnings are surfaced")
 
 	rootCmd.AddCommand(updateCmd)
 }

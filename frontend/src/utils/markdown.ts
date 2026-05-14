@@ -1,4 +1,4 @@
-import { marked } from 'marked'
+import { marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
 
@@ -13,16 +13,42 @@ mermaid.initialize({
 let mermaidCounter = 0
 
 /**
+ * Resolution result for an entity-ID code span. Mirrors the server-side
+ * `Mention` shape returned in `ViewResponse.mentions` (TKT-747O): the
+ * server walks each rendered markdown blob, resolves bare-ID code spans
+ * against the store, and surfaces the resulting `{type, title}` map so
+ * the renderer can rewrite the code spans into in-app links without a
+ * second round-trip.
+ */
+export interface EntityRef {
+  type: string
+  title: string
+  inaccessible?: boolean
+  inaccessibleReason?: string
+}
+
+export type EntityRefResolver = (id: string) => EntityRef | null
+
+/**
  * Render markdown to HTML with GFM support.
  * Returns sanitized HTML string (mermaid diagrams are placeholders).
  * Checkboxes get data-cb-idx attributes for toggle support.
+ *
+ * When a `refResolver` is supplied, inline code spans whose entire text
+ * matches an entity ID known to the resolver are rewritten as in-app
+ * links titled with the target entity's title. Matches the Lua-side
+ * semantics from TKT-LXYHQ exactly: only bare-content code spans are
+ * touched; code blocks, link text, and multi-token spans are left
+ * alone. Inaccessible targets (e.g. git-crypt encrypted) render as
+ * `<a>ID 🔒</a>` with a tooltip mirroring `PropertyDisplay.vue`.
  */
-export function renderMarkdown(content: string): string {
+export function renderMarkdown(content: string, refResolver?: EntityRefResolver): string {
   if (!content) return ''
 
   const rawHtml = marked.parse(content, {
     gfm: true,
     breaks: true,
+    walkTokens: refResolver ? (token) => rewriteEntityRefToken(token, refResolver) : undefined,
   }) as string
 
   // Add data-cb-idx to checkboxes for toggle support
@@ -36,6 +62,70 @@ export function renderMarkdown(content: string): string {
   return DOMPurify.sanitize(htmlWithCbIdx, {
     ADD_ATTR: ['data-cb-idx'],
   })
+}
+
+// rewriteEntityRefToken mutates a `codespan` token in place into a `link`
+// token when its text matches a resolver hit. Token-level rewriting keeps
+// the eventual HTML escaping under marked's control: link text flows
+// through marked's text-renderer (which HTML-escapes) so a malicious entity
+// title cannot break out of the `<a>` element.
+function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver): void {
+  if (!isCodespanToken(token)) return
+  let hit: EntityRef | null
+  try {
+    hit = resolve(token.text)
+  } catch {
+    // Defensive: a resolver bug must never break markdown rendering.
+    return
+  }
+  // Require a type so we can build a stable URL. Title may be empty for
+  // an inaccessible target whose display source is unreadable; in that
+  // case we fall back to using the ID as link text. For everything else
+  // a missing title is the resolver telling us "I don't know enough to
+  // present this", and we leave the code span alone.
+  if (!hit || !hit.type) return
+  const visibleTitle = hit.title || (hit.inaccessible ? token.text : '')
+  if (!visibleTitle) return
+
+  const href = `/entity/${hit.type}/${token.text}`
+  // Inaccessible targets get a trailing lock affordance; keep the
+  // readable title when one was supplied (the lock only conveys "the
+  // underlying file is encrypted") and only fall back to the bare ID
+  // when the title would otherwise be empty.
+  const linkText = hit.inaccessible ? `${visibleTitle} 🔒` : visibleTitle
+  const tokenTitle = hit.inaccessible ? inaccessibleTooltipFor(hit.inaccessibleReason) : null
+
+  const rewritten = token as unknown as Tokens.Link & { raw?: string }
+  rewritten.type = 'link'
+  rewritten.href = href
+  rewritten.title = tokenTitle
+  rewritten.text = linkText
+  rewritten.tokens = [{ type: 'text', raw: linkText, text: linkText } as Tokens.Text]
+  // Clear the original codespan `raw` (the backticked source) so any
+  // downstream consumer that re-emits markdown sees the link shape, not
+  // a stale code-span literal. Marked's HTML renderer doesn't read
+  // `raw` on links, but defensive consistency is cheap.
+  rewritten.raw = `[${linkText}](${href})`
+}
+
+function isCodespanToken(token: unknown): token is Tokens.Codespan {
+  return (
+    typeof token === 'object' &&
+    token !== null &&
+    (token as { type?: unknown }).type === 'codespan' &&
+    typeof (token as { text?: unknown }).text === 'string'
+  )
+}
+
+// inaccessibleTooltipFor mirrors PropertyDisplay.vue's inaccessibleTooltip
+// helper so users see consistent copy whether the lock indicator appears
+// on a property or on an entity-ref link.
+function inaccessibleTooltipFor(reason: string | undefined): string {
+  if (reason === 'git-crypt') {
+    return 'git-crypt encrypted (run `git-crypt unlock` to read)'
+  }
+  if (reason) return `inaccessible (${reason})`
+  return 'inaccessible'
 }
 
 /**

@@ -81,6 +81,13 @@ func (s *mockState) Put(_ context.Context, key string, data []byte) error {
 	return nil
 }
 
+func (s *mockState) Delete(_ context.Context, key string) error {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	delete(s.m.cacheFiles, key)
+	return nil
+}
+
 type notFoundError struct{ name string }
 
 func (e *notFoundError) Error() string { return "not found: " + e.name }

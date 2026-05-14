@@ -8,7 +8,6 @@ import type {
   FormConfig,
   ListConfig,
   ViewConfig,
-  EntityViewConfig,
   KanbanConfig,
   DashboardConfig,
   NavigationEntry,
@@ -25,10 +24,6 @@ export const useSchemaStore = defineStore('schema', () => {
   const forms = ref<Map<string, FormConfig>>(new Map())
   const lists = ref<Map<string, ListConfig>>(new Map())
   const views = ref<Map<string, ViewConfig>>(new Map())
-  // entityViewConfigs is the data-entry config's entity_views section: a
-  // per-type binding of "the canonical detail view for entities of this type".
-  // Distinct from `entityTypes` above, which is the metamodel definition.
-  const entityViewConfigs = ref<Map<string, EntityViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
@@ -39,6 +34,10 @@ export const useSchemaStore = defineStore('schema', () => {
   const paletteLight = ref<Record<string, string>>({})
   const paletteDark = ref<Record<string, string>>({})
   const darkDisabled = ref(false)
+  // Sidebar logo. Fed initially by Sidebar's `_sidebar` fetch on mount,
+  // then mutated by SettingsView's upload/remove handlers so the
+  // sidebar updates without a page reload.
+  const logoUrl = ref<string | null>(null)
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -64,12 +63,6 @@ export const useSchemaStore = defineStore('schema', () => {
     return undefined
   })
   const getView = computed(() => (id: string) => views.value.get(id))
-  // getEntityDetailView returns the canonical detail view id for an entity
-  // type, or undefined if none is configured. Consumers building entity
-  // links should fall back to /entity/:type/:id when undefined.
-  const getEntityDetailView = computed(
-    () => (type: string) => entityViewConfigs.value.get(type)?.detail_view
-  )
   const getKanban = computed(() => (id: string) => kanbans.value.get(id))
   const getAction = computed(() => (id: string) => actions.value.get(id))
 
@@ -108,7 +101,6 @@ export const useSchemaStore = defineStore('schema', () => {
       forms.value = new Map(Object.entries(configData.forms || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
       views.value = new Map(Object.entries(configData.views || {}))
-      entityViewConfigs.value = new Map(Object.entries(configData.entity_views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
@@ -140,6 +132,10 @@ export const useSchemaStore = defineStore('schema', () => {
     await load()
   }
 
+  function setLogoUrl(url: string | null) {
+    logoUrl.value = url
+  }
+
   return {
     // State
     entityTypes,
@@ -148,7 +144,6 @@ export const useSchemaStore = defineStore('schema', () => {
     forms,
     lists,
     views,
-    entityViewConfigs,
     kanbans,
     documents,
     actions,
@@ -159,6 +154,7 @@ export const useSchemaStore = defineStore('schema', () => {
     paletteLight,
     paletteDark,
     darkDisabled,
+    logoUrl,
     loaded,
     loading,
     error,
@@ -170,7 +166,6 @@ export const useSchemaStore = defineStore('schema', () => {
     getList,
     findListIdForEntityType,
     getView,
-    getEntityDetailView,
     getKanban,
     getAction,
     entityTypeList,
@@ -179,5 +174,6 @@ export const useSchemaStore = defineStore('schema', () => {
     // Actions
     load,
     reload,
+    setLogoUrl,
   }
 })

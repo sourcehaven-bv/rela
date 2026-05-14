@@ -2663,6 +2663,10 @@ func newTestAppV1(t *testing.T) *App {
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string"},
 				},
+				// PropertyOrder is populated at YAML-load time in
+				// production; set it explicitly here so tests exercise
+				// the same code paths the runtime hits.
+				PropertyOrder: []string{"title", "status"},
 			},
 			"feature": {
 				Label:    "Feature",
@@ -2670,6 +2674,7 @@ func newTestAppV1(t *testing.T) *App {
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: "string", Required: true},
 				},
+				PropertyOrder: []string{"title"},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -2817,6 +2822,9 @@ func TestV1GetRelationType_IncomingReturnsEdgeWithMeta(t *testing.T) {
 	if got := edges[0]["id"]; got != sourceID {
 		t.Errorf("incoming edge peer = %v, want %s", got, sourceID)
 	}
+	if got := edges[0]["type"]; got != "feature" {
+		t.Errorf("incoming edge peer type = %v, want %q", got, "feature")
+	}
 	meta, ok := edges[0]["meta"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected meta object on edge, got %T: %v", edges[0]["meta"], edges[0])
@@ -2857,8 +2865,42 @@ func TestV1EntityRelations_GroupsIncomingUnderInverseName(t *testing.T) {
 	if got := blockedBy[0]["id"]; got != sourceID {
 		t.Errorf("blockedBy[0].id = %v, want %s", got, sourceID)
 	}
+	if got := blockedBy[0]["type"]; got != "feature" {
+		t.Errorf("blockedBy[0].type = %v, want %q", got, "feature")
+	}
 	if got := blockedBy[0]["direction"]; got != "incoming" {
 		t.Errorf("blockedBy[0].direction = %v, want %q", got, "incoming")
+	}
+}
+
+// TestV1GetRelationType_OutgoingIncludesPeerType verifies the outgoing
+// path emits `type` per resource identifier — required by the SPA to
+// build JSON:API §9 resource identifiers without consulting the
+// schema or guessing from ID prefix. (TKT-ZEKO4 Step 0.)
+func TestV1GetRelationType_OutgoingIncludesPeerType(t *testing.T) {
+	app := newReverseRelationsTestApp(t)
+	sourceID, targetID := seedBlocksReverseFixture(t, app)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/features/"+sourceID+"/relations/blocks", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetRelationType(rec, req, "feature", sourceID, "blocks")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var edges []map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &edges); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 outgoing edge, got %d", len(edges))
+	}
+	if got := edges[0]["id"]; got != targetID {
+		t.Errorf("outgoing edge peer id = %v, want %s", got, targetID)
+	}
+	if got := edges[0]["type"]; got != "feature" {
+		t.Errorf("outgoing edge peer type = %v, want %q", got, "feature")
 	}
 }
 
@@ -3755,5 +3797,314 @@ func TestValidateCreateIDOpts(t *testing.T) {
 				t.Errorf("got error %q, want containing %q", got, tt.wantErr)
 			}
 		})
+	}
+}
+
+// --- handleV1Views (entity-type-keyed) ---
+
+func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp V1ViewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Entry.ID != "TKT-001" || resp.Entry.Type != "ticket" {
+		t.Errorf("entry: want TKT-001/ticket, got %+v", resp.Entry)
+	}
+	if len(resp.Sections) == 0 {
+		t.Fatal("expected at least one section in default view")
+	}
+	// First section must be properties (the synthesizer always emits it
+	// when the type has any properties — ticket has title and status).
+	if resp.Sections[0].Display != "properties" {
+		t.Errorf("section[0].display: want properties, got %q", resp.Sections[0].Display)
+	}
+}
+
+func TestV1Views_ConfiguredViewForType(t *testing.T) {
+	app := newTestAppV1(t)
+	// Register an explicit view for ticket — replaces the default.
+	state := app.State()
+	state.Cfg.Views["ticket_detail"] = ViewConfig{
+		Title: "Ticket",
+		Entry: ViewEntry{Type: "ticket"},
+		Sections: []ViewSection{
+			{Heading: "Just Title", Source: "entry", Display: "properties",
+				Fields: []ViewSectionField{{Property: "title"}}},
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp V1ViewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Configured view has a single section with heading "Just Title" —
+	// distinguishes it from the synthesized default.
+	if len(resp.Sections) != 1 {
+		t.Fatalf("expected 1 section from explicit config, got %d: %+v", len(resp.Sections), resp.Sections)
+	}
+	if resp.Sections[0].Heading != "Just Title" {
+		t.Errorf("heading: want Just Title, got %q", resp.Sections[0].Heading)
+	}
+}
+
+// assertViewSectionsLackKeys decodes a view response body and asserts that
+// none of its sections contain any of the named JSON keys. Decoding via
+// map[string]json.RawMessage so a future re-introduction that renamed the
+// Go field would still get caught.
+func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
+	t.Helper()
+	var raw struct {
+		Sections []map[string]json.RawMessage `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i, sec := range raw.Sections {
+		for _, k := range keys {
+			if _, ok := sec[k]; ok {
+				t.Errorf("section[%d]: %q must not be present in view responses", i, k)
+			}
+		}
+	}
+}
+
+// View responses must not carry add/link affordances. The view path is
+// strictly read-only; mutations live on the form/side-panel path. This guards
+// against re-introducing addInfo / linkInfo on V1ViewSection across every
+// shape that historically emitted them: outgoing/incoming traversals,
+// cards/list/table displays, and the variant where the target type has no
+// create-form configured (which previously emitted only linkInfo).
+func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
+	type variant struct {
+		name     string
+		traverse ViewTraverse
+		display  string
+		// withCreateForm seeds a Forms entry so createFormForType resolves
+		// — exercising the path that pre-change emitted both addInfo and
+		// linkInfo. Without it, only linkInfo was emitted historically.
+		withCreateForm bool
+	}
+	variants := []variant{
+		{"outgoing-cards-with-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "cards", true},
+		{"outgoing-list-with-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "list", true},
+		{"outgoing-table-with-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "table", true},
+		{"incoming-cards-with-form", ViewTraverse{From: "entry", FollowIncoming: "implements", CollectAs: "tickets"}, "cards", true},
+		{"outgoing-cards-no-form", ViewTraverse{From: "entry", Follow: "implements", CollectAs: "features"}, "cards", false},
+	}
+
+	for _, v := range variants {
+		t.Run(v.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			state := app.State()
+			if v.withCreateForm {
+				// Wire forms for both ends so the variant works regardless
+				// of traversal direction (the resolver picks createFormForType
+				// against `relDef.From` for incoming, `relDef.To` for outgoing).
+				state.Cfg.Forms["create_feature"] = dataentryconfig.Form{EntityType: "feature"}
+				state.Cfg.Forms["create_ticket"] = dataentryconfig.Form{EntityType: "ticket"}
+			}
+
+			// The view's entry type depends on traversal direction so the
+			// FollowIncoming variant has a sensible from-side entity to
+			// land on.
+			entryType := "ticket"
+			entryID := "TKT-001"
+			otherType := "feature"
+			otherID := "FEAT-001"
+			if v.traverse.FollowIncoming != "" {
+				entryType, otherType = otherType, entryType
+				entryID, otherID = otherID, entryID
+			}
+
+			columns := []ListColumn{}
+			if v.display == "table" {
+				columns = []ListColumn{{Property: "title", Label: "Title"}}
+			}
+			state.Cfg.Views["v"] = ViewConfig{
+				Entry:    ViewEntry{Type: entryType},
+				Traverse: []ViewTraverse{v.traverse},
+				Sections: []ViewSection{{
+					Heading: "Section", Source: v.traverse.CollectAs, Display: v.display, Columns: columns,
+				}},
+			}
+
+			seedEntity(app, &entity.Entity{
+				ID: entryID, Type: entryType,
+				Properties: map[string]interface{}{"title": "entry"},
+			})
+			seedEntity(app, &entity.Entity{
+				ID: otherID, Type: otherType,
+				Properties: map[string]interface{}{"title": "other"},
+			})
+			// Edge always points TKT → FEAT regardless of which is entry.
+			seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/"+entryType+"/"+entryID, http.NoBody)
+			rec := httptest.NewRecorder()
+			app.handleV1Views(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+			}
+			assertViewSectionsLackKeys(t, rec.Body.Bytes(), "addInfo", "linkInfo")
+		})
+	}
+}
+
+func TestV1Views_UnknownEntityType(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/nonexistent/X-1", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: want 404, got %d", rec.Code)
+	}
+}
+
+func TestV1Views_UnknownEntityID(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/MISSING", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status: want 422 for missing entity, got %d", rec.Code)
+	}
+}
+
+func TestV1Views_BadPath(t *testing.T) {
+	app := newTestAppV1(t)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"missing entity id", "/api/v1/_views/ticket"},
+		{"empty entity type", "/api/v1/_views//TKT-001"},
+		{"trailing slash only", "/api/v1/_views/"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
+			rec := httptest.NewRecorder()
+			app.handleV1Views(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status: want 400, got %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestV1Views_MethodNotAllowed(t *testing.T) {
+	app := newTestAppV1(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status: want 405, got %d", rec.Code)
+	}
+}
+
+func TestV1Views_MentionsPopulated(t *testing.T) {
+	app := newTestAppV1(t)
+	target := &entity.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Target Ticket",
+			"status": "open",
+		},
+	}
+	seedEntity(app, target)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Origin Ticket",
+			"status": "open",
+		},
+		Content: "see `TKT-002` for the dependency; `TKT-NOPE` is unknown",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp V1ViewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := resp.Mentions["TKT-002"]; got.Type != target.Type || got.Title != target.Title() {
+		t.Errorf("mentions[TKT-002]: want {%q,%q}, got %+v", target.Type, target.Title(), got)
+	}
+	if _, ok := resp.Mentions["TKT-NOPE"]; ok {
+		t.Errorf("mentions must not include unknown ID TKT-NOPE; got %+v", resp.Mentions)
+	}
+}
+
+func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Plain Ticket",
+			"status": "open",
+		},
+		Content: "no entity references here",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Views(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", rec.Code)
+	}
+	// Assert the JSON omits the mentions key entirely; the SPA treats a
+	// missing key the same as an empty map, but `omitempty` is the
+	// documented wire contract.
+	if strings.Contains(rec.Body.String(), `"mentions"`) {
+		t.Errorf("response must omit mentions when none collected; body: %s", rec.Body.String())
 	}
 }

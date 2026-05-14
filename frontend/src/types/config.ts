@@ -14,21 +14,11 @@ export interface Config {
   forms: Record<string, FormConfig>
   lists: Record<string, ListConfig>
   views: Record<string, ViewConfig>
-  entity_views?: Record<string, EntityViewConfig>
   kanbans: Record<string, KanbanConfig>
   dashboard?: DashboardConfig
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   documents?: Record<string, DocumentConfig>
-}
-
-// EntityViewConfig declares UX bindings for a metamodel entity type.
-// detail_view names the canonical view used to display an entity of this type
-// — consumed by the SPA when an entity link needs to be rendered (entity-list
-// rows, custom-view sections). Missing detail_view falls back to
-// /entity/:type/:id.
-export interface EntityViewConfig {
-  detail_view?: string
 }
 
 export interface ActionConfig {
@@ -125,7 +115,6 @@ export interface ListConfig {
   default_sort?: SortSpec[]
   create_form?: string
   edit_form?: string
-  detail_view?: string
   page_size?: number
   actions?: string[]
 }
@@ -290,6 +279,9 @@ export interface SidebarGroup {
 export interface SidebarData {
   app: AppConfig
   navigation: SidebarGroup[]
+  /** URL of the user-uploaded sidebar logo (with cache-busting query
+   *  parameter), or null/undefined when no logo is set. */
+  logoUrl?: string | null
 }
 
 // Document config for external rendering via shell commands

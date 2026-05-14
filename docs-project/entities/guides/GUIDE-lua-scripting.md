@@ -290,12 +290,60 @@ Transport errors (e.g., terminal not interactive) also raise Lua errors.
 
 | Function | Description | Returns |
 |----------|-------------|---------|
-| `rela.create_entity(type, props, content?, id?)` | Create entity | table |
-| `rela.update_entity(id, props, content?)` | Update entity | table |
+| `rela.create_entity(type, props, content?, id?)` | Create entity | table, warnings? |
+| `rela.update_entity(id, props, content?)` | Update entity | table, warnings? |
 | `rela.delete_entity(id, cascade?)` | Delete entity | boolean |
 | `rela.create_relation(from, type, to)` | Create relation | table |
 | `rela.delete_relation(from, type, to)` | Delete relation | boolean |
 | `rela.refresh()` | Reload graph from disk | boolean |
+
+#### Validation warnings (multi-return)
+
+`rela.create_entity` and `rela.update_entity` return TWO values per
+[DEC-HWZHA](../tickets/entities/decisions/DEC-HWZHA.md): the
+entity table (always present on success) and an optional warnings
+table (`nil` when there are no warnings).
+
+The contract follows **`string.gsub`** semantics — both returns can
+be non-nil simultaneously, and the second is *additional success
+information*, NOT an error indicator. This is the opposite of
+`io.open`'s `(file, err)` shape, where the two are mutually
+exclusive.
+
+```lua
+-- Existing scripts (single return) keep working:
+local e = rela.update_entity("TKT-001", {title = "x"})
+print(e.id)
+
+-- Read warnings when you care:
+local e, warnings = rela.update_entity("TKT-001", {title = ""})
+-- e.id is set; the entity was persisted with title cleared.
+-- warnings is a table when validation surfaced soft conditions:
+for _, w in ipairs(warnings or {}) do
+    print(w.code, w.path, w.detail)
+    -- e.g. required_property_unset  /properties/title  This field is required
+end
+```
+
+Each warning is `{code = string, path = string, detail = string}`.
+Warning codes match those in
+[`docs/data-entry/api-reference.md`](data-entry/api-reference.md).
+
+**Hard errors still raise**. An entity with an unknown type or a
+malformed ID prefix raises a Lua error — `pcall` catches it. Soft
+validation conditions (missing required field, invalid enum value,
+bad date) no longer raise; they show up in the warnings return so
+the script can decide what to do.
+
+```lua
+-- Hard errors raise:
+local ok, err = pcall(rela.update_entity, "BAD-PREFIX", {})
+-- ok=false, err="entity not found: BAD-PREFIX"
+
+-- Soft conditions don't raise:
+local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
+-- ok=true, e is the entity, warnings is the validation findings.
+```
 
 ### Schema Functions
 

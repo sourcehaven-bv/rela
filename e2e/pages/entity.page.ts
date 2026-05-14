@@ -78,9 +78,13 @@ export class EntityPage extends BasePage {
   }
 
   async clickRelationLink(targetId: string) {
-    const link = this.page.locator('button.relation-link').filter({ hasText: targetId });
-    await expect(link).toBeVisible();
-    await link.click();
+    // Detail screens render related entities as cards / list items with a
+    // data-entity-id attribute on the row root and a clickable header
+    // (cards) or anchor (list).
+    const item = this.page.locator(`[data-entity-id="${targetId}"]`).first();
+    await expect(item).toBeVisible();
+    const trigger = item.locator('.card-header, .list-link').first();
+    await trigger.click();
   }
 
   async expectTypeBadge(type: string | RegExp) {
@@ -166,5 +170,28 @@ export class EntityPage extends BasePage {
     return this.contentBody
       .locator(`input[type="checkbox"][data-cb-idx="${index}"]`)
       .isChecked();
+  }
+
+  // --- content entity-reference helpers ---
+
+  /** Locator for an in-content link rewritten from a `\`<id>\`` code span
+   *  to a navigable entity detail link (TKT-747O). Returns the <a> element
+   *  whose href routes to the target's detail page. */
+  contentEntityRefLink(entityType: string, id: string): Locator {
+    return this.contentBody.locator(`a[href="/entity/${entityType}/${id}"]`).first();
+  }
+
+  /** Locator for an inline `<code>` element in the entity content with the
+   *  given exact text. Used in negative tests to assert a code span was
+   *  NOT rewritten into an anchor — e.g. unknown IDs or fenced blocks. */
+  contentCodeSpan(text: string): Locator {
+    return this.contentBody.locator('code', { hasText: text });
+  }
+
+  /** Click the in-content entity-reference link for `(entityType, id)` and
+   *  wait for the SPA route to settle on the target page. */
+  async clickContentEntityRef(entityType: string, id: string): Promise<void> {
+    await this.contentEntityRefLink(entityType, id).click();
+    await this.page.waitForURL(new RegExp(`/entity/${entityType}/${id}(\\?|$)`));
   }
 }

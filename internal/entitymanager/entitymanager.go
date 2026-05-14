@@ -30,6 +30,21 @@ type CreateOptions struct {
 	SkipAutomation bool
 }
 
+// Warning is a non-blocking finding surfaced to the caller alongside
+// a successful write per DEC-HWZHA — a state the storage layer
+// tolerated but that an analyze tool would also flag. Code values are
+// stable and match the corresponding `analyze_*` finding codes where
+// applicable. Path is an RFC 6901 JSON Pointer to the offending field.
+//
+// Warnings are NOT errors. The write succeeded; the warning is
+// advisory. Consumers should surface them non-blockingly (HTTP body,
+// MCP result text, CLI stderr, Lua second return).
+type Warning struct {
+	Code   string `json:"code"`
+	Path   string `json:"path,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // CreateResult describes the outcome of a create, including automation
 // side-effects.
 type CreateResult struct {
@@ -38,6 +53,10 @@ type CreateResult struct {
 	EntitiesCreated    []*entity.Entity
 	AutomationWarnings []string
 	AutomationErrors   []string
+	// Warnings collects DEC-HWZHA soft validation findings on the
+	// post-write entity. Nil when there are none. Sorted by Path for
+	// stable client-facing ordering.
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // UpdateResult describes the outcome of an update.
@@ -47,6 +66,10 @@ type UpdateResult struct {
 	EntitiesCreated    []*entity.Entity
 	AutomationWarnings []string
 	AutomationErrors   []string
+	// Warnings collects DEC-HWZHA soft validation findings on the
+	// post-write entity. Nil when there are none. Sorted by Path for
+	// stable client-facing ordering.
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // DeleteResult describes entities and relations removed by a delete.

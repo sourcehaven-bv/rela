@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* global process */
 
 /**
  * Generate or check coverage baseline for frontend tests.

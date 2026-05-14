@@ -3,9 +3,15 @@ import type { Entity } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
+  // Raw property name (e.g. "title") — used to correlate with the entry's
+  // inaccessible[] for tooltip reasons.
+  property?: string
   label: string
   values?: string[]
   propType?: string
+  // True when the underlying entity is git-crypt encrypted; PropertyDisplay
+  // renders a lock indicator instead of the (absent) value.
+  inaccessible?: boolean
 }
 
 // Entity data for view sections
@@ -53,29 +59,6 @@ export interface ViewGroup {
   entities?: ViewEntity[]
 }
 
-// Add button target
-export interface ViewAddTarget {
-  entityType: string
-  formId: string
-  label: string
-}
-
-// Add button info
-export interface ViewAddInfo {
-  relation: string
-  linkAs: 'from' | 'to'
-  peerId: string
-  targets: ViewAddTarget[]
-}
-
-// Link existing button info
-export interface ViewLinkInfo {
-  relation: string
-  linkAs: 'from' | 'to'
-  peerId: string
-  entityTypes: string[]
-}
-
 // View section with all display types
 export interface ViewSection {
   heading: string
@@ -91,17 +74,37 @@ export interface ViewSection {
   isGrouped: boolean
   content?: string
   hasContent: boolean
-  addInfo?: ViewAddInfo
-  linkInfo?: ViewLinkInfo
+}
+
+// Mention is the resolved target of an entity-ID code span found inside
+// any markdown body the response carries (entry content + section
+// content). Mirrors the server-side `Mention` Go struct (TKT-747O); the
+// SPA's `renderMarkdown` consumes this map to rewrite bare-ID code spans
+// into titled in-app links. `inaccessible` flags targets whose display
+// title is unreadable (e.g. git-crypt encrypted) so the renderer can
+// show a lock affordance.
+//
+// `inaccessible_reason` carries the matching `entity.InaccessibleReason`
+// value as a bare string. Today only `"git-crypt"` is produced; the SPA
+// treats unknown reasons as opaque and falls back to a generic tooltip,
+// so adding new reasons server-side never breaks the client.
+export interface Mention {
+  type: string
+  title: string
+  inaccessible?: boolean
+  inaccessible_reason?: string
 }
 
 // Full view API response
 export interface ViewResponse {
   entry: Entity
   sections: ViewSection[]
+  mentions?: Record<string, Mention>
 }
 
-// Fetch executed view data
-export async function fetchView(viewId: string, entityId: string): Promise<ViewResponse> {
-  return api.get<ViewResponse>(`/_views/${viewId}/${entityId}`)
+// Fetch executed view data for an entity. The backend looks up the
+// configured ViewConfig by entry.type, or synthesizes a default when
+// none is registered.
+export async function fetchView(entityType: string, entityId: string): Promise<ViewResponse> {
+  return api.get<ViewResponse>(`/_views/${entityType}/${entityId}`)
 }

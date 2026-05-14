@@ -88,7 +88,7 @@ export interface PaginatedResponse<T = EntityResponse> {
 }
 
 export interface ApiHelpers {
-  createEntity(plural: string, data: { properties: Record<string, unknown>; relations?: Record<string, string[]>; id?: string; prefix?: string }): Promise<EntityResponse>;
+  createEntity(plural: string, data: { properties: Record<string, unknown>; content?: string; relations?: Record<string, string[]>; id?: string; prefix?: string }): Promise<EntityResponse>;
   getEntity(plural: string, id: string): Promise<EntityResponse>;
   updateEntity(plural: string, id: string, properties: Record<string, unknown>): Promise<EntityResponse>;
   deleteEntity(plural: string, id: string): Promise<void>;

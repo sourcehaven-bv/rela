@@ -204,6 +204,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
 	mux.HandleFunc("/api/v1/_settings", a.handleAPISettingsCRUD)
 	mux.HandleFunc("/api/v1/_palette", a.handleAPIPaletteCRUD)
+	mux.HandleFunc("/api/v1/_theme/logo", a.handleAPIThemeLogo)
+	mux.HandleFunc("/api/v1/_theme/export", a.handleAPIThemeExport)
+	mux.HandleFunc("/api/v1/_theme/import", a.handleAPIThemeImport)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.handleV1Sidebar)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
@@ -457,6 +460,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	result := a.entityToV1(created, plural, true, false)
+	// DEC-HWZHA: surface entity-level soft validation findings (e.g.
+	// required-field-missing) as warnings on the 201 response.
+	if len(createResult.Warnings) > 0 {
+		result.Warnings = append(result.Warnings, createResult.Warnings...)
+	}
 
 	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
@@ -593,9 +601,16 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 	entityChanged := req.Properties != nil || req.Content != nil
 	if entityChanged {
-		if _, err := a.entityManager.UpdateEntity(r.Context(), entity); err != nil {
+		updateResult, err := a.entityManager.UpdateEntity(r.Context(), entity)
+		if err != nil {
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 			return
+		}
+		// DEC-HWZHA: soft validation findings ride on the result as
+		// warnings. Merge them into the response alongside any
+		// relation warnings already collected.
+		if updateResult != nil {
+			warnings = append(warnings, updateResult.Warnings...)
 		}
 	}
 
@@ -702,6 +717,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	for _, edge := range outgoing {
 		rel := map[string]interface{}{
 			"id":        edge.To,
+			"type":      a.peerType(edge.To),
 			"direction": "outgoing",
 		}
 		if len(edge.Properties) > 0 {
@@ -721,6 +737,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		rel := map[string]interface{}{
 			"id":        edge.From,
+			"type":      a.peerType(edge.From),
 			"direction": "incoming",
 		}
 		if len(edge.Properties) > 0 {
@@ -779,7 +796,8 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 			peerID = edge.From
 		}
 		rel := map[string]interface{}{
-			"id": peerID,
+			"id":   peerID,
+			"type": a.peerType(peerID),
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
@@ -1691,10 +1709,18 @@ type V1SidePanelSection struct {
 // Values is always an array so that list-typed properties retain per-item
 // structure; scalar properties become a one-element array. Empty fields emit
 // an empty array (omitted via omitempty when nil).
+//
+// Property carries the raw property name so consumers can correlate the
+// field with metamodel data (e.g. inaccessibility lookup); Label is the
+// human-readable rendering. Inaccessible is true when the underlying entity
+// is git-crypt encrypted — the field is known to exist in the schema but
+// its value cannot be read.
 type V1SectionField struct {
-	Label    string   `json:"label"`
-	Values   []string `json:"values,omitempty"`
-	PropType string   `json:"propType,omitempty"`
+	Property     string   `json:"property,omitempty"`
+	Label        string   `json:"label"`
+	Values       []string `json:"values,omitempty"`
+	PropType     string   `json:"propType,omitempty"`
+	Inaccessible bool     `json:"inaccessible,omitempty"`
 }
 
 // V1SidePanelEntity represents an entity in a side panel section.
@@ -1840,6 +1866,11 @@ type V1SidebarGroup struct {
 type V1SidebarResponse struct {
 	App        V1AppConfig      `json:"app"`
 	Navigation []V1SidebarGroup `json:"navigation"`
+	// LogoURL is the cache-busted URL of the user-uploaded sidebar logo,
+	// or nil when no logo is set. Included here (rather than in
+	// `_settings`) so the SPA can render the logo on first paint without
+	// blocking on a settings fetch.
+	LogoURL *string `json:"logoUrl,omitempty"`
 }
 
 // handleV1Sidebar returns denormalized sidebar data with entity counts.
@@ -1899,6 +1930,7 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		},
 		Navigation: navigation,
 	}
+	resp.LogoURL = s.LogoURL()
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -2411,9 +2443,22 @@ func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 // --- Views API ---
 
 // V1ViewResponse contains the executed view data.
+//
+// Mentions carries the implicit-relation set discovered by scanning the
+// entry and section markdown contents for bare-content entity-ID code
+// spans (see collectMentions). The SPA's markdown renderer consumes this
+// map to rewrite those code spans into titled in-app links. Mirrors the
+// Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
+// that don't go through the Lua document path.
+//
+// Wire stability: `mentions` is part of the public v1 API. The set of
+// `inaccessible_reason` values may grow as new locking mechanisms are
+// added (today: `git-crypt`); clients must treat unknown reasons as
+// opaque rather than enumerating them.
 type V1ViewResponse struct {
-	Entry    V1Entity        `json:"entry"`
-	Sections []V1ViewSection `json:"sections"`
+	Entry    V1Entity           `json:"entry"`
+	Sections []V1ViewSection    `json:"sections"`
+	Mentions map[string]Mention `json:"mentions,omitempty"`
 }
 
 // V1ViewSection represents a section with resolved data.
@@ -2431,8 +2476,6 @@ type V1ViewSection struct {
 	IsGrouped    bool             `json:"isGrouped"`
 	Content      string           `json:"content,omitempty"`
 	HasContent   bool             `json:"hasContent"`
-	AddInfo      *V1ViewAddInfo   `json:"addInfo,omitempty"`
-	LinkInfo     *V1ViewLinkInfo  `json:"linkInfo,omitempty"`
 }
 
 // V1ViewEntity represents an entity in a view section.
@@ -2480,7 +2523,11 @@ type V1ViewGroup struct {
 	Entities  []V1ViewEntity `json:"entities,omitempty"`
 }
 
-// V1ViewAddInfo describes an add button configuration.
+// V1ViewAddInfo describes an add button configuration. Despite the "View"
+// prefix this is now used only by V1SidePanelSection — see TKT-6ETQ for
+// the rename to V1SidePanelAddInfo. Do not reach for this type from a new
+// view-related response: the read-only-view invariant established by
+// TKT-651W means no view section should carry add affordances.
 type V1ViewAddInfo struct {
 	Relation string            `json:"relation"`
 	LinkAs   string            `json:"linkAs"`
@@ -2489,6 +2536,7 @@ type V1ViewAddInfo struct {
 }
 
 // V1ViewAddTarget represents a possible target for add action.
+// Side-panel-only post TKT-651W; see TKT-6ETQ for the rename plan.
 type V1ViewAddTarget struct {
 	EntityType string `json:"entityType"`
 	FormID     string `json:"formId"`
@@ -2496,6 +2544,7 @@ type V1ViewAddTarget struct {
 }
 
 // V1ViewLinkInfo describes a link existing button configuration.
+// Side-panel-only post TKT-651W; see TKT-6ETQ for the rename plan.
 type V1ViewLinkInfo struct {
 	Relation    string   `json:"relation"`
 	LinkAs      string   `json:"linkAs"`
@@ -2503,28 +2552,44 @@ type V1ViewLinkInfo struct {
 	EntityTypes []string `json:"entityTypes"`
 }
 
-// handleV1Views handles GET /api/v1/_views/{viewId}/{entityId}.
+// handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.
 // Returns JSON with executed view data including entry and sections.
+//
+// View configs are looked up by entry.type. When no explicit ViewConfig
+// is registered for entityType, a default is synthesized from the
+// metamodel (see buildDefaultViewConfig) and executed through the same
+// pipeline so the response shape is identical.
 func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 
-	// Parse path: /api/v1/_views/{viewId}/{entityId}
+	// Parse path: /api/v1/_views/{entityType}/{entityId}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_views/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_views/{viewId}/{entityId}", "")
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_views/{entityType}/{entityId}", "")
 		return
 	}
 
-	viewID, entityID := parts[0], parts[1] // Get view config
+	entityType, entityID := parts[0], parts[1]
 	s := a.State()
-	viewCfg, ok := s.Cfg.Views[viewID]
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "view_not_found", "View not found", "")
+
+	if _, ok := s.Meta.GetEntityDef(entityType); !ok {
+		writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
 		return
+	}
+
+	viewCfg, ok := findViewByEntityType(s.Cfg.Views, entityType)
+	if !ok {
+		viewCfg, ok = buildDefaultViewConfig(s.Meta, entityType)
+		if !ok {
+			// Cannot happen — entity type already validated above —
+			// but handled defensively to keep the contract clear.
+			writeV1Error(w, r, http.StatusNotFound, "entity_type_not_found", "Entity type not found", entityType)
+			return
+		}
 	}
 
 	// Execute view
@@ -2536,9 +2601,6 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 	// Build sections
 	sections := a.buildSections(viewCfg.Sections, result)
-
-	// Resolve add/link info for sections
-	a.resolveSectionButtonsWithTraverse(viewCfg, sections, result.Entry)
 
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
@@ -2640,29 +2702,42 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
 		}
 
-		// Convert add/link info
-		if sec.AddInfo != nil {
-			v1Sec.AddInfo = &V1ViewAddInfo{
-				Relation: sec.AddInfo.Relation,
-				LinkAs:   sec.AddInfo.LinkAs,
-				PeerID:   sec.AddInfo.PeerID,
-			}
-			for _, t := range sec.AddInfo.Targets {
-				v1Sec.AddInfo.Targets = append(v1Sec.AddInfo.Targets, V1ViewAddTarget(t))
-			}
-		}
-
-		if sec.LinkInfo != nil {
-			v1Sec.LinkInfo = &V1ViewLinkInfo{
-				Relation:    sec.LinkInfo.Relation,
-				LinkAs:      sec.LinkInfo.LinkAs,
-				PeerID:      sec.LinkInfo.PeerID,
-				EntityTypes: sec.LinkInfo.EntityTypes,
-			}
-		}
-
 		resp.Sections = append(resp.Sections, v1Sec)
 	}
 
+	resp.Mentions = collectMentions(r.Context(), a.store, s.Meta, viewContentBlobs(result.Entry, sections)...)
+
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// viewContentBlobs gathers every markdown body that will be rendered by
+// the SPA for a single view response: the entry's content, every section's
+// own content, and every entity card's content (sections with display
+// "content"/"cards" surface related entities, each carrying its own
+// `Content` markdown that EntityDetail.vue renders with the same
+// `refResolver`). Used to scope the mentions scan to text the user
+// actually sees on this screen.
+func viewContentBlobs(entry *entityPkg.Entity, sections []SectionData) []string {
+	blobs := make([]string, 0, 1+len(sections))
+	if entry != nil && entry.Content != "" {
+		blobs = append(blobs, entry.Content)
+	}
+	for _, sec := range sections {
+		if sec.HasContent && sec.Content != "" {
+			blobs = append(blobs, sec.Content)
+		}
+		for _, ent := range sec.Entities {
+			if ent.HasContent && ent.Content != "" {
+				blobs = append(blobs, ent.Content)
+			}
+		}
+		for _, grp := range sec.Groups {
+			for _, ent := range grp.Entities {
+				if ent.HasContent && ent.Content != "" {
+					blobs = append(blobs, ent.Content)
+				}
+			}
+		}
+	}
+	return blobs
 }
