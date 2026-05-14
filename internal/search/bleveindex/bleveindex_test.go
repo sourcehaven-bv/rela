@@ -117,6 +117,41 @@ func TestIndex_UpdateOverwrites(t *testing.T) {
 	assert.Contains(t, ids, "REQ-1")
 }
 
+func TestIndex_IndexBatch(t *testing.T) {
+	idx := newTestIndex(t)
+
+	entities := []*entity.Entity{
+		entity.New("REQ-1", "requirement"),
+		entity.New("REQ-2", "requirement"),
+		entity.New("REQ-3", "requirement"),
+	}
+	entities[0].SetString("title", "Alpha")
+	entities[1].SetString("title", "Beta")
+	entities[2].SetString("title", "Gamma")
+
+	count, err := idx.IndexBatch(entities)
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
+
+	for _, e := range entities {
+		ids, err := idx.Search(e.Properties["title"].(string), 10)
+		require.NoError(t, err)
+		assert.Contains(t, ids, e.ID)
+	}
+}
+
+func TestIndex_IndexBatch_Empty(t *testing.T) {
+	idx := newTestIndex(t)
+
+	count, err := idx.IndexBatch(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	count, err = idx.IndexBatch([]*entity.Entity{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
 func TestIndex_Limit(t *testing.T) {
 	idx := newTestIndex(t)
 

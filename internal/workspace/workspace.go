@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +31,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -95,9 +95,12 @@ func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
 // Metamodel, Manager (including its automation engine and cascade
 // runner), and search index are constructed once at New and never
 // reloaded — schema or automation changes require a restart. The
-// store is self-watching: when an fsstore implementation is used, it
-// observes external file edits and emits events. Workspace subscribes
-// to those events and keeps the search index in sync automatically.
+// search index is kept in sync with store writes via a per-workspace
+// subscription to store.Subscribe — every in-process write
+// (Create/Update/DeleteEntity through the store API) is applied to
+// the search backend. External edits to on-disk files are only
+// observed once a caller invokes StartWatching, which arms fsstore's
+// own file watcher to translate filesystem events into store events.
 type Workspace struct {
 	// fs is the filesystem handle used for all workspace I/O:
 	// directory topology (ReadDir, MkdirAll, Stat, Walk) and byte
@@ -112,14 +115,12 @@ type Workspace struct {
 	scriptExec ScriptExecutor
 
 	// Core services — immutable after construction.
-	store     store.Store
-	meta      *metamodel.Metamodel
-	manager   *entitymanager.Manager // the production write path
-	searchIdx *search.Index          // may be nil if index construction failed
+	store         store.Store
+	meta          *metamodel.Metamodel
+	manager       *entitymanager.Manager // the production write path
+	searchBackend *bleveindex.Index      // may be nil if index construction failed
 
-	// Derived services — memoised on first access. tracer wraps the store
-	// and wsSearcher wraps the workspace; both are cheap wrappers but
-	// accessing them from Lua bindings on every call was unnecessary churn.
+	// Derived services — memoised on first access.
 	tracerOnce   sync.Once
 	tracer       tracer.Tracer
 	searcherOnce sync.Once
@@ -127,7 +128,8 @@ type Workspace struct {
 
 	// Watcher state (nil when not watching).
 	watcher    *storage.Watcher
-	stopSearch func() // cancels the search-index reindex goroutine
+	stopSearch func()         // cancels the search-index subscription
+	searchWG   sync.WaitGroup // joins the subscription goroutine on Close
 
 	// storeFactory opens the workspace's authoritative store. In
 	// production this builds the fsstore under the project directory;
@@ -198,11 +200,11 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 	// Populate the search index from the opened store and subscribe to
 	// store events so the index stays current when files change on disk
 	// (or when the fsstore emits updates from its own watcher).
-	if ws.searchIdx != nil {
-		if err := indexStoreEntities(ws.searchIdx, s, meta); err != nil {
+	if ws.searchBackend != nil {
+		if err := backfillSearchBackend(context.Background(), ws.searchBackend, s); err != nil {
 			slog.Warn("failed to index entities", "error", err)
 		}
-		ws.startSearchReindex()
+		ws.startSearchSubscription()
 	}
 	return ws, nil
 }
@@ -262,8 +264,8 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
 	if err != nil {
 		panic(fmt.Sprintf("NewForTest: %v", err))
 	}
-	if cfg.store != nil && ws.searchIdx != nil {
-		if err := indexStoreEntities(ws.searchIdx, cfg.store, meta); err != nil {
+	if cfg.store != nil && ws.searchBackend != nil {
+		if err := backfillSearchBackend(context.Background(), ws.searchBackend, cfg.store); err != nil {
 			panic(fmt.Sprintf("NewForTest: index entities: %v", err))
 		}
 	}
@@ -313,11 +315,11 @@ func newWorkspace(
 ) (*Workspace, error) {
 	// Create an empty search index — callers that use a real store
 	// populate it from that store. Failures degrade search but don't
-	// block construction; Search() surfaces the nil index as an
-	// explicit error.
-	var searchIdx *search.Index
-	if idx, err := search.NewIndex(); err == nil {
-		searchIdx = idx
+	// block construction; Searcher() surfaces the nil backend as an
+	// explicit error when queried.
+	var searchBackend *bleveindex.Index
+	if idx, err := bleveindex.NewMem(); err == nil {
+		searchBackend = idx
 	} else {
 		slog.Warn("failed to create search index", "error", err)
 	}
@@ -336,13 +338,13 @@ func newWorkspace(
 	}
 
 	ws := &Workspace{
-		fs:         fs,
-		paths:      paths,
-		config:     cfg,
-		scriptExec: scriptExec,
-		store:      st,
-		meta:       meta,
-		searchIdx:  searchIdx,
+		fs:            fs,
+		paths:         paths,
+		config:        cfg,
+		scriptExec:    scriptExec,
+		store:         st,
+		meta:          meta,
+		searchBackend: searchBackend,
 	}
 	for _, opt := range opts {
 		opt(ws)
@@ -380,16 +382,31 @@ func newWorkspace(
 	return ws, nil
 }
 
-// indexStoreEntities (re)indexes every entity in the store into the
-// given search index. Errors from the store iterator are surfaced;
-// index errors are returned so the caller can decide whether to
-// publish a partial index.
-func indexStoreEntities(idx *search.Index, s store.Store, meta *metamodel.Metamodel) error {
-	if idx == nil || s == nil {
+// backfillSearchBackend populates a search backend with every entity
+// currently in the store. Errors from individual entities are collected
+// and returned together so the operator sees the complete picture; a
+// partial index is preferable to no index but the caller knows it is
+// partial.
+func backfillSearchBackend(ctx context.Context, backend *bleveindex.Index, s store.Store) error {
+	if backend == nil || s == nil {
 		return nil
 	}
-	docs := storeSearchDocuments(s, meta)
-	return idx.IndexBatch(docs)
+	entities := make([]*entity.Entity, 0)
+	var listErrs []error
+	for e, err := range s.ListEntities(ctx, store.EntityQuery{}) {
+		if err != nil {
+			listErrs = append(listErrs, err)
+			continue
+		}
+		entities = append(entities, e)
+	}
+	indexed, indexErr := backend.IndexBatch(entities)
+	if len(listErrs) == 0 && indexErr == nil {
+		return nil
+	}
+	skipped := len(entities) - indexed
+	return fmt.Errorf("backfill indexed %d entities, skipped %d, list errors: %v, index error: %w",
+		indexed, skipped, listErrs, indexErr)
 }
 
 // syncCountsFromStore reports how many entities and relations the
@@ -503,31 +520,6 @@ func (w *Workspace) Meta() *metamodel.Metamodel { return w.meta }
 // via NewForTest.
 func (w *Workspace) Store() store.Store { return w.store }
 
-// search runs the legacy word/phrase Bleve query against the workspace's
-// search index. External callers use Searcher() instead; this method
-// backs that adapter.
-func (w *Workspace) search(words, phrases []string, limit int) ([]*entity.Entity, []float64, error) {
-	if w.searchIdx == nil {
-		return nil, nil, errors.New("search index not available")
-	}
-	results, err := w.searchIdx.Search(words, phrases, limit)
-	if err != nil {
-		return nil, nil, err
-	}
-	ctx := context.Background()
-	entities := make([]*entity.Entity, 0, len(results))
-	scores := make([]float64, 0, len(results))
-	for _, r := range results {
-		e, err := w.store.GetEntity(ctx, r.ID)
-		if err != nil {
-			continue
-		}
-		entities = append(entities, e)
-		scores = append(scores, r.Score)
-	}
-	return entities, scores, nil
-}
-
 // --- Project accessors ---
 
 // Paths returns the project directory layout.
@@ -628,19 +620,23 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 
 // --- Lifecycle ---
 
-// startSearchReindex subscribes to the store's event stream and updates
-// the search index on every create/update/delete. The returned cancel is
-// stored on the workspace and invoked by Close.
-func (w *Workspace) startSearchReindex() {
-	if w.searchIdx == nil || w.store == nil {
+// startSearchSubscription subscribes the search backend to the store's
+// event stream so the index stays current after construction. The
+// returned cancel is stored on the workspace and invoked by Close,
+// which also waits for the subscription goroutine to drain before
+// closing the underlying backend.
+func (w *Workspace) startSearchSubscription() {
+	if w.searchBackend == nil || w.store == nil {
 		return
 	}
 	ch, cancel := w.store.Subscribe(storeEventBufferSize)
 	w.stopSearch = cancel
-	go w.reindexLoop(ch)
+	w.searchWG.Add(1)
+	go w.searchSubscriptionLoop(ch)
 }
 
-func (w *Workspace) reindexLoop(ch <-chan store.Event) {
+func (w *Workspace) searchSubscriptionLoop(ch <-chan store.Event) {
+	defer w.searchWG.Done()
 	ctx := context.Background()
 	for ev := range ch {
 		switch ev.Op {
@@ -652,14 +648,14 @@ func (w *Workspace) reindexLoop(ch <-chan store.Event) {
 			if err != nil {
 				continue
 			}
-			if err := w.searchIdx.Index(entityToSearchDocument(e, w.meta)); err != nil {
+			if err := w.searchBackend.EntityPut(e); err != nil {
 				slog.Warn("search index update failed", "id", ev.EntityID, "error", err)
 			}
 		case store.EventEntityDeleted:
 			if ev.EntityID == "" {
 				continue
 			}
-			if err := w.searchIdx.Remove(ev.EntityID); err != nil {
+			if err := w.searchBackend.EntityDelete(ev.EntityID); err != nil {
 				slog.Warn("search index remove failed", "id", ev.EntityID, "error", err)
 			}
 		case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
@@ -806,19 +802,30 @@ func (w *Workspace) StopWatching() {
 
 // Close releases resources held by the workspace (search index, watcher,
 // store). Close is not safe to call concurrently with Workspace methods.
+//
+// Cleanup order matters: the subscription cancel is signaled first,
+// then the subscription goroutine is joined before closing the search
+// backend (otherwise bleve.Close races with in-flight EntityPut from
+// the still-draining channel). Every subsystem's close is attempted
+// even if an earlier one errored so a partial failure doesn't leak
+// store goroutines or watcher resources.
 func (w *Workspace) Close() error {
 	w.StopWatching()
+
 	if w.stopSearch != nil {
 		w.stopSearch()
 		w.stopSearch = nil
 	}
-	if w.searchIdx != nil {
-		if err := w.searchIdx.Close(); err != nil {
-			w.searchIdx = nil
-			return fmt.Errorf("close search index: %w", err)
+	w.searchWG.Wait()
+
+	var firstErr error
+	if w.searchBackend != nil {
+		if err := w.searchBackend.Close(); err != nil {
+			firstErr = fmt.Errorf("close search index: %w", err)
 		}
-		w.searchIdx = nil
+		w.searchBackend = nil
 	}
+
 	if w.store != nil {
 		if sw, ok := w.store.(storeWatcher); ok {
 			sw.StopWatching()
@@ -829,7 +836,7 @@ func (w *Workspace) Close() error {
 			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // PauseWatching temporarily suppresses file change events.
@@ -852,65 +859,4 @@ func (w *Workspace) ResumeWatching() {
 // file access (e.g., attachment store, writing output files).
 func (w *Workspace) FS() storage.FS {
 	return w.fs
-}
-
-// --- Search document conversion ---
-
-// entityToSearchDocument converts an entity to a search.Document.
-func entityToSearchDocument(e *entity.Entity, meta *metamodel.Metamodel) search.Document {
-	return search.Document{
-		ID:          e.ID,
-		Type:        e.Type,
-		Primary:     meta.DisplayTitle(e.ID, e.Type, e.Properties),
-		Description: e.Description(),
-		Content:     e.Content,
-		Properties:  flattenProperties(e.Properties),
-	}
-}
-
-// storeSearchDocuments iterates a store and produces search documents for
-// every entity. Errors from the store iterator are ignored — partial
-// indexing is preferable to dropping the whole index.
-func storeSearchDocuments(st store.Store, meta *metamodel.Metamodel) []search.Document {
-	if st == nil {
-		return nil
-	}
-	docs := make([]search.Document, 0)
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{}) {
-		if err != nil {
-			continue
-		}
-		docs = append(docs, entityToSearchDocument(e, meta))
-	}
-	return docs
-}
-
-// flattenProperties extracts all property values as a single searchable string.
-func flattenProperties(props map[string]interface{}) string {
-	// Sort keys for deterministic output.
-	keys := make([]string, 0, len(props))
-	for k := range props {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var parts []string
-	for _, k := range keys {
-		v := props[k]
-		switch val := v.(type) {
-		case string:
-			parts = append(parts, val)
-		case []string:
-			parts = append(parts, val...)
-		case []interface{}:
-			for _, item := range val {
-				if s, ok := item.(string); ok {
-					parts = append(parts, s)
-				}
-			}
-		default:
-			parts = append(parts, fmt.Sprintf("%v", v))
-		}
-	}
-	return strings.Join(parts, " ")
 }
