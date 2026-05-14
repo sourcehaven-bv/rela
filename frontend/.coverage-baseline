@@ -22,6 +22,6 @@ src/utils/dom.ts;11;8
 src/utils/entityRoute.ts;5;5
 src/utils/filters.ts;62;62
 src/utils/format.ts;61;61
-src/utils/markdown.ts;39;37
+src/utils/markdown.ts;66;63
 src/utils/palette.ts;235;209
 src/utils/returnPath.ts;25;23
