@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { listEntities, getEntity, createEntity, updateEntity, deleteEntity } from '@/api/entities'
+import {
+  listEntities,
+  getEntity,
+  createEntity,
+  updateEntity,
+  deleteEntity,
+  type EntityPatch,
+} from '@/api/entities'
 import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
 import { useGitStore } from './git'
 
@@ -146,7 +153,7 @@ export const useEntitiesStore = defineStore('entities', () => {
   async function update(
     type: string,
     id: string,
-    data: Partial<Entity>,
+    data: EntityPatch,
     etag?: string
   ): Promise<Entity> {
     const entity = await updateEntity(type, id, data, etag)

@@ -24,6 +24,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   update: [value: string[]]
+  // Companion to `update`: a Map of selected-target ID → entity type.
+  // The unified PATCH builder needs `type` for every resource identifier
+  // (JSON:API §9). RelationPicker is the only widget that knows the
+  // type at pick time. Emitted on every `update` and on initial load.
+  'update:types': [types: Map<string, string>]
   'incoming-changed': [payload: RelationPickerIncomingState]
 }>()
 
@@ -137,16 +142,28 @@ function emitIncomingDiff() {
   emit('incoming-changed', { added, removed })
 }
 
+// Build a Map<id, type> from candidates for the current outgoing
+// selection. Used to feed DynamicForm's pickerTypes so the unified
+// PATCH builder can populate `type` per resource identifier without
+// guessing via `to[0]` or `id_prefix`.
+function buildOutgoingTypes(ids: string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const c of candidates.value) {
+    if (ids.includes(c.id)) out.set(c.id, c.type)
+  }
+  return out
+}
+
 function selectEntity(entity: Entity) {
   if (isIncoming.value) {
     incomingValue.value = isMulti.value
       ? [...incomingValue.value, entity.id]
       : [entity.id]
     emitIncomingDiff()
-  } else if (isMulti.value) {
-    emit('update', [...props.value, entity.id])
   } else {
-    emit('update', [entity.id])
+    const next = isMulti.value ? [...props.value, entity.id] : [entity.id]
+    emit('update', next)
+    emit('update:types', buildOutgoingTypes(next))
   }
   searchQuery.value = ''
   showDropdown.value = false
@@ -157,7 +174,9 @@ function removeEntity(entityId: string) {
     incomingValue.value = incomingValue.value.filter((id) => id !== entityId)
     emitIncomingDiff()
   } else {
-    emit('update', props.value.filter((id) => id !== entityId))
+    const next = props.value.filter((id) => id !== entityId)
+    emit('update', next)
+    emit('update:types', buildOutgoingTypes(next))
   }
 }
 
@@ -186,6 +205,12 @@ function handleEntityCreated(entity: Entity) {
 onMounted(async () => {
   await loadCandidates()
   await loadIncomingValue()
+  // Surface types for any pre-existing outgoing selection so the
+  // submit-time PATCH builder knows the type even when the user
+  // didn't touch this widget.
+  if (!isIncoming.value && props.value.length > 0) {
+    emit('update:types', buildOutgoingTypes(props.value))
+  }
 })
 
 // Close dropdown when clicking outside

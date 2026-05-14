@@ -717,6 +717,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	for _, edge := range outgoing {
 		rel := map[string]interface{}{
 			"id":        edge.To,
+			"type":      a.peerType(edge.To),
 			"direction": "outgoing",
 		}
 		if len(edge.Properties) > 0 {
@@ -736,6 +737,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		rel := map[string]interface{}{
 			"id":        edge.From,
+			"type":      a.peerType(edge.From),
 			"direction": "incoming",
 		}
 		if len(edge.Properties) > 0 {
@@ -794,7 +796,8 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 			peerID = edge.From
 		}
 		rel := map[string]interface{}{
-			"id": peerID,
+			"id":   peerID,
+			"type": a.peerType(peerID),
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties

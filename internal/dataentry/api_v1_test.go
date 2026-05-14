@@ -2822,6 +2822,9 @@ func TestV1GetRelationType_IncomingReturnsEdgeWithMeta(t *testing.T) {
 	if got := edges[0]["id"]; got != sourceID {
 		t.Errorf("incoming edge peer = %v, want %s", got, sourceID)
 	}
+	if got := edges[0]["type"]; got != "feature" {
+		t.Errorf("incoming edge peer type = %v, want %q", got, "feature")
+	}
 	meta, ok := edges[0]["meta"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected meta object on edge, got %T: %v", edges[0]["meta"], edges[0])
@@ -2862,8 +2865,42 @@ func TestV1EntityRelations_GroupsIncomingUnderInverseName(t *testing.T) {
 	if got := blockedBy[0]["id"]; got != sourceID {
 		t.Errorf("blockedBy[0].id = %v, want %s", got, sourceID)
 	}
+	if got := blockedBy[0]["type"]; got != "feature" {
+		t.Errorf("blockedBy[0].type = %v, want %q", got, "feature")
+	}
 	if got := blockedBy[0]["direction"]; got != "incoming" {
 		t.Errorf("blockedBy[0].direction = %v, want %q", got, "incoming")
+	}
+}
+
+// TestV1GetRelationType_OutgoingIncludesPeerType verifies the outgoing
+// path emits `type` per resource identifier — required by the SPA to
+// build JSON:API §9 resource identifiers without consulting the
+// schema or guessing from ID prefix. (TKT-ZEKO4 Step 0.)
+func TestV1GetRelationType_OutgoingIncludesPeerType(t *testing.T) {
+	app := newReverseRelationsTestApp(t)
+	sourceID, targetID := seedBlocksReverseFixture(t, app)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/features/"+sourceID+"/relations/blocks", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetRelationType(rec, req, "feature", sourceID, "blocks")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var edges []map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &edges); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 outgoing edge, got %d", len(edges))
+	}
+	if got := edges[0]["id"]; got != targetID {
+		t.Errorf("outgoing edge peer id = %v, want %s", got, targetID)
+	}
+	if got := edges[0]["type"]; got != "feature" {
+		t.Errorf("outgoing edge peer type = %v, want %q", got, "feature")
 	}
 }
 

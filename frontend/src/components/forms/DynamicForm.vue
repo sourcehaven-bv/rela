@@ -6,9 +6,15 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
-import type { PropertyDef, FormFieldOrRelation, Template } from '@/types'
-import { getTemplates, createRelation, updateRelationProperties, deleteRelation } from '@/api'
+import type { PropertyDef, FormFieldOrRelation, Template, ModernRelationsField } from '@/types'
+import { getTemplates, createRelation, deleteRelation, updateRelationProperties } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
+import {
+  buildRelationsPatch,
+  reshapeLegacyToModern,
+  OUTGOING_SUFFIX,
+  INCOMING_SUFFIX,
+} from './relationsPatch'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 import RelationCards from './RelationCards.vue'
@@ -40,6 +46,11 @@ const returnTo = ref<string | null>(null)
 // State
 const formData = ref<Record<string, unknown>>({})
 const relations = ref<Record<string, string[]>>({})
+// Per-relation `id -> entity type` map, fed by RelationPicker's
+// `update:types` emit. Required by the unified PATCH builder to emit
+// JSON:API §9 resource identifiers without guessing target types
+// via `to[0]` (which is wrong for polymorphic relations).
+const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
 const loading = ref(true)
 const saveGeneration = ref(0) // Incremented after save to reset RelationCards
@@ -332,8 +343,9 @@ async function handleSubmit() {
 
   saving.value = true
   try {
-    // Exclude card-managed relations from the entity update payload —
-    // those are saved separately via savePendingRelationCards()
+    // Card-managed relations are not put into the legacy
+    // `filteredRelations` IDs-only map — they're delivered through
+    // pendingCardChanges and the unified PATCH-with-relations shape.
     const cardRelations = new Set(
       fields.value
         .filter((f) => f.relation && f.widget === 'cards')
@@ -346,26 +358,63 @@ async function handleSubmit() {
       }
     }
 
+    // Build modern relations from card edits. If any outgoing card was
+    // touched, the entire body must use modern shape (`shape_mixed`
+    // 400). Reshape the legacy picker IDs via `pickerTypes`; if any
+    // picker target has no resolved type, fall back to legacy + warn
+    // (TKT-ZEKO4 Q5).
+    const modernRelations = buildRelationsPatch(pendingCardChanges.value)
+    const hasModernCardEntries = Object.keys(modernRelations).length > 0
+    let relationsPayload: Record<string, string[]> | ModernRelationsField = filteredRelations
+    if (hasModernCardEntries) {
+      const reshaped = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
+      if (reshaped) {
+        relationsPayload = { ...reshaped, ...modernRelations }
+      } else {
+        // Pathological form — surface and stay legacy for THIS save.
+        // Per-edge card meta is lost; user is told to reload to get
+        // fresh edge types from backend Step 0.
+        uiStore.error(
+          'Some related entities have unknown types. Card-only changes are not saved. Reload the form and try again.',
+        )
+        // Drop the outgoing card-edit Map entries so they aren't
+        // mistakenly cleared on success below.
+        for (const key of Array.from(pendingCardChanges.value.keys())) {
+          if (key.endsWith(OUTGOING_SUFFIX)) pendingCardChanges.value.delete(key)
+        }
+      }
+    }
+
     const payload: {
       id?: string
       prefix?: string
       properties: Record<string, unknown>
-      relations: Record<string, string[]>
+      relations: Record<string, string[]> | ModernRelationsField
       content?: string
     } = {
       properties: formData.value,
-      relations: filteredRelations,
+      relations: relationsPayload,
       content: content.value || undefined,
     }
 
     if (isEdit.value && props.entityId) {
-      await entitiesStore.update(formConfig.value.entity, props.entityId, payload)
-      // Save any pending relation card changes (adds, removes, property edits)
-      await savePendingRelationCards()
+      const updated = await entitiesStore.update(formConfig.value.entity, props.entityId, payload)
+      // Incoming-direction edits remain on the per-edge path; the
+      // unified wire format has no `direction:incoming` concept.
+      await savePendingIncomingChanges()
+      surfaceWarnings(updated.warnings)
       uiStore.success('Entity updated successfully')
     } else {
+      // Create path stays legacy: POST handler hard-codes
+      // `map[string][]string`, modern shape is not accepted. Cards
+      // never render in create mode (they require entityId), so
+      // `pendingCardChanges` is empty and relationsPayload is the
+      // legacy `filteredRelations`. The cast is safe by construction.
       Object.assign(payload, idControls.buildPayloadFields())
-      const entity = await entitiesStore.create(formConfig.value.entity, payload)
+      const entity = await entitiesStore.create(formConfig.value.entity, {
+        ...payload,
+        relations: filteredRelations,
+      })
 
       // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
       // For link_as=to, the relation is already included in relations.value (pre-filled)
@@ -445,6 +494,10 @@ function updateRelation(relation: string, value: string[]) {
   checkDirty()
 }
 
+function updateRelationTypes(relation: string, types: Map<string, string>) {
+  pickerTypes.value[relation] = types
+}
+
 // Pending relation card changes (for batch save)
 const pendingCardChanges = ref<Map<string, RelationCardState>>(new Map())
 
@@ -453,16 +506,16 @@ function updateRelationCards(relation: string, state: RelationCardState) {
   checkDirty()
 }
 
-// Bridge incoming-direction RelationPicker changes into the same pending-
-// changes map that RelationCards uses so savePendingRelationCards reconciles
-// them through the direction-aware create/delete path. Keyed with the
-// `-incoming` suffix that the save loop already understands. Pickers have
-// no editable relation-properties so `updated` is always empty.
+// Bridge incoming-direction RelationPicker changes into the pending-
+// changes map under an `-incoming` suffix. The unified PATCH wire
+// format has no `direction:incoming` concept, so these are NOT
+// merged into the entity PATCH — they're applied via the legacy
+// per-edge endpoints in savePendingIncomingChanges below.
 function updateIncomingPicker(
   relation: string,
   state: { added: Array<{ targetId: string }>; removed: string[] },
 ) {
-  pendingCardChanges.value.set(`${relation}-incoming`, {
+  pendingCardChanges.value.set(`${relation}${INCOMING_SUFFIX}`, {
     entries: [],
     added: state.added,
     removed: state.removed,
@@ -471,28 +524,47 @@ function updateIncomingPicker(
   checkDirty()
 }
 
-async function savePendingRelationCards() {
+// Apply incoming-direction edits via per-edge endpoints. The unified
+// PATCH wire format has no `direction:incoming` concept, so incoming
+// adds, removes, AND meta updates all stay on the per-edge path.
+// Outgoing edits were already saved as part of the unified PATCH body,
+// so the Map's outgoing entries are no-ops here; we filter by suffix
+// for clarity. After this returns, clear the whole map: both channels'
+// work is complete.
+async function savePendingIncomingChanges() {
   const entity = formConfig.value!.entity
   const entityId = props.entityId!
 
   await Promise.all(
-    Array.from(pendingCardChanges.value.entries()).map(async ([key, state]) => {
-      const relation = key.replace(/-outgoing$|-incoming$/, '')
-      const direction = key.endsWith('-incoming') ? 'incoming' : undefined
-      for (const targetId of state.removed) {
-        await deleteRelation(entity, entityId, relation, targetId, direction)
-      }
-      for (const add of state.added) {
-        await createRelation(entity, entityId, relation, add.targetId, add.meta, direction)
-      }
-      for (const upd of state.updated) {
-        await updateRelationProperties(entity, entityId, relation, upd.targetId, upd.meta, direction)
-      }
-    })
+    Array.from(pendingCardChanges.value.entries())
+      .filter(([key]) => key.endsWith(INCOMING_SUFFIX))
+      .map(async ([key, state]) => {
+        const relation = key.slice(0, -INCOMING_SUFFIX.length)
+        for (const targetId of state.removed) {
+          await deleteRelation(entity, entityId, relation, targetId, 'incoming')
+        }
+        for (const add of state.added) {
+          await createRelation(entity, entityId, relation, add.targetId, add.meta, 'incoming')
+        }
+        for (const upd of state.updated) {
+          await updateRelationProperties(entity, entityId, relation, upd.targetId, upd.meta, 'incoming')
+        }
+      }),
   )
 
   pendingCardChanges.value.clear()
   saveGeneration.value++
+}
+
+// Surface soft validation warnings from a mutation response as a
+// non-blocking toast. Per DEC-HWZHA, soft conditions (target type
+// mismatch, unknown meta key, required-meta unset, etc.) ride on the
+// 200 response rather than failing it. Without this, the conditions
+// would be invisible to the user.
+function surfaceWarnings(warnings: { code: string; path: string; detail: string }[] | undefined) {
+  if (!warnings || warnings.length === 0) return
+  const codes = [...new Set(warnings.map((w) => w.code))].join(', ')
+  uiStore.warning(`Saved with ${warnings.length} warning(s): ${codes}`)
 }
 
 function updateContent(value: string) {
@@ -663,6 +735,7 @@ onBeforeRouteLeave(async () => {
                   :entity-id="entityId"
                   :value="relations[field.relation] || []"
                   @update="updateRelation(field.relation!, $event)"
+                  @update:types="(types) => updateRelationTypes(field.relation!, types)"
                   @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
                 />
               </template>
