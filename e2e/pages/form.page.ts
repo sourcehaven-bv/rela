@@ -285,6 +285,74 @@ export class FormPage extends BasePage {
     })
   }
 
+  // --- Inline backtick autocomplete (TKT-2RCP) ---
+
+  /** Inline popup the markdown editor pops when the user types a
+   *  backtick in prose context. Rendered next to the editor textarea
+   *  (NOT teleported), so we scope to the editor container. */
+  get backtickPopup(): Locator {
+    return this.markdownEditorRoot.locator('.backtick-popup')
+  }
+
+  get backtickPopupOptions(): Locator {
+    return this.backtickPopup.locator('.backtick-popup-option')
+  }
+
+  get backtickPopupHint(): Locator {
+    return this.backtickPopup.locator('.backtick-popup-hint')
+  }
+
+  /** Type a single character into the editor at the current cursor.
+   *  Uses execCommand insertText so EasyMDE's CodeMirror sees a real
+   *  user-input event (mirrors the inputRead flow). Focuses the
+   *  CodeMirror inputField explicitly because Playwright's click on
+   *  `.CodeMirror` lands on the gutter wrapper, not the hidden
+   *  textarea that captures input events. */
+  async typeIntoEditor(text: string): Promise<void> {
+    await this.codeMirror.click()
+    await this.page.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cm = (document.querySelector('.CodeMirror') as any)?.CodeMirror
+      cm?.focus()
+    })
+    for (const ch of text) {
+      await this.page.evaluate((c) => document.execCommand('insertText', false, c), ch)
+    }
+  }
+
+  /** Shrink the inline-autocomplete open-delay to a small value for
+   *  e2e timing. Without this, the test depends on Playwright's
+   *  per-character `execCommand` latency to spread typing across the
+   *  default 600 ms grace window — fragile on fast runners. Call
+   *  before the editor mounts (i.e. before navigating to the form). */
+  async useFastAutocompleteDelay(delayMs = 30): Promise<void> {
+    await this.page.addInitScript((d) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(window as any).__BACKTICK_AUTOCOMPLETE_DELAY_MS__ = d
+    }, delayMs)
+  }
+
+  /** Clear the editor's buffer entirely. Useful when a form preloads a
+   *  template body and the test wants a known starting state. */
+  async clearEditorBuffer(): Promise<void> {
+    await this.codeMirror.click()
+    await this.page.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cm = (document.querySelector('.CodeMirror') as any)?.CodeMirror
+      if (cm) {
+        cm.setValue('')
+        cm.focus()
+        cm.setCursor({ line: 0, ch: 0 })
+      }
+    })
+  }
+
+  /** Wait for the inline autocomplete popup to appear. Default 1500 ms
+   *  (well above the 600 ms open delay). */
+  async waitForBacktickPopup(): Promise<void> {
+    await this.backtickPopup.waitFor({ state: 'visible', timeout: 1_500 })
+  }
+
   // --- Template selector ---
 
   get templateSelector(): Locator {

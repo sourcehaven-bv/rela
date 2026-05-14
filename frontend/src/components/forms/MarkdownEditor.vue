@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed, shallowRef } from 'vue'
 import EasyMDE from 'easymde'
 import 'easymde/dist/easymde.min.css'
 import EntityPickerModal from './EntityPickerModal.vue'
+import BacktickAutocompletePopup from './BacktickAutocompletePopup.vue'
 import { insertEntityRef } from './insertEntityRef'
+import {
+  useBacktickAutocomplete,
+  type SessionController,
+  type ReadonlySessionState,
+} from '@/composables/useBacktickAutocomplete'
+import { useSchemaStore } from '@/stores'
 
 const props = defineProps<{
   modelValue: string
@@ -15,11 +22,35 @@ const emit = defineEmits<{
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const editorRoot = ref<HTMLElement | null>(null)
 let editor: EasyMDE | null = null
 
 // The entity-reference picker (TKT-I5NO) is owned by the editor — opened
 // from the toolbar button, dismissed via emit('close') or after select.
 const pickerOpen = ref(false)
+
+// Inline backtick autocomplete (TKT-2RCP). Wired up after EasyMDE mounts;
+// torn down before EasyMDE unmounts. Uses a shallowRef because the
+// controller's nested reactive state shouldn't be re-proxied by Vue.
+const schemaStore = useSchemaStore()
+const autocomplete = shallowRef<SessionController | null>(null)
+// Editor bounding rect, refreshed when the autocomplete state changes —
+// used to position the popup relative to the editor root rather than the
+// viewport.
+const editorRect = ref<DOMRect | null>(null)
+const popupState = computed<ReadonlySessionState | null>(
+  () => autocomplete.value?.state ?? null,
+)
+function refreshEditorRect(): void {
+  editorRect.value = editorRoot.value?.getBoundingClientRect() ?? null
+}
+// Re-measure the editor on every anchor change so a scroll within the
+// editor (which shifts the popup's anchor pixel coords) gets the
+// correct parent-relative position.
+watch(
+  () => popupState.value?.anchor,
+  () => refreshEditorRect(),
+)
 
 onMounted(() => {
   if (!textareaRef.value) return
@@ -96,6 +127,31 @@ onMounted(() => {
       emit('update:modelValue', editor.value())
     }
   })
+
+  // Initialise the inline backtick autocomplete (TKT-2RCP). The
+  // composable owns its own CodeMirror subscriptions and runs them
+  // alongside the existing change handler.
+  //
+  // Tests can shrink the open-delay grace period to a few milliseconds
+  // by setting `window.__BACKTICK_AUTOCOMPLETE_DELAY_MS__` before the
+  // editor mounts. Production builds never set this, so the 600 ms
+  // default stands (RR-1629).
+  const w = window as Window & { __BACKTICK_AUTOCOMPLETE_DELAY_MS__?: number }
+  const testDelay =
+    typeof w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__ === 'number'
+      ? w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__
+      : undefined
+  autocomplete.value = useBacktickAutocomplete(
+    editor,
+    () => schemaStore.entityTypes,
+    testDelay !== undefined ? { openDelayMs: testDelay } : undefined,
+  )
+  // Refresh the popup's anchor reference rectangle whenever the editor
+  // resizes (fullscreen toggle, viewport changes). The bounding rect is
+  // also updated as the popup's `state.anchor` shifts; this just keeps
+  // the parent-relative conversion in sync.
+  refreshEditorRect()
+  window.addEventListener('resize', refreshEditorRect)
 })
 
 // Sync external changes to editor
@@ -135,20 +191,42 @@ onBeforeUnmount(() => {
   // can't fire against a null editor (RR-032O). The picker's own
   // onBeforeUnmount also aborts in-flight searches.
   pickerOpen.value = false
+  // Tear down the autocomplete BEFORE EasyMDE so its CodeMirror
+  // subscriptions are removed cleanly (TKT-2RCP).
+  autocomplete.value?.dispose()
+  autocomplete.value = null
+  window.removeEventListener('resize', refreshEditorRect)
   if (editor) {
     editor.toTextArea()
     editor = null
   }
 })
+
+function onPopupPick(idx: number): void {
+  if (!autocomplete.value) return
+  autocomplete.value.setHighlight(idx)
+  autocomplete.value.pick()
+}
+
+function onPopupHover(idx: number): void {
+  autocomplete.value?.setHighlight(idx)
+}
 </script>
 
 <template>
-  <div class="markdown-editor">
+  <div ref="editorRoot" class="markdown-editor">
     <textarea ref="textareaRef"/>
     <EntityPickerModal
       :open="pickerOpen"
       @select="onPickerSelect"
       @close="onPickerClose"
+    />
+    <BacktickAutocompletePopup
+      v-if="popupState"
+      :state="popupState"
+      :editor-rect="editorRect"
+      @pick="onPopupPick"
+      @hover="onPopupHover"
     />
   </div>
 </template>
@@ -156,6 +234,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .markdown-editor {
   width: 100%;
+  /* `position: relative` so the inline backtick autocomplete popup, which
+     uses `position: absolute` with editor-relative coords, anchors to the
+     editor instead of escaping up to the next positioned ancestor. */
+  position: relative;
 }
 
 .markdown-editor :deep(.EasyMDEContainer) {
