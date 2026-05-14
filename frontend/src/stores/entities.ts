@@ -154,9 +154,10 @@ export const useEntitiesStore = defineStore('entities', () => {
     type: string,
     id: string,
     data: EntityPatch,
-    etag?: string
+    etag?: string,
+    signal?: AbortSignal,
   ): Promise<Entity> {
-    const entity = await updateEntity(type, id, data, etag)
+    const entity = await updateEntity(type, id, data, etag, signal)
     cache.value.set(cacheKey(type, id), {
       entity,
       timestamp: Date.now(),

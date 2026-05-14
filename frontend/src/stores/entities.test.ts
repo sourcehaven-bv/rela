@@ -198,7 +198,8 @@ describe('Entities Store', () => {
         'ticket',
         'TKT-001',
         { properties: { title: 'Updated Title' } },
-        undefined
+        undefined,
+        undefined,
       )
       expect(result).toEqual(updatedEntity)
       expect(store.getCached('ticket', 'TKT-001')).toEqual(updatedEntity)
@@ -213,7 +214,8 @@ describe('Entities Store', () => {
         'ticket',
         'TKT-001',
         { properties: { title: 'Updated' } },
-        'etag-123'
+        'etag-123',
+        undefined,
       )
     })
   })

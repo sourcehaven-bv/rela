@@ -94,31 +94,34 @@ test.describe('Relation Cards', () => {
     }
   });
 
-  test('batch save: changes are not persisted until Save is clicked', async ({ appPage, api }) => {
+  test('autosave persists relation card text edits', async ({ appPage, api }) => {
+    // Was: 'batch save: changes are not persisted until Save is clicked'.
+    // After TKT-E6094 there is no explicit Save in edit mode; autosave
+    // fires automatically after a debounce. Assert the server reflects
+    // the edit after blur + the autosave PATCH lands.
     const rc = new RelationCardsPage(appPage);
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
     const card = rc.cardByTargetId(SEED.features.exportData);
     await expect(card).toBeVisible();
 
-    const original = await rc.getTextInputValue(card);
     const updated = 'batch save test reason';
     await rc.editTextInput(card, updated);
 
-    // The pending-edit lives only in the client until Save is clicked. We can't
-    // assert this through the rendered SPA — the SPA is what's holding the
-    // pending change — so query the server directly and confirm it still has
-    // the original value.
-    const before = await api.listRelations('features', SEED.features.authentication, 'blocks');
-    expect(before.find((r) => r.id === SEED.features.exportData)?.meta?.reason).toBe(original);
-
-    await rc.saveAndWaitForNavigation();
+    await appPage.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await appPage.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/v1/features/${SEED.features.authentication}`) &&
+        r.request().method() === 'PATCH',
+    );
 
     const after = await api.listRelations('features', SEED.features.authentication, 'blocks');
     expect(after.find((r) => r.id === SEED.features.exportData)?.meta?.reason).toBe(updated);
   });
 
-  test('removing a relation is only persisted on save', async ({ appPage, api }) => {
+  test('autosave persists relation card removal', async ({ appPage, api }) => {
+    // Was: 'removing a relation is only persisted on save'. Same
+    // TKT-E6094 rationale as above: autosave fires the PATCH directly.
     const rc = new RelationCardsPage(appPage);
     await rc.navigateToEdit('feature', SEED.features.authentication);
 
@@ -127,12 +130,11 @@ test.describe('Relation Cards', () => {
     const firstId = await rc.getFirstCardEntityId(tagged);
     await rc.clickRemoveFirstCardIn(tagged);
 
-    // Server-side assertion for the same reason as the batch-save test above:
-    // the SPA will happily show the card as gone regardless of persistence.
-    const before = await api.listRelations('features', SEED.features.authentication, 'tagged');
-    expect(before.some((r) => r.id === firstId)).toBeTruthy();
-
-    await rc.saveAndWaitForNavigation();
+    await appPage.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/v1/features/${SEED.features.authentication}`) &&
+        r.request().method() === 'PATCH',
+    );
 
     const after = await api.listRelations('features', SEED.features.authentication, 'tagged');
     expect(after.some((r) => r.id === firstId)).toBeFalsy();

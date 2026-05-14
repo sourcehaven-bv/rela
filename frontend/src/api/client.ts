@@ -60,12 +60,12 @@ class ApiClient {
     return response.data
   }
 
-  async patch<T>(url: string, data: unknown, etag?: string): Promise<T> {
+  async patch<T>(url: string, data: unknown, etag?: string, signal?: AbortSignal): Promise<T> {
     const headers: Record<string, string> = {}
     if (etag) {
       headers['If-Match'] = etag
     }
-    const response: AxiosResponse<T> = await this.client.patch(url, data, { headers })
+    const response: AxiosResponse<T> = await this.client.patch(url, data, { headers, signal })
     return response.data
   }
 

@@ -2,7 +2,7 @@
 id: PLAN-L9NL2
 type: planning-checklist
 title: 'Planning: Per-property + content auto-save in DynamicForm'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -49,6 +49,21 @@ status: in-progress
 5. **AC5 — Type in markdown body**: debounced PATCH with `{content: <body>}`. Indicator → saved. **Test**: vitest.
 6. **AC6 — Clear body**: empty out the body. PATCH fires with `{content: ""}` (TKT-6WLSW pointer-vs-string semantics). **Test**: vitest.
 
+### Relations
+
+R1. **AC-R1 — Relation widget edit autosaves**: edit a `cards` or `picker`
+relation widget. After debounce, a unified PATCH fires carrying the modern
+relations body (same wire shape TKT-ZEKO4 + TKT-GFQK landed). Indicator → saved.
+**Test**: vitest + e2e.
+
+R2. **AC-R2 — Pristine relation Map produces no body entry**: the composable is
+invoked while no relation has actually been touched. No PATCH body key is
+emitted for any relation (TKT-ZEKO4 Q6 invariant). **Test**: vitest.
+
+R3. **AC-R3 — Mixed property + relation edit**: type into a property AND edit a
+card in the same debounce window. ONE unified PATCH fires carrying both
+`properties` and `relations`. **Test**: vitest with fake timers.
+
 ### Failure modes
 
 7. **AC7 — 422 on a property**: server returns 422. The field shows its error inline; a revert button restores the last server-known value; other fields keep working. **Test**: vitest with mocked 422 response.
@@ -66,8 +81,8 @@ status: in-progress
 
 ### Form gating
 
-13. **AC13 — RelationCards forms keep Save**: when a form's config includes a `cards` relation widget, the Save button is preserved and `useAutoSave` is not mounted. **Test**: vitest on DynamicForm with mocked formConfig.
-14. **AC14 — Forms without RelationCards autosave**: a form with only field widgets uses autosave; no Save button visible. **Test**: vitest.
+13. **AC13 — DELETED**: was "RelationCards forms keep Save button". After TKT-GFQK, RelationCards forms save through the same unified PATCH as everything else, so there's no longer a reason to opt out per-widget.
+14. **AC14 — All edit-mode forms autosave**: a form in edit mode mounts `useAutoSave`. The explicit Save button is removed for all edit-mode forms. Create-mode forms keep the explicit submit. **Test**: vitest.
 
 ### Backend
 
@@ -173,12 +188,20 @@ lose A's dirty marker before the queued PATCH fires.
 Port from WIP with the following deltas:
 
 1. **Wire-format substitution**: replace WIP's `patchEntity(type, id, patch)` with `entitiesStore.update(type, id, patch)`. Behavioral equivalence — both call the same backend.
-2. **Warnings consumption**: when the response includes `warnings: [{code, path, detail}]`, the composable categorizes each by its `path`:
+2. **Warnings consumption**: when the response includes `warnings: [{code, path, detail, direction?}]`, the composable categorizes each by its `path`:
    - Path matches `/properties/<field>` or `/properties_unset/<index>` → attach to that field as a yellow hint via `fieldWarnings.value[field] = { code, detail }`. Indicator stays "saved".
    - Path matches `/content` → attach to content as a yellow hint via `contentWarning.value`.
-   - Other paths → log to console; no UI surface (relations warnings are handled by TKT-B9SXH).
+   - Path matches `/relations/<relType>` → attach to a per-relation
+warning map `relationWarnings.value[relType]`. DynamicForm renders these next to
+the affected widget.
 3. **Symbol sentinel for unset**: the WIP uses an internal `Symbol("unset")` sentinel to mark a field as "queued for unset" in the per-field pending map; preserve.
 4. **`commitImmediately()`**: returns a Promise that resolves when the pending queue drains. Used by the navigation guard.
+5. **Relations channel (new vs WIP)**: a single boolean flag
+`relationsDirty` (no per-relation debounce — relation events are coarser than
+keystrokes). On dirty + debounce fire, the next PATCH body includes `relations`
+constructed from `buildRelationsPatch` + `reshapeLegacyToModern` exactly as
+DynamicForm does today. The composable does NOT own `pendingCardChanges` — it
+takes a getter from the form so the same Map flows through.
 
 Public API the composable exposes:
 
@@ -197,6 +220,12 @@ Public API the composable exposes:
   scheduleFieldSave: (field: string, value: unknown) => void,
   scheduleUnset: (field: string) => void,
   scheduleContentSave: (content: string) => void,
+  // Mirrors the cards-changed / incoming-changed handler. Marks the
+  // relation Map dirty so the next debounce fire includes the modern
+  // relations field in the PATCH body. The composable does NOT own
+  // the Map — DynamicForm continues to own pendingCardChanges; this
+  // method just signals "kick the queue."
+  scheduleRelationsChange: () => void,
   commitImmediately: () => Promise<void>,
   revertField: (field: string) => void,
   revertContent: () => void,
@@ -222,19 +251,20 @@ provide/inject). For each field:
 
 **Layer 6 — `DynamicForm.vue` integration**:
 
-Add a `formAllowsAutosave(formConfig)` predicate: returns false if any widget is
-`cards` or `relations` (RelationCards / RelationPicker — TKT-B9SXH territory).
-Returns false in create mode.
+In edit mode (when `props.entityId` is set), mount `useAutoSave`. Create mode
+keeps the explicit submit.
 
-When predicate is true:
 - Mount `useAutoSave` with the entity's type/id.
 - On every property change in formData, call `scheduleFieldSave` (or `scheduleUnset` for empty values).
 - On every content change, call `scheduleContentSave`.
-- Render `AutoSaveIndicator` instead of the Save button.
-- Wire the Vue Router beforeEach guard to call `commitImmediately()` then await its promise before allowing the route change.
-
-When predicate is false:
-- Keep current explicit-Save behavior unchanged.
+- On every `cards-changed` / `incoming-changed` event, call
+`scheduleRelationsChange`. The composable's relations path reuses the unified
+PATCH builder TKT-ZEKO4/TKT-GFQK landed (`buildRelationsPatch`
+  + `reshapeLegacyToModern` + `inverseByRelation` map) so incoming widgets
+ride the same wire.
+- Replace the Save button with `AutoSaveIndicator` for edit-mode forms.
+- Wire the Vue Router beforeEach guard to call `commitImmediately()` then
+await its promise before allowing the route change.
 
 **Layer 7 — `MarkdownEditor.vue` integration**:
 
@@ -328,8 +358,13 @@ tests; AC12 (navigation guard) is an e2e in Playwright.
 
 **Risks:**
 
-1. **Risk: DynamicForm regression — autosave-eligible vs not detection misclassifies a form, breaking either save flow.**
-   - **Mitigation**: explicit `formAllowsAutosave` predicate with a unit test enumerating widget types. Forms with `cards` widget keep current Save behavior; forms without it autosave. AC13 and AC14 lock this in.
+1. **Risk: relation auto-save reuses the unified PATCH builder, but the
+builder's pristine-card invariant (TKT-ZEKO4) assumed user-driven saves.
+Autosave may invoke it with a stale Map and silently wipe relations.**
+   - **Mitigation**: the builder already guards with the pristine check
+(`added.length + removed.length + updated.length > 0`). Reuse the same Map; do
+NOT clear or re-seed entries from autosave. Add a test that verifies a pristine
+relation Map produces zero body entries when invoked from the composable.
 2. **Risk: dirty registry leaks fields across routes when the user navigates without committing.**
    - **Mitigation**: `commitImmediately()` runs before route change; bounded `dirtyWindowMs` (1500ms) on the registry expires stale entries. AC11 + AC12.
 3. **Risk: SSE event arrives mid-PATCH, frontend merges stale data over the just-saved value.**
@@ -364,11 +399,364 @@ For enhancements: identify what documentation needs updating.
 - [x] `frontend/CLAUDE.md` — composables + components index update for `useAutoSave`, `dirtyFormRegistry`, `AutoSaveIndicator`
 - [x] README.md — N/A
 - [x] API docs — `internal/openapi/openapi.yaml` regenerated for `properties_unset`
-- [ ] N/A — Internal change, no user-facing docs needed
+- [x] N/A — Internal change, no user-facing docs needed
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** *<!-- to be filled after /design-review -->*
+**Design Review Findings:** rewritten plan absorbs the addendum below; the
+following decisions resolve all design-review findings (C1-C4, S1-S7).
+
+---
+
+## Design Review Addendum (absorbing critical + significant findings)
+
+### C1 — Backend `properties_unset` insertion in the modern PATCH handler
+
+The current handler is Phase A (validate relations) → Phase B (entity update) →
+Phase C (apply relations). `properties_unset` belongs at the end of Phase B
+alongside `properties` and `content`.
+
+Concrete change in `handleV1UpdateEntity`:
+
+```go
+var req struct {
+    Properties      map[string]interface{} `json:"properties,omitempty"`
+    PropertiesUnset []string               `json:"properties_unset,omitempty"`
+    Content         *string                `json:"content,omitempty"`
+    Relations       V1RelationsField       `json:"relations,omitempty"`
+}
+
+// ... Phase A ...
+
+// Phase B: entity update
+if req.Properties != nil {
+    for k, v := range req.Properties {
+        entity.Properties[k] = v
+    }
+}
+for i, k := range req.PropertiesUnset {
+    if _, declared := s.Meta.Entities[entity.Type].Properties[k]; !declared {
+        warnings = append(warnings, Warning{
+            Code:   "unknown_property_unset_key",
+            Path:   fmt.Sprintf("/properties_unset/%d", i),
+            Detail: fmt.Sprintf("property %q is not declared on entity type %q", k, entity.Type),
+        })
+        // The delete is still a silent no-op; analyze flags the stray key.
+    }
+    delete(entity.Properties, k)
+}
+if req.Content != nil {
+    entity.Content = *req.Content
+}
+entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
+// ... rest unchanged ...
+```
+
+`delete()` on a nil map is a no-op in Go; no nil-guard needed. "Unknown" means
+"not declared in the metamodel for this entity type" (allowlist check). A key
+that's just absent from `entity.Properties` but IS declared in the metamodel is
+silent — the user might be clearing an already-empty optional field.
+
+### C2 — Relations bundling decision table
+
+| Fire trigger | What's in the PATCH body |
+|---|---|
+| `fireProperty(p)` only | `{properties: {p: v}}` + (if `relationsDirty`) `{relations: <built>}` |
+| `fireContent()` only | `{content: ...}` + (if `relationsDirty`) `{relations: <built>}` |
+| `fireRelations()` only (no per-property timer is firing) | `{relations: <built>}` only |
+| After bundle ships successfully | clear `relationsDirty` |
+| `buildRelationsPatch(...)` returns `{}` (pristine) | omit `relations` key entirely from the body |
+
+`relationsDirty` is a single boolean. `scheduleRelationsChange()` sets it and
+starts/refreshes a relations debounce timer (default 800ms, same as
+property/content). On any fire, the composable bundles relations IFF
+`relationsDirty === true`. After a successful save that included a relations
+body, `relationsDirty = false`.
+
+Rationale for a single boolean (not per-relation): the cards-changed event is
+coarser than keystrokes (one event per row add/remove/edit), debounce flattens
+the bursts anyway, and the wire's `buildRelationsPatch` already does
+per-relation pruning via the pristine-card invariant. A per-relation map of
+dirty flags would just duplicate that.
+
+### C3 — Warning path → widget id mapping with TKT-GFQK direction
+
+The composable accepts a `inverseToCanonical: Map<string, string>` argument
+built by the form. The form constructs it from the same `fields.value` loop that
+builds `inverseByRelation`, but inverted:
+
+```ts
+const inverseToCanonical = new Map<string, string>()
+for (const f of fields.value) {
+  if (!f.relation) continue
+  const inverse = schemaStore.getInverseName(f.relation)
+  if (inverse) inverseToCanonical.set(inverse, f.relation)
+}
+```
+
+Warning categorizer in `useAutoSave.ts`:
+
+```ts
+function categorizeWarning(w: Warning) {
+  const m = w.path?.match(/^\/relations\/([^/]+)/)
+  if (m) {
+    const bodyKey = m[1]
+    const direction = w.direction || 'outgoing'
+    const canonical = direction === 'incoming'
+      ? inverseToCanonical.get(bodyKey) ?? bodyKey
+      : bodyKey
+    relationWarnings.value[`${canonical}-${direction}`] = w
+    return
+  }
+  // /properties/<field> or /properties_unset/<i> → fieldWarnings
+  // /content → contentWarning
+}
+```
+
+The widget id convention is `${relation}-${direction}`, matching the key shape
+`pendingCardChanges` already uses. Add a typed helper:
+
+```ts
+// frontend/src/components/forms/widgetId.ts
+export type WidgetId = `${string}-outgoing` | `${string}-incoming`
+export function widgetId(rel: string, dir: 'outgoing' | 'incoming' = 'outgoing'): WidgetId {
+  return `${rel}-${dir}`
+}
+```
+
+Used by DynamicForm, the warning categorizer, and tests.
+
+### C4 — `commitImmediately` return type, timeout, abort
+
+```ts
+export interface CommitResult {
+  settled: boolean       // true if all chained work resolved before timeout
+  error?: string          // non-empty when any save in the chain rejected
+}
+
+function commitImmediately(timeoutMs = 10_000): Promise<CommitResult> {
+  // Flush all per-property timers.
+  for (const p of Object.keys(timers)) {
+    clearTimeout(timers[p]); fireProperty(p)
+  }
+  if (contentTimer) { clearTimeout(contentTimer); contentTimer = null; fireContent() }
+  if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null; fireRelations() }
+
+  return new Promise<CommitResult>((resolve) => {
+    const t = setTimeout(() => {
+      abortInFlight() // AbortController.signal handed to entitiesStore.update
+      resolve({ settled: false, error: 'timeout' })
+    }, timeoutMs)
+    queueTail
+      .then(() => resolve({ settled: true }))
+      .catch((err) => resolve({ settled: true, error: String(err?.message ?? err) }))
+      .finally(() => clearTimeout(t))
+  })
+}
+```
+
+The composable owns the timeout. `abortInFlight()` cancels any currently-running
+fetch via an AbortController whose signal is passed into `entitiesStore.update`.
+(Requires extending `entitiesStore.update` to accept a signal.)
+
+Navigation guard in DynamicForm:
+
+```ts
+onBeforeRouteLeave(async () => {
+  const result = await autoSave.commitImmediately()
+  if (!result.settled || result.error) {
+    return await confirm({
+      title: 'Unsaved changes',
+      message: result.error ?? 'Some changes are still saving.',
+      confirmLabel: 'Leave anyway',
+      danger: true,
+    })
+  }
+  return true
+})
+```
+
+### S1 — SSE subscription + mergeServerResponse + incoming-widget refresh
+
+DynamicForm subscribes to `entity:updated` for its own entity:
+
+```ts
+const { onEvent } = useEvents()
+const stopSse = onEvent('entity:updated', async (data) => {
+  if (data?.id !== props.entityId) return
+  // Force-refetch (bypass cache); merge non-dirty fields.
+  const refreshed = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, true)
+  autoSave.mergeServerResponse(refreshed)
+})
+onBeforeUnmount(stopSse)
+```
+
+`mergeServerResponse` skips fields where `isDirty(field)` (own composable) OR
+`anyFormDirty(entityId, field)` (cross-form dirty registry).
+
+**Incoming widget refresh is out of scope for v1.** Incoming relations don't
+appear in `entity.relations` (which is outgoing-only). SSE- triggered refresh of
+`RelationCards` / `RelationPicker` incoming widgets would require the widget to
+re-fetch its peer list and a separate dirty check inside the widget. Tracked as
+follow-up. Document the limitation in the user-facing docs: "edits to incoming
+relations from another tab require a page refresh to appear."
+
+### S2 — ETag concurrency story
+
+The composable does NOT send `If-Match`. Rationale: the FIFO chain serializes
+all PATCHes per entity, so within one composable instance two writes never
+collide. Cross-tab races are resolved by the SSE + dirty registry merge (S1);
+last-write-per-field-wins is acceptable for autosave UX. If a future feature
+needs optimistic concurrency, the ETag plumbing is already in
+`entitiesStore.update` — a caller can opt in.
+
+Document explicitly in the composable header comment.
+
+### S3 — Dirty registry lifecycle on route change
+
+`onScopeDispose` calls `commitImmediately()` synchronously, awaits via the
+navigation guard, then unregisters:
+
+```ts
+onScopeDispose(async () => {
+  await autoSave.commitImmediately()
+  unregisterDirty()
+})
+```
+
+Because `onBeforeRouteLeave` is async and runs BEFORE unmount, the flush happens
+first; `onScopeDispose` is the safety net for unusual unmount paths (component
+swap, programmatic destroy). No deferred eviction needed in the registry itself
+— keep the WIP registry's `registerForm()` returning a synchronous unregister.
+
+### S4 — Drop `formAllowsAutosave` references
+
+The plan's earlier text (lines 26, 110) about a `formAllowsAutosave` predicate
+is obsolete and should be ignored. The actual rule is:
+
+- **Edit mode** (`props.entityId` set): autosave is mounted, Save button is hidden, `AutoSaveIndicator` is shown.
+- **Create mode** (`props.entityId` undefined): autosave is NOT mounted, Save button stays.
+- **Incoming widget on a relation without `inverse:`**: load-time pre-flight already warns the user; autosave does NOT gate on this. The save will throw at `buildRelationsPatch` if the user edits the affected widget, and the composable surfaces it as a relation-warning error. Same behavior as manual save.
+
+### S5 — `lastSeenServer` only updated from server responses
+
+The WIP code wrote `lastSeenServer[property] = entry.value` (client- sent value)
+after a successful save. This is wrong when the server applies automations. Fix
+in the port:
+
+```ts
+// After successful save:
+const response = await entitiesStore.update(...)
+mergeServerResponse(response)  // <- this rewrites lastSeenServer
+// Do NOT manually set lastSeenServer here.
+```
+
+`mergeServerResponse` walks the server response and writes `lastSeenServer[k] =
+v` for every property in the response, regardless of whether the property is
+currently dirty. Only the `applyServerProperty` side skips dirty fields. This
+decouples no-op suppression from the client-sent value and surfaces
+automation-derived drift correctly.
+
+### S6 — Clear semantics per property type
+
+Decision lives in DynamicForm's `updateField` wrapper:
+
+```ts
+function updateField(property: string, value: unknown) {
+  formData.value[property] = value
+  const def = entityType.value?.properties[property]
+  const cleared = isClearedForType(value, def)
+  if (cleared) {
+    autoSave.scheduleUnset(property)
+  } else {
+    autoSave.scheduleFieldSave(property, value)
+  }
+}
+
+function isClearedForType(value: unknown, def: PropertyDef | undefined): boolean {
+  if (def?.type === 'boolean') return false  // false is a value, not unset
+  if (Array.isArray(value)) return value.length === 0
+  return value === '' || value === null || value === undefined
+}
+```
+
+### S7 — AC4 scope: global indicator, not per-field
+
+Reword AC4 to acknowledge the global indicator:
+
+> AC4 — Two edits to different fields: type into A, then B before A's
+> debounce. Two PATCHes serialize through the FIFO queue. The global
+> indicator coalesces the sequence (e.g., saving → saving → saved) — there
+> is no per-field "saving" state in v1. Per-field state is the error +
+> revert affordance; per-field "saving" is a follow-up.
+
+This matches the WIP's exposed API and avoids over-promising.
+
+### Minor fixes incorporated
+
+- N1: AC1 sub-test for `MIN_SAVING_VISIBLE_MS` — rapid second keystroke during the floor resets it; no flicker.
+- N2: pendingEntry as discriminated union (`{kind: 'set', value} | {kind: 'unset'}`) — cleaner than `Symbol` sentinel; preserved internally.
+- N4: AC18 added — PATCH with properties + properties_unset + relations together applies in order.
+
+### AC18 (new)
+
+PATCH body containing `properties`, `properties_unset`, AND `relations` applies
+in order:
+1. Property upserts merge into `entity.Properties`.
+2. `properties_unset` keys delete from `entity.Properties`.
+3. Entity is written via `entityManager.UpdateEntity`.
+4. Phase C applies relations.
+
+Test: Go integration test with a metamodel having a required property and an
+optional one; PATCH that sets the required + unsets the optional + adds a
+relation; verify all three apply.
+
+---
+
+## Updated public API surface
+
+```ts
+// Composable signature
+interface AutoSaveOptions {
+  getEntityType: () => string
+  getEntityId: () => string | undefined  // may be undefined during create
+  debounceMs?: number
+  dirtyWindowMs?: number
+  formData: Ref<Record<string, unknown>>
+  contentRef: Ref<string>
+  // New for relations channel:
+  inverseToCanonical: Map<string, string>
+  buildRelationsBody: () => ModernRelationsField  // closure that calls buildRelationsPatch
+  // Apply callbacks:
+  applyServerProperty: (property: string, value: unknown) => void
+  applyServerContent: (content: string) => void
+  onError: (msg: string) => void
+}
+
+interface AutoSave {
+  status: ComputedRef<'idle' | 'saving' | 'saved' | 'error'>
+  lastError: ComputedRef<string | null>
+  inFlightCount: ComputedRef<number>
+  pendingCount: ComputedRef<number>
+  fieldErrors: ComputedRef<Record<string, string>>
+  fieldWarnings: ComputedRef<Record<string, Warning>>
+  contentError: ComputedRef<string | null>
+  contentWarning: ComputedRef<Warning | null>
+  relationWarnings: ComputedRef<Record<WidgetId, Warning>>  // new
+  isDirty: (field: string) => boolean
+  isContentDirty: () => boolean
+  isRelationsDirty: () => boolean  // new
+  scheduleFieldSave: (field: string, value: unknown) => void
+  scheduleUnset: (field: string) => void
+  scheduleContentSave: (content: string) => void
+  scheduleRelationsChange: () => void  // new
+  commitImmediately: (timeoutMs?: number) => Promise<CommitResult>
+  revertField: (field: string) => void
+  revertContent: () => void
+  recordServerSnapshot: (entity: Entity) => void
+  mergeServerResponse: (entity: Entity) => void
+}
+```

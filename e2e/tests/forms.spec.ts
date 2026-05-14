@@ -164,10 +164,18 @@ test.describe('Edit Form - Default Relation Picker Save (BUG-UNEBR regression)',
     const formPage = new FormPage(appPage);
     await formPage.navigateToEditForm('task', taskId!);
 
+    // After TKT-E6094, edit forms autosave on debounce. Arm the
+    // PATCH waiter BEFORE the picker action so the response can't
+    // land before we start listening.
+    const patchPromise = appPage.waitForResponse(
+      (r) => r.url().includes(`/api/v1/tasks/${taskId!}`) && r.request().method() === 'PATCH',
+      { timeout: 5000 },
+    );
+
     // Add the second feature via the `implements` relation picker.
     await formPage.addRelation('Implements Feature', featureBId!);
 
-    const response = await formPage.saveAndWaitForPatch('tasks', taskId!);
+    const response = await patchPromise;
     expect(response.status()).toBe(200);
 
     const updated = await api.getEntity('tasks', taskId!);
