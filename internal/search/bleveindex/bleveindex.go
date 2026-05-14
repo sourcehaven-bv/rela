@@ -112,6 +112,36 @@ func (idx *Index) EntityPut(e *entity.Entity) error {
 	return idx.bumpLastModified(e.UpdatedAt)
 }
 
+// IndexBatch indexes every entity in a single Bleve batch and bumps
+// LastModified once at the end. Use this for initial backfill where
+// N round-trips through EntityPut would be O(N) Bleve transactions.
+// Returns the number of entities successfully written and the first
+// error (if any). Subsequent entities are not attempted on error.
+func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
+	if len(entities) == 0 {
+		return 0, nil
+	}
+	batch := idx.index.NewBatch()
+	var latest time.Time
+	for _, e := range entities {
+		if err := batch.Index(e.ID, entityToDoc(e)); err != nil {
+			return 0, fmt.Errorf("bleveindex: batch index %s: %w", e.ID, err)
+		}
+		if e.UpdatedAt.After(latest) {
+			latest = e.UpdatedAt
+		}
+	}
+	if err := idx.index.Batch(batch); err != nil {
+		return 0, fmt.Errorf("bleveindex: commit batch: %w", err)
+	}
+	if !latest.IsZero() {
+		if err := idx.bumpLastModified(latest); err != nil {
+			return len(entities), err
+		}
+	}
+	return len(entities), nil
+}
+
 // EntityDelete removes an entity from the search index.
 func (idx *Index) EntityDelete(id string) error {
 	if err := idx.index.Delete(id); err != nil {

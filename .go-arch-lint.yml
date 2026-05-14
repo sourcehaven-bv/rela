@@ -263,6 +263,7 @@ deps:
       - app
       - autocascade
       - automation
+      - bleveindex
       - config
       - dataentryconfig
       - entitymanager
@@ -275,7 +276,6 @@ deps:
       - schema
       - script
       - search
-      - searchparser
       - state
       - storage
       - store

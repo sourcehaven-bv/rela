@@ -135,25 +135,6 @@ func ParseQuery(query string) *SearchQuery {
 	return sq
 }
 
-// SplitFreeText splits a free-text query into fuzzy words and exact phrases.
-// Quoted substrings become phrases; everything else becomes a word.
-// Used by search backends that need the words/phrases distinction when they
-// receive a single Query.Text string.
-func SplitFreeText(text string) (words, phrases []string) {
-	for _, token := range tokenize(text) {
-		if strings.HasPrefix(token, "\"") && strings.HasSuffix(token, "\"") {
-			if phrase := strings.Trim(token, "\""); phrase != "" {
-				phrases = append(phrases, phrase)
-			}
-			continue
-		}
-		if token != "" {
-			words = append(words, token)
-		}
-	}
-	return words, phrases
-}
-
 // tokenize splits a query string into tokens, preserving quoted strings
 func tokenize(query string) []string {
 	var tokens []string
