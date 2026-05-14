@@ -115,12 +115,19 @@ type RelationOptions struct {
 }
 
 // EntityManager provides the high-level write API for entities and relations.
-// Implementations run automations, validate, and may add policy concerns
-// (ACL, audit, etc.) on top of the underlying Store.
 //
-// Read operations are intentionally NOT on this interface today — consumers
-// read directly from store.Store. If the manager needs to enforce read
-// policies later, reads can be added here.
+// **Transitional.** This is a producer-side interface (defined alongside
+// its sole implementation, [Manager]), which the project explicitly
+// avoids per CLAUDE.md "consumer-side interfaces" rule. It exists today
+// because the legacy [internal/workspace] shim returns it from
+// `Workspace.Manager()` and several call sites depend on it. As call
+// sites are migrated off workspace, each one should declare its own
+// narrow consumer-side interface naming only the methods it invokes.
+// This interface is scheduled for removal after TKT-64R3 deletes the
+// workspace shim.
+//
+// Read operations are intentionally NOT on this interface — consumers
+// read directly from [store.Store].
 type EntityManager interface {
 	// CreateEntity creates a new entity, running on-create automations.
 	CreateEntity(ctx context.Context, e *entity.Entity, opts CreateOptions) (*CreateResult, error)
