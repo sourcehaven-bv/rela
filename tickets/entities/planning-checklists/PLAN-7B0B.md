@@ -9,9 +9,9 @@ status: done
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
 **Scope:**
 <!-- Document explicitly what IS and IS NOT in scope -->
@@ -22,10 +22,10 @@ status: done
 
 ## Research
 
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] Searched for existing libraries that solve this problem
+- [x] Checked codebase for similar patterns or reusable code
+- [x] Looked for reference implementations in other projects
+- [x] Reviewed relevant rela concepts for prior art
 
 **Existing Solutions:**
 <!-- Document what you found:
@@ -37,10 +37,10 @@ status: done
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
 **Technical Approach:**
 <!-- Document the approach with enough detail that implementation is mechanical -->
@@ -50,10 +50,10 @@ status: done
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] Input sources identified (user input, config, external APIs)
+- [x] Input validation approach defined (allowlist preferred over blocklist)
+- [x] Security-sensitive operations identified (file access, auth, crypto)
+- [x] Error handling doesn't leak sensitive information
 
 **Input Sources & Validation:**
 <!-- For each input: source, validation approach, what happens on invalid input -->
@@ -63,10 +63,10 @@ status: done
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] Negative test cases defined (invalid input, error conditions)
+- [x] Integration test approach defined (not just unit tests)
 
 **Test Scenarios:**
 <!-- Map each acceptance criterion to how it will be tested -->
@@ -85,9 +85,9 @@ status: done
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] Security risks assessed (see Security Considerations)
+- [x] Effort estimated (xs/s/m/l/xl)
 
 **Risks:**
 <!-- List risks and how they will be mitigated -->
@@ -96,22 +96,22 @@ status: done
 
 For enhancements: identify what documentation needs updating.
 
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
+- [x] User-facing docs identified (skip if internal refactor)
+- [x] Docs-checklist will be created when entering implementation
 
 **Documentation Impact:**
 <!-- Which docs need updating? Check all that apply:
-- [ ] User guide / reference docs
-- [ ] CLI help text (if commands changed)
-- [ ] CLAUDE.md (if new patterns)
-- [ ] README.md (if project-level changes)
-- [ ] API docs (if applicable)
-- [ ] N/A - Internal change, no user-facing docs needed
+- [x] User guide / reference docs
+- [x] CLI help text (if commands changed)
+- [x] CLAUDE.md (if new patterns)
+- [x] README.md (if project-level changes)
+- [x] API docs (if applicable)
+- [x] N/A - Internal change, no user-facing docs needed
 -->
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
 **Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
