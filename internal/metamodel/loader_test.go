@@ -1802,6 +1802,190 @@ func TestLoad_AllShippedMetamodels(t *testing.T) {
 	}
 }
 
+// Inverse-name validation tests (TKT-4VLN).
+//
+// `inverse:` on a RelationDef is a free-form string. The loader must
+// reject two failure modes so downstream consumers (TKT-GFQK's
+// unified-PATCH inverse-name resolver) can rely on the lookup being
+// unambiguous:
+//
+//   - Two relations declaring the same `inverse:` ID
+//     (`inverse_name_collision`).
+//   - A relation declaring `inverse: X` where `X` is also the name of
+//     a separate canonical relation (`inverse_shadows_canonical`).
+//
+// The symmetric-self-inverse case (`symmetric: true` AND
+// `inverse: <self>`) is the one allowed name overlap.
+
+func TestParse_InverseNameCollision_Rejected(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "D-"
+    properties:
+      title:
+        type: string
+        required: true
+relations:
+  blocks:
+    label: blocks
+    from: [doc]
+    to: [doc]
+    inverse: blockedBy
+  prevents:
+    label: prevents
+    from: [doc]
+    to: [doc]
+    inverse: blockedBy
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "inverse_name_collision") {
+		t.Errorf("expected inverse_name_collision in error, got: %v", err)
+	}
+	// Both offending relations should be named.
+	if !strings.Contains(err.Error(), `"blocks"`) || !strings.Contains(err.Error(), `"prevents"`) {
+		t.Errorf("error should name both colliding relations: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"blockedBy"`) {
+		t.Errorf("error should name the duplicate inverse: %v", err)
+	}
+}
+
+func TestParse_InverseShadowsCanonical_Rejected(t *testing.T) {
+	// `r1`'s inverse is named `r2`, AND a separate canonical `r2` exists.
+	// The metamodel author likely didn't intend the shadowing — reject.
+	yaml := `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "D-"
+    properties:
+      title:
+        type: string
+        required: true
+relations:
+  r1:
+    label: r1
+    from: [doc]
+    to: [doc]
+    inverse: r2
+  r2:
+    label: r2
+    from: [doc]
+    to: [doc]
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "inverse_shadows_canonical") {
+		t.Errorf("expected inverse_shadows_canonical in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"r1"`) || !strings.Contains(err.Error(), `"r2"`) {
+		t.Errorf("error should name both the declaring and shadowed relation: %v", err)
+	}
+}
+
+func TestParse_SymmetricSelfInverse_OK(t *testing.T) {
+	// `symmetric: true` with `inverse: <self>` is the intended way to
+	// express "this relation is its own inverse". Must load.
+	yaml := `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "D-"
+    properties:
+      title:
+        type: string
+        required: true
+relations:
+  related-to:
+    label: related to
+    from: [doc]
+    to: [doc]
+    symmetric: true
+    inverse: related-to
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	owner, ok := m.InverseOwner("related-to")
+	if !ok {
+		t.Fatal("symmetric self-inverse should populate InverseOwner")
+	}
+	assertEqual(t, owner, "related-to")
+}
+
+func TestInverseOwner_PopulatedOnValidLoad(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "D-"
+    properties:
+      title:
+        type: string
+        required: true
+relations:
+  blocks:
+    label: blocks
+    from: [doc]
+    to: [doc]
+    inverse: blockedBy
+  affects:
+    label: affects
+    from: [doc]
+    to: [doc]
+    inverse: affectedBy
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+
+	owner, ok := m.InverseOwner("blockedBy")
+	if !ok {
+		t.Fatal("expected blockedBy to be in InverseOwner")
+	}
+	assertEqual(t, owner, "blocks")
+
+	owner, ok = m.InverseOwner("affectedBy")
+	if !ok {
+		t.Fatal("expected affectedBy to be in InverseOwner")
+	}
+	assertEqual(t, owner, "affects")
+
+	// Canonical name should NOT appear in the inverse map.
+	if _, ok := m.InverseOwner("blocks"); ok {
+		t.Error("canonical relation name should not appear in InverseOwner")
+	}
+
+	// Unknown name returns false.
+	if _, ok := m.InverseOwner("does-not-exist"); ok {
+		t.Error("unknown inverse name should return ok=false")
+	}
+}
+
+func TestInverseOwner_AbsentWhenNoInverseDeclared(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "D-"
+    properties:
+      title:
+        type: string
+        required: true
+relations:
+  r:
+    label: r
+    from: [doc]
+    to: [doc]
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	if _, ok := m.InverseOwner("r"); ok {
+		t.Error("relation without declared inverse should not appear in InverseOwner")
+	}
+}
+
 // findRepoRoot walks up from the test's working directory until it
 // finds a directory containing go.mod, then returns it. Fails the test
 // if go.mod is never found — indicates the package was moved without
