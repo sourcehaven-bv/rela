@@ -5,7 +5,7 @@ title: Migrate RelationCards + RelationPicker to unified PATCH-with-relations wi
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: review
 ---
 
 ## Problem
