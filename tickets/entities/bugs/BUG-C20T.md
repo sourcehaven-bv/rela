@@ -2,6 +2,7 @@
 id: BUG-C20T
 type: bug
 title: DeleteEntity silently swallows non-NotFound relation-delete errors
+description: Manager.DeleteEntity and cascadeHost.DeleteEntity silently swallow non-ErrNotFound relation-delete errors, leaving dangling relations when the entity-delete succeeds. Caller sees no error.
 priority: medium
 effort: s
 status: backlog
