@@ -52,6 +52,18 @@ func (a *App) getEntity(id string) (*entity.Entity, bool) {
 	return e, true
 }
 
+// peerType returns the entity type for the peer ID on the other end of
+// a relation edge, or empty string if the peer can't be resolved. Used
+// by the relation GET handlers to emit a `type` field per edge so SPA
+// clients can construct JSON:API §9 resource identifiers without
+// guessing.
+func (a *App) peerType(id string) string {
+	if e, ok := a.getEntity(id); ok {
+		return e.Type
+	}
+	return ""
+}
+
 // outgoingRelations returns all outgoing relations for id using the
 // background context. Prefer outgoingRelationsCtx when a request context
 // is in scope.

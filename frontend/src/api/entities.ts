@@ -1,5 +1,14 @@
 import { api } from './client'
-import type { Entity, CreateEntity, ListResponse, ListParams, AnalyzeResult, Template, RelationEntry } from '@/types'
+import type {
+  Entity,
+  CreateEntity,
+  ListResponse,
+  ListParams,
+  AnalyzeResult,
+  Template,
+  RelationEntry,
+  ModernRelationsField,
+} from '@/types'
 import { useSchemaStore } from '@/stores/schema'
 
 function getPlural(type: string): string {
@@ -27,10 +36,18 @@ export async function createEntity(type: string, entity: CreateEntity): Promise<
   return api.post<Entity>(`/${getPlural(type)}`, entity)
 }
 
+// EntityPatch is the union of legacy IDs-only and modern JSON:API §9
+// relation shapes the unified PATCH endpoint accepts. The body must
+// not mix shapes (`shape_mixed` 400); the SPA's body-assembly helper
+// in DynamicForm ensures all-modern-or-all-legacy.
+export type EntityPatch = Omit<Partial<Entity>, 'relations'> & {
+  relations?: Record<string, string[]> | ModernRelationsField
+}
+
 export async function updateEntity(
   type: string,
   id: string,
-  patch: Partial<Entity>,
+  patch: EntityPatch,
   etag?: string
 ): Promise<Entity> {
   return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag)

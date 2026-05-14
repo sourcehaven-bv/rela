@@ -12,13 +12,11 @@ import {
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
 import type { PropertyDef } from '@/types/schema'
+import type { RelationCardState } from './relationsPatch'
 
-export interface RelationCardState {
-  entries: RelationEntry[]
-  added: Array<{ targetId: string; meta?: Record<string, unknown> }>
-  removed: string[]
-  updated: Array<{ targetId: string; meta: Record<string, unknown> }>
-}
+// Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
+// callers keep working without a churn rename.
+export type { RelationCardState }
 
 const props = defineProps<{
   field: FormFieldOrRelation
@@ -277,6 +275,7 @@ function addRelation() {
   // Add to local entries
   const newEntry: RelationEntry = {
     id: targetId,
+    type: selectedTarget.value.type,
     direction: isIncoming.value ? 'incoming' : 'outgoing',
     meta,
   }
