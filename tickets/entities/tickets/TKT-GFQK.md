@@ -5,7 +5,7 @@ title: Unify data-entry handling of incoming and outgoing relations
 kind: refactor
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Problem

@@ -2,7 +2,7 @@
 id: PLAN-7B0B
 type: planning-checklist
 title: 'Planning: Unify data-entry handling of incoming and outgoing relations'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
