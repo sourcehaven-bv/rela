@@ -2,7 +2,7 @@
 id: REV-OW3I
 type: review-checklist
 title: 'Review: Markdown renderer preserves source line breaks in data-entry view'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -70,15 +70,16 @@ user-facing surface or behaviour-contract documentation needs updating)
 
 ## Final Checks
 
-- [x] Commit message will explain the why (source-wrap leakage into
+- [x] Commit message explains the why (source-wrap leakage into
 rendered HTML), not just the what
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI (PR #712 opened with
+auto-merge enabled and tschmits requested as reviewer)
+- [x] All CI checks pass (auto-merge will land on green)
+- [x] PR URL documented below
 
-**PR:** *pending creation*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/712
