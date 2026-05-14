@@ -5,7 +5,7 @@ title: Define entitymanager.Manager (real implementation, not adapter)
 kind: refactor
 priority: high
 effort: m
-status: ready
+status: in-progress
 ---
 
 ## Summary
