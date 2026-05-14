@@ -507,14 +507,18 @@ func validateRelationInverses(m *Metamodel) []string {
 
 		if existing, ok := owners[inv]; ok {
 			errs = append(errs, fmt.Sprintf(
-				"inverse_name_collision: relations %q and %q both declare inverse %q",
+				"inverse_name_collision: relations %q and %q both declare inverse %q "+
+					"(each inverse name must be unique across the metamodel; "+
+					"rename one of the `inverse:` values or remove the duplicate)",
 				existing, relType, inv))
 			continue
 		}
 
 		if _, shadowsCanonical := m.Relations[inv]; shadowsCanonical && !isSelfSymmetric {
 			errs = append(errs, fmt.Sprintf(
-				"inverse_shadows_canonical: relation %q declares inverse %q which is also the name of canonical relation %q",
+				"inverse_shadows_canonical: relation %q declares inverse %q which is also the name of canonical relation %q "+
+					"(rename the inverse to a unique name; "+
+					"for a self-inverse, set `symmetric: true` on the canonical relation and use its own name as inverse)",
 				relType, inv, inv))
 			continue
 		}
