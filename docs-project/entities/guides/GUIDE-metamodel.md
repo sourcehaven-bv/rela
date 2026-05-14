@@ -595,6 +595,49 @@ API's `GET /api/v1/{plural}/{id}/relations` response, and it's what surfaces in 
 modal's "Incoming relations" section. See [data-entry.md → Reverse Relations](data-entry.md#reverse-incoming-relations)
 for how form widgets and list columns opt into reverse direction with `direction: incoming`.
 
+#### Inverse name uniqueness
+
+Inverse names must be globally unique across the metamodel. Two failure modes
+are rejected at load time:
+
+- **`inverse_name_collision`** — two relations declare the same `inverse:` ID.
+  rela cannot tell which canonical relation an inverse-keyed lookup refers to,
+  so this is treated as a structural error. Example:
+
+  ```yaml
+  relations:
+    blocks:
+      inverse: blockedBy
+    prevents:
+      inverse: blockedBy   # rejected: collides with `blocks`
+  ```
+
+- **`inverse_shadows_canonical`** — a relation declares `inverse: X` where `X`
+  is also the name of a separate canonical relation. The metamodel author
+  most likely didn't mean for `X` to refer to two different relation sets at
+  once. Example:
+
+  ```yaml
+  relations:
+    r1:
+      inverse: r2
+    r2:                    # rejected: shadows the inverse of `r1`
+      from: [...]
+      to: [...]
+  ```
+
+**Exception:** symmetric relations are allowed to be their own inverse:
+
+```yaml
+relations:
+  related-to:
+    symmetric: true
+    inverse: related-to    # OK — symmetric self-inverse
+```
+
+Use the symmetric form when the relation has no preferred direction (e.g. "is
+related to" reads the same from either side).
+
 ### Cardinality Constraints
 
 Use cardinality to enforce rules:
