@@ -43,7 +43,11 @@ test.describe('Document view: Edit button', () => {
     expect(returnTo).toBe(`/document/${DOC_WITH_EDIT}/${FEATURE_ID}`);
   });
 
-  test('saving the form returns to the document URL', async ({ appPage }) => {
+  test('navigating back from the form returns to the document URL', async ({ appPage }) => {
+    // Was: 'saving the form returns to the document URL'. After
+    // TKT-E6094 there's no explicit Save in edit mode — autosave runs
+    // continuously and never triggers navigation. The user goes back
+    // explicitly; this test verifies the return_to round-trips.
     const doc = new DocumentPage(appPage);
     await doc.navigateToDocument(DOC_WITH_EDIT, FEATURE_ID);
 
@@ -51,8 +55,9 @@ test.describe('Document view: Edit button', () => {
     await doc.editButton(EDIT_LABEL).click();
     await form.expectAtFormUrl(EDIT_FORM, FEATURE_ID);
 
-    // Submit the form unchanged. Edit mode allows a no-op save.
-    await form.saveAndWaitForPatch('features', FEATURE_ID);
+    // No edits — go back. The route guard's commitImmediately returns
+    // settled:true on a quiet queue, so navigation proceeds silently.
+    await appPage.goBack();
 
     await doc.expectAtDocumentUrl(DOC_WITH_EDIT, FEATURE_ID);
   });

@@ -112,9 +112,26 @@ export class FormPage extends BasePage {
 
   async submit() {
     const startUrl = this.page.url();
-    await this.submitButton.click();
-    // Submit is a client-side fetch followed by a router.push on success. Wait
-    // briefly for the URL to change; if validation fails we stay on the form.
+    // Wait briefly for the submit button to appear; in create mode the
+    // form always has it. In autosave edit mode it never appears.
+    const submitVisible = await this.submitButton
+      .first()
+      .waitFor({ state: 'visible', timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (submitVisible) {
+      await this.submitButton.first().click();
+      // Submit is a client-side fetch followed by a router.push on success.
+      // Wait briefly for the URL to change; if validation fails we stay on the form.
+      await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
+      return;
+    }
+    // TKT-E6094 autosave: no explicit Submit. Blur, wait for the autosave
+    // PATCH(es) to drain, then navigate back; the route guard flushes any
+    // pending edits before the URL changes.
+    await this.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await this.page.waitForTimeout(1000);
+    await this.page.goBack();
     await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
   }
 
@@ -166,15 +183,47 @@ export class FormPage extends BasePage {
     return values;
   }
 
-  /** Submit and wait for the save PATCH on the given entity, returning the response. */
+  /** Submit and wait for the save PATCH on the given entity, returning
+   *  the response. After TKT-E6094 (autosave) edit forms no longer have
+   *  an explicit Save button: the PATCH fires automatically after a
+   *  debounce. We detect either mode and wait for the same PATCH.
+   *
+   *  For autosave forms, the caller should have just performed an edit
+   *  (fillField/selectField etc.) — this helper triggers a blur to flush
+   *  the debounce and then waits for the PATCH. */
   async saveAndWaitForPatch(plural: string, entityId: string) {
-    const [resp] = await Promise.all([
-      this.page.waitForResponse(
-        (r) => r.url().includes(`/api/v1/${plural}/${entityId}`) && r.request().method() === 'PATCH',
-      ),
-      this.submitButton.first().click(),
-    ]);
-    return resp;
+    const submitVisible = await this.submitButton
+      .first()
+      .waitFor({ state: 'visible', timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (submitVisible) {
+      const [resp] = await Promise.all([
+        this.page.waitForResponse(
+          (r) => r.url().includes(`/api/v1/${plural}/${entityId}`) && r.request().method() === 'PATCH',
+        ),
+        this.submitButton.first().click(),
+      ]);
+      return resp;
+    }
+    // Autosave path: blur to flush pending input, then wait for the
+    // PATCH chain to drain. Multiple edits in quick succession serialize
+    // through the FIFO queue, so we wait for an idle window of no PATCH
+    // activity. Bounded so a no-edit form doesn't hang.
+    await this.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    let lastResp: Awaited<ReturnType<typeof this.page.waitForResponse>> | undefined;
+    // Poll for PATCH responses until 1s elapses without one.
+    for (;;) {
+      const resp = await this.page
+        .waitForResponse(
+          (r) => r.url().includes(`/api/v1/${plural}/${entityId}`) && r.request().method() === 'PATCH',
+          { timeout: 1500 },
+        )
+        .catch(() => undefined);
+      if (!resp) break;
+      lastResp = resp;
+    }
+    return lastResp;
   }
 
   /** True if the page shows an inline-create UI for related entities. */

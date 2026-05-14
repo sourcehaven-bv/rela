@@ -539,6 +539,8 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
+	s := a.State()
+
 	entity, found := a.getEntity(entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
@@ -566,9 +568,10 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	var req struct {
-		Properties map[string]interface{} `json:"properties,omitempty"`
-		Content    *string                `json:"content,omitempty"`
-		Relations  V1RelationsField       `json:"relations,omitempty"`
+		Properties      map[string]interface{} `json:"properties,omitempty"`
+		PropertiesUnset []string               `json:"properties_unset,omitempty"`
+		Content         *string                `json:"content,omitempty"`
+		Relations       V1RelationsField       `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -606,10 +609,30 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 			entity.Properties[k] = v
 		}
 	}
+	// Apply properties_unset AFTER property upserts so a body that
+	// both sets and unsets the same key behaves like the last-write-
+	// wins of property merging followed by the explicit unset.
+	// (TKT-E6094 / autosave: maps the "user cleared this field" intent
+	// to a wire-level delete that's distinct from "field was untouched".)
+	if len(req.PropertiesUnset) > 0 {
+		entityTypeDef, hasType := s.Meta.Entities[entity.Type]
+		for i, k := range req.PropertiesUnset {
+			if hasType {
+				if _, declared := entityTypeDef.Properties[k]; !declared {
+					warnings = append(warnings, Warning{
+						Code:   "unknown_property_unset_key",
+						Path:   fmt.Sprintf("/properties_unset/%d", i),
+						Detail: fmt.Sprintf("property %q is not declared on entity type %q", k, entity.Type),
+					})
+				}
+			}
+			delete(entity.Properties, k)
+		}
+	}
 	if req.Content != nil {
 		entity.Content = *req.Content
 	}
-	entityChanged := req.Properties != nil || req.Content != nil
+	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
 	if entityChanged {
 		updateResult, err := a.entityManager.UpdateEntity(r.Context(), entity)
 		if err != nil {

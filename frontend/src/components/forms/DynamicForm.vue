@@ -16,6 +16,9 @@ import {
   OUTGOING_SUFFIX,
   INCOMING_SUFFIX,
 } from './relationsPatch'
+import { useAutoSave } from '@/composables/useAutoSave'
+import { registerForm } from './dirtyFormRegistry'
+import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationPicker from './RelationPicker.vue'
 import RelationCards from './RelationCards.vue'
@@ -498,11 +501,30 @@ function handleCancel() {
 function updateField(property: string, value: unknown) {
   formData.value[property] = value
   checkDirty()
+  if (!autoSave.value) return
+  // TKT-E6094: clear semantics per type. For string/list properties an
+  // empty value means "user cleared" → properties_unset. Boolean false
+  // is a legitimate value, never an unset.
+  const def = entityType.value?.properties[property]
+  if (isClearedForType(value, def)) {
+    autoSave.value.scheduleUnset(property)
+  } else {
+    autoSave.value.scheduleFieldSave(property, value)
+  }
+}
+
+function isClearedForType(value: unknown, def: PropertyDef | undefined): boolean {
+  if (def?.type === 'boolean') return false
+  if (Array.isArray(value)) return value.length === 0
+  return value === '' || value === null || value === undefined
 }
 
 function updateRelation(relation: string, value: string[]) {
   relations.value[relation] = value
   checkDirty()
+  // Legacy IDs-only relation widget. Autosave routes this through the
+  // pendingCardChanges map: any change triggers a relations PATCH.
+  autoSave.value?.scheduleRelationsChange()
 }
 
 function updateRelationTypes(relation: string, types: Map<string, string>) {
@@ -512,9 +534,67 @@ function updateRelationTypes(relation: string, types: Map<string, string>) {
 // Pending relation card changes (for batch save)
 const pendingCardChanges = ref<Map<string, RelationCardState>>(new Map())
 
+// TKT-E6094: autosave is mounted only in edit mode. In create mode
+// the user explicitly clicks Save; the form delays the entity into
+// existence until then.
+const autoSave = computed(() => {
+  if (!isEdit.value || !props.entityId || !formConfig.value) return null
+  return _autoSaveInstance.value
+})
+// Lazy holder so we construct the composable once per (entityId, formId).
+const _autoSaveInstance = ref<ReturnType<typeof useAutoSave> | null>(null)
+
+function buildAutoSaveRelationsBody(): ModernRelationsField | null {
+  // Mirror handleSubmit's body assembly. Two sources of relation
+  // edits flow through autosave:
+  //   - card-managed widgets (`pendingCardChanges`) — modern shape
+  //     via buildRelationsPatch (per-edge meta + content).
+  //   - legacy IDs-only widgets (`relations`) — non-card pickers
+  //     write IDs; reshapeLegacyToModern wraps them in {data:[{type,id}]}
+  //     so they ride the same modern PATCH.
+  //
+  // Returns null when neither source is dirty.
+  const inverseByRelation = new Map<string, string>()
+  const cardRelations = new Set<string>()
+  if (formConfig.value) {
+    for (const f of fields.value) {
+      if (!f.relation) continue
+      const inv = schemaStore.getInverseName(f.relation)
+      if (inv) inverseByRelation.set(f.relation, inv)
+      if (f.widget === 'cards') cardRelations.add(f.relation)
+    }
+  }
+  // Legacy picker edits — non-card relations from `relations.value`.
+  const filteredRelations: Record<string, string[]> = {}
+  for (const [rel, ids] of Object.entries(relations.value)) {
+    if (cardRelations.has(rel)) continue
+    filteredRelations[rel] = ids
+  }
+  const modernCards = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
+  const hasModernCards = Object.keys(modernCards).length > 0
+  const hasLegacy = Object.keys(filteredRelations).length > 0
+  if (!hasModernCards && !hasLegacy) return null
+  // Reshape legacy IDs to modern shape (autosave always uses modern;
+  // shape_mixed 400 otherwise).
+  const reshaped = hasLegacy
+    ? reshapeLegacyToModern(filteredRelations, pickerTypes.value)
+    : {}
+  if (reshaped === null) {
+    // Pathological: a picker target without a known type. Surface
+    // and skip — explicit Save in create mode handles this case;
+    // autosave is best-effort.
+    uiStore.error(
+      'Some related entities have unknown types; relation changes were not saved. Reload the form and try again.',
+    )
+    return null
+  }
+  return { ...reshaped, ...modernCards }
+}
+
 function updateRelationCards(relation: string, state: RelationCardState) {
   pendingCardChanges.value.set(relation, state)
   checkDirty()
+  autoSave.value?.scheduleRelationsChange()
 }
 
 // Bridge incoming-direction RelationPicker changes into the pending-
@@ -536,6 +616,7 @@ function updateIncomingPicker(
     updated: [],
   })
   checkDirty()
+  autoSave.value?.scheduleRelationsChange()
 }
 
 // Surface soft validation warnings from a mutation response as a
@@ -552,6 +633,7 @@ function surfaceWarnings(warnings: { code: string; path: string; detail: string 
 function updateContent(value: string) {
   content.value = value
   checkDirty()
+  autoSave.value?.scheduleContentSave(value)
 }
 
 function checkDirty() {
@@ -601,6 +683,42 @@ onMounted(async () => {
   }
   loading.value = false
 
+  // TKT-E6094: mount the autosave composable in edit mode. The save
+  // path replaces handleSubmit's Save button for edit forms; create
+  // forms keep the explicit submit.
+  if (isEdit.value && props.entityId && formConfig.value) {
+    const inverseToCanonical = new Map<string, string>()
+    for (const f of fields.value) {
+      if (!f.relation) continue
+      const inv = schemaStore.getInverseName(f.relation)
+      if (inv) inverseToCanonical.set(inv, f.relation)
+    }
+    _autoSaveInstance.value = useAutoSave({
+      getEntityType: () => formConfig.value!.entity,
+      getEntityId: () => props.entityId!,
+      formData,
+      contentRef: content,
+      inverseToCanonical,
+      buildRelationsBody: () => buildAutoSaveRelationsBody(),
+      applyServerProperty: (property, value) => {
+        if (value === undefined) {
+          delete formData.value[property]
+        } else {
+          formData.value[property] = value
+        }
+      },
+      applyServerContent: (c) => { content.value = c },
+      onError: (msg) => uiStore.error(msg),
+    })
+    // Register with the dirty registry so SSE-driven re-fetches in
+    // other forms on the same entity preserve this form's dirty state.
+    const unregister = registerForm(
+      props.entityId,
+      (property) => _autoSaveInstance.value?.isDirty(property) ?? false,
+    )
+    onBeforeUnmount(unregister)
+  }
+
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
   // without an `inverse:` declared in the metamodel can't be saved
   // through the unified PATCH. Warn the user at form-load time so the
@@ -634,6 +752,23 @@ onBeforeUnmount(() => {
 // navigation downstream — if one were added, the assignment should move into
 // a router.afterEach hook gated on success.
 onBeforeRouteLeave(async () => {
+  // TKT-E6094: in edit mode, flush autosave before navigating away.
+  // On clean commit we proceed silently; on error or timeout we
+  // prompt the user to confirm.
+  if (autoSave.value) {
+    const result = await autoSave.value.commitImmediately()
+    if (result.settled && !result.error) {
+      dirty.value = false
+      return true
+    }
+    return await confirm({
+      title: 'Unsaved changes',
+      message: result.error ?? 'Some changes are still saving.',
+      confirmLabel: 'Leave anyway',
+      danger: true,
+    })
+  }
+  // Create-mode / no autosave: original prompt.
   if (!dirty.value) return true
   const ok = await confirm({
     title: 'Unsaved changes',
@@ -770,6 +905,7 @@ onBeforeRouteLeave(async () => {
               :entity-id="entityId"
               :value="relations[field.relation] || []"
               @update="updateRelation(field.relation!, $event)"
+              @update:types="(types) => updateRelationTypes(field.relation!, types)"
               @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
             />
           </template>
@@ -786,21 +922,40 @@ onBeforeRouteLeave(async () => {
         </div>
 
         <div class="form-actions">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="saving"
-            @click="handleCancel"
-          >
-            Cancel <kbd>Esc</kbd>
-          </button>
-          <button
-            type="submit"
-            class="btn btn-primary"
-            :disabled="saving"
-          >
-            {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
-          </button>
+          <!-- Edit mode: ambient autosave indicator replaces the
+               explicit Save button. Cancel is repurposed as a Back
+               button to navigate away (with the autosave-flushing
+               route guard catching any pending edits). -->
+          <template v-if="autoSave">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              @click="handleCancel"
+            >
+              Back <kbd>Esc</kbd>
+            </button>
+            <AutoSaveIndicator
+              :status="autoSave.status"
+              :error="autoSave.lastError"
+            />
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              :disabled="saving"
+              @click="handleCancel"
+            >
+              Cancel <kbd>Esc</kbd>
+            </button>
+            <button
+              type="submit"
+              class="btn btn-primary"
+              :disabled="saving"
+            >
+              {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
+            </button>
+          </template>
         </div>
       </form>
     </div>

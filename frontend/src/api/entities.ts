@@ -40,7 +40,12 @@ export async function createEntity(type: string, entity: CreateEntity): Promise<
 // relation shapes the unified PATCH endpoint accepts. The body must
 // not mix shapes (`shape_mixed` 400); the SPA's body-assembly helper
 // in DynamicForm ensures all-modern-or-all-legacy.
+//
+// `properties_unset` (TKT-E6094) lets callers express "user cleared
+// this field" distinct from "field was untouched". Autosave uses it
+// to delete keys atomically alongside property upserts.
 export type EntityPatch = Omit<Partial<Entity>, 'relations'> & {
+  properties_unset?: string[]
   relations?: Record<string, string[]> | ModernRelationsField
 }
 
@@ -48,9 +53,10 @@ export async function updateEntity(
   type: string,
   id: string,
   patch: EntityPatch,
-  etag?: string
+  etag?: string,
+  signal?: AbortSignal,
 ): Promise<Entity> {
-  return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag)
+  return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag, signal)
 }
 
 export async function deleteEntity(type: string, id: string): Promise<void> {

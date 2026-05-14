@@ -97,9 +97,32 @@ export class BasePage {
    *  RelationCardsPage share that same contract, so this helper is the
    *  single source of truth for the navigation predicate. */
   async submitFormAndWaitForNavigation(submitButton: Locator) {
+    const submitVisible = await submitButton
+      .waitFor({ state: 'visible', timeout: 2000 })
+      .then(() => true)
+      .catch(() => false);
+    if (submitVisible) {
+      await Promise.all([
+        this.page.waitForURL((url) => !url.pathname.includes('/form/'), { timeout: 10000 }),
+        submitButton.click(),
+      ]);
+      return;
+    }
+    // TKT-E6094: in autosave mode there is no explicit submit; the form
+    // saves continuously. Blur to flush pending input, wait for any
+    // in-flight or queued autosave PATCH to land, then navigate back.
+    await this.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    // Wait for at least one PATCH on the current entity (the autosave),
+    // bounded so a clean form (no edits) doesn't hang.
+    await this.page
+      .waitForResponse(
+        (r) => r.url().includes('/api/v1/') && r.request().method() === 'PATCH',
+        { timeout: 2000 },
+      )
+      .catch(() => {});
     await Promise.all([
       this.page.waitForURL((url) => !url.pathname.includes('/form/'), { timeout: 10000 }),
-      submitButton.click(),
+      this.page.goBack(),
     ]);
   }
 
