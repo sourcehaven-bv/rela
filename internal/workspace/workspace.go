@@ -16,6 +16,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
+	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -39,41 +40,40 @@ type ChangeEvent = storage.ChangeEvent
 // ChangeOp is re-exported from storage for the same reason as ChangeEvent.
 type ChangeOp = storage.ChangeOp
 
-// ScriptExecutor runs automation scripts with entity context. This follows
-// dependency inversion: workspace defines the interface it needs; the script
-// package implements it. Workspace stays independent of Lua specifics beyond
-// the lua.WriteDeps capability bundle.
+// ScriptExecutor is what Workspace requires from a script executor:
+// the Lua-execution surface used by [luaScriptRunner] when wiring
+// automation cascades, plus LuaCache() access for callers that build
+// Lua runtimes directly (validation rules, MCP lua_eval, CLI flow).
 //
-// The executor is stateless — workspace passes deps and the triggering entity
-// pair at execution time. The .rela/ cache dir for AI/secrets is derived from
-// deps.ProjectRoot by the executor.
-//
-// For production, pass script.NewEngine(). For tests, pass NopScriptExecutor.
+// *script.Engine satisfies this interface structurally; tests can
+// pass [NopScriptExecutor].
 type ScriptExecutor interface {
 	// ExecuteCode runs inline script code with entity context.
 	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+
 	// ExecuteFile runs a script file from the scripts/ directory.
 	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
-	// LuaCache returns the executor's shared Lua cache, or nil if the
-	// executor does not provide one. Callers that build Lua runtimes
-	// directly (validation rules, lua_eval, flow, etc.) pass this via
-	// lua.WithCache so every runtime in the process shares cache state.
+
+	// LuaCache returns the executor's shared Lua cache, or nil if
+	// the executor does not provide one. Callers that build Lua
+	// runtimes directly pass this via lua.WithCache so every runtime
+	// in the process shares cache state.
 	LuaCache() *lua.Cache
 }
 
-// NopScriptExecutor is a no-op implementation of ScriptExecutor for tests
-// that don't trigger Lua automations. It panics if actually called, making
-// it obvious when a test unexpectedly triggers Lua execution.
+// NopScriptExecutor is the no-op [ScriptExecutor] for tests that
+// don't exercise Lua. Calling its Execute* methods panics, making
+// unexpected script execution loud.
 var NopScriptExecutor ScriptExecutor = nopScriptExecutor{}
 
 type nopScriptExecutor struct{}
 
 func (nopScriptExecutor) ExecuteCode(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	panic("NopScriptExecutor: Lua execution not expected in this context")
+	panic("workspace.NopScriptExecutor: Lua execution not expected in this context")
 }
 
 func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Entity) error {
-	panic("NopScriptExecutor: Lua execution not expected in this context")
+	panic("workspace.NopScriptExecutor: Lua execution not expected in this context")
 }
 
 func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
@@ -106,8 +106,9 @@ type Workspace struct {
 	// Core services — immutable after construction.
 	store      store.Store
 	meta       *metamodel.Metamodel
-	automation *automation.Engine // may be nil if the metamodel has no automations
-	searchIdx  *search.Index      // may be nil if index construction failed
+	automation *automation.Engine  // may be nil if the metamodel has no automations
+	runner     *autocascade.Runner // may be nil iff automation is nil
+	searchIdx  *search.Index       // may be nil if index construction failed
 
 	// Derived services — memoised on first access. tracer wraps the store
 	// and wsSearcher wraps the workspace; both are cheap wrappers but
@@ -127,15 +128,9 @@ type Workspace struct {
 	storeFactory store.Factory
 }
 
-// maxAutomationDepth limits recursive automation triggering. When an entity
-// is created by automation, it can trigger further automations up to this
-// depth. Beyond this limit, entities are still created but automations are
-// skipped with a warning. This prevents infinite loops from misconfigured
-// automations while allowing useful chaining (e.g., ticket → checklist → items).
-const (
-	maxAutomationDepth   = 50
-	storeEventBufferSize = 32
-)
+// storeEventBufferSize bounds the workspace's store-event subscription.
+// Cascade depth is now [autocascade.MaxDepth], owned by that package.
+const storeEventBufferSize = 32
 
 // Discover discovers a project from the given start directory and creates
 // a workspace with the given script executor. If startDir is empty, it uses
@@ -187,7 +182,10 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 	if openErr != nil {
 		return nil, fmt.Errorf("open store: %w", openErr)
 	}
-	ws := newWorkspace(fs, paths, meta, exec, opts...)
+	ws, err := newWorkspace(fs, paths, meta, exec, opts...)
+	if err != nil {
+		return nil, err
+	}
 	ws.store = s
 	ws.storeFactory = factory
 
@@ -250,7 +248,14 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
 		opt(cfg)
 	}
 
-	ws := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	ws, err := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	if err != nil {
+		// NewForTest is panicy by design (it has no error return);
+		// callers that want a builder that fails gracefully should
+		// use New. This matches the existing convention for
+		// indexStoreEntities failures below.
+		panic(fmt.Sprintf("NewForTest: %v", err))
+	}
 	if cfg.store != nil {
 		ws.store = cfg.store
 		if ws.searchIdx != nil {
@@ -296,10 +301,30 @@ func WithStoreFactory(f store.Factory) Option {
 func newWorkspace(
 	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, scriptExec ScriptExecutor,
 	opts ...Option,
-) *Workspace {
+) (*Workspace, error) {
 	var autoEngine *automation.Engine
+	var cascadeRunner *autocascade.Runner
 	if len(meta.Automations) > 0 {
 		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
+		// Build the cascade runner alongside the engine. The runner
+		// is what executes automation results' side effects;
+		// workspace.createEntity / updateEntity invoke it via
+		// runner.Process. Workspace itself satisfies autocascade.Host
+		// (see autocascade_host.go).
+		//
+		// Per CLAUDE.md "Constructors reject nil required fields",
+		// propagate failure rather than silently disabling
+		// automation — a project with automations in its metamodel
+		// but a broken runner is a fail-fast condition, not a
+		// degraded mode.
+		// Runner is script-runtime-agnostic; the per-call
+		// luaScriptRunner adapter (constructed at each dispatch
+		// site) carries the workspace's ScriptExecutor + lua.WriteDeps.
+		r, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
+		if err != nil {
+			return nil, fmt.Errorf("build autocascade runner: %w", err)
+		}
+		cascadeRunner = r
 	}
 
 	// Create an empty search index — callers that use a real store
@@ -334,12 +359,13 @@ func newWorkspace(
 		store:      memstore.New(),
 		meta:       meta,
 		automation: autoEngine,
+		runner:     cascadeRunner,
 		searchIdx:  searchIdx,
 	}
 	for _, opt := range opts {
 		opt(ws)
 	}
-	return ws
+	return ws, nil
 }
 
 // indexStoreEntities (re)indexes every entity in the store into the
@@ -820,12 +846,17 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity
 	}
 
 	// Apply automation side effects (relations, entities, Lua) after entity is written.
-	if autoResult != nil {
-		effects := w.applyAutomationSideEffects(entity, nil, autoResult)
-		result.RelationsCreated = effects.RelationsCreated
-		result.EntitiesCreated = effects.EntitiesCreated
-		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
-		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
+	if autoResult != nil && w.runner != nil {
+		outcome, _ := w.runner.Process(context.Background(), w, autocascade.Request{
+			Trigger:    entity,
+			OldTrigger: nil,
+			Result:     autoResult,
+			Scripts:    newLuaScriptRunner(w.scriptExec, w.LuaWriteDeps()),
+		})
+		result.RelationsCreated = outcome.RelationsCreated
+		result.EntitiesCreated = outcome.EntitiesCreated
+		result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
+		result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 	}
 
 	// Compute soft-condition warnings against the post-write entity
@@ -904,12 +935,17 @@ func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResul
 	}
 
 	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
-	if autoResult != nil {
-		effects := w.applyAutomationSideEffects(entity, oldEntity, autoResult)
-		result.RelationsCreated = effects.RelationsCreated
-		result.EntitiesCreated = effects.EntitiesCreated
-		result.AutomationErrors = append(result.AutomationErrors, effects.Errors...)
-		result.AutomationWarnings = append(result.AutomationWarnings, effects.Warnings...)
+	if autoResult != nil && w.runner != nil {
+		outcome, _ := w.runner.Process(context.Background(), w, autocascade.Request{
+			Trigger:    entity,
+			OldTrigger: oldEntity,
+			Result:     autoResult,
+			Scripts:    newLuaScriptRunner(w.scriptExec, w.LuaWriteDeps()),
+		})
+		result.RelationsCreated = outcome.RelationsCreated
+		result.EntitiesCreated = outcome.EntitiesCreated
+		result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
+		result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 	}
 
 	return result, nil
@@ -1045,24 +1081,17 @@ func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpt
 	return e, nil
 }
 
-// automationSideEffects holds entities and relations created by automation.
+// FindExistingRelationTarget finds an existing entity of the given
+// type that is the target of a relation from the source entity with
+// the given relation type. Returns nil if no such entity exists.
 //
-// Errors is intentionally []string rather than []error: today no consumer
-// branches on the underlying type; UpdateResult.AutomationErrors is read
-// only as text by the API layer. Promote to []error (preserving
-// *lua.ScriptError) when a future surface needs typed access — at which
-// point formatAutomationError's stringification goes away.
-type automationSideEffects struct {
-	RelationsCreated []*entity.Relation
-	EntitiesCreated  []*entity.Entity
-	Errors           []string
-	Warnings         []string
-}
-
-// findExistingRelationTarget finds an existing entity of the given type that is
-// the target of a relation from the source entity with the given relation type.
-// Returns nil if no such entity exists.
-func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
+// Exported because it satisfies [autocascade.Host] directly (rather
+// than via a forwarder in autocascade_host.go like the other Host
+// methods) — the underlying logic was always here as
+// findExistingRelationTarget; promoting in place is cheaper than
+// introducing a forwarder for a query method whose name is already
+// fine for both audiences.
+func (w *Workspace) FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
 	ctx := context.Background()
 	st := w.Store()
 	for rel, err := range st.ListRelations(ctx, store.RelationQuery{
@@ -1082,297 +1111,6 @@ func (w *Workspace) findExistingRelationTarget(sourceID, relationType, targetTyp
 		}
 	}
 	return nil
-}
-
-// automationQueueItem represents a pending automation result to process.
-type automationQueueItem struct {
-	trigger    *entity.Entity
-	autoResult *automation.Result
-}
-
-// applyAutomationSideEffects processes automation results iteratively using a BFS queue.
-// This avoids deep recursion and provides clear iteration limits.
-func (w *Workspace) applyAutomationSideEffects(
-	triggerEntity *entity.Entity,
-	oldEntity *entity.Entity,
-	autoResult *automation.Result,
-) *automationSideEffects {
-	effects := &automationSideEffects{}
-
-	// BFS queue of pending automation results to process.
-	queue := []automationQueueItem{{triggerEntity, autoResult}}
-	iterations := 0
-
-	for len(queue) > 0 && iterations < maxAutomationDepth {
-		// Pop from front (BFS order - process all items at depth N before depth N+1).
-		item := queue[0]
-		queue = queue[1:]
-		iterations++
-
-		// Process Lua scripts for this trigger.
-		w.executeLuaActions(item.trigger, oldEntity, item.autoResult.LuaToExecute, effects)
-
-		// Process relations for this trigger.
-		w.applyRelationCreations(item.trigger, item.autoResult.RelationsToCreate, effects)
-
-		// Collect warnings/errors from this automation result.
-		effects.Warnings = append(effects.Warnings, item.autoResult.Warnings...)
-		effects.Errors = append(effects.Errors, item.autoResult.Errors...)
-
-		// Process entity creations and collect any new queue items.
-		newItems := w.processEntityCreations(item.trigger, item.autoResult.EntitiesToCreate, effects)
-		queue = append(queue, newItems...)
-	}
-
-	// Warn if we hit the limit with work remaining.
-	if len(queue) > 0 {
-		effects.Warnings = append(effects.Warnings,
-			fmt.Sprintf("automation iteration limit (%d) reached; %d pending items skipped",
-				maxAutomationDepth, len(queue)))
-	}
-
-	return effects
-}
-
-// processEntityCreations handles entity creation from automation and returns new queue items.
-func (w *Workspace) processEntityCreations(
-	trigger *entity.Entity,
-	toCreateList []automation.EntityToCreate,
-	effects *automationSideEffects,
-) []automationQueueItem {
-	var newItems []automationQueueItem
-
-	for _, toCreate := range toCreateList {
-		if skip := w.handleIfExists(trigger, toCreate, effects); skip {
-			continue
-		}
-
-		// Create entity (no automation yet).
-		created, createErr := w.createEntityCore(toCreate.Type, createEntityCoreOpts{
-			TemplateVariant: toCreate.Template,
-			Properties:      toCreate.Properties,
-		})
-		if createErr != nil {
-			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("failed to create automation entity %s: %v", toCreate.Type, createErr))
-
-			continue
-		}
-		effects.EntitiesCreated = append(effects.EntitiesCreated, created)
-
-		// Create relation from trigger if specified.
-		if toCreate.RelationFromTrigger != "" {
-			w.createTriggerRelation(trigger, created, toCreate.RelationFromTrigger, effects)
-		}
-
-		// Run automation on newly created entity.
-		newItem := w.runCreatedEntityAutomation(created, effects)
-		if newItem != nil {
-			newItems = append(newItems, *newItem)
-		}
-	}
-
-	return newItems
-}
-
-// runCreatedEntityAutomation runs automation on a newly created entity and returns a queue item if needed.
-func (w *Workspace) runCreatedEntityAutomation(
-	created *entity.Entity,
-	effects *automationSideEffects,
-) *automationQueueItem {
-	if w.automation == nil {
-		return nil
-	}
-
-	newAutoResult := w.automation.Process(automation.Event{
-		Type:   automation.EventEntityCreated,
-		Entity: created,
-	})
-
-	// Apply property changes from automation.
-	if len(newAutoResult.PropertiesSet) > 0 {
-		for prop, val := range newAutoResult.PropertiesSet {
-			created.SetString(prop, val)
-		}
-		// Re-write entity with updated properties.
-		if err := w.writeEntity(created); err != nil {
-			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("failed to update automation entity %s: %v", created.ID, err))
-		}
-	}
-
-	// Return queue item if there's more work to do.
-	hasWork := len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
-		len(newAutoResult.LuaToExecute) > 0 ||
-		len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0
-	if hasWork {
-		return &automationQueueItem{created, newAutoResult}
-	}
-
-	return nil
-}
-
-// applyRelationCreations creates relations from automation results.
-func (w *Workspace) applyRelationCreations(
-	triggerEntity *entity.Entity,
-	relations []*entity.Relation,
-	effects *automationSideEffects,
-) {
-	meta := w.Meta()
-
-	for _, rel := range relations {
-		rel.From = triggerEntity.ID
-
-		targetEntity, err := w.Store().GetEntity(context.Background(), rel.To)
-		if err != nil {
-			effects.Errors = append(effects.Errors,
-				"automation relation target not found: "+rel.To)
-			continue
-		}
-		if err := meta.ValidateRelation(rel.Type, triggerEntity.Type, targetEntity.Type); err != nil {
-			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("automation relation invalid: %v", err))
-			continue
-		}
-
-		if err := w.writeRelationCore(rel); err != nil {
-			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("failed to create automation relation: %v", err))
-			continue
-		}
-		effects.RelationsCreated = append(effects.RelationsCreated, rel)
-	}
-}
-
-// executeLuaActions executes Lua scripts from automation results.
-func (w *Workspace) executeLuaActions(
-	newEntity *entity.Entity,
-	oldEntity *entity.Entity,
-	luaActions []automation.LuaToExecute,
-	effects *automationSideEffects,
-) {
-	if len(luaActions) == 0 {
-		return
-	}
-
-	deps := w.LuaWriteDeps()
-
-	for _, action := range luaActions {
-		var err error
-
-		switch {
-		case action.Code != "":
-			err = w.scriptExec.ExecuteCode(action.Code, deps, newEntity, oldEntity)
-		case action.FilePath != "":
-			err = w.scriptExec.ExecuteFile(action.FilePath, deps, newEntity, oldEntity)
-		default:
-			// Empty action - skip
-			continue
-		}
-
-		if err != nil {
-			// Automations have no incoming HTTP request to correlate
-			// against, so the slog line uses the automation name +
-			// triggering entity id as the natural identity. Operators
-			// grep on those rather than a per-request hex.
-			triggerID := ""
-			if newEntity != nil {
-				triggerID = newEntity.ID
-			} else if oldEntity != nil {
-				triggerID = oldEntity.ID
-			}
-			slog.Warn("automation script failed",
-				"automation", action.AutomationName,
-				"entity", triggerID,
-				"error", err)
-			effects.Errors = append(effects.Errors, formatAutomationError(action, err))
-		}
-	}
-}
-
-// formatAutomationError renders an automation Lua failure as a single
-// string for the existing []string Errors slice. For Lua failures the
-// engine has already wrapped err in *lua.ScriptError; we add the
-// automation identity (the engine doesn't know it) and use the typed
-// fields so the message includes a concrete script-or-automation name.
-//
-// Inline `lua: |` blocks have no FilePath, so the engine sees scriptPath
-// as "" and tags the envelope with "<inline>". We override that here
-// once we know the automation name.
-func formatAutomationError(action automation.LuaToExecute, err error) string {
-	var se *lua.ScriptError
-	if errors.As(err, &se) {
-		if action.FilePath == "" && action.AutomationName != "" {
-			se.Path = "automation:" + action.AutomationName
-			// Re-render Error() output reflects the new Path.
-		}
-		return se.Error()
-	}
-	return "script execution error: " + err.Error()
-}
-
-// handleIfExists checks if_exists behavior for entity creation.
-// Returns true if the entity creation should be skipped.
-func (w *Workspace) handleIfExists(
-	triggerEntity *entity.Entity,
-	toCreate automation.EntityToCreate,
-	effects *automationSideEffects,
-) bool {
-	if toCreate.RelationFromTrigger == "" {
-		return false
-	}
-
-	existingTarget := w.findExistingRelationTarget(
-		triggerEntity.ID, toCreate.RelationFromTrigger, toCreate.Type)
-
-	if existingTarget == nil {
-		return false
-	}
-
-	switch toCreate.IfExists {
-	case automation.IfExistsSkip:
-		effects.EntitiesCreated = append(effects.EntitiesCreated, existingTarget)
-		return true
-	case automation.IfExistsError:
-		effects.Errors = append(effects.Errors,
-			fmt.Sprintf("entity already exists via %s relation: %s",
-				toCreate.RelationFromTrigger, existingTarget.ID))
-		return true
-	case automation.IfExistsReplace:
-		if _, err := w.deleteEntity(existingTarget.Type, existingTarget.ID, true); err != nil {
-			effects.Errors = append(effects.Errors,
-				fmt.Sprintf("failed to delete existing entity for replace: %v", err))
-			return true
-		}
-	default:
-		effects.Errors = append(effects.Errors,
-			fmt.Sprintf("unknown if_exists value %q, skipping entity creation", toCreate.IfExists))
-		return true
-	}
-	return false
-}
-
-// createTriggerRelation creates a relation from the trigger entity to a newly created entity.
-func (w *Workspace) createTriggerRelation(
-	triggerEntity, created *entity.Entity,
-	relationType string,
-	effects *automationSideEffects,
-) {
-	meta := w.Meta()
-
-	if err := meta.ValidateRelation(relationType, triggerEntity.Type, created.Type); err != nil {
-		effects.Errors = append(effects.Errors,
-			fmt.Sprintf("automation relation invalid: %v", err))
-		return
-	}
-
-	rel := entity.NewRelation(triggerEntity.ID, relationType, created.ID)
-	if err := w.writeRelationCore(rel); err != nil {
-		effects.Errors = append(effects.Errors,
-			fmt.Sprintf("failed to create automation relation: %v", err))
-		return
-	}
-	effects.RelationsCreated = append(effects.RelationsCreated, rel)
 }
 
 // --- Relation operations ---

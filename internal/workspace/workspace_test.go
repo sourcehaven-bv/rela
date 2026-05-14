@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -310,7 +311,7 @@ func TestCreateEntity(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	if _, ok := ws.GetEntity("REQ-001"); !ok {
+	if _, ok := ws.lookupEntity("REQ-001"); !ok {
 		t.Error("entity not found after create")
 	}
 }
@@ -371,7 +372,7 @@ func TestCreateEntity_CustomIDRejectedForSequential(t *testing.T) {
 
 	// Verify no entity of any kind was persisted — a regression that silently
 	// substituted a generated ID would not surface if we only checked REQ-042.
-	if _, ok := ws.GetEntity("REQ-042"); ok {
+	if _, ok := ws.lookupEntity("REQ-042"); ok {
 		t.Error("entity was persisted despite rejection")
 	}
 	if n := countEntities(t, ws); n != 0 {
@@ -410,7 +411,7 @@ relations: {}
 	}
 
 	// Verify no entity was persisted (symmetric with the sequential case).
-	if _, ok := ws.GetEntity("my-custom-id"); ok {
+	if _, ok := ws.lookupEntity("my-custom-id"); ok {
 		t.Error("entity was persisted despite rejection")
 	}
 	if n := countEntities(t, ws); n != 0 {
@@ -512,7 +513,7 @@ func TestUpdateEntity(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	updated, ok := ws.GetEntity(entity.ID)
+	updated, ok := ws.lookupEntity(entity.ID)
 	if !ok {
 		t.Fatal("entity not found after update")
 	}
@@ -540,7 +541,7 @@ func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	if result.RelationsDeleted != 0 {
 		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
 	}
-	if _, ok := ws.GetEntity(req.ID); ok {
+	if _, ok := ws.lookupEntity(req.ID); ok {
 		t.Error("entity still present after delete")
 	}
 }
@@ -835,7 +836,7 @@ func TestCreateEntity_AutomationWithIfExistsReplace(t *testing.T) {
 		t.Errorf("expected different checklist ID after replace, got same: %s", checklist2.ID)
 	}
 
-	if _, ok := ws.GetEntity(checklist1.ID); ok {
+	if _, ok := ws.lookupEntity(checklist1.ID); ok {
 		t.Errorf("old checklist %s should be deleted", checklist1.ID)
 	}
 }
@@ -1119,7 +1120,7 @@ automations:
 // --- Automation recursion depth limit tests ---
 
 func TestCreateEntity_AutomationDepthLimit(t *testing.T) {
-	// This test verifies that recursive automations are limited to maxAutomationDepth.
+	// This test verifies that recursive automations are limited to autocascade.MaxDepth.
 	// Creating a "starter" triggers creation of "chain" entities recursively.
 	metamodelYAML := `version: "1.0"
 entities:
@@ -1179,10 +1180,10 @@ automations:
 		t.Fatalf("CreateEntity error = %v", err)
 	}
 
-	// Should have created multiple chain entities (limited by maxAutomationDepth).
+	// Should have created multiple chain entities (limited by autocascade.MaxDepth).
 	// At depth 0: starter created, automation creates chain at depth 1
 	// At depth 1: chain created, automation creates chain at depth 2
-	// ... up to maxAutomationDepth
+	// ... up to autocascade.MaxDepth
 	chainCount := 0
 	for _, e := range result.EntitiesCreated {
 		if e.Type == "chain" {
@@ -1190,11 +1191,11 @@ automations:
 		}
 	}
 
-	// We should have exactly maxAutomationDepth chain entities.
+	// We should have exactly autocascade.MaxDepth chain entities.
 	// Depth 0 creates at depth 1, depth 1 creates at depth 2, etc.
-	// So entities are created at depths 1 through maxAutomationDepth.
-	if chainCount != maxAutomationDepth {
-		t.Errorf("expected %d chain entities (depth limit), got %d", maxAutomationDepth, chainCount)
+	// So entities are created at depths 1 through autocascade.MaxDepth.
+	if chainCount != autocascade.MaxDepth {
+		t.Errorf("expected %d chain entities (depth limit), got %d", autocascade.MaxDepth, chainCount)
 	}
 
 	// Should have a warning about iteration limit being reached.
@@ -1211,8 +1212,8 @@ automations:
 
 	// Verify store is consistent - all entities should be present.
 	allNodes := collectEntities(ws.Store(), store.EntityQuery{})
-	// 1 starter + maxAutomationDepth chains
-	expectedTotal := 1 + maxAutomationDepth
+	// 1 starter + autocascade.MaxDepth chains
+	expectedTotal := 1 + autocascade.MaxDepth
 	if len(allNodes) != expectedTotal {
 		t.Errorf("expected %d total entities, got %d", expectedTotal, len(allNodes))
 	}
@@ -1336,7 +1337,7 @@ func TestLuaAutomation_InlineCode(t *testing.T) {
 	}
 
 	// Lua automation updates the entity via rela.update_entity.
-	updated, _ := ws.GetEntity(entity.ID)
+	updated, _ := ws.lookupEntity(entity.ID)
 	if updated.GetString("status") != "processed" {
 		t.Errorf("expected status 'processed' from Lua, got %q", updated.GetString("status"))
 	}
@@ -1385,7 +1386,7 @@ automations:
 	}
 
 	// Verify lua_result was set by Lua code using entity global.
-	updated, _ := ws.GetEntity(entity.ID)
+	updated, _ := ws.lookupEntity(entity.ID)
 	expectedResult := "entity_id:" + entity.ID
 	if updated.GetString("lua_result") != expectedResult {
 		t.Errorf("expected lua_result %q, got %q", expectedResult, updated.GetString("lua_result"))
@@ -1432,7 +1433,7 @@ automations:
 	entityID := entity.ID
 
 	// Get fresh entity from the store (may have been modified by creation automations).
-	fresh, _ := ws.GetEntity(entityID)
+	fresh, _ := ws.lookupEntity(entityID)
 	entity = fresh
 
 	// Update to trigger automation.
@@ -1450,7 +1451,7 @@ automations:
 	}
 
 	// Verify old_status was captured from old_entity.
-	finalEntity, _ := ws.GetEntity(entityID)
+	finalEntity, _ := ws.lookupEntity(entityID)
 	oldStatusVal := finalEntity.GetString("old_status")
 	switch oldStatusVal {
 	case "":

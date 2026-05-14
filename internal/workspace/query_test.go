@@ -46,7 +46,7 @@ func queryTestWorkspace(t *testing.T) *Workspace {
 func TestGetEntity(t *testing.T) {
 	ws := queryTestWorkspace(t)
 
-	e, ok := ws.GetEntity("A-1")
+	e, ok := ws.lookupEntity("A-1")
 	if !ok {
 		t.Fatal("expected A-1 to exist")
 	}
@@ -54,7 +54,7 @@ func TestGetEntity(t *testing.T) {
 		t.Errorf("type = %q, want ticket", e.Type)
 	}
 
-	if _, ok := ws.GetEntity("MISSING"); ok {
+	if _, ok := ws.lookupEntity("MISSING"); ok {
 		t.Error("expected missing ID to return ok=false")
 	}
 }
