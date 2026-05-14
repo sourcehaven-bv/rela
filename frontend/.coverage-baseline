@@ -13,7 +13,7 @@ src/composables/useScopeNavigation.ts;46;46
 src/composables/useUrlFilterSync.ts;35;33
 src/stores/entities.ts;75;75
 src/stores/git.ts;57;56
-src/stores/schema.ts;92;86
+src/stores/schema.ts;95;87
 src/stores/scriptError.ts;10;10
 src/stores/ui.ts;48;47
 src/types/config.ts;7;7
@@ -22,6 +22,6 @@ src/utils/dom.ts;11;8
 src/utils/entityRoute.ts;5;5
 src/utils/filters.ts;62;62
 src/utils/format.ts;61;61
-src/utils/markdown.ts;39;37
+src/utils/markdown.ts;66;63
 src/utils/palette.ts;235;209
 src/utils/returnPath.ts;25;23
