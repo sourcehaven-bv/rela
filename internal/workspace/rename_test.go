@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -333,9 +334,8 @@ func TestRename_ErrorNewIDExists(t *testing.T) {
 	if err == nil {
 		t.Fatal("Rename() should fail when new ID already exists")
 	}
-	expectedErr := "entity with ID " + req2.ID + " already exists"
-	if err.Error() != expectedErr {
-		t.Errorf("error = %q, want %q", err.Error(), expectedErr)
+	if !errors.Is(err, rename.ErrEntityAlreadyExists) {
+		t.Errorf("error = %v, want rename.ErrEntityAlreadyExists", err)
 	}
 }
 

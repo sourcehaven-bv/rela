@@ -297,14 +297,23 @@ deps:
       - markdown
       - metamodel
       - project
-  # entitymanager: pure domain interfaces, no internal deps (entity is in commonComponents)
+  entitymanager:
+    mayDependOn:
+      - autocascade
+      - automation
+      - metamodel
+      - rename
+      - store
+      - templating
   importer:
     mayDependOn:
       - metamodel
       - storage
       - store
       - storeutil
-  # rename: stateless helpers, no internal deps
+  rename:
+    mayDependOn:
+      - store
   schema:
     mayDependOn:
       - dataentryconfig
