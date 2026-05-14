@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  buildRelationsPatch,
+  buildRelationsPatch as buildRelationsPatchRaw,
   reshapeLegacyToModern,
   OUTGOING_SUFFIX,
   INCOMING_SUFFIX,
@@ -21,6 +21,16 @@ function card(overrides: Partial<RelationCardState> = {}): RelationCardState {
 
 function pending(entries: Record<string, RelationCardState>): Map<string, RelationCardState> {
   return new Map(Object.entries(entries))
+}
+
+// buildRelationsPatch with a default empty inverseByRelation map for
+// outgoing-only tests. Incoming-suffix tests must opt in by passing
+// their own map.
+function buildRelationsPatch(
+  p: Map<string, RelationCardState>,
+  inverse: Map<string, string> = new Map(),
+) {
+  return buildRelationsPatchRaw(p, inverse)
 }
 
 describe('buildRelationsPatch', () => {
@@ -121,32 +131,55 @@ describe('buildRelationsPatch', () => {
     })
   })
 
-  it('skips incoming-suffix keys (they take the per-edge path)', () => {
+  it('incoming-suffix key emits under inverse body key (TKT-GFQK)', () => {
     const result = buildRelationsPatch(
       pending({
-        ['tagged' + INCOMING_SUFFIX]: card({
+        ['blocks' + INCOMING_SUFFIX]: card({
           entries: [{ id: 'T-1', type: 'ticket' }],
           added: [{ targetId: 'T-1' }],
         }),
       }),
+      new Map([['blocks', 'blockedBy']]),
     )
-    expect(result).toEqual({})
+    // Backend resolveDirection sees `blockedBy`, swaps endpoints, and
+    // writes `T-1 --blocks--> path-entity`.
+    expect(result).toEqual({
+      blockedBy: { data: [{ type: 'ticket', id: 'T-1' }] },
+    })
   })
 
-  it('mixed in+out keeps outgoing, skips incoming', () => {
+  it('mixed canonical+inverse: both emit under their respective body keys', () => {
     const result = buildRelationsPatch(
       pending({
         ['tagged' + OUTGOING_SUFFIX]: card({
           entries: [{ id: 'L-1', type: 'label' }],
           added: [{ targetId: 'L-1' }],
         }),
-        ['referenced-by' + INCOMING_SUFFIX]: card({
+        ['blocks' + INCOMING_SUFFIX]: card({
           entries: [{ id: 'T-1', type: 'ticket' }],
           added: [{ targetId: 'T-1' }],
         }),
       }),
+      new Map([['blocks', 'blockedBy']]),
     )
-    expect(Object.keys(result)).toEqual(['tagged'])
+    expect(Object.keys(result).sort()).toEqual(['blockedBy', 'tagged'])
+  })
+
+  it('throws when incoming-suffix key has no inverse declared in the lookup', () => {
+    // DynamicForm pre-flights this at form-load time; the throw is the
+    // defensive last-line guard for the case where pre-flight failed
+    // (race, bug, etc.).
+    expect(() =>
+      buildRelationsPatch(
+        pending({
+          ['blocks' + INCOMING_SUFFIX]: card({
+            entries: [{ id: 'T-1', type: 'ticket' }],
+            added: [{ targetId: 'T-1' }],
+          }),
+        }),
+        new Map(), // empty: no inverse known
+      ),
+    ).toThrow(/no inverse declared/)
   })
 
   it('throws loudly when an entry is missing type (drift surfaces, not silent corruption)', () => {

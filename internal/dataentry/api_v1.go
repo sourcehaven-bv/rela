@@ -131,11 +131,21 @@ type V1RelationType struct {
 	Description string                   `json:"description,omitempty"`
 	From        []string                 `json:"from"`
 	To          []string                 `json:"to"`
+	Inverse     *V1InverseDef            `json:"inverse,omitempty"`
+	Symmetric   bool                     `json:"symmetric,omitempty"`
 	MinOutgoing *int                     `json:"min_outgoing,omitempty"`
 	MaxOutgoing *int                     `json:"max_outgoing,omitempty"`
 	MinIncoming *int                     `json:"min_incoming,omitempty"`
 	MaxIncoming *int                     `json:"max_incoming,omitempty"`
 	Properties  map[string]V1PropertyDef `json:"properties,omitempty"`
+}
+
+// V1InverseDef mirrors metamodel.InverseDef on the wire. The SPA reads
+// `inverse.id` to find the inverse body key for incoming-direction
+// edits routed through the unified PATCH (TKT-GFQK).
+type V1InverseDef struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 }
 
 // V1CustomType is the JSON representation of a custom type.
@@ -1017,10 +1027,14 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			Description: def.Description,
 			From:        def.From,
 			To:          def.To,
+			Symmetric:   def.Symmetric,
 			MinOutgoing: def.MinOutgoing,
 			MaxOutgoing: def.MaxOutgoing,
 			MinIncoming: def.MinIncoming,
 			MaxIncoming: def.MaxIncoming,
+		}
+		if def.Inverse != nil && def.Inverse.ID != "" {
+			rt.Inverse = &V1InverseDef{ID: def.Inverse.ID, Label: def.Inverse.Label}
 		}
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]V1PropertyDef, len(def.Properties))

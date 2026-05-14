@@ -544,9 +544,11 @@ relations:
   implements:
     from: [task]
     to: [feature]
+    inverse: implementedBy
   fixes:
     from: [task]
     to: [bug]
+    inverse: fixedBy
 `;
 
 const DATA_ENTRY_YAML = `
