@@ -5,7 +5,7 @@ title: Migrate workspace from legacy search.Index to bleveindex+search.Service
 kind: refactor
 priority: high
 effort: s
-status: review
+status: done
 ---
 
 ## Summary
