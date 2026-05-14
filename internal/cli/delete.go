@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -72,7 +72,7 @@ Examples:
 
 		result, err := ws.EntityManager().DeleteEntity(ctx, entityID, deleteCascade)
 		if err != nil {
-			if errors.Is(err, workspace.ErrHasRelations) {
+			if errors.Is(err, entitymanager.ErrHasRelations) {
 				return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", entityID)
 			}
 			return err

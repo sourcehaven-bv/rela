@@ -23,31 +23,34 @@ type createCoreOpts struct {
 }
 
 // createCore is the shared bare-write entity-creation path: resolve
-// ID, apply template defaults, apply caller properties, validate
-// against the metamodel, persist. **No automation.**
+// ID, apply template defaults, apply caller properties, partition
+// validation errors per DEC-HWZHA (hard errors abort; soft conditions
+// proceed and are returned as warnings), persist. **No automation.**
 //
 // Free function over [Deps] (not a method on Manager) so cascadeHost
 // can call it directly without constructing a half-initialized
 // Manager view.
-func createCore(ctx context.Context, deps Deps, entityType string, opts createCoreOpts) (*entity.Entity, error) {
+func createCore(
+	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
+) (*entity.Entity, []Warning, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", entityType)
+		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
 	entityID := opts.ID
 	if entityID == "" {
 		id, err := generateID(ctx, deps, entityType, opts.IDPrefix)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		entityID = id
 	} else {
 		if !entityDef.IsManualID() {
-			return nil, customIDNotAllowedError(entityType, entityDef, entityID)
+			return nil, nil, customIDNotAllowedError(entityType, entityDef, entityID)
 		}
 		if err := entity.ValidateID(entityID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -55,10 +58,10 @@ func createCore(ctx context.Context, deps Deps, entityType string, opts createCo
 
 	tmpl, err := deps.Templater.EntityTemplate(ctx, entityType, opts.TemplateVariant)
 	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
+		return nil, nil, fmt.Errorf("load template: %w", err)
 	}
 	if opts.TemplateVariant != "" && tmpl == nil {
-		return nil, fmt.Errorf("template variant %q not found for entity type %s", opts.TemplateVariant, entityType)
+		return nil, nil, fmt.Errorf("template variant %q not found for entity type %s", opts.TemplateVariant, entityType)
 	}
 	if tmpl != nil {
 		e.Properties, e.Content = templating.ApplyEntity(e.Properties, e.Content, tmpl)
@@ -76,15 +79,23 @@ func createCore(ctx context.Context, deps Deps, entityType string, opts createCo
 		e.SetString("status", entityDef.GetDefaultStatus(deps.Meta))
 	}
 
+	// DEC-HWZHA: hard structural errors abort; soft conditions
+	// (required-missing, type mismatch, invalid enum, malformed value)
+	// ride along on the result as warnings.
+	var warnings []Warning
 	if errs := deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
-		return nil, newValidationError(errs)
+		hard, soft := partitionValidationErrors(errs)
+		if len(hard) > 0 {
+			return nil, nil, newValidationError(hard)
+		}
+		warnings = soft
 	}
 
 	if err := upsertEntity(ctx, deps.Store, e); err != nil {
-		return nil, fmt.Errorf("write entity: %w", err)
+		return nil, nil, fmt.Errorf("write entity: %w", err)
 	}
 
-	return e, nil
+	return e, warnings, nil
 }
 
 // generateID generates the next ID for the given entity type. If
