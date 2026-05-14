@@ -21,8 +21,9 @@ function assemble(
   pending: Map<string, RelationCardState>,
   legacy: Record<string, string[]>,
   pickerTypes: Record<string, Map<string, string>>,
+  inverseByRelation: Map<string, string> = new Map(),
 ): { shape: 'modern' | 'legacy' | 'mixed-blocked'; body: unknown } {
-  const modern = buildRelationsPatch(pending)
+  const modern = buildRelationsPatch(pending, inverseByRelation)
   const hasModern = Object.keys(modern).length > 0
   if (!hasModern) return { shape: 'legacy', body: legacy }
   const reshaped = reshapeLegacyToModern(legacy, pickerTypes)

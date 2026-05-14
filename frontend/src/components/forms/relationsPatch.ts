@@ -6,6 +6,9 @@
 // 1. buildRelationsPatch turns the per-relation pendingCardChanges Map
 //    (kept by RelationCards via the cards-changed event) into the
 //    JSON:API §9 modern relations field carried on the PATCH body.
+//    Incoming-direction edits (suffix `-incoming`) are emitted under
+//    their relation's inverse name so the backend resolveDirection
+//    picks them up as "path entity is target" writes (TKT-GFQK).
 //
 // 2. reshapeLegacyToModern converts a legacy IDs-only relations record
 //    into the modern shape using a per-relation Map<id, type> sourced
@@ -41,24 +44,33 @@ export interface RelationCardState {
 // pending card-changes Map. Contract:
 //
 //   - Input keys are `<relation>${OUTGOING_SUFFIX}` or
-//     `<relation>${INCOMING_SUFFIX}`. Incoming keys are skipped here;
-//     they take the per-edge path.
+//     `<relation>${INCOMING_SUFFIX}`.
+//   - Outgoing keys map to the canonical relation name as the body key.
+//   - Incoming keys map to the relation's inverse name via the
+//     `inverseByRelation` lookup. Backend resolveDirection then treats
+//     the path entity as the target of the canonical edge.
 //   - Emit a relation entry ONLY when the user actually touched it
 //     during this form session (added/removed/updated non-empty).
 //     A pristine card in the Map produces no key — preventing
 //     `data: []` wipes on autosave with a stale Map (TKT-ZEKO4 Q6).
 //   - `state.entries` is the post-edit desired set; the builder maps
 //     it to resource identifiers directly.
-//   - Every entry MUST carry `type` (backend Step 0 + RelationCards
-//     populate). The builder throws on missing `type` to surface a
-//     drift bug loudly instead of emitting a malformed body.
+//   - Every entry MUST carry `type`. The builder throws on missing
+//     `type` to surface a drift bug loudly instead of emitting a
+//     malformed body.
+//   - An incoming-suffix key whose canonical relation has no
+//     declared inverse also throws. DynamicForm should pre-flight
+//     this at form-load time; the throw here is the defensive
+//     last-line guard.
 export function buildRelationsPatch(
   pending: Map<string, RelationCardState>,
+  inverseByRelation: Map<string, string>,
 ): ModernRelationsField {
   const out: ModernRelationsField = {}
   for (const [key, state] of pending.entries()) {
-    if (key.endsWith(INCOMING_SUFFIX)) continue
-    if (!key.endsWith(OUTGOING_SUFFIX)) continue
+    const isOutgoing = key.endsWith(OUTGOING_SUFFIX)
+    const isIncoming = key.endsWith(INCOMING_SUFFIX)
+    if (!isOutgoing && !isIncoming) continue
     if (
       state.added.length === 0 &&
       state.removed.length === 0 &&
@@ -66,7 +78,21 @@ export function buildRelationsPatch(
     ) {
       continue
     }
-    const relation = key.slice(0, -OUTGOING_SUFFIX.length)
+    const suffixLen = isOutgoing ? OUTGOING_SUFFIX.length : INCOMING_SUFFIX.length
+    const canonical = key.slice(0, -suffixLen)
+    let bodyKey: string
+    if (isOutgoing) {
+      bodyKey = canonical
+    } else {
+      const inverse = inverseByRelation.get(canonical)
+      if (!inverse) {
+        throw new Error(
+          `Cannot emit incoming-direction patch for relation '${canonical}': ` +
+            `no inverse declared in metamodel. DynamicForm should have pre-flighted this.`,
+        )
+      }
+      bodyKey = inverse
+    }
     const data: ResourceIdentifier[] = state.entries.map((e) => {
       if (!e.type) {
         throw new Error(
@@ -83,7 +109,7 @@ export function buildRelationsPatch(
       }
       return ri
     })
-    out[relation] = { data }
+    out[bodyKey] = { data }
   }
   return out
 }

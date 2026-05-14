@@ -30,7 +30,7 @@ type Warning = entitymanager.Warning
 // entity is updated, so a structural relation problem doesn't leave
 // the entity half-written.
 func (a *App) validateRelationsModern(
-	ctx context.Context, _ string, sourceType string, desired map[string]V1RelationsUpdate,
+	ctx context.Context, entityID string, pathEntityType string, desired map[string]V1RelationsUpdate,
 ) ([]Warning, error) {
 	if len(desired) == 0 {
 		return nil, nil
@@ -38,36 +38,54 @@ func (a *App) validateRelationsModern(
 	meta := a.State().Meta
 	var warnings []Warning
 
-	for relType, upd := range desired {
+	// Self-loop shape_conflict detection: a body that references the
+	// path entity under BOTH a canonical name AND its inverse for the
+	// same canonical relation refers to the same physical edge twice.
+	// Skipped for symmetric relations (whose inverse equals canonical
+	// and which have no preferred direction).
+	if err := detectSelfLoopShapeConflict(meta, entityID, desired); err != nil {
+		return nil, err
+	}
+
+	for bodyKey, upd := range desired {
 		if !upd.DataPresent {
 			return nil, &wireError{
 				Code:   "data_required",
-				Path:   "/relations/" + jsonPointerEscape(relType) + "/data",
+				Path:   "/relations/" + jsonPointerEscape(bodyKey) + "/data",
 				Detail: "`data` field is required when a relation wrapper appears",
 			}
 		}
 
-		relDef, ok := meta.Relations[relType]
+		canonical, incoming, ok := resolveDirection(meta, bodyKey)
 		if !ok {
 			return nil, &structuralError{
 				Code:   "unknown_relation_type",
-				Path:   "/relations/" + jsonPointerEscape(relType),
-				Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", relType),
+				Path:   "/relations/" + jsonPointerEscape(bodyKey),
+				Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", bodyKey),
 			}
 		}
+		relDef := meta.Relations[canonical]
 
-		// Source-type allowlist: a soft warning per DEC-HWZHA. The
-		// edge can still be written; analyze flags it.
-		if !containsString(relDef.From, sourceType) {
+		// Path-entity-side type allowlist:
+		//   - outgoing: path entity is source, check relDef.From
+		//   - incoming: path entity is target, check relDef.To
+		allowedPathTypes := relDef.From
+		warningCode := "source_type_not_allowed"
+		if incoming {
+			allowedPathTypes = relDef.To
+			warningCode = "target_type_not_allowed"
+		}
+		if !containsString(allowedPathTypes, pathEntityType) {
 			warnings = append(warnings, Warning{
-				Code:   "source_type_not_allowed",
-				Path:   "/relations/" + jsonPointerEscape(relType),
-				Detail: fmt.Sprintf("relation %q does not declare %q as an allowed source type", relType, sourceType),
+				Code:      warningCode,
+				Path:      "/relations/" + jsonPointerEscape(bodyKey),
+				Detail:    fmt.Sprintf("relation %q does not declare %q as an allowed %s type", canonical, pathEntityType, sideLabel(incoming, true)),
+				Direction: directionLabel(incoming),
 			})
 		}
 
 		for i, ref := range upd.Data {
-			edgePath := fmt.Sprintf("/relations/%s/data/%d", jsonPointerEscape(relType), i)
+			edgePath := fmt.Sprintf("/relations/%s/data/%d", jsonPointerEscape(bodyKey), i)
 
 			// Content on a non-content-bearing relation type is a
 			// structural impossibility — the file format can't hold
@@ -76,47 +94,84 @@ func (a *App) validateRelationsModern(
 				return nil, &structuralError{
 					Code:   "content_not_supported",
 					Path:   edgePath + "/content",
-					Detail: fmt.Sprintf("relation type %q does not support per-edge content", relType),
+					Detail: fmt.Sprintf("relation type %q does not support per-edge content", canonical),
 				}
 			}
 
-			// Soft conditions surfaced as warnings:
-			ws := a.collectEdgeWarnings(ctx, relType, &relDef, ref, edgePath)
+			// Soft conditions surfaced as warnings. The peer is whichever
+			// side the path entity is NOT on.
+			ws := a.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
 			warnings = append(warnings, ws...)
 		}
 	}
 	return warnings, nil
 }
 
+// directionLabel returns the JSON-friendly string for the direction
+// flag. Matches the Warning.Direction field contract from TKT-GFQK.
+func directionLabel(incoming bool) string {
+	if incoming {
+		return "incoming"
+	}
+	return "outgoing"
+}
+
+// sideLabel produces a human-readable side description for warning
+// messages ("source" / "target"). pathSide=true asks for the side the
+// path entity is on; pathSide=false asks for the peer side.
+func sideLabel(incoming, pathSide bool) string {
+	if incoming == pathSide {
+		return "target"
+	}
+	return "source"
+}
+
 // collectEdgeWarnings runs the soft-condition checks for a single
 // resource identifier. None of these block the write.
+//
+// `incoming` flips the side of the type-allowlist checks: when true,
+// the `ref` is the SOURCE side of the canonical edge (the path entity
+// is the target). Warning codes stay the same so client de-dup by
+// code keeps working; the `Direction` field disambiguates.
 func (a *App) collectEdgeWarnings(
 	ctx context.Context, relType string, relDef *metamodel.RelationDef,
-	ref V1ResourceIdentifier, edgePath string,
+	ref V1ResourceIdentifier, edgePath string, incoming bool,
 ) []Warning {
 	var warnings []Warning
 	meta := a.State().Meta
+	direction := directionLabel(incoming)
 
-	target, err := a.store.GetEntity(ctx, ref.ID)
+	peer, err := a.store.GetEntity(ctx, ref.ID)
 	if err != nil {
 		warnings = append(warnings, Warning{
-			Code:   "target_not_found",
-			Path:   edgePath + "/id",
-			Detail: fmt.Sprintf("target entity %q does not exist; the edge will be created but reference a missing target", ref.ID),
+			Code:      "target_not_found",
+			Path:      edgePath + "/id",
+			Detail:    fmt.Sprintf("peer entity %q does not exist; the edge will be created but reference a missing peer", ref.ID),
+			Direction: direction,
 		})
 	} else {
-		if target.Type != ref.Type {
+		if peer.Type != ref.Type {
 			warnings = append(warnings, Warning{
-				Code:   "target_type_mismatch",
-				Path:   edgePath + "/type",
-				Detail: fmt.Sprintf("expected target type %q, but %q is of type %q", ref.Type, ref.ID, target.Type),
+				Code:      "target_type_mismatch",
+				Path:      edgePath + "/type",
+				Detail:    fmt.Sprintf("expected peer type %q, but %q is of type %q", ref.Type, ref.ID, peer.Type),
+				Direction: direction,
 			})
 		}
-		if !containsString(relDef.To, target.Type) {
+		// Peer-side type allowlist: when path entity is source
+		// (outgoing), the peer is target and must be in relDef.To;
+		// when path entity is target (incoming), the peer is source
+		// and must be in relDef.From.
+		peerSideAllowed := relDef.To
+		if incoming {
+			peerSideAllowed = relDef.From
+		}
+		if !containsString(peerSideAllowed, peer.Type) {
 			warnings = append(warnings, Warning{
-				Code:   "target_type_not_allowed",
-				Path:   edgePath,
-				Detail: fmt.Sprintf("relation %q does not declare %q as an allowed target type", relType, target.Type),
+				Code:      "target_type_not_allowed",
+				Path:      edgePath,
+				Detail:    fmt.Sprintf("relation %q does not declare %q as an allowed %s type", relType, peer.Type, sideLabel(incoming, false)),
+				Direction: direction,
 			})
 		}
 	}
@@ -125,18 +180,20 @@ func (a *App) collectEdgeWarnings(
 	for k := range ref.Meta {
 		if _, known := relDef.Properties[k]; !known {
 			warnings = append(warnings, Warning{
-				Code:   "unknown_meta_key",
-				Path:   edgePath + "/meta/" + jsonPointerEscape(k),
-				Detail: fmt.Sprintf("relation type %q does not declare meta property %q", relType, k),
+				Code:      "unknown_meta_key",
+				Path:      edgePath + "/meta/" + jsonPointerEscape(k),
+				Detail:    fmt.Sprintf("relation type %q does not declare meta property %q", relType, k),
+				Direction: direction,
 			})
 		}
 	}
 	for _, k := range ref.MetaUnset {
 		if _, known := relDef.Properties[k]; !known {
 			warnings = append(warnings, Warning{
-				Code:   "unknown_meta_key",
-				Path:   edgePath + "/meta_unset",
-				Detail: fmt.Sprintf("relation type %q does not declare meta property %q", relType, k),
+				Code:      "unknown_meta_key",
+				Path:      edgePath + "/meta_unset",
+				Detail:    fmt.Sprintf("relation type %q does not declare meta property %q", relType, k),
+				Direction: direction,
 			})
 		}
 	}
@@ -149,9 +206,10 @@ func (a *App) collectEdgeWarnings(
 		}
 		if err := meta.ValidatePropertyValue(k, &propDef, v); err != nil {
 			warnings = append(warnings, Warning{
-				Code:   "meta_type_mismatch",
-				Path:   edgePath + "/meta/" + jsonPointerEscape(k),
-				Detail: err.Error(),
+				Code:      "meta_type_mismatch",
+				Path:      edgePath + "/meta/" + jsonPointerEscape(k),
+				Detail:    err.Error(),
+				Direction: direction,
 			})
 		}
 	}
@@ -187,52 +245,60 @@ func (a *App) applyRelationsModern(
 	em := a.entityManager
 	var warnings []Warning
 
-	for relType, upd := range desired {
-		relDef := meta.Relations[relType] // already verified in validateRelationsModern
+	for bodyKey, upd := range desired {
+		canonical, incoming, ok := resolveDirection(meta, bodyKey)
+		if !ok {
+			// validateRelationsModern already screened this; defensive.
+			return warnings, &structuralError{
+				Code:   "unknown_relation_type",
+				Path:   "/relations/" + jsonPointerEscape(bodyKey),
+				Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", bodyKey),
+			}
+		}
+		relDef := meta.Relations[canonical]
+		direction := directionLabel(incoming)
 
 		desiredByID := make(map[string]V1ResourceIdentifier, len(upd.Data))
 		for _, ref := range upd.Data {
 			desiredByID[ref.ID] = ref
 		}
 
-		current := map[string]*entity.Relation{}
-		for _, edge := range a.outgoingRelations(entityID) {
-			if edge.Type == relType {
-				current[edge.To] = edge
-			}
-		}
+		current := a.currentEdgesByPeer(entityID, canonical, incoming)
 
 		// Adds and upserts.
 		for _, ref := range upd.Data {
 			finalProps, finalContent, contentSet := mergeEdgeMeta(current[ref.ID], ref)
 
-			ws := requiredMetaWarnings(relType, &relDef, ref, finalProps,
-				fmt.Sprintf("/relations/%s/data", jsonPointerEscape(relType)))
+			ws := requiredMetaWarnings(canonical, &relDef, ref, finalProps,
+				fmt.Sprintf("/relations/%s/data", jsonPointerEscape(bodyKey)), direction)
 			warnings = append(warnings, ws...)
+
+			from, to := edgeEndpoints(entityID, ref.ID, incoming)
 
 			existing, exists := current[ref.ID]
 			if exists {
 				if isEdgeNoOp(existing, finalProps, finalContent, contentSet, ref) {
 					continue // value-based no-op suppression
 				}
-				if err := a.writeUpdateRelation(ctx, entityID, relType, ref); err != nil {
+				if err := a.writeUpdateRelation(ctx, from, to, canonical, ref); err != nil {
 					return warnings, err
 				}
 			} else {
-				if err := a.writeCreateRelation(ctx, entityID, relType, ref, finalProps, finalContent); err != nil {
+				if err := a.writeCreateRelation(ctx, from, to, canonical, ref, finalProps, finalContent); err != nil {
 					return warnings, err
 				}
 			}
 		}
 
 		// Deletes: every current edge not in the desired set.
-		for targetID := range current {
-			if _, kept := desiredByID[targetID]; kept {
+		for peerID := range current {
+			if _, kept := desiredByID[peerID]; kept {
 				continue
 			}
-			if err := em.DeleteRelation(ctx, entityID, relType, targetID); err != nil {
+			from, to := edgeEndpoints(entityID, peerID, incoming)
+			if err := em.DeleteRelation(ctx, from, canonical, to); err != nil {
 				return warnings, &relationError{
-					RelType: relType, Target: targetID, Op: "delete",
+					RelType: canonical, Target: peerID, Op: "delete",
 					Reason: "delete_failed", Err: err,
 				}
 			}
@@ -246,15 +312,19 @@ func (a *App) applyRelationsModern(
 // happy case); on a target-not-found error it falls back to a direct
 // store write so DEC-HWZHA's "soft conditions are warnings, not
 // rejections" policy holds.
+//
+// `from` and `to` are pre-resolved by the caller via edgeEndpoints —
+// this function does not consult direction. `ref.ID` is the peer ID
+// (which is `to` for outgoing edges and `from` for incoming).
 func (a *App) writeCreateRelation(
-	ctx context.Context, from, relType string, ref V1ResourceIdentifier,
+	ctx context.Context, from, to, relType string, ref V1ResourceIdentifier,
 	finalProps map[string]interface{}, finalContent string,
 ) error {
 	opts := entitymanager.RelationOptions{
 		Properties: finalProps,
 		Content:    ref.Content,
 	}
-	_, err := a.entityManager.CreateRelation(ctx, from, relType, ref.ID, opts)
+	_, err := a.entityManager.CreateRelation(ctx, from, relType, to, opts)
 	if err == nil {
 		return nil
 	}
@@ -267,7 +337,7 @@ func (a *App) writeCreateRelation(
 	// Soft condition (e.g., target missing): write directly through
 	// the store, skipping the workspace's pre-write validation.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := a.store.CreateRelation(ctx, from, relType, ref.ID, data); sErr != nil {
+	if _, sErr := a.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: sErr,
@@ -279,15 +349,17 @@ func (a *App) writeCreateRelation(
 // writeUpdateRelation updates an existing relation, preferring the
 // EntityManager path. Falls back to a direct store write on soft
 // conditions, mirroring writeCreateRelation.
+//
+// `from` and `to` are pre-resolved by the caller via edgeEndpoints.
 func (a *App) writeUpdateRelation(
-	ctx context.Context, from, relType string, ref V1ResourceIdentifier,
+	ctx context.Context, from, to, relType string, ref V1ResourceIdentifier,
 ) error {
 	opts := entitymanager.RelationOptions{
 		Properties: ref.Meta,
 		MetaUnset:  ref.MetaUnset,
 		Content:    ref.Content,
 	}
-	_, err := a.entityManager.UpdateRelation(ctx, from, relType, ref.ID, opts)
+	_, err := a.entityManager.UpdateRelation(ctx, from, relType, to, opts)
 	if err == nil {
 		return nil
 	}
@@ -298,10 +370,10 @@ func (a *App) writeUpdateRelation(
 		}
 	}
 	// Soft condition: rebuild the post-merge state and write directly.
-	current, _ := a.store.GetRelation(ctx, from, relType, ref.ID)
+	current, _ := a.store.GetRelation(ctx, from, relType, to)
 	finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 	data := store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := a.store.UpdateRelation(ctx, from, relType, ref.ID, data); sErr != nil {
+	if _, sErr := a.store.UpdateRelation(ctx, from, relType, to, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "update",
 			Reason: "update_failed", Err: sErr,
@@ -396,9 +468,15 @@ func mapsEqual(a, b map[string]interface{}) bool {
 
 // requiredMetaWarnings returns warnings for declared-required meta
 // keys that are absent from the post-merge state.
+//
+// `direction` is the direction label ("outgoing" or "incoming") to
+// stamp on the emitted Warning so UIs can disambiguate same-edge
+// warnings without parsing paths. Per-edge meta is currently
+// relation-type-scoped (not per-direction), so direction does not
+// affect WHICH keys are required — it only labels the output.
 func requiredMetaWarnings(
 	relType string, relDef *metamodel.RelationDef, ref V1ResourceIdentifier,
-	finalProps map[string]interface{}, dataPath string,
+	finalProps map[string]interface{}, dataPath, direction string,
 ) []Warning {
 	var ws []Warning
 	for k, propDef := range relDef.Properties {
@@ -407,9 +485,10 @@ func requiredMetaWarnings(
 		}
 		if _, ok := finalProps[k]; !ok {
 			ws = append(ws, Warning{
-				Code:   "required_meta_unset",
-				Path:   fmt.Sprintf("%s[id=%s]/meta/%s", dataPath, jsonPointerEscape(ref.ID), jsonPointerEscape(k)),
-				Detail: fmt.Sprintf("relation type %q requires meta property %q", relType, k),
+				Code:      "required_meta_unset",
+				Path:      fmt.Sprintf("%s[id=%s]/meta/%s", dataPath, jsonPointerEscape(ref.ID), jsonPointerEscape(k)),
+				Detail:    fmt.Sprintf("relation type %q requires meta property %q", relType, k),
+				Direction: direction,
 			})
 		}
 	}

@@ -7,8 +7,9 @@ import { readReturnTo } from '@/utils/returnPath'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import type { PropertyDef, FormFieldOrRelation, Template, ModernRelationsField } from '@/types'
-import { getTemplates, createRelation, deleteRelation, updateRelationProperties } from '@/api'
+import { getTemplates, createRelation } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
+import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
   buildRelationsPatch,
   reshapeLegacyToModern,
@@ -358,12 +359,20 @@ async function handleSubmit() {
       }
     }
 
-    // Build modern relations from card edits. If any outgoing card was
-    // touched, the entire body must use modern shape (`shape_mixed`
-    // 400). Reshape the legacy picker IDs via `pickerTypes`; if any
-    // picker target has no resolved type, fall back to legacy + warn
-    // (TKT-ZEKO4 Q5).
-    const modernRelations = buildRelationsPatch(pendingCardChanges.value)
+    // Build modern relations from card edits. If any card was touched
+    // (outgoing or incoming), the entire body uses modern shape — the
+    // wire format forbids mixing legacy and modern (`shape_mixed` 400).
+    // Reshape the legacy picker IDs via `pickerTypes`; if any picker
+    // target has no resolved type, fall back to legacy + warn
+    // (TKT-ZEKO4 Q5). Incoming-suffix entries become inverse-named
+    // body keys via the inverseByRelation lookup (TKT-GFQK).
+    const inverseByRelation = new Map<string, string>()
+    for (const f of fields.value) {
+      if (!f.relation) continue
+      const inverse = schemaStore.getInverseName(f.relation)
+      if (inverse) inverseByRelation.set(f.relation, inverse)
+    }
+    const modernRelations = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
     const hasModernCardEntries = Object.keys(modernRelations).length > 0
     let relationsPayload: Record<string, string[]> | ModernRelationsField = filteredRelations
     if (hasModernCardEntries) {
@@ -399,9 +408,11 @@ async function handleSubmit() {
 
     if (isEdit.value && props.entityId) {
       const updated = await entitiesStore.update(formConfig.value.entity, props.entityId, payload)
-      // Incoming-direction edits remain on the per-edge path; the
-      // unified wire format has no `direction:incoming` concept.
-      await savePendingIncomingChanges()
+      // After TKT-GFQK incoming-direction edits flow through the same
+      // unified PATCH (remapped to inverse body keys), so no second
+      // save channel is needed. Clear pending state.
+      pendingCardChanges.value.clear()
+      saveGeneration.value++
       surfaceWarnings(updated.warnings)
       uiStore.success('Entity updated successfully')
     } else {
@@ -507,53 +518,24 @@ function updateRelationCards(relation: string, state: RelationCardState) {
 }
 
 // Bridge incoming-direction RelationPicker changes into the pending-
-// changes map under an `-incoming` suffix. The unified PATCH wire
-// format has no `direction:incoming` concept, so these are NOT
-// merged into the entity PATCH — they're applied via the legacy
-// per-edge endpoints in savePendingIncomingChanges below.
+// changes map under an `-incoming` suffix. After TKT-GFQK these flow
+// through the SAME unified PATCH as outgoing — buildRelationsPatch
+// remaps the suffix to the relation's inverse body key, and the
+// backend's resolveDirection treats it as a "path entity is target"
+// write. RelationPicker emits enough state (loadedEntries +
+// currentEntries) for us to build a proper RelationCardState the
+// builder can consume.
 function updateIncomingPicker(
   relation: string,
-  state: { added: Array<{ targetId: string }>; removed: string[] },
+  state: RelationPickerIncomingState,
 ) {
   pendingCardChanges.value.set(`${relation}${INCOMING_SUFFIX}`, {
-    entries: [],
+    entries: state.currentEntries,
     added: state.added,
     removed: state.removed,
     updated: [],
   })
   checkDirty()
-}
-
-// Apply incoming-direction edits via per-edge endpoints. The unified
-// PATCH wire format has no `direction:incoming` concept, so incoming
-// adds, removes, AND meta updates all stay on the per-edge path.
-// Outgoing edits were already saved as part of the unified PATCH body,
-// so the Map's outgoing entries are no-ops here; we filter by suffix
-// for clarity. After this returns, clear the whole map: both channels'
-// work is complete.
-async function savePendingIncomingChanges() {
-  const entity = formConfig.value!.entity
-  const entityId = props.entityId!
-
-  await Promise.all(
-    Array.from(pendingCardChanges.value.entries())
-      .filter(([key]) => key.endsWith(INCOMING_SUFFIX))
-      .map(async ([key, state]) => {
-        const relation = key.slice(0, -INCOMING_SUFFIX.length)
-        for (const targetId of state.removed) {
-          await deleteRelation(entity, entityId, relation, targetId, 'incoming')
-        }
-        for (const add of state.added) {
-          await createRelation(entity, entityId, relation, add.targetId, add.meta, 'incoming')
-        }
-        for (const upd of state.updated) {
-          await updateRelationProperties(entity, entityId, relation, upd.targetId, upd.meta, 'incoming')
-        }
-      }),
-  )
-
-  pendingCardChanges.value.clear()
-  saveGeneration.value++
 }
 
 // Surface soft validation warnings from a mutation response as a
@@ -618,6 +600,24 @@ onMounted(async () => {
     await loadTemplates()
   }
   loading.value = false
+
+  // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
+  // without an `inverse:` declared in the metamodel can't be saved
+  // through the unified PATCH. Warn the user at form-load time so the
+  // failure surfaces before edits accumulate. The widget still renders
+  // (display path is direction-aware and works), but save will throw
+  // a clear error from buildRelationsPatch if they try.
+  for (const f of fields.value) {
+    if (f.relation && f.direction === 'incoming') {
+      const inverse = schemaStore.getInverseName(f.relation)
+      if (!inverse) {
+        uiStore.warning(
+          `Relation '${f.relation}' has no 'inverse:' declared in the metamodel. ` +
+            `Saving changes from this widget will fail until the metamodel is updated.`,
+        )
+      }
+    }
+  }
 })
 
 onBeforeUnmount(() => {
