@@ -272,7 +272,12 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 		t.Fatalf("CreateEntity: %v", err)
 	}
 	// upsertEntity tries Create first then Update on conflict. Second
-	// persist therefore runs Create→conflict→Update.
+	// persist therefore runs Create→conflict→Update. Both counts pin
+	// the shape: a future change that switches to "check-then-write"
+	// would flip creates from 2 to 1 without changing updates.
+	if got := cs.creates.Load(); got != 2 {
+		t.Errorf("CreateEntity calls = %d, want 2 (initial + upsert probe)", got)
+	}
 	if got := cs.updates.Load(); got != 1 {
 		t.Errorf("UpdateEntity calls = %d, want 1", got)
 	}
@@ -647,5 +652,129 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 	}
 	if got := cs.updateCalls.Load(); got != 0 {
 		t.Errorf("UpdateEntity calls = %d, want 0 (must not mask non-conflict)", got)
+	}
+}
+
+// --- DEC-HWZHA: soft-validation partitioning ---
+
+// softValidationMetamodel adds an enum property whose missing-value
+// case is a soft (warning) condition.
+const softValidationMetamodel = `version: "1.0"
+entities:
+  ticket:
+    label: Ticket
+    plural: tickets
+    id_prefix: "TKT-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      priority:
+        type: priority
+        required: true
+relations: {}
+types:
+  priority:
+    values: [low, medium, high]
+`
+
+// TestCreate_SoftValidationProducesWarning pins DEC-HWZHA: a
+// required-but-missing soft-validation condition surfaces as a Warning
+// on CreateResult while the write succeeds.
+func TestCreate_SoftValidationProducesWarning(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(softValidationMetamodel))
+	if err != nil {
+		t.Fatalf("metamodel.Parse: %v", err)
+	}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:     memstore.New(),
+		Meta:      meta,
+		Templater: nopTemplater{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Create with missing required `priority` — soft condition under
+	// DEC-HWZHA, write succeeds, warning surfaces.
+	e := entity.New("", "ticket")
+	e.SetString("title", "Soft warning case")
+	result, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings len = %d, want 1: %+v", len(result.Warnings), result.Warnings)
+	}
+	w := result.Warnings[0]
+	if w.Code != "required_property_unset" {
+		t.Errorf("Warning.Code = %q, want required_property_unset", w.Code)
+	}
+	if w.Path != "/properties/priority" {
+		t.Errorf("Warning.Path = %q, want /properties/priority", w.Path)
+	}
+}
+
+// TestCreate_HardValidationStillAborts pins that hard validation
+// errors still abort the write (DEC-HWZHA hard class is unchanged).
+func TestCreate_HardValidationStillAborts(t *testing.T) {
+	mgr, cs := newManager(t, nil)
+
+	// Unknown entity type is a hard error.
+	e := entity.New("", "nonexistent_type")
+	_, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	if err == nil {
+		t.Fatal("expected error for unknown type")
+	}
+	if !strings.Contains(err.Error(), "unknown entity type") {
+		t.Errorf("error = %q, want contains 'unknown entity type'", err.Error())
+	}
+	if got := cs.creates.Load(); got != 0 {
+		t.Errorf("CreateEntity calls = %d, want 0 (hard error must abort)", got)
+	}
+}
+
+// TestUpdate_SoftValidationProducesWarning pins the same DEC-HWZHA
+// behavior on the update path.
+func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(softValidationMetamodel))
+	if err != nil {
+		t.Fatalf("metamodel.Parse: %v", err)
+	}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:     memstore.New(),
+		Meta:      meta,
+		Templater: nopTemplater{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	// Seed an entity that has the required field set.
+	e := entity.New("", "ticket")
+	e.SetString("title", "Initial")
+	e.SetString("priority", "high")
+	created, err := mgr.CreateEntity(ctx, e, entitymanager.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+	if len(created.Warnings) != 0 {
+		t.Fatalf("seed warnings = %d, want 0", len(created.Warnings))
+	}
+
+	// Clear `priority` and update — soft warning.
+	updated := &entity.Entity{
+		ID:         created.Entity.ID,
+		Type:       created.Entity.Type,
+		Properties: map[string]interface{}{"title": "Cleared"},
+	}
+	result, err := mgr.UpdateEntity(ctx, updated)
+	if err != nil {
+		t.Fatalf("UpdateEntity: %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings len = %d, want 1: %+v", len(result.Warnings), result.Warnings)
 	}
 }

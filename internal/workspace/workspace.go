@@ -1,7 +1,14 @@
 // Package workspace provides a stateful domain session that owns the
-// authoritative store, metamodel, and automation engine. All writes go
-// through Workspace so that persistence, validation, and automation
-// stay coordinated.
+// authoritative store, metamodel, search index, and (transitionally)
+// constructs the [entitymanager.Manager] that runs every write
+// pipeline. All writes go through Workspace's EntityManager so that
+// persistence, validation, and automation stay coordinated.
+//
+// **Transitional.** Workspace is being decomposed: the production
+// write path lives in [internal/entitymanager], and Workspace is the
+// shim that constructs Manager and wires per-call lua transport (see
+// [wsScriptRunner]). TKT-64R3 deletes this package once consumers
+// (CLI/MCP/dataentry/scheduler) construct their own services.
 package workspace
 
 import (
@@ -29,7 +36,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
@@ -79,17 +85,19 @@ func (nopScriptExecutor) ExecuteFile(_ string, _ lua.WriteDeps, _, _ *entity.Ent
 func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
 
 // Workspace is a stateful domain session that ties together the store
-// (persistence), metamodel (schema), automation engine, and search index.
-// All write operations go through Workspace so that persistence,
-// validation, and automation stay coordinated.
+// (persistence), metamodel (schema), [entitymanager.Manager] (the
+// write path that runs validation + automation + cascade), and search
+// index. All write operations go through Workspace's EntityManager so
+// that persistence, validation, and automation stay coordinated.
 //
 // # Lifecycle
 //
-// Metamodel, automation engine, and search index are loaded once at New
-// and never reloaded — schema or automation changes require a restart.
-// The store is self-watching: when an fsstore implementation is used, it
-// observes external file edits and emits events. Workspace subscribes to
-// those events and keeps the search index in sync automatically.
+// Metamodel, Manager (including its automation engine and cascade
+// runner), and search index are constructed once at New and never
+// reloaded — schema or automation changes require a restart. The
+// store is self-watching: when an fsstore implementation is used, it
+// observes external file edits and emits events. Workspace subscribes
+// to those events and keeps the search index in sync automatically.
 type Workspace struct {
 	// fs is the filesystem handle used for all workspace I/O:
 	// directory topology (ReadDir, MkdirAll, Stat, Walk) and byte
@@ -104,11 +112,10 @@ type Workspace struct {
 	scriptExec ScriptExecutor
 
 	// Core services — immutable after construction.
-	store      store.Store
-	meta       *metamodel.Metamodel
-	automation *automation.Engine  // may be nil if the metamodel has no automations
-	runner     *autocascade.Runner // may be nil iff automation is nil
-	searchIdx  *search.Index       // may be nil if index construction failed
+	store     store.Store
+	meta      *metamodel.Metamodel
+	manager   *entitymanager.Manager // the production write path
+	searchIdx *search.Index          // may be nil if index construction failed
 
 	// Derived services — memoised on first access. tracer wraps the store
 	// and wsSearcher wraps the workspace; both are cheap wrappers but
@@ -182,11 +189,10 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 	if openErr != nil {
 		return nil, fmt.Errorf("open store: %w", openErr)
 	}
-	ws, err := newWorkspace(fs, paths, meta, exec, opts...)
+	ws, err := newWorkspace(fs, paths, meta, exec, s, opts...)
 	if err != nil {
 		return nil, err
 	}
-	ws.store = s
 	ws.storeFactory = factory
 
 	// Populate the search index from the opened store and subscribe to
@@ -248,20 +254,17 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
 		opt(cfg)
 	}
 
-	ws, err := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script)
+	st := cfg.store
+	if st == nil {
+		st = memstore.New()
+	}
+	ws, err := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script, st)
 	if err != nil {
-		// NewForTest is panicy by design (it has no error return);
-		// callers that want a builder that fails gracefully should
-		// use New. This matches the existing convention for
-		// indexStoreEntities failures below.
 		panic(fmt.Sprintf("NewForTest: %v", err))
 	}
-	if cfg.store != nil {
-		ws.store = cfg.store
-		if ws.searchIdx != nil {
-			if err := indexStoreEntities(ws.searchIdx, cfg.store, meta); err != nil {
-				panic(fmt.Sprintf("NewForTest: index entities: %v", err))
-			}
+	if cfg.store != nil && ws.searchIdx != nil {
+		if err := indexStoreEntities(ws.searchIdx, cfg.store, meta); err != nil {
+			panic(fmt.Sprintf("NewForTest: index entities: %v", err))
 		}
 	}
 	return ws
@@ -298,35 +301,16 @@ func WithStoreFactory(f store.Factory) Option {
 	return func(w *Workspace) { w.storeFactory = f }
 }
 
+// newWorkspace is the single-phase Workspace constructor: it owns
+// search-index creation, config loading, automation+cascade wiring,
+// and [entitymanager.Manager] construction. The store is supplied by
+// the caller (fsstore from [New], memstore or caller-supplied from
+// [NewForTest]) so Manager binds to the *intended* store rather than
+// a placeholder.
 func newWorkspace(
-	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel, scriptExec ScriptExecutor,
-	opts ...Option,
+	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel,
+	scriptExec ScriptExecutor, st store.Store, opts ...Option,
 ) (*Workspace, error) {
-	var autoEngine *automation.Engine
-	var cascadeRunner *autocascade.Runner
-	if len(meta.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
-		// Build the cascade runner alongside the engine. The runner
-		// is what executes automation results' side effects;
-		// workspace.createEntity / updateEntity invoke it via
-		// runner.Process. Workspace itself satisfies autocascade.Host
-		// (see autocascade_host.go).
-		//
-		// Per CLAUDE.md "Constructors reject nil required fields",
-		// propagate failure rather than silently disabling
-		// automation — a project with automations in its metamodel
-		// but a broken runner is a fail-fast condition, not a
-		// degraded mode.
-		// Runner is script-runtime-agnostic; the per-call
-		// luaScriptRunner adapter (constructed at each dispatch
-		// site) carries the workspace's ScriptExecutor + lua.WriteDeps.
-		r, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
-		if err != nil {
-			return nil, fmt.Errorf("build autocascade runner: %w", err)
-		}
-		cascadeRunner = r
-	}
-
 	// Create an empty search index — callers that use a real store
 	// populate it from that store. Failures degrade search but don't
 	// block construction; Search() surfaces the nil index as an
@@ -356,15 +340,43 @@ func newWorkspace(
 		paths:      paths,
 		config:     cfg,
 		scriptExec: scriptExec,
-		store:      memstore.New(),
+		store:      st,
 		meta:       meta,
-		automation: autoEngine,
-		runner:     cascadeRunner,
 		searchIdx:  searchIdx,
 	}
 	for _, opt := range opts {
 		opt(ws)
 	}
+
+	// Wire automation engine + cascade runner. Both are optional; the
+	// pair is supplied to Manager together (Manager's constructor
+	// enforces "both or neither").
+	var autoEngine *automation.Engine
+	var cascadeRunner *autocascade.Runner
+	if len(meta.Automations) > 0 {
+		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
+		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
+		if rerr != nil {
+			return nil, fmt.Errorf("build autocascade runner: %w", rerr)
+		}
+		cascadeRunner = r
+	}
+
+	// Build the Manager. Workspace's wsEntityManager forwards every
+	// write through it; legacy workspace.createEntity / updateEntity
+	// / deleteEntity methods were deleted in TKT-IU2S.
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:        ws.store,
+		Meta:         ws.meta,
+		Templater:    ws.Templater(),
+		Automations:  autoEngine,
+		Cascade:      cascadeRunner,
+		ScriptRunner: &wsScriptRunner{w: ws},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build entitymanager: %w", err)
+	}
+	ws.manager = mgr
 	return ws, nil
 }
 
@@ -422,42 +434,12 @@ func (w *Workspace) writeEntity(e *entity.Entity) error {
 	return storeUpsertEntity(w.currentStore(), e)
 }
 
-// deleteEntityStore is the write-through delete path. Cascade is false
-// because the workspace's CRUD already deletes incident relations
-// explicitly before calling this.
-func (w *Workspace) deleteEntityStore(id string) error {
-	if id == "" {
-		return nil
-	}
-	st := w.currentStore()
-	if st == nil {
-		return nil
-	}
-	if _, err := st.DeleteEntity(context.Background(), id, false); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	return nil
-}
-
 // writeRelation upserts a relation into the authoritative store.
 func (w *Workspace) writeRelation(r *entity.Relation) error {
 	if r == nil {
 		return nil
 	}
 	return storeUpsertRelation(w.currentStore(), r)
-}
-
-// deleteRelationStore removes a relation from the authoritative store.
-func (w *Workspace) deleteRelationStore(from, relType, to string) error {
-	st := w.currentStore()
-	if st == nil {
-		return nil
-	}
-	err := st.DeleteRelation(context.Background(), from, relType, to)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	return nil
 }
 
 // currentStore returns the authoritative store for reads and writes.
@@ -717,22 +699,6 @@ func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.Entit
 
 // --- ID generation ---
 
-// customIDNotAllowedError formats a caller-facing error for the case where a
-// custom ID was supplied but the entity type's id_type auto-generates. The
-// message names the type, the id_type, the offending input, and — crucially —
-// tells the caller what to do instead (omit the id; if a prefix is configured,
-// that hints at what the generated ID will look like).
-func customIDNotAllowedError(entityType string, def *metamodel.EntityDef, offendingID string) error {
-	hint := "omit the \"id\" field to auto-generate one"
-	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
-		hint = fmt.Sprintf("omit the \"id\" field to auto-generate one (prefix %q)", prefixes[0])
-	}
-	return fmt.Errorf(
-		"entity type %q uses id_type=%s; custom ID %q not allowed — %s",
-		entityType, def.GetIDType(), offendingID, hint,
-	)
-}
-
 // GenerateID generates the next ID for the given entity type. If prefix is
 // non-empty it is used instead of the default prefix from the metamodel.
 func (w *Workspace) GenerateID(entityType, prefix string) (string, error) {
@@ -771,477 +737,6 @@ func (w *Workspace) collectAllIDs() []string {
 	}
 	return ids
 }
-
-// --- Entity operations ---
-
-// CreateOptions configures entity creation.
-type CreateOptions struct {
-	ID         string                 // empty = auto-generate
-	Prefix     string                 // override default ID prefix (ignored when ID is set)
-	Properties map[string]interface{} // property values
-	Content    string                 // markdown body
-}
-
-// CreateResult contains side-effects from entity creation.
-type CreateResult struct {
-	AutomationWarnings []string
-	AutomationErrors   []string
-	RelationsCreated   []*entity.Relation
-	EntitiesCreated    []*entity.Entity
-	// Warnings collects DEC-HWZHA soft validation findings on the
-	// post-write entity (required-field-missing, type mismatches,
-	// invalid values). Sorted by Path for stable client-facing
-	// ordering. Nil when there are none.
-	Warnings []entitymanager.Warning
-}
-
-// CreateEntity generates an ID (unless provided), applies templates and
-// defaults, validates, writes to the store, and runs automation.
-func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity.Entity, *CreateResult, error) {
-	// Reject caller-supplied IDs on types that auto-generate. Runs before the
-	// duplicate check so the "wrong id_type" error wins over an incidental
-	// collision — otherwise a caller chasing the duplicate message could keep
-	// picking new IDs without learning they shouldn't be picking one at all.
-	if opts.ID != "" {
-		if def, ok := w.meta.GetEntityDef(entityType); ok && !def.IsManualID() {
-			return nil, nil, customIDNotAllowedError(entityType, def, opts.ID)
-		}
-		// Check for duplicates if custom ID provided.
-		if _, err := w.Store().GetEntity(context.Background(), opts.ID); err == nil {
-			return nil, nil, fmt.Errorf("entity with ID %s already exists", opts.ID)
-		}
-	}
-
-	// Create entity using core logic (no automation yet - we run it after for pre-validation changes).
-	entity, err := w.createEntityCore(entityType, createEntityCoreOpts{
-		ID:         opts.ID,
-		IDPrefix:   opts.Prefix,
-		Properties: opts.Properties,
-		Content:    opts.Content,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Run automation and apply property changes.
-	result := &CreateResult{}
-	var autoResult *automation.Result
-	if w.automation != nil {
-		autoResult = w.automation.Process(automation.Event{
-			Type:   automation.EventEntityCreated,
-			Entity: entity,
-		})
-		// Apply property changes.
-		if len(autoResult.PropertiesSet) > 0 {
-			for prop, val := range autoResult.PropertiesSet {
-				entity.SetString(prop, val)
-			}
-			// Re-write entity with automation-set properties.
-			if err := w.writeEntity(entity); err != nil {
-				return nil, nil, fmt.Errorf("write entity after automation: %w", err)
-			}
-		}
-		result.AutomationWarnings = autoResult.Warnings
-		result.AutomationErrors = autoResult.Errors
-	}
-
-	// Apply automation side effects (relations, entities, Lua) after entity is written.
-	if autoResult != nil && w.runner != nil {
-		outcome, _ := w.runner.Process(context.Background(), w, autocascade.Request{
-			Trigger:    entity,
-			OldTrigger: nil,
-			Result:     autoResult,
-			Scripts:    newLuaScriptRunner(w.scriptExec, w.LuaWriteDeps()),
-		})
-		result.RelationsCreated = outcome.RelationsCreated
-		result.EntitiesCreated = outcome.EntitiesCreated
-		result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
-		result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
-	}
-
-	// Compute soft-condition warnings against the post-write entity
-	// state (post-automation). Per DEC-HWZHA, warnings reflect what's
-	// wrong with the entity as persisted, not what the request itself
-	// touched. Hard structural errors would have been caught by
-	// createEntityCore above.
-	if errs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
-		_, result.Warnings = partitionValidationErrors(errs)
-	}
-
-	return entity, result, nil
-}
-
-// UpdateResult contains side-effects from entity update.
-type UpdateResult struct {
-	AutomationWarnings []string
-	AutomationErrors   []string
-	RelationsCreated   []*entity.Relation
-	EntitiesCreated    []*entity.Entity
-	// Warnings collects DEC-HWZHA soft validation findings on the
-	// post-write entity (required-field-missing, type mismatches,
-	// invalid values). Sorted by Path for stable client-facing
-	// ordering. Nil when there are none.
-	Warnings []entitymanager.Warning
-}
-
-// UpdateEntity validates and writes an existing entity, runs automation,
-// and persists to the authoritative store.
-//
-// Per DEC-HWZHA, validation errors split into two classes: hard
-// structural errors (unknown entity type, ID prefix mismatch — the
-// storage layer can't construct the file path) abort the write with
-// (nil, *ValidationError). Soft conditions (required-field-missing,
-// type mismatch, invalid value) ride on the result as Warnings; the
-// write proceeds. See partitionValidationErrors for the rule.
-func (w *Workspace) updateEntity(entity, oldEntity *entity.Entity) (*UpdateResult, error) {
-	// Validate. Hard errors (unknown type, bad ID prefix) abort; soft
-	// errors (required-missing, type mismatch, invalid value) are
-	// re-computed AFTER automation runs (since automation may set or
-	// modify properties) and surfaced as warnings on the result.
-	allErrs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
-	hardErrs, _ := partitionValidationErrors(allErrs)
-	if len(hardErrs) > 0 {
-		return nil, newValidationError(hardErrs)
-	}
-
-	result := &UpdateResult{}
-
-	// Run automation to get property changes and side effects.
-	var autoResult *automation.Result
-	if w.automation != nil && oldEntity != nil {
-		autoResult = w.automation.Process(automation.Event{
-			Type:      automation.EventEntityUpdated,
-			Entity:    entity,
-			OldEntity: oldEntity,
-		})
-		for prop, val := range autoResult.PropertiesSet {
-			entity.SetString(prop, val)
-		}
-		result.AutomationWarnings = autoResult.Warnings
-		result.AutomationErrors = autoResult.Errors
-	}
-
-	// Re-compute soft-condition warnings against the post-automation
-	// entity state. Per DEC-HWZHA, warnings reflect what's wrong with
-	// the entity as it will be persisted.
-	if errs := w.meta.ValidateEntity(entity.ID, entity.Type, entity.Properties); len(errs) > 0 {
-		_, result.Warnings = partitionValidationErrors(errs)
-	}
-
-	// Write to store BEFORE side effects. This ensures Lua scripts can
-	// modify entities without being overwritten.
-	if err := w.writeEntity(entity); err != nil {
-		return nil, fmt.Errorf("write entity: %w", err)
-	}
-
-	// Apply automation side effects (relations, entities, Lua) AFTER entity is written.
-	if autoResult != nil && w.runner != nil {
-		outcome, _ := w.runner.Process(context.Background(), w, autocascade.Request{
-			Trigger:    entity,
-			OldTrigger: oldEntity,
-			Result:     autoResult,
-			Scripts:    newLuaScriptRunner(w.scriptExec, w.LuaWriteDeps()),
-		})
-		result.RelationsCreated = outcome.RelationsCreated
-		result.EntitiesCreated = outcome.EntitiesCreated
-		result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
-		result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
-	}
-
-	return result, nil
-}
-
-// DeleteResult contains info about what was deleted.
-type DeleteResult struct {
-	RelationsDeleted int
-}
-
-// ErrHasRelations is returned by DeleteEntity when cascade is false but
-// the entity has relations.
-var ErrHasRelations = errors.New("entity has relations; set cascade=true to delete")
-
-// DeleteEntity removes an entity and optionally cascades to its relations.
-func (w *Workspace) deleteEntity(_, id string, cascade bool) (*DeleteResult, error) {
-	ctx := context.Background()
-	st := w.Store()
-	if _, err := st.GetEntity(ctx, id); err != nil {
-		return nil, fmt.Errorf("entity not found: %s", id)
-	}
-
-	incoming := collectRelations(st, store.RelationQuery{EntityID: id, Direction: store.DirectionIncoming})
-	outgoing := collectRelations(st, store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing})
-	totalRelations := len(incoming) + len(outgoing)
-
-	if totalRelations > 0 && !cascade {
-		return nil, ErrHasRelations
-	}
-
-	result := &DeleteResult{}
-
-	// Delete relations first.
-	for _, rel := range incoming {
-		if err := w.deleteRelationStore(rel.From, rel.Type, rel.To); err != nil {
-			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
-		}
-		result.RelationsDeleted++
-	}
-	for _, rel := range outgoing {
-		if err := w.deleteRelationStore(rel.From, rel.Type, rel.To); err != nil {
-			slog.Warn("failed to delete relation", "from", rel.From, "type", rel.Type, "to", rel.To, "error", err)
-		}
-		result.RelationsDeleted++
-	}
-
-	// Delete entity.
-	if err := w.deleteEntityStore(id); err != nil {
-		return nil, fmt.Errorf("delete entity: %w", err)
-	}
-
-	return result, nil
-}
-
-// createEntityCoreOpts configures core entity creation.
-type createEntityCoreOpts struct {
-	ID              string                 // Custom ID (empty = auto-generate)
-	IDPrefix        string                 // Prefix for auto-generated ID
-	TemplateVariant string                 // Template variant name (empty = default template)
-	Properties      map[string]interface{} // Properties to set
-	Content         string                 // Body content
-}
-
-// createEntityCore creates an entity without running automations.
-// This is the shared creation logic used by CreateEntity and automation processing.
-func (w *Workspace) createEntityCore(entityType string, opts createEntityCoreOpts) (*entity.Entity, error) {
-	meta := w.Meta()
-	entityDef, ok := meta.GetEntityDef(entityType)
-	if !ok {
-		return nil, fmt.Errorf("unknown entity type: %s", entityType)
-	}
-
-	// Resolve ID.
-	entityID := opts.ID
-	if entityID == "" {
-		id, err := w.GenerateID(entityType, opts.IDPrefix)
-		if err != nil {
-			return nil, err
-		}
-		entityID = id
-	} else {
-		if !entityDef.IsManualID() {
-			return nil, customIDNotAllowedError(entityType, entityDef, entityID)
-		}
-		if err := entity.ValidateID(entityID); err != nil {
-			return nil, err
-		}
-	}
-
-	e := entity.New(entityID, entityType)
-
-	// Apply template defaults (use variant if specified).
-	tmpl, err := w.Templater().EntityTemplate(context.Background(), entityType, opts.TemplateVariant)
-	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
-	}
-	// If a variant was explicitly specified but not found, that's an error.
-	if opts.TemplateVariant != "" && tmpl == nil {
-		return nil, fmt.Errorf("template variant %q not found for entity type %s", opts.TemplateVariant, entityType)
-	}
-	if tmpl != nil {
-		e.Properties, e.Content = templating.ApplyEntity(e.Properties, e.Content, tmpl)
-	}
-
-	// Apply provided properties (override template defaults).
-	for k, v := range opts.Properties {
-		e.Properties[k] = v
-	}
-
-	// Set body content.
-	if opts.Content != "" {
-		e.Content = opts.Content
-	}
-
-	// Set default status if not set.
-	if e.GetString("status") == "" {
-		e.SetString("status", entityDef.GetDefaultStatus(meta))
-	}
-
-	// Validate. Hard errors abort; soft errors are returned as
-	// warnings via the outer createEntity wrapper.
-	allErrs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
-	hardErrs, _ := partitionValidationErrors(allErrs)
-	if len(hardErrs) > 0 {
-		return nil, newValidationError(hardErrs)
-	}
-
-	// Persist to the authoritative store (disk via fsstore in production).
-	if err := w.writeEntity(e); err != nil {
-		return nil, fmt.Errorf("write entity: %w", err)
-	}
-
-	return e, nil
-}
-
-// FindExistingRelationTarget finds an existing entity of the given
-// type that is the target of a relation from the source entity with
-// the given relation type. Returns nil if no such entity exists.
-//
-// Exported because it satisfies [autocascade.Host] directly (rather
-// than via a forwarder in autocascade_host.go like the other Host
-// methods) — the underlying logic was always here as
-// findExistingRelationTarget; promoting in place is cheaper than
-// introducing a forwarder for a query method whose name is already
-// fine for both audiences.
-func (w *Workspace) FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
-	ctx := context.Background()
-	st := w.Store()
-	for rel, err := range st.ListRelations(ctx, store.RelationQuery{
-		EntityID:  sourceID,
-		Direction: store.DirectionOutgoing,
-		Type:      relationType,
-	}) {
-		if err != nil {
-			continue
-		}
-		target, err := st.GetEntity(ctx, rel.To)
-		if err != nil {
-			continue
-		}
-		if target.Type == targetType {
-			return target
-		}
-	}
-	return nil
-}
-
-// --- Relation operations ---
-
-// writeRelationCore persists a relation to every store. Shared by
-// CreateRelation and automation processing.
-func (w *Workspace) writeRelationCore(rel *entity.Relation) error {
-	if err := w.writeRelation(rel); err != nil {
-		return fmt.Errorf("write relation: %w", err)
-	}
-	return nil
-}
-
-// CreateRelationOptions configures optional settings for relation creation
-// and updates. See entitymanager.RelationOptions for the full contract; this
-// type is the workspace-internal mirror.
-type CreateRelationOptions struct {
-	Properties map[string]interface{}
-	MetaUnset  []string
-	Content    *string
-}
-
-// CreateRelation validates both endpoints exist, checks for duplicates,
-// validates against the metamodel, and writes to the authoritative store.
-func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*entity.Relation, error) {
-	ctx := context.Background()
-	st := w.Store()
-	fromEntity, err := st.GetEntity(ctx, from)
-	if err != nil {
-		return nil, fmt.Errorf("source entity not found: %s", from)
-	}
-	toEntity, err := st.GetEntity(ctx, to)
-	if err != nil {
-		return nil, fmt.Errorf("target entity not found: %s", to)
-	}
-
-	// Validate relation type.
-	if vErr := w.meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
-		return nil, fmt.Errorf("invalid relation: %w", vErr)
-	}
-
-	// Check for duplicates.
-	if _, gErr := st.GetRelation(ctx, from, relType, to); gErr == nil {
-		return nil, fmt.Errorf("relation already exists: %s --%s--> %s", from, relType, to)
-	}
-
-	rel := entity.NewRelation(from, relType, to)
-
-	// Apply template if available.
-	tmpl, err := w.Templater().RelationTemplate(context.Background(), relType)
-	if err != nil {
-		return nil, fmt.Errorf("load relation template: %w", err)
-	}
-	if tmpl != nil {
-		rel.Properties = templating.ApplyRelation(rel.Properties, tmpl)
-	}
-
-	// Apply caller-provided properties and content (override template defaults).
-	// MetaUnset is ignored on Create — there are no existing values to clear.
-	if len(opts) > 0 {
-		if len(opts[0].Properties) > 0 && rel.Properties == nil {
-			rel.Properties = make(map[string]interface{})
-		}
-		for k, v := range opts[0].Properties {
-			rel.Properties[k] = v
-		}
-		if opts[0].Content != nil {
-			rel.Content = *opts[0].Content
-		}
-	}
-
-	if err := w.writeRelationCore(rel); err != nil {
-		return nil, err
-	}
-
-	return rel, nil
-}
-
-// updateRelation updates an existing relation's properties and content
-// using merge-then-unset semantics:
-//
-//  1. opts.Properties MERGES into the existing relation's properties.
-//     Keys absent from opts.Properties are NOT cleared by this call;
-//     callers that want to clear keys must list them in MetaUnset.
-//  2. opts.MetaUnset removes the named keys from the merged map. A key
-//     in MetaUnset that is not present is a silent no-op.
-//  3. If opts.Content is non-nil, the relation's body is replaced with
-//     *opts.Content (including the empty string clears the body). If
-//     opts.Content is nil, the existing body is left untouched.
-//
-// The store-level UpdateRelation always performs a full-replacement
-// write of the relation; the merge-and-unset logic lives here at the
-// workspace boundary so that automations and validation see the
-// post-merge state.
-func (w *Workspace) updateRelation(from, relType, to string, opts CreateRelationOptions) (*entity.Relation, error) {
-	rel, err := w.Store().GetRelation(context.Background(), from, relType, to)
-	if err != nil {
-		return nil, fmt.Errorf("relation not found: %s --%s--> %s", from, relType, to)
-	}
-
-	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
-		rel.Properties = make(map[string]interface{})
-	}
-	for k, v := range opts.Properties {
-		rel.Properties[k] = v
-	}
-	for _, k := range opts.MetaUnset {
-		delete(rel.Properties, k)
-	}
-	if opts.Content != nil {
-		rel.Content = *opts.Content
-	}
-
-	if err := w.writeRelationCore(rel); err != nil {
-		return nil, err
-	}
-
-	return rel, nil
-}
-
-// DeleteRelation removes a relation from disk and the in-memory store(s).
-func (w *Workspace) deleteRelation(from, relType, to string) error {
-	if err := w.deleteRelationStore(from, relType, to); err != nil {
-		return fmt.Errorf("delete relation: %w", err)
-	}
-	return nil
-}
-
-// --- Rename ---
-
-// --- File watching ---
 
 // WatchOptions configures the file watcher.
 type WatchOptions struct {

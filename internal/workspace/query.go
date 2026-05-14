@@ -25,8 +25,10 @@ func (w *Workspace) lookupEntity(id string) (*entity.Entity, bool) {
 	return e, true
 }
 
-// GetEntity satisfies [autocascade.Host.GetEntity] — a context-aware
-// lookup that propagates the underlying store error.
+// GetEntity is a context-aware lookup that propagates the underlying
+// store error. Used by callers that hold a *Workspace but want store-
+// shaped error semantics (e.g. [store.ErrNotFound]) instead of the
+// boolean miss-signal [Workspace.lookupEntity] provides.
 func (w *Workspace) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
 	return w.Store().GetEntity(ctx, id)
 }

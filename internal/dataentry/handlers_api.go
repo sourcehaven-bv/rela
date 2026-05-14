@@ -11,7 +11,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // --- JSON API Handlers ---
@@ -409,7 +408,7 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID, Prefix: req.Prefix})
 	if err != nil {
-		var valErr *workspace.ValidationError
+		var valErr *entitymanager.ValidationError
 		if errors.As(err, &valErr) {
 			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
 			return
@@ -465,7 +464,7 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	result, err := a.entityManager.UpdateEntity(r.Context(), e)
 	if err != nil {
-		var valErr *workspace.ValidationError
+		var valErr *entitymanager.ValidationError
 		if errors.As(err, &valErr) {
 			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
 			return

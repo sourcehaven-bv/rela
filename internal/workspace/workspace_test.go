@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -74,6 +75,77 @@ func setupTestWorkspace(t *testing.T) *Workspace {
 	return NewForTest(meta, WithFS(fs, ctx))
 }
 
+// CreateOptions is a test-only adapter that preserves the
+// pre-decomposition workspace create-options shape. It exists so the
+// large body of workspace tests can keep their current call style
+// while routing every write through [entitymanager.Manager].
+type CreateOptions struct {
+	ID         string
+	Prefix     string
+	Properties map[string]interface{}
+	Content    string
+	Variant    string
+}
+
+// createEntity is a test-only adapter that creates an entity through
+// the workspace's EntityManager. Returns the created entity, the
+// CreateResult, and any error — matching the pre-decomposition
+// signature so tests don't need to be rewritten.
+func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entitypkg.Entity, *entitymanager.CreateResult, error) {
+	e := &entitypkg.Entity{
+		Type:       entityType,
+		Properties: opts.Properties,
+		Content:    opts.Content,
+	}
+	res, err := w.EntityManager().CreateEntity(context.Background(), e, entitymanager.CreateOptions{
+		ID:      opts.ID,
+		Prefix:  opts.Prefix,
+		Variant: opts.Variant,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return res.Entity, res, nil
+}
+
+// updateEntity is a test-only adapter that mirrors the pre-decomposition
+// signature.
+func (w *Workspace) updateEntity(e, _ *entitypkg.Entity) (*entitymanager.UpdateResult, error) {
+	return w.EntityManager().UpdateEntity(context.Background(), e)
+}
+
+// deleteEntity is a test-only adapter.
+func (w *Workspace) deleteEntity(_, id string, cascade bool) (*entitymanager.DeleteResult, error) {
+	return w.EntityManager().DeleteEntity(context.Background(), id, cascade)
+}
+
+// createRelation is a test-only adapter that mirrors the pre-decomposition
+// signature.
+//
+//nolint:unparam // relType is parameterized for symmetry with the real API; tests happen to use one type
+func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*entitypkg.Relation, error) {
+	relOpts := entitymanager.RelationOptions{}
+	if len(opts) > 0 {
+		relOpts.Properties = opts[0].Properties
+		relOpts.MetaUnset = opts[0].MetaUnset
+		relOpts.Content = opts[0].Content
+	}
+	return w.EntityManager().CreateRelation(context.Background(), from, relType, to, relOpts)
+}
+
+// deleteRelation is a test-only adapter.
+func (w *Workspace) deleteRelation(from, relType, to string) error {
+	return w.EntityManager().DeleteRelation(context.Background(), from, relType, to)
+}
+
+// CreateRelationOptions is a test-only adapter type (the workspace
+// production type was deleted in TKT-IU2S).
+type CreateRelationOptions struct {
+	Properties map[string]interface{}
+	MetaUnset  []string
+	Content    *string
+}
+
 // mustCreate is a test helper that creates an entity, fatally failing on error.
 // Returns the created entity so tests can reference its generated ID without
 // hardcoding it.
@@ -84,6 +156,13 @@ func mustCreate(t *testing.T, ws *Workspace, entityType string, opts CreateOptio
 		t.Fatalf("mustCreate(%s): %v", entityType, err)
 	}
 	return e
+}
+
+// IsValidationError reports whether err is a [entitymanager.ValidationError].
+// Test-only shim preserving the pre-decomposition workspace API.
+func IsValidationError(err error) bool {
+	var ve *entitymanager.ValidationError
+	return errors.As(err, &ve)
 }
 
 // --- Constructor tests ---
@@ -538,8 +617,8 @@ func TestDeleteEntity_NoCascade_NoRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteEntity() error = %v", err)
 	}
-	if result.RelationsDeleted != 0 {
-		t.Errorf("relations deleted = %d, want 0", result.RelationsDeleted)
+	if len(result.DeletedRelations) != 0 {
+		t.Errorf("relations deleted = %d, want 0", len(result.DeletedRelations))
 	}
 	if _, ok := ws.lookupEntity(req.ID); ok {
 		t.Error("entity still present after delete")
@@ -572,8 +651,8 @@ func TestDeleteEntity_CascadeRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cascade delete error = %v", err)
 	}
-	if result.RelationsDeleted != 1 {
-		t.Errorf("relations deleted = %d, want 1", result.RelationsDeleted)
+	if len(result.DeletedRelations) != 1 {
+		t.Errorf("relations deleted = %d, want 1", len(result.DeletedRelations))
 	}
 }
 
@@ -663,7 +742,7 @@ func TestDeleteRelation(t *testing.T) {
 // --- Errors ---
 
 func TestIsValidationError(t *testing.T) {
-	err := newValidationError(nil)
+	err := &entitymanager.ValidationError{}
 	if !IsValidationError(err) {
 		t.Error("expected IsValidationError to return true")
 	}

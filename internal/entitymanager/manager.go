@@ -126,6 +126,11 @@ func New(d Deps) (*Manager, error) {
 //     automation-set properties; pinned by manager_test.go).
 //  3. Dispatch cascade via Cascade.Process; merge outcome into the
 //     CreateResult.
+//
+// **Caller-entity mutation.** The supplied `*entity.Entity` is used as
+// a property/content carrier and not retained — the freshly-built
+// entity is returned via [CreateResult.Entity]. Callers should consume
+// the returned entity, not the one they passed in.
 func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts CreateOptions) (*CreateResult, error) {
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
@@ -139,7 +144,7 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 		}
 	}
 
-	created, err := createCore(ctx, m.deps, e.Type, createCoreOpts{
+	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.Prefix,
 		TemplateVariant: opts.Variant,
@@ -150,7 +155,7 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 		return nil, err
 	}
 
-	result := &CreateResult{Entity: created}
+	result := &CreateResult{Entity: created, Warnings: warnings}
 
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {
@@ -167,6 +172,12 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 		}
 		if writeErr := upsertEntity(ctx, m.deps.Store, created); writeErr != nil {
 			return nil, fmt.Errorf("write entity after automation: %w", writeErr)
+		}
+		// Recompute warnings against the post-automation state
+		// (DEC-HWZHA). The pre-write warnings from createCore reflect
+		// the entity before automation set any properties.
+		if errs := m.deps.Meta.ValidateEntity(created.ID, created.Type, created.Properties); len(errs) > 0 {
+			_, result.Warnings = partitionValidationErrors(errs)
 		}
 	}
 	result.AutomationWarnings = autoResult.Warnings
@@ -193,6 +204,11 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 // when an old state is available, applies property changes, persists,
 // and dispatches the cascade.
 //
+// **Caller-entity mutation.** When automation sets properties via
+// [automation.Result.PropertiesSet], UpdateEntity mutates the supplied
+// `*entity.Entity` in place before writing. Callers that need to
+// preserve the pre-call state should clone first.
+//
 // **Gate:** if the entity doesn't exist, UpdateEntity returns
 // [ErrEntityNotFound] and never runs the engine. (Preserves
 // pre-refactor workspace behavior.)
@@ -200,8 +216,14 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateRe
 	if e == nil {
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
-	if errs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
-		return nil, newValidationError(errs)
+	// DEC-HWZHA: partition validation errors once. Hard errors abort;
+	// soft conditions populate Result.Warnings. If automation runs and
+	// mutates properties, we recompute warnings against the post-
+	// automation state.
+	preErrs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	hard, soft := partitionValidationErrors(preErrs)
+	if len(hard) > 0 {
+		return nil, newValidationError(hard)
 	}
 
 	oldEntity, getErr := m.deps.Store.GetEntity(ctx, e.ID)
@@ -209,7 +231,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateRe
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
 	}
 
-	result := &UpdateResult{Entity: e}
+	result := &UpdateResult{Entity: e, Warnings: soft}
 
 	runAutomation := m.deps.Automations != nil
 	var autoResult *automation.Result
@@ -222,6 +244,13 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateRe
 		if len(autoResult.PropertiesSet) > 0 {
 			for prop, val := range autoResult.PropertiesSet {
 				e.SetString(prop, val)
+			}
+			// Properties changed — recompute warnings against the
+			// post-automation state (DEC-HWZHA).
+			if errs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+				_, result.Warnings = partitionValidationErrors(errs)
+			} else {
+				result.Warnings = nil
 			}
 		}
 		result.AutomationWarnings = autoResult.Warnings

@@ -2,19 +2,16 @@ package workspace
 
 import (
 	"context"
-	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/rename"
 )
 
-// ErrNilEntity is returned when a nil entity is passed to a mutating method.
-var ErrNilEntity = errors.New("entity is nil")
-
-// wsEntityManager adapts the workspace's legacy write API to the
-// entitymanager.EntityManager interface. It converts entity.Entity at the
-// boundary and delegates to the workspace's automation-aware methods.
+// wsEntityManager is a transitional adapter that forwards every write
+// to the workspace's held [entitymanager.Manager]. It exists because
+// consumers reach EntityManager via the workspace shim today; TKT-64R3
+// replaces the shim with direct Manager construction at each wiring
+// site and deletes this adapter along with [internal/workspace].
 type wsEntityManager struct {
 	w *Workspace
 }
@@ -22,150 +19,46 @@ type wsEntityManager struct {
 var _ entitymanager.EntityManager = (*wsEntityManager)(nil)
 
 func (m *wsEntityManager) CreateEntity(
-	_ context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
+	ctx context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
 ) (*entitymanager.CreateResult, error) {
-	if e == nil {
-		return nil, ErrNilEntity
-	}
-
-	createOpts := CreateOptions{
-		ID:         opts.ID,
-		Prefix:     opts.Prefix,
-		Properties: e.Properties,
-		Content:    e.Content,
-	}
-	_ = opts.Variant // Variant not yet plumbed through workspace.CreateEntity
-
-	created, result, err := m.w.createEntity(e.Type, createOpts)
-	if err != nil {
-		return nil, err
-	}
-
-	return &entitymanager.CreateResult{
-		Entity:             created,
-		RelationsCreated:   result.RelationsCreated,
-		EntitiesCreated:    result.EntitiesCreated,
-		AutomationWarnings: result.AutomationWarnings,
-		AutomationErrors:   result.AutomationErrors,
-		Warnings:           result.Warnings,
-	}, nil
+	return m.w.manager.CreateEntity(ctx, e, opts)
 }
 
 func (m *wsEntityManager) UpdateEntity(
-	_ context.Context, e *entity.Entity,
+	ctx context.Context, e *entity.Entity,
 ) (*entitymanager.UpdateResult, error) {
-	if e == nil {
-		return nil, ErrNilEntity
-	}
-
-	// Find current state for oldEntity.
-	current, ok := m.w.lookupEntity(e.ID)
-	if !ok {
-		return nil, &entityNotFoundError{ID: e.ID}
-	}
-
-	// Build updated entity by applying e's fields over current.
-	updated := current.Clone()
-	updated.Properties = make(map[string]interface{}, len(e.Properties))
-	for k, v := range e.Properties {
-		updated.Properties[k] = v
-	}
-	updated.Content = e.Content
-
-	result, err := m.w.updateEntity(updated, current)
-	if err != nil {
-		return nil, err
-	}
-
-	return &entitymanager.UpdateResult{
-		Entity:             updated,
-		RelationsCreated:   result.RelationsCreated,
-		EntitiesCreated:    result.EntitiesCreated,
-		AutomationWarnings: result.AutomationWarnings,
-		AutomationErrors:   result.AutomationErrors,
-		Warnings:           result.Warnings,
-	}, nil
+	return m.w.manager.UpdateEntity(ctx, e)
 }
 
 func (m *wsEntityManager) DeleteEntity(
-	_ context.Context, id string, cascade bool,
+	ctx context.Context, id string, cascade bool,
 ) (*entitymanager.DeleteResult, error) {
-	// Workspace.DeleteEntity needs entity type; look it up.
-	current, ok := m.w.lookupEntity(id)
-	if !ok {
-		return nil, &entityNotFoundError{ID: id}
-	}
-
-	// Capture relations before delete so we can report what got cascaded.
-	var deletedRels []*entity.Relation
-	if cascade {
-		deletedRels = append(deletedRels, m.w.IncomingRelations(id)...)
-		deletedRels = append(deletedRels, m.w.OutgoingRelations(id)...)
-	}
-
-	_, err := m.w.deleteEntity(current.Type, id, cascade)
-	if err != nil {
-		return nil, err
-	}
-
-	return &entitymanager.DeleteResult{
-		DeletedEntities:  []*entity.Entity{current},
-		DeletedRelations: deletedRels,
-	}, nil
+	return m.w.manager.DeleteEntity(ctx, id, cascade)
 }
 
 func (m *wsEntityManager) RenameEntity(
-	_ context.Context, oldID, newID string, opts entitymanager.RenameOptions,
+	ctx context.Context, oldID, newID string, opts entitymanager.RenameOptions,
 ) (*entitymanager.RenameResult, error) {
-	current, ok := m.w.lookupEntity(oldID)
-	if !ok {
-		return nil, &entityNotFoundError{ID: oldID}
-	}
-
-	result, err := m.w.rename(current.Type, oldID, newID, rename.Options{DryRun: opts.DryRun})
-	if err != nil {
-		return nil, err
-	}
-
-	return &entitymanager.RenameResult{
-		OldID:            result.OldID,
-		NewID:            result.NewID,
-		RelationsUpdated: len(result.RelationsUpdated),
-	}, nil
+	return m.w.manager.RenameEntity(ctx, oldID, newID, opts)
 }
 
 func (m *wsEntityManager) CreateRelation(
-	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
+	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	return m.w.createRelation(from, relType, to, CreateRelationOptions{
-		Properties: opts.Properties,
-		MetaUnset:  opts.MetaUnset,
-		Content:    opts.Content,
-	})
+	return m.w.manager.CreateRelation(ctx, from, relType, to, opts)
 }
 
 func (m *wsEntityManager) UpdateRelation(
-	_ context.Context, from, relType, to string, opts entitymanager.RelationOptions,
+	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
 ) (*entity.Relation, error) {
-	return m.w.updateRelation(from, relType, to, CreateRelationOptions{
-		Properties: opts.Properties,
-		MetaUnset:  opts.MetaUnset,
-		Content:    opts.Content,
-	})
+	return m.w.manager.UpdateRelation(ctx, from, relType, to, opts)
 }
 
-func (m *wsEntityManager) DeleteRelation(_ context.Context, from, relType, to string) error {
-	return m.w.deleteRelation(from, relType, to)
+func (m *wsEntityManager) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	return m.w.manager.DeleteRelation(ctx, from, relType, to)
 }
 
 // EntityManager returns the entity management service.
 func (w *Workspace) EntityManager() entitymanager.EntityManager {
 	return &wsEntityManager{w: w}
 }
-
-// entityNotFoundError is a local error type for the manager.
-type entityNotFoundError struct {
-	ID string
-}
-
-func (e *entityNotFoundError) Error() string { return "entity not found: " + e.ID }

@@ -36,13 +36,19 @@ var _ autocascade.Host = (*cascadeHost)(nil)
 func (h *cascadeHost) CreateEntity(
 	entityType string, opts autocascade.CreateEntityOptions,
 ) (*entity.Entity, error) {
-	return createCore(context.Background(), h.deps, entityType, createCoreOpts{
+	// Cascade-driven creates discard warnings — the autocascade.Host
+	// contract returns only (*entity.Entity, error). The Runner doesn't
+	// propagate per-step warnings; they'd be merged into the trigger's
+	// CreateResult.Warnings if we extended Outcome, but that's a
+	// separate change.
+	e, _, err := createCore(context.Background(), h.deps, entityType, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.IDPrefix,
 		TemplateVariant: opts.TemplateVariant,
 		Properties:      opts.Properties,
 		Content:         opts.Content,
 	})
+	return e, err
 }
 
 // WriteEntity satisfies [autocascade.Host.WriteEntity] by performing
