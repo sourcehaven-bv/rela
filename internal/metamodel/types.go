@@ -16,7 +16,23 @@ type Metamodel struct {
 	Automations []AutomationDef        `yaml:"automations,omitempty"`
 
 	// Computed lookups (not from YAML)
-	aliasMap map[string]string // alias -> canonical name
+	aliasMap      map[string]string // alias -> canonical name
+	inverseOwners map[string]string // inverse name -> owning canonical relation name
+}
+
+// InverseOwner returns the canonical relation type that declares the
+// given inverse name, if any. Populated at load time by the metamodel
+// loader after rejecting collisions and canonical-name shadowing. The
+// data-entry unified-PATCH wire format uses this to resolve inverse
+// body keys without scanning the relation map on every request.
+//
+// For a relation declared `symmetric: true` with `inverse: <self>`,
+// the inverse maps back to the same canonical relation — callers that
+// care about direction should consult `RelationDef.Symmetric` and
+// treat the path entity as source regardless of the body key.
+func (m *Metamodel) InverseOwner(inverseName string) (string, bool) {
+	owner, ok := m.inverseOwners[inverseName]
+	return owner, ok
 }
 
 // ValidationRule defines a custom validation rule for entities

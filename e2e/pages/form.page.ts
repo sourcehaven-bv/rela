@@ -234,6 +234,57 @@ export class FormPage extends BasePage {
     await this.page.keyboard.type(text);
   }
 
+  // --- Entity-reference picker (TKT-I5NO) ---
+
+  /** Toolbar button that opens the EntityPickerModal. Located by its
+   *  title attribute rather than the icon class so the test survives
+   *  icon-swap refactors. */
+  get insertEntityRefButton(): Locator {
+    return this.markdownToolbar.locator('button[title="Insert entity reference"]')
+  }
+
+  /** Picker modal overlay. Teleported to <body>, so we query the page
+   *  rather than the form root. */
+  get entityPickerOverlay(): Locator {
+    return this.page.locator('.entity-picker-overlay')
+  }
+
+  get entityPickerInput(): Locator {
+    return this.entityPickerOverlay.locator('.entity-picker-input')
+  }
+
+  get entityPickerOptions(): Locator {
+    return this.entityPickerOverlay.locator('.entity-picker-option')
+  }
+
+  /** Click the toolbar button and wait for the modal to render. */
+  async openEntityPicker(): Promise<void> {
+    await this.insertEntityRefButton.click()
+    await expect(this.entityPickerInput).toBeFocused()
+  }
+
+  /** Type a query into the picker and wait for results to render. The
+   *  150ms client debounce plus Bleve commit latency means we wait up to
+   *  five seconds before failing — generous enough that a freshly-created
+   *  entity surfaces, tight enough that a real bug still fails fast. */
+  async searchEntityPicker(query: string): Promise<void> {
+    await this.entityPickerInput.fill(query)
+    await expect(this.entityPickerOptions.first()).toBeVisible({ timeout: 5_000 })
+  }
+
+  /** Read the current CodeMirror buffer back as a single string. Used
+   *  to assert the picker inserted the expected `<id>` code span. */
+  async getMarkdownBody(): Promise<string> {
+    return await this.codeMirror.evaluate((el) => {
+      // CodeMirror v5 exposes the instance on the .CodeMirror node via the
+      // global CodeMirror constructor. EasyMDE preserves the same shape;
+      // every line in the document is concatenated with '\n'.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cm = (el as any).CodeMirror
+      return typeof cm?.getValue === 'function' ? (cm.getValue() as string) : ''
+    })
+  }
+
   // --- Template selector ---
 
   get templateSelector(): Locator {

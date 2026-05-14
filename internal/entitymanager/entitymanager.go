@@ -43,6 +43,11 @@ type Warning struct {
 	Code   string `json:"code"`
 	Path   string `json:"path,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	// Direction is "outgoing" by default. When the warning was emitted
+	// under an inverse body key in the unified PATCH, it's "incoming".
+	// Lets UIs disambiguate same-edge warnings without parsing the
+	// (free-form) JSON Pointer path. See TKT-GFQK.
+	Direction string `json:"direction,omitempty"`
 }
 
 // CreateResult describes the outcome of a create, including automation

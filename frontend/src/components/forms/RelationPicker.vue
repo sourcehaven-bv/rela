@@ -3,14 +3,18 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { getEntityRelations } from '@/api'
-import type { FormFieldOrRelation, Entity } from '@/types'
+import type { FormFieldOrRelation, Entity, RelationEntry } from '@/types'
 import InlineCreateModal from './InlineCreateModal.vue'
 
-// Reverse-relation diff payload. Mirrors RelationCardState (without the
-// `updated` channel — pickers don't edit relation properties) so DynamicForm
-// can route incoming-picker changes through its existing direction-aware
-// save reconciler.
+// Per-edge state emitted on the incoming-changed channel after
+// TKT-GFQK unified the save path. DynamicForm wraps this into a
+// RelationCardState so buildRelationsPatch emits under the inverse
+// body key. Pickers don't edit per-edge meta so `updated` is empty.
 export interface RelationPickerIncomingState {
+  // Snapshot loaded from the server, used as the diff baseline.
+  loadedEntries: RelationEntry[]
+  // Current desired set after user edits.
+  currentEntries: RelationEntry[]
   added: Array<{ targetId: string }>
   removed: string[]
 }
@@ -29,6 +33,10 @@ const emit = defineEmits<{
   // (JSON:API §9). RelationPicker is the only widget that knows the
   // type at pick time. Emitted on every `update` and on initial load.
   'update:types': [types: Map<string, string>]
+  // Incoming-direction edits flow through this channel. The payload
+  // carries enough state for DynamicForm to build the RelationCardState
+  // routed under `-incoming` suffix, which buildRelationsPatch then
+  // emits under the inverse body key. (See TKT-GFQK.)
   'incoming-changed': [payload: RelationPickerIncomingState]
 }>()
 
@@ -47,9 +55,20 @@ const createTargetType = ref('')
 // parent's `:value` prop is sourced from `entity.relations`, which the
 // backend only populates with outgoing edges, so it's never useful for
 // reverse pickers. `incomingOriginal` is the snapshot for diff-on-save.
+//
+// Load-failure-cannot-wipe guarantee (TKT-GFQK F7b): on incoming
+// pickers, edits are emitted ONLY after a successful load. If the
+// load fails or hasn't completed, the picker stays inert — no
+// `incoming-changed` event fires until the user actually selects or
+// removes a peer, AND the snapshot is non-null.
 const isIncoming = computed(() => props.field.direction === 'incoming')
 const incomingValue = ref<string[]>([])
 const incomingOriginal = ref<string[]>([])
+// Snapshot of the loaded edges keyed by ID. Used by the new
+// emitIncomingDiff to construct a RelationEntry-shaped payload
+// without a second GET. Empty until loadIncomingValue succeeds.
+const incomingLoadedEntries = ref<RelationEntry[]>([])
+const incomingLoaded = ref(false)
 
 // Computed
 const relationType = computed(() => {
@@ -126,20 +145,55 @@ async function loadIncomingValue() {
     const ids = edges.map((e) => e.id)
     incomingValue.value = ids
     incomingOriginal.value = [...ids]
+    incomingLoadedEntries.value = edges
+    incomingLoaded.value = true
   } catch (err) {
     if (isCancelledFetch(err)) return
     console.error('Failed to load incoming relations:', err)
+    // Stay inert (incomingLoaded=false) so any user-triggered emit
+    // is a no-op until load succeeds. Prevents wipe-on-load-failure.
   }
 }
 
+// emitIncomingDiff sends the current desired peer set to DynamicForm
+// (TKT-GFQK). The payload includes the loaded snapshot AND the
+// current entries so DynamicForm can build a RelationCardState whose
+// `entries` field reflects the post-edit set (driving the inverse-
+// keyed body in buildRelationsPatch).
+//
+// Emits ONLY if the load succeeded, so a failed load can't manifest
+// as a save-time `data: []` wipe (load-failure-cannot-wipe).
 function emitIncomingDiff() {
+  if (!incomingLoaded.value) return
   const original = new Set(incomingOriginal.value)
   const current = new Set(incomingValue.value)
   const added = incomingValue.value
     .filter((id) => !original.has(id))
     .map((id) => ({ targetId: id }))
   const removed = incomingOriginal.value.filter((id) => !current.has(id))
-  emit('incoming-changed', { added, removed })
+
+  // Build currentEntries from loaded snapshot + any newly-added peer
+  // (whose type comes from candidates). Removed entries are excluded.
+  const loadedById = new Map(incomingLoadedEntries.value.map((e) => [e.id, e]))
+  const currentEntries: RelationEntry[] = []
+  for (const id of incomingValue.value) {
+    const fromLoaded = loadedById.get(id)
+    if (fromLoaded) {
+      currentEntries.push(fromLoaded)
+      continue
+    }
+    // Newly-added: look up the type from candidates.
+    const cand = candidates.value.find((c) => c.id === id)
+    if (cand) {
+      currentEntries.push({ id, type: cand.type, direction: 'incoming' })
+    }
+  }
+  emit('incoming-changed', {
+    loadedEntries: incomingLoadedEntries.value,
+    currentEntries,
+    added,
+    removed,
+  })
 }
 
 // Build a Map<id, type> from candidates for the current outgoing

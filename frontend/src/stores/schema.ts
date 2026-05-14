@@ -52,6 +52,14 @@ export const useSchemaStore = defineStore('schema', () => {
   // Getters
   const getEntityType = computed(() => (name: string) => entityTypes.value.get(name))
   const getRelationType = computed(() => (name: string) => relationTypes.value.get(name))
+  // Look up a relation type's inverse name (e.g., "blocks" → "blockedBy").
+  // Returns undefined when the relation has no declared inverse. Used by
+  // the unified-PATCH builder to emit incoming-direction edits under the
+  // inverse body key, so the backend's resolveDirection picks them up
+  // as "path entity is target" writes.
+  const getInverseName = computed(
+    () => (name: string) => relationTypes.value.get(name)?.inverse?.id,
+  )
   const getForm = computed(() => (id: string) => forms.value.get(id))
   const getList = computed(() => (id: string) => lists.value.get(id))
   // Find the first list ID that shows entities of the given type.
@@ -162,6 +170,7 @@ export const useSchemaStore = defineStore('schema', () => {
     // Getters
     getEntityType,
     getRelationType,
+    getInverseName,
     getForm,
     getList,
     findListIdForEntityType,

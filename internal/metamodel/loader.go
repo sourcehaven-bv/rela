@@ -235,6 +235,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateEntitySemantics(m)...)
 	validationErrors = append(validationErrors, validateRelationReferences(m)...)
 	validationErrors = append(validationErrors, validateRelationProperties(m)...)
+	validationErrors = append(validationErrors, validateRelationInverses(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}
@@ -465,6 +466,69 @@ func validateRelationReferences(m *Metamodel) []string {
 		}
 	}
 
+	return errs
+}
+
+// validateRelationInverses enforces the cross-relation uniqueness
+// rules on `inverse:` declarations and, on success, populates
+// `m.inverseOwners` for O(1) runtime lookup.
+//
+// Two failure modes are rejected:
+//
+//   - Two unrelated canonical relations declare the same `inverse:` ID.
+//     Without this guard, a consumer that resolves a body key by
+//     inverse name would pick non-deterministically across runs
+//     (Go map iteration is randomized).
+//   - A relation declares `inverse: X` where `X` is also the name of
+//     a separate canonical relation. The lookup precedence would be
+//     ambiguous: canonical first wins by convention, but the
+//     metamodel author likely didn't intend the shadowing.
+//
+// Symmetric self-inverse (`symmetric: true` AND `inverse.id == relType`)
+// is the one allowed case where a name appears in both maps — it
+// describes a single relation that is its own inverse.
+//
+// If any violation is found, `inverseOwners` is left nil so callers
+// surface a clear "metamodel did not pass validation" failure rather
+// than reading a partially populated map.
+func validateRelationInverses(m *Metamodel) []string {
+	var errs []string
+	owners := make(map[string]string, len(m.Relations))
+
+	for _, relType := range sortedKeys(m.Relations) {
+		rel := m.Relations[relType]
+		if rel.Inverse == nil || rel.Inverse.ID == "" {
+			continue
+		}
+		inv := rel.Inverse.ID
+
+		// Symmetric self-inverse is the only allowed name overlap.
+		isSelfSymmetric := rel.Symmetric && inv == relType
+
+		if existing, ok := owners[inv]; ok {
+			errs = append(errs, fmt.Sprintf(
+				"inverse_name_collision: relations %q and %q both declare inverse %q "+
+					"(each inverse name must be unique across the metamodel; "+
+					"rename one of the `inverse:` values or remove the duplicate)",
+				existing, relType, inv))
+			continue
+		}
+
+		if _, shadowsCanonical := m.Relations[inv]; shadowsCanonical && !isSelfSymmetric {
+			errs = append(errs, fmt.Sprintf(
+				"inverse_shadows_canonical: relation %q declares inverse %q which is also the name of canonical relation %q "+
+					"(rename the inverse to a unique name; "+
+					"for a self-inverse, set `symmetric: true` on the canonical relation and use its own name as inverse)",
+				relType, inv, inv))
+			continue
+		}
+
+		owners[inv] = relType
+	}
+
+	if len(errs) == 0 {
+		m.inverseOwners = owners
+	}
 	return errs
 }
 
