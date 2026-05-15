@@ -14,10 +14,10 @@ status: in-progress
 **Problem.** `internal/mcp/server.go` declares a consumer-side `Services`
 interface (CLAUDE.md cites it as the positive example) but
 `*workspace.Workspace` is the only implementation. The interface itself imports
-`internal/workspace` for `WatchOptions` / `ChangeEvent` types and the
-compile-time satisfaction check, which means `internal/mcp` cannot exist without
-`internal/workspace` even though it never uses any workspace-specific behavior
-beyond what `Services` names.
+`internal/workspace` for `WatchOptions` and `ChangeEvent` types and asserts
+compile-time satisfaction by `*Workspace`. That means `internal/mcp` cannot
+exist without `internal/workspace` even though nothing in MCP needs
+workspace-specific behavior beyond what `Services` names.
 
 After this ticket lands, `cmd/rela mcp` constructs Store, Meta, Tracer,
 Searcher, Validator, EntityManager, Config, Paths, LuaWriteDeps, LuaCache
@@ -26,27 +26,28 @@ directly, supplies them to MCP via a wiring helper, and `internal/mcp` drops its
 
 **Scope (in):**
 
-- New wiring file `internal/cli/mcp_wiring.go` (or inline in `cli/mcp.go`) builds the focused dependencies and exposes a struct that satisfies `mcp.Services`.
-- `internal/mcp/server.go` Services interface keeps its current shape, but watcher types (`WatchOptions`, `ChangeEvent`, the `StartWatching` / `StopWatching` / `PauseWatching` / `ResumeWatching` methods) move out of the `workspace` import dependency. Options A and B below.
+- New wiring file `internal/cli/mcp_wiring.go` constructs the focused dependencies and exposes a struct that satisfies `mcp.Services`.
+- `internal/mcp/server.go::Services` interface keeps its current shape on the read side, but watcher methods (`StartWatching` / `StopWatching` / `PauseWatching` / `ResumeWatching` taking `workspace.WatchOptions`) are replaced with a single `Watcher() mcp.Watcher` capability declared inline in `internal/mcp` (4 methods, narrow, consumer-side).
 - `internal/cli/mcp.go` stops calling `workspace.Discover`; calls the new wiring path.
-- `internal/mcp/tools_test.go` (one call site to `workspace.NewForTest`) migrates to a stub `mcp.Services` for the test surface it actually needs, or stays as-is if the test fixture remains useful — decide during implementation when the diff is in hand.
-- `internal/mcp/watcher_test.go` is a `workspace` unit test by content; it can stay as a workspace test (rename / relocate to `internal/workspace/`) or move to use the new wiring. Decide during implementation.
+- `internal/mcp/tools_test.go` (one call site to `workspace.NewForTest`) migrates to a stub `mcp.Services` for the test surface it actually needs — see Step 6 below.
+- `internal/mcp/watcher_test.go` relocates to `internal/workspace/` or gets deleted (storage watcher tests already cover the underlying behavior — see Risks).
 
 **Scope (out):**
 
-- Changes to MCP tool implementations (tools_entity, tools_relation, etc.).
-- Changes to the `Services` interface surface beyond the watcher-type extraction.
-- Watcher behavioral changes — preserve current semantics (200ms debounce, fsstore feature-test, etc.).
-- Removing `Workspace.StartWatching` / `StopWatching` / `Pause` / `Resume` methods — they stay on Workspace for now; just that `mcp.Services` no longer references workspace types.
-- Building dataentry off Workspace (separate ticket).
-- Wiring Workspace as a fallback Services implementer — once `internal/mcp` no longer imports `internal/workspace`, *Workspace stops being a Services implementation*. This is the point of the migration. Other consumers continue to use Workspace; MCP just stops.
+- Changes to MCP tool implementations (tools_entity, tools_relation, etc.) other than the `PauseWatching` / `ResumeWatching` call-site rename to `Watcher().Pause()` / `Watcher().Resume()`.
+- Changes to the Services interface read-side methods (Store, Meta, Tracer, Searcher, Validator, EntityManager, Config, Paths, LuaWriteDeps, LuaCache).
+- Watcher behavioral changes — preserve current semantics (200ms debounce, fsstore feature-test).
+- Removing `Workspace.StartWatching` / etc. methods — they stay on Workspace for now; only their typed contract with MCP changes. Other consumers (data-entry, scheduler) still call these methods.
+- Building dataentry/CLI/scheduler off Workspace (separate tickets).
+- Migrating the search-backend wiring to MCP's helper (TKT-Q1JT just landed the Observer pattern; MCP's helper uses it directly — ~5 LOC instead of the ~30 LOC the original plan worried about).
 
 **Acceptance Criteria:**
 
-1. `internal/mcp` package's import graph no longer contains `internal/workspace`. Verified by `! grep -r 'internal/workspace' internal/mcp/` returning success (no matches) AND `just arch-lint` passing.
+1. `grep -r 'internal/workspace' internal/mcp/` (excluding `_test.go`) returns zero matches.
 2. `cmd/rela mcp` still starts a working MCP server: file watcher fires on entity file changes; all MCP tools work end-to-end. Verified by existing MCP integration tests passing (tools_test, tools_lua_test, convert_test, watcher_test or its replacement).
-3. The wiring helper is small and obvious: under 100 LOC, no service-locator god-struct, no late-binding setters.
-4. `mcp.Services` interface stays a consumer-side interface (3–4 *categories* of dependency, naming methods MCP actually invokes); no new methods leak through unless MCP genuinely calls them.
+3. The wiring helper is small: target ≤ 200 LOC (revised up from the original 100 — see "Wiring complexity" in Approach for why).
+4. `mcp.Services` interface stays narrow: ≤ 11 methods, no growth. `mcp.Watcher` is 4 methods. No service-locator god-struct, no late-binding setters.
+5. `just lint`, `just arch-lint`, `just test -race`, `just ci` all pass.
 
 ## Research
 
@@ -55,16 +56,25 @@ directly, supplies them to MCP via a wiring helper, and `internal/mcp` drops its
 - [x] Looked for reference implementations in other projects
 - [x] Reviewed relevant rela concepts for prior art
 
-**Existing solutions in this repo:**
+**Reference implementations in repo:**
 
-- `internal/scheduler/scheduler.go` — `WorkspaceProvider` is a 4-method consumer-side interface; the scheduler's entry point in `cmd/rela` constructs a small struct that satisfies it. Same shape as the target here.
-- `internal/lua/deps.go` — `ReadDeps` / `WriteDeps` are capability bundles; written by the consumer (Lua), filled in at wiring sites. Demonstrates "construct focused services once at the wiring boundary."
-- TKT-IU2S (just merged, PR #711) — flipped `wsEntityManager` to delegate to `entitymanager.Manager`, with single-phase `newWorkspace(store)` construction. Confirms the focused-services pattern works under the runtime constraints (search index, observers).
+- `internal/scheduler/scheduler.go` — 4-method consumer-side `WorkspaceProvider` interface. Wiring lives in CLI.
+- `internal/lua/deps.go` — `ReadDeps` / `WriteDeps` capability bundles, constructed at wiring sites.
+- TKT-LCTG (PR #718, merged) — workspace migrated to `bleveindex.NewMem()` + `search.New(store, backend)`; the same primitives the MCP helper will call.
+- TKT-Q1JT (PR #720, in review) — `app.FSFactory.AddObserver(observer)` so the search backend is wired as a synchronous observer on the store before OpenStore. MCP's helper uses the same pattern.
+- TKT-IU2S (PR #711, merged) — `entitymanager.Manager` is the production write path. MCP constructs its own Manager instance directly.
 
-**Reference implementation:** the `cmd/rela-server` (data-entry server) entry
-point already constructs Store, Meta, Tracer, Search etc. individually before
-handing them to its HTTP server. The MCP wiring should look structurally
-identical.
+**The ScriptRunner cycle.** `entitymanager.Manager` requires
+`autocascade.ScriptRunner` if the metamodel declares automations. The
+ScriptRunner is the adapter that translates a cascade action into a Lua
+execution. The runner needs `lua.WriteDeps`, which holds a reference back to the
+EntityManager so Lua scripts can call into CRUD. This is the cycle that
+`wsScriptRunner` resolves via per-call `w.LuaWriteDeps()` — see
+`internal/workspace/wsscriptrunner.go`.
+
+MCP's helper must reproduce this pattern: a small adapter struct in
+`internal/cli/mcp_wiring.go` that resolves `lua.WriteDeps` per cascade dispatch,
+using the helper's own Manager reference.
 
 ## Approach
 
@@ -73,102 +83,223 @@ identical.
 - [x] Alternatives considered (document why rejected)
 - [x] Dependencies identified (packages, APIs, types)
 
-### Step 1 — Lift watcher types out of `internal/workspace`
+### Step 1 — Replace watcher methods on `mcp.Services` with a narrow capability
 
-`mcp.Services` references `workspace.WatchOptions`, `workspace.ChangeEvent`,
-`workspace.WatchOptions{OnChange: func(_ []workspace.ChangeEvent)}`. While those
-still live in `internal/workspace`, MCP must import workspace.
-
-**Chosen approach: option B — move watcher types to `internal/storage`.**
-
-The watcher is already implemented by `storage.Watcher` and emits
-`storage.ChangeEvent`. `workspace.WatchOptions` is a thin wrapper that adds
-`ExtraDirs`, `ExtraFiles`, and an `OnChange` callback re-typed in terms of a
-workspace-local `ChangeEvent` (which is itself just a re-export of
-`storage.ChangeEvent` if I read the watcher correctly). The cleanest move is to
-define a `Watcher` capability inline in `internal/mcp/server.go` that names what
-MCP actually needs:
+Today:
 
 ```go
 // internal/mcp/server.go
+type Services interface {
+    // ... read services (Store, Meta, Tracer, ...)
+    PauseWatching()
+    ResumeWatching()
+    StartWatching(workspace.WatchOptions) error
+    StopWatching()
+}
+```
+
+The `workspace.WatchOptions` parameter is the load-bearing import. The MCP body
+only does `s.ws.StartWatching(workspace.WatchOptions{ OnChange: func(_
+[]workspace.ChangeEvent) { ... }})` and ignores the event slice. So MCP only
+needs "start watching, call this when anything changes."
+
+After this ticket:
+
+```go
+// internal/mcp/server.go
+type Services interface {
+    // ... read services unchanged ...
+    Watcher() Watcher
+}
+
+// Watcher is the narrow file-watching capability MCP requires from
+// its wiring site. The implementation is supplied by the helper at
+// construction time.
 type Watcher interface {
-    Start(onChange func()) error  // MCP only cares "something changed"
+    Start(onChange func()) error
     Stop()
     Pause()
     Resume()
 }
 ```
 
-Then `mcp.Services` becomes:
+`internal/mcp` no longer imports `workspace.WatchOptions` or
+`workspace.ChangeEvent`. The wiring site supplies a `mcp.Watcher` adapter that
+wraps `storage.Watcher`.
+
+### Step 2 — Update MCP call sites
+
+- `server.go::Serve` — `s.ws.StartWatching(workspace.WatchOptions{OnChange: ...})` becomes `s.ws.Watcher().Start(func() { ... })`; `s.ws.StopWatching()` becomes `s.ws.Watcher().Stop()`.
+- `tools_entity.go:331-332` — `PauseWatching` / `ResumeWatching` become `Watcher().Pause()` / `Watcher().Resume()`.
+- `var _ Services = (*workspace.Workspace)(nil)` — DELETE the compile-time assertion. Workspace no longer satisfies the new Services interface (the watcher shape changed); that's fine because workspace won't be a Services implementation after this ticket.
+
+### Step 3 — Build the wiring helper
+
+`internal/cli/mcp_wiring.go` (new file) constructs the focused services and
+returns a struct that satisfies `mcp.Services`. The structure:
 
 ```go
-type Services interface {
-    Store() store.Store
-    Meta() *metamodel.Metamodel
-    Tracer() tracer.Tracer
-    Searcher() search.Searcher
-    Validator() validator.Validator
-    EntityManager() entitymanager.EntityManager
-    Config() config.Loader
-    Paths() *project.Context
-    LuaWriteDeps() lua.WriteDeps
-    LuaCache() *lua.Cache
-    Watcher() Watcher  // narrow capability, defined in mcp
+// internal/cli/mcp_wiring.go
+package cli
+
+type mcpServices struct {
+    store    store.Store
+    meta     *metamodel.Metamodel
+    tracer   tracer.Tracer
+    searcher search.Searcher
+    valid    validator.Validator
+    em       entitymanager.EntityManager
+    config   config.Loader
+    paths    *project.Context
+    luaDeps  func() lua.WriteDeps  // resolved per-call (cycle-breaker)
+    luaCache *lua.Cache
+    watcher  mcp.Watcher
+}
+
+// Methods that satisfy mcp.Services...
+
+func newMCPServices(...) (*mcpServices, error) {
+    // 1. project.Discover, load metamodel
+    // 2. bleveindex.NewMem()
+    // 3. factory := &app.FSFactory{FS, Paths}; factory.AddObserver(backend)
+    // 4. store, _ := factory.OpenStore(meta)
+    // 5. backfill backend from store
+    // 6. tracer := tracer.New(store)
+    // 7. searcher := search.New(store, backend)
+    // 8. validator := validator.New(store, meta, luaReadDeps)
+    // 9. Manager construction (with ScriptRunner adapter — see Step 4)
+    // 10. config.NewFSLoader, lua.NewCache, storage.Watcher adapter
+    // 11. assemble mcpServices, return
 }
 ```
 
-MCP no longer imports `workspace.WatchOptions` or `workspace.ChangeEvent`. The
-wiring site provides an implementation of `mcp.Watcher` — either a small adapter
-around `storage.Watcher` for production, or a no-op stub for tests. **The narrow
-capability is the contract; the implementation lives at the adapter layer.**
-(CLAUDE.md: "transport-specific types belong at adapter layers.")
+### Step 4 — ScriptRunner adapter
 
-The current MCP code calls `s.ws.StartWatching(workspace.WatchOptions{ OnChange:
-func(_ []workspace.ChangeEvent) { ... }})` but the body ignores the event slice;
-it only cares that *something* changed. So `mcp.Watcher.Start(onChange func())`
-is sufficient. No event payload needs to cross the interface.
-
-**Alternatives considered:**
-
-- **(A) Keep `WatchOptions` / `ChangeEvent` in `internal/workspace`, import them in `internal/mcp`** — rejected. Defeats the entire migration; `internal/mcp` would still depend on `internal/workspace`.
-- **(C) Move `WatchOptions` / `ChangeEvent` to a new `internal/watcher` package** — viable but extra package weight for two types. Burning a top-level package on this is heavy when MCP's actual need is a four-method interface it can declare locally.
-- **(D) Inline storage.Watcher directly in mcp.Services without an interface** — rejected. Ties `mcp.Services` to the concrete storage type, which the wiring site can no longer substitute for tests.
-
-### Step 2 — Build the wiring helper
-
-`internal/cli/mcp.go::runMCPServer` currently does:
+`entitymanager.Manager` needs an `autocascade.ScriptRunner` when automations are
+configured. The adapter has to resolve `lua.WriteDeps` per cascade dispatch —
+same pattern as `wsScriptRunner`. The adapter:
 
 ```go
-mcpWs, err := workspace.Discover(startDir, script.NewEngine())
-srv := relamcp.NewServer(mcpWs, Version)
+// internal/cli/mcp_wiring.go
+type mcpScriptRunner struct{ svc *mcpServices }
+
+func (r *mcpScriptRunner) Run(ctx context.Context, a autocascade.ScriptAction) error {
+    return newLuaScriptRunner(scriptEngine, r.svc.luaDeps()).Run(ctx, a)
+}
 ```
 
-Replace with a wiring helper in `internal/cli/mcp_wiring.go` (new file) that:
+`newLuaScriptRunner` is the same factory used by workspace, but it's currently
+package-private to `workspace`. **Decision point:** either (a) export it as
+`lua.NewScriptRunner(...)` or move it to a shared location, or (b) hand-roll a
+similar adapter in the wiring helper.
 
-1. Discovers the project (`project.Discover` — already a thin function used by `workspace.Discover` internally).
-2. Constructs Store (`fsstore.New(...)`), Meta (loads metamodel.yaml), Tracer (`tracer.New(store)`), Searcher (`search.NewBleve(...)`), Validator (`validator.New(meta, store)`), EntityManager (`entitymanager.New(deps)`), Config (`config.NewLoader(...)`), LuaCache (`lua.NewCache(...)`), LuaWriteDeps (built per-request? — verify), and a storage.Watcher adapter.
-3. Returns an `mcpServices` struct that holds all of the above and has trivial accessor methods satisfying `mcp.Services`.
+Looking at `internal/workspace/luascriptrunner.go`: it's ~80 LOC that wraps a
+`ScriptExecutor` with cascade-shaped dispatch + ScriptError patching. The
+cleanest move is to lift it into `internal/script` as
+`script.NewLuaScriptRunner(exec, deps) autocascade.ScriptRunner` — then
+workspace and MCP both consume the same helper.
+
+**This is a precursor.** Either:
+
+- **Option A:** Split out `script.NewLuaScriptRunner` as a small follow-up PR before this one.
+- **Option B:** Include the lift in TKT-KWAX — adds ~80 LOC of move/refactor to the PR, but keeps the migration in one commit.
+
+Decision: **Option B** for TKT-KWAX. The lift is contained to one file move +
+one workspace import update; bundling it avoids the PR-ordering coordination
+overhead.
+
+### Step 5 — Watcher adapter
+
+```go
+// internal/cli/mcp_wiring.go
+type mcpWatcher struct {
+    storeWatcher storeStartStopper  // type-assertion on store for StartWatching/StopWatching
+    extWatcher   *storage.Watcher    // optional, for ExtraDirs / ExtraFiles use cases
+    onChange     func()
+}
+```
+
+For MCP today, there are no `ExtraDirs` / `ExtraFiles` — just the store's own
+watcher. The adapter just calls into fsstore's `StartWatching()` /
+`StopWatching()` (already implemented).
+
+The current `workspace.StartWatching` does:
+1. Type-assert `store.(storeWatcher)` and call `StartWatching()` if supported
+2. Optionally construct a `storage.Watcher` for ExtraDirs/Files
+
+MCP's adapter only needs (1). It can hand off to a tiny helper that type-asserts
+the store and starts its own watcher.
+
+### Step 6 — Update MCP tests
+
+`internal/mcp/tools_test.go:68` uses `workspace.NewForTest(meta,
+workspace.WithTestStore(st))`.
+
+The migration:
+
+```go
+// before
+ws := workspace.NewForTest(meta, workspace.WithTestStore(st))
+
+// after — option A (hand-built stub)
+ws := newTestMCPServices(t, meta, st)
+```
+
+`newTestMCPServices` is a per-test helper that builds the focused services
+without going through workspace. ~30 LOC, lives in
+`internal/mcp/test_helpers_test.go`.
+
+Alternative: keep tests on `workspace.NewForTest` for now, since `mcp.Services`
+is structurally satisfied by `*workspace.Workspace` *minus* the watcher methods
+— once the Watcher contract changes, workspace won't satisfy the new Services.
+So this isn't really an alternative; the test fixture must migrate.
+
+`internal/mcp/watcher_test.go` is testing `workspace.StartWatching` behavior,
+not MCP behavior. The `storage.Watcher` package already has tests for the
+underlying debounce + file-change handling. **Decision: delete
+watcher_test.go.** Don't relocate — its contents duplicate
+`storage/watcher_test.go`.
+
+### Wiring complexity
+
+Original plan estimated ≤100 LOC for the helper. Revised estimate: **150-200
+LOC** because:
+
+- ScriptRunner adapter (~30 LOC)
+- Watcher adapter (~30 LOC)
+- Service construction (~60 LOC including all the validation)
+- `mcpServices` struct + accessor methods (~40 LOC)
+- Per-call `luaDeps` closure with the cycle-breaking pattern (~20 LOC)
+
+This is still small — comparable to `internal/scheduler/scheduler.go` which is
+~150 LOC. The complexity isn't in the wiring helper itself; it's in the
+cycle-breaking patterns the helper has to reproduce.
+
+### Alternatives considered
+
+- **(A) Keep `WatchOptions` / `ChangeEvent` in `internal/workspace`, import them in `internal/mcp`** — rejected. Defeats the migration.
+- **(B) Move watcher types to a new `internal/watcher` package** — rejected. Extra package weight for what MCP can declare inline.
+- **(C) Single `mcp.Watcher` interface declared in MCP** — chosen.
+- **(D) Inline `storage.Watcher` directly in `mcp.Services`** — rejected. Ties Services to a concrete storage type.
 
 **Files to modify:**
 
-- `internal/mcp/server.go` — replace `WatchOptions`/`ChangeEvent` usage with `Watcher` capability; drop `internal/workspace` import.
-- `internal/mcp/tools_entity.go` — `s.ws.PauseWatching()` / `s.ws.ResumeWatching()` become `s.ws.Watcher().Pause()` / `s.ws.Watcher().Resume()`.
+- `internal/mcp/server.go` — replace 4 watcher methods with `Watcher() Watcher` capability; delete `internal/workspace` import + the compile-time assertion.
+- `internal/mcp/tools_entity.go` — rename `PauseWatching` / `ResumeWatching` call sites.
 - `internal/cli/mcp.go` — call new wiring helper instead of `workspace.Discover`.
-- `internal/cli/mcp_wiring.go` — NEW. Builds focused services, returns `mcp.Services` impl.
-- `internal/mcp/tools_test.go` — migrate test-side fixture (decide stub-vs-real during implementation).
-- `internal/mcp/watcher_test.go` — relocate or migrate (decide during implementation; this file tests workspace behavior, not MCP).
+- `internal/cli/mcp_wiring.go` — NEW (~150-200 LOC).
+- `internal/mcp/tools_test.go` — migrate test fixture.
+- `internal/mcp/test_helpers_test.go` — NEW (~30 LOC) with `newTestMCPServices`.
+- `internal/mcp/watcher_test.go` — DELETE.
+- `internal/script/` (new file?) — `NewLuaScriptRunner` lifted from `internal/workspace/luascriptrunner.go`.
+- `internal/workspace/luascriptrunner.go` — DELETE (moved to `internal/script`).
+- `internal/workspace/wsscriptrunner.go` — UPDATE to use `script.NewLuaScriptRunner` instead of the workspace-private helper.
 
 **Files NOT modified:**
 
-- `internal/workspace/workspace.go` — `StartWatching` / `StopWatching` / Pause / Resume stay on Workspace; only their typed contract with MCP changes.
-- `internal/mcp/tools_*.go` (other than tools_entity for pause/resume rename).
+- `internal/workspace/workspace.go` — watcher methods stay on Workspace (data-entry / scheduler still use them).
+- `internal/mcp/tools_{relation,analysis,helpers,schema,trace,export,lua}.go` — no changes (they only call read-side methods on `Services`).
 - `cmd/rela/main.go` — wiring happens in `internal/cli/`, not `cmd/`.
-
-### Step 3 — Verify and clean up
-
-- Compile-time assertion: `var _ Services = (*mcpServices)(nil)` in the wiring file.
-- Constructor validation: `mcpServices` constructor rejects nil required fields per CLAUDE.md.
-- Capability bundles split read/write? — MCP doesn't have a clean split here; the Services interface is mostly read-oriented. Skip this split for MCP (it would just be the whole bundle either way).
 
 ## Security Considerations
 
@@ -177,16 +308,16 @@ Replace with a wiring helper in `internal/cli/mcp_wiring.go` (new file) that:
 - [x] Security-sensitive operations identified (file access, auth, crypto)
 - [x] Error handling doesn't leak sensitive information
 
-**Input sources:** This ticket is pure refactor — no new input surfaces. The
-project root path comes from `--project-dir` flag or `RELA_PROJECT` env var as
-today; validation behavior is unchanged.
+**Input sources:** Pure refactor. No new input surfaces. The project root path
+comes from `--project-dir` flag or `RELA_PROJECT` env var as today; validation
+behavior is unchanged.
 
-**Security-sensitive operations:** File-watcher start/stop is now exposed
-through a narrower capability but the underlying `storage.Watcher` is untouched.
-No new privileges, no new file access patterns.
+**Security-sensitive operations:** None new. File watcher uses the same
+`storage.Watcher` semantics. Lua execution uses the same `script.Engine` +
+`lua.WriteDeps`.
 
 **Error handling:** Wiring helper returns the same `errors.New("no project
-found: ...")` shape as today. No sensitive info added.
+found: ...")` shape as today.
 
 ## Test Plan
 
@@ -197,21 +328,22 @@ found: ...")` shape as today. No sensitive info added.
 
 **Test scenarios:**
 
-1. **AC1 (no workspace import in mcp)** — `grep -r 'workspace' internal/mcp/*.go` returns zero hits. Added to CI via existing arch-lint check, which already enforces import rules. May need to extend `.archlint.yaml` to explicitly forbid mcp→workspace.
-2. **AC2 (server still works)** — existing MCP integration tests pass: tools_test.go (entity CRUD via MCP), tools_lua_test.go (Lua execution), convert_test.go (type conversions). watcher_test.go either migrates or gets relocated.
-3. **AC3 (small wiring helper)** — `wc -l internal/cli/mcp_wiring.go` under 100. Manual review during PR.
-4. **AC4 (Services interface stays narrow)** — `mcp.Watcher` is 4 methods. `mcp.Services` keeps ~10-11 methods (one Watcher replaces 4 watcher methods, net change is -3). Verified by diff.
+1. **AC1 (no workspace import in mcp)** — `grep -r 'internal/workspace' internal/mcp/*.go` returns zero hits (test files included after the fixture migration). Verified by `just arch-lint` enforcing the import ban via a new arch-lint constraint (or via existing rules — verify during implementation).
+2. **AC2 (server still works)** — existing MCP integration tests pass: tools_test (entity CRUD via MCP), tools_lua_test (Lua execution), convert_test (type conversions). watcher_test deleted; coverage replaced by `internal/storage/watcher_test.go` (already passing).
+3. **AC3 (helper size)** — `wc -l internal/cli/mcp_wiring.go` ≤ 200. Manual review during PR.
+4. **AC4 (Services interface narrow)** — `mcp.Watcher` is 4 methods; `mcp.Services` keeps 11 methods (Watcher() replaces 4 watcher methods, net -3). Verified by diff.
 
 **Edge cases:**
 
-- **Watcher unavailable (memstore in tests)** — production wires `storage.Watcher`; tests can wire a no-op stub. Today fsstore's `StartWatching` is feature-tested via type assertion; the wiring layer absorbs that.
-- **Empty/missing extra files** — `workspace.WatchOptions{ExtraDirs: nil}` is the typical case; MCP never sets ExtraDirs. The new `mcp.Watcher.Start(onChange)` has no ExtraDirs concept — that's a workspace concern.
-- **Concurrent Start/Stop** — `storage.Watcher` already handles this; no new concurrency surfaces.
+- **Project not found** — wiring helper returns the same "no project found" error today.
+- **Bad metamodel** — metamodel load fails; wiring returns the underlying error (today swallowed as "no project found"; can stay swallowed for behavior preservation, OR surface — decide during implementation).
+- **Lua disabled** — when `scriptEngine` is `script.NewEngine()` with no Lua interpreter configured (impossible today, but theoretically possible), ScriptRunner adapter returns the engine's error. No new behavior.
+- **fsstore watcher unsupported (memstore in tests)** — type assertion on `storeWatcher` fails gracefully; the watcher adapter no-ops Start/Stop. Today's `workspace.StartWatching` does the same.
 
 **Negative tests:**
 
-- **Project not found** — wiring helper returns the same "no project found" error.
-- **Bad metamodel** — metamodel load fails; wiring returns the underlying error (today it's swallowed and returned as "no project found"; document any improvement).
+- **mcpServices construction with missing dependency** — exercise via unit test: pass nil store / meta to a constructor variant, expect error. Confirms constructor-validates-required pattern (CLAUDE.md).
+- **Watcher.Start invoked twice** — should the adapter detect re-entry and error? Today's `workspace.StartWatching` doesn't guard; preserve that behavior.
 
 ## Risk Assessment
 
@@ -221,14 +353,17 @@ found: ...")` shape as today. No sensitive info added.
 
 **Risks:**
 
-1. **LuaWriteDeps assembly** (mentioned in original ticket) — Workspace assembles `lua.WriteDeps` by handing over its own `store`, `meta`, `entityManager`, etc. The wiring helper has all those pieces in hand. The risk is that some field is workspace-private; verified by reading `Workspace.LuaWriteDeps()` and confirming all dependencies are constructable at the wiring site. **Mitigation:** if anything is workspace-private, lift it to the focused service before this ticket.
-2. **Watcher API change** — replacing `StartWatching(WatchOptions)` with `Watcher().Start(onChange)` is a contract change on `mcp.Services`. The change is internal (only MCP references it), but the diff is non-trivial. **Mitigation:** keep the change mechanical — the new `mcp.Watcher` interface names exactly the four operations MCP performs, no more.
-3. **Test fixtures** — `tools_test.go` uses `workspace.NewForTest`; migrating it cleanly may force test-side wiring of stubs that didn't exist before. **Mitigation:** the test stub for `mcp.Services` can be hand-written in `internal/mcp/`'s test files; it's a one-time cost.
-4. **watcher_test.go** — tests workspace's watcher via the workspace API, not the MCP layer. It's misfiled in `internal/mcp`. **Mitigation:** relocate to `internal/workspace/` as part of this ticket OR delete (workspace already has its own watcher coverage — verify before deleting).
+1. **ScriptRunner cycle.** Manager needs ScriptRunner; ScriptRunner needs LuaWriteDeps; LuaWriteDeps needs Manager. The per-call `luaDeps func() lua.WriteDeps` closure in `mcpServices` resolves this — same pattern as `wsScriptRunner`. **Mitigation:** confirm the pattern compiles with a small spike before committing to the full migration.
+2. **lifting `luaScriptRunner`.** Moving `internal/workspace/luascriptrunner.go` to `internal/script` is mechanical but touches workspace's `wsScriptRunner`. **Mitigation:** keep the file move + import update as the FIRST commit in the PR so the diff is reviewable in isolation.
+3. **Test fixture migration.** `tools_test.go` uses `workspace.NewForTest`; building `newTestMCPServices` is ~30 LOC of stub. **Mitigation:** write the helper first, port one test to it, verify it works, then port the rest in one commit.
+4. **watcher_test.go deletion.** May lose MCP-specific watcher coverage. **Mitigation:** read the test before deleting; if it asserts MCP-specific behavior (it doesn't — it tests workspace), delete. Otherwise port.
+5. **mcp.Services compile-time assertion against Workspace.** Today's `var _ Services = (*workspace.Workspace)(nil)` will fail after the Watcher contract change. **Mitigation:** delete the assertion (not load-bearing now that workspace isn't supposed to satisfy Services).
+6. **TKT-Q1JT must merge first.** This ticket assumes `app.FSFactory.AddObserver` exists. **Mitigation:** wait for PR #720 to merge before starting implementation; the plan can be written against the merged API. (Today's status: #720 awaiting tschmits' approval — CI green, auto-merge armed.)
 
-**Effort:** S — the surface is small (one Services interface, one wiring helper,
-~6 file changes). The dependency lifting is the riskiest step but preview
-reading of Workspace.LuaWriteDeps suggests it's mechanical.
+**Effort: M.** ~250-300 LOC of changes (mostly new in the helper, some delete in
+mcp). Higher than the original "S" estimate because the ScriptRunner cycle +
+tests + script.NewLuaScriptRunner lift add complexity the original plan didn't
+account for.
 
 ## Documentation Planning
 
@@ -238,11 +373,14 @@ reading of Workspace.LuaWriteDeps suggests it's mechanical.
 **Documentation Impact:**
 
 - N/A — Internal refactor, no user-facing docs needed. MCP behavior is unchanged.
-- CLAUDE.md already cites `mcp.Services` as a positive example; that citation remains correct after the migration (in fact more correct, since the interface is now genuinely narrow).
+- CLAUDE.md cites `mcp.Services` as a positive example. The citation remains correct (in fact more correct — the interface is now genuinely narrow, no longer leaking workspace types).
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation (done in earlier round; addressed via TKT-LCTG + TKT-Q1JT precursors)
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** &lt;!-- to be filled in after design review --&gt;
+**Design Review Findings:**
+
+- **Round 1 (cranky on original plan):** Search-lifecycle gap → resolved by TKT-LCTG (merged) + TKT-Q1JT (in review).
+- **Round 2 (this plan):** No outstanding findings; the wiring complexity (ScriptRunner cycle, watcher type lifting) is documented and has chosen approaches. If the spike in Risk #1 reveals issues, revise here before implementing.
