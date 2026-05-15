@@ -95,12 +95,13 @@ func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
 // Metamodel, Manager (including its automation engine and cascade
 // runner), and search index are constructed once at New and never
 // reloaded — schema or automation changes require a restart. The
-// search index is kept in sync with store writes via a per-workspace
-// subscription to store.Subscribe — every in-process write
-// (Create/Update/DeleteEntity through the store API) is applied to
-// the search backend. External edits to on-disk files are only
-// observed once a caller invokes StartWatching, which arms fsstore's
-// own file watcher to translate filesystem events into store events.
+// search backend is installed as a store.EntityObserver at store
+// construction time so every in-process write (Create/Update/
+// DeleteEntity through the store API) updates the search index
+// synchronously under the store's write lock. External edits to
+// on-disk files are only observed once a caller invokes
+// StartWatching, which arms fsstore's own file watcher to translate
+// filesystem events into store events.
 type Workspace struct {
 	// fs is the filesystem handle used for all workspace I/O:
 	// directory topology (ReadDir, MkdirAll, Stat, Walk) and byte
@@ -127,19 +128,13 @@ type Workspace struct {
 	searcher     search.Searcher
 
 	// Watcher state (nil when not watching).
-	watcher    *storage.Watcher
-	stopSearch func()         // cancels the search-index subscription
-	searchWG   sync.WaitGroup // joins the subscription goroutine on Close
+	watcher *storage.Watcher
 
 	// storeFactory opens the workspace's authoritative store. In
 	// production this builds the fsstore under the project directory;
 	// tests can inject a different factory via WithStoreFactory.
 	storeFactory store.Factory
 }
-
-// storeEventBufferSize bounds the workspace's store-event subscription.
-// Cascade depth is now [autocascade.MaxDepth], owned by that package.
-const storeEventBufferSize = 32
 
 // Discover discovers a project from the given start directory and creates
 // a workspace with the given script executor. If startDir is empty, it uses
@@ -187,24 +182,44 @@ func New(fs storage.FS, paths *project.Context, scriptExec ScriptExecutor, opts 
 		factory = &app.FSFactory{FS: fs, Paths: paths}
 	}
 
+	// Build the search backend BEFORE opening the store so it can be
+	// installed as an observer. The store then calls EntityPut /
+	// EntityDelete synchronously on every write; no subscription
+	// goroutine is needed. Backend construction failure is non-fatal —
+	// Searcher() surfaces an explicit error when queried.
+	var searchBackend *bleveindex.Index
+	if idx, idxErr := bleveindex.NewMem(); idxErr == nil {
+		searchBackend = idx
+	} else {
+		slog.Warn("failed to create search index", "error", idxErr)
+	}
+	if observable, ok := factory.(observerWiringFactory); ok && searchBackend != nil {
+		observable.AddObserver(searchBackend)
+	}
+
 	s, openErr := factory.OpenStore(meta)
 	if openErr != nil {
 		return nil, fmt.Errorf("open store: %w", openErr)
 	}
-	ws, err := newWorkspace(fs, paths, meta, exec, s, opts...)
+	ws, err := newWorkspace(fs, paths, meta, exec, s, searchBackend, opts...)
 	if err != nil {
 		return nil, err
 	}
 	ws.storeFactory = factory
 
-	// Populate the search index from the opened store and subscribe to
-	// store events so the index stays current when files change on disk
-	// (or when the fsstore emits updates from its own watcher).
-	if ws.searchBackend != nil {
-		if err := backfillSearchBackend(context.Background(), ws.searchBackend, s); err != nil {
+	// Backfill the initial state: observers are NOT invoked for entities
+	// already on disk when the store opens, so iterate ListEntities once
+	// after OpenStore to seed the index. Subsequent writes reach the
+	// backend via the observer hook installed above.
+	//
+	// Writes that race this backfill (e.g. an automation firing during
+	// construction) are safe: bleve EntityPut is idempotent, so the
+	// observer-applied write and the backfill-applied write produce the
+	// same final state.
+	if searchBackend != nil {
+		if err := backfillSearchBackend(context.Background(), searchBackend, s); err != nil {
 			slog.Warn("failed to index entities", "error", err)
 		}
-		ws.startSearchSubscription()
 	}
 	return ws, nil
 }
@@ -232,6 +247,16 @@ func WithFS(fs storage.FS, paths *project.Context) TestOption {
 // WithTestStore replaces the default empty memstore with a caller-
 // supplied store. The workspace's search index is populated from the
 // store's current contents at construction time.
+//
+// Caveat: a caller-supplied store is NOT auto-wired with the search
+// backend as an observer — observer setup must happen at store
+// construction, which the workspace cannot retrofit. Initial-state
+// backfill still runs, so any entities already in the store appear
+// in search results; subsequent writes will not reach the index.
+// If you need incremental sync, build the memstore with
+// [memstore.WithObserver] yourself and pass that store here, or use
+// the default memstore (omit WithTestStore) which wires the observer
+// automatically.
 func WithTestStore(s store.Store) TestOption {
 	return func(c *testConfig) { c.store = s }
 }
@@ -256,16 +281,29 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Workspace {
 		opt(cfg)
 	}
 
+	// Build the search backend before the store so the default
+	// memstore can observe it. WithTestStore-supplied stores skip
+	// observer wiring — see WithTestStore's godoc.
+	var searchBackend *bleveindex.Index
+	if idx, err := bleveindex.NewMem(); err == nil {
+		searchBackend = idx
+	}
+
 	st := cfg.store
 	if st == nil {
-		st = memstore.New()
+		if searchBackend != nil {
+			st = memstore.New(memstore.WithObserver(searchBackend))
+		} else {
+			st = memstore.New()
+		}
 	}
-	ws, err := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script, st)
+
+	ws, err := newWorkspace(cfg.fs, cfg.paths, meta, cfg.script, st, searchBackend)
 	if err != nil {
 		panic(fmt.Sprintf("NewForTest: %v", err))
 	}
-	if cfg.store != nil && ws.searchBackend != nil {
-		if err := backfillSearchBackend(context.Background(), ws.searchBackend, cfg.store); err != nil {
+	if cfg.store != nil && searchBackend != nil {
+		if err := backfillSearchBackend(context.Background(), searchBackend, cfg.store); err != nil {
 			panic(fmt.Sprintf("NewForTest: index entities: %v", err))
 		}
 	}
@@ -293,6 +331,18 @@ type storeWatcher interface {
 	StopWatching()
 }
 
+// observerWiringFactory is the consumer-side capability the workspace
+// looks for on a [store.Factory] to install its search-index backend
+// as an [store.EntityObserver] before the store opens. Factories that
+// satisfy this interface (today: [*app.FSFactory]) wire the observer
+// synchronously into the resulting store; factories that don't (a
+// hypothetical remote-only factory) silently degrade to "no
+// incremental sync" — Searcher() still works against the initial
+// backfill but does not see subsequent writes.
+type observerWiringFactory interface {
+	AddObserver(store.EntityObserver)
+}
+
 // Option configures a Workspace.
 type Option func(*Workspace)
 
@@ -311,19 +361,10 @@ func WithStoreFactory(f store.Factory) Option {
 // a placeholder.
 func newWorkspace(
 	fs storage.FS, paths *project.Context, meta *metamodel.Metamodel,
-	scriptExec ScriptExecutor, st store.Store, opts ...Option,
+	scriptExec ScriptExecutor, st store.Store,
+	searchBackend *bleveindex.Index,
+	opts ...Option,
 ) (*Workspace, error) {
-	// Create an empty search index — callers that use a real store
-	// populate it from that store. Failures degrade search but don't
-	// block construction; Searcher() surfaces the nil backend as an
-	// explicit error when queried.
-	var searchBackend *bleveindex.Index
-	if idx, err := bleveindex.NewMem(); err == nil {
-		searchBackend = idx
-	} else {
-		slog.Warn("failed to create search index", "error", err)
-	}
-
 	// Load project config (use defaults if not found or paths is nil).
 	var cfg *project.Config
 	if paths != nil {
@@ -618,52 +659,6 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 	return result
 }
 
-// --- Lifecycle ---
-
-// startSearchSubscription subscribes the search backend to the store's
-// event stream so the index stays current after construction. The
-// returned cancel is stored on the workspace and invoked by Close,
-// which also waits for the subscription goroutine to drain before
-// closing the underlying backend.
-func (w *Workspace) startSearchSubscription() {
-	if w.searchBackend == nil || w.store == nil {
-		return
-	}
-	ch, cancel := w.store.Subscribe(storeEventBufferSize)
-	w.stopSearch = cancel
-	w.searchWG.Add(1)
-	go w.searchSubscriptionLoop(ch)
-}
-
-func (w *Workspace) searchSubscriptionLoop(ch <-chan store.Event) {
-	defer w.searchWG.Done()
-	ctx := context.Background()
-	for ev := range ch {
-		switch ev.Op {
-		case store.EventEntityCreated, store.EventEntityUpdated:
-			if ev.EntityID == "" {
-				continue
-			}
-			e, err := w.store.GetEntity(ctx, ev.EntityID)
-			if err != nil {
-				continue
-			}
-			if err := w.searchBackend.EntityPut(e); err != nil {
-				slog.Warn("search index update failed", "id", ev.EntityID, "error", err)
-			}
-		case store.EventEntityDeleted:
-			if ev.EntityID == "" {
-				continue
-			}
-			if err := w.searchBackend.EntityDelete(ev.EntityID); err != nil {
-				slog.Warn("search index remove failed", "id", ev.EntityID, "error", err)
-			}
-		case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
-			// Relations don't affect the entity search index.
-		}
-	}
-}
-
 // --- Type resolution ---
 
 // ResolveEntityType resolves a type name (alias, plural) to its canonical
@@ -803,28 +798,13 @@ func (w *Workspace) StopWatching() {
 // Close releases resources held by the workspace (search index, watcher,
 // store). Close is not safe to call concurrently with Workspace methods.
 //
-// Cleanup order matters: the subscription cancel is signaled first,
-// then the subscription goroutine is joined before closing the search
-// backend (otherwise bleve.Close races with in-flight EntityPut from
-// the still-draining channel). Every subsystem's close is attempted
-// even if an earlier one errored so a partial failure doesn't leak
-// store goroutines or watcher resources.
+// Subsystems close in observer-dependency order: store first, so no
+// further observer callbacks can land on the search backend; then the
+// backend itself. Every subsystem's close is attempted even if an
+// earlier one errored so a partial failure doesn't leak store
+// goroutines or watcher resources.
 func (w *Workspace) Close() error {
 	w.StopWatching()
-
-	if w.stopSearch != nil {
-		w.stopSearch()
-		w.stopSearch = nil
-	}
-	w.searchWG.Wait()
-
-	var firstErr error
-	if w.searchBackend != nil {
-		if err := w.searchBackend.Close(); err != nil {
-			firstErr = fmt.Errorf("close search index: %w", err)
-		}
-		w.searchBackend = nil
-	}
 
 	if w.store != nil {
 		if sw, ok := w.store.(storeWatcher); ok {
@@ -835,6 +815,14 @@ func (w *Workspace) Close() error {
 				slog.Warn("failed to close store", "error", err)
 			}
 		}
+	}
+
+	var firstErr error
+	if w.searchBackend != nil {
+		if err := w.searchBackend.Close(); err != nil {
+			firstErr = fmt.Errorf("close search index: %w", err)
+		}
+		w.searchBackend = nil
 	}
 	return firstErr
 }
