@@ -5,7 +5,7 @@ title: Migrate MCP server to wire its own services (off Workspace)
 kind: refactor
 priority: medium
 effort: s
-status: planning
+status: done
 ---
 
 ## Summary
