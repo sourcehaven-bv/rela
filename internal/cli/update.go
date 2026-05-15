@@ -45,8 +45,9 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 		ctx := context.Background()
+		svc := cliWriteFromContext(cmd.Context())
 
-		entity, err := ws.Store().GetEntity(ctx, entityID)
+		entity, err := svc.Store().GetEntity(ctx, entityID)
 		if err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
@@ -98,7 +99,7 @@ Examples:
 			return errors.New("no updates specified")
 		}
 
-		result, err := ws.EntityManager().UpdateEntity(ctx, entity)
+		result, err := svc.EntityManager().UpdateEntity(ctx, entity)
 		if err != nil {
 			return err
 		}

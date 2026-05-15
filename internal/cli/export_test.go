@@ -19,8 +19,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-func setupTestGraph() {
-	meta = &metamodel.Metamodel{
+// setupTestGraph builds a small graph and attaches services to the
+// test context. Returns the metamodel used so tests can reference it.
+func setupTestGraph(t *testing.T) *metamodel.Metamodel {
+	t.Helper()
+	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"control": {
 				Label:    "Control",
@@ -82,12 +85,15 @@ func setupTestGraph() {
 	seedR("CTRL-002", "mitigates", "RISK-001")
 	seedR("CTRL-001", "evidencedBy", "EV-001")
 
-	ws = workspace.NewForTest(meta, workspace.WithTestStore(s))
+	ws := workspace.NewForTest(meta, workspace.WithTestStore(s))
+	//nolint:fatcontext // testCtx is a sequential-test fixture, not a per-call context
+	testCtx = attachServices(t.Context(), &cliServices{ws: ws})
 	out = output.New(output.FormatTable)
+	return meta
 }
 
 func TestExportEntitiesJSON(t *testing.T) {
-	setupTestGraph()
+	setupTestGraph(t)
 	exportFormat = "json"
 	exportWithRelations = false
 
@@ -96,7 +102,7 @@ func TestExportEntitiesJSON(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := exportEntities("control")
+	err := exportEntities(cliReadFromContext(testCtx), "control")
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
@@ -131,7 +137,7 @@ func TestExportEntitiesJSON(t *testing.T) {
 }
 
 func TestExportEntitiesWithRelations(t *testing.T) {
-	setupTestGraph()
+	setupTestGraph(t)
 	exportFormat = "json"
 	exportWithRelations = true
 
@@ -139,7 +145,7 @@ func TestExportEntitiesWithRelations(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := exportEntities("control")
+	err := exportEntities(cliReadFromContext(testCtx), "control")
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
@@ -194,7 +200,7 @@ func TestExportEntitiesWithRelations(t *testing.T) {
 }
 
 func TestExportEntitiesCSV(t *testing.T) {
-	setupTestGraph()
+	setupTestGraph(t)
 	exportFormat = "csv"
 	exportWithRelations = false
 
@@ -254,7 +260,7 @@ func TestExportEntitiesCSV(t *testing.T) {
 }
 
 func TestExportEntitiesYAML(t *testing.T) {
-	setupTestGraph()
+	setupTestGraph(t)
 	exportFormat = "yaml"
 	exportWithRelations = false
 
@@ -262,7 +268,7 @@ func TestExportEntitiesYAML(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := exportEntities("control")
+	err := exportEntities(cliReadFromContext(testCtx), "control")
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
@@ -286,7 +292,7 @@ func TestExportEntitiesYAML(t *testing.T) {
 }
 
 func TestExportAllData(t *testing.T) {
-	setupTestGraph()
+	setupTestGraph(t)
 	exportFormat = "json"
 	exportWithRelations = false
 	exportAll = true
@@ -295,7 +301,7 @@ func TestExportAllData(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := exportAllData()
+	err := exportAllData(cliReadFromContext(testCtx))
 	if err != nil {
 		t.Fatalf("exportAllData failed: %v", err)
 	}
@@ -324,7 +330,7 @@ func TestExportAllData(t *testing.T) {
 }
 
 func TestExportEmptyResult(t *testing.T) {
-	setupTestGraph()
+	meta := setupTestGraph(t)
 	exportFormat = "json"
 	exportWithRelations = false
 
@@ -339,7 +345,7 @@ func TestExportEmptyResult(t *testing.T) {
 		IDPrefix: "PROC-",
 	}
 
-	err := exportEntities("procedure")
+	err := exportEntities(cliReadFromContext(testCtx), "procedure")
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}

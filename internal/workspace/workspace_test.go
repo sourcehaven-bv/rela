@@ -200,35 +200,6 @@ func TestNewWithGraph(t *testing.T) {
 	}
 }
 
-// --- Type resolution ---
-
-func TestResolveEntityType(t *testing.T) {
-	ws := setupTestWorkspace(t)
-
-	tests := []struct {
-		input   string
-		want    string
-		wantErr bool
-	}{
-		{"requirement", "requirement", false},
-		{"decision", "decision", false},
-		{"requirements", "requirement", false},
-		{"decisions", "decision", false},
-		{"unknown", "", true},
-	}
-
-	for _, tt := range tests {
-		resolved, _, err := ws.ResolveEntityType(tt.input)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("ResolveEntityType(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
-			continue
-		}
-		if resolved != tt.want {
-			t.Errorf("ResolveEntityType(%q) = %q, want %q", tt.input, resolved, tt.want)
-		}
-	}
-}
-
 // --- ID generation ---
 
 func TestGenerateID(t *testing.T) {

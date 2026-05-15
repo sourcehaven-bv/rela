@@ -31,12 +31,13 @@ Examples:
 		if !gcTempFiles {
 			return errors.New("specify --temp-files")
 		}
-		return gcOrphanedTempFiles()
+		svc := cliAnalyzeFromContext(cmd.Context())
+		return gcOrphanedTempFiles(svc)
 	},
 }
 
-func gcOrphanedTempFiles() error {
-	orphaned, err := ws.FindOrphanedTempFiles()
+func gcOrphanedTempFiles(svc cliAnalyze) error {
+	orphaned, err := svc.FindOrphanedTempFiles()
 	if err != nil {
 		return fmt.Errorf("find orphaned files: %w", err)
 	}
@@ -54,7 +55,7 @@ func gcOrphanedTempFiles() error {
 		return nil
 	}
 
-	count, err := ws.CleanupOrphanedTempFiles()
+	count, err := svc.CleanupOrphanedTempFiles()
 	if err != nil {
 		return fmt.Errorf("cleanup failed: %w", err)
 	}

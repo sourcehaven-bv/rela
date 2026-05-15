@@ -14,12 +14,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-func setupRenameTestEnv(t *testing.T) string {
+// renameTestEnv is the bundle returned by setupRenameTestEnv; the
+// rename tests need the temp dir and the project paths in order to
+// inspect file-on-disk side effects.
+type renameTestEnv struct {
+	dir   string
+	paths *project.Context
+}
+
+func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	t.Helper()
 	dir := t.TempDir()
 
 	out = output.New(output.FormatTable)
-	projectCtx = &project.Context{
+	paths := &project.Context{
 		Root:                 dir,
 		EntitiesDir:          filepath.Join(dir, "entities"),
 		RelationsDir:         filepath.Join(dir, "relations"),
@@ -37,23 +45,24 @@ func setupRenameTestEnv(t *testing.T) string {
 
 	// Write metamodel using shared helper
 	metamodelYAML := testutil.SimpleMetamodelYAML()
-	os.WriteFile(projectCtx.MetamodelPath, []byte(metamodelYAML), 0644)
+	os.WriteFile(paths.MetamodelPath, []byte(metamodelYAML), 0644)
 
 	// Load metamodel
-	var err error
-	meta, err = metamodel.Parse([]byte(metamodelYAML))
+	meta, err := metamodel.Parse([]byte(metamodelYAML))
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
 
 	// Set up workspace backed by a real filesystem so the rename
-	// command can modify files on disk. Use NewWithGraph rather than
+	// command can modify files on disk. Use NewForTest rather than
 	// workspace.New here because SimpleMetamodelYAML deliberately uses
 	// pre-migration syntax, which workspace.New rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	ws = workspace.NewForTest(meta, workspace.WithFS(fs, projectCtx))
+	ws := workspace.NewForTest(meta, workspace.WithFS(fs, paths))
+	//nolint:fatcontext // test setup
+	testCtx = attachServices(t.Context(), &cliServices{ws: ws})
 
-	return dir
+	return renameTestEnv{dir: dir, paths: paths}
 }
 
 func writeEntityFile(t *testing.T, path, id, entityType, title string) {
@@ -99,7 +108,9 @@ func TestValidateTypeName(t *testing.T) {
 
 func TestRenameEntityCommand(t *testing.T) {
 	t.Run("renames entity type end to end", func(t *testing.T) {
-		dir := setupRenameTestEnv(t)
+		env := setupRenameTestEnv(t)
+		dir := env.dir
+		svc := cliAnalyzeFromContext(testCtx)
 
 		// Create entity files
 		writeEntityFile(t,
@@ -112,13 +123,13 @@ func TestRenameEntityCommand(t *testing.T) {
 		// Run rename
 		renameForce = true
 		renamePlural = ""
-		err := runRenameEntity("requirement", "feature")
+		err := runRenameEntity(svc, "requirement", "feature")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
 		// Check metamodel was updated
-		mmData, err := os.ReadFile(projectCtx.MetamodelPath)
+		mmData, err := os.ReadFile(env.paths.MetamodelPath)
 		if err != nil {
 			t.Fatalf("failed to read metamodel: %v", err)
 		}
@@ -158,9 +169,10 @@ func TestRenameEntityCommand(t *testing.T) {
 
 	t.Run("error when old type not found", func(t *testing.T) {
 		setupRenameTestEnv(t)
+		svc := cliAnalyzeFromContext(testCtx)
 
 		renameForce = true
-		err := runRenameEntity("nonexistent", "feature")
+		err := runRenameEntity(svc, "nonexistent", "feature")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -171,9 +183,10 @@ func TestRenameEntityCommand(t *testing.T) {
 
 	t.Run("error when new type already exists", func(t *testing.T) {
 		setupRenameTestEnv(t)
+		svc := cliAnalyzeFromContext(testCtx)
 
 		renameForce = true
-		err := runRenameEntity("requirement", "decision")
+		err := runRenameEntity(svc, "requirement", "decision")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -184,9 +197,10 @@ func TestRenameEntityCommand(t *testing.T) {
 
 	t.Run("error when new type name is invalid", func(t *testing.T) {
 		setupRenameTestEnv(t)
+		svc := cliAnalyzeFromContext(testCtx)
 
 		renameForce = true
-		err := runRenameEntity("requirement", "Bad-Name")
+		err := runRenameEntity(svc, "requirement", "Bad-Name")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -196,7 +210,9 @@ func TestRenameEntityCommand(t *testing.T) {
 	})
 
 	t.Run("custom plural form", func(t *testing.T) {
-		dir := setupRenameTestEnv(t)
+		env := setupRenameTestEnv(t)
+		dir := env.dir
+		svc := cliAnalyzeFromContext(testCtx)
 
 		writeEntityFile(t,
 			filepath.Join(dir, "entities", "requirements", "REQ-001.md"),
@@ -204,7 +220,7 @@ func TestRenameEntityCommand(t *testing.T) {
 
 		renameForce = true
 		renamePlural = "policies"
-		err := runRenameEntity("requirement", "policy")
+		err := runRenameEntity(svc, "requirement", "policy")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -216,7 +232,9 @@ func TestRenameEntityCommand(t *testing.T) {
 	})
 
 	t.Run("renames template if exists", func(t *testing.T) {
-		dir := setupRenameTestEnv(t)
+		env := setupRenameTestEnv(t)
+		dir := env.dir
+		svc := cliAnalyzeFromContext(testCtx)
 
 		// Create template
 		templateDir := filepath.Join(dir, "templates", "entities")
@@ -226,7 +244,7 @@ func TestRenameEntityCommand(t *testing.T) {
 
 		renameForce = true
 		renamePlural = ""
-		err := runRenameEntity("requirement", "feature")
+		err := runRenameEntity(svc, "requirement", "feature")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -241,21 +259,22 @@ func TestRenameEntityCommand(t *testing.T) {
 	})
 
 	t.Run("handles no entity directory", func(t *testing.T) {
-		setupRenameTestEnv(t)
+		env := setupRenameTestEnv(t)
+		svc := cliAnalyzeFromContext(testCtx)
 
 		// Remove the entities directory entirely
-		os.RemoveAll(projectCtx.EntitiesDir)
-		os.MkdirAll(projectCtx.EntitiesDir, 0755)
+		os.RemoveAll(env.paths.EntitiesDir)
+		os.MkdirAll(env.paths.EntitiesDir, 0755)
 
 		renameForce = true
 		renamePlural = ""
-		err := runRenameEntity("requirement", "feature")
+		err := runRenameEntity(svc, "requirement", "feature")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
 		// Metamodel should still be updated
-		mmData, _ := os.ReadFile(projectCtx.MetamodelPath)
+		mmData, _ := os.ReadFile(env.paths.MetamodelPath)
 		if !strings.Contains(string(mmData), "feature:") {
 			t.Error("metamodel should contain 'feature:' key even with no entity directory")
 		}

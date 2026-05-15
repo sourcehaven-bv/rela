@@ -22,8 +22,9 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		svc := cliAnalyzeFromContext(cmd.Context())
 
-		infos, err := ws.ListAttachments(entityID)
+		infos, err := svc.ListAttachments(entityID)
 		if err != nil {
 			return err
 		}

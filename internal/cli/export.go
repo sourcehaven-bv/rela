@@ -88,9 +88,11 @@ Examples:
   rela export control --format csv | mlr --csv filter '$status == "applicable"'`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliReadFromContext(cmd.Context())
+
 		// Determine what to export
 		if exportAll {
-			return exportAllData()
+			return exportAllData(svc)
 		}
 
 		if len(args) == 0 {
@@ -101,18 +103,18 @@ Examples:
 		// Handle plural form
 		typeName = strings.TrimSuffix(typeName, "s")
 
-		resolvedType, _, err := resolveEntityType(typeName)
+		resolvedType, _, err := resolveEntityType(svc.Meta(), typeName)
 		if err != nil {
 			return err
 		}
 
-		return exportEntities(resolvedType)
+		return exportEntities(svc, resolvedType)
 	},
 }
 
-func exportEntities(entityType string) error {
+func exportEntities(svc cliRead, entityType string) error {
 	ctx := context.Background()
-	st := ws.Store()
+	st := svc.Store()
 	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
 		if err != nil {
@@ -144,7 +146,7 @@ func exportEntities(entityType string) error {
 	for _, e := range entities {
 		exp := entityToExport(e)
 		if exportWithRelations {
-			exp.Relations = getEntityRelations(e.ID)
+			exp.Relations = getEntityRelations(svc, e.ID)
 		}
 		exportData = append(exportData, exp)
 	}
@@ -152,9 +154,9 @@ func exportEntities(entityType string) error {
 	return writeExport(exportData, entities)
 }
 
-func exportAllData() error {
+func exportAllData(svc cliRead) error {
 	ctx := context.Background()
-	st := ws.Store()
+	st := svc.Store()
 
 	allEntities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
@@ -195,7 +197,7 @@ func exportAllData() error {
 	for _, e := range allEntities {
 		exp := entityToExport(e)
 		if exportWithRelations {
-			exp.Relations = getEntityRelations(e.ID)
+			exp.Relations = getEntityRelations(svc, e.ID)
 		}
 		exportEntities = append(exportEntities, exp)
 	}
@@ -241,9 +243,9 @@ func entityToExport(e *entity.Entity) ExportEntity {
 	}
 }
 
-func getEntityRelations(entityID string) *ExportRelations {
+func getEntityRelations(svc cliRead, entityID string) *ExportRelations {
 	ctx := context.Background()
-	st := ws.Store()
+	st := svc.Store()
 
 	relations := &ExportRelations{
 		Outgoing: make(map[string][]RelationTarget),

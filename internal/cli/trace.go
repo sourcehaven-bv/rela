@@ -34,13 +34,14 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		svc := cliReadFromContext(cmd.Context())
 
 		ctx := context.Background()
-		if _, err := ws.Store().GetEntity(ctx, entityID); err != nil {
+		if _, err := svc.Store().GetEntity(ctx, entityID); err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		result := ws.Tracer().TraceFrom(ctx, entityID, traceMaxDepth)
+		result := svc.Tracer().TraceFrom(ctx, entityID, traceMaxDepth)
 		if result == nil {
 			out.WriteMessage("No downstream dependencies found")
 			return nil
@@ -62,13 +63,14 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
+		svc := cliReadFromContext(cmd.Context())
 
 		ctx := context.Background()
-		if _, err := ws.Store().GetEntity(ctx, entityID); err != nil {
+		if _, err := svc.Store().GetEntity(ctx, entityID); err != nil {
 			return &entityNotFoundError{ID: entityID}
 		}
 
-		result := ws.Tracer().TraceTo(ctx, entityID, traceMaxDepth)
+		result := svc.Tracer().TraceTo(ctx, entityID, traceMaxDepth)
 		if result == nil {
 			out.WriteMessage("No upstream dependencies found")
 			return nil
@@ -89,16 +91,17 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fromID := args[0]
 		toID := args[1]
+		svc := cliReadFromContext(cmd.Context())
 
 		ctx := context.Background()
-		if _, err := ws.Store().GetEntity(ctx, fromID); err != nil {
+		if _, err := svc.Store().GetEntity(ctx, fromID); err != nil {
 			return fmt.Errorf("source entity not found: %s", fromID)
 		}
-		if _, err := ws.Store().GetEntity(ctx, toID); err != nil {
+		if _, err := svc.Store().GetEntity(ctx, toID); err != nil {
 			return fmt.Errorf("target entity not found: %s", toID)
 		}
 
-		path := ws.Tracer().FindPath(ctx, fromID, toID)
+		path := svc.Tracer().FindPath(ctx, fromID, toID)
 		if path == nil {
 			out.WriteMessage("No path found between %s and %s", fromID, toID)
 			return nil

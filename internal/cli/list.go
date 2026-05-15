@@ -46,13 +46,15 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		st := ws.Store()
+		svc := cliReadFromContext(cmd.Context())
+		st := svc.Store()
+		meta := svc.Meta()
 
 		q := store.EntityQuery{}
 		var entityTypeName string
 
 		if len(args) > 0 {
-			resolvedType, _, err := resolveEntityType(args[0])
+			resolvedType, _, err := resolveEntityType(meta, args[0])
 			if err != nil {
 				return err
 			}

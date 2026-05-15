@@ -32,7 +32,7 @@ func setupJSONTestOutput() *bytes.Buffer {
 // it runs one analysis command through the CLI and verifies the
 // envelope (status, count) is correctly populated.
 func TestAnalyzeOrphansJSONOutput(t *testing.T) {
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
 				Label:      "Requirement",
@@ -47,7 +47,7 @@ func TestAnalyzeOrphansJSONOutput(t *testing.T) {
 
 	buf := setupJSONTestOutput()
 
-	if err := analyzeOrphansCmd.RunE(nil, nil); err != nil {
+	if err := analyzeOrphansCmd.RunE(testCmd(), nil); err != nil {
 		t.Fatalf("analyze orphans error = %v", err)
 	}
 
@@ -70,7 +70,7 @@ func TestAnalyzeOrphansJSONOutput(t *testing.T) {
 // validations`. Otherwise CI piping the command sees clean runs even
 // when rules silently fail.
 func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Label: "Ticket", IDPrefix: "TKT-",
 				Properties: map[string]metamodel.PropertyDef{}},
@@ -84,7 +84,8 @@ func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
 	applySeeder(seeder)
 
 	out = output.NewWithWriter(&bytes.Buffer{}, output.FormatTable)
-	err := runValidations(context.Background(), workspace.AnalyzeOptions{})
+	svc := cliAnalyzeFromContext(testCtx)
+	err := runValidations(context.Background(), svc, workspace.AnalyzeOptions{})
 
 	if err == nil {
 		t.Fatal("expected non-zero exit error, got nil")
@@ -104,7 +105,7 @@ func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
 // consumers parsing JSON see rule failures rather than silently
 // reading 0s while text output shows failures.
 func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {Label: "Ticket", IDPrefix: "TKT-",
 				Properties: map[string]metamodel.PropertyDef{}},
@@ -119,7 +120,7 @@ func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
 	applySeeder(seeder)
 
 	buf := setupJSONTestOutput()
-	analyzeAllCmd.SetContext(context.Background())
+	analyzeAllCmd.SetContext(testCtx)
 	if err := analyzeAllCmd.RunE(analyzeAllCmd, nil); err != nil {
 		t.Fatalf("analyze all: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
 // test today. Runs via the CLI so we simultaneously exercise the JSON
 // output envelope.
 func TestAnalyzeGaps(t *testing.T) {
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
 				Label:      "Requirement",
@@ -166,7 +167,7 @@ func TestAnalyzeGaps(t *testing.T) {
 
 	buf := setupJSONTestOutput()
 
-	if err := analyzeGapsCmd.RunE(nil, nil); err != nil {
+	if err := analyzeGapsCmd.RunE(testCmd(), nil); err != nil {
 		t.Fatalf("analyze gaps error = %v", err)
 	}
 

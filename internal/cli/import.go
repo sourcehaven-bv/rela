@@ -70,6 +70,7 @@ CSV format (relations):
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath := args[0]
+		svc := cliWriteFromContext(cmd.Context())
 
 		opts := importer.Options{
 			Format:        importer.Format(importFormat),
@@ -79,7 +80,7 @@ CSV format (relations):
 			RelationsFile: importRelationsFile,
 		}
 
-		imp := importer.New(ws.Store(), meta, opts, importer.NewImportSource(ws.FS()))
+		imp := importer.New(svc.Store(), svc.Meta(), opts, importer.NewImportSource(svc.FS()))
 
 		if importDryRun {
 			out.WriteInfo("Dry run - validating without creating files...")

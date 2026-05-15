@@ -30,6 +30,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 		filePaths := args[1:]
+		svc := cliAnalyzeFromContext(cmd.Context())
 
 		var attached int
 		for _, filePath := range filePaths {
@@ -50,7 +51,7 @@ Examples:
 					return fmt.Errorf("invalid path %q: %w", match, err)
 				}
 
-				result, err := ws.AttachFile(entityID, absPath, attachProperty)
+				result, err := svc.AttachFile(entityID, absPath, attachProperty)
 				if err != nil {
 					return fmt.Errorf("failed to attach %q: %w", match, err)
 				}

@@ -34,7 +34,8 @@ Examples:
   rela fmt --check        # Check if files need formatting (for CI)`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		st := ws.Store()
+		svc := cliReadFromContext(cmd.Context())
+		st := svc.Store()
 		f, ok := st.(store.Formatter)
 		if !ok {
 			out.WriteMessage("The active storage backend does not support formatting.")
@@ -50,7 +51,7 @@ Examples:
 		// Collect entity IDs from store
 		q := store.EntityQuery{}
 		if len(args) > 0 {
-			resolvedType, _, err := resolveEntityType(args[0])
+			resolvedType, _, err := resolveEntityType(svc.Meta(), args[0])
 			if err != nil {
 				return err
 			}

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -34,7 +35,9 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get entities and edges
 		ctx := context.Background()
-		st := ws.Store()
+		svc := cliReadFromContext(cmd.Context())
+		st := svc.Store()
+		meta := svc.Meta()
 
 		var entities []*entity.Entity
 		for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
@@ -86,7 +89,7 @@ Examples:
 		}
 
 		// Generate DOT
-		dot := generateDOT(entities, edges)
+		dot := generateDOT(meta, entities, edges)
 
 		// Output handling
 		if graphOutput == "" {
@@ -106,7 +109,7 @@ Examples:
 	},
 }
 
-func generateDOT(entities []*entity.Entity, edges []*entity.Relation) string {
+func generateDOT(meta *metamodel.Metamodel, entities []*entity.Entity, edges []*entity.Relation) string {
 	var sb strings.Builder
 
 	direction := "TB"

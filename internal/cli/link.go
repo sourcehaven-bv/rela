@@ -22,8 +22,9 @@ Examples:
 		fromID := args[0]
 		relationType := args[1]
 		toID := args[2]
+		svc := cliWriteFromContext(cmd.Context())
 
-		_, err := ws.EntityManager().CreateRelation(
+		_, err := svc.EntityManager().CreateRelation(
 			context.Background(), fromID, relationType, toID, entitymanager.RelationOptions{})
 		if err != nil {
 			return err

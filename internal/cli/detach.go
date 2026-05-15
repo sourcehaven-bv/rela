@@ -25,14 +25,15 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 		propName := args[1]
+		svc := cliWriteFromContext(cmd.Context())
 
 		ctx := context.Background()
-		e, err := ws.Store().GetEntity(ctx, entityID)
+		e, err := svc.Store().GetEntity(ctx, entityID)
 		if err != nil {
 			return fmt.Errorf("entity not found: %s", entityID)
 		}
 
-		entityDef, ok := meta.GetEntityDef(e.Type)
+		entityDef, ok := svc.Meta().GetEntityDef(e.Type)
 		if !ok {
 			return fmt.Errorf("unknown entity type: %s", e.Type)
 		}
@@ -50,12 +51,12 @@ Examples:
 			return fmt.Errorf("property %q has no attachment", propName)
 		}
 
-		if err := ws.Store().DeleteAttachment(ctx, entityID, propName); err != nil {
+		if err := svc.Store().DeleteAttachment(ctx, entityID, propName); err != nil {
 			return fmt.Errorf("delete attachment: %w", err)
 		}
 
 		delete(e.Properties, propName)
-		if _, err := ws.EntityManager().UpdateEntity(ctx, e); err != nil {
+		if _, err := svc.EntityManager().UpdateEntity(ctx, e); err != nil {
 			return fmt.Errorf("update entity: %w", err)
 		}
 

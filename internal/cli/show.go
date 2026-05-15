@@ -22,7 +22,8 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 		ctx := context.Background()
-		st := ws.Store()
+		svc := cliReadFromContext(cmd.Context())
+		st := svc.Store()
 
 		e, err := st.GetEntity(ctx, entityID)
 		if err != nil {

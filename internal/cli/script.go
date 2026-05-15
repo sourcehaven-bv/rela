@@ -58,16 +58,17 @@ Example:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		scriptPath := args[0]
 		scriptArgs := args[1:]
+		svc := cliWriteFromContext(cmd.Context())
 
 		opts := []lua.Option{
 			lua.WithContext(cmd.Context()),
-			lua.WithCache(ws.LuaCache()),
+			lua.WithCache(svc.LuaCache()),
 		}
 		if scriptOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
 		}
 
-		runtime, err := script.NewWriterRuntime(ws.LuaWriteDeps(), scriptPath,
+		runtime, err := script.NewWriterRuntime(svc.LuaWriteDeps(), scriptPath,
 			os.Stdout, opts...)
 		if err != nil {
 			return err

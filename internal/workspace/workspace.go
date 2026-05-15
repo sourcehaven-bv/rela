@@ -659,35 +659,6 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 	return result
 }
 
-// --- Type resolution ---
-
-// ResolveEntityType resolves a type name (alias, plural) to its canonical
-// name and definition.
-func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	meta := w.Meta()
-
-	// Exact match or alias.
-	resolved := meta.ResolveAlias(strings.TrimSpace(typeName))
-	if def, ok := meta.GetEntityDef(resolved); ok {
-		return resolved, def, nil
-	}
-
-	// Strip common plural suffixes.
-	suffixes := []string{"ies", "es", "s"}
-	replacements := []string{"y", "", ""}
-	for i, suffix := range suffixes {
-		if strings.HasSuffix(typeName, suffix) {
-			singular := strings.TrimSuffix(typeName, suffix) + replacements[i]
-			resolved = meta.ResolveAlias(singular)
-			if def, ok := meta.GetEntityDef(resolved); ok {
-				return resolved, def, nil
-			}
-		}
-	}
-
-	return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
-}
-
 // --- ID generation ---
 
 // GenerateID generates the next ID for the given entity type. If prefix is

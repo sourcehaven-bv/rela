@@ -16,20 +16,16 @@ import (
 func setupSchemaTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
 	t.Helper()
 
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
 	buf = new(bytes.Buffer)
 	out = output.NewWithWriter(buf, output.FormatTable)
 
 	cleanup = func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}
 
 	return buf, cleanup
@@ -195,18 +191,13 @@ func TestSchemaEntity(t *testing.T) {
 }
 
 func TestSchemaEntityWithAlias(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
 	// Parse the default metamodel from YAML to properly build the alias map
-	var err error
-	meta, err = metamodel.Parse([]byte(metamodel.DefaultMetamodelYAML()))
+	meta, err := metamodel.Parse([]byte(metamodel.DefaultMetamodelYAML()))
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
@@ -286,16 +277,12 @@ func TestSchemaRelationNotFound(t *testing.T) {
 }
 
 func TestSchemaOverviewJSON(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
@@ -328,16 +315,12 @@ func TestSchemaOverviewJSON(t *testing.T) {
 }
 
 func TestSchemaEntitiesJSON(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
@@ -364,16 +347,12 @@ func TestSchemaEntitiesJSON(t *testing.T) {
 }
 
 func TestSchemaEntityJSON(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
@@ -403,16 +382,12 @@ func TestSchemaEntityJSON(t *testing.T) {
 }
 
 func TestSchemaRelationJSON(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
@@ -442,17 +417,13 @@ func TestSchemaRelationJSON(t *testing.T) {
 }
 
 func TestSchemaTypesEmpty(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
 	// Create metamodel with no custom types
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version:  "1.0",
 		Types:    map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{},
@@ -475,17 +446,13 @@ func TestSchemaTypesEmpty(t *testing.T) {
 }
 
 func TestSchemaEntitiesEmpty(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
 	// Create metamodel with no entities
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version:   "1.0",
 		Types:     map[string]metamodel.CustomType{},
 		Entities:  map[string]metamodel.EntityDef{},
@@ -509,17 +476,13 @@ func TestSchemaEntitiesEmpty(t *testing.T) {
 }
 
 func TestSchemaRelationsEmpty(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
 	// Create metamodel with no relations
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version:   "1.0",
 		Types:     map[string]metamodel.CustomType{},
 		Entities:  map[string]metamodel.EntityDef{},
@@ -543,20 +506,16 @@ func TestSchemaRelationsEmpty(t *testing.T) {
 }
 
 func TestSchemaWithCardinality(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
 	sourceMin := 1
 	sourceMax := 5
 
 	// Create metamodel with cardinality constraints
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
@@ -597,17 +556,13 @@ func TestSchemaWithCardinality(t *testing.T) {
 }
 
 func TestSchemaWithSymmetricRelation(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
 	// Create metamodel with symmetric relation
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
@@ -654,23 +609,19 @@ func TestSchemaGraphviz(t *testing.T) {
 	schemaGraphviz = true
 	schemaConstraints = false
 
-	err := runSchemaGraphviz()
+	err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
 	if err != nil {
 		t.Fatalf("schema graphviz failed: %v", err)
 	}
 }
 
 func TestSchemaGraphvizOutput(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
 	var buf bytes.Buffer
@@ -678,7 +629,7 @@ func TestSchemaGraphvizOutput(t *testing.T) {
 
 	// Capture stdout for runSchemaGraphviz
 	oldStdout := captureStdout(t, func() {
-		err := runSchemaGraphviz()
+		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
 		if err != nil {
 			t.Fatalf("schema graphviz failed: %v", err)
 		}
@@ -713,21 +664,17 @@ func TestSchemaGraphvizOutput(t *testing.T) {
 }
 
 func TestSchemaGraphvizWithConstraints(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	oldConstraints := schemaConstraints
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 		schemaConstraints = oldConstraints
 	}()
 
 	sourceMin := 1
 	targetMax := 1
 
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
@@ -751,7 +698,7 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	schemaConstraints = true
 
 	result := captureStdout(t, func() {
-		err := runSchemaGraphviz()
+		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
 		if err != nil {
 			t.Fatalf("schema graphviz with constraints failed: %v", err)
 		}
@@ -767,16 +714,12 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 }
 
 func TestSchemaGraphvizWithColors(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
@@ -795,7 +738,7 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 	out = output.NewWithWriter(&buf, output.FormatTable)
 
 	result := captureStdout(t, func() {
-		err := runSchemaGraphviz()
+		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
 		if err != nil {
 			t.Fatalf("schema graphviz with colors failed: %v", err)
 		}
@@ -811,16 +754,12 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 }
 
 func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{
@@ -842,7 +781,7 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 	out = output.NewWithWriter(&buf, output.FormatTable)
 
 	result := captureStdout(t, func() {
-		err := runSchemaGraphviz()
+		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
 		if err != nil {
 			t.Fatalf("schema graphviz with multiple from/to failed: %v", err)
 		}
@@ -968,24 +907,20 @@ func schemaGraphvizFixture(
 	rels map[string]metamodel.RelationDef,
 ) {
 	t.Helper()
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	oldGraphviz := schemaGraphviz
 	oldExclude := schemaExclude
 	oldNoBundle := schemaNoBundle
 	oldNoLegend := schemaNoLegend
 	t.Cleanup(func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 		schemaGraphviz = oldGraphviz
 		schemaExclude = oldExclude
 		schemaNoBundle = oldNoBundle
 		schemaNoLegend = oldNoLegend
 	})
 
-	meta = &metamodel.Metamodel{
+	meta := &metamodel.Metamodel{
 		Version:   "1.0",
 		Types:     map[string]metamodel.CustomType{},
 		Entities:  ents,
@@ -1016,7 +951,7 @@ func TestSchemaGraphvizExclude(t *testing.T) {
 	schemaExclude = []string{"c"}
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1048,7 +983,7 @@ func TestSchemaGraphvizLegendFiveTargets(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1079,7 +1014,7 @@ func TestSchemaGraphvizHubIsolatedTargets(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1122,7 +1057,7 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1177,7 +1112,7 @@ func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1209,7 +1144,7 @@ func TestSchemaGraphvizFewTargetsPlain(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1243,7 +1178,7 @@ func TestSchemaGraphvizDropsEmptyNode(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1272,7 +1207,7 @@ func TestSchemaGraphvizNoLegendFlag(t *testing.T) {
 	schemaNoLegend = true
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1297,7 +1232,7 @@ func TestSchemaGraphvizNoBundleFlag(t *testing.T) {
 	schemaNoBundle = true
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1402,7 +1337,7 @@ func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
@@ -1461,7 +1396,7 @@ func TestSchemaGraphvizEscapesHTML(t *testing.T) {
 	)
 
 	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(); err != nil {
+		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
 			t.Fatalf("runSchemaGraphviz: %v", err)
 		}
 	})
