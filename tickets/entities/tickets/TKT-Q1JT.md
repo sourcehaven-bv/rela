@@ -5,7 +5,7 @@ title: Wire workspace search backend as fsstore Observer (drop Subscribe gorouti
 kind: refactor
 priority: medium
 effort: s
-status: backlog
+status: done
 ---
 
 ## Summary
