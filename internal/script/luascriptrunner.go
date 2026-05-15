@@ -1,18 +1,28 @@
-package workspace
+package script
 
 import (
 	"context"
 	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
 
-// luaScriptRunner adapts the workspace's Lua-based [ScriptExecutor]
-// to the runtime-agnostic [autocascade.ScriptRunner] interface that
-// Runner consumes. One adapter is constructed per Runner.Process call
-// so the per-request lua.WriteDeps bundle is bound at the right
-// scope.
+// Executor is the consumer-side interface the [LuaScriptRunner] needs
+// from its Lua-based script executor. *script.Engine satisfies it
+// structurally; tests can pass a stub that only implements these
+// methods.
+type Executor interface {
+	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+}
+
+// LuaScriptRunner adapts a Lua-based [Executor] to the
+// runtime-agnostic [autocascade.ScriptRunner] interface that
+// [autocascade.Runner] consumes. One adapter is constructed per
+// dispatch so the per-request lua.WriteDeps bundle is bound at the
+// right scope.
 //
 // Engine-specific concerns live here, not in autocascade:
 //   - lua.WriteDeps is captured at construction.
@@ -22,21 +32,20 @@ import (
 // autocascade.Runner is therefore independent of any specific script
 // runtime; replacing Lua with another engine would mean providing a
 // different ScriptRunner adapter, not changing Runner.
-type luaScriptRunner struct {
-	exec ScriptExecutor
+type LuaScriptRunner struct {
+	exec Executor
 	deps lua.WriteDeps
 }
 
-// newLuaScriptRunner is constructed inside Workspace dispatch sites
-// (createEntity / updateEntity) per cascade invocation. Returns nil
-// if exec is nil — Runner records each scripted action as an error
-// when ScriptRunner is nil, which is the right behavior for
-// misconfigured deployments.
-func newLuaScriptRunner(exec ScriptExecutor, deps lua.WriteDeps) *luaScriptRunner {
+// NewLuaScriptRunner is constructed inside dispatch sites per cascade
+// invocation. Returns nil if exec is nil — Runner records each
+// scripted action as an error when ScriptRunner is nil, which is the
+// right behavior for misconfigured deployments.
+func NewLuaScriptRunner(exec Executor, deps lua.WriteDeps) *LuaScriptRunner {
 	if exec == nil {
 		return nil
 	}
-	return &luaScriptRunner{exec: exec, deps: deps}
+	return &LuaScriptRunner{exec: exec, deps: deps}
 }
 
 // Run dispatches the action to the underlying executor.
@@ -45,7 +54,7 @@ func newLuaScriptRunner(exec ScriptExecutor, deps lua.WriteDeps) *luaScriptRunne
 // Lua-error-path patching: Runner.executeScriptActions slog-Warns
 // with the automation name and appends err.Error() to Outcome.Errors,
 // which is the surface the API layer reads.
-func (l *luaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction) error {
+func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction) error {
 	var err error
 	switch {
 	case action.Code != "":
@@ -80,6 +89,6 @@ func formatScriptError(action autocascade.ScriptAction, err error) error {
 	return err
 }
 
-// Compile-time assertion that *luaScriptRunner satisfies the
+// Compile-time assertion that *LuaScriptRunner satisfies the
 // consumer-side ScriptRunner interface.
-var _ autocascade.ScriptRunner = (*luaScriptRunner)(nil)
+var _ autocascade.ScriptRunner = (*LuaScriptRunner)(nil)

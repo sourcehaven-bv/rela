@@ -1,4 +1,4 @@
-package workspace
+package script
 
 import (
 	"context"
@@ -38,14 +38,12 @@ func (r *recordingScriptExecutor) ExecuteFile(path string, _ lua.WriteDeps, newE
 	return r.err
 }
 
-func (r *recordingScriptExecutor) LuaCache() *lua.Cache { return nil }
-
 // TestLuaScriptRunner_DispatchByActionShape — Code-only actions go to
 // ExecuteCode; FilePath-only go to ExecuteFile; both-empty actions
 // are a no-op.
 func TestLuaScriptRunner_DispatchByActionShape(t *testing.T) {
 	rec := &recordingScriptExecutor{}
-	r := newLuaScriptRunner(rec, lua.WriteDeps{})
+	r := NewLuaScriptRunner(rec, lua.WriteDeps{})
 
 	trigger := entity.New("REQ-001", "requirement")
 	if err := r.Run(context.Background(), autocascade.ScriptAction{Code: "print('hi')", NewEntity: trigger}); err != nil {
@@ -84,7 +82,7 @@ func TestLuaScriptRunner_PatchesScriptErrorPath(t *testing.T) {
 			LuaMessage: "boom",
 		},
 	}
-	r := newLuaScriptRunner(exec, lua.WriteDeps{})
+	r := NewLuaScriptRunner(exec, lua.WriteDeps{})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code: "error('boom')",
@@ -116,7 +114,7 @@ func TestLuaScriptRunner_FilePathErrorNotPatched(t *testing.T) {
 			LuaMessage: "boom",
 		},
 	}
-	r := newLuaScriptRunner(exec, lua.WriteDeps{})
+	r := NewLuaScriptRunner(exec, lua.WriteDeps{})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		FilePath: "foo.lua",
@@ -134,11 +132,11 @@ func TestLuaScriptRunner_FilePathErrorNotPatched(t *testing.T) {
 	}
 }
 
-// TestLuaScriptRunner_NilOnNilExec — newLuaScriptRunner returns nil
+// TestLuaScriptRunner_NilOnNilExec — NewLuaScriptRunner returns nil
 // when given a nil executor, so callers can pass the result to
 // autocascade.Request.Scripts safely.
 func TestLuaScriptRunner_NilOnNilExec(t *testing.T) {
-	if got := newLuaScriptRunner(nil, lua.WriteDeps{}); got != nil {
+	if got := NewLuaScriptRunner(nil, lua.WriteDeps{}); got != nil {
 		t.Errorf("expected nil ScriptRunner for nil executor, got %#v", got)
 	}
 }

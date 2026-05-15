@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // wsScriptRunner is the [autocascade.ScriptRunner] adapter the
@@ -34,5 +35,5 @@ var _ autocascade.ScriptRunner = (*wsScriptRunner)(nil)
 
 // Run satisfies [autocascade.ScriptRunner.Run].
 func (r *wsScriptRunner) Run(ctx context.Context, a autocascade.ScriptAction) error {
-	return newLuaScriptRunner(r.w.scriptExec, r.w.LuaWriteDeps()).Run(ctx, a)
+	return script.NewLuaScriptRunner(r.w.scriptExec, r.w.LuaWriteDeps()).Run(ctx, a)
 }

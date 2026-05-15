@@ -1,9 +1,7 @@
 package workspace
 
 import (
-	"context"
 	"errors"
-	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -61,27 +59,13 @@ func (w *Workspace) Tracer() tracer.Tracer {
 	return w.tracer
 }
 
-// errSearcher is the Searcher returned when the workspace failed to
-// construct a search backend at startup. Every call yields a single
-// error so callers see an explicit failure rather than silently empty
-// results.
-type errSearcher struct{ err error }
-
-var _ search.Searcher = errSearcher{}
-
-func (s errSearcher) Search(_ context.Context, _ search.Query) iter.Seq2[search.Hit, error] {
-	return func(yield func(search.Hit, error) bool) {
-		yield(search.Hit{}, s.err)
-	}
-}
-
 // Searcher returns a search.Searcher backed by the workspace's search index.
 // The wrapper is created on first access and reused for the lifetime of the
 // workspace.
 func (w *Workspace) Searcher() search.Searcher {
 	w.searcherOnce.Do(func() {
 		if w.searchBackend == nil {
-			w.searcher = errSearcher{err: errors.New("search index not available")}
+			w.searcher = search.ErrSearcher(errors.New("search index not available"))
 			return
 		}
 		w.searcher = search.New(w.store, w.searchBackend)

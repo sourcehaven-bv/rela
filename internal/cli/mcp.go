@@ -2,13 +2,13 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // coverage-ignore: MCP command - requires stdio server
@@ -53,13 +53,19 @@ func runMCPServer() error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	// Discover project and initialize workspace
-	mcpWs, err := workspace.Discover(startDir, script.NewEngine())
+	svc, err := newMCPServices(startDir)
 	if err != nil {
-		return errors.New("no project found: run 'rela init' to create one")
+		// project.Discover signals "no project here" with a distinct
+		// error; everything else (metamodel parse error, store open
+		// failure, etc.) is a real diagnostic the operator needs.
+		if errors.Is(err, relaerrors.ErrNoProject) {
+			return errors.New("no project found: run 'rela init' to create one")
+		}
+		return fmt.Errorf("mcp startup: %w", err)
 	}
+	defer svc.Close()
 
-	srv := relamcp.NewServer(mcpWs, Version)
+	srv := relamcp.NewServer(svc, Version)
 	return srv.Serve()
 }
 
