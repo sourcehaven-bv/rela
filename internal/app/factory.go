@@ -19,9 +19,30 @@ import (
 // (fsstore) rooted at the given project paths. Each OpenStore call
 // returns a fresh, independent store — callers that want a single
 // long-lived store should open it once and keep it alive.
+//
+// Observers (set via [FSFactory.AddObserver]) are forwarded to
+// [fsstore.Config.Observers] when the store is opened: each observer
+// is notified synchronously on entity writes (create / update /
+// delete / rename). This is the hook used by derived state (e.g.
+// search indexes) to stay current; it is NOT invoked for entities
+// already on disk when the store is first opened, so callers that
+// need an initial snapshot must iterate the store after OpenStore
+// returns and feed their observer manually.
 type FSFactory struct {
 	FS    storage.FS
 	Paths *project.Context
+
+	observers []store.EntityObserver
+}
+
+// AddObserver registers an entity observer that the next OpenStore
+// call will hook into the resulting store. Safe to call repeatedly;
+// each observer is invoked exactly once per write event.
+func (f *FSFactory) AddObserver(o store.EntityObserver) {
+	if o == nil {
+		return
+	}
+	f.observers = append(f.observers, o)
 }
 
 // compile-time interface check
@@ -50,6 +71,7 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 		AttachmentsKey: "attachments",
 		CacheKey:       ".rela",
 		Schemas:        buildSchemas(meta),
+		Observers:      f.observers,
 	})
 }
 

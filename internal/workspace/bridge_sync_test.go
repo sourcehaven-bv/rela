@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
@@ -84,4 +85,38 @@ func TestFactoryInitialLoad(t *testing.T) {
 		rels++
 	}
 	assert.Equal(t, 1, rels, "relation should be loaded")
+}
+
+// TestStoreWritesAppearSynchronouslyInSearch asserts that a write
+// through the store after workspace.New is visible in Searcher()
+// results immediately, without any goroutine join or sleep. The
+// search backend is installed as a store observer, so the update is
+// applied under the store's write lock — by the time CreateEntity
+// returns, the search index has already seen it.
+func TestStoreWritesAppearSynchronouslyInSearch(t *testing.T) {
+	fs, paths := bridgePaths(t)
+
+	factory := &app.FSFactory{FS: fs, Paths: paths}
+
+	ws, err := workspace.New(fs, paths, workspace.NopScriptExecutor,
+		workspace.WithStoreFactory(factory))
+	require.NoError(t, err)
+	defer ws.Close()
+
+	ctx := context.Background()
+	require.NoError(t, ws.Store().CreateEntity(ctx, &entity.Entity{
+		ID:         "REQ-Live",
+		Type:       "requirement",
+		Properties: map[string]interface{}{"title": "Authoritative live sync"},
+	}))
+
+	// Search synchronously — no Sleep, no Eventually. If observer
+	// wiring is in place, the entity is in the index by the time
+	// CreateEntity returned.
+	hits := make([]string, 0, 1)
+	for hit, err := range ws.Searcher().Search(ctx, search.Query{Text: "Authoritative"}) {
+		require.NoError(t, err)
+		hits = append(hits, hit.ID)
+	}
+	assert.Contains(t, hits, "REQ-Live", "observer should have indexed the entity synchronously")
 }
