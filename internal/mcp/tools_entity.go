@@ -328,8 +328,8 @@ func (s *Server) handleRenameEntity(
 	dryRun := request.GetBool("dry_run", false)
 
 	// Pause watcher during rename
-	s.ws.PauseWatching()
-	defer s.ws.ResumeWatching()
+	s.ws.Watcher().Pause()
+	defer s.ws.Watcher().Resume()
 
 	result, renameErr := s.ws.EntityManager().RenameEntity(
 		ctx, oldID, newID, entitymanager.RenameOptions{DryRun: dryRun})

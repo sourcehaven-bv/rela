@@ -13,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // makeTestServer creates a Server with a populated store for handler testing.
@@ -65,10 +64,10 @@ func makeTestServer(t *testing.T) *Server {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	ws := workspace.NewForTest(meta, workspace.WithTestStore(st))
+	svc := newTestServices(t, meta, st)
 
 	return &Server{
-		ws:     ws,
+		ws:     svc,
 		logger: slog.New(slog.DiscardHandler),
 	}
 }

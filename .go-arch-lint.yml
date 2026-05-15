@@ -164,6 +164,11 @@ deps:
   cli:
     mayDependOn:
       - ai
+      - app
+      - autocascade
+      - automation
+      - bleveindex
+      - config
       - dataentryconfig
       - entitymanager
       - filter
@@ -178,7 +183,12 @@ deps:
       - scheduler
       - schema
       - script
+      - search
+      - storage
       - store
+      - templating
+      - tracer
+      - validator
       - workspace
     canUse:
       - cobra
@@ -242,7 +252,6 @@ deps:
       - store
       - tracer
       - validator
-      - workspace
     canUse:
       - mcpgo
       - fsnotify
@@ -389,6 +398,7 @@ deps:
   script:
     mayDependOn:
       - ai
+      - autocascade
       - lua
       - metamodel
       - project

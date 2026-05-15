@@ -35,13 +35,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
-// Services is the slice of the workspace API the MCP server actually
-// uses. *workspace.Workspace satisfies it; tests that need a narrower
-// surface can implement Services directly instead of building a full
-// workspace.
+// Services is the slice of backend services the MCP server actually
+// uses. Tests that need a narrower surface can implement Services
+// directly. The wiring site (internal/cli) constructs a concrete
+// implementation from focused services and supplies it to NewServer.
 type Services interface {
 	Store() store.Store
 	Meta() *metamodel.Metamodel
@@ -53,14 +52,21 @@ type Services interface {
 	Paths() *project.Context
 	LuaWriteDeps() lua.WriteDeps
 	LuaCache() *lua.Cache
-	PauseWatching()
-	ResumeWatching()
-	StartWatching(workspace.WatchOptions) error
-	StopWatching()
+	Watcher() Watcher
 }
 
-// compile-time check that *workspace.Workspace satisfies Services.
-var _ Services = (*workspace.Workspace)(nil)
+// Watcher is the narrow file-watching capability MCP requires from
+// its wiring site. Start arms the watcher with an opaque "something
+// changed" callback; Pause / Resume temporarily suppress callbacks
+// while in-process writes happen (e.g. entity rename). The wiring
+// site supplies an adapter that translates these calls into the
+// underlying filesystem watcher.
+type Watcher interface {
+	Start(onChange func()) error
+	Stop()
+	Pause()
+	Resume()
+}
 
 // Server wraps the MCP server with rela-specific state.
 type Server struct {
@@ -108,21 +114,19 @@ func NewServer(ws Services, version string) *Server {
 func (s *Server) Serve() error {
 	s.logger.Info("starting rela MCP server on stdio")
 
-	// Start file watcher via workspace
-	if err := s.ws.StartWatching(workspace.WatchOptions{
-		OnChange: func(_ []workspace.ChangeEvent) {
-			s.logger.Info("graph re-synced from file changes")
-			if s.mcp != nil {
-				s.mcp.SendNotificationToAllClients(
-					mcpgo.MethodNotificationResourcesListChanged, nil,
-				)
-			}
-		},
+	// Start the file watcher; MCP only cares "something changed."
+	if err := s.ws.Watcher().Start(func() {
+		s.logger.Info("graph re-synced from file changes")
+		if s.mcp != nil {
+			s.mcp.SendNotificationToAllClients(
+				mcpgo.MethodNotificationResourcesListChanged, nil,
+			)
+		}
 	}); err != nil {
 		s.logger.Warn("file watcher not started", "error", err)
 	}
 
-	defer s.ws.StopWatching()
+	defer s.ws.Watcher().Stop()
 
 	// mcp-go's WithErrorLogger expects a stdlib *log.Logger; bridge to slog
 	// so all output flows through the configured slog handler.
