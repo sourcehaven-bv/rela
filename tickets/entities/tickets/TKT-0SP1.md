@@ -1,56 +1,61 @@
 ---
 id: TKT-0SP1
 type: ticket
-title: Migrate CLI commands to scoped consumer-side interfaces (off Workspace)
+title: Migrate CLI to scoped services helper (drop package globals)
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: done
 ---
 
 ## Summary
 
-`internal/cli/root.go` holds package-level globals `ws`, `projectCtx`, `meta`
-populated via `workspace.Discover` in `PersistentPreRunE`. Subcommands reach
-into `ws` for whatever they need: Store, Meta, Tracer, EntityManager, Paths,
-Config, plus CLI-specific utilities like `RunValidations`, `FindOrphans`,
-`FindGaps`, `FindDuplicates`, `RenameEntityType`, `Templater`, `AttachFile`,
-`ListAttachments`.
+`internal/cli/root.go` holds package-level globals `ws`, `projectCtx`, `meta`,
+`out` populated via `workspace.Discover` in `PersistentPreRunE`. Subcommands
+reach for `ws.X()` directly. After TKT-KWAX (MCP migrated) and TKT-LCTG /
+TKT-Q1JT (workspace internals straightened), CLI is the last big consumer that
+still binds to `*workspace.Workspace`.
 
-Replace package globals with explicit, scoped consumer-side interfaces. Each
-subcommand declares the minimum surface it needs.
+This ticket builds a wiring helper for CLI — analogous to
+`internal/cli/mcp_wiring.go` — that constructs focused services (Store, Meta,
+Tracer, Searcher, Validator, EntityManager, Config, Paths, Templater, FS, Lua
+deps) and exposes them via a `*cliServices` bundle. Subcommands consume services
+from a context-attached bundle instead of reaching for package globals.
 
 ## In scope
 
-- Define a small number of scoped CLI service interfaces in `internal/cli` based on actual usage clusters (rough sketch — finalize during planning):
-  - `analyzeServices` — Store, Meta, Tracer, FindOrphans, FindGaps, FindDuplicates (used by `find`, `gc`, etc.)
-  - `validationServices` — Store, Meta, RunValidations (used by `validate`)
-  - `schemaServices` — Store, Meta, RenameEntityType (used by `schema`, `rename`)
-  - `writeServices` — EntityManager, Meta (used by create / update / delete commands)
-  - `templateServices` — Templater, Paths
-- A small wiring helper builds focused services once at startup and supplies the appropriate interface to each subcommand's `RunE`.
-- Drop the `ws`, `projectCtx`, `meta` package globals in `cli/root.go`.
+- New `internal/cli/cli_wiring.go` builds `*cliServices` from the project root. Mirrors `mcp_wiring.go` (observer-wired bleve, ScriptRunner adapter, watcher adapter).
+- `internal/cli/root.go::PersistentPreRunE` constructs the bundle once and stows it on the command context (or holds it as a package-level pointer that's narrower than today's `ws`).
+- Each subcommand file (`create.go`, `delete.go`, `list.go`, `show.go`, etc.) reads its services from the bundle.
+- Drop package globals `ws`, `projectCtx`, `meta`. Keep `out` (CLI output writer — different concern).
+- `internal/cli` stops importing `internal/workspace` directly. Verified by `grep` + arch-lint.
 
 ## Out of scope
 
-- Reorganizing the CLI command structure itself.
-- Test refactoring beyond what's needed to unblock the migration.
+- **Lifting workspace facade methods** (`AnalyzeAll`, `CheckCardinality`, `FindDuplicates`, `FindGaps`, `FindOrphansWithScope`, `FindOrphanedTempFiles`, `CleanupOrphanedTempFiles`, `RunValidations`, `RunValidationsFiltered`, `RenameEntityType`, `AttachFile`, `ListAttachments`) into their own packages. These ~700 LOC of CLI-specific conveniences stay on `Workspace` for now. CLI consumes them via a `cliServices.Analyze`/`cliServices.Attach`/`cliServices.Rename` facade that holds a `*workspace.Workspace` reference. **Tracked in TKT-FACL** (follow-up).
+- Changes to subcommand argument parsing, flag schema, output format.
+- Migrating dataentry/scheduler.
+- Deleting workspace methods that CLI no longer references.
 
 ## Depends on
 
-- `entitymanager.Manager` real implementation (separate ticket).
-- automation.Runner extraction (separate ticket).
-- Possibly "Extract analysis facade" if `FindOrphans` / `FindGaps` / `FindDuplicates` are best lifted into their own service rather than staying as Workspace methods. Decide during planning.
+- TKT-KWAX (PR #722, merged). Establishes the wiring-helper pattern that this ticket reuses.
+- TKT-LCTG / TKT-Q1JT (merged). Provides `bleveindex.NewMem` + `app.FSFactory.AddObserver` for the wiring helper.
 
 ## Why
 
-CLI is the largest cluster of Workspace consumers — ~18 commands. Migrating them
-is the bulk of the dependency reduction work. The package globals in `root.go`
-are also the single biggest "god-object via the side door" pattern in the
-codebase.
+The CLI-bound globals are the single biggest "god-object via the side door"
+pattern in the codebase per the original TKT-0SP1 scoping. Every subcommand
+silently depends on whatever methods `*workspace.Workspace` exposes; renaming a
+workspace method breaks 18 CLI files. After this ticket, each subcommand
+declares the minimum services it needs via the bundle.
+
+Splitting the facade-lift into a separate PR (TKT-FACL) keeps this diff
+reviewable while still progressing the workspace decomposition arc.
 
 ## Risks
 
-- The scoped interfaces have to align with actual usage; a survey is needed during planning to avoid creating clusters that don't match real boundaries.
-- Some Workspace methods (`RunValidations`, `FindOrphans`, etc.) are CLI-only conveniences. They may need to lift into their own service packages (`internal/analysis`, etc.) rather than staying on Workspace; that's a separable decision.
-- Largest blast radius of the migration tickets. May warrant splitting per command-cluster if the PR gets too big.
+- **Subcommand count.** ~30 CLI files. Per-file diff is mechanical (s/ws.X()/svc.X()/) but the volume is real. Mitigation: scripted rename + audit pass; reviewer-friendly diff stat.
+- **Test fixtures.** `cli/test_helpers_test.go` builds workspace; needs to migrate to a stub `cliServices`. Same pattern as TKT-KWAX's `newTestServices`.
+- **Facade methods.** CLI still calls `svc.Analyze.FindOrphansWithScope(...)` etc. — those forward to `*workspace.Workspace` internally. Document the transitional shape so the next ticket (TKT-FACL) has a clear migration target.
+- **`out` package global.** Output formatting is CLI-specific (not workspace-related); keep as-is for this ticket.
