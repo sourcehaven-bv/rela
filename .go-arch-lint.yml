@@ -190,6 +190,7 @@ deps:
       - schema
       - script
       - search
+      - state
       - storage
       - store
       - templating

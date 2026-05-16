@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -48,13 +49,16 @@ type cliRead interface {
 
 // cliWrite is cliRead + the write-path services that mutating
 // subcommands need (create / delete / update / link / unlink /
-// detach / import / normalize / script).
+// detach / import / normalize / script / scheduler). State() lives
+// here (not on cliRead) because state.KV.Put/Delete mutate
+// persistent state — same write-bundle invariant as EntityManager.
 type cliWrite interface {
 	cliRead
 	EntityManager() entitymanager.EntityManager
 	Validator() validator.Validator
 	LuaCache() *lua.Cache
 	LuaWriteDeps() lua.WriteDeps
+	State() state.KV
 }
 
 // cliAnalyze bundles the read-side analysis surface plus the CLI's
@@ -125,6 +129,7 @@ func (s *cliServices) EntityManager() entitymanager.EntityManager { return s.ws.
 func (s *cliServices) Validator() validator.Validator             { return s.ws.Validator() }
 func (s *cliServices) LuaCache() *lua.Cache                       { return s.ws.LuaCache() }
 func (s *cliServices) LuaWriteDeps() lua.WriteDeps                { return s.ws.LuaWriteDeps() }
+func (s *cliServices) State() state.KV                            { return s.ws.State() }
 
 // --- cliAnalyze ---
 
