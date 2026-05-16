@@ -8,15 +8,14 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Warning is a type alias for entitymanager.Warning so that handlers
+// Warning is a type alias for entity.Warning so that handlers
 // in this package can write `dataentry.Warning` without importing the
 // entitymanager package at every call site. Behavior is identical.
-type Warning = entitymanager.Warning
+type Warning = entity.Warning
 
 // validateRelationsModern runs the validation phase of the modern
 // reconciler without performing any writes. It returns:
@@ -320,7 +319,7 @@ func (a *App) writeCreateRelation(
 	ctx context.Context, from, to, relType string, ref V1ResourceIdentifier,
 	finalProps map[string]interface{}, finalContent string,
 ) error {
-	opts := entitymanager.RelationOptions{
+	opts := entity.RelationOptions{
 		Properties: finalProps,
 		Content:    ref.Content,
 	}
@@ -354,7 +353,7 @@ func (a *App) writeCreateRelation(
 func (a *App) writeUpdateRelation(
 	ctx context.Context, from, to, relType string, ref V1ResourceIdentifier,
 ) error {
-	opts := entitymanager.RelationOptions{
+	opts := entity.RelationOptions{
 		Properties: ref.Meta,
 		MetaUnset:  ref.MetaUnset,
 		Content:    ref.Content,

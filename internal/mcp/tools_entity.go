@@ -11,7 +11,6 @@ import (
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -166,7 +165,7 @@ func (s *Server) handleCreateEntity(
 			Properties: properties,
 			Content:    content,
 		},
-		entitymanager.CreateOptions{ID: customID},
+		entity.CreateOptions{ID: customID},
 	)
 	if createErr != nil {
 		return mcp.NewToolResultError(createErr.Error()), nil
@@ -259,7 +258,7 @@ func (s *Server) handleUpdateEntity(
 // AI agents reading the tool result can detect warnings by checking
 // for the literal "WARNINGS (" prefix without parsing the body. The
 // tool's registered description documents this convention.
-func prefixWarnings(warnings []entitymanager.Warning) string {
+func prefixWarnings(warnings []entity.Warning) string {
 	if len(warnings) == 0 {
 		return ""
 	}
@@ -332,7 +331,7 @@ func (s *Server) handleRenameEntity(
 	defer s.ws.Watcher().Resume()
 
 	result, renameErr := s.ws.EntityManager().RenameEntity(
-		ctx, oldID, newID, entitymanager.RenameOptions{DryRun: dryRun})
+		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil
 	}

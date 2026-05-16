@@ -32,7 +32,7 @@ type createCoreOpts struct {
 // Manager view.
 func createCore(
 	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
-) (*entity.Entity, []Warning, error) {
+) (*entity.Entity, []entity.Warning, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
@@ -82,7 +82,7 @@ func createCore(
 	// DEC-HWZHA: hard structural errors abort; soft conditions
 	// (required-missing, type mismatch, invalid enum, malformed value)
 	// ride along on the result as warnings.
-	var warnings []Warning
+	var warnings []entity.Warning
 	if errs := deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 		hard, soft := partitionValidationErrors(errs)
 		if len(hard) > 0 {

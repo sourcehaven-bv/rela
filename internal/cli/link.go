@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 var linkCmd = &cobra.Command{
@@ -25,7 +25,7 @@ Examples:
 		svc := cliWriteFromContext(cmd.Context())
 
 		_, err := svc.EntityManager().CreateRelation(
-			context.Background(), fromID, relationType, toID, entitymanager.RelationOptions{})
+			context.Background(), fromID, relationType, toID, entity.RelationOptions{})
 		if err != nil {
 			return err
 		}

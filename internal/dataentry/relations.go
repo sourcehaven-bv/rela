@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // relationError is returned by reconcileOutgoingRelations to surface a
@@ -110,7 +110,7 @@ func (a *App) reconcileOutgoingRelations(ctx context.Context, entityID string, d
 			if currentByType[relType][id] {
 				continue
 			}
-			if _, err := a.entityManager.CreateRelation(ctx, entityID, relType, id, entitymanager.RelationOptions{}); err != nil {
+			if _, err := a.entityManager.CreateRelation(ctx, entityID, relType, id, entityPkg.RelationOptions{}); err != nil {
 				return &relationError{RelType: relType, Target: id, Op: "create", Reason: "create_failed", Err: err}
 			}
 		}

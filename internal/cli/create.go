@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 var (
@@ -96,7 +95,7 @@ Examples:
 				Properties: props,
 				Content:    bodyContent,
 			},
-			entitymanager.CreateOptions{ID: createID},
+			entitypkg.CreateOptions{ID: createID},
 		)
 		if err != nil {
 			return err

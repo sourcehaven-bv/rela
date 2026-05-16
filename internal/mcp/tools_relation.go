@@ -9,7 +9,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -77,7 +76,7 @@ func (s *Server) handleCreateRelation(
 	// rather than "set body to empty". MCP clients can omit the field or
 	// pass null to mean the same; an explicit "" today never reaches a
 	// no-content-meant-empty case in practice.
-	opts := entitymanager.RelationOptions{
+	opts := entity.RelationOptions{
 		Properties: extractProperties(request),
 		Content:    nilIfEmpty(request.GetString("content", "")),
 	}
@@ -125,7 +124,7 @@ func (s *Server) handleDeleteRelation(
 
 // nilIfEmpty returns nil when s is empty, else &s. Used to translate
 // "absent / empty string" inputs from the MCP layer into the
-// leave-alone semantic of entitymanager.RelationOptions.Content.
+// leave-alone semantic of entity.RelationOptions.Content.
 func nilIfEmpty(s string) *string {
 	if s == "" {
 		return nil

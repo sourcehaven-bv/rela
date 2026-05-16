@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/rename"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -13,8 +14,8 @@ import (
 // orchestration lives in internal/rename so this and the legacy
 // workspace shim share one implementation.
 func renameEntity(
-	ctx context.Context, st store.Store, oldID, newID string, opts RenameOptions,
-) (*RenameResult, error) {
+	ctx context.Context, st store.Store, oldID, newID string, opts entity.RenameOptions,
+) (*entity.RenameResult, error) {
 	res, err := rename.Rename(ctx, st, oldID, newID, rename.Options{DryRun: opts.DryRun})
 	if err != nil {
 		// Translate rename's sentinels into entitymanager's so
@@ -28,7 +29,7 @@ func renameEntity(
 			return nil, err
 		}
 	}
-	return &RenameResult{
+	return &entity.RenameResult{
 		OldID:            res.OldID,
 		NewID:            res.NewID,
 		RelationsUpdated: len(res.RelationsUpdated),

@@ -163,8 +163,8 @@ type mockManager struct {
 var _ entitymanager.EntityManager = (*mockManager)(nil)
 
 func (m *mockManager) CreateEntity(
-	ctx context.Context, e *entity.Entity, opts entitymanager.CreateOptions,
-) (*entitymanager.CreateResult, error) {
+	ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
+) (*entity.CreateResult, error) {
 	if e == nil {
 		return nil, errors.New("entity is nil")
 	}
@@ -181,21 +181,21 @@ func (m *mockManager) CreateEntity(
 	if err := m.ws.store.CreateEntity(ctx, newE); err != nil {
 		return nil, err
 	}
-	return &entitymanager.CreateResult{Entity: newE}, nil
+	return &entity.CreateResult{Entity: newE}, nil
 }
 
 func (m *mockManager) UpdateEntity(
 	ctx context.Context, e *entity.Entity,
-) (*entitymanager.UpdateResult, error) {
+) (*entity.UpdateResult, error) {
 	if err := m.ws.store.UpdateEntity(ctx, e); err != nil {
 		return nil, err
 	}
-	return &entitymanager.UpdateResult{Entity: e}, nil
+	return &entity.UpdateResult{Entity: e}, nil
 }
 
 func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
-) (*entitymanager.DeleteResult, error) {
+) (*entity.DeleteResult, error) {
 	current, err := m.ws.store.GetEntity(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -203,19 +203,19 @@ func (m *mockManager) DeleteEntity(
 	if _, err := m.ws.store.DeleteEntity(ctx, id, cascade); err != nil {
 		return nil, err
 	}
-	return &entitymanager.DeleteResult{
+	return &entity.DeleteResult{
 		DeletedEntities: []*entity.Entity{current},
 	}, nil
 }
 
 func (m *mockManager) RenameEntity(
-	_ context.Context, _, _ string, _ entitymanager.RenameOptions,
-) (*entitymanager.RenameResult, error) {
+	_ context.Context, _, _ string, _ entity.RenameOptions,
+) (*entity.RenameResult, error) {
 	return nil, errors.New("rename not supported by mockManager")
 }
 
 func (m *mockManager) CreateRelation(
-	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
+	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	content := ""
 	if opts.Content != nil {
@@ -229,7 +229,7 @@ func (m *mockManager) CreateRelation(
 }
 
 func (m *mockManager) UpdateRelation(
-	ctx context.Context, from, relType, to string, opts entitymanager.RelationOptions,
+	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	content := ""
 	if opts.Content != nil {

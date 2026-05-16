@@ -91,13 +91,13 @@ type CreateOptions struct {
 // the workspace's EntityManager. Returns the created entity, the
 // CreateResult, and any error — matching the pre-decomposition
 // signature so tests don't need to be rewritten.
-func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entitypkg.Entity, *entitymanager.CreateResult, error) {
+func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entitypkg.Entity, *entitypkg.CreateResult, error) {
 	e := &entitypkg.Entity{
 		Type:       entityType,
 		Properties: opts.Properties,
 		Content:    opts.Content,
 	}
-	res, err := w.EntityManager().CreateEntity(context.Background(), e, entitymanager.CreateOptions{
+	res, err := w.EntityManager().CreateEntity(context.Background(), e, entitypkg.CreateOptions{
 		ID:      opts.ID,
 		Prefix:  opts.Prefix,
 		Variant: opts.Variant,
@@ -110,12 +110,12 @@ func (w *Workspace) createEntity(entityType string, opts CreateOptions) (*entity
 
 // updateEntity is a test-only adapter that mirrors the pre-decomposition
 // signature.
-func (w *Workspace) updateEntity(e, _ *entitypkg.Entity) (*entitymanager.UpdateResult, error) {
+func (w *Workspace) updateEntity(e, _ *entitypkg.Entity) (*entitypkg.UpdateResult, error) {
 	return w.EntityManager().UpdateEntity(context.Background(), e)
 }
 
 // deleteEntity is a test-only adapter.
-func (w *Workspace) deleteEntity(_, id string, cascade bool) (*entitymanager.DeleteResult, error) {
+func (w *Workspace) deleteEntity(_, id string, cascade bool) (*entitypkg.DeleteResult, error) {
 	return w.EntityManager().DeleteEntity(context.Background(), id, cascade)
 }
 
@@ -124,7 +124,7 @@ func (w *Workspace) deleteEntity(_, id string, cascade bool) (*entitymanager.Del
 //
 //nolint:unparam // relType is parameterized for symmetry with the real API; tests happen to use one type
 func (w *Workspace) createRelation(from, relType, to string, opts ...CreateRelationOptions) (*entitypkg.Relation, error) {
-	relOpts := entitymanager.RelationOptions{}
+	relOpts := entitypkg.RelationOptions{}
 	if len(opts) > 0 {
 		relOpts.Properties = opts[0].Properties
 		relOpts.MetaUnset = opts[0].MetaUnset

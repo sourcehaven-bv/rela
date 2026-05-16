@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -226,7 +226,7 @@ Examples:
 
 func runRenameID(svc cliWrite, oldID, newID string) error {
 	result, err := svc.EntityManager().RenameEntity(
-		context.Background(), oldID, newID, entitymanager.RenameOptions{DryRun: renameIDDryRun})
+		context.Background(), oldID, newID, entity.RenameOptions{DryRun: renameIDDryRun})
 	if err != nil {
 		return err
 	}

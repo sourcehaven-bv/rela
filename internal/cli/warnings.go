@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // errStrictWarnings is the sentinel error returned by CLI commands
@@ -21,7 +21,7 @@ var errStrictWarnings = errors.New("validation warnings (--strict)")
 // One line per warning. Stderr (not stdout) so the command's normal
 // output pipeline isn't polluted. Returns silently when the slice is
 // empty.
-func printValidationWarnings(warnings []entitymanager.Warning) {
+func printValidationWarnings(warnings []entity.Warning) {
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "WARNING: %s at %s: %s\n", w.Code, w.Path, w.Detail)
 	}

@@ -168,7 +168,7 @@ func createReq(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 	t.Helper()
 	e := entity.New("", "requirement")
 	e.SetString("title", title)
-	res, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	res, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("createReq(%q): %v", title, err)
 	}
@@ -179,7 +179,7 @@ func createDec(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 	t.Helper()
 	e := entity.New("", "decision")
 	e.SetString("title", title)
-	res, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	res, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("createDec(%q): %v", title, err)
 	}
@@ -267,7 +267,7 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "Automated")
-	result, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	result, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestCreate_SkipAutomation(t *testing.T) {
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "No Automation")
-	_, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{SkipAutomation: true})
+	_, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{SkipAutomation: true})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestCreate_SkipAutomation(t *testing.T) {
 
 // TestCreate_AutomationCreatesRelatedEntity exercises the cascade
 // path: an automation that creates a downstream entity. Verifies the
-// outcome lands on CreateResult and that the cascade-driven create
+// outcome lands on entity.CreateResult and that the cascade-driven create
 // does NOT re-trigger automation (the no-recursion invariant).
 func TestCreate_AutomationCreatesRelatedEntity(t *testing.T) {
 	// Single automation: when a requirement is created, create a
@@ -330,7 +330,7 @@ func TestCreate_AutomationCreatesRelatedEntity(t *testing.T) {
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "Trigger Cascade")
-	result, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	result, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 	// recursively invoked, we'd see additional Create+Update pairs.
 	e := entity.New("", "requirement")
 	e.SetString("title", "Parent")
-	result, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	result, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestDelete_HasRelationsRejectsWhenNotCascading(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "Linked Source")
 	dec := createDec(t, mgr, "Linked Target")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -455,7 +455,7 @@ func TestDelete_CascadeRemovesIncidentRelations(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "Source")
 	dec := createDec(t, mgr, "Target")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -483,7 +483,7 @@ func TestRename_DryRunDoesNotChangeStore(t *testing.T) {
 	deletesBefore := cs.deletes.Load()
 
 	newID := req.ID + "X"
-	res, err := mgr.RenameEntity(ctx, req.ID, newID, entitymanager.RenameOptions{DryRun: true})
+	res, err := mgr.RenameEntity(ctx, req.ID, newID, entity.RenameOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("RenameEntity dry: %v", err)
 	}
@@ -513,12 +513,12 @@ func TestRename_AppliesAndRewritesRelations(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "Original")
 	dec := createDec(t, mgr, "Pointer")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
 	newID := req.ID + "-renamed"
-	res, err := mgr.RenameEntity(ctx, req.ID, newID, entitymanager.RenameOptions{})
+	res, err := mgr.RenameEntity(ctx, req.ID, newID, entity.RenameOptions{})
 	if err != nil {
 		t.Fatalf("RenameEntity: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestRename_AppliesAndRewritesRelations(t *testing.T) {
 
 func TestRename_NotFoundReturnsTypedError(t *testing.T) {
 	mgr, _ := newManager(t, nil)
-	_, err := mgr.RenameEntity(context.Background(), "REQ-999", "REQ-998", entitymanager.RenameOptions{})
+	_, err := mgr.RenameEntity(context.Background(), "REQ-999", "REQ-998", entity.RenameOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 		t.Fatalf("expected ErrEntityNotFound, got %v", err)
 	}
@@ -548,10 +548,10 @@ func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
 
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{})
+	_, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
 		t.Fatalf("expected ErrRelationAlreadyExists, got %v", err)
 	}
@@ -560,7 +560,7 @@ func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
 func TestCreateRelation_SourceNotFoundTyped(t *testing.T) {
 	mgr, _ := newManager(t, nil)
 	dec := createDec(t, mgr, "Target")
-	_, err := mgr.CreateRelation(context.Background(), "REQ-999", "addresses", dec.ID, entitymanager.RelationOptions{})
+	_, err := mgr.CreateRelation(context.Background(), "REQ-999", "addresses", dec.ID, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 		t.Fatalf("expected ErrEntityNotFound, got %v", err)
 	}
@@ -571,14 +571,14 @@ func TestUpdateRelation_MergesProperties(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{
+	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{
 		Properties: map[string]interface{}{"weight": "high", "extra": "keep"},
 	}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
 	// Merge a new value and unset "extra".
-	rel, err := mgr.UpdateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{
+	rel, err := mgr.UpdateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{
 		Properties: map[string]interface{}{"weight": "low"},
 		MetaUnset:  []string{"extra"},
 	})
@@ -595,7 +595,7 @@ func TestUpdateRelation_MergesProperties(t *testing.T) {
 
 func TestUpdateRelation_NotFoundTyped(t *testing.T) {
 	mgr, _ := newManager(t, nil)
-	_, err := mgr.UpdateRelation(context.Background(), "DEC-1", "addresses", "REQ-1", entitymanager.RelationOptions{})
+	_, err := mgr.UpdateRelation(context.Background(), "DEC-1", "addresses", "REQ-1", entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrRelationNotFound) {
 		t.Fatalf("expected ErrRelationNotFound, got %v", err)
 	}
@@ -606,7 +606,7 @@ func TestDeleteRelation_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entitymanager.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 	if err := mgr.DeleteRelation(ctx, dec.ID, "addresses", req.ID); err != nil {
@@ -646,7 +646,7 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "Will Fail")
-	_, err = mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	_, err = mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("expected sentinel propagated, got %v", err)
 	}
@@ -680,8 +680,8 @@ types:
 `
 
 // TestCreate_SoftValidationProducesWarning pins DEC-HWZHA: a
-// required-but-missing soft-validation condition surfaces as a Warning
-// on CreateResult while the write succeeds.
+// required-but-missing soft-validation condition surfaces as a entity.Warning
+// on entity.CreateResult while the write succeeds.
 func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 	meta, err := metamodel.Parse([]byte(softValidationMetamodel))
 	if err != nil {
@@ -700,7 +700,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 	// DEC-HWZHA, write succeeds, warning surfaces.
 	e := entity.New("", "ticket")
 	e.SetString("title", "Soft warning case")
-	result, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	result, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
@@ -709,10 +709,10 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 	}
 	w := result.Warnings[0]
 	if w.Code != "required_property_unset" {
-		t.Errorf("Warning.Code = %q, want required_property_unset", w.Code)
+		t.Errorf("entity.Warning.Code = %q, want required_property_unset", w.Code)
 	}
 	if w.Path != "/properties/priority" {
-		t.Errorf("Warning.Path = %q, want /properties/priority", w.Path)
+		t.Errorf("entity.Warning.Path = %q, want /properties/priority", w.Path)
 	}
 }
 
@@ -723,7 +723,7 @@ func TestCreate_HardValidationStillAborts(t *testing.T) {
 
 	// Unknown entity type is a hard error.
 	e := entity.New("", "nonexistent_type")
-	_, err := mgr.CreateEntity(context.Background(), e, entitymanager.CreateOptions{})
+	_, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err == nil {
 		t.Fatal("expected error for unknown type")
 	}
@@ -756,7 +756,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 	e := entity.New("", "ticket")
 	e.SetString("title", "Initial")
 	e.SetString("priority", "high")
-	created, err := mgr.CreateEntity(ctx, e, entitymanager.CreateOptions{})
+	created, err := mgr.CreateEntity(ctx, e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
