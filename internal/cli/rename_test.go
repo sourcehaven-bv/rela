@@ -59,8 +59,12 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	// pre-migration syntax, which workspace.New rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	ws := workspace.NewForTest(meta, workspace.WithFS(fs, paths))
+	svc, err := newCLIServicesFromWorkspace(ws)
+	if err != nil {
+		t.Fatalf("newCLIServicesFromWorkspace: %v", err)
+	}
 	//nolint:fatcontext // test setup
-	testCtx = attachServices(t.Context(), &cliServices{ws: ws})
+	testCtx = attachServices(t.Context(), svc)
 
 	return renameTestEnv{dir: dir, paths: paths}
 }

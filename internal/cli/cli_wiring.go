@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -54,13 +56,11 @@ type cliWrite interface {
 }
 
 // cliAnalyze is cliRead + the CLI-specific facade methods that
-// today live on *workspace.Workspace. TKT-2W0X lifts these methods
-// into dedicated packages (internal/analysis, internal/attachment,
-// internal/renametype); when that lands the implementation behind
-// this interface swaps without touching subcommands.
-//
-// Deprecated workspace.* types in the signatures (AnalyzeOptions,
-// AnalysisSummary, etc.) move with their methods in TKT-2W0X.
+// today live on *workspace.Workspace. The arc that started with
+// TKT-2W0X (attachment) lifts these methods into dedicated packages;
+// internal/renametype (TKT-04YA) and internal/analysis (TKT-B01S)
+// follow. Each lift swaps signatures here without touching the
+// subcommand handlers.
 type cliAnalyze interface {
 	cliRead
 	AnalyzeAll(ctx context.Context, opts workspace.AnalyzeOptions) *workspace.AnalysisSummary
@@ -77,17 +77,20 @@ type cliAnalyze interface {
 		filters []workspace.ValidationFilter,
 	) workspace.ValidationResult
 	RenameEntityType(oldType, newType, newPlural string) (int, error)
-	AttachFile(entityID, filePath, property string) (*workspace.AttachResult, error)
-	ListAttachments(entityID string) ([]workspace.AttachmentInfo, error)
+	AttachFile(ctx context.Context, entityID, filePath, property string) (*attachment.Result, error)
+	ListAttachments(ctx context.Context, entityID string) ([]attachment.Info, error)
 }
 
 // cliServices is the single concrete implementation that satisfies
-// all three bundle interfaces. It holds a *workspace.Workspace and
-// forwards every accessor. The interfaces — not the struct — are
+// all three bundle interfaces. It holds a *workspace.Workspace for
+// the methods still rooted there + dedicated services that have
+// been lifted out (currently: attachment; more to follow as
+// TKT-04YA / TKT-B01S land). The interfaces — not the struct — are
 // the consumer-facing contracts: subcommands see only the bundle
 // they pulled from context.
 type cliServices struct {
-	ws *workspace.Workspace
+	ws         *workspace.Workspace
+	attachment *attachment.Service
 }
 
 // Compile-time assertions: cliServices must satisfy every bundle
@@ -163,12 +166,12 @@ func (s *cliServices) RenameEntityType(oldType, newType, newPlural string) (int,
 	return s.ws.RenameEntityType(oldType, newType, newPlural)
 }
 
-func (s *cliServices) AttachFile(entityID, filePath, property string) (*workspace.AttachResult, error) {
-	return s.ws.AttachFile(entityID, filePath, property)
+func (s *cliServices) AttachFile(ctx context.Context, entityID, filePath, property string) (*attachment.Result, error) {
+	return s.attachment.Attach(ctx, entityID, filePath, property)
 }
 
-func (s *cliServices) ListAttachments(entityID string) ([]workspace.AttachmentInfo, error) {
-	return s.ws.ListAttachments(entityID)
+func (s *cliServices) ListAttachments(ctx context.Context, entityID string) ([]attachment.Info, error) {
+	return s.attachment.List(ctx, entityID)
 }
 
 // --- context plumbing ---
@@ -233,5 +236,21 @@ func newCLIServices(startDir string) (*cliServices, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &cliServices{ws: ws}, nil
+	return newCLIServicesFromWorkspace(ws)
+}
+
+// newCLIServicesFromWorkspace wires the focused services around an
+// already-constructed workspace. Used by [newCLIServices] in
+// production and by the test fixture (which constructs workspace
+// via [workspace.NewForTest]).
+func newCLIServicesFromWorkspace(ws *workspace.Workspace) (*cliServices, error) {
+	att, err := attachment.New(attachment.Deps{
+		Store:         ws.Store(),
+		Meta:          ws.Meta(),
+		EntityManager: ws.EntityManager(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attachment service: %w", err)
+	}
+	return &cliServices{ws: ws, attachment: att}, nil
 }

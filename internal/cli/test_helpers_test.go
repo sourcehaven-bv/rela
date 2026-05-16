@@ -99,7 +99,11 @@ func (ss *storeSeeder) addRelation(from, relType, to string) {
 // implementation production uses.
 func (ss *storeSeeder) build() *cliServices {
 	ws := workspace.NewForTest(ss.meta, workspace.WithTestStore(ss.s))
-	return &cliServices{ws: ws}
+	svc, err := newCLIServicesFromWorkspace(ws)
+	if err != nil {
+		panic("storeSeeder.build: " + err.Error())
+	}
+	return svc
 }
 
 // applySeeder snapshots the seeder's store into the package-level
