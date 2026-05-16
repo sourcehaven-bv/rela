@@ -11,12 +11,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // setupTestGraph builds a small graph and attaches services to the
@@ -85,10 +85,11 @@ func setupTestGraph(t *testing.T) *metamodel.Metamodel {
 	seedR("CTRL-002", "mitigates", "RISK-001")
 	seedR("CTRL-001", "evidencedBy", "EV-001")
 
-	ws := workspace.NewForTest(meta, workspace.WithTestStore(s))
-	svc, err := newCLIServicesFromWorkspace(ws)
+	svc, err := newCLIServicesFromAppbuild(
+		appbuild.NewForTest(meta, appbuild.WithTestStore(s)),
+	)
 	if err != nil {
-		t.Fatalf("newCLIServicesFromWorkspace: %v", err)
+		t.Fatalf("newCLIServicesFromAppbuild: %v", err)
 	}
 	//nolint:fatcontext // testCtx is a sequential-test fixture, not a per-call context
 	testCtx = attachServices(t.Context(), svc)

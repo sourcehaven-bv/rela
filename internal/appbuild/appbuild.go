@@ -103,6 +103,11 @@ func (s *Services) Validator() validator.Validator { return s.validator }
 // Templater returns the entity/relation template service.
 func (s *Services) Templater() templating.Templater { return s.templater }
 
+// ScriptEngine returns the Lua script engine. Callers that need the
+// engine's shared lua.Cache (for [lua.WithCache] when building runtimes
+// directly) reach it via [script.Engine.LuaCache].
+func (s *Services) ScriptEngine() *script.Engine { return s.scriptEngine }
+
 // Config returns the project's data-entry config loader.
 func (s *Services) Config() config.Loader { return s.cfgLoader }
 

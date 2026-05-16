@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -21,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Services bundles are scoped by purpose (read / write / analyze) so
@@ -90,14 +90,13 @@ type cliAnalyze interface {
 }
 
 // cliServices is the single concrete implementation that satisfies
-// all three bundle interfaces. It holds a *workspace.Workspace for
-// the methods still rooted there + dedicated services that have
-// been lifted out (currently: attachment; more to follow as
-// TKT-04YA / TKT-B01S land). The interfaces — not the struct — are
-// the consumer-facing contracts: subcommands see only the bundle
-// they pulled from context.
+// all three bundle interfaces. It holds an *appbuild.Services for the
+// per-project collaborators plus dedicated services that have been
+// lifted out (attachment, renametype, analysis). The interfaces — not
+// the struct — are the consumer-facing contracts: subcommands see
+// only the bundle they pulled from context.
 type cliServices struct {
-	ws         *workspace.Workspace
+	svc        *appbuild.Services
 	attachment *attachment.Service
 	renametype *renametype.Service
 	analysis   *analysis.Service
@@ -114,22 +113,22 @@ var (
 
 // --- cliRead ---
 
-func (s *cliServices) Store() store.Store              { return s.ws.Store() }
-func (s *cliServices) Meta() *metamodel.Metamodel      { return s.ws.Meta() }
-func (s *cliServices) Paths() *project.Context         { return s.ws.Paths() }
-func (s *cliServices) Tracer() tracer.Tracer           { return s.ws.Tracer() }
-func (s *cliServices) Searcher() search.Searcher       { return s.ws.Searcher() }
-func (s *cliServices) Config() config.Loader           { return s.ws.Config() }
-func (s *cliServices) Templater() templating.Templater { return s.ws.Templater() }
-func (s *cliServices) FS() storage.FS                  { return s.ws.FS() }
+func (s *cliServices) Store() store.Store              { return s.svc.Store() }
+func (s *cliServices) Meta() *metamodel.Metamodel      { return s.svc.Meta() }
+func (s *cliServices) Paths() *project.Context         { return s.svc.Paths() }
+func (s *cliServices) Tracer() tracer.Tracer           { return s.svc.Tracer() }
+func (s *cliServices) Searcher() search.Searcher       { return s.svc.Searcher() }
+func (s *cliServices) Config() config.Loader           { return s.svc.Config() }
+func (s *cliServices) Templater() templating.Templater { return s.svc.Templater() }
+func (s *cliServices) FS() storage.FS                  { return s.svc.FS() }
 
 // --- cliWrite ---
 
-func (s *cliServices) EntityManager() entitymanager.EntityManager { return s.ws.EntityManager() }
-func (s *cliServices) Validator() validator.Validator             { return s.ws.Validator() }
-func (s *cliServices) LuaCache() *lua.Cache                       { return s.ws.LuaCache() }
-func (s *cliServices) LuaWriteDeps() lua.WriteDeps                { return s.ws.LuaWriteDeps() }
-func (s *cliServices) State() state.KV                            { return s.ws.State() }
+func (s *cliServices) EntityManager() entitymanager.EntityManager { return s.svc.EntityManager() }
+func (s *cliServices) Validator() validator.Validator             { return s.svc.Validator() }
+func (s *cliServices) LuaCache() *lua.Cache                       { return s.svc.ScriptEngine().LuaCache() }
+func (s *cliServices) LuaWriteDeps() lua.WriteDeps                { return s.svc.LuaWriteDeps() }
+func (s *cliServices) State() state.KV                            { return s.svc.State() }
 
 // --- cliAnalyze ---
 
@@ -176,11 +175,11 @@ func (s *cliServices) RunValidationsFiltered(
 func (s *cliServices) RenameEntityType(oldType, newType, newPlural string) (int, error) {
 	if s.renametype == nil {
 		// Reached only when a test built cliServices from an
-		// FS-less workspace.NewForTest fixture and then drove a
+		// FS-less appbuild.NewForTest fixture and then drove a
 		// rename. Production wiring always populates renametype
-		// (workspace.Discover guarantees FS + Paths). Panic loudly
+		// (appbuild.Discover guarantees FS + Paths). Panic loudly
 		// so the test setup gap is unmistakable.
-		panic("cli: renametype service not wired — test fixture must use workspace.WithFS")
+		panic("cli: renametype service not wired — test fixture must use appbuild.WithFS")
 	}
 	return s.renametype.Rename(oldType, newType, newPlural)
 }
@@ -247,57 +246,55 @@ func cliAnalyzeFromContext(ctx context.Context) cliAnalyze {
 }
 
 // newCLIServices discovers the project at startDir and constructs
-// the focused-services bundle. Mirrors workspace.Discover's
-// behavior; the returned *cliServices satisfies cliRead / cliWrite /
-// cliAnalyze.
+// the focused-services bundle. Mirrors appbuild.Discover's behavior;
+// the returned *cliServices satisfies cliRead / cliWrite / cliAnalyze.
 func newCLIServices(startDir string) (*cliServices, error) {
-	ws, err := workspace.Discover(startDir, script.NewEngine())
+	svc, err := appbuild.Discover(startDir, script.NewEngine())
 	if err != nil {
 		return nil, err
 	}
-	return newCLIServicesFromWorkspace(ws)
+	return newCLIServicesFromAppbuild(svc)
 }
 
-// newCLIServicesFromWorkspace wires the focused services around an
-// already-constructed workspace. Used by [newCLIServices] in
-// production and by the test fixture (which constructs workspace
-// via [workspace.NewForTest]).
-func newCLIServicesFromWorkspace(ws *workspace.Workspace) (*cliServices, error) {
+// newCLIServicesFromAppbuild wires the focused services around an
+// already-constructed appbuild.Services. Used by [newCLIServices] in
+// production and by the CLI test fixtures.
+func newCLIServicesFromAppbuild(svc *appbuild.Services) (*cliServices, error) {
 	att, err := attachment.New(attachment.Deps{
-		Store:         ws.Store(),
-		Meta:          ws.Meta(),
-		EntityManager: ws.EntityManager(),
+		Store:         svc.Store(),
+		Meta:          svc.Meta(),
+		EntityManager: svc.EntityManager(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("attachment service: %w", err)
 	}
-	// renametype needs FS + Paths; the test fixture's
-	// workspace.NewForTest skips both. Skip wiring renametype when
-	// either is absent — handlers panic clearly via the unset-service
-	// check rather than nil-deref when an FS-less workspace is given
-	// to a rename test by accident.
+	// renametype needs FS + Paths; the FS-less appbuild.NewForTest
+	// fixture skips both. Skip wiring renametype when either is
+	// absent — handlers panic clearly via the unset-service check
+	// rather than nil-deref when an FS-less fixture is given to a
+	// rename test by accident.
 	var rt *renametype.Service
-	if ws.FS() != nil && ws.Paths() != nil {
+	if svc.FS() != nil && svc.Paths() != nil {
 		rt, err = renametype.New(renametype.Deps{
-			FS:    ws.FS(),
-			Meta:  ws.Meta(),
-			Paths: ws.Paths(),
+			FS:    svc.FS(),
+			Meta:  svc.Meta(),
+			Paths: svc.Paths(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("renametype service: %w", err)
 		}
 	}
 	an, err := analysis.New(analysis.Deps{
-		Store:       ws.Store(),
-		Meta:        ws.Meta(),
-		Tracer:      ws.Tracer(),
-		LuaReadDeps: ws.LuaReadDeps(),
-		LuaCache:    ws.LuaCache(),
-		FS:          ws.FS(),
-		Paths:       ws.Paths(),
+		Store:       svc.Store(),
+		Meta:        svc.Meta(),
+		Tracer:      svc.Tracer(),
+		LuaReadDeps: svc.LuaReadDeps(),
+		LuaCache:    svc.ScriptEngine().LuaCache(),
+		FS:          svc.FS(),
+		Paths:       svc.Paths(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("analysis service: %w", err)
 	}
-	return &cliServices{ws: ws, attachment: att, renametype: rt, analysis: an}, nil
+	return &cliServices{svc: svc, attachment: att, renametype: rt, analysis: an}, nil
 }

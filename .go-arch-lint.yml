@@ -166,6 +166,7 @@ deps:
       - ai
       - analysis
       - app
+      - appbuild
       - attachment
       - autocascade
       - automation
@@ -280,6 +281,7 @@ deps:
       - config
       - entitymanager
       - lua
+      - memstore
       - metamodel
       - project
       - script

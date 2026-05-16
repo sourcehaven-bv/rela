@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // validate_test.go covers only the CLI concerns:
@@ -96,17 +96,17 @@ func TestParseChecks(t *testing.T) {
 	}
 }
 
-// seedWorkspace builds a workspace from a seeded memstore using the
-// given metamodel and seed function. Used to feed runValidationChecks
-// in CLI-layer tests — that function takes *workspace.Workspace
-// directly because validate.go (the package-global-free validate
-// command) constructs its own workspace for the --check pass.
-func seedWorkspace(meta *metamodel.Metamodel, seed func(*storeSeeder)) *workspace.Workspace {
+// seedServices builds an *appbuild.Services from a seeded memstore
+// using the given metamodel and seed function. Used to feed
+// runValidationChecks in CLI-layer tests — that function takes
+// *appbuild.Services directly because validate.go constructs its own
+// services bundle for the --check pass.
+func seedServices(meta *metamodel.Metamodel, seed func(*storeSeeder)) *appbuild.Services {
 	seeder := newStoreSeeder(meta)
 	if seed != nil {
 		seed(seeder)
 	}
-	return workspace.NewForTest(meta, workspace.WithTestStore(seeder.s))
+	return appbuild.NewForTest(meta, appbuild.WithTestStore(seeder.s))
 }
 
 // TestRunValidationChecks_JSONOutput exercises the CLI JSON output
@@ -136,7 +136,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 	}
 	meta.InitAliases()
 
-	ws := seedWorkspace(meta, func(s *storeSeeder) {
+	svc := seedServices(meta, func(s *storeSeeder) {
 		s.addEntity(testutil.EntityFor(meta, "feature").ID("FEAT-001"))
 	})
 
@@ -145,17 +145,17 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 
 	validateChecks = []string{"cardinality"}
 
-	tr := tracer.New(ws.Store())
+	tr := tracer.New(svc.Store())
 	an, err := analysis.New(analysis.Deps{
-		Store:       ws.Store(),
-		Meta:        ws.Meta(),
+		Store:       svc.Store(),
+		Meta:        svc.Meta(),
 		Tracer:      tr,
-		LuaReadDeps: ws.LuaReadDeps(),
+		LuaReadDeps: svc.LuaReadDeps(),
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}
-	hasErrors, err := runValidationChecks(context.Background(), ws, an, out, meta)
+	hasErrors, err := runValidationChecks(context.Background(), svc, an, out, meta)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

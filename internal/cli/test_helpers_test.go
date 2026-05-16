@@ -5,12 +5,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // testCtx is the cobra-context the test fixture stamps services into.
@@ -91,15 +91,13 @@ func (ss *storeSeeder) addRelation(from, relType, to string) {
 	}
 }
 
-// build wraps the seeded store in a workspace.Workspace (the
-// transitional facade still constructed via workspace.NewForTest)
-// and returns a *cliServices that satisfies cliRead / cliWrite /
-// cliAnalyze. TKT-2W0X moves the facade methods to dedicated
-// packages; until then, tests share the same workspace-backed
-// implementation production uses.
+// build wraps the seeded store in an *appbuild.Services and returns a
+// *cliServices that satisfies cliRead / cliWrite / cliAnalyze. Tests
+// share the same appbuild-backed implementation production uses.
 func (ss *storeSeeder) build() *cliServices {
-	ws := workspace.NewForTest(ss.meta, workspace.WithTestStore(ss.s))
-	svc, err := newCLIServicesFromWorkspace(ws)
+	svc, err := newCLIServicesFromAppbuild(
+		appbuild.NewForTest(ss.meta, appbuild.WithTestStore(ss.s)),
+	)
 	if err != nil {
 		panic("storeSeeder.build: " + err.Error())
 	}

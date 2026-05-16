@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var flowOutputDir string
@@ -62,20 +62,20 @@ Example:
 		// Discover project from script location (walk up from script's directory)
 		// This allows shebang scripts to work from any directory
 		scriptDir := filepath.Dir(scriptPath)
-		flowWs, err := workspace.Discover(scriptDir, script.NewEngine())
+		flowSvc, err := appbuild.Discover(scriptDir, script.NewEngine())
 		if err != nil {
 			return fmt.Errorf("no project found for script %s", scriptPath)
 		}
 
 		opts := []lua.Option{
 			lua.WithContext(cmd.Context()),
-			lua.WithCache(flowWs.LuaCache()),
+			lua.WithCache(flowSvc.ScriptEngine().LuaCache()),
 		}
 		if flowOutputDir != "" {
 			opts = append(opts, lua.WithOutputDir(flowOutputDir))
 		}
 
-		runtime, rtErr := script.NewWriterRuntime(flowWs.LuaWriteDeps(),
+		runtime, rtErr := script.NewWriterRuntime(flowSvc.LuaWriteDeps(),
 			scriptPath, os.Stdout, opts...)
 		if rtErr != nil {
 			return rtErr
