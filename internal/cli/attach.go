@@ -51,7 +51,7 @@ Examples:
 					return fmt.Errorf("invalid path %q: %w", match, err)
 				}
 
-				result, err := svc.AttachFile(entityID, absPath, attachProperty)
+				result, err := svc.AttachFile(cmd.Context(), entityID, absPath, attachProperty)
 				if err != nil {
 					return fmt.Errorf("failed to attach %q: %w", match, err)
 				}

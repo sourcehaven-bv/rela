@@ -1,51 +1,62 @@
 ---
 id: TKT-2W0X
 type: ticket
-title: Lift workspace analysis / attachment / rename-type facades to dedicated packages
+title: Lift workspace.AttachFile / ListAttachments to internal/attachment
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Summary
 
-After TKT-0SP1 lands, CLI consumes `*workspace.Workspace`'s CLI-specific
-convenience methods through a `cliServices.Analyze` / `.Attach` / `.Rename`
-facade that forwards to workspace. Those methods (~700 LOC across
-`internal/workspace/analysis.go`, `attachment.go`, `rename_type.go`) are not
-workspace-internal concerns — they're CLI-shaped operations that happened to
-live on the legacy Workspace god-object.
+Move `Workspace.AttachFile` and `Workspace.ListAttachments` (~130 LOC in
+`internal/workspace/attachment.go` + associated types) into a new
+`internal/attachment` package. CLI consumes the new package directly via its
+wiring helper; workspace methods are deleted.
 
-Move them into dedicated packages so CLI consumes them directly and workspace
-shrinks toward deletion.
+First of three sequential lifts:
+1. **TKT-2W0X** (this) — attachment (smallest, ~130 LOC)
+2. **TKT-RT01** (filed) — renametype
+3. **TKT-AN01** (filed) — analysis (largest, ~450 LOC + types)
+
+Split into three PRs so each is reviewable independently. After all three land,
+`cliAnalyze` interface drops its workspace.* type leaks and `internal/cli` stops
+importing `internal/workspace` from any production file.
 
 ## In scope
 
-- New `internal/analysis` package owns `AnalyzeAll`, `CheckCardinality`, `FindDuplicates`, `FindGaps`, `FindOrphansWithScope`, `FindOrphanedTempFiles`, `CleanupOrphanedTempFiles`, `RunValidations`, `RunValidationsFiltered`. Constructor takes Store + Meta + Tracer + Validator + FS + Paths (or whatever subset each function needs).
-- New `internal/attachment` package owns `AttachFile`, `ListAttachments`. Constructor takes FS + Paths.
-- New `internal/renametype` package owns `RenameEntityType`. Constructor takes Store + Meta + FS + Paths.
-- CLI's wiring helper constructs each service and exposes it via `cliServices.Analyze` / `.Attach` / `.Rename`.
-- Workspace's methods become forwarders (transitional) OR are deleted (preferred — anything else is god-object preservation).
+- New `internal/attachment` package:
+  - Types: `AttachmentInfo`, `AttachResult` (moved verbatim).
+  - `attachment.Service` with constructor `attachment.New(deps)` taking Store, Meta, EntityManager. Validates required deps per CLAUDE.md.
+  - Methods: `Attach(entityID, filePath, property)` and `List(entityID)` — same behavior as workspace counterparts.
+  - Helpers (`findFileProperty`, `contentTypeForName`) move with implementation.
+- `internal/cli/cli_wiring.go::cliAnalyze` interface:
+  - `AttachFile` / `ListAttachments` method signatures change from `*workspace.AttachResult` / `[]workspace.AttachmentInfo` to `*attachment.AttachResult` / `[]attachment.AttachmentInfo`.
+  - `cliServices` forwarders point at the new package's Service.
+  - Note: `attach.go` / `attachments.go` call sites only reference the result types via interface; no subcommand changes needed.
+- `internal/workspace/attachment.go` DELETED.
+- Tests follow the implementation: workspace tests for these methods move to `internal/attachment` (or are deleted if they overlap with new tests).
+- `.go-arch-lint.yml`: add `internal/attachment` component; CLI gains dep; workspace drops the file's dependencies.
 
 ## Out of scope
 
-- Other workspace methods that CLI doesn't call.
-- Re-architecting the analysis algorithms themselves.
+- `RenameEntityType` and analysis facades — separate tickets.
+- Changes to attachment storage semantics or fsstore's `AttachFile` method.
+- Renaming the methods (keep `AttachFile` / `ListAttachments` for API stability through the transition).
 
 ## Depends on
 
-- TKT-0SP1 — CLI must already consume facades via the bundle (not direct `*Workspace` access).
+- TKT-0SP1 (PR #724) — CLI bundle's `cliAnalyze` interface must already be in place. Stacked on TKT-0SP1's branch.
 
 ## Why
 
-The "lift facade methods" half of the original TKT-0SP1 scope. Split out so
-reviewers see two reviewable chunks instead of one 1000+ LOC PR. After this
-lands, the only remaining `*workspace.Workspace` consumers are dataentry and
-scheduler — both already have narrow consumer-side interfaces.
+Attachment is the smallest facade — proving the lift pattern on a 130-LOC slice
+before doing the larger ones reduces risk. After this PR lands, `cliAnalyze`'s
+workspace.* type leaks drop from 7 to 5; each subsequent lift removes more.
 
 ## Risks
 
-- `RunValidationsFiltered` has filter-tag plumbing — make sure the lifted package preserves the existing API surface.
-- `AttachFile` interacts with fsstore's attachment directory — verify the lifted package can reach attachment storage without dragging fsstore as a direct dep.
-- 700 LOC of moves; mechanical but tests need to follow the implementations.
+- Tests: `internal/workspace/attachment_test.go` (if it exists) needs to move. Verify before deletion.
+- Constructor wiring: the attachment Service needs Store + Meta + EntityManager. CLI's wiring helper already has all three.
+- Coverage floors in `.testcoverage.yml`: new package gets a floor; workspace's coverage may shift.

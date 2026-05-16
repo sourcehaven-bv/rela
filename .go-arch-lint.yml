@@ -39,6 +39,7 @@ components:
   workspace:        { in: internal/workspace }
 
   # Domain services
+  attachment:       { in: internal/attachment }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   conflict:         { in: internal/conflict }
@@ -165,6 +166,7 @@ deps:
     mayDependOn:
       - ai
       - app
+      - attachment
       - autocascade
       - automation
       - bleveindex
@@ -294,6 +296,11 @@ deps:
       - validator
 
   # Domain services
+  attachment:
+    mayDependOn:
+      - entitymanager
+      - metamodel
+      - store
   autocascade:
     mayDependOn:
       - automation

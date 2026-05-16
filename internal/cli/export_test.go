@@ -86,8 +86,12 @@ func setupTestGraph(t *testing.T) *metamodel.Metamodel {
 	seedR("CTRL-001", "evidencedBy", "EV-001")
 
 	ws := workspace.NewForTest(meta, workspace.WithTestStore(s))
+	svc, err := newCLIServicesFromWorkspace(ws)
+	if err != nil {
+		t.Fatalf("newCLIServicesFromWorkspace: %v", err)
+	}
 	//nolint:fatcontext // testCtx is a sequential-test fixture, not a per-call context
-	testCtx = attachServices(t.Context(), &cliServices{ws: ws})
+	testCtx = attachServices(t.Context(), svc)
 	out = output.New(output.FormatTable)
 	return meta
 }

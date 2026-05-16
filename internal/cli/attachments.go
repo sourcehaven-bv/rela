@@ -24,7 +24,7 @@ Examples:
 		entityID := args[0]
 		svc := cliAnalyzeFromContext(cmd.Context())
 
-		infos, err := svc.ListAttachments(entityID)
+		infos, err := svc.ListAttachments(cmd.Context(), entityID)
 		if err != nil {
 			return err
 		}
