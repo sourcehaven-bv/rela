@@ -72,6 +72,9 @@ components:
   memstore:         { in: internal/store/memstore }
   storeutil:        { in: internal/store/storeutil }
 
+  # Project bootstrap utilities
+  projectsetup:     { in: internal/projectsetup }
+
   # Infrastructure
   ai:               { in: internal/ai }
   secrets:          { in: internal/secrets }
@@ -184,6 +187,7 @@ deps:
       - metamodel
       - output
       - project
+      - projectsetup
       - rename
       - renametype
       - scheduler
@@ -280,12 +284,10 @@ deps:
       - automation
       - bleveindex
       - config
-      - dataentryconfig
       - entitymanager
       - lua
       - memstore
       - metamodel
-      - migration
       - project
       - rename
       - schema
@@ -298,6 +300,13 @@ deps:
       - tracer
       - validation
       - validator
+  projectsetup:
+    mayDependOn:
+      - dataentryconfig
+      - metamodel
+      - migration
+      - project
+      - storage
 
   # Domain services
   analysis:
