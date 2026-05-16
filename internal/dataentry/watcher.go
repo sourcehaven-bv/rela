@@ -12,21 +12,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
-// WatchOptions describes the watch contract dataentry needs from
-// its wiring site. Defined here at the consumer per CLAUDE.md
-// "interfaces at the call site"; the wiring site supplies an
-// implementation that bridges to whatever watch mechanism it
-// exposes (today, the workspace's StartWatching).
-type WatchOptions struct {
-	// ExtraFiles lists additional files to watch (e.g., data-entry.yaml).
-	ExtraFiles []string
-	// ExtraDirs lists additional directories to watch.
-	ExtraDirs []string
-	// OnChange fires when any watched extra file changes.
-	OnChange func(events []storage.ChangeEvent)
+// storeWatcher is the optional capability dataentry needs from a
+// store to drive live-reload of entity/relation files. fsstore
+// satisfies it; in-memory backends don't. Defined here at the
+// consumer per CLAUDE.md "interfaces at the call site".
+type storeWatcher interface {
+	StartWatching() error
 }
 
 // sseEvent represents a Server-Sent Event with optional JSON data.
@@ -93,15 +86,29 @@ func (b *eventBroker) broadcastGitStatus() {
 	b.broadcastEvent(sseEvent{Type: "git:status", Data: "{}"})
 }
 
-// StartWatching begins file watching for live-reload of views when project
-// files change. The workspace handles metamodel + graph reload; this method
-// subscribes to the config service for data-entry.yaml changes and adds
-// SSE broadcast side-effects.
-// Stop via a.StopWatching() plus the workspace's own watcher shutdown.
+// StartWatching begins file watching for live-reload. It does two
+// independent things:
+//
+//  1. Subscribes to `data-entry.yaml` via the config loader so SPA
+//     reloads pick up dashboard / palette / form config changes.
+//  2. Asks the store to start watching its own entity/relation files
+//     (feature-detected via [storeWatcher] — fsstore implements it;
+//     in-memory backends don't). The store's observer chain handles
+//     reindex automatically; no callback wiring is needed at this
+//     layer.
+//
+// The returned error covers only the config-subscriber failure
+// (step 1). Store-watcher errors (step 2) are logged via slog.Warn
+// because store watching is a live-reload nice-to-have, not a
+// startup requirement.
+//
+// Stop via [App.StopWatching]. Note: that only releases the config
+// subscription — the store-watcher lifecycle is owned by the store
+// (closed when the store is closed).
 //
 // coverage-ignore: requires real filesystem events via fsnotify
 func (a *App) StartWatching() error {
-	// Subscribe to data-entry.yaml via the config loader.
+	// (1) data-entry.yaml subscription.
 	if sub, ok := a.cfgLoader.(config.Subscriber); ok {
 		stop, err := sub.Subscribe(context.Background(), ConfigFile, func() {
 			a.rebuildState(true, false)
@@ -113,18 +120,21 @@ func (a *App) StartWatching() error {
 		a.stopConfigWatch = stop
 	}
 
-	if a.startWatching == nil {
-		return nil
+	// (2) Store-level watcher (fsstore). Errors are logged, not
+	// returned — store watching is a live-reload nice-to-have, not a
+	// startup requirement. Stores that don't implement [storeWatcher]
+	// (memstore, etc.) get a debug log instead of silence so
+	// "why isn't live-reload working" doesn't require a goose chase.
+	if sw, ok := a.store.(storeWatcher); ok {
+		if err := sw.StartWatching(); err != nil {
+			slog.Warn("store watcher not started", "error", err)
+		}
+	} else {
+		slog.Debug("store does not implement watching; live-reload of external edits disabled",
+			"store", fmt.Sprintf("%T", a.store))
 	}
-	return a.startWatching(WatchOptions{
-		OnChange: func(events []storage.ChangeEvent) {
-			for _, e := range events {
-				slog.Debug("file changed", "path", e.Path, "op", e.Op)
-			}
-			a.onDataReload(events)
-			a.broker.broadcast("refresh")
-		},
-	})
+
+	return nil
 }
 
 // StartGitFetch begins periodic git fetch in the background.
@@ -165,13 +175,6 @@ func (a *App) StartGitFetch() (stop func()) {
 		close(done)
 	}
 }
-
-// onDataReload handles dataentry-specific side-effects after the workspace
-// has re-synced the graph from entity/relation changes. Today this is a
-// no-op: dataentry's AppState doesn't depend on entity data directly,
-// so there's nothing to rebuild. Kept in place so the test helper has a
-// callable and so future per-entity reactions have an obvious hook.
-func (a *App) onDataReload(_ []storage.ChangeEvent) {}
 
 // rebuildState re-reads changed inputs and publishes a fresh AppState
 // snapshot atomically. Readers observe either the pre-reload or the

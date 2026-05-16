@@ -101,9 +101,9 @@ type App struct {
 	fs    storage.FS
 	paths *project.Context
 
-	// Core services. Some are passed in (store, entityManager, searcher,
-	// startWatching are genuinely workspace-owned); the rest are
-	// constructed from primitives inside NewApp.
+	// Core services. Some are passed in (store, entityManager,
+	// searcher); the rest are constructed from primitives inside
+	// NewApp.
 	store         store.Store
 	entityManager entitymanager.EntityManager
 	searcher      search.Searcher
@@ -112,7 +112,6 @@ type App struct {
 	templater     templating.Templater
 	cfgLoader     config.Loader
 	kv            state.KV
-	startWatching func(WatchOptions) error
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -150,8 +149,11 @@ type App struct {
 	security *security
 }
 
-// StopWatching releases dataentry-specific watchers (config, etc.).
-// The workspace's own watcher is stopped separately by its owner.
+// StopWatching releases the data-entry.yaml subscription started by
+// [App.StartWatching]. The store-level watcher (when present) has its
+// own lifecycle managed by the store and is stopped during store
+// close, not here — asymmetric on purpose: dataentry doesn't own the
+// store, only its config subscription.
 func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
@@ -217,13 +219,17 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 	return nil
 }
 
-// NewApp creates and initializes an App. Callers pass in the primitives
-// (fs, paths, meta, store) plus the services that are genuinely
-// workspace-owned and cannot be reconstructed from primitives:
-// entityManager (runs workspace's automation engine), searcher (reads
-// the live Bleve index maintained by the workspace), and startWatching
-// (a lifecycle hook). Everything else — state.KV, config.Loader,
-// tracer, templater, validator, lua.WriteDeps — is constructed locally.
+// NewApp creates and initializes an App. Callers pass in the
+// primitives (fs, paths, meta, store) plus the services that depend
+// on workspace assembly: entityManager (the production write path)
+// and searcher (the live Bleve index). Everything else — state.KV,
+// config.Loader, tracer, templater, validator — is constructed
+// locally.
+//
+// The store-level file watcher (live-reload of external entity /
+// relation edits) is feature-detected on `st` inside
+// [App.StartWatching] via the [storeWatcher] interface; callers do
+// not wire it.
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -231,7 +237,6 @@ func NewApp(
 	st store.Store,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
-	startWatching func(WatchOptions) error,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -336,7 +341,6 @@ func NewApp(
 		templater:     templater,
 		cfgLoader:     cfgLoader,
 		kv:            kv,
-		startWatching: startWatching,
 		broker:        newEventBroker(),
 		scriptEngine:  scriptEngine,
 	}

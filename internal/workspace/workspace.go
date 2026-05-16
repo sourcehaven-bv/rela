@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"context"
 
@@ -102,9 +101,10 @@ func (nopScriptExecutor) LuaCache() *lua.Cache { return nil }
 // construction time so every in-process write (Create/Update/
 // DeleteEntity through the store API) updates the search index
 // synchronously under the store's write lock. External edits to
-// on-disk files are only observed once a caller invokes
-// StartWatching, which arms fsstore's own file watcher to translate
-// filesystem events into store events.
+// on-disk files are observed only when a caller (typically
+// [dataentry.App.StartWatching]) asks the store to start watching;
+// the store's own observer chain then carries those events into the
+// search index.
 type Workspace struct {
 	// fs is the filesystem handle used for all workspace I/O:
 	// directory topology (ReadDir, MkdirAll, Stat, Walk) and byte
@@ -129,9 +129,6 @@ type Workspace struct {
 	tracer       tracer.Tracer
 	searcherOnce sync.Once
 	searcher     search.Searcher
-
-	// Watcher state (nil when not watching).
-	watcher *storage.Watcher
 
 	// storeFactory opens the workspace's authoritative store. In
 	// production this builds the fsstore under the project directory;
@@ -710,74 +707,9 @@ func (w *Workspace) collectAllIDs() []string {
 	return ids
 }
 
-// WatchOptions configures the file watcher.
-type WatchOptions struct {
-	// ExtraFiles lists additional files to watch (e.g., data-entry.yaml).
-	ExtraFiles []string
-	// ExtraDirs lists additional directories to watch (e.g., metamodel/).
-	ExtraDirs []string
-	// OnChange is called when any watched extra file changes. Store
-	// events are handled internally (they keep the search index in sync);
-	// only consumers of ExtraFiles/ExtraDirs receive events here.
-	OnChange func(events []ChangeEvent)
-}
-
-// StartWatching begins watching for file changes.
-//
-//   - Entity/relation changes: the store's own watcher (fsstore) emits
-//     events; the workspace subscribes at New() to keep the search index
-//     in sync. Nothing is wired here for entity/relation changes.
-//   - Extra files/dirs (views.yaml, etc.) are watched via a separate
-//     storage.Watcher and fire opts.OnChange.
-//
-// Metamodel and automation changes are not picked up while the workspace
-// is running — restart to apply them.
-func (w *Workspace) StartWatching(opts WatchOptions) error {
-	// Ask the store to start watching its own data files. The interface
-	// doesn't mandate this capability, so we feature-test via type
-	// assertion — fsstore supports it; memstore and other in-memory
-	// backends don't need to.
-	if w.store != nil {
-		if sw, ok := w.store.(storeWatcher); ok {
-			if err := sw.StartWatching(); err != nil {
-				slog.Warn("store watcher not started", "error", err)
-			}
-		}
-	}
-
-	// Optional extra watcher for non-store files (views.yaml, etc.).
-	if len(opts.ExtraDirs) > 0 || len(opts.ExtraFiles) > 0 {
-		watcher, err := storage.NewWatcher(storage.WatchConfig{
-			Dirs:       opts.ExtraDirs,
-			Files:      opts.ExtraFiles,
-			Extensions: []string{".yaml", ".yml"},
-			Debounce:   200 * time.Millisecond,
-			SkipHidden: true,
-			OnChange: func(events []storage.ChangeEvent) {
-				if opts.OnChange != nil {
-					opts.OnChange(events)
-				}
-			},
-		})
-		if err != nil {
-			return err
-		}
-		go watcher.Start()
-		w.watcher = watcher
-	}
-	return nil
-}
-
-// StopWatching stops the file watcher.
-func (w *Workspace) StopWatching() {
-	if w.watcher != nil {
-		w.watcher.Stop()
-		w.watcher = nil
-	}
-}
-
-// Close releases resources held by the workspace (search index, watcher,
-// store). Close is not safe to call concurrently with Workspace methods.
+// Close releases resources held by the workspace (search index,
+// store). Close is not safe to call concurrently with Workspace
+// methods.
 //
 // Subsystems close in observer-dependency order: store first, so no
 // further observer callbacks can land on the search backend; then the
@@ -785,8 +717,6 @@ func (w *Workspace) StopWatching() {
 // earlier one errored so a partial failure doesn't leak store
 // goroutines or watcher resources.
 func (w *Workspace) Close() error {
-	w.StopWatching()
-
 	if w.store != nil {
 		if sw, ok := w.store.(storeWatcher); ok {
 			sw.StopWatching()
@@ -806,20 +736,6 @@ func (w *Workspace) Close() error {
 		w.searchBackend = nil
 	}
 	return firstErr
-}
-
-// PauseWatching temporarily suppresses file change events.
-func (w *Workspace) PauseWatching() {
-	if w.watcher != nil {
-		w.watcher.Pause()
-	}
-}
-
-// ResumeWatching re-enables file change events after PauseWatching.
-func (w *Workspace) ResumeWatching() {
-	if w.watcher != nil {
-		w.watcher.Resume()
-	}
 }
 
 // --- Filesystem access ---

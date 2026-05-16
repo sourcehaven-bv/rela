@@ -57,7 +57,6 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 	app, err := NewApp(
 		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
-		ws.StartWatching,
 	)
 	if err != nil {
 		t.Fatalf("creating app: %v", err)
