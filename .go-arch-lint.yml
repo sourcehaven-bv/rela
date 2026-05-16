@@ -227,7 +227,6 @@ deps:
       - templating
       - tracer
       - validator
-      - workspace
     canUse:
       - goldmark
       - gogit

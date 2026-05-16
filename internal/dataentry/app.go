@@ -34,7 +34,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // AppState bundles the reloadable fields of App into an immutable snapshot.
@@ -113,7 +112,7 @@ type App struct {
 	templater     templating.Templater
 	cfgLoader     config.Loader
 	kv            state.KV
-	startWatching func(workspace.WatchOptions) error
+	startWatching func(WatchOptions) error
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -232,7 +231,7 @@ func NewApp(
 	st store.Store,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
-	startWatching func(workspace.WatchOptions) error,
+	startWatching func(WatchOptions) error,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.

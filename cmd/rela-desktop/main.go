@@ -141,7 +141,15 @@ func (d *Desktop) LoadProject(dir string) string {
 	app, err := dataentry.NewApp(
 		fs, projCtx, ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
-		ws.StartWatching,
+		// Adapter: bridge dataentry.WatchOptions (consumer-side type)
+		// to workspace.WatchOptions (producer-side type).
+		func(opts dataentry.WatchOptions) error {
+			return ws.StartWatching(workspace.WatchOptions{
+				ExtraFiles: opts.ExtraFiles,
+				ExtraDirs:  opts.ExtraDirs,
+				OnChange:   opts.OnChange,
+			})
+		},
 	)
 	if err != nil {
 		d.mu.Lock()

@@ -12,8 +12,22 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
+
+// WatchOptions describes the watch contract dataentry needs from
+// its wiring site. Defined here at the consumer per CLAUDE.md
+// "interfaces at the call site"; the wiring site supplies an
+// implementation that bridges to whatever watch mechanism it
+// exposes (today, the workspace's StartWatching).
+type WatchOptions struct {
+	// ExtraFiles lists additional files to watch (e.g., data-entry.yaml).
+	ExtraFiles []string
+	// ExtraDirs lists additional directories to watch.
+	ExtraDirs []string
+	// OnChange fires when any watched extra file changes.
+	OnChange func(events []storage.ChangeEvent)
+}
 
 // sseEvent represents a Server-Sent Event with optional JSON data.
 type sseEvent struct {
@@ -102,8 +116,8 @@ func (a *App) StartWatching() error {
 	if a.startWatching == nil {
 		return nil
 	}
-	return a.startWatching(workspace.WatchOptions{
-		OnChange: func(events []workspace.ChangeEvent) {
+	return a.startWatching(WatchOptions{
+		OnChange: func(events []storage.ChangeEvent) {
 			for _, e := range events {
 				slog.Debug("file changed", "path", e.Path, "op", e.Op)
 			}
@@ -157,7 +171,7 @@ func (a *App) StartGitFetch() (stop func()) {
 // no-op: dataentry's AppState doesn't depend on entity data directly,
 // so there's nothing to rebuild. Kept in place so the test helper has a
 // callable and so future per-entity reactions have an obvious hook.
-func (a *App) onDataReload(_ []workspace.ChangeEvent) {}
+func (a *App) onDataReload(_ []storage.ChangeEvent) {}
 
 // rebuildState re-reads changed inputs and publishes a fresh AppState
 // snapshot atomically. Readers observe either the pre-reload or the
