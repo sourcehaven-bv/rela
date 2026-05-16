@@ -66,6 +66,15 @@ func NewLuaScriptRunner(exec Executor, readDeps lua.ReadDeps) *LuaScriptRunner {
 // with the automation name and appends err.Error() to Outcome.Errors,
 // which is the surface the API layer reads.
 func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction, m autocascade.Mutator) error {
+	if action.Code == "" && action.FilePath == "" {
+		return nil
+	}
+	if m == nil {
+		// Lua scripts may invoke rela.create_entity et al., which require
+		// a non-nil EntityManager in lua.WriteDeps. Reject up-front rather
+		// than letting the engine nil-deref on the first call.
+		return errors.New("script: LuaScriptRunner.Run: mutator is required")
+	}
 	deps := lua.WriteDeps{
 		ReadDeps:      l.readDeps,
 		EntityManager: m, // Manager satisfies both Mutator and lua's wider EntityManager interface.
@@ -76,8 +85,6 @@ func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction
 		err = l.exec.ExecuteCode(action.Code, deps, action.NewEntity, action.OldEntity)
 	case action.FilePath != "":
 		err = l.exec.ExecuteFile(action.FilePath, deps, action.NewEntity, action.OldEntity)
-	default:
-		return nil
 	}
 	if err == nil {
 		return nil

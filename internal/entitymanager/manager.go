@@ -59,6 +59,16 @@ type Manager struct {
 	deps Deps
 }
 
+// Compile-time assertions: Manager must satisfy both the public
+// EntityManager contract and the autocascade.Mutator surface (the
+// per-cascade write handle scripted actions receive). A drift in
+// either interface surfaces at this type, not at the call sites that
+// pass Manager into Request.Mutator or lua.WriteDeps.EntityManager.
+var (
+	_ EntityManager       = (*Manager)(nil)
+	_ autocascade.Mutator = (*Manager)(nil)
+)
+
 // Deps is the constructor input for [New]. Using a struct keeps the
 // constructor signature stable as new collaborators land (audit,
 // principal, policy in subsequent tickets).
@@ -89,8 +99,10 @@ type Deps struct {
 	// cascade. May be nil if no scripted automations are configured;
 	// Runner records each scripted action as a per-action error when
 	// no ScriptRunner is supplied. Wiring sites that need
-	// transport-specific deps (e.g. Lua) supply a per-request adapter
-	// here (see internal/workspace/luascriptrunner.go).
+	// transport-specific deps (e.g. Lua) construct one with the
+	// static read deps at this layer; the per-cascade mutator is
+	// supplied by Manager via [autocascade.Request.Mutator] (see
+	// internal/script/luascriptrunner.go for the Lua adapter).
 	ScriptRunner autocascade.ScriptRunner
 }
 

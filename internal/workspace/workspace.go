@@ -6,8 +6,10 @@
 //
 // **Transitional.** Workspace is being decomposed: the production
 // write path lives in [internal/entitymanager], and Workspace is the
-// shim that constructs Manager and wires per-call lua transport (see
-// [wsScriptRunner]). TKT-64R3 deletes this package once consumers
+// shim that constructs Manager and wires the Lua script adapter
+// ([script.LuaScriptRunner], built once per workspace with the
+// static read deps; the per-cascade mutator is supplied by Manager
+// at dispatch time). TKT-64R3 deletes this package once consumers
 // (CLI/MCP/dataentry/scheduler) construct their own services.
 package workspace
 
@@ -414,7 +416,8 @@ func newWorkspace(
 	// per-cascade mutation handle is supplied via Request.Mutator
 	// inside Manager.runWriteCascade (Manager satisfies
 	// autocascade.Mutator structurally). That split is what removes
-	// the construction cycle that wsScriptRunner used to paper over.
+	// the construction cycle the old wsScriptRunner adapter used to
+	// paper over (deleted in TKT-Z9MR).
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        ws.store,
 		Meta:         ws.meta,

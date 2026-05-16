@@ -49,10 +49,10 @@ type Request struct {
 	// Mutator is the per-cascade graph-write handle Runner passes to
 	// Scripts.Run so script actions can create/update/delete
 	// entities and relations from within the cascade. Manager
-	// populates this with itself when dispatching. Optional: when
-	// nil alongside a non-nil Scripts, scripted actions may still
-	// run for engines that don't need a write handle, but the
-	// production Lua adapter rejects nil.
+	// populates this with itself when dispatching. The production
+	// Lua adapter ([script.LuaScriptRunner]) rejects a nil mutator
+	// with an explicit error; engines that don't expose mutation to
+	// scripts may ignore the argument.
 	Mutator Mutator
 }
 

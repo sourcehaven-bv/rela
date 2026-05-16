@@ -11,18 +11,24 @@ import (
 // at the call site" — Runner is the consumer; entitymanager.Manager
 // satisfies it structurally.
 //
-// The interface mirrors the seven methods of entitymanager.EntityManager
-// so that the same value (a Manager) can serve both as the public
-// write API and as the per-cascade script-mutation handle. Today only
-// five of these are exercised by Lua bindings (CreateEntity /
-// UpdateEntity / DeleteEntity / CreateRelation / DeleteRelation); the
-// other two (RenameEntity, UpdateRelation) are carried for shape
-// symmetry. A future hygiene PR may narrow this to the actually-called
-// subset.
+// **Why seven methods.** The interface mirrors all seven methods of
+// entitymanager.EntityManager because today's `lua.WriteDeps.EntityManager`
+// is typed as that wide interface and the Lua script adapter assigns
+// `m` straight into the field. If Mutator were narrower (the five
+// methods Lua actually calls — RenameEntity and UpdateRelation are
+// unused from scripts) the assignment wouldn't type-check.
 //
-// The interface is engine-agnostic: any future script runtime (Python,
-// JS, ...) that mutates the graph receives a Mutator alongside its
-// action payload, not a Lua-typed deps bundle.
+// TKT-IF37 tracks narrowing both surfaces to five — after that the
+// interface body shrinks. Until then the two extra methods are
+// carried for assignment compatibility, not because any script
+// invokes them.
+//
+// **Transport-vocabulary, not engine-runtime, agnostic.** The
+// interface is independent of which script runtime is doing the
+// invoking (Lua today; Python/JS later would receive a Mutator the
+// same way). It is *not* free of rela's domain vocabulary: the
+// method signatures reference entity.CreateOptions / CreateResult etc.
+// Any new engine adapter still speaks rela's write-API types.
 type Mutator interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)

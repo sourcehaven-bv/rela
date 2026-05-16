@@ -405,6 +405,67 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 	// re-entered itself recursively).
 }
 
+// recordingScripts captures the mutator passed to Run so tests can
+// assert Manager populates Request.Mutator with itself.
+type recordingScripts struct {
+	mutator autocascade.Mutator
+	calls   int
+}
+
+func (r *recordingScripts) Run(_ context.Context, _ autocascade.ScriptAction, m autocascade.Mutator) error {
+	r.calls++
+	r.mutator = m
+	return nil
+}
+
+// TestCreate_PassesManagerAsMutator pins that Manager.runWriteCascade
+// supplies itself as Request.Mutator when dispatching, so scripted
+// actions can call back through the same write path. Without this,
+// future refactors could silently drop the assignment and only
+// fail when an actual script tried to mutate.
+func TestCreate_PassesManagerAsMutator(t *testing.T) {
+	scripts := &recordingScripts{}
+	cs := &countingStore{Store: memstore.New()}
+	auto := automation.Automation{
+		Name: "fires-script",
+		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
+		Do:   []automation.Action{{Lua: "-- noop"}},
+	}
+	engine := automation.NewEngine([]automation.Automation{auto})
+	runner, err := autocascade.New(autocascade.Deps{Engine: engine})
+	if err != nil {
+		t.Fatalf("autocascade.New: %v", err)
+	}
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:        cs,
+		Meta:         parseMeta(t),
+		Templater:    nopTemplater{},
+		Automations:  engine,
+		Cascade:      runner,
+		ScriptRunner: scripts,
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+
+	e := entity.New("", "requirement")
+	e.SetString("title", "Trigger")
+	if _, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{}); err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+	if scripts.calls != 1 {
+		t.Fatalf("Run calls = %d, want 1", scripts.calls)
+	}
+	if scripts.mutator == nil {
+		t.Fatal("scripts.mutator = nil; Manager did not populate Request.Mutator")
+	}
+	// The mutator IS the Manager. Same-pointer-comparison verifies
+	// Manager passes itself rather than constructing an adapter.
+	if scripts.mutator != autocascade.Mutator(mgr) {
+		t.Errorf("mutator = %p, want manager %p", scripts.mutator, mgr)
+	}
+}
+
 // --- Update path: oldEntity gate, typed errors ---
 
 func TestUpdate_NotFoundReturnsTypedError(t *testing.T) {
