@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -56,27 +57,29 @@ type cliWrite interface {
 	LuaWriteDeps() lua.WriteDeps
 }
 
-// cliAnalyze is cliRead + the CLI-specific facade methods that
-// today live on *workspace.Workspace. The arc that started with
-// TKT-2W0X (attachment) lifts these methods into dedicated packages;
-// internal/renametype (TKT-04YA) and internal/analysis (TKT-B01S)
-// follow. Each lift swaps signatures here without touching the
-// subcommand handlers.
+// cliAnalyze bundles the read-side analysis surface plus the CLI's
+// maintenance facades (rename-entity-type, attach-file). Drift
+// warning: after the TKT-2W0X / TKT-04YA / TKT-B01S lifts the bundle
+// spans three subsystems (analysis, attachment, renametype). The
+// attach/attachments/rename subcommands piggyback this bundle today
+// because they ran on workspace originally; a follow-up should split
+// attachment + renametype into their own bundles so cliAnalyze stays
+// narrow per CLAUDE.md "scoped consumer-side Services interface."
 type cliAnalyze interface {
 	cliRead
-	AnalyzeAll(ctx context.Context, opts workspace.AnalyzeOptions) *workspace.AnalysisSummary
-	CheckCardinality(opts workspace.AnalyzeOptions) []workspace.CardinalityViolation
-	FindDuplicates(opts workspace.AnalyzeOptions) []workspace.DuplicateGroup
-	FindGaps(opts workspace.AnalyzeOptions) []workspace.GapResult
-	FindOrphansWithScope(opts workspace.AnalyzeOptions) []*entity.Entity
+	AnalyzeAll(ctx context.Context, opts analysis.Options) *analysis.Summary
+	CheckCardinality(opts analysis.Options) []analysis.CardinalityViolation
+	FindDuplicates(opts analysis.Options) []analysis.DuplicateGroup
+	FindGaps(opts analysis.Options) []analysis.GapResult
+	FindOrphansWithScope(opts analysis.Options) []*entity.Entity
 	FindOrphanedTempFiles() ([]string, error)
 	CleanupOrphanedTempFiles() (int, error)
-	RunValidations(ctx context.Context, opts workspace.AnalyzeOptions) workspace.ValidationResult
+	RunValidations(ctx context.Context, opts analysis.Options) analysis.ValidationResult
 	RunValidationsFiltered(
 		ctx context.Context,
-		opts workspace.AnalyzeOptions,
-		filters []workspace.ValidationFilter,
-	) workspace.ValidationResult
+		opts analysis.Options,
+		filters []analysis.ValidationFilter,
+	) analysis.ValidationResult
 	RenameEntityType(oldType, newType, newPlural string) (int, error)
 	AttachFile(ctx context.Context, entityID, filePath, property string) (*attachment.Result, error)
 	ListAttachments(ctx context.Context, entityID string) ([]attachment.Info, error)
@@ -93,6 +96,7 @@ type cliServices struct {
 	ws         *workspace.Workspace
 	attachment *attachment.Service
 	renametype *renametype.Service
+	analysis   *analysis.Service
 }
 
 // Compile-time assertions: cliServices must satisfy every bundle
@@ -122,46 +126,46 @@ func (s *cliServices) Validator() validator.Validator             { return s.ws.
 func (s *cliServices) LuaCache() *lua.Cache                       { return s.ws.LuaCache() }
 func (s *cliServices) LuaWriteDeps() lua.WriteDeps                { return s.ws.LuaWriteDeps() }
 
-// --- cliAnalyze (transitional — TKT-2W0X) ---
+// --- cliAnalyze ---
 
-func (s *cliServices) AnalyzeAll(ctx context.Context, opts workspace.AnalyzeOptions) *workspace.AnalysisSummary {
-	return s.ws.AnalyzeAll(ctx, opts)
+func (s *cliServices) AnalyzeAll(ctx context.Context, opts analysis.Options) *analysis.Summary {
+	return s.analysis.AnalyzeAll(ctx, opts)
 }
 
-func (s *cliServices) CheckCardinality(opts workspace.AnalyzeOptions) []workspace.CardinalityViolation {
-	return s.ws.CheckCardinality(opts)
+func (s *cliServices) CheckCardinality(opts analysis.Options) []analysis.CardinalityViolation {
+	return s.analysis.CheckCardinality(opts)
 }
 
-func (s *cliServices) FindDuplicates(opts workspace.AnalyzeOptions) []workspace.DuplicateGroup {
-	return s.ws.FindDuplicates(opts)
+func (s *cliServices) FindDuplicates(opts analysis.Options) []analysis.DuplicateGroup {
+	return s.analysis.FindDuplicates(opts)
 }
 
-func (s *cliServices) FindGaps(opts workspace.AnalyzeOptions) []workspace.GapResult {
-	return s.ws.FindGaps(opts)
+func (s *cliServices) FindGaps(opts analysis.Options) []analysis.GapResult {
+	return s.analysis.FindGaps(opts)
 }
 
-func (s *cliServices) FindOrphansWithScope(opts workspace.AnalyzeOptions) []*entity.Entity {
-	return s.ws.FindOrphansWithScope(opts)
+func (s *cliServices) FindOrphansWithScope(opts analysis.Options) []*entity.Entity {
+	return s.analysis.FindOrphansWithScope(opts)
 }
 
 func (s *cliServices) FindOrphanedTempFiles() ([]string, error) {
-	return s.ws.FindOrphanedTempFiles()
+	return s.analysis.FindOrphanedTempFiles()
 }
 
 func (s *cliServices) CleanupOrphanedTempFiles() (int, error) {
-	return s.ws.CleanupOrphanedTempFiles()
+	return s.analysis.CleanupOrphanedTempFiles()
 }
 
-func (s *cliServices) RunValidations(ctx context.Context, opts workspace.AnalyzeOptions) workspace.ValidationResult {
-	return s.ws.RunValidations(ctx, opts)
+func (s *cliServices) RunValidations(ctx context.Context, opts analysis.Options) analysis.ValidationResult {
+	return s.analysis.RunValidations(ctx, opts)
 }
 
 func (s *cliServices) RunValidationsFiltered(
 	ctx context.Context,
-	opts workspace.AnalyzeOptions,
-	filters []workspace.ValidationFilter,
-) workspace.ValidationResult {
-	return s.ws.RunValidationsFiltered(ctx, opts, filters)
+	opts analysis.Options,
+	filters []analysis.ValidationFilter,
+) analysis.ValidationResult {
+	return s.analysis.RunValidationsFiltered(ctx, opts, filters)
 }
 
 func (s *cliServices) RenameEntityType(oldType, newType, newPlural string) (int, error) {
@@ -278,5 +282,17 @@ func newCLIServicesFromWorkspace(ws *workspace.Workspace) (*cliServices, error) 
 			return nil, fmt.Errorf("renametype service: %w", err)
 		}
 	}
-	return &cliServices{ws: ws, attachment: att, renametype: rt}, nil
+	an, err := analysis.New(analysis.Deps{
+		Store:       ws.Store(),
+		Meta:        ws.Meta(),
+		Tracer:      ws.Tracer(),
+		LuaReadDeps: ws.LuaReadDeps(),
+		LuaCache:    ws.LuaCache(),
+		FS:          ws.FS(),
+		Paths:       ws.Paths(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("analysis service: %w", err)
+	}
+	return &cliServices{ws: ws, attachment: att, renametype: rt, analysis: an}, nil
 }

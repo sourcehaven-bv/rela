@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -18,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -237,7 +237,7 @@ This catches issues in manually-edited markdown files that bypass CLI validation
 }
 
 // runPropertyValidation validates entity and relation properties against the metamodel.
-func runPropertyValidation(svc cliAnalyze, opts workspace.AnalyzeOptions) error {
+func runPropertyValidation(svc cliAnalyze, opts analysis.Options) error {
 	allEntityErrors := schema.ValidateEntityProperties(svc.Store(), svc.Meta())
 	if opts.Scope != nil {
 		filtered := allEntityErrors[:0]
@@ -389,7 +389,7 @@ Example metamodel configuration:
 }
 
 // runValidations executes custom validation rules.
-func runValidations(ctx context.Context, svc cliAnalyze, opts workspace.AnalyzeOptions) error {
+func runValidations(ctx context.Context, svc cliAnalyze, opts analysis.Options) error {
 	rules := svc.Meta().Validations
 	if len(rules) == 0 {
 		return writeNoValidationRules()
@@ -419,7 +419,7 @@ func writeNoValidationRules() error {
 }
 
 // countValidationViolationsBySeverity tallies error vs. warning violations.
-func countValidationViolationsBySeverity(violations []workspace.ValidationViolation) (errors, warnings int) {
+func countValidationViolationsBySeverity(violations []analysis.ValidationViolation) (errors, warnings int) {
 	for _, v := range violations {
 		if v.Severity == "error" {
 			errors++
@@ -434,7 +434,7 @@ func countValidationViolationsBySeverity(violations []workspace.ValidationViolat
 // any rule failed to run or any error-severity violation was found.
 func writeValidationsJSON(
 	rules []metamodel.ValidationRule,
-	result workspace.ValidationResult,
+	result analysis.ValidationResult,
 	errorCount, warningCount int,
 ) error {
 	status := "success"
@@ -466,10 +466,10 @@ func writeValidationsJSON(
 // when any error-severity violation was found or any rule failed to run.
 func writeValidationsText(
 	rules []metamodel.ValidationRule,
-	result workspace.ValidationResult,
+	result analysis.ValidationResult,
 	errorCount, warningCount int,
 ) error {
-	ruleViolations := make(map[string][]workspace.ValidationViolation)
+	ruleViolations := make(map[string][]analysis.ValidationViolation)
 	for _, v := range result.Violations {
 		ruleViolations[v.RuleName] = append(ruleViolations[v.RuleName], v)
 	}
@@ -491,7 +491,7 @@ func writeValidationsText(
 }
 
 // writeRuleViolations renders the per-rule heading and entity list.
-func writeRuleViolations(rule metamodel.ValidationRule, vs []workspace.ValidationViolation) {
+func writeRuleViolations(rule metamodel.ValidationRule, vs []analysis.ValidationViolation) {
 	if len(vs) == 0 {
 		return
 	}
@@ -522,7 +522,7 @@ func writeValidationsSummary(ruleCount, errorCount, warningCount int, hasErrors 
 // renderValidationErrors writes script-error and load-error blocks to
 // the global `out` writer. Empty slices render nothing — the caller
 // still owns the success / summary line.
-func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []workspace.ValidationLoadError) {
+func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []analysis.ValidationLoadError) {
 	if len(scriptErrors) > 0 {
 		out.WriteError("Validation script errors (%d):", len(scriptErrors))
 		for _, se := range scriptErrors {
@@ -901,6 +901,6 @@ func init() {
 }
 
 // resolveAnalyzeOpts returns the analysis options.
-func resolveAnalyzeOpts() (*workspace.AnalyzeOptions, error) {
-	return &workspace.AnalyzeOptions{}, nil
+func resolveAnalyzeOpts() (*analysis.Options, error) {
+	return &analysis.Options{}, nil
 }

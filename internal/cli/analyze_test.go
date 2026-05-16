@@ -7,16 +7,16 @@ import (
 	stderrors "errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // analyze_test.go covers the CLI JSON output shape. The underlying
 // analysis correctness (orphans, duplicates, cardinality, properties,
-// validations) is exercised directly in internal/workspace/analysis_test.go.
+// validations) is exercised directly in internal/analysis/analysis_test.go.
 // Keep only:
 //   - one representative JSON-output test (so the CLI wiring is covered)
 //   - the gaps test (not currently covered at the workspace layer)
@@ -85,7 +85,7 @@ func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
 
 	out = output.NewWithWriter(&bytes.Buffer{}, output.FormatTable)
 	svc := cliAnalyzeFromContext(testCtx)
-	err := runValidations(context.Background(), svc, workspace.AnalyzeOptions{})
+	err := runValidations(context.Background(), svc, analysis.Options{})
 
 	if err == nil {
 		t.Fatal("expected non-zero exit error, got nil")

@@ -39,6 +39,7 @@ components:
   workspace:        { in: internal/workspace }
 
   # Domain services
+  analysis:         { in: internal/analysis }
   attachment:       { in: internal/attachment }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
@@ -166,6 +167,7 @@ deps:
   cli:
     mayDependOn:
       - ai
+      - analysis
       - app
       - attachment
       - autocascade
@@ -298,6 +300,16 @@ deps:
       - validator
 
   # Domain services
+  analysis:
+    mayDependOn:
+      - lua
+      - metamodel
+      - project
+      - schema
+      - storage
+      - store
+      - tracer
+      - validation
   attachment:
     mayDependOn:
       - entitymanager
