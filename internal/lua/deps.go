@@ -1,7 +1,9 @@
 package lua
 
 import (
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"context"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -24,10 +26,29 @@ type ReadDeps struct {
 	ProjectRoot string
 }
 
+// Mutator is the consumer-side write surface Lua bindings call into
+// from rela.create_entity / rela.update_entity / rela.delete_entity /
+// rela.create_relation / rela.delete_relation. Defined here at the
+// consumer per CLAUDE.md "interfaces at the call site"; the wiring
+// site supplies an implementation (the production one being the
+// project's EntityManager).
+//
+// Five methods — RenameEntity and UpdateRelation are intentionally
+// absent because no Lua binding invokes them. Narrowed from the
+// wider EntityManager interface in TKT-IF37 to drop lua's transitive
+// dependency on internal/entitymanager.
+type Mutator interface {
+	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
+	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
+	DeleteRelation(ctx context.Context, from, relType, to string) error
+}
+
 // WriteDeps is the capability bundle required to run a read-write Lua runtime.
 // A runtime built from WriteDeps (see NewWriter) additionally exposes
 // create/update/delete bindings for entities and relations.
 type WriteDeps struct {
 	ReadDeps
-	EntityManager entitymanager.EntityManager
+	EntityManager Mutator
 }

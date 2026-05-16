@@ -17,7 +17,6 @@ import (
 	glua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -154,13 +153,13 @@ func testWorkspace(t *testing.T) *mockWorkspace {
 	return newMockWorkspace(t)
 }
 
-// mockManager is a minimal entitymanager.EntityManager for tests. It
-// delegates to the underlying memstore.
+// mockManager is a minimal [Mutator] for tests. It delegates to the
+// underlying memstore. Five methods — the lua write-binding surface.
 type mockManager struct {
 	ws *mockWorkspace
 }
 
-var _ entitymanager.EntityManager = (*mockManager)(nil)
+var _ Mutator = (*mockManager)(nil)
 
 func (m *mockManager) CreateEntity(
 	ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
@@ -208,12 +207,6 @@ func (m *mockManager) DeleteEntity(
 	}, nil
 }
 
-func (m *mockManager) RenameEntity(
-	_ context.Context, _, _ string, _ entity.RenameOptions,
-) (*entity.RenameResult, error) {
-	return nil, errors.New("rename not supported by mockManager")
-}
-
 func (m *mockManager) CreateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -226,18 +219,6 @@ func (m *mockManager) CreateRelation(
 		data = &store.RelationData{Properties: opts.Properties, Content: content}
 	}
 	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
-}
-
-func (m *mockManager) UpdateRelation(
-	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
-) (*entity.Relation, error) {
-	content := ""
-	if opts.Content != nil {
-		content = *opts.Content
-	}
-	return m.ws.store.UpdateRelation(ctx, from, relType, to, store.RelationData{
-		Properties: opts.Properties, Content: content,
-	})
 }
 
 func (m *mockManager) DeleteRelation(ctx context.Context, from, relType, to string) error {

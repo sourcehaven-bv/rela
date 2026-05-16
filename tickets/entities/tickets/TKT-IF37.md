@@ -5,7 +5,7 @@ title: Narrow lua.WriteDeps.EntityManager and autocascade.Mutator to the 5 metho
 kind: refactor
 priority: low
 effort: s
-status: ready
+status: done
 ---
 
 ## Summary

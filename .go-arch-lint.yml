@@ -401,7 +401,6 @@ deps:
   lua:
     mayDependOn:
       - ai
-      - entitymanager
       - filter
       - metamodel
       - search

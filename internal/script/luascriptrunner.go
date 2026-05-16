@@ -76,8 +76,12 @@ func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction
 		return errors.New("script: LuaScriptRunner.Run: mutator is required")
 	}
 	deps := lua.WriteDeps{
-		ReadDeps:      l.readDeps,
-		EntityManager: m, // Manager satisfies both Mutator and lua's wider EntityManager interface.
+		ReadDeps: l.readDeps,
+		// m satisfies autocascade.Mutator (5 methods); the same five
+		// are lua.Mutator's surface so the assignment type-checks. The
+		// duplication of the interface is intentional per CLAUDE.md
+		// "interfaces at the call site".
+		EntityManager: m,
 	}
 	var err error
 	switch {
@@ -114,3 +118,11 @@ func formatScriptError(action autocascade.ScriptAction, err error) error {
 // Compile-time assertion that *LuaScriptRunner satisfies the
 // consumer-side ScriptRunner interface.
 var _ autocascade.ScriptRunner = (*LuaScriptRunner)(nil)
+
+// Compile-time assertion that [autocascade.Mutator] and [lua.Mutator]
+// are structurally equivalent. Run assigns the autocascade-typed
+// argument into the lua-typed field at line ~84; that assignment
+// type-checks only as long as the two interfaces declare the same
+// methods. This is the only file that imports both packages, so it
+// is the only place the invariant can be pinned.
+var _ lua.Mutator = autocascade.Mutator(nil)
