@@ -5,7 +5,7 @@ title: Lift workspace.RenameEntityType to internal/renametype
 kind: refactor
 priority: medium
 effort: s
-status: backlog
+status: done
 ---
 
 ## Summary
