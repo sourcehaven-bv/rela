@@ -127,13 +127,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, ws *workspace.Wo
 	app.templater = ws.Templater()
 	app.cfgLoader = ws.Config()
 	app.kv = ws.State()
-	app.startWatching = func(opts WatchOptions) error {
-		return ws.StartWatching(workspace.WatchOptions{
-			ExtraFiles: opts.ExtraFiles,
-			ExtraDirs:  opts.ExtraDirs,
-			OnChange:   opts.OnChange,
-		})
-	}
 	// Wire a minimal documentService for tests that hit the documents
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).

@@ -242,29 +242,18 @@ func TestEventBrokerConcurrency(t *testing.T) {
 	}
 }
 
-// simulateReload mimics what the watcher subscriptions do in production:
-// a config-path event triggers rebuildState(config); other events go to
-// onDataReload. Metamodel changes are ignored — the workspace does not
-// reload the metamodel while running.
+// simulateReload mimics what the data-entry.yaml subscriber does in
+// production: a config-path event triggers rebuildState(config). Other
+// event paths are ignored — entity/relation changes are reconciled by
+// the store's own observer chain (see [App.StartWatching]), not via a
+// dataentry-level callback.
 func (a *App) simulateReload(events []storage.ChangeEvent) {
 	configPath := a.paths.Root + "/" + ConfigFile
-	configEvent := false
-	var dataEvents []storage.ChangeEvent
 	for _, e := range events {
-		switch e.Path {
-		case configPath:
-			configEvent = true
-		default:
-			dataEvents = append(dataEvents, e)
+		if e.Path == configPath {
+			a.rebuildState(true, false)
+			return
 		}
-	}
-	if configEvent {
-		a.rebuildState(true, false)
-	}
-	if len(dataEvents) > 0 {
-		// Data changes no longer require an explicit workspace sync;
-		// the store watches its own files and reconciles internally.
-		a.onDataReload(dataEvents)
 	}
 }
 
@@ -532,7 +521,10 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 				return
 			default:
 			}
-			app.onDataReload(nil)
+			// Hammer the actual reload path (config-driven rebuild)
+			// concurrently with reader goroutines so torn snapshots
+			// would be observable.
+			app.rebuildState(true, false)
 		}
 	}()
 
