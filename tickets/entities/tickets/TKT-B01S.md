@@ -5,7 +5,7 @@ title: Lift workspace analysis methods to internal/analysis
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Summary
