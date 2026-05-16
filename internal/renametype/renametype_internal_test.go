@@ -1,4 +1,4 @@
-package workspace
+package renametype
 
 import (
 	"strings"
@@ -89,6 +89,19 @@ body has type: foo
 			newType:  "feature",
 			replaced: false,
 		},
+		{
+			// CRLF case: strings.Split("---\r\n...","\n") leaves the
+			// \r on the line. TrimSpace strips it for delimiter detection
+			// and TrimLeft does not — so the type: prefix still matches
+			// but the rewritten line is LF-only. This test documents the
+			// current behavior (mixed line endings on output) so any
+			// future change is intentional.
+			name:     "CRLF line endings: replacement loses \\r on the rewritten line",
+			input:    "---\r\nid: REQ-1\r\ntype: requirement\r\ntitle: Something\r\n---\r\nbody\r\n",
+			newType:  "feature",
+			want:     "---\r\nid: REQ-1\r\ntype: feature\ntitle: Something\r\n---\r\nbody\r\n",
+			replaced: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -171,7 +184,6 @@ id: REQ-2
 type: requirement
 ---
 `), 0o644)
-	// Non-markdown file should be skipped.
 	_ = fs.WriteFile("/entities/reqs/README.txt", []byte("hi"), 0o644)
 
 	count, err := rewriteEntityTypeInDir(fs, "/entities/reqs", "feature")

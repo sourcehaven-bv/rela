@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -91,6 +92,7 @@ type cliAnalyze interface {
 type cliServices struct {
 	ws         *workspace.Workspace
 	attachment *attachment.Service
+	renametype *renametype.Service
 }
 
 // Compile-time assertions: cliServices must satisfy every bundle
@@ -163,7 +165,15 @@ func (s *cliServices) RunValidationsFiltered(
 }
 
 func (s *cliServices) RenameEntityType(oldType, newType, newPlural string) (int, error) {
-	return s.ws.RenameEntityType(oldType, newType, newPlural)
+	if s.renametype == nil {
+		// Reached only when a test built cliServices from an
+		// FS-less workspace.NewForTest fixture and then drove a
+		// rename. Production wiring always populates renametype
+		// (workspace.Discover guarantees FS + Paths). Panic loudly
+		// so the test setup gap is unmistakable.
+		panic("cli: renametype service not wired — test fixture must use workspace.WithFS")
+	}
+	return s.renametype.Rename(oldType, newType, newPlural)
 }
 
 func (s *cliServices) AttachFile(ctx context.Context, entityID, filePath, property string) (*attachment.Result, error) {
@@ -252,5 +262,21 @@ func newCLIServicesFromWorkspace(ws *workspace.Workspace) (*cliServices, error) 
 	if err != nil {
 		return nil, fmt.Errorf("attachment service: %w", err)
 	}
-	return &cliServices{ws: ws, attachment: att}, nil
+	// renametype needs FS + Paths; the test fixture's
+	// workspace.NewForTest skips both. Skip wiring renametype when
+	// either is absent — handlers panic clearly via the unset-service
+	// check rather than nil-deref when an FS-less workspace is given
+	// to a rename test by accident.
+	var rt *renametype.Service
+	if ws.FS() != nil && ws.Paths() != nil {
+		rt, err = renametype.New(renametype.Deps{
+			FS:    ws.FS(),
+			Meta:  ws.Meta(),
+			Paths: ws.Paths(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("renametype service: %w", err)
+		}
+	}
+	return &cliServices{ws: ws, attachment: att, renametype: rt}, nil
 }

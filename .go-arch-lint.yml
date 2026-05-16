@@ -46,6 +46,7 @@ components:
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
   rename:           { in: internal/rename }
+  renametype:       { in: internal/renametype }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   tracer:           { in: internal/tracer }
@@ -182,6 +183,7 @@ deps:
       - output
       - project
       - rename
+      - renametype
       - scheduler
       - schema
       - script
@@ -301,6 +303,11 @@ deps:
       - entitymanager
       - metamodel
       - store
+  renametype:
+    mayDependOn:
+      - metamodel
+      - project
+      - storage
   autocascade:
     mayDependOn:
       - automation
