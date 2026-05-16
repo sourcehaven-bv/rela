@@ -5,7 +5,7 @@ title: Migrate dataentry server to wire its own services (off Workspace)
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: done
 ---
 
 ## Summary
