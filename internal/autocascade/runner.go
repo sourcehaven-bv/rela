@@ -88,7 +88,8 @@ func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, 
 		// workspace.applyAutomationSideEffects behavior — for
 		// cascaded entities the original trigger's old state flows
 		// through. Preserving the behavior; not "fixing" it here.
-		r.executeScriptActions(ctx, req.Scripts, item.trigger, req.OldTrigger, item.autoResult.LuaToExecute, &outcome)
+		r.executeScriptActions(ctx, req.Scripts, req.Mutator,
+			item.trigger, req.OldTrigger, item.autoResult.LuaToExecute, &outcome)
 
 		// Process relations for this trigger.
 		r.applyRelationCreations(ctx, host, item.trigger, item.autoResult.RelationsToCreate, &outcome)
@@ -242,6 +243,7 @@ func (r *Runner) applyRelationCreations(
 func (r *Runner) executeScriptActions(
 	ctx context.Context,
 	scripts ScriptRunner,
+	mutator Mutator,
 	newEntity *entity.Entity,
 	oldEntity *entity.Entity,
 	luaActions []automation.LuaToExecute,
@@ -269,7 +271,7 @@ func (r *Runner) executeScriptActions(
 			Name:      action.AutomationName,
 			NewEntity: newEntity,
 			OldEntity: oldEntity,
-		})
+		}, mutator)
 		if err == nil {
 			continue
 		}

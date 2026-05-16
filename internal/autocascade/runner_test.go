@@ -531,7 +531,7 @@ type recordingScriptRunner struct {
 	actions  []autocascade.ScriptAction
 }
 
-func (r *recordingScriptRunner) Run(_ context.Context, a autocascade.ScriptAction) error {
+func (r *recordingScriptRunner) Run(_ context.Context, a autocascade.ScriptAction, _ autocascade.Mutator) error {
 	r.runCalls++
 	r.actions = append(r.actions, a)
 	return nil
@@ -541,6 +541,6 @@ type failingScriptRunner struct {
 	err error
 }
 
-func (f *failingScriptRunner) Run(_ context.Context, _ autocascade.ScriptAction) error {
+func (f *failingScriptRunner) Run(_ context.Context, _ autocascade.ScriptAction, _ autocascade.Mutator) error {
 	return f.err
 }

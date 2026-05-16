@@ -37,14 +37,23 @@ type Request struct {
 	// [automation.Engine.Process] for the initiating event.
 	Result *automation.Result
 
-	// Scripts is the per-call script execution adapter. The caller
-	// constructs one with any per-request state (capability
-	// bundles, audit context) already bound, so Runner does not
-	// need to know about the underlying engine. Optional: when nil,
-	// scripted automation actions are recorded as errors in the
-	// Outcome (rather than silently skipped) — production callers
-	// always supply one.
+	// Scripts is the script execution adapter. Built once per
+	// wiring scope (no per-request state) — the per-request mutation
+	// handle is supplied via Mutator below.
+	//
+	// Optional: when nil, scripted automation actions are recorded
+	// as errors in the Outcome (rather than silently skipped) —
+	// production callers always supply one.
 	Scripts ScriptRunner
+
+	// Mutator is the per-cascade graph-write handle Runner passes to
+	// Scripts.Run so script actions can create/update/delete
+	// entities and relations from within the cascade. Manager
+	// populates this with itself when dispatching. Optional: when
+	// nil alongside a non-nil Scripts, scripted actions may still
+	// run for engines that don't need a write handle, but the
+	// production Lua adapter rejects nil.
+	Mutator Mutator
 }
 
 // Outcome is the cumulative result of a cascade.

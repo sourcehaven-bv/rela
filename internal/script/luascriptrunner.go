@@ -20,12 +20,21 @@ type Executor interface {
 
 // LuaScriptRunner adapts a Lua-based [Executor] to the
 // runtime-agnostic [autocascade.ScriptRunner] interface that
-// [autocascade.Runner] consumes. One adapter is constructed per
-// dispatch so the per-request lua.WriteDeps bundle is bound at the
-// right scope.
+// [autocascade.Runner] consumes.
+//
+// Lifecycle: one LuaScriptRunner is built per wiring scope (workspace,
+// MCP server, app-build, etc.). The runner holds the **static** half
+// of lua.WriteDeps — [lua.ReadDeps] (Store/Tracer/Searcher/Meta/
+// ProjectRoot) — captured at construction. The **dynamic** half — the
+// [autocascade.Mutator] that scripts call back into for graph writes —
+// is passed per-call via [Run]. That split is how the construction
+// cycle between EntityManager and the Lua write-deps bundle is broken:
+// Runner is built before EntityManager exists; EntityManager
+// (a Mutator) supplies itself when dispatching.
 //
 // Engine-specific concerns live here, not in autocascade:
-//   - lua.WriteDeps is captured at construction.
+//   - lua.ReadDeps captured at construction.
+//   - lua.WriteDeps assembled inside Run from readDeps + per-call mutator.
 //   - *lua.ScriptError patching (rewriting the Path field to
 //     "automation:<name>" for inline blocks) happens inside Run.
 //
@@ -33,34 +42,40 @@ type Executor interface {
 // runtime; replacing Lua with another engine would mean providing a
 // different ScriptRunner adapter, not changing Runner.
 type LuaScriptRunner struct {
-	exec Executor
-	deps lua.WriteDeps
+	exec     Executor
+	readDeps lua.ReadDeps
 }
 
-// NewLuaScriptRunner is constructed inside dispatch sites per cascade
-// invocation. Returns nil if exec is nil — Runner records each
+// NewLuaScriptRunner returns a LuaScriptRunner bound to exec and the
+// static read deps. Returns nil if exec is nil — Runner records each
 // scripted action as an error when ScriptRunner is nil, which is the
 // right behavior for misconfigured deployments.
-func NewLuaScriptRunner(exec Executor, deps lua.WriteDeps) *LuaScriptRunner {
+func NewLuaScriptRunner(exec Executor, readDeps lua.ReadDeps) *LuaScriptRunner {
 	if exec == nil {
 		return nil
 	}
-	return &LuaScriptRunner{exec: exec, deps: deps}
+	return &LuaScriptRunner{exec: exec, readDeps: readDeps}
 }
 
-// Run dispatches the action to the underlying executor.
+// Run dispatches the action to the underlying executor. The mutator
+// argument supplies the per-cascade graph-write handle for the
+// constructed lua.WriteDeps.
 //
 // Errors returned by the executor are *not* wrapped here beyond the
 // Lua-error-path patching: Runner.executeScriptActions slog-Warns
 // with the automation name and appends err.Error() to Outcome.Errors,
 // which is the surface the API layer reads.
-func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction) error {
+func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction, m autocascade.Mutator) error {
+	deps := lua.WriteDeps{
+		ReadDeps:      l.readDeps,
+		EntityManager: m, // Manager satisfies both Mutator and lua's wider EntityManager interface.
+	}
 	var err error
 	switch {
 	case action.Code != "":
-		err = l.exec.ExecuteCode(action.Code, l.deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteCode(action.Code, deps, action.NewEntity, action.OldEntity)
 	case action.FilePath != "":
-		err = l.exec.ExecuteFile(action.FilePath, l.deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteFile(action.FilePath, deps, action.NewEntity, action.OldEntity)
 	default:
 		return nil
 	}

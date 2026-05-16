@@ -190,6 +190,7 @@ func (m *Manager) CreateEntity(
 		OldTrigger: nil,
 		Result:     autoResult,
 		Scripts:    m.deps.ScriptRunner,
+		Mutator:    m, // Manager satisfies autocascade.Mutator structurally
 	})
 	if cascadeErr != nil {
 		return nil, fmt.Errorf("cascade: %w", cascadeErr)
@@ -272,6 +273,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		OldTrigger: oldEntity,
 		Result:     autoResult,
 		Scripts:    m.deps.ScriptRunner,
+		Mutator:    m, // Manager satisfies autocascade.Mutator structurally
 	})
 	if cascadeErr != nil {
 		return nil, fmt.Errorf("cascade: %w", cascadeErr)

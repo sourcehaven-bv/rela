@@ -30,6 +30,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -408,13 +409,19 @@ func newWorkspace(
 	// Build the Manager. Workspace's wsEntityManager forwards every
 	// write through it; legacy workspace.createEntity / updateEntity
 	// / deleteEntity methods were deleted in TKT-IU2S.
+	//
+	// ScriptRunner takes only the static lua.ReadDeps here; the
+	// per-cascade mutation handle is supplied via Request.Mutator
+	// inside Manager.runWriteCascade (Manager satisfies
+	// autocascade.Mutator structurally). That split is what removes
+	// the construction cycle that wsScriptRunner used to paper over.
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        ws.store,
 		Meta:         ws.meta,
 		Templater:    ws.Templater(),
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
-		ScriptRunner: &wsScriptRunner{w: ws},
+		ScriptRunner: script.NewLuaScriptRunner(ws.scriptExec, ws.LuaReadDeps()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)

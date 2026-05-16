@@ -6,20 +6,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// ScriptRunner is the per-request abstraction Runner uses to execute
-// scripted automation actions. It is intentionally script-runtime-
-// agnostic: Runner does not know whether the underlying engine is
-// Lua, JavaScript, or something else.
+// ScriptRunner is the abstraction Runner uses to execute scripted
+// automation actions. It is intentionally script-runtime-agnostic:
+// Runner does not know whether the underlying engine is Lua,
+// JavaScript, or something else.
 //
-// The caller of [Runner.Process] constructs a per-call ScriptRunner
-// that has already bound any per-request state the engine needs
-// (capability bundles, entity context, audit metadata, etc.) — Runner
-// just hands it a [ScriptAction] and asks for execution.
-//
-// Lifecycle: ScriptRunner is request-scoped. The caller may freshly
-// construct one per Process call (typical for Lua, where deps need to
-// be assembled per-request) or reuse one across requests (cheap when
-// no per-request state needs binding).
+// Lifecycle: ScriptRunner is built once at wiring time. Each Run call
+// receives the per-cascade [Mutator] from [Request.Mutator] so script
+// actions can call back into the graph (create / update / delete).
+// This per-call mutator is the contract that lets ScriptRunner remain
+// free of the construction-time cycle between EntityManager and the
+// engine's write-deps assembly.
 type ScriptRunner interface {
 	// Run executes the action and returns any error from the
 	// underlying engine. Implementations are responsible for any
@@ -27,7 +24,10 @@ type ScriptRunner interface {
 	// names into Lua script-error envelopes) — Runner appends the
 	// stringified error to Outcome.Errors as-is and continues the
 	// cascade.
-	Run(ctx context.Context, action ScriptAction) error
+	//
+	// mutator is the per-cascade write handle the script may invoke;
+	// engines that don't expose mutation to scripts may ignore it.
+	Run(ctx context.Context, action ScriptAction, mutator Mutator) error
 }
 
 // ScriptAction is one scripted automation action passed to a
@@ -66,6 +66,6 @@ var NopScriptRunner ScriptRunner = nopScriptRunner{}
 
 type nopScriptRunner struct{}
 
-func (nopScriptRunner) Run(_ context.Context, _ ScriptAction) error {
+func (nopScriptRunner) Run(_ context.Context, _ ScriptAction, _ Mutator) error {
 	panic("autocascade.NopScriptRunner: script execution not expected in this context")
 }
