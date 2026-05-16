@@ -38,21 +38,28 @@ func (r *recordingScriptExecutor) ExecuteFile(path string, _ lua.WriteDeps, newE
 	return r.err
 }
 
+// stubMutator is type-correct but never invoked — every method panics
+// so tests that accidentally call Mutator methods fail loudly.
+// LuaScriptRunner only assigns it into lua.WriteDeps.EntityManager;
+// the executor stubs above ignore that field, so no method actually
+// fires in these tests.
+type stubMutator struct{ autocascade.Mutator }
+
 // TestLuaScriptRunner_DispatchByActionShape — Code-only actions go to
 // ExecuteCode; FilePath-only go to ExecuteFile; both-empty actions
 // are a no-op.
 func TestLuaScriptRunner_DispatchByActionShape(t *testing.T) {
 	rec := &recordingScriptExecutor{}
-	r := NewLuaScriptRunner(rec, lua.WriteDeps{})
+	r := NewLuaScriptRunner(rec, lua.ReadDeps{})
 
 	trigger := entity.New("REQ-001", "requirement")
-	if err := r.Run(context.Background(), autocascade.ScriptAction{Code: "print('hi')", NewEntity: trigger}); err != nil {
+	if err := r.Run(context.Background(), autocascade.ScriptAction{Code: "print('hi')", NewEntity: trigger}, stubMutator{}); err != nil {
 		t.Fatalf("Run(Code): %v", err)
 	}
-	if err := r.Run(context.Background(), autocascade.ScriptAction{FilePath: "foo.lua", NewEntity: trigger}); err != nil {
+	if err := r.Run(context.Background(), autocascade.ScriptAction{FilePath: "foo.lua", NewEntity: trigger}, stubMutator{}); err != nil {
 		t.Fatalf("Run(FilePath): %v", err)
 	}
-	if err := r.Run(context.Background(), autocascade.ScriptAction{NewEntity: trigger}); err != nil {
+	if err := r.Run(context.Background(), autocascade.ScriptAction{NewEntity: trigger}, stubMutator{}); err != nil {
 		t.Fatalf("Run(empty): %v", err)
 	}
 
@@ -82,12 +89,12 @@ func TestLuaScriptRunner_PatchesScriptErrorPath(t *testing.T) {
 			LuaMessage: "boom",
 		},
 	}
-	r := NewLuaScriptRunner(exec, lua.WriteDeps{})
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code: "error('boom')",
 		Name: "my-automation",
-	})
+	}, stubMutator{})
 	if err == nil {
 		t.Fatal("expected error from Run, got nil")
 	}
@@ -114,12 +121,12 @@ func TestLuaScriptRunner_FilePathErrorNotPatched(t *testing.T) {
 			LuaMessage: "boom",
 		},
 	}
-	r := NewLuaScriptRunner(exec, lua.WriteDeps{})
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		FilePath: "foo.lua",
 		Name:     "my-automation",
-	})
+	}, stubMutator{})
 	if err == nil {
 		t.Fatal("expected error from Run, got nil")
 	}
@@ -136,7 +143,29 @@ func TestLuaScriptRunner_FilePathErrorNotPatched(t *testing.T) {
 // when given a nil executor, so callers can pass the result to
 // autocascade.Request.Scripts safely.
 func TestLuaScriptRunner_NilOnNilExec(t *testing.T) {
-	if got := NewLuaScriptRunner(nil, lua.WriteDeps{}); got != nil {
+	if got := NewLuaScriptRunner(nil, lua.ReadDeps{}); got != nil {
 		t.Errorf("expected nil ScriptRunner for nil executor, got %#v", got)
+	}
+}
+
+// TestLuaScriptRunner_RejectsNilMutator — Run with a non-empty action
+// and nil mutator returns a typed error rather than letting the
+// executor nil-deref on the first rela.create_entity call.
+func TestLuaScriptRunner_RejectsNilMutator(t *testing.T) {
+	r := NewLuaScriptRunner(&recordingScriptExecutor{}, lua.ReadDeps{})
+	err := r.Run(context.Background(),
+		autocascade.ScriptAction{Code: "print('hi')"}, nil)
+	if err == nil {
+		t.Fatal("expected error for nil mutator, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutator is required") {
+		t.Errorf("err = %v, want mutator-required message", err)
+	}
+
+	// Empty action with nil mutator is still a no-op (no executor
+	// dispatch happens, so no mutator is needed).
+	if err := r.Run(context.Background(),
+		autocascade.ScriptAction{}, nil); err != nil {
+		t.Errorf("empty action: expected no-op, got %v", err)
 	}
 }

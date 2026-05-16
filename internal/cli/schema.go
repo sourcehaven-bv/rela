@@ -59,10 +59,11 @@ Examples:
   rela schema --graphviz --constraints  # DOT with cardinality
   rela schema --graphviz --exclude referentie  # hide an entity type`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliReadFromContext(cmd.Context())
 		if schemaGraphviz {
-			return runSchemaGraphviz()
+			return runSchemaGraphviz(svc.Meta())
 		}
-		return runSchemaOverview()
+		return runSchemaOverview(svc)
 	},
 }
 
@@ -70,7 +71,7 @@ var schemaOverviewCmd = &cobra.Command{
 	Use:   "overview",
 	Short: "Show metamodel overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSchemaOverview()
+		return runSchemaOverview(cliReadFromContext(cmd.Context()))
 	},
 }
 
@@ -78,7 +79,7 @@ var schemaEntitiesCmd = &cobra.Command{
 	Use:   "entities",
 	Short: "List all entity types",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSchemaEntities()
+		return runSchemaEntities(cliReadFromContext(cmd.Context()).Meta())
 	},
 }
 
@@ -86,7 +87,7 @@ var schemaRelationsCmd = &cobra.Command{
 	Use:   "relations",
 	Short: "List all relation types",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSchemaRelations()
+		return runSchemaRelations(cliReadFromContext(cmd.Context()).Meta())
 	},
 }
 
@@ -94,7 +95,7 @@ var schemaTypesCmd = &cobra.Command{
 	Use:   "types",
 	Short: "List custom types defined in the metamodel",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSchemaTypes()
+		return runSchemaTypes(cliReadFromContext(cmd.Context()).Meta())
 	},
 }
 
@@ -103,7 +104,7 @@ var schemaEntityCmd = &cobra.Command{
 	Short: "Show details for a specific entity type",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSchemaEntity(args[0])
+		return runSchemaEntity(cliReadFromContext(cmd.Context()).Meta(), args[0])
 	},
 }
 
@@ -112,11 +113,12 @@ var schemaRelationCmd = &cobra.Command{
 	Short: "Show details for a specific relation type",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSchemaRelation(args[0])
+		return runSchemaRelation(cliReadFromContext(cmd.Context()).Meta(), args[0])
 	},
 }
 
-func runSchemaOverview() error {
+func runSchemaOverview(svc cliRead) error {
+	meta := svc.Meta()
 	if out.Format == "json" {
 		return out.WriteSchemaOverview(meta)
 	}
@@ -137,17 +139,15 @@ func runSchemaOverview() error {
 	// Entity types with counts
 	entityNames := getSortedEntityNames(meta)
 
-	// Get entity counts from workspace if available
+	// Get entity counts from store
 	entityCounts := make(map[string]int)
 	maxCount := 0
-	if ws != nil {
-		st := ws.Store()
-		for _, name := range entityNames {
-			count, _ := st.CountEntities(context.Background(), store.EntityQuery{Type: name})
-			entityCounts[name] = count
-			if count > maxCount {
-				maxCount = count
-			}
+	st := svc.Store()
+	for _, name := range entityNames {
+		count, _ := st.CountEntities(context.Background(), store.EntityQuery{Type: name})
+		entityCounts[name] = count
+		if count > maxCount {
+			maxCount = count
 		}
 	}
 
@@ -185,7 +185,7 @@ func runSchemaOverview() error {
 	return nil
 }
 
-func runSchemaEntities() error {
+func runSchemaEntities(meta *metamodel.Metamodel) error {
 	if out.Format == "json" {
 		return out.WriteSchemaEntities(meta)
 	}
@@ -223,7 +223,7 @@ func runSchemaEntities() error {
 	return nil
 }
 
-func runSchemaRelations() error {
+func runSchemaRelations(meta *metamodel.Metamodel) error {
 	if out.Format == "json" {
 		return out.WriteSchemaRelations(meta)
 	}
@@ -279,7 +279,7 @@ func runSchemaRelations() error {
 	return nil
 }
 
-func runSchemaTypes() error {
+func runSchemaTypes(meta *metamodel.Metamodel) error {
 	if out.Format == "json" {
 		return out.WriteSchemaTypes(meta)
 	}
@@ -307,7 +307,7 @@ func runSchemaTypes() error {
 	return nil
 }
 
-func runSchemaEntity(name string) error {
+func runSchemaEntity(meta *metamodel.Metamodel, name string) error {
 	// Resolve alias
 	resolved := meta.ResolveAlias(name)
 	def, ok := meta.GetEntityDef(resolved)
@@ -326,10 +326,10 @@ func runSchemaEntity(name string) error {
 	writeEntityBasicInfo(resolved, def)
 	out.WriteMessage("")
 	out.WriteMessage("Properties:")
-	writeEntityProperties(def)
+	writeEntityProperties(meta, def)
 	out.WriteMessage("")
 	out.WriteMessage("Relations:")
-	writeEntityRelations(resolved)
+	writeEntityRelations(meta, resolved)
 
 	return nil
 }
@@ -357,7 +357,7 @@ func writeEntityBasicInfo(resolved string, def *metamodel.EntityDef) {
 	}
 }
 
-func writeEntityProperties(def *metamodel.EntityDef) {
+func writeEntityProperties(meta *metamodel.Metamodel, def *metamodel.EntityDef) {
 	// Sort properties by name, with required properties first
 	propNames := make([]string, 0, len(def.Properties))
 	for propName := range def.Properties {
@@ -374,11 +374,11 @@ func writeEntityProperties(def *metamodel.EntityDef) {
 
 	for _, propName := range propNames {
 		prop := def.Properties[propName]
-		writePropertyDetail(propName, prop)
+		writePropertyDetail(meta, propName, prop)
 	}
 }
 
-func writePropertyDetail(propName string, prop metamodel.PropertyDef) {
+func writePropertyDetail(meta *metamodel.Metamodel, propName string, prop metamodel.PropertyDef) {
 	required := ""
 	if prop.Required {
 		required = " (required)"
@@ -407,7 +407,7 @@ func writePropertyDetail(propName string, prop metamodel.PropertyDef) {
 	}
 }
 
-func writeEntityRelations(resolved string) {
+func writeEntityRelations(meta *metamodel.Metamodel, resolved string) {
 	hasRelations := false
 	for relName, relDef := range meta.Relations {
 		isSource := sliceContains(relDef.From, resolved)
@@ -432,7 +432,7 @@ func writeEntityRelations(resolved string) {
 	}
 }
 
-func runSchemaRelation(name string) error {
+func runSchemaRelation(meta *metamodel.Metamodel, name string) error {
 	def, ok := meta.GetRelationDef(name)
 	if !ok {
 		return fmt.Errorf("unknown relation type: %s", name)
@@ -580,7 +580,7 @@ type relPair struct {
 	srcIdx int // color index of the source in the entity palette
 }
 
-func runSchemaGraphviz() error {
+func runSchemaGraphviz(meta *metamodel.Metamodel) error {
 	entityNames, relPairs := prepareSchemaGraph(meta)
 	classifyRenderings(entityNames, relPairs)
 
@@ -649,7 +649,7 @@ func runSchemaGraphviz() error {
 
 	if len(legendEntries) > 0 {
 		sb.WriteString("\n")
-		sb.WriteString(renderLegendNode(legendEntries, entityNames))
+		sb.WriteString(renderLegendNode(meta, legendEntries, entityNames))
 	}
 
 	sb.WriteString("}\n")
@@ -823,7 +823,7 @@ func visibleEntities(entityNames []string, pairs []relPair) map[string]bool {
 
 // renderLegendNode emits the __legend plaintext node containing an HTML-like
 // TABLE with one two-row block per legend entry.
-func renderLegendNode(entries []relPair, entityNames []string) string {
+func renderLegendNode(meta *metamodel.Metamodel, entries []relPair, entityNames []string) string {
 	total := len(entityNames)
 	labelOf := make(map[string]string, total)
 	for _, name := range entityNames {

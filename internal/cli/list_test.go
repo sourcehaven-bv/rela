@@ -6,7 +6,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -17,16 +16,8 @@ import (
 // here.
 
 func setupListTestEnv() {
-	meta = nil // Will be set by individual tests
-	ws = nil   // Will be set by individual tests after meta is set
+	testCtx = nil //nolint:fatcontext // reset between tests; individual tests populate via applySeeder
 	out = output.New(output.FormatTable)
-	projectCtx = &project.Context{
-		Root:          "/tmp/test-project",
-		EntitiesDir:   "/tmp/test-project/entities",
-		RelationsDir:  "/tmp/test-project/relations",
-		CacheDir:      "/tmp/test-project/.rela",
-		MetamodelPath: "/tmp/test-project/metamodel.yaml",
-	}
 }
 
 // setupWorkspaceFromMeta wires ws/g to an empty store-backed workspace
@@ -40,8 +31,7 @@ func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
 func TestResolveEntityTypeWithAlias(t *testing.T) {
 	setupListTestEnv()
 
-	var err error
-	meta, err = metamodel.Parse([]byte(testutil.AliasMetamodelYAML()))
+	meta, err := metamodel.Parse([]byte(testutil.AliasMetamodelYAML()))
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
@@ -63,7 +53,7 @@ func TestResolveEntityTypeWithAlias(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved, _, err := resolveEntityType(tt.input)
+			resolved, _, err := resolveEntityType(meta, tt.input)
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("resolveEntityType(%q) expected error, got nil", tt.input)
@@ -86,7 +76,7 @@ func TestResolveEntityTypeWithAlias(t *testing.T) {
 func TestListTypeParsingEdgeCases(t *testing.T) {
 	setupListTestEnv()
 
-	meta = testutil.NewMetamodel().
+	meta := testutil.NewMetamodel().
 		DefineEntity("requirement").
 		Label("Requirement").
 		IDPrefix("REQ-").
@@ -120,7 +110,7 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved, _, err := resolveEntityType(tt.input)
+			resolved, _, err := resolveEntityType(meta, tt.input)
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("resolveEntityType(%q) expected error, got nil", tt.input)
@@ -140,10 +130,10 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 
 func TestListCommandWithUnknownType(t *testing.T) {
 	setupListTestEnv()
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	applySeeder(newStoreSeeder(meta))
 
-	_, _, err := resolveEntityType("nonexistent")
+	_, _, err := resolveEntityType(meta, "nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}

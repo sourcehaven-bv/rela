@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,14 +10,12 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // coverage-ignore: scheduler command - long-running process
 var schedulerCmd = &cobra.Command{
-	Use:         "scheduler",
-	Short:       "Run scheduled Lua tasks",
-	Annotations: map[string]string{skipProjectDiscovery: "true"},
+	Use:   "scheduler",
+	Short: "Run scheduled Lua tasks",
 	Long: `Starts a long-running process that executes Lua scripts on recurring schedules.
 
 Schedules are defined in schedules.yaml in the project root:
@@ -54,19 +51,9 @@ Graceful shutdown via Ctrl+C / SIGTERM.`,
 }
 
 func runScheduler(cmd *cobra.Command) error {
-	startDir := projectPath
-	if startDir == "" {
-		startDir = os.Getenv("RELA_PROJECT")
-	}
+	svc := cliWriteFromContext(cmd.Context())
 
-	engine := script.NewEngine()
-
-	schedWs, err := workspace.Discover(startDir, engine)
-	if err != nil {
-		return errors.New("no project found: run 'rela init' to create one")
-	}
-
-	data, err := schedWs.Config().Load(context.Background(), scheduler.ConfigFile)
+	data, err := svc.Config().Load(context.Background(), scheduler.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)
 	}
@@ -80,7 +67,9 @@ func runScheduler(cmd *cobra.Command) error {
 		Level: slog.LevelInfo,
 	}))
 
-	s := scheduler.New(cfg, engine, schedWs, logger)
+	// cliWrite satisfies scheduler.WorkspaceProvider structurally
+	// (Paths / Config / State / LuaWriteDeps).
+	s := scheduler.New(cfg, script.NewEngine(), svc, logger)
 	return s.Run(cmd.Context())
 }
 

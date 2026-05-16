@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
 var (
@@ -49,9 +48,10 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		typeName := args[0]
+		svc := cliWriteFromContext(cmd.Context())
 
 		// Resolve type (handle aliases)
-		resolvedType, entityDef, err := resolveEntityType(typeName)
+		resolvedType, entityDef, err := resolveEntityType(svc.Meta(), typeName)
 		if err != nil {
 			return err
 		}
@@ -89,13 +89,13 @@ Examples:
 			return err
 		}
 
-		result, err := ws.EntityManager().CreateEntity(context.Background(),
+		result, err := svc.EntityManager().CreateEntity(context.Background(),
 			&entitypkg.Entity{
 				Type:       resolvedType,
 				Properties: props,
 				Content:    bodyContent,
 			},
-			entitymanager.CreateOptions{ID: createID},
+			entitypkg.CreateOptions{ID: createID},
 		)
 		if err != nil {
 			return err
@@ -120,7 +120,7 @@ Examples:
 
 		out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 		if outputFormat == "json" {
-			if e, err := ws.Store().GetEntity(context.Background(), entity.ID); err == nil {
+			if e, err := svc.Store().GetEntity(context.Background(), entity.ID); err == nil {
 				_ = out.WriteEntities([]*entitypkg.Entity{e})
 			}
 		}

@@ -406,7 +406,7 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		Properties: req.Properties,
 		Content:    req.Content,
 	}
-	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entitymanager.CreateOptions{ID: req.ID, Prefix: req.Prefix})
+	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entity.CreateOptions{ID: req.ID, Prefix: req.Prefix})
 	if err != nil {
 		var valErr *entitymanager.ValidationError
 		if errors.As(err, &valErr) {
@@ -523,7 +523,7 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	relation, err := a.entityManager.CreateRelation(r.Context(), req.From, req.Type, req.To, entitymanager.RelationOptions{
+	relation, err := a.entityManager.CreateRelation(r.Context(), req.From, req.Type, req.To, entity.RelationOptions{
 		Properties: req.Properties,
 	})
 	if err != nil {

@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // entitymanagerWarning is an alias to keep the test signatures short.
-type entitymanagerWarning = entitymanager.Warning
+type entitymanagerWarning = entity.Warning
 
 // softeningTestMetamodelYAML defines an entity type with property
 // classes that exercise every soft-condition warning code:

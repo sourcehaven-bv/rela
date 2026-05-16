@@ -50,6 +50,9 @@ Examples:
   rela template init --force                 # Overwrite existing templates
   rela template init requirement --variant epic  # Generate requirement--epic.md variant`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliReadFromContext(cmd.Context())
+		meta := svc.Meta()
+
 		// Collect types to generate
 		var entityTypes, relationTypes []string
 
@@ -88,12 +91,12 @@ Examples:
 
 		var createdCount, skippedCount int
 
-		tmpl := ws.Templater()
+		tmpl := svc.Templater()
 		ctx := context.Background()
 
 		// Generate entity templates
 		for _, entityType := range entityTypes {
-			created, err := tmpl.GenerateEntity(ctx, ws.Meta(), entityType, templateVariant, templateForce)
+			created, err := tmpl.GenerateEntity(ctx, meta, entityType, templateVariant, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", entityType, err)
 			}
@@ -114,7 +117,7 @@ Examples:
 
 		// Generate relation templates
 		for _, relationType := range relationTypes {
-			created, err := tmpl.GenerateRelation(ctx, ws.Meta(), relationType, templateForce)
+			created, err := tmpl.GenerateRelation(ctx, meta, relationType, templateForce)
 			if err != nil {
 				return fmt.Errorf("failed to generate template for %s: %w", relationType, err)
 			}

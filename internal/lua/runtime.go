@@ -24,7 +24,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -1293,7 +1292,7 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		Content:    content,
 	}
 	result, err := r.deps.EntityManager.CreateEntity(
-		context.Background(), newE, entitymanager.CreateOptions{ID: customID})
+		context.Background(), newE, entity.CreateOptions{ID: customID})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -1360,7 +1359,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	return 2
 }
 
-// WarningsToTable converts a slice of entitymanager.Warning to a Lua
+// WarningsToTable converts a slice of entity.Warning to a Lua
 // table of {code, path, detail} sub-tables. Returns lua.LNil (NOT
 // an empty table) when the slice is empty so scripts can use the
 // `for _, w in ipairs(warnings or {})` pattern idiomatically and
@@ -1370,7 +1369,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 // rela.create_entity, following string.gsub's "(value, count)"
 // pattern — both returns can be non-nil simultaneously, and the
 // second is additional success information, NOT an error indicator.
-func WarningsToTable(ls *lua.LState, warnings []entitymanager.Warning) lua.LValue {
+func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 	if len(warnings) == 0 {
 		return lua.LNil
 	}
@@ -1416,7 +1415,7 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 	}
 
 	rel, err := r.deps.EntityManager.CreateRelation(
-		context.Background(), from, relType, to, entitymanager.RelationOptions{})
+		context.Background(), from, relType, to, entity.RelationOptions{})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0

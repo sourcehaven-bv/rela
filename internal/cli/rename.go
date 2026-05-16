@@ -11,7 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -46,7 +47,8 @@ Examples:
   rela rename entity requirement feature --force`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runRenameEntity(args[0], args[1])
+		svc := cliAnalyzeFromContext(cmd.Context())
+		return runRenameEntity(svc, args[0], args[1])
 	},
 }
 
@@ -65,8 +67,8 @@ type renameEntityInfo struct {
 }
 
 // coverage-ignore: interactive CLI - tested via integration tests
-func runRenameEntity(oldType, newType string) error {
-	info, err := resolveRenameEntity(oldType, newType)
+func runRenameEntity(svc cliAnalyze, oldType, newType string) error {
+	info, err := resolveRenameEntity(svc, oldType, newType)
 	if err != nil {
 		return err
 	}
@@ -84,10 +86,11 @@ func runRenameEntity(oldType, newType string) error {
 		}
 	}
 
-	return applyRenameEntity(info)
+	return applyRenameEntity(svc, info)
 }
 
-func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
+func resolveRenameEntity(svc cliAnalyze, oldType, newType string) (*renameEntityInfo, error) {
+	meta := svc.Meta()
 	resolvedOld := meta.ResolveAlias(oldType)
 	oldDef, ok := meta.GetEntityDef(resolvedOld)
 	if !ok {
@@ -108,26 +111,27 @@ func resolveRenameEntity(oldType, newType string) (*renameEntityInfo, error) {
 		newPlural = newType + "s"
 	}
 
-	oldTemplatePath := projectCtx.EntityTemplatePath(resolvedOld)
-	_, statErr := ws.FS().Stat(oldTemplatePath)
+	paths := svc.Paths()
+	oldTemplatePath := paths.EntityTemplatePath(resolvedOld)
+	_, statErr := svc.FS().Stat(oldTemplatePath)
 
-	entityCount, _ := ws.Store().CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
+	entityCount, _ := svc.Store().CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
 
 	return &renameEntityInfo{
 		resolvedOld:     resolvedOld,
 		newType:         newType,
 		oldPlural:       oldPlural,
 		newPlural:       newPlural,
-		oldDir:          projectCtx.EntityTypeDirWithPlural(oldPlural),
-		newDir:          projectCtx.EntityTypeDirWithPlural(newPlural),
+		oldDir:          paths.EntityTypeDirWithPlural(oldPlural),
+		newDir:          paths.EntityTypeDirWithPlural(newPlural),
 		entityCount:     entityCount,
-		relCount:        countAffectedRelations(resolvedOld),
+		relCount:        countAffectedRelations(meta, resolvedOld),
 		oldTemplatePath: oldTemplatePath,
 		hasTemplate:     statErr == nil,
 	}, nil
 }
 
-func countAffectedRelations(entityType string) int {
+func countAffectedRelations(meta *metamodel.Metamodel, entityType string) int {
 	count := 0
 	for _, relName := range meta.RelationTypes() {
 		relDef, _ := meta.GetRelationDef(relName)
@@ -168,8 +172,8 @@ func confirmRename() (bool, error) {
 	return response == "y" || response == "yes", nil
 }
 
-func applyRenameEntity(info *renameEntityInfo) error {
-	count, err := ws.RenameEntityType(info.resolvedOld, info.newType, info.newPlural)
+func applyRenameEntity(svc cliAnalyze, info *renameEntityInfo) error {
+	count, err := svc.RenameEntityType(info.resolvedOld, info.newType, info.newPlural)
 	if err != nil {
 		return err
 	}
@@ -215,13 +219,14 @@ Examples:
   rela rename id REQ-001 REQ-100 --dry-run`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runRenameID(args[0], args[1])
+		svc := cliWriteFromContext(cmd.Context())
+		return runRenameID(svc, args[0], args[1])
 	},
 }
 
-func runRenameID(oldID, newID string) error {
-	result, err := ws.EntityManager().RenameEntity(
-		context.Background(), oldID, newID, entitymanager.RenameOptions{DryRun: renameIDDryRun})
+func runRenameID(svc cliWrite, oldID, newID string) error {
+	result, err := svc.EntityManager().RenameEntity(
+		context.Background(), oldID, newID, entity.RenameOptions{DryRun: renameIDDryRun})
 	if err != nil {
 		return err
 	}

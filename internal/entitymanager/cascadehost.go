@@ -39,7 +39,7 @@ func (h *cascadeHost) CreateEntity(
 	// Cascade-driven creates discard warnings — the autocascade.Host
 	// contract returns only (*entity.Entity, error). The Runner doesn't
 	// propagate per-step warnings; they'd be merged into the trigger's
-	// CreateResult.Warnings if we extended Outcome, but that's a
+	// entity.CreateResult.Warnings if we extended Outcome, but that's a
 	// separate change.
 	e, _, err := createCore(context.Background(), h.deps, entityType, createCoreOpts{
 		ID:              opts.ID,

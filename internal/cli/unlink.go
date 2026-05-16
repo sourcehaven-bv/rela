@@ -21,13 +21,14 @@ Examples:
 		relationType := args[1]
 		toID := args[2]
 		ctx := context.Background()
+		svc := cliWriteFromContext(cmd.Context())
 
 		// Check if relation exists (for better error message)
-		if _, err := ws.Store().GetRelation(ctx, fromID, relationType, toID); err != nil {
+		if _, err := svc.Store().GetRelation(ctx, fromID, relationType, toID); err != nil {
 			return fmt.Errorf("relation not found: %s --%s--> %s", fromID, relationType, toID)
 		}
 
-		if err := ws.EntityManager().DeleteRelation(ctx, fromID, relationType, toID); err != nil {
+		if err := svc.EntityManager().DeleteRelation(ctx, fromID, relationType, toID); err != nil {
 			return err
 		}
 

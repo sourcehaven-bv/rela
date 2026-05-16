@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -17,6 +18,17 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
+
+// metamodelAccessor is the narrow consumer-side interface
+// validate.go needs from a metamodel: enough to check that a --check
+// filter names a real entity type or validation rule before the
+// analysis service runs. Defined at the call site per CLAUDE.md
+// "interfaces at the call site." *metamodel.Metamodel satisfies it
+// structurally.
+type metamodelAccessor interface {
+	HasEntityType(entityType string) bool
+	HasValidationRule(ruleName string) bool
+}
 
 // validateChecks holds the --check flag values.
 var validateChecks []string
@@ -120,9 +132,21 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize workspace: %w", err)
 	}
+	checkAnalysis, err := analysis.New(analysis.Deps{
+		Store:       checkWs.Store(),
+		Meta:        checkWs.Meta(),
+		Tracer:      checkWs.Tracer(),
+		LuaReadDeps: checkWs.LuaReadDeps(),
+		LuaCache:    checkWs.LuaCache(),
+		FS:          checkWs.FS(),
+		Paths:       checkWs.Paths(),
+	})
+	if err != nil {
+		return fmt.Errorf("initialize analysis service: %w", err)
+	}
 
 	// Run requested checks
-	checkErrors, err := runValidationChecks(cmd.Context(), checkWs, out, result.Metamodel)
+	checkErrors, err := runValidationChecks(cmd.Context(), checkWs, checkAnalysis, out, result.Metamodel)
 	if err != nil {
 		return err
 	}
@@ -145,8 +169,9 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 func runValidationChecks(
 	ctx context.Context,
 	checkWs *workspace.Workspace,
+	checkAnalysis *analysis.Service,
 	checkOut *output.Writer,
-	meta workspace.MetamodelAccessor,
+	meta metamodelAccessor,
 ) (bool, error) {
 	// Parse check flags
 	checks, err := parseChecks(validateChecks, meta)
@@ -154,11 +179,11 @@ func runValidationChecks(
 		return false, err
 	}
 
-	opts := workspace.AnalyzeOptions{}
+	opts := analysis.Options{}
 	hasErrors := false
 
 	if checks.cardinality {
-		if runCardinalityCheck(checkWs, checkOut, opts) {
+		if runCardinalityCheck(checkAnalysis, checkOut, opts) {
 			hasErrors = true
 		}
 	}
@@ -170,7 +195,7 @@ func runValidationChecks(
 	}
 
 	if checks.validations {
-		if runValidationsCheck(ctx, checkWs, checkOut, opts, checks.validationFilters) {
+		if runValidationsCheck(ctx, checkAnalysis, checkOut, opts, checks.validationFilters) {
 			hasErrors = true
 		}
 	}
@@ -179,11 +204,11 @@ func runValidationChecks(
 }
 
 // runCardinalityCheck runs cardinality validation. Returns true if errors found.
-func runCardinalityCheck(checkWs *workspace.Workspace, checkOut *output.Writer, opts workspace.AnalyzeOptions) bool {
+func runCardinalityCheck(checkAnalysis *analysis.Service, checkOut *output.Writer, opts analysis.Options) bool {
 	if !quiet {
 		fmt.Println("\nChecking cardinality constraints...")
 	}
-	violations := checkWs.CheckCardinality(opts)
+	violations := checkAnalysis.CheckCardinality(opts)
 	if len(violations) == 0 {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All cardinality constraints satisfied")
@@ -213,7 +238,7 @@ func runCardinalityCheck(checkWs *workspace.Workspace, checkOut *output.Writer, 
 }
 
 // runPropertiesCheck runs property validation. Returns true if errors found.
-func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, opts workspace.AnalyzeOptions) bool {
+func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, opts analysis.Options) bool {
 	if !quiet {
 		fmt.Println("\nValidating entity properties...")
 	}
@@ -273,24 +298,24 @@ func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, o
 // runValidationsCheck runs custom validation rules. Returns true if errors found.
 func runValidationsCheck(
 	ctx context.Context,
-	checkWs *workspace.Workspace,
+	checkAnalysis *analysis.Service,
 	checkOut *output.Writer,
-	opts workspace.AnalyzeOptions,
-	filters []workspace.ValidationFilter,
+	opts analysis.Options,
+	filters []analysis.ValidationFilter,
 ) bool {
 	if !quiet {
 		fmt.Println("\nRunning custom validations...")
 	}
 
-	var result workspace.ValidationResult
+	var result analysis.ValidationResult
 	if len(filters) > 0 {
-		result = checkWs.RunValidationsFiltered(ctx, opts, filters)
+		result = checkAnalysis.RunValidationsFiltered(ctx, opts, filters)
 	} else {
-		result = checkWs.RunValidations(ctx, opts)
+		result = checkAnalysis.RunValidations(ctx, opts)
 	}
 	violations := result.Violations
 
-	errorCount, warningCount := workspace.CountValidationsBySeverity(violations)
+	errorCount, warningCount := analysis.CountValidationsBySeverity(violations)
 	if len(violations) == 0 && !result.HasErrors() {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All validation rules passed")
@@ -325,7 +350,7 @@ func runValidationsCheck(
 func renderValidationErrorsTo(
 	checkOut *output.Writer,
 	scriptErrors []*lua.ScriptError,
-	loadErrors []workspace.ValidationLoadError,
+	loadErrors []analysis.ValidationLoadError,
 ) {
 	if len(scriptErrors) > 0 {
 		checkOut.WriteError("Validation script errors (%d):", len(scriptErrors))
@@ -344,11 +369,11 @@ func renderValidationErrorsTo(
 // outputValidationViolations prints validation violations grouped by rule.
 func outputValidationViolations(
 	checkOut *output.Writer,
-	violations []workspace.ValidationViolation,
+	violations []analysis.ValidationViolation,
 	errorCount, warningCount int,
 ) {
 	// Group violations by rule
-	ruleViolations := make(map[string][]workspace.ValidationViolation)
+	ruleViolations := make(map[string][]analysis.ValidationViolation)
 	ruleDescriptions := make(map[string]string)
 	ruleSeverities := make(map[string]string)
 	for _, v := range violations {
@@ -388,11 +413,11 @@ type parsedChecks struct {
 	cardinality       bool
 	properties        bool
 	validations       bool
-	validationFilters []workspace.ValidationFilter
+	validationFilters []analysis.ValidationFilter
 }
 
 // parseChecks parses and validates --check flag values.
-func parseChecks(checks []string, meta workspace.MetamodelAccessor) (*parsedChecks, error) {
+func parseChecks(checks []string, meta metamodelAccessor) (*parsedChecks, error) {
 	result := &parsedChecks{}
 
 	for _, check := range checks {
@@ -433,25 +458,25 @@ func parseChecks(checks []string, meta workspace.MetamodelAccessor) (*parsedChec
 }
 
 // parseValidationFilter parses a validation filter string.
-func parseValidationFilter(filterStr string, meta workspace.MetamodelAccessor) (workspace.ValidationFilter, error) {
+func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.ValidationFilter, error) {
 	if strings.HasPrefix(filterStr, "@") {
 		// Entity type filter
 		entityType := strings.TrimPrefix(filterStr, "@")
 		if entityType == "" {
-			return workspace.ValidationFilter{}, stderrors.New("empty entity type in validation filter")
+			return analysis.ValidationFilter{}, stderrors.New("empty entity type in validation filter")
 		}
 		// Validate entity type exists
 		if !meta.HasEntityType(entityType) {
-			return workspace.ValidationFilter{}, fmt.Errorf("unknown entity type in validation filter: %s", entityType)
+			return analysis.ValidationFilter{}, fmt.Errorf("unknown entity type in validation filter: %s", entityType)
 		}
-		return workspace.ValidationFilter{EntityType: entityType}, nil
+		return analysis.ValidationFilter{EntityType: entityType}, nil
 	}
 
 	// Rule name filter - validate it exists
 	if !meta.HasValidationRule(filterStr) {
-		return workspace.ValidationFilter{}, fmt.Errorf("unknown validation rule: %s", filterStr)
+		return analysis.ValidationFilter{}, fmt.Errorf("unknown validation rule: %s", filterStr)
 	}
-	return workspace.ValidationFilter{RuleName: filterStr}, nil
+	return analysis.ValidationFilter{RuleName: filterStr}, nil
 }
 
 // reportDataEntryValidation reports data-entry.yaml validation results.

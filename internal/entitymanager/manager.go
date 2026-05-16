@@ -59,6 +59,16 @@ type Manager struct {
 	deps Deps
 }
 
+// Compile-time assertions: Manager must satisfy both the public
+// EntityManager contract and the autocascade.Mutator surface (the
+// per-cascade write handle scripted actions receive). A drift in
+// either interface surfaces at this type, not at the call sites that
+// pass Manager into Request.Mutator or lua.WriteDeps.EntityManager.
+var (
+	_ EntityManager       = (*Manager)(nil)
+	_ autocascade.Mutator = (*Manager)(nil)
+)
+
 // Deps is the constructor input for [New]. Using a struct keeps the
 // constructor signature stable as new collaborators land (audit,
 // principal, policy in subsequent tickets).
@@ -89,8 +99,10 @@ type Deps struct {
 	// cascade. May be nil if no scripted automations are configured;
 	// Runner records each scripted action as a per-action error when
 	// no ScriptRunner is supplied. Wiring sites that need
-	// transport-specific deps (e.g. Lua) supply a per-request adapter
-	// here (see internal/workspace/luascriptrunner.go).
+	// transport-specific deps (e.g. Lua) construct one with the
+	// static read deps at this layer; the per-cascade mutator is
+	// supplied by Manager via [autocascade.Request.Mutator] (see
+	// internal/script/luascriptrunner.go for the Lua adapter).
 	ScriptRunner autocascade.ScriptRunner
 }
 
@@ -125,13 +137,15 @@ func New(d Deps) (*Manager, error) {
 //     the first is the validated bare entity, the second carries any
 //     automation-set properties; pinned by manager_test.go).
 //  3. Dispatch cascade via Cascade.Process; merge outcome into the
-//     CreateResult.
+//     entity.CreateResult.
 //
 // **Caller-entity mutation.** The supplied `*entity.Entity` is used as
 // a property/content carrier and not retained — the freshly-built
-// entity is returned via [CreateResult.Entity]. Callers should consume
+// entity is returned via [entity.CreateResult.Entity]. Callers should consume
 // the returned entity, not the one they passed in.
-func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts CreateOptions) (*CreateResult, error) {
+func (m *Manager) CreateEntity(
+	ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
+) (*entity.CreateResult, error) {
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
@@ -155,7 +169,7 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 		return nil, err
 	}
 
-	result := &CreateResult{Entity: created, Warnings: warnings}
+	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {
@@ -188,6 +202,7 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 		OldTrigger: nil,
 		Result:     autoResult,
 		Scripts:    m.deps.ScriptRunner,
+		Mutator:    m, // Manager satisfies autocascade.Mutator structurally
 	})
 	if cascadeErr != nil {
 		return nil, fmt.Errorf("cascade: %w", cascadeErr)
@@ -212,7 +227,7 @@ func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity, opts Creat
 // **Gate:** if the entity doesn't exist, UpdateEntity returns
 // [ErrEntityNotFound] and never runs the engine. (Preserves
 // pre-refactor workspace behavior.)
-func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateResult, error) {
+func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
 	if e == nil {
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
@@ -231,7 +246,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateRe
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
 	}
 
-	result := &UpdateResult{Entity: e, Warnings: soft}
+	result := &entity.UpdateResult{Entity: e, Warnings: soft}
 
 	runAutomation := m.deps.Automations != nil
 	var autoResult *automation.Result
@@ -270,6 +285,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateRe
 		OldTrigger: oldEntity,
 		Result:     autoResult,
 		Scripts:    m.deps.ScriptRunner,
+		Mutator:    m, // Manager satisfies autocascade.Mutator structurally
 	})
 	if cascadeErr != nil {
 		return nil, fmt.Errorf("cascade: %w", cascadeErr)
@@ -286,7 +302,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*UpdateRe
 // **No automation, no cascade.** When cascade is false and the
 // entity has any incident relations, returns [ErrHasRelations]
 // without deleting anything.
-func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*DeleteResult, error) {
+func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error) {
 	current, err := m.deps.Store.GetEntity(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
@@ -324,7 +340,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*D
 		return nil, fmt.Errorf("delete entity: %w", delErr)
 	}
 
-	return &DeleteResult{
+	return &entity.DeleteResult{
 		DeletedEntities:  []*entity.Entity{current},
 		DeletedRelations: deletedRelations,
 	}, nil
@@ -336,14 +352,16 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*D
 // workspace behavior).
 //
 // If opts.DryRun is true, no changes are persisted.
-func (m *Manager) RenameEntity(ctx context.Context, oldID, newID string, opts RenameOptions) (*RenameResult, error) {
+func (m *Manager) RenameEntity(
+	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
+) (*entity.RenameResult, error) {
 	return renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 }
 
 // CreateRelation creates a new relation, validating endpoints and
 // the relation-type tuple against the metamodel. **No automation.**
 func (m *Manager) CreateRelation(
-	ctx context.Context, from, relType, to string, opts RelationOptions,
+	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	fromEntity, err := m.deps.Store.GetEntity(ctx, from)
 	if err != nil {
@@ -390,7 +408,7 @@ func (m *Manager) CreateRelation(
 // applies MetaUnset, optionally replaces content, and persists.
 // **No automation, no metamodel re-validation.**
 func (m *Manager) UpdateRelation(
-	ctx context.Context, from, relType, to string, opts RelationOptions,
+	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
 	if err != nil {

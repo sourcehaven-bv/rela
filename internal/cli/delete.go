@@ -32,7 +32,8 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entityID := args[0]
 		ctx := context.Background()
-		st := ws.Store()
+		svc := cliWriteFromContext(cmd.Context())
+		st := svc.Store()
 
 		entity, err := st.GetEntity(ctx, entityID)
 		if err != nil {
@@ -70,7 +71,7 @@ Examples:
 			}
 		}
 
-		result, err := ws.EntityManager().DeleteEntity(ctx, entityID, deleteCascade)
+		result, err := svc.EntityManager().DeleteEntity(ctx, entityID, deleteCascade)
 		if err != nil {
 			if errors.Is(err, entitymanager.ErrHasRelations) {
 				return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", entityID)

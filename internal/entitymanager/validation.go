@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -15,11 +16,11 @@ import (
 //
 // See *metamodel.ValidationError.IsSoft for the categorization rule.
 func partitionValidationErrors(errs []*metamodel.ValidationError) (
-	hard []*metamodel.ValidationError, warnings []Warning,
+	hard []*metamodel.ValidationError, warnings []entity.Warning,
 ) {
 	for _, err := range errs {
 		if err.IsSoft() {
-			warnings = append(warnings, Warning{
+			warnings = append(warnings, entity.Warning{
 				Code:   warningCodeFor(err.Type),
 				Path:   propertyPointer(err.Property),
 				Detail: err.Message,

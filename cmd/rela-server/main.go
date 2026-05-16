@@ -71,7 +71,15 @@ func main() {
 	app, err := dataentry.NewApp(
 		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
 		ws.EntityManager(), ws.Searcher(),
-		ws.StartWatching,
+		// Adapter: bridge dataentry.WatchOptions (consumer-side type)
+		// to workspace.WatchOptions (producer-side type).
+		func(opts dataentry.WatchOptions) error {
+			return ws.StartWatching(workspace.WatchOptions{
+				ExtraFiles: opts.ExtraFiles,
+				ExtraDirs:  opts.ExtraDirs,
+				OnChange:   opts.OnChange,
+			})
+		},
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

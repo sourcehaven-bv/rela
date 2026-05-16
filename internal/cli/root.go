@@ -12,11 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/project"
-	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // configureLogging sets the default slog logger based on the global
@@ -48,11 +44,11 @@ var (
 	// annotation skip workspace initialization in PersistentPreRunE.
 	skipProjectDiscovery = "skipProjectDiscovery"
 
-	// Shared state initialized by PersistentPreRunE
-	ws         *workspace.Workspace
-	projectCtx *project.Context // derived from ws.Paths()
-	meta       *metamodel.Metamodel
-	out        *output.Writer
+	// out is the CLI output writer. Configured by PersistentPreRunE
+	// from the --output flag. CLI-specific (not workspace-related);
+	// kept as a package global until output formatting is decoupled
+	// in a separate refactor.
+	out *output.Writer
 )
 
 // rootCmd represents the base command
@@ -81,16 +77,15 @@ and maintain semantic relationships between them.`,
 			startDir = os.Getenv("RELA_PROJECT")
 		}
 
-		// Discover project and initialize workspace
-		var err error
-		ws, err = workspace.Discover(startDir, script.NewEngine())
+		svc, err := newCLIServices(startDir)
 		if err != nil {
 			return wrapDiscoverError(err)
 		}
 
-		// Convenience aliases for read-only commands
-		projectCtx = ws.Paths()
-		meta = ws.Meta()
+		// Stash the focused-services bundles on the cobra context so
+		// subcommand RunE handlers retrieve them via
+		// cliReadFromContext / cliWriteFromContext / cliAnalyzeFromContext.
+		cmd.SetContext(attachServices(cmd.Context(), svc))
 
 		// Set up output writer
 		out = output.New(output.Format(outputFormat))
@@ -155,9 +150,4 @@ func wrapDiscoverError(err error) error {
 		return stderrors.New("no project found: run 'rela init' to create one")
 	}
 	return err
-}
-
-// resolveEntityType delegates to workspace.
-func resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	return ws.ResolveEntityType(typeName)
 }

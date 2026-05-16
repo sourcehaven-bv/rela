@@ -39,12 +39,15 @@ components:
   workspace:        { in: internal/workspace }
 
   # Domain services
+  analysis:         { in: internal/analysis }
+  attachment:       { in: internal/attachment }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
   rename:           { in: internal/rename }
+  renametype:       { in: internal/renametype }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   tracer:           { in: internal/tracer }
@@ -164,7 +167,9 @@ deps:
   cli:
     mayDependOn:
       - ai
+      - analysis
       - app
+      - attachment
       - autocascade
       - automation
       - bleveindex
@@ -180,10 +185,12 @@ deps:
       - output
       - project
       - rename
+      - renametype
       - scheduler
       - schema
       - script
       - search
+      - state
       - storage
       - store
       - templating
@@ -221,7 +228,6 @@ deps:
       - templating
       - tracer
       - validator
-      - workspace
     canUse:
       - goldmark
       - gogit
@@ -294,6 +300,26 @@ deps:
       - validator
 
   # Domain services
+  analysis:
+    mayDependOn:
+      - lua
+      - metamodel
+      - project
+      - schema
+      - storage
+      - store
+      - tracer
+      - validation
+  attachment:
+    mayDependOn:
+      - entitymanager
+      - metamodel
+      - store
+  renametype:
+    mayDependOn:
+      - metamodel
+      - project
+      - storage
   autocascade:
     mayDependOn:
       - automation

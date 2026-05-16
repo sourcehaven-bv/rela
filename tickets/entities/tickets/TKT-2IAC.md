@@ -5,7 +5,7 @@ title: Migrate scheduler to wire its own services (off Workspace)
 kind: refactor
 priority: medium
 effort: s
-status: ready
+status: done
 ---
 
 ## Summary

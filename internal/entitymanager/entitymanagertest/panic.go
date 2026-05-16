@@ -21,32 +21,32 @@ type PanicOnUse struct{}
 var _ entitymanager.EntityManager = PanicOnUse{}
 
 func (PanicOnUse) CreateEntity(context.Context, *entity.Entity,
-	entitymanager.CreateOptions) (*entitymanager.CreateResult, error) {
+	entity.CreateOptions) (*entity.CreateResult, error) {
 	panic("entitymanagertest.PanicOnUse.CreateEntity: not expected in this test")
 }
 
 func (PanicOnUse) UpdateEntity(context.Context,
-	*entity.Entity) (*entitymanager.UpdateResult, error) {
+	*entity.Entity) (*entity.UpdateResult, error) {
 	panic("entitymanagertest.PanicOnUse.UpdateEntity: not expected in this test")
 }
 
 func (PanicOnUse) DeleteEntity(context.Context, string,
-	bool) (*entitymanager.DeleteResult, error) {
+	bool) (*entity.DeleteResult, error) {
 	panic("entitymanagertest.PanicOnUse.DeleteEntity: not expected in this test")
 }
 
 func (PanicOnUse) RenameEntity(context.Context, string, string,
-	entitymanager.RenameOptions) (*entitymanager.RenameResult, error) {
+	entity.RenameOptions) (*entity.RenameResult, error) {
 	panic("entitymanagertest.PanicOnUse.RenameEntity: not expected in this test")
 }
 
 func (PanicOnUse) CreateRelation(context.Context, string, string, string,
-	entitymanager.RelationOptions) (*entity.Relation, error) {
+	entity.RelationOptions) (*entity.Relation, error) {
 	panic("entitymanagertest.PanicOnUse.CreateRelation: not expected in this test")
 }
 
 func (PanicOnUse) UpdateRelation(context.Context, string, string, string,
-	entitymanager.RelationOptions) (*entity.Relation, error) {
+	entity.RelationOptions) (*entity.Relation, error) {
 	panic("entitymanagertest.PanicOnUse.UpdateRelation: not expected in this test")
 }
 

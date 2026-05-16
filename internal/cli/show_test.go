@@ -21,13 +21,13 @@ import (
 // suite (internal/store/storetest). Representative formatting tests
 // here are enough to catch regressions in the CLI glue.
 
-// setupShowTest wires globals that the show command reads.
-func setupShowTest(t *testing.T) (buf *bytes.Buffer, seeder *storeSeeder, cleanup func()) {
+// setupShowTest wires test context with services and a fresh seeder
+// the test can populate. Returns the seeder so test code can add
+// entities and call applySeeder when ready to snapshot.
+func setupShowTest(t *testing.T) (buf *bytes.Buffer, seeder *storeSeeder, meta *metamodel.Metamodel, cleanup func()) {
 	t.Helper()
 
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 
 	meta = metamodel.DefaultMetamodel()
 	seeder = newStoreSeeder(meta)
@@ -36,12 +36,10 @@ func setupShowTest(t *testing.T) (buf *bytes.Buffer, seeder *storeSeeder, cleanu
 	out = output.NewWithWriter(buf, output.FormatTable)
 
 	cleanup = func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}
 
-	return buf, seeder, cleanup
+	return buf, seeder, meta, cleanup
 }
 
 // TestShowEntityRendersRelations covers the full CLI render path: entity
@@ -49,7 +47,7 @@ func setupShowTest(t *testing.T) (buf *bytes.Buffer, seeder *storeSeeder, cleanu
 // output. One representative case is enough — the store's own tests
 // cover the query side.
 func TestShowEntityRendersRelations(t *testing.T) {
-	buf, seeder, cleanup := setupShowTest(t)
+	buf, seeder, meta, cleanup := setupShowTest(t)
 	defer cleanup()
 
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").
@@ -59,6 +57,7 @@ func TestShowEntityRendersRelations(t *testing.T) {
 	seeder.addRelation("DEC-001", "addresses", "REQ-001")
 	seeder.addRelation("REQ-001", "implements", "SOL-001")
 	applySeeder(seeder)
+	showCmd.SetContext(testCtx)
 
 	if err := showCmd.RunE(showCmd, []string{"REQ-001"}); err != nil {
 		t.Fatalf("show command failed: %v", err)
@@ -74,9 +73,10 @@ func TestShowEntityRendersRelations(t *testing.T) {
 
 // TestShowEntityNotFound covers the error path for a missing ID.
 func TestShowEntityNotFound(t *testing.T) {
-	_, seeder, cleanup := setupShowTest(t)
+	_, seeder, _, cleanup := setupShowTest(t)
 	defer cleanup()
 	applySeeder(seeder)
+	showCmd.SetContext(testCtx)
 
 	err := showCmd.RunE(showCmd, []string{"NONEXISTENT-001"})
 	if err == nil {
@@ -99,22 +99,19 @@ func TestShowEntityNotFound(t *testing.T) {
 // TestShowEntityJSON exercises JSON output shape, which is a CLI
 // concern distinct from the table formatter.
 func TestShowEntityJSON(t *testing.T) {
-	oldMeta := meta
 	oldOut := out
-	oldWs := ws
 	defer func() {
-		meta = oldMeta
 		out = oldOut
-		ws = oldWs
 	}()
 
-	meta = metamodel.DefaultMetamodel()
+	meta := metamodel.DefaultMetamodel()
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 
 	var buf bytes.Buffer
 	out = output.NewWithWriter(&buf, output.FormatJSON)
 	applySeeder(seeder)
+	showCmd.SetContext(testCtx)
 
 	if err := showCmd.RunE(showCmd, []string{"REQ-001"}); err != nil {
 		t.Fatalf("show command failed: %v", err)
@@ -176,7 +173,7 @@ func TestClassifyReadError(t *testing.T) {
 // TestShowCommandRequiresExactlyOneArg exercises the cobra Args
 // validator — a CLI plumbing concern.
 func TestShowCommandRequiresExactlyOneArg(t *testing.T) {
-	_, seeder, cleanup := setupShowTest(t)
+	_, seeder, _, cleanup := setupShowTest(t)
 	defer cleanup()
 	applySeeder(seeder)
 

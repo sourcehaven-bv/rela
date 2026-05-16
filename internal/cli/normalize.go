@@ -42,11 +42,12 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		st := ws.Store()
+		svc := cliWriteFromContext(cmd.Context())
+		st := svc.Store()
 
 		q := store.EntityQuery{}
 		if len(args) > 0 {
-			resolvedType, _, err := resolveEntityType(args[0])
+			resolvedType, _, err := resolveEntityType(svc.Meta(), args[0])
 			if err != nil {
 				return err
 			}

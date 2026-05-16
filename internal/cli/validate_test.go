@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
@@ -19,8 +21,8 @@ import (
 //
 // Validation correctness (cardinality, properties, custom rules,
 // filter-by-rule/filter-by-type, warning vs error severity) is
-// exercised directly at the workspace layer in analysis_test.go —
-// don't duplicate those assertions here.
+// exercised in internal/analysis/analysis_test.go — don't duplicate
+// those assertions here.
 
 func TestParseChecks(t *testing.T) {
 	meta := &metamodel.Metamodel{
@@ -96,23 +98,25 @@ func TestParseChecks(t *testing.T) {
 
 // seedWorkspace builds a workspace from a seeded memstore using the
 // given metamodel and seed function. Used to feed runValidationChecks
-// in CLI-layer tests.
+// in CLI-layer tests — that function takes *workspace.Workspace
+// directly because validate.go (the package-global-free validate
+// command) constructs its own workspace for the --check pass.
 func seedWorkspace(meta *metamodel.Metamodel, seed func(*storeSeeder)) *workspace.Workspace {
 	seeder := newStoreSeeder(meta)
 	if seed != nil {
 		seed(seeder)
 	}
-	return seeder.build()
+	return workspace.NewForTest(meta, workspace.WithTestStore(seeder.s))
 }
 
 // TestRunValidationChecks_JSONOutput exercises the CLI JSON output
 // envelope once, using a cardinality violation as the trigger. The
 // actual cardinality, property, and custom-rule logic is covered in
-// workspace/analysis_test.go; here we only verify the CLI shape.
+// internal/analysis/analysis_test.go; here we only verify the CLI shape.
 func TestRunValidationChecks_JSONOutput(t *testing.T) {
-	origWs, origOut, origChecks, origQuiet := ws, out, validateChecks, quiet
+	origOut, origChecks, origQuiet := out, validateChecks, quiet
 	t.Cleanup(func() {
-		ws, out, validateChecks, quiet = origWs, origOut, origChecks, origQuiet
+		out, validateChecks, quiet = origOut, origChecks, origQuiet
 	})
 
 	minOne := 1
@@ -132,7 +136,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 	}
 	meta.InitAliases()
 
-	ws = seedWorkspace(meta, func(s *storeSeeder) {
+	ws := seedWorkspace(meta, func(s *storeSeeder) {
 		s.addEntity(testutil.EntityFor(meta, "feature").ID("FEAT-001"))
 	})
 
@@ -141,7 +145,17 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 
 	validateChecks = []string{"cardinality"}
 
-	hasErrors, err := runValidationChecks(context.Background(), ws, out, meta)
+	tr := tracer.New(ws.Store())
+	an, err := analysis.New(analysis.Deps{
+		Store:       ws.Store(),
+		Meta:        ws.Meta(),
+		Tracer:      tr,
+		LuaReadDeps: ws.LuaReadDeps(),
+	})
+	if err != nil {
+		t.Fatalf("analysis.New: %v", err)
+	}
+	hasErrors, err := runValidationChecks(context.Background(), ws, an, out, meta)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

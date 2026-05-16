@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -18,7 +19,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 var (
@@ -70,12 +70,13 @@ var analyzeOrphansCmd = &cobra.Command{
 	Use:   "orphans",
 	Short: "Find entities with no connections",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
 
-		orphans := ws.FindOrphansWithScope(*opts)
+		orphans := svc.FindOrphansWithScope(*opts)
 		filter.SortByID(orphans, storeEntityRecord, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
@@ -96,12 +97,13 @@ var analyzeDuplicatesCmd = &cobra.Command{
 	Use:   "duplicates",
 	Short: "Find entities with similar titles",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
 
-		duplicates := ws.FindDuplicates(*opts)
+		duplicates := svc.FindDuplicates(*opts)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -147,12 +149,13 @@ var analyzeGapsCmd = &cobra.Command{
 Entity types configured with id_type: string are excluded from gap analysis
 since they use manually-specified IDs that are not expected to be sequential.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
 
-		allGaps := ws.FindGaps(*opts)
+		allGaps := svc.FindGaps(*opts)
 
 		if writeAnalysisJSON(len(allGaps), allGaps,
 			"No ID sequence gaps found", "Found gaps in %d ID sequences") {
@@ -176,12 +179,13 @@ var analyzeCardinalityCmd = &cobra.Command{
 	Use:   "cardinality",
 	Short: "Check relation cardinality constraints",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
 
-		violations := ws.CheckCardinality(*opts)
+		violations := svc.CheckCardinality(*opts)
 
 		if writeAnalysisJSON(len(violations), violations,
 			"All cardinality constraints satisfied", "Found %d cardinality violations") {
@@ -223,17 +227,18 @@ Checks for:
 
 This catches issues in manually-edited markdown files that bypass CLI validation.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
-		return runPropertyValidation(*opts)
+		return runPropertyValidation(svc, *opts)
 	},
 }
 
 // runPropertyValidation validates entity and relation properties against the metamodel.
-func runPropertyValidation(opts workspace.AnalyzeOptions) error {
-	allEntityErrors := schema.ValidateEntityProperties(ws.Store(), ws.Meta())
+func runPropertyValidation(svc cliAnalyze, opts analysis.Options) error {
+	allEntityErrors := schema.ValidateEntityProperties(svc.Store(), svc.Meta())
 	if opts.Scope != nil {
 		filtered := allEntityErrors[:0]
 		for _, ee := range allEntityErrors {
@@ -243,7 +248,7 @@ func runPropertyValidation(opts workspace.AnalyzeOptions) error {
 		}
 		allEntityErrors = filtered
 	}
-	allRelationErrors := schema.ValidateRelationProperties(ws.Store(), ws.Meta())
+	allRelationErrors := schema.ValidateRelationProperties(svc.Store(), svc.Meta())
 
 	errorCount := 0
 	for _, ee := range allEntityErrors {
@@ -374,22 +379,23 @@ Example metamodel configuration:
         - "priority!="
       severity: error`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
-		return runValidations(cmd.Context(), *opts)
+		return runValidations(cmd.Context(), svc, *opts)
 	},
 }
 
 // runValidations executes custom validation rules.
-func runValidations(ctx context.Context, opts workspace.AnalyzeOptions) error {
-	rules := meta.Validations
+func runValidations(ctx context.Context, svc cliAnalyze, opts analysis.Options) error {
+	rules := svc.Meta().Validations
 	if len(rules) == 0 {
 		return writeNoValidationRules()
 	}
 
-	result := ws.RunValidations(ctx, opts)
+	result := svc.RunValidations(ctx, opts)
 	errorCount, warningCount := countValidationViolationsBySeverity(result.Violations)
 
 	if out.Format == "json" {
@@ -413,7 +419,7 @@ func writeNoValidationRules() error {
 }
 
 // countValidationViolationsBySeverity tallies error vs. warning violations.
-func countValidationViolationsBySeverity(violations []workspace.ValidationViolation) (errors, warnings int) {
+func countValidationViolationsBySeverity(violations []analysis.ValidationViolation) (errors, warnings int) {
 	for _, v := range violations {
 		if v.Severity == "error" {
 			errors++
@@ -428,7 +434,7 @@ func countValidationViolationsBySeverity(violations []workspace.ValidationViolat
 // any rule failed to run or any error-severity violation was found.
 func writeValidationsJSON(
 	rules []metamodel.ValidationRule,
-	result workspace.ValidationResult,
+	result analysis.ValidationResult,
 	errorCount, warningCount int,
 ) error {
 	status := "success"
@@ -460,10 +466,10 @@ func writeValidationsJSON(
 // when any error-severity violation was found or any rule failed to run.
 func writeValidationsText(
 	rules []metamodel.ValidationRule,
-	result workspace.ValidationResult,
+	result analysis.ValidationResult,
 	errorCount, warningCount int,
 ) error {
-	ruleViolations := make(map[string][]workspace.ValidationViolation)
+	ruleViolations := make(map[string][]analysis.ValidationViolation)
 	for _, v := range result.Violations {
 		ruleViolations[v.RuleName] = append(ruleViolations[v.RuleName], v)
 	}
@@ -485,7 +491,7 @@ func writeValidationsText(
 }
 
 // writeRuleViolations renders the per-rule heading and entity list.
-func writeRuleViolations(rule metamodel.ValidationRule, vs []workspace.ValidationViolation) {
+func writeRuleViolations(rule metamodel.ValidationRule, vs []analysis.ValidationViolation) {
 	if len(vs) == 0 {
 		return
 	}
@@ -516,7 +522,7 @@ func writeValidationsSummary(ruleCount, errorCount, warningCount int, hasErrors 
 // renderValidationErrors writes script-error and load-error blocks to
 // the global `out` writer. Empty slices render nothing — the caller
 // still owns the success / summary line.
-func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []workspace.ValidationLoadError) {
+func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []analysis.ValidationLoadError) {
 	if len(scriptErrors) > 0 {
 		out.WriteError("Validation script errors (%d):", len(scriptErrors))
 		for _, se := range scriptErrors {
@@ -535,13 +541,14 @@ var analyzeAllCmd = &cobra.Command{
 	Use:   "all",
 	Short: "Run all analyses",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		opts, err := resolveAnalyzeOpts()
 		if err != nil {
 			return err
 		}
 
 		// Get summary from workspace
-		summary := ws.AnalyzeAll(cmd.Context(), *opts)
+		summary := svc.AnalyzeAll(cmd.Context(), *opts)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -598,7 +605,7 @@ var analyzeAllCmd = &cobra.Command{
 			fmt.Sprintf("Gaps: %d", summary.Gaps),
 			fmt.Sprintf("Properties: %d", summary.PropertyErrors),
 		}
-		if len(meta.Validations) > 0 {
+		if len(svc.Meta().Validations) > 0 {
 			summaryItems = append(summaryItems, fmt.Sprintf("Validation Errors: %d", summary.ValidationErrors))
 			summaryItems = append(summaryItems, fmt.Sprintf("Validation Warnings: %d", summary.ValidationWarnings))
 			if summary.ValidationScriptErrors > 0 {
@@ -640,14 +647,14 @@ var analyzeAllCmd = &cobra.Command{
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Property Validation")
-		if err := runPropertyValidation(*opts); err != nil {
+		if err := runPropertyValidation(svc, *opts); err != nil {
 			errs = append(errs, fmt.Errorf("property validation: %w", err))
 		}
 
-		if len(meta.Validations) > 0 {
+		if len(svc.Meta().Validations) > 0 {
 			out.WriteMessage("")
 			out.WriteSectionHeader("Custom Validations")
-			if err := runValidations(cmd.Context(), *opts); err != nil {
+			if err := runValidations(cmd.Context(), svc, *opts); err != nil {
 				errs = append(errs, fmt.Errorf("custom validations: %w", err))
 			}
 		}
@@ -680,19 +687,20 @@ Examples:
   rela analyze schema --cleanup       # Remove unused types
   rela analyze schema --cleanup --dry-run  # Preview cleanup changes`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
 		if schemaThreshold < 0 {
 			return stderrors.New("--threshold must be non-negative")
 		}
 
 		// Load optional config files
-		dataEntry := loadDataEntryConfig()
+		dataEntry := loadDataEntryConfig(svc)
 
 		// Run analysis
-		analysis := schema.Analyze(meta, &schema.StoreCounter{Store: ws.Store()}, dataEntry, schemaThreshold)
+		analysis := schema.Analyze(svc.Meta(), &schema.StoreCounter{Store: svc.Store()}, dataEntry, schemaThreshold)
 
 		// Handle cleanup mode
 		if schemaCleanup {
-			return runSchemaCleanup(analysis)
+			return runSchemaCleanup(svc, analysis)
 		}
 
 		// Output results
@@ -701,8 +709,8 @@ Examples:
 }
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
-func loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := ws.Config().Load(context.Background(), dataentryconfig.ConfigFile)
+func loadDataEntryConfig(svc cliAnalyze) *dataentryconfig.Config {
+	data, err := svc.Config().Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil // File doesn't exist or can't be read
 	}
@@ -714,7 +722,7 @@ func loadDataEntryConfig() *dataentryconfig.Config {
 }
 
 // runSchemaCleanup executes the cleanup plan.
-func runSchemaCleanup(analysis *schema.Analysis) error {
+func runSchemaCleanup(svc cliAnalyze, analysis *schema.Analysis) error {
 	plan := schema.PlanCleanup(analysis)
 
 	if plan.IsEmpty() {
@@ -765,7 +773,7 @@ func runSchemaCleanup(analysis *schema.Analysis) error {
 	}
 
 	// Execute cleanup
-	projectRoot := filepath.Dir(ws.Paths().MetamodelPath)
+	projectRoot := filepath.Dir(svc.Paths().MetamodelPath)
 	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
 		return err
 	}
@@ -893,6 +901,6 @@ func init() {
 }
 
 // resolveAnalyzeOpts returns the analysis options.
-func resolveAnalyzeOpts() (*workspace.AnalyzeOptions, error) {
-	return &workspace.AnalyzeOptions{}, nil
+func resolveAnalyzeOpts() (*analysis.Options, error) {
+	return &analysis.Options{}, nil
 }

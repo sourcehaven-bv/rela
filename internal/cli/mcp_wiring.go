@@ -109,9 +109,9 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 	svc.validator = validator.New(st, mm, svc.luaReadDeps())
 
 	// Build the Manager. Wire autocascade if metamodel declares
-	// automations; the ScriptRunner adapter resolves lua.WriteDeps
-	// per-call (cycle: Manager → ScriptRunner → WriteDeps →
-	// EntityManager) — same shape as workspace.wsScriptRunner.
+	// automations; the ScriptRunner takes only the static lua.ReadDeps
+	// (per-cascade Mutator is supplied via Request.Mutator inside
+	// Manager.runWriteCascade — Manager satisfies autocascade.Mutator).
 	var autoEngine *automation.Engine
 	var cascadeRunner *autocascade.Runner
 	if len(mm.Automations) > 0 {
@@ -128,7 +128,7 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		Templater:    templating.NewFSTemplater(fs, paths),
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
-		ScriptRunner: &mcpScriptRunner{svc: svc},
+		ScriptRunner: script.NewLuaScriptRunner(svc.scriptEngine, svc.luaReadDeps()),
 	})
 	if mgrErr != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", mgrErr)
@@ -188,27 +188,6 @@ func (s *mcpServices) Close() error {
 		s.backend = nil
 	}
 	return nil
-}
-
-// --- ScriptRunner adapter ---
-
-// mcpScriptRunner is the per-call [autocascade.ScriptRunner] adapter
-// the wiring helper constructs once at startup and hands to
-// [entitymanager.Manager]. Each [Run] call instantiates a fresh
-// [script.LuaScriptRunner] bound to a freshly-resolved
-// [lua.WriteDeps] — same per-call resolution pattern as
-// `workspace.wsScriptRunner`.
-//
-// The cycle (Manager → ScriptRunner → WriteDeps → EntityManager →
-// Manager) is broken because `svc.manager` is nil when the adapter
-// is constructed; by the time `Run` fires (during a cascade dispatch
-// inside a CRUD call), `newMCPServices` has populated `svc.manager`.
-type mcpScriptRunner struct{ svc *mcpServices }
-
-var _ autocascade.ScriptRunner = (*mcpScriptRunner)(nil)
-
-func (r *mcpScriptRunner) Run(ctx context.Context, a autocascade.ScriptAction) error {
-	return script.NewLuaScriptRunner(r.svc.scriptEngine, r.svc.LuaWriteDeps()).Run(ctx, a)
 }
 
 // --- Watcher adapter ---

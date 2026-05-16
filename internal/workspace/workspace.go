@@ -6,8 +6,10 @@
 //
 // **Transitional.** Workspace is being decomposed: the production
 // write path lives in [internal/entitymanager], and Workspace is the
-// shim that constructs Manager and wires per-call lua transport (see
-// [wsScriptRunner]). TKT-64R3 deletes this package once consumers
+// shim that constructs Manager and wires the Lua script adapter
+// ([script.LuaScriptRunner], built once per workspace with the
+// static read deps; the per-cascade mutator is supplied by Manager
+// at dispatch time). TKT-64R3 deletes this package once consumers
 // (CLI/MCP/dataentry/scheduler) construct their own services.
 package workspace
 
@@ -30,6 +32,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -408,13 +411,20 @@ func newWorkspace(
 	// Build the Manager. Workspace's wsEntityManager forwards every
 	// write through it; legacy workspace.createEntity / updateEntity
 	// / deleteEntity methods were deleted in TKT-IU2S.
+	//
+	// ScriptRunner takes only the static lua.ReadDeps here; the
+	// per-cascade mutation handle is supplied via Request.Mutator
+	// inside Manager.runWriteCascade (Manager satisfies
+	// autocascade.Mutator structurally). That split is what removes
+	// the construction cycle the old wsScriptRunner adapter used to
+	// paper over (deleted in TKT-Z9MR).
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        ws.store,
 		Meta:         ws.meta,
 		Templater:    ws.Templater(),
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
-		ScriptRunner: &wsScriptRunner{w: ws},
+		ScriptRunner: script.NewLuaScriptRunner(ws.scriptExec, ws.LuaReadDeps()),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -657,35 +667,6 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 		}
 	}
 	return result
-}
-
-// --- Type resolution ---
-
-// ResolveEntityType resolves a type name (alias, plural) to its canonical
-// name and definition.
-func (w *Workspace) ResolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
-	meta := w.Meta()
-
-	// Exact match or alias.
-	resolved := meta.ResolveAlias(strings.TrimSpace(typeName))
-	if def, ok := meta.GetEntityDef(resolved); ok {
-		return resolved, def, nil
-	}
-
-	// Strip common plural suffixes.
-	suffixes := []string{"ies", "es", "s"}
-	replacements := []string{"y", "", ""}
-	for i, suffix := range suffixes {
-		if strings.HasSuffix(typeName, suffix) {
-			singular := strings.TrimSuffix(typeName, suffix) + replacements[i]
-			resolved = meta.ResolveAlias(singular)
-			if def, ok := meta.GetEntityDef(resolved); ok {
-				return resolved, def, nil
-			}
-		}
-	}
-
-	return "", nil, fmt.Errorf("unknown entity type: %s", typeName)
 }
 
 // --- ID generation ---

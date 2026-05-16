@@ -17,7 +17,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -456,7 +455,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 			Properties: req.Properties,
 			Content:    req.Content,
 		},
-		entitymanager.CreateOptions{ID: req.ID, Prefix: req.Prefix},
+		entityPkg.CreateOptions{ID: req.ID, Prefix: req.Prefix},
 	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
@@ -870,7 +869,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
-	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{Properties: req.Meta})
+	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta})
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
 		return
@@ -912,7 +911,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
 
-	rel, err := a.entityManager.UpdateRelation(r.Context(), from, relType, to, entitymanager.RelationOptions{
+	rel, err := a.entityManager.UpdateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{
 		Properties: req.Meta,
 	})
 	if err != nil {
@@ -993,7 +992,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 			Properties: props,
 			Content:    entity.Content,
 		},
-		entitymanager.CreateOptions{},
+		entityPkg.CreateOptions{},
 	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "clone_failed", "Failed to clone entity", err.Error())
