@@ -23,8 +23,8 @@ import (
 
 	"github.com/chromedp/chromedp"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // newE2ETestApp creates a full App using a copy of the prototype project for E2E tests.
@@ -50,20 +50,21 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 
 	_ = os.MkdirAll(filepath.Join(projectDir, ".rela"), 0o755)
 
-	ws, err := workspace.Discover(projectDir, script.NewEngine())
+	svc, err := appbuild.Discover(projectDir, script.NewEngine())
 	if err != nil {
-		t.Fatalf("creating workspace: %v", err)
+		t.Fatalf("appbuild.Discover: %v", err)
 	}
 	app, err := NewApp(
-		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
-		ws.EntityManager(), ws.Searcher(),
+		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
+		svc.EntityManager(), svc.Searcher(),
 	)
 	if err != nil {
+		svc.Close()
 		t.Fatalf("creating app: %v", err)
 	}
 
 	cleanup := func() {
-		// TempDir cleanup is automatic
+		svc.Close()
 	}
 
 	return app, projectDir, cleanup

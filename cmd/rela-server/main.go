@@ -22,10 +22,10 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // stringSliceFlag collects repeated -allowed-origin values.
@@ -62,15 +62,21 @@ func main() {
 		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	ws, err := workspace.Discover(absDir, script.NewEngine())
+	svc, err := appbuild.Discover(absDir, script.NewEngine())
 	if err != nil {
-		slog.Error("failed to initialize workspace", "error", err)
+		slog.Error("failed to initialize project services", "error", err)
 		os.Exit(1)
 	}
+	// No defer svc.Close(): rela-server is a daemon — it runs until
+	// the process exits, at which point the OS reclaims file
+	// descriptors and goroutines. A defer would be reached only via
+	// early os.Exit paths, where defers don't run anyway. Per-project
+	// Close() *is* required in long-running hosts that switch
+	// projects (see rela-desktop); this is the daemon-lifetime case.
 
 	app, err := dataentry.NewApp(
-		ws.FS(), ws.Paths(), ws.Meta(), ws.Store(),
-		ws.EntityManager(), ws.Searcher(),
+		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
+		svc.EntityManager(), svc.Searcher(),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
@@ -109,8 +115,10 @@ func main() {
 			"bind", *bind)
 	}
 	// Start background scheduler if schedules.yaml exists.
+	// *appbuild.Services satisfies scheduler.WorkspaceProvider
+	// structurally (Paths / Config / State / LuaWriteDeps).
 	// The goroutine is cleaned up on process exit.
-	scheduler.StartBackground(context.Background(), ws, slog.Default())
+	scheduler.StartBackground(context.Background(), svc, slog.Default())
 
 	if err := startPprofIfRequested(*debugPprof); err != nil {
 		slog.Error("pprof startup failed", "error", err)

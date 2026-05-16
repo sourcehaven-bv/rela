@@ -28,6 +28,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/git"
@@ -36,7 +37,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Version is set at build time via -ldflags.
@@ -54,6 +54,7 @@ type Desktop struct {
 	ctx               context.Context //nolint:containedctx // Wails runtime ctx must live for the struct lifetime
 	mu                sync.RWMutex
 	app               *dataentry.App
+	svc               *appbuild.Services // per-project services; closed on next LoadProject
 	handler           http.Handler
 	loadErr           string
 	prefs             *desktop.Preferences
@@ -130,17 +131,17 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	ws, wsErr := workspace.New(fs, projCtx, script.NewEngine())
-	if wsErr != nil {
+	svc, svcErr := appbuild.New(fs, projCtx, script.NewEngine())
+	if svcErr != nil {
 		d.mu.Lock()
-		d.loadErr = wsErr.Error()
+		d.loadErr = svcErr.Error()
 		d.mu.Unlock()
-		return wsErr.Error()
+		return svcErr.Error()
 	}
 
 	app, err := dataentry.NewApp(
-		fs, projCtx, ws.Meta(), ws.Store(),
-		ws.EntityManager(), ws.Searcher(),
+		fs, projCtx, svc.Meta(), svc.Store(),
+		svc.EntityManager(), svc.Searcher(),
 	)
 	if err != nil {
 		d.mu.Lock()
@@ -149,10 +150,15 @@ func (d *Desktop) LoadProject(dir string) string {
 		return err.Error()
 	}
 	d.mu.Lock()
-	// Stop previous scheduler if running.
+	// Stop previous scheduler and close previous services in
+	// dependency order: scheduler first so no in-flight tick lands
+	// on a closed store, then svc.Close() releases the store + bleve.
 	if d.stopScheduler != nil {
 		d.stopScheduler()
+		d.stopScheduler = nil
 	}
+	prevSvc := d.svc
+	d.svc = svc
 	d.app = app
 	d.handler = app.NewRouter()
 	d.loadErr = ""
@@ -165,7 +171,13 @@ func (d *Desktop) LoadProject(dir string) string {
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
 
-	scheduler.StartBackground(schedCtx, ws, slog.Default())
+	// Close the previous project's services outside the lock so the
+	// store/index Close doesn't block other Desktop methods.
+	if prevSvc != nil {
+		_ = prevSvc.Close()
+	}
+
+	scheduler.StartBackground(schedCtx, svc, slog.Default())
 
 	if d.ctx != nil {
 		runtime.WindowSetTitle(d.ctx, app.ProjectName())

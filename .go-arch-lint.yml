@@ -36,6 +36,7 @@ components:
 
   # Application services
   app:              { in: internal/app }
+  appbuild:         { in: internal/appbuild }
   workspace:        { in: internal/workspace }
 
   # Domain services
@@ -136,30 +137,23 @@ deps:
       - cli
   cmdServer:
     mayDependOn:
-      - app
+      - appbuild
       - dataentry
-      - lua
-      - metamodel
-      - project
       - scheduler
       - script
-      - storage
-      - workspace
     canUse:
       - http2
   cmdDesktop:
     mayDependOn:
-      - app
+      - appbuild
       - dataentry
       - desktop
       - git
-      - lua
       - metamodel
       - project
       - scheduler
       - script
       - storage
-      - workspace
     canUse:
       - wails
 
@@ -273,6 +267,25 @@ deps:
       - project
       - storage
       - store
+  appbuild:
+    mayDependOn:
+      - app
+      - autocascade
+      - automation
+      - bleveindex
+      - config
+      - entitymanager
+      - lua
+      - metamodel
+      - project
+      - script
+      - search
+      - state
+      - storage
+      - store
+      - templating
+      - tracer
+      - validator
   workspace:
     mayDependOn:
       - app
