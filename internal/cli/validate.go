@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
@@ -88,7 +89,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Always validate config files first
-	result, err := workspace.Validate(startDir)
+	result, err := projectsetup.Validate(startDir)
 	if err != nil {
 		return err
 	}
@@ -480,7 +481,7 @@ func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.V
 }
 
 // reportDataEntryValidation reports data-entry.yaml validation results.
-func reportDataEntryValidation(result *workspace.ValidateResult, hasErrors bool) bool {
+func reportDataEntryValidation(result *projectsetup.ValidateResult, hasErrors bool) bool {
 	if result.DataEntrySkipped {
 		if quiet {
 			return hasErrors
