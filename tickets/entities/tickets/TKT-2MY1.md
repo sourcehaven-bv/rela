@@ -5,7 +5,7 @@ title: dataentry owns its data-entry.yaml watcher (remove WatchOptions indirecti
 kind: refactor
 priority: medium
 effort: s
-status: ready
+status: done
 ---
 
 ## Summary
