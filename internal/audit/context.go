@@ -2,30 +2,10 @@ package audit
 
 import "context"
 
-// principalKey / triggeredByKey are unexported context.WithValue keys
-// so no other package can collide with them or read/write the values
-// outside this package's API.
-type principalKey struct{}
+// triggeredByKey is the unexported context.WithValue key so no other
+// package can collide with it or read/write the value outside this
+// package's API.
 type triggeredByKey struct{}
-
-// WithPrincipal returns a derived context carrying p. Entry points
-// stamp Principal once at startup (or per-request for data-entry,
-// later); Manager reads it via [PrincipalFrom] on each write.
-func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	return context.WithValue(ctx, principalKey{}, p)
-}
-
-// PrincipalFrom returns the Principal carried by ctx, or
-// Principal{User:"unknown", Tool:"unknown"} if none was stamped.
-// Returning a default rather than panicking keeps audit best-effort
-// even when a new call site forgets to thread principal through —
-// the misattribution is visible in the audit log, not silent.
-func PrincipalFrom(ctx context.Context) Principal {
-	if v, ok := ctx.Value(principalKey{}).(Principal); ok {
-		return v
-	}
-	return Principal{User: "unknown", Tool: "unknown"}
-}
 
 // WithTriggeredBy returns a derived context carrying label. The
 // autocascade runner stamps "automation:<name>"; the scheduler

@@ -368,8 +368,8 @@ the user-facing reference; rules for new code:
   audit record won't be emitted.
 - **New entry-point binaries stamp Principal at startup.** Each
   binary or root command attaches a Principal once:
-  `ctx = audit.WithPrincipal(ctx, audit.Principal{User: audit.SystemUser(), Tool: audit.ToolXxx})`.
-  Use one of the `audit.ToolCLI` / `ToolMCP` / `ToolDataEntry` /
+  `ctx = principal.With(ctx, principal.Principal{User: principal.SystemUser(), Tool: principal.ToolXxx})`.
+  Use one of the `principal.ToolCLI` / `ToolMCP` / `ToolDataEntry` /
   `ToolScheduler` / `ToolDesktop` constants — string literals will
   not surface typos until the entry-point smoke test catches them.
 - **Engine-initiated paths stamp `triggered_by`.** Scheduler tasks
@@ -377,7 +377,7 @@ the user-facing reference; rules for new code:
   the autocascade runner does the analogous thing for automation
   cascades. Direct user actions leave `triggered_by` empty.
 - **Lua bindings do not expose audit primitives.** A Lua script
-  must not be able to call `audit.WithPrincipal` or rewrite its
+  must not be able to call `principal.With` or rewrite its
   own attribution — the spoofing test in `internal/lua/audit_spoofing_test.go`
   guards this. Do not register `rela.audit` or `rela.principal`
   on the runtime.
@@ -401,6 +401,7 @@ Domain and storage:
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
 | `internal/audit`         | Append-only JSONL audit log of every successful write     |
+| `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx     |
 | `internal/validator`     | Validation engine invoked by entitymanager                |
 | `internal/markdown`      | Parse/write entity and relation markdown                  |
 | `internal/project`       | Project discovery, paths (`Context`)                      |

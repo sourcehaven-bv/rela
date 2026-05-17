@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // coverage-ignore: MCP command - requires stdio server
@@ -69,9 +69,9 @@ func runMCPServer() error {
 	// Override the cli-stamped Principal with Tool=mcp. Every audit
 	// record produced by tool handlers within this server inherits
 	// this Principal via the request ctx. See plan AC4.
-	mcpPrincipal := audit.Principal{
-		User: audit.SystemUser(),
-		Tool: audit.ToolMCP,
+	mcpPrincipal := principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolMCP,
 	}
 	srv, srvErr := relamcp.NewServer(svc, Version, relamcp.WithPrincipal(mcpPrincipal))
 	if srvErr != nil {

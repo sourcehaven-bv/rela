@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -45,7 +46,7 @@ func newManagerWithAudit(
 // ctxWithPrincipal is a helper for tests that need to verify audit
 // records carry the right Principal.
 func ctxWithPrincipal(user, tool string) context.Context {
-	return audit.WithPrincipal(context.Background(), audit.Principal{User: user, Tool: tool})
+	return principal.With(context.Background(), principal.Principal{User: user, Tool: tool})
 }
 
 // --- AC1: every entity write produces one audit record ---
@@ -56,7 +57,7 @@ func TestAudit_AC1_EntityCreateRecordsOnce(t *testing.T) {
 
 	e := entity.New("", "requirement")
 	e.SetString("title", "AC1 entity")
-	res, err := mgr.CreateEntity(ctxWithPrincipal("alice", audit.ToolCLI), e, entity.CreateOptions{})
+	res, err := mgr.CreateEntity(ctxWithPrincipal("alice", principal.ToolCLI), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestAudit_AC1_EntityCreateRecordsOnce(t *testing.T) {
 	if r.Subject.ID != res.Entity.ID {
 		t.Errorf("Subject.ID = %q, want %q", r.Subject.ID, res.Entity.ID)
 	}
-	if r.Principal.User != "alice" || r.Principal.Tool != audit.ToolCLI {
+	if r.Principal.User != "alice" || r.Principal.Tool != principal.ToolCLI {
 		t.Errorf("Principal = %+v, want alice/cli", r.Principal)
 	}
 	if r.Summary != "created" {
@@ -296,7 +297,7 @@ func TestAudit_AC3_PrincipalFromCtx(t *testing.T) {
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
-	ctx := ctxWithPrincipal("alice", audit.ToolMCP)
+	ctx := ctxWithPrincipal("alice", principal.ToolMCP)
 	_, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
@@ -306,7 +307,7 @@ func TestAudit_AC3_PrincipalFromCtx(t *testing.T) {
 	if r.Principal.User != "alice" {
 		t.Errorf("Principal.User = %q, want alice", r.Principal.User)
 	}
-	if r.Principal.Tool != audit.ToolMCP {
+	if r.Principal.Tool != principal.ToolMCP {
 		t.Errorf("Principal.Tool = %q, want mcp", r.Principal.Tool)
 	}
 }
@@ -405,7 +406,7 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 	}}
 	mgr := newManagerWithAudit(t, mem, autos)
 
-	ctx := ctxWithPrincipal("alice", audit.ToolCLI)
+	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
 	_, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)

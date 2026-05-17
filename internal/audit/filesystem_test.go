@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 func TestNewFilesystem_RejectsEmptyDir(t *testing.T) {
@@ -35,7 +36,7 @@ func TestFilesystem_RecordWritesJSONL(t *testing.T) {
 	a.Record(audit.Record{
 		Op:        audit.OpCreateEntity,
 		Subject:   &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
-		Principal: audit.Principal{User: "alice", Tool: audit.ToolCLI},
+		Principal: principal.Principal{User: "alice", Tool: principal.ToolCLI},
 	})
 
 	lines := readLines(t, filepath.Join(auditDir, "2026-05-17.jsonl"))
@@ -255,7 +256,7 @@ func TestFilesystem_SanitizationStripsControlChars(t *testing.T) {
 	a.Record(audit.Record{
 		Op:        audit.OpCreateEntity,
 		Subject:   &audit.Subject{Kind: "entity", Type: "tick\net", ID: "TKT-\x001"},
-		Principal: audit.Principal{User: "al\x1bice", Tool: audit.ToolCLI},
+		Principal: principal.Principal{User: "al\x1bice", Tool: principal.ToolCLI},
 		Summary:   "created\nwith newline",
 	})
 

@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // configureLogging sets the default slog logger based on the global
@@ -114,10 +114,10 @@ func run() int {
 	// Stamp the audit Principal once for the entire CLI invocation.
 	// Subcommands that take a different identity (e.g. `rela mcp`) re-
 	// stamp the ctx with their own Tool value before invoking domain
-	// code. See audit.WithPrincipal for the contract.
-	ctx = audit.WithPrincipal(ctx, audit.Principal{
-		User: audit.SystemUser(),
-		Tool: audit.ToolCLI,
+	// code. See principal.With for the contract.
+	ctx = principal.With(ctx, principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolCLI,
 	})
 
 	err := rootCmd.ExecuteContext(ctx)

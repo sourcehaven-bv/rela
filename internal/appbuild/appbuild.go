@@ -178,7 +178,7 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 //
 // Discover constructs a production [audit.Filesystem] under
 // .rela/audit/. The entry point caller is responsible for stamping
-// [audit.Principal] onto the request context (this varies per
+// [principal.Principal] onto the request context (this varies per
 // binary — cli, mcp, scheduler, data-entry server).
 func Discover(startDir string, scriptEngine *script.Engine) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())

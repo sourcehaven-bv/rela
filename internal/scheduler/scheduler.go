@@ -28,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -87,9 +88,9 @@ func StartBackground(
 // Extracted so the stamping logic can be unit-tested without booting
 // the script engine.
 func stampTaskAuditContext(ctx context.Context, taskName string) context.Context {
-	out := audit.WithPrincipal(ctx, audit.Principal{
-		User: audit.SystemUser(),
-		Tool: audit.ToolScheduler,
+	out := principal.With(ctx, principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolScheduler,
 	})
 	return audit.WithTriggeredBy(out, "schedule:"+taskName)
 }

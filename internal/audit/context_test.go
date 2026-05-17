@@ -5,23 +5,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
-
-func TestPrincipalFrom_DefaultsToUnknown(t *testing.T) {
-	got := audit.PrincipalFrom(context.Background())
-	want := audit.Principal{User: "unknown", Tool: "unknown"}
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestWithPrincipal_RoundTrip(t *testing.T) {
-	p := audit.Principal{User: "alice", Tool: audit.ToolCLI}
-	ctx := audit.WithPrincipal(context.Background(), p)
-	if got := audit.PrincipalFrom(ctx); got != p {
-		t.Errorf("round-trip mismatch: got %+v, want %+v", got, p)
-	}
-}
 
 func TestTriggeredByFrom_DefaultsToEmpty(t *testing.T) {
 	if got := audit.TriggeredByFrom(context.Background()); got != "" {
@@ -36,15 +21,17 @@ func TestWithTriggeredBy_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestPrincipal_DoesNotOverrideOnRederive(t *testing.T) {
-	// Demonstrates: when a cascade wraps ctx with WithTriggeredBy, the
-	// originator's Principal is preserved (the cascade does NOT overwrite
-	// it). This is the behavior step 5 of the technical approach relies on.
-	original := audit.Principal{User: "alice", Tool: audit.ToolCLI}
-	ctx := audit.WithPrincipal(context.Background(), original)
+// TestPrincipalAndTriggeredBy_Orthogonal demonstrates that wrapping
+// ctx with audit.WithTriggeredBy preserves the originator's
+// principal.Principal — the two context values are independent. The
+// cascade path relies on this: triggered_by gets layered on by the
+// runner without overwriting the originator's Principal.
+func TestPrincipalAndTriggeredBy_Orthogonal(t *testing.T) {
+	original := principal.Principal{User: "alice", Tool: principal.ToolCLI}
+	ctx := principal.With(context.Background(), original)
 	cascade := audit.WithTriggeredBy(ctx, "automation:on-create")
 
-	if got := audit.PrincipalFrom(cascade); got != original {
+	if got := principal.From(cascade); got != original {
 		t.Errorf("Principal was overwritten by triggered-by wrap: got %+v, want %+v", got, original)
 	}
 	if got := audit.TriggeredByFrom(cascade); got != "automation:on-create" {

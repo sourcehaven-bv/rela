@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 func TestRecord_JSONRoundtrip(t *testing.T) {
@@ -21,7 +22,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 				Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 				Op:        audit.OpCreateEntity,
 				Subject:   &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
-				Principal: audit.Principal{User: "alice", Tool: audit.ToolCLI},
+				Principal: principal.Principal{User: "alice", Tool: principal.ToolCLI},
 				Summary:   "created",
 			},
 			wantKey: `"subject":{"kind":"entity"`,
@@ -32,7 +33,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 				Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 				Op:        audit.OpCreateRelation,
 				Subject:   &audit.Subject{Kind: "relation", RelationType: "requires", FromID: "F-1", ToID: "C-2"},
-				Principal: audit.Principal{User: "bob", Tool: audit.ToolMCP},
+				Principal: principal.Principal{User: "bob", Tool: principal.ToolMCP},
 			},
 			wantKey: `"from_id":"F-1"`,
 		},
@@ -43,7 +44,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 				Op:        audit.OpRenameEntity,
 				Before:    &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-OLD"},
 				After:     &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-NEW"},
-				Principal: audit.Principal{User: "carol", Tool: audit.ToolCLI},
+				Principal: principal.Principal{User: "carol", Tool: principal.ToolCLI},
 			},
 			wantKey: `"after":{"kind":"entity"`,
 		},
@@ -76,7 +77,7 @@ func TestRecord_OmitemptyOnOptionalFields(t *testing.T) {
 		Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 		Op:        audit.OpCreateEntity,
 		Subject:   &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
-		Principal: audit.Principal{User: "alice", Tool: audit.ToolCLI},
+		Principal: principal.Principal{User: "alice", Tool: principal.ToolCLI},
 		// TriggeredBy and Summary left empty
 	}
 	data, err := json.Marshal(rec)
@@ -109,7 +110,7 @@ func TestRecord_RenameOmitsSubject(t *testing.T) {
 		Op:        audit.OpRenameEntity,
 		Before:    &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-OLD"},
 		After:     &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-NEW"},
-		Principal: audit.Principal{User: "carol", Tool: audit.ToolCLI},
+		Principal: principal.Principal{User: "carol", Tool: principal.ToolCLI},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {

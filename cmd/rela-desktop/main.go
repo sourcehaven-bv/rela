@@ -34,6 +34,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -78,9 +79,9 @@ type cloneAuthState struct {
 
 // coverage-ignore: Wails lifecycle callback
 func (d *Desktop) startup(ctx context.Context) {
-	d.ctx = audit.WithPrincipal(ctx, audit.Principal{
-		User: audit.SystemUser(),
-		Tool: audit.ToolDesktop,
+	d.ctx = principal.With(ctx, principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolDesktop,
 	})
 }
 

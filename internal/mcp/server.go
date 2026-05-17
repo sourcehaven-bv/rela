@@ -28,11 +28,11 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -76,7 +76,7 @@ type Server struct {
 	mcp       *server.MCPServer
 	ws        Services
 	logger    *slog.Logger
-	principal audit.Principal
+	principal principal.Principal
 }
 
 // Option configures a [Server] at construction.
@@ -87,7 +87,7 @@ type Option func(*Server)
 // Applies to every registered tool — including lua_eval / lua_run /
 // any future write tool — because the middleware runs ahead of all
 // handlers (registration-time wrapping, not per-handler opt-in).
-func WithPrincipal(p audit.Principal) Option {
+func WithPrincipal(p principal.Principal) Option {
 	return func(s *Server) { s.principal = p }
 }
 
@@ -102,7 +102,7 @@ func WithPrincipal(p audit.Principal) Option {
 // middleware is registered, so there's no "no Principal" branch here.
 func (s *Server) principalMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-		return next(audit.WithPrincipal(ctx, s.principal), req)
+		return next(principal.With(ctx, s.principal), req)
 	}
 }
 
@@ -111,7 +111,7 @@ func (s *Server) principalMiddleware(next server.ToolHandlerFunc) server.ToolHan
 // `unknown/unknown` audit attribution would be an invisible
 // production bug (CLAUDE.md "constructors reject nil required
 // fields"). Tests must pass a non-zero Principal too — use any
-// non-empty `audit.Principal{User: ..., Tool: ...}`.
+// non-empty `principal.Principal{User: ..., Tool: ...}`.
 func NewServer(ws Services, version string, opts ...Option) (*Server, error) {
 	s := &Server{
 		ws:     ws,
@@ -120,7 +120,7 @@ func NewServer(ws Services, version string, opts ...Option) (*Server, error) {
 	for _, opt := range opts {
 		opt(s)
 	}
-	if s.principal == (audit.Principal{}) {
+	if s.principal == (principal.Principal{}) {
 		return nil, errors.New("mcp.NewServer: Principal is required (use WithPrincipal)")
 	}
 

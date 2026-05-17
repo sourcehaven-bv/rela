@@ -6,33 +6,17 @@
 // The package exposes a single-method [Audit] interface plus three
 // backends ([Nop], [Memory], [Filesystem]). Manager calls
 // [Audit.Record] on every successful write; the per-call attribution
-// (Principal, triggered_by) is carried via [context.Context] and read
-// in the Manager helper.
+// ([principal.Principal] for "who", [WithTriggeredBy] for "what
+// engine path") is carried via [context.Context] and read here.
 //
 // See [PLAN-XKMJ] in the tickets tree for the full design and the
 // acceptance criteria each constructor / helper here satisfies.
 package audit
 
-import "time"
+import (
+	"time"
 
-// Principal identifies who is making a write. User is the OS user
-// captured at process startup via [SystemUser]; data-entry will later
-// override per-request from an HTTP middleware. Tool identifies the
-// entry point — one of the Tool* constants below.
-type Principal struct {
-	User string `json:"user"`
-	Tool string `json:"tool"`
-}
-
-// Tool constants — the values that may appear in Principal.Tool.
-// Entry-point wiring references these instead of string literals so
-// typos surface at compile time.
-const (
-	ToolCLI       = "cli"
-	ToolMCP       = "mcp"
-	ToolDataEntry = "data-entry"
-	ToolScheduler = "scheduler"
-	ToolDesktop   = "desktop"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // Op constants — the values that appear in Record.Op. Stable wire
@@ -74,14 +58,14 @@ type Subject struct {
 // and leave Subject nil; every other op populates Subject and
 // leaves Before/After nil.
 type Record struct {
-	Time        time.Time `json:"time"`
-	Op          string    `json:"op"`
-	Subject     *Subject  `json:"subject,omitempty"`
-	Before      *Subject  `json:"before,omitempty"`
-	After       *Subject  `json:"after,omitempty"`
-	Principal   Principal `json:"principal"`
-	TriggeredBy string    `json:"triggered_by,omitempty"`
-	Summary     string    `json:"summary,omitempty"`
+	Time        time.Time           `json:"time"`
+	Op          string              `json:"op"`
+	Subject     *Subject            `json:"subject,omitempty"`
+	Before      *Subject            `json:"before,omitempty"`
+	After       *Subject            `json:"after,omitempty"`
+	Principal   principal.Principal `json:"principal"`
+	TriggeredBy string              `json:"triggered_by,omitempty"`
+	Summary     string              `json:"summary,omitempty"`
 }
 
 // Audit is the consumer-side write surface every audit backend

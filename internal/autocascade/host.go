@@ -26,7 +26,7 @@ import (
 // narrow on purpose — only the operations Runner actually calls.
 //
 // Every method takes a context — Runner threads its per-Process ctx
-// (which carries `audit.Principal` from the originator and
+// (which carries `principal.Principal` from the originator and
 // `audit.TriggeredBy` set by Runner before script execution) so the
 // Host's audit emission inherits the right attribution.
 type Host interface {

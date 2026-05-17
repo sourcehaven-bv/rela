@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -180,7 +181,7 @@ func (h *cascadeHost) recordCascadeEntity(ctx context.Context, op string, e *ent
 			Type: e.Type,
 			ID:   e.ID,
 		},
-		Principal:   audit.PrincipalFrom(cascadeCtx),
+		Principal:   principal.From(cascadeCtx),
 		TriggeredBy: audit.TriggeredByFrom(cascadeCtx),
 		Summary:     summary,
 	})
@@ -219,7 +220,7 @@ func (h *cascadeHost) recordRelationAuditWithCtx(
 			FromID:       r.From,
 			ToID:         r.To,
 		},
-		Principal:   audit.PrincipalFrom(ctx),
+		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     summary,
 	})

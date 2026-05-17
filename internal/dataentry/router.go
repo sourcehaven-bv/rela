@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // CheckEmbeddedSPA verifies that the embedded Vue SPA bundle is present and
@@ -91,7 +91,7 @@ func (a *App) NewRouter() http.Handler {
 // Principal that should be stamped on its context. A follow-up PR
 // will replace the default with a header/cookie/session-aware
 // resolver that derives User per request.
-type PrincipalResolver func(*http.Request) audit.Principal
+type PrincipalResolver func(*http.Request) principal.Principal
 
 // defaultPrincipalResolver stamps Principal{User: "unknown", Tool:
 // "data-entry"} on every request. The User is intentionally
@@ -99,10 +99,10 @@ type PrincipalResolver func(*http.Request) audit.Principal
 // operator's $USER for every edit by every human web user would be
 // actively misleading. Per-request override is the explicit
 // follow-up; this resolver is the seam where that change plugs in.
-func defaultPrincipalResolver(_ *http.Request) audit.Principal {
-	return audit.Principal{
+func defaultPrincipalResolver(_ *http.Request) principal.Principal {
+	return principal.Principal{
 		User: "unknown",
-		Tool: audit.ToolDataEntry,
+		Tool: principal.ToolDataEntry,
 	}
 }
 
@@ -111,7 +111,7 @@ func defaultPrincipalResolver(_ *http.Request) audit.Principal {
 // behavior.
 func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := audit.WithPrincipal(r.Context(), resolve(r))
+		ctx := principal.With(r.Context(), resolve(r))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

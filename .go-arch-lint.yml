@@ -78,6 +78,7 @@ components:
   # Infrastructure
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
+  principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
@@ -143,6 +144,7 @@ deps:
       - appbuild
       - audit
       - dataentry
+      - principal
       - scheduler
       - script
     canUse:
@@ -155,6 +157,7 @@ deps:
       - desktop
       - git
       - metamodel
+      - principal
       - project
       - scheduler
       - script
@@ -184,6 +187,7 @@ deps:
       - mcp
       - metamodel
       - output
+      - principal
       - project
       - projectsetup
       - rename
@@ -214,6 +218,7 @@ deps:
       - dataentryconfig
       - entitymanager
       - filter
+      - principal
       - git
       - htmlutil
       - lua
@@ -251,6 +256,7 @@ deps:
       - dataentryconfig
       - entitymanager
       - filter
+      - principal
       - lua
       - metamodel
       - project
@@ -321,6 +327,9 @@ deps:
       - entitymanager
       - metamodel
       - store
+  audit:
+    mayDependOn:
+      - principal
   renametype:
     mayDependOn:
       - metamodel
@@ -345,6 +354,7 @@ deps:
       - autocascade
       - automation
       - metamodel
+      - principal
       - rename
       - store
       - templating
@@ -426,6 +436,7 @@ deps:
       - config
       - lua
       - metamodel
+      - principal
       - project
       - script
       - state

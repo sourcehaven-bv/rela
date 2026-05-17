@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // recordEntityAudit emits one audit record for an entity create /
@@ -28,7 +29,7 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 			Type: e.Type,
 			ID:   e.ID,
 		},
-		Principal:   audit.PrincipalFrom(ctx),
+		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     summary,
 	})
@@ -49,7 +50,7 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 			FromID:       rel.From,
 			ToID:         rel.To,
 		},
-		Principal:   audit.PrincipalFrom(ctx),
+		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     summary,
 	})
@@ -76,7 +77,7 @@ func (m *Manager) recordRenameAudit(ctx context.Context, before, after *entity.E
 			Type: after.Type,
 			ID:   after.ID,
 		},
-		Principal:   audit.PrincipalFrom(ctx),
+		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     "renamed",
 	})

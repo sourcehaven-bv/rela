@@ -7,7 +7,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // TestNewServer_RejectsZeroPrincipal verifies that NewServer refuses
@@ -26,12 +26,12 @@ func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
 // middleware. Registered handlers (including new write tools added
 // later) inherit the stamp automatically; no per-handler opt-in.
 func TestPrincipalMiddleware_WithOption(t *testing.T) {
-	want := audit.Principal{User: "alice", Tool: audit.ToolMCP}
+	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 
-	var captured audit.Principal
+	var captured principal.Principal
 	handler := s.principalMiddleware(func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-		captured = audit.PrincipalFrom(ctx)
+		captured = principal.From(ctx)
 		return mcpgo.NewToolResultText("ok"), nil
 	})
 
@@ -48,7 +48,7 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 // write tools) still inherit the Principal stamp because the
 // middleware sits in front of every registered handler.
 func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
-	want := audit.Principal{User: "alice", Tool: audit.ToolMCP}
+	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 
 	srv := server.NewMCPServer("test", "0.0.0",
@@ -56,10 +56,10 @@ func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
 		server.WithToolHandlerMiddleware(s.principalMiddleware),
 	)
 
-	var captured audit.Principal
+	var captured principal.Principal
 	srv.AddTool(mcpgo.Tool{Name: "any-write-tool"},
 		func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-			captured = audit.PrincipalFrom(ctx)
+			captured = principal.From(ctx)
 			return mcpgo.NewToolResultText("ok"), nil
 		})
 
