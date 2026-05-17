@@ -77,6 +77,7 @@ components:
 
   # Infrastructure
   ai:               { in: internal/ai }
+  audit:            { in: internal/audit }
   secrets:          { in: internal/secrets }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
@@ -140,6 +141,7 @@ deps:
   cmdServer:
     mayDependOn:
       - appbuild
+      - audit
       - dataentry
       - scheduler
       - script
@@ -148,6 +150,7 @@ deps:
   cmdDesktop:
     mayDependOn:
       - appbuild
+      - audit
       - dataentry
       - desktop
       - git
@@ -167,6 +170,7 @@ deps:
       - app
       - appbuild
       - attachment
+      - audit
       - autocascade
       - automation
       - bleveindex
@@ -204,6 +208,7 @@ deps:
   # Web / UI layer
   dataentry:
     mayDependOn:
+      - audit
       - config
       - conflict
       - dataentryconfig
@@ -241,6 +246,7 @@ deps:
   mcp:
     mayDependOn:
       - ai
+      - audit
       - config
       - dataentryconfig
       - entitymanager
@@ -273,6 +279,7 @@ deps:
   appbuild:
     mayDependOn:
       - app
+      - audit
       - autocascade
       - automation
       - bleveindex
@@ -321,6 +328,7 @@ deps:
       - storage
   autocascade:
     mayDependOn:
+      - audit
       - automation
   automation:
     mayDependOn:
@@ -333,6 +341,7 @@ deps:
       - project
   entitymanager:
     mayDependOn:
+      - audit
       - autocascade
       - automation
       - metamodel
@@ -413,6 +422,7 @@ deps:
       - rrulego
   scheduler:
     mayDependOn:
+      - audit
       - config
       - lua
       - metamodel
