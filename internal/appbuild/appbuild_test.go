@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -164,14 +165,17 @@ func TestNew_RejectsNilDeps(t *testing.T) {
 		want string
 	}{
 		{"nil fs", func() (*appbuild.Services, error) {
-			return appbuild.New(nil, svc.Paths(), script.NewEngine())
+			return appbuild.New(nil, svc.Paths(), script.NewEngine(), audit.Nop{})
 		}, "fs is required"},
 		{"nil paths", func() (*appbuild.Services, error) {
-			return appbuild.New(svc.FS(), nil, script.NewEngine())
+			return appbuild.New(svc.FS(), nil, script.NewEngine(), audit.Nop{})
 		}, "paths is required"},
 		{"nil engine", func() (*appbuild.Services, error) {
-			return appbuild.New(svc.FS(), svc.Paths(), nil)
+			return appbuild.New(svc.FS(), svc.Paths(), nil, audit.Nop{})
 		}, "scriptEngine is required"},
+		{"nil audit", func() (*appbuild.Services, error) {
+			return appbuild.New(svc.FS(), svc.Paths(), script.NewEngine(), nil)
+		}, "auditSink is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

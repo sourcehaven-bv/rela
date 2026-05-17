@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -183,7 +184,17 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	err := s.engine.ExecuteFile(task.Script, s.ws.LuaWriteDeps(), nil, nil)
+	// Stamp the audit Principal + triggered_by so any writes the Lua
+	// script performs (directly via rela.create_entity, or indirectly
+	// via automation cascades) are attributed to the scheduler with
+	// the right task identity.
+	taskCtx := audit.WithPrincipal(ctx, audit.Principal{
+		User: audit.SystemUser(),
+		Tool: audit.ToolScheduler,
+	})
+	taskCtx = audit.WithTriggeredBy(taskCtx, "schedule:"+task.Name)
+
+	err := s.engine.ExecuteFileCtx(taskCtx, task.Script, s.ws.LuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {

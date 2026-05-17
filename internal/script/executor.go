@@ -9,6 +9,7 @@ package script
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -58,18 +59,34 @@ func (e *Engine) LuaCache() *lua.Cache {
 // newEntity/oldEntity are optional — nil when no entity is in scope.
 func (e *Engine) ExecuteCode(code string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
-	return e.execute(code, deps, "", newEntity, oldEntity)
+	return e.ExecuteCodeCtx(context.Background(), code, deps, newEntity, oldEntity)
+}
+
+// ExecuteCodeCtx is [ExecuteCode] with an explicit context. The
+// context's values (audit.Principal, triggered_by) flow into Lua
+// write bindings so downstream audit records carry the right
+// attribution. Cancellation also propagates into in-flight Lua.
+func (e *Engine) ExecuteCodeCtx(ctx context.Context, code string, deps lua.WriteDeps,
+	newEntity, oldEntity *entity.Entity) error {
+	return e.execute(ctx, code, deps, "", newEntity, oldEntity)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
 // The path must be a local path (no ".." or absolute paths) with .lua extension.
 func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
+	return e.ExecuteFileCtx(context.Background(), path, deps, newEntity, oldEntity)
+}
+
+// ExecuteFileCtx is [ExecuteFile] with an explicit context — see
+// [ExecuteCodeCtx] for the rationale.
+func (e *Engine) ExecuteFileCtx(ctx context.Context, path string, deps lua.WriteDeps,
+	newEntity, oldEntity *entity.Entity) error {
 	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {
 		return err
 	}
-	return e.execute(scriptCode, deps, path, newEntity, oldEntity)
+	return e.execute(ctx, scriptCode, deps, path, newEntity, oldEntity)
 }
 
 // ExecuteDocument loads and runs a Lua script in document-rendering mode.
@@ -163,11 +180,14 @@ func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 
 // execute runs Lua code with entity context. scriptPath is used to resolve
 // per-script secrets; pass "" for inline code (no secrets loaded).
-// Timeout is handled by lua.Runtime (default 30s).
-func (e *Engine) execute(code string, deps lua.WriteDeps, scriptPath string,
+// Timeout is handled by lua.Runtime (default 30s). ctx threads through
+// to Lua write bindings so downstream Manager calls receive the
+// caller's Principal / triggered_by values.
+func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, scriptPath string,
 	newEntity, oldEntity *entity.Entity) error {
 	var output bytes.Buffer
-	runtime, err := NewWriterRuntime(deps, scriptPath, &output, lua.WithCache(e.cache))
+	runtime, err := NewWriterRuntime(deps, scriptPath, &output,
+		lua.WithCache(e.cache), lua.WithContext(ctx))
 	if err != nil {
 		return err
 	}

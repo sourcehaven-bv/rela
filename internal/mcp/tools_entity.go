@@ -138,6 +138,7 @@ func (s *Server) handleSearchEntities(
 func (s *Server) handleCreateEntity(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
+	ctx = s.principalContext(ctx)
 	typeName, err := request.RequireString("type")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -190,6 +191,7 @@ func (s *Server) handleCreateEntity(
 func (s *Server) handleUpdateEntity(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
+	ctx = s.principalContext(ctx)
 	id, err := request.RequireString("id")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -274,6 +276,7 @@ func prefixWarnings(warnings []entity.Warning) string {
 func (s *Server) handleDeleteEntity(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
+	ctx = s.principalContext(ctx)
 	id, err := request.RequireString("id")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -312,6 +315,7 @@ func (s *Server) handleDeleteEntity(
 func (s *Server) handleRenameEntity(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
+	ctx = s.principalContext(ctx)
 	oldID, err := request.RequireString("id")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil

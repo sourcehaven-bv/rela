@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
@@ -109,6 +110,15 @@ func run() int {
 	// in-flight operations, including embedded Lua execution.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Stamp the audit Principal once for the entire CLI invocation.
+	// Subcommands that take a different identity (e.g. `rela mcp`) re-
+	// stamp the ctx with their own Tool value before invoking domain
+	// code. See audit.WithPrincipal for the contract.
+	ctx = audit.WithPrincipal(ctx, audit.Principal{
+		User: audit.SystemUser(),
+		Tool: audit.ToolCLI,
+	})
 
 	err := rootCmd.ExecuteContext(ctx)
 	if err == nil {

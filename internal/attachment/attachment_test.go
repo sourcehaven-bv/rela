@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -86,6 +87,7 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		Store:     st,
 		Meta:      meta,
 		Templater: templating.NewFSTemplater(fs, ctx),
+		Audit:     audit.Nop{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

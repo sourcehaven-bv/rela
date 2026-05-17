@@ -21,11 +21,13 @@
 package mcp
 
 import (
+	"context"
 	"log/slog"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -70,16 +72,41 @@ type Watcher interface {
 
 // Server wraps the MCP server with rela-specific state.
 type Server struct {
-	mcp    *server.MCPServer
-	ws     Services
-	logger *slog.Logger
+	mcp       *server.MCPServer
+	ws        Services
+	logger    *slog.Logger
+	principal audit.Principal
+}
+
+// Option configures a [Server] at construction.
+type Option func(*Server)
+
+// WithPrincipal stamps p onto every request ctx the server passes to
+// downstream Manager calls. Without this option, audit records
+// produced by MCP-driven writes carry Principal{User:"unknown",
+// Tool:"unknown"} — useful for tests, never what production wants.
+func WithPrincipal(p audit.Principal) Option {
+	return func(s *Server) { s.principal = p }
+}
+
+// principalContext wraps ctx with the server's Principal, if one was
+// supplied via WithPrincipal. Tool handlers call this to ensure
+// downstream audit records are correctly attributed.
+func (s *Server) principalContext(ctx context.Context) context.Context {
+	if s.principal == (audit.Principal{}) {
+		return ctx
+	}
+	return audit.WithPrincipal(ctx, s.principal)
 }
 
 // NewServer creates a new MCP server for a rela project.
-func NewServer(ws Services, version string) *Server {
+func NewServer(ws Services, version string, opts ...Option) *Server {
 	s := &Server{
 		ws:     ws,
 		logger: slog.Default().With("component", "mcp"),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	mcpServer := server.NewMCPServer(

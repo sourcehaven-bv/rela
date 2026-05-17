@@ -118,12 +118,28 @@ func WithTimeout(d time.Duration) Option {
 // timeout is derived from this parent so canceling the parent also cancels
 // the timeout-bound context.
 //
+// The parent ctx also carries values (Principal, triggered_by) into
+// downstream Mutator calls — Lua write bindings derive their ctx from
+// the parent so audit attribution flows naturally from caller →
+// engine → Lua → Manager.
+//
 // Typical usage: pass cmd.Context() from a cobra RunE so that Ctrl+C
 // interrupts script execution.
 func WithContext(ctx context.Context) Option {
 	return func(r *Runtime) {
 		r.parentCtx = ctx
 	}
+}
+
+// callerCtx returns the parent context (or context.Background() if
+// none was set). Used by write bindings to derive the ctx passed to
+// the Mutator — so the caller's Principal and triggered_by flow
+// through Lua into Manager.
+func (r *Runtime) callerCtx() context.Context {
+	if r.parentCtx != nil {
+		return r.parentCtx
+	}
+	return context.Background()
 }
 
 // WithOutputDir sets the output directory for write_file.
@@ -1292,7 +1308,7 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		Content:    content,
 	}
 	result, err := r.deps.EntityManager.CreateEntity(
-		context.Background(), newE, entity.CreateOptions{ID: customID})
+		r.callerCtx(), newE, entity.CreateOptions{ID: customID})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -1321,7 +1337,7 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	ctx := context.Background()
+	ctx := r.callerCtx()
 	existing, err := r.deps.Store.GetEntity(ctx, id)
 	if err != nil {
 		ls.RaiseError("entity not found: %s", id)
@@ -1394,7 +1410,7 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 
 	cascade := ls.OptBool(2, false)
 
-	if _, err := r.deps.EntityManager.DeleteEntity(context.Background(), id, cascade); err != nil {
+	if _, err := r.deps.EntityManager.DeleteEntity(r.callerCtx(), id, cascade); err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
 	}
@@ -1415,7 +1431,7 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 	}
 
 	rel, err := r.deps.EntityManager.CreateRelation(
-		context.Background(), from, relType, to, entity.RelationOptions{})
+		r.callerCtx(), from, relType, to, entity.RelationOptions{})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0
@@ -1436,7 +1452,7 @@ func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	if err := r.deps.EntityManager.DeleteRelation(context.Background(), from, relType, to); err != nil {
+	if err := r.deps.EntityManager.DeleteRelation(r.callerCtx(), from, relType, to); err != nil {
 		ls.RaiseError("delete relation error: %s", err.Error())
 		return 0
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -112,6 +113,7 @@ func newTestServices(t *testing.T, meta *metamodel.Metamodel, st store.Store) *t
 		Store:       st,
 		Meta:        meta,
 		Templater:   templating.NewFSTemplater(nil, nil),
+		Audit:       audit.Nop{},
 		Automations: autoEngine,
 		Cascade:     cascadeRunner,
 	})

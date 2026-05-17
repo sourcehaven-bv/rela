@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 )
 
 // CheckEmbeddedSPA verifies that the embedded Vue SPA bundle is present and
@@ -81,7 +83,27 @@ func (a *App) NewRouter() http.Handler {
 		handler = a.security.requireSameOrigin(handler)
 		handler = a.security.requireLocalHost(handler)
 	}
+	handler = stampAuditPrincipal(handler)
 	return handler
+}
+
+// stampAuditPrincipal stamps Principal{User: "unknown", Tool:
+// "data-entry"} on every request ctx. The User is intentionally
+// "unknown" (not the server process owner) — recording the server's
+// $USER for every edit by every human web user would be actively
+// misleading. Per-request override (read user from a header /
+// cookie / session) lands in a follow-up PR.
+//
+// See plan AC4 for the test that pins this behavior.
+func stampAuditPrincipal(next http.Handler) http.Handler {
+	principal := audit.Principal{
+		User: "unknown",
+		Tool: audit.ToolDataEntry,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := audit.WithPrincipal(r.Context(), principal)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // spaHandler wraps a filesystem and serves index.html for any path that doesn't

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -265,7 +266,8 @@ func (r *Runner) executeScriptActions(
 			continue
 		}
 
-		err := scripts.Run(ctx, ScriptAction{
+		actionCtx := audit.WithTriggeredBy(ctx, "automation:"+action.AutomationName)
+		err := scripts.Run(actionCtx, ScriptAction{
 			Code:      action.Code,
 			FilePath:  action.FilePath,
 			Name:      action.AutomationName,
