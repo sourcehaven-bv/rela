@@ -79,6 +79,21 @@ func StartBackground(
 	}()
 }
 
+// stampTaskAuditContext stamps the scheduler-specific Principal and
+// the per-task triggered_by label on a child context so audit records
+// produced by the Lua script (directly via rela.create_entity, or
+// indirectly via automation cascades) carry the right attribution.
+//
+// Extracted so the stamping logic can be unit-tested without booting
+// the script engine.
+func stampTaskAuditContext(ctx context.Context, taskName string) context.Context {
+	out := audit.WithPrincipal(ctx, audit.Principal{
+		User: audit.SystemUser(),
+		Tool: audit.ToolScheduler,
+	})
+	return audit.WithTriggeredBy(out, "schedule:"+taskName)
+}
+
 // Scheduler runs Lua scripts sequentially on simple recurring schedules.
 type Scheduler struct {
 	config *Config
@@ -184,16 +199,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	// Stamp the audit Principal + triggered_by so any writes the Lua
-	// script performs (directly via rela.create_entity, or indirectly
-	// via automation cascades) are attributed to the scheduler with
-	// the right task identity.
-	taskCtx := audit.WithPrincipal(ctx, audit.Principal{
-		User: audit.SystemUser(),
-		Tool: audit.ToolScheduler,
-	})
-	taskCtx = audit.WithTriggeredBy(taskCtx, "schedule:"+task.Name)
-
+	taskCtx := stampTaskAuditContext(ctx, task.Name)
 	err := s.engine.ExecuteFileCtx(taskCtx, task.Script, s.ws.LuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
