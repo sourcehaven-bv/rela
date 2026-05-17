@@ -292,10 +292,10 @@ dissolved at the same time.
   through `script.NewWriterRuntime`, which calls `lua.LoadContextOptions`.
 - **Don't wire AI into the validation path** — per-entity cost blowup
   with no quota. See `internal/ai/` docs for the rationale.
-- **Don't extend `internal/workspace` in new code.** It is a transitional
-  shim still wired in `cli/root.go` and `mcp/server.go`. New call sites
-  take the focused interfaces above directly. When touching code that
-  still uses workspace, prefer migrating it out over extending.
+- **Don't reintroduce `internal/workspace`.** It was the legacy
+  god-object aggregate; deleted in the workspace-decomposition arc.
+  New code wires services individually via `appbuild.Discover` /
+  `appbuild.New` or takes focused interfaces at the call site.
 
 ## Architecture
 
@@ -354,6 +354,38 @@ yourself adding a 422 on a write path, ask: "could a hand-editor produce
 this state in a markdown file? If yes, it's a soft condition — warn,
 don't reject."
 
+### Audit log
+
+Every successful entity / relation create / update / delete /
+rename is audited by `entitymanager.Manager` as a JSONL record
+under `.rela/audit/YYYY-MM-DD.jsonl`. See `docs/audit-log.md` for
+the user-facing reference; rules for new code:
+
+- **New write paths inherit audit automatically.** Any code that
+  calls `entitymanager.Manager.{Create,Update,Delete,Rename}{Entity,Relation}`
+  produces a record without further wiring. Do not bypass Manager
+  by writing directly to `store.Store` from a write path — the
+  audit record won't be emitted.
+- **New entry-point binaries stamp Principal at startup.** Each
+  binary or root command attaches a Principal once:
+  `ctx = audit.WithPrincipal(ctx, audit.Principal{User: audit.SystemUser(), Tool: audit.ToolXxx})`.
+  Use one of the `audit.ToolCLI` / `ToolMCP` / `ToolDataEntry` /
+  `ToolScheduler` / `ToolDesktop` constants — string literals will
+  not surface typos until the entry-point smoke test catches them.
+- **Engine-initiated paths stamp `triggered_by`.** Scheduler tasks
+  wrap the per-task ctx with `audit.WithTriggeredBy(ctx, "schedule:"+task.Name)`;
+  the autocascade runner does the analogous thing for automation
+  cascades. Direct user actions leave `triggered_by` empty.
+- **Lua bindings do not expose audit primitives.** A Lua script
+  must not be able to call `audit.WithPrincipal` or rewrite its
+  own attribution — the spoofing test in `internal/lua/audit_spoofing_test.go`
+  guards this. Do not register `rela.audit` or `rela.principal`
+  on the runtime.
+- **Constructor takes `Audit` as a required collaborator.**
+  `entitymanager.Deps.Audit` and `appbuild.New` reject nil.
+  Tests use `audit.Nop{}` (an explicit opt-out) or `audit.NewMemory()`
+  when they assert on records.
+
 ### Packages
 
 Entry points: `cmd/rela`, `cmd/rela-server`, `cmd/rela-desktop`.
@@ -367,11 +399,12 @@ Domain and storage:
 | `internal/store`         | Storage abstraction — CRUD + events, `fsstore`/`memstore` |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
-| `internal/entitymanager` | Write path: automations, validation, policy               |
+| `internal/entitymanager` | Write path: automations, validation, audit, policy        |
+| `internal/audit`         | Append-only JSONL audit log of every successful write     |
 | `internal/validator`     | Validation engine invoked by entitymanager                |
 | `internal/markdown`      | Parse/write entity and relation markdown                  |
 | `internal/project`       | Project discovery, paths (`Context`)                      |
-| `internal/workspace`     | Legacy aggregate — transitional, being phased out         |
+| `internal/appbuild`      | Wiring facade — constructs the focused services bundle    |
 
 Subsystems (see each package's doc comment for details):
 
@@ -384,6 +417,7 @@ Subsystems (see each package's doc comment for details):
 | `internal/lua`        | Lua runtime + bindings (`ReadDeps`, `WriteDeps`)               |
 | `internal/script`     | Script execution helpers that wrap `lua` with project context  |
 | `internal/automation` | Automation engine invoked by `entitymanager`                   |
+| `internal/autocascade`| Cascade orchestration (runs automation side-effects)           |
 | `internal/ai`         | OpenAI-compatible LLM provider (used from Lua)                 |
 | `internal/migration`  | Schema migrations for project YAML files                       |
 
