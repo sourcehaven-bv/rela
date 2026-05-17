@@ -83,25 +83,35 @@ func (a *App) NewRouter() http.Handler {
 		handler = a.security.requireSameOrigin(handler)
 		handler = a.security.requireLocalHost(handler)
 	}
-	handler = stampAuditPrincipal(handler)
+	handler = stampAuditPrincipal(handler, defaultPrincipalResolver)
 	return handler
 }
 
-// stampAuditPrincipal stamps Principal{User: "unknown", Tool:
-// "data-entry"} on every request ctx. The User is intentionally
-// "unknown" (not the server process owner) — recording the server's
-// $USER for every edit by every human web user would be actively
-// misleading. Per-request override (read user from a header /
-// cookie / session) lands in a follow-up PR.
-//
-// See plan AC4 for the test that pins this behavior.
-func stampAuditPrincipal(next http.Handler) http.Handler {
-	principal := audit.Principal{
+// PrincipalResolver maps an incoming HTTP request to the audit
+// Principal that should be stamped on its context. A follow-up PR
+// will replace the default with a header/cookie/session-aware
+// resolver that derives User per request.
+type PrincipalResolver func(*http.Request) audit.Principal
+
+// defaultPrincipalResolver stamps Principal{User: "unknown", Tool:
+// "data-entry"} on every request. The User is intentionally
+// "unknown" (not the server process owner) — recording the
+// operator's $USER for every edit by every human web user would be
+// actively misleading. Per-request override is the explicit
+// follow-up; this resolver is the seam where that change plugs in.
+func defaultPrincipalResolver(_ *http.Request) audit.Principal {
+	return audit.Principal{
 		User: "unknown",
 		Tool: audit.ToolDataEntry,
 	}
+}
+
+// stampAuditPrincipal stamps a Principal (resolved by resolve) on
+// every request ctx. See plan AC4 for the test that pins this
+// behavior.
+func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := audit.WithPrincipal(r.Context(), principal)
+		ctx := audit.WithPrincipal(r.Context(), resolve(r))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

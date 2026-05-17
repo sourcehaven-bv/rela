@@ -209,7 +209,7 @@ func (m *Manager) CreateEntity(
 	result.AutomationWarnings = autoResult.Warnings
 	result.AutomationErrors = autoResult.Errors
 
-	outcome, cascadeErr := m.deps.Cascade.Process(ctx, &cascadeHost{deps: m.deps, parentCtx: ctx}, autocascade.Request{
+	outcome, cascadeErr := m.deps.Cascade.Process(ctx, &cascadeHost{deps: m.deps}, autocascade.Request{
 		Trigger:    created,
 		OldTrigger: nil,
 		Result:     autoResult,
@@ -296,7 +296,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return result, nil
 	}
 
-	outcome, cascadeErr := m.deps.Cascade.Process(ctx, &cascadeHost{deps: m.deps, parentCtx: ctx}, autocascade.Request{
+	outcome, cascadeErr := m.deps.Cascade.Process(ctx, &cascadeHost{deps: m.deps}, autocascade.Request{
 		Trigger:    e,
 		OldTrigger: oldEntity,
 		Result:     autoResult,

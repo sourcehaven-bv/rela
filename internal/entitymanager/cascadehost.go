@@ -29,12 +29,10 @@ import (
 // Manager's recordEntityAudit / recordRelationAudit) because it
 // bypasses Manager itself — going through createCore / upsertEntity
 // to avoid double-cascading. Records carry triggered_by="automation"
-// to distinguish them from direct writes.
+// (or the cascade-delete label when invoked from IfExistsReplace) to
+// distinguish them from direct writes.
 type cascadeHost struct {
 	deps Deps
-	// cascadeHost is per-call (constructed in Manager methods);
-	// its lifetime is bound to a single ctx, so embedding is safe.
-	parentCtx context.Context //nolint:containedctx // per-call lifetime; see field doc
 }
 
 // Compile-time assertion.
@@ -45,14 +43,14 @@ var _ autocascade.Host = (*cascadeHost)(nil)
 // running automations afterward (Runner manages follow-up cascade
 // scheduling on the result).
 func (h *cascadeHost) CreateEntity(
-	entityType string, opts autocascade.CreateEntityOptions,
+	ctx context.Context, entityType string, opts autocascade.CreateEntityOptions,
 ) (*entity.Entity, error) {
 	// Cascade-driven creates discard warnings — the autocascade.Host
 	// contract returns only (*entity.Entity, error). The Runner doesn't
 	// propagate per-step warnings; they'd be merged into the trigger's
 	// entity.CreateResult.Warnings if we extended Outcome, but that's a
 	// separate change.
-	e, _, err := createCore(h.parentCtx, h.deps, entityType, createCoreOpts{
+	e, _, err := createCore(ctx, h.deps, entityType, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.IDPrefix,
 		TemplateVariant: opts.TemplateVariant,
@@ -60,7 +58,7 @@ func (h *cascadeHost) CreateEntity(
 		Content:         opts.Content,
 	})
 	if err == nil {
-		h.recordCascadeEntity(audit.OpCreateEntity, e, "created")
+		h.recordCascadeEntity(ctx, audit.OpCreateEntity, e, "created")
 	}
 	return e, err
 }
@@ -74,8 +72,8 @@ func (h *cascadeHost) CreateEntity(
 // already produced one audit record. Emitting another for the
 // property-set step would double-count the same entity creation in
 // the audit log.
-func (h *cascadeHost) WriteEntity(e *entity.Entity) error {
-	return upsertEntity(h.parentCtx, h.deps.Store, e)
+func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
+	return upsertEntity(ctx, h.deps.Store, e)
 }
 
 // GetEntity satisfies [autocascade.Host.GetEntity] by forwarding to
@@ -86,11 +84,11 @@ func (h *cascadeHost) GetEntity(ctx context.Context, id string) (*entity.Entity,
 
 // WriteRelation satisfies [autocascade.Host.WriteRelation] by
 // performing a bare upsert against the store.
-func (h *cascadeHost) WriteRelation(r *entity.Relation) error {
-	if err := upsertRelation(h.parentCtx, h.deps.Store, r); err != nil {
+func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) error {
+	if err := upsertRelation(ctx, h.deps.Store, r); err != nil {
 		return err
 	}
-	h.recordCascadeRelation(audit.OpCreateRelation, r, "created")
+	h.recordCascadeRelation(ctx, audit.OpCreateRelation, r, "created")
 	return nil
 }
 
@@ -104,6 +102,11 @@ func (h *cascadeHost) ValidateRelation(relType, fromType, toType string) error {
 // [Manager.DeleteEntity]'s incident-relation handling. The entityType
 // parameter is informational — the store looks up the type from the
 // entity itself.
+//
+// triggered_by attribution: invoked only from the IfExistsReplace
+// path. Stamp `cascade:delete-entity:<id>` on the ctx so the
+// cascaded relation deletes are attributed to the replacement
+// operation, matching the direct-DeleteEntity convention in Manager.
 func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bool) error {
 	current, err := h.deps.Store.GetEntity(ctx, id)
 	if err != nil {
@@ -116,13 +119,18 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 		return ErrHasRelations
 	}
 
+	cascadeCtx := ctx
+	if cascade && (len(incoming)+len(outgoing)) > 0 {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
+	}
+
 	for _, rel := range incoming {
 		if delErr := h.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
 			!errors.Is(delErr, store.ErrNotFound) {
 
 			continue
 		}
-		h.recordCascadeRelation(audit.OpDeleteRelation, rel, "deleted")
+		h.recordRelationAuditWithCtx(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 	for _, rel := range outgoing {
 		if delErr := h.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
@@ -130,7 +138,7 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 
 			continue
 		}
-		h.recordCascadeRelation(audit.OpDeleteRelation, rel, "deleted")
+		h.recordRelationAuditWithCtx(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 
 	if _, delErr := h.deps.Store.DeleteEntity(ctx, id, false); delErr != nil &&
@@ -138,31 +146,36 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 
 		return fmt.Errorf("delete entity: %w", delErr)
 	}
-	h.recordCascadeEntity(audit.OpDeleteEntity, current, "deleted")
+	h.recordCascadeEntity(ctx, audit.OpDeleteEntity, current, "deleted")
 	return nil
 }
 
 // FindExistingRelationTarget satisfies
 // [autocascade.Host.FindExistingRelationTarget].
 func (h *cascadeHost) FindExistingRelationTarget(
-	sourceID, relationType, targetType string,
+	ctx context.Context, sourceID, relationType, targetType string,
 ) *entity.Entity {
-	return findExistingRelationTarget(h.parentCtx, h.deps.Store, sourceID, relationType, targetType)
+	return findExistingRelationTarget(ctx, h.deps.Store, sourceID, relationType, targetType)
 }
 
 // recordCascadeEntity emits an audit record for a cascade-driven
 // entity write. Carries triggered_by="automation" (a generic label —
 // see runner.go applyRelationCreations for the rationale) plus the
-// originator's Principal inherited from parentCtx.
-func (h *cascadeHost) recordCascadeEntity(op string, e *entity.Entity, summary string) {
+// originator's Principal inherited from ctx, *unless* ctx already
+// carries a triggered_by (e.g. cascade:delete-entity:X from the
+// IfExistsReplace path), in which case the existing label wins.
+func (h *cascadeHost) recordCascadeEntity(ctx context.Context, op string, e *entity.Entity, summary string) {
 	if e == nil {
 		return
 	}
-	cascadeCtx := audit.WithTriggeredBy(h.parentCtx, "automation")
+	cascadeCtx := ctx
+	if audit.TriggeredByFrom(ctx) == "" {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "automation")
+	}
 	h.deps.Audit.Record(audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
-		Subject: audit.Subject{
+		Subject: &audit.Subject{
 			Kind: "entity",
 			Type: e.Type,
 			ID:   e.ID,
@@ -174,23 +187,40 @@ func (h *cascadeHost) recordCascadeEntity(op string, e *entity.Entity, summary s
 }
 
 // recordCascadeRelation emits an audit record for a cascade-driven
-// relation write.
-func (h *cascadeHost) recordCascadeRelation(op string, r *entity.Relation, summary string) {
+// relation write. Defaults triggered_by to "automation" when ctx
+// carries none.
+func (h *cascadeHost) recordCascadeRelation(ctx context.Context, op string, r *entity.Relation, summary string) {
 	if r == nil {
 		return
 	}
-	cascadeCtx := audit.WithTriggeredBy(h.parentCtx, "automation")
+	cascadeCtx := ctx
+	if audit.TriggeredByFrom(ctx) == "" {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "automation")
+	}
+	h.recordRelationAuditWithCtx(cascadeCtx, op, r, summary)
+}
+
+// recordRelationAuditWithCtx is the raw emitter used by paths that
+// already wrapped ctx with the correct triggered_by (e.g. the
+// cascade-delete loop in DeleteEntity). Skips the
+// "default-to-automation" wrap that recordCascadeRelation applies.
+func (h *cascadeHost) recordRelationAuditWithCtx(
+	ctx context.Context, op string, r *entity.Relation, summary string,
+) {
+	if r == nil {
+		return
+	}
 	h.deps.Audit.Record(audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
-		Subject: audit.Subject{
+		Subject: &audit.Subject{
 			Kind:         "relation",
 			RelationType: r.Type,
 			FromID:       r.From,
 			ToID:         r.To,
 		},
-		Principal:   audit.PrincipalFrom(cascadeCtx),
-		TriggeredBy: audit.TriggeredByFrom(cascadeCtx),
+		Principal:   audit.PrincipalFrom(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     summary,
 	})
 }

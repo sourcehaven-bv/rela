@@ -134,7 +134,7 @@ func (r *Runner) processEntityCreations(
 		// Create entity. Runner takes responsibility for the
 		// follow-up cascade evaluation on the result; Host.CreateEntity
 		// must not fire automations itself (see Host doc).
-		created, createErr := host.CreateEntity(toCreate.Type, CreateEntityOptions{
+		created, createErr := host.CreateEntity(ctx, toCreate.Type, CreateEntityOptions{
 			TemplateVariant: toCreate.Template,
 			Properties:      toCreate.Properties,
 		})
@@ -148,11 +148,11 @@ func (r *Runner) processEntityCreations(
 
 		// Create relation from trigger if specified.
 		if toCreate.RelationFromTrigger != "" {
-			r.createTriggerRelation(host, trigger, created, toCreate.RelationFromTrigger, outcome)
+			r.createTriggerRelation(ctx, host, trigger, created, toCreate.RelationFromTrigger, outcome)
 		}
 
 		// Run automation on newly created entity.
-		newItem := r.runCreatedEntityAutomation(host, created, outcome)
+		newItem := r.runCreatedEntityAutomation(ctx, host, created, outcome)
 		if newItem != nil {
 			newItems = append(newItems, *newItem)
 		}
@@ -164,6 +164,7 @@ func (r *Runner) processEntityCreations(
 // runCreatedEntityAutomation runs automation on a newly created
 // entity and returns a queue item if the result implies more work.
 func (r *Runner) runCreatedEntityAutomation(
+	ctx context.Context,
 	host Host,
 	created *entity.Entity,
 	outcome *Outcome,
@@ -183,7 +184,7 @@ func (r *Runner) runCreatedEntityAutomation(
 			created.SetString(prop, val)
 		}
 		// Re-write entity with updated properties.
-		if err := host.WriteEntity(created); err != nil {
+		if err := host.WriteEntity(ctx, created); err != nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("failed to update automation entity %s: %v", created.ID, err))
 		}
@@ -227,7 +228,7 @@ func (r *Runner) applyRelationCreations(
 			continue
 		}
 
-		if err := host.WriteRelation(rel); err != nil {
+		if err := host.WriteRelation(ctx, rel); err != nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("failed to create automation relation: %v", err))
 			continue
@@ -312,7 +313,7 @@ func (r *Runner) handleIfExists(
 	}
 
 	existingTarget := host.FindExistingRelationTarget(
-		triggerEntity.ID, toCreate.RelationFromTrigger, toCreate.Type)
+		ctx, triggerEntity.ID, toCreate.RelationFromTrigger, toCreate.Type)
 
 	if existingTarget == nil {
 		return false
@@ -344,6 +345,7 @@ func (r *Runner) handleIfExists(
 // createTriggerRelation creates a relation from the trigger entity to
 // a newly created entity. Failures are appended to outcome.Errors.
 func (r *Runner) createTriggerRelation(
+	ctx context.Context,
 	host Host,
 	triggerEntity, created *entity.Entity,
 	relationType string,
@@ -356,7 +358,7 @@ func (r *Runner) createTriggerRelation(
 	}
 
 	rel := entity.NewRelation(triggerEntity.ID, relationType, created.ID)
-	if err := host.WriteRelation(rel); err != nil {
+	if err := host.WriteRelation(ctx, rel); err != nil {
 		outcome.Errors = append(outcome.Errors,
 			fmt.Sprintf("failed to create automation relation: %v", err))
 		return

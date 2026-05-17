@@ -200,7 +200,7 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	start := s.now()
 
 	taskCtx := stampTaskAuditContext(ctx, task.Name)
-	err := s.engine.ExecuteFileCtx(taskCtx, task.Script, s.ws.LuaWriteDeps(), nil, nil)
+	err := s.engine.ExecuteFile(taskCtx, task.Script, s.ws.LuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {

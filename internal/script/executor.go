@@ -57,30 +57,20 @@ func (e *Engine) LuaCache() *lua.Cache {
 //
 // AI config and per-script secrets are loaded from deps.ProjectRoot/.rela.
 // newEntity/oldEntity are optional — nil when no entity is in scope.
-func (e *Engine) ExecuteCode(code string, deps lua.WriteDeps,
-	newEntity, oldEntity *entity.Entity) error {
-	return e.ExecuteCodeCtx(context.Background(), code, deps, newEntity, oldEntity)
-}
-
-// ExecuteCodeCtx is [ExecuteCode] with an explicit context. The
-// context's values (audit.Principal, triggered_by) flow into Lua
-// write bindings so downstream audit records carry the right
-// attribution. Cancellation also propagates into in-flight Lua.
-func (e *Engine) ExecuteCodeCtx(ctx context.Context, code string, deps lua.WriteDeps,
+//
+// ctx threads into Lua write bindings so downstream audit records
+// carry the caller's Principal / triggered_by, and cancellation
+// propagates into in-flight Lua. Callers without a meaningful ctx
+// pass context.Background() explicitly.
+func (e *Engine) ExecuteCode(ctx context.Context, code string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
 	return e.execute(ctx, code, deps, "", newEntity, oldEntity)
 }
 
 // ExecuteFile loads and runs a script file from the scripts/ directory.
-// The path must be a local path (no ".." or absolute paths) with .lua extension.
-func (e *Engine) ExecuteFile(path string, deps lua.WriteDeps,
-	newEntity, oldEntity *entity.Entity) error {
-	return e.ExecuteFileCtx(context.Background(), path, deps, newEntity, oldEntity)
-}
-
-// ExecuteFileCtx is [ExecuteFile] with an explicit context — see
-// [ExecuteCodeCtx] for the rationale.
-func (e *Engine) ExecuteFileCtx(ctx context.Context, path string, deps lua.WriteDeps,
+// The path must be a local path (no ".." or absolute paths) with .lua
+// extension. ctx semantics match [ExecuteCode].
+func (e *Engine) ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity) error {
 	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {

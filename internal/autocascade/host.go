@@ -24,6 +24,11 @@ import (
 // Host is what Runner needs from its caller to execute a cascade.
 // Each method documents where Runner invokes it. The interface is
 // narrow on purpose — only the operations Runner actually calls.
+//
+// Every method takes a context — Runner threads its per-Process ctx
+// (which carries `audit.Principal` from the originator and
+// `audit.TriggeredBy` set by Runner before script execution) so the
+// Host's audit emission inherits the right attribution.
 type Host interface {
 	// CreateEntity creates a new entity from the supplied options
 	// (ID generation, template application, validation, persistence)
@@ -36,7 +41,7 @@ type Host interface {
 	// entity creation. The bare write semantics are roughly
 	// "everything workspace.createEntityCore does, including
 	// validation, minus the post-write automation event."
-	CreateEntity(entityType string, opts CreateEntityOptions) (*entity.Entity, error)
+	CreateEntity(ctx context.Context, entityType string, opts CreateEntityOptions) (*entity.Entity, error)
 
 	// WriteEntity upserts an *existing* entity to the store without
 	// any further processing (no ID generation, no template, no
@@ -44,7 +49,7 @@ type Host interface {
 	// changes from [automation.Result.PropertiesSet] onto an entity
 	// that already went through [Host.CreateEntity] earlier in the
 	// cascade.
-	WriteEntity(e *entity.Entity) error
+	WriteEntity(ctx context.Context, e *entity.Entity) error
 
 	// GetEntity reads an entity by ID. Runner uses it to verify that
 	// targets of automation-generated relations exist before
@@ -54,7 +59,7 @@ type Host interface {
 	// WriteRelation upserts the relation to the store. Runner uses
 	// it for entries in [automation.Result.RelationsToCreate] and
 	// for trigger relations attached to automation-created entities.
-	WriteRelation(r *entity.Relation) error
+	WriteRelation(ctx context.Context, r *entity.Relation) error
 
 	// ValidateRelation checks whether a relation of the given type
 	// from `fromType` to `toType` is admissible per the active
@@ -75,7 +80,7 @@ type Host interface {
 	// of the given relation type from the source entity, if any.
 	// Returns nil if no such relation exists. Runner uses it to
 	// implement the IfExists behaviors (Skip / Error / Replace).
-	FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity
+	FindExistingRelationTarget(ctx context.Context, sourceID, relationType, targetType string) *entity.Entity
 }
 
 // CreateEntityOptions configures a [Host.CreateEntity] call.

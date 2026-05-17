@@ -24,10 +24,9 @@ import (
 // Security:
 //   - Files opened with O_APPEND|O_CREATE|O_WRONLY|O_NOFOLLOW and mode [fileMode].
 //   - The audit directory is Lstat'd before MkdirAll; if it is a symlink,
-//     the backend disables itself for the rest of the process (slog.Error;
-//     subsequent Record calls become no-ops). Refusing-and-degrading is
-//     correct here per AC14 — an unwritable audit must not block legitimate
-//     entity writes.
+//     the backend logs slog.Error and skips the write. Subsequent records
+//     retry after [retryAfter] — a transient ENOSPC / perms blip should
+//     not silently lose audit for the rest of the process.
 //
 // Sanitization: every string field on Record is sanitized at this
 // layer — truncated to 1024 chars (UTF-8 safe) and C0/DEL control
@@ -40,8 +39,16 @@ type Filesystem struct {
 	mu          sync.Mutex
 	currentDate string
 	file        *os.File
-	disabled    bool // set when symlink detected or open keeps failing
+	nextRetry   time.Time // zero = not in cooldown; later = skip until then
 }
+
+// retryAfter is the cool-down between failed rotate attempts. The
+// previous implementation set a permanent disabled flag on the first
+// failure, turning a transient ENOSPC / NFS hiccup into total audit
+// loss until process restart. 60s strikes the balance: short enough
+// that a brief outage doesn't lose more than a minute of records;
+// long enough that a sustained failure doesn't spam slog.
+const retryAfter = 60 * time.Second
 
 // filesystemConfig is the receiver for [Option]s.
 type filesystemConfig struct {
@@ -77,23 +84,31 @@ func NewFilesystem(dir string, opts ...Option) (*Filesystem, error) {
 // file, rotating if the UTC date has changed since the last write.
 // Errors are logged via slog and otherwise swallowed — audit must
 // never block an entity write.
+//
+// When rotate fails (symlinked dir, ENOSPC, perms), the backend
+// enters a cooldown for [retryAfter]; records during the cooldown
+// are dropped silently. Once the cooldown expires the next Record
+// retries — a transient failure doesn't kill audit for the process
+// lifetime.
 func (f *Filesystem) Record(rec Record) {
 	rec = sanitize(rec)
+	now := f.clock().UTC()
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.disabled {
+	if !f.nextRetry.IsZero() && now.Before(f.nextRetry) {
 		return
 	}
 
-	today := f.clock().UTC().Format("2006-01-02")
+	today := now.Format("2006-01-02")
 	if today != f.currentDate || f.file == nil {
 		if err := f.rotateLocked(today); err != nil {
 			slog.Error("audit.write_failed", "stage", "rotate", "error", err)
-			f.disabled = true
+			f.nextRetry = now.Add(retryAfter)
 			return
 		}
+		f.nextRetry = time.Time{}
 	}
 
 	line, err := json.Marshal(rec)
@@ -187,14 +202,18 @@ func sanitize(rec Record) Record {
 	return rec
 }
 
-func sanitizeSubject(s Subject) Subject {
-	s.Kind = clean(s.Kind)
-	s.Type = clean(s.Type)
-	s.ID = clean(s.ID)
-	s.RelationType = clean(s.RelationType)
-	s.FromID = clean(s.FromID)
-	s.ToID = clean(s.ToID)
-	return s
+func sanitizeSubject(s *Subject) *Subject {
+	if s == nil {
+		return nil
+	}
+	cleaned := *s
+	cleaned.Kind = clean(cleaned.Kind)
+	cleaned.Type = clean(cleaned.Type)
+	cleaned.ID = clean(cleaned.ID)
+	cleaned.RelationType = clean(cleaned.RelationType)
+	cleaned.FromID = clean(cleaned.FromID)
+	cleaned.ToID = clean(cleaned.ToID)
+	return &cleaned
 }
 
 // clean truncates s to fieldLimit (UTF-8 safe) and replaces control

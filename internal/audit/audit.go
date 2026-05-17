@@ -67,12 +67,18 @@ type Subject struct {
 }
 
 // Record is one audit row in the JSONL stream.
+//
+// Subject / Before / After are pointers so encoding/json can honor
+// omitempty — non-pointer struct fields would marshal as
+// `"subject":{}` even when zero. Rename ops populate Before/After
+// and leave Subject nil; every other op populates Subject and
+// leaves Before/After nil.
 type Record struct {
 	Time        time.Time `json:"time"`
 	Op          string    `json:"op"`
-	Subject     Subject   `json:"subject,omitempty"`
-	Before      Subject   `json:"before,omitempty"`
-	After       Subject   `json:"after,omitempty"`
+	Subject     *Subject  `json:"subject,omitempty"`
+	Before      *Subject  `json:"before,omitempty"`
+	After       *Subject  `json:"after,omitempty"`
 	Principal   Principal `json:"principal"`
 	TriggeredBy string    `json:"triggered_by,omitempty"`
 	Summary     string    `json:"summary,omitempty"`

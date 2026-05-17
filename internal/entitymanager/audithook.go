@@ -23,7 +23,7 @@ func (m *Manager) recordEntityAudit(ctx context.Context, op string, e *entity.En
 	m.deps.Audit.Record(audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
-		Subject: audit.Subject{
+		Subject: &audit.Subject{
 			Kind: "entity",
 			Type: e.Type,
 			ID:   e.ID,
@@ -43,7 +43,7 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 	m.deps.Audit.Record(audit.Record{
 		Time: time.Now().UTC(),
 		Op:   op,
-		Subject: audit.Subject{
+		Subject: &audit.Subject{
 			Kind:         "relation",
 			RelationType: rel.Type,
 			FromID:       rel.From,
@@ -66,12 +66,12 @@ func (m *Manager) recordRenameAudit(ctx context.Context, before, after *entity.E
 	m.deps.Audit.Record(audit.Record{
 		Time: time.Now().UTC(),
 		Op:   audit.OpRenameEntity,
-		Before: audit.Subject{
+		Before: &audit.Subject{
 			Kind: "entity",
 			Type: before.Type,
 			ID:   before.ID,
 		},
-		After: audit.Subject{
+		After: &audit.Subject{
 			Kind: "entity",
 			Type: after.Type,
 			ID:   after.ID,

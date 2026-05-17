@@ -209,9 +209,9 @@ func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
 		t.Errorf("expected type=requirement in Before/After, got %q/%q",
 			renameRec.Before.Type, renameRec.After.Type)
 	}
-	// Subject must be empty for rename.
-	if renameRec.Subject != (audit.Subject{}) {
-		t.Errorf("rename should leave Subject empty, got %+v", renameRec.Subject)
+	// Subject must be nil for rename (Before/After carry the diff).
+	if renameRec.Subject != nil {
+		t.Errorf("rename should leave Subject nil, got %+v", *renameRec.Subject)
 	}
 }
 
@@ -440,6 +440,60 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 	}
 	if cascadedRelation == 0 {
 		t.Errorf("want >=1 cascaded create-relation records with TriggeredBy, got 0")
+	}
+}
+
+// TestAudit_IfExistsReplaceUsesCascadeLabel verifies that
+// cascadeHost.DeleteEntity (invoked via the IfExistsReplace path)
+// labels cascaded relation deletes with `cascade:delete-entity:<id>`,
+// not the generic "automation" — symmetric with the direct
+// Manager.DeleteEntity path. Without this, replace operations would
+// be indistinguishable from automation-generated relation deletes in
+// the audit trail.
+func TestAudit_IfExistsReplaceUsesCascadeLabel(t *testing.T) {
+	// We can exercise cascadeHost.DeleteEntity directly — it's the
+	// IfExistsReplace path's entry point and the only place the
+	// cascade label gets stamped. Going through autocascade.Runner
+	// would add a metamodel-with-if_exists:replace fixture that isn't
+	// needed to prove the attribution.
+	mem := audit.NewMemory()
+	mgr := newManagerWithAudit(t, mem, nil)
+
+	// Seed an entity with one incident relation.
+	req, _ := mgr.CreateEntity(context.Background(),
+		entity.New("", "requirement"), entity.CreateOptions{})
+	dec, _ := mgr.CreateEntity(context.Background(),
+		entity.New("", "decision"), entity.CreateOptions{})
+	_, _ = mgr.CreateRelation(context.Background(),
+		dec.Entity.ID, "addresses", req.Entity.ID, entity.RelationOptions{})
+
+	// Reach into the manager's cascadeHost. The Deps struct is
+	// unexported but accessible via the manager's package — this
+	// file is in entitymanager_test, so we route through a public
+	// helper that emulates how the runner invokes the host.
+	startLen := len(mem.Records())
+
+	// Construct a cascadeHost the same way Manager does and invoke
+	// DeleteEntity directly. The test thus pins the host's
+	// triggered_by behavior independent of the runner.
+	host := entitymanager.NewCascadeHostForTest(mgr)
+	if err := host.DeleteEntity(context.Background(), "requirement", req.Entity.ID, true); err != nil {
+		t.Fatalf("cascadeHost.DeleteEntity: %v", err)
+	}
+
+	newRecords := mem.Records()[startLen:]
+	want := "cascade:delete-entity:" + req.Entity.ID
+	var relDeletes int
+	for _, r := range newRecords {
+		if r.Op == audit.OpDeleteRelation {
+			relDeletes++
+			if r.TriggeredBy != want {
+				t.Errorf("relation-delete TriggeredBy = %q, want %q", r.TriggeredBy, want)
+			}
+		}
+	}
+	if relDeletes != 1 {
+		t.Errorf("want 1 relation-delete record, got %d", relDeletes)
 	}
 }
 

@@ -20,7 +20,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 			rec: audit.Record{
 				Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 				Op:        audit.OpCreateEntity,
-				Subject:   audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
+				Subject:   &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
 				Principal: audit.Principal{User: "alice", Tool: audit.ToolCLI},
 				Summary:   "created",
 			},
@@ -31,7 +31,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 			rec: audit.Record{
 				Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 				Op:        audit.OpCreateRelation,
-				Subject:   audit.Subject{Kind: "relation", RelationType: "requires", FromID: "F-1", ToID: "C-2"},
+				Subject:   &audit.Subject{Kind: "relation", RelationType: "requires", FromID: "F-1", ToID: "C-2"},
 				Principal: audit.Principal{User: "bob", Tool: audit.ToolMCP},
 			},
 			wantKey: `"from_id":"F-1"`,
@@ -41,8 +41,8 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 			rec: audit.Record{
 				Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 				Op:        audit.OpRenameEntity,
-				Before:    audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-OLD"},
-				After:     audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-NEW"},
+				Before:    &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-OLD"},
+				After:     &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-NEW"},
 				Principal: audit.Principal{User: "carol", Tool: audit.ToolCLI},
 			},
 			wantKey: `"after":{"kind":"entity"`,
@@ -75,7 +75,7 @@ func TestRecord_OmitemptyOnOptionalFields(t *testing.T) {
 	rec := audit.Record{
 		Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
 		Op:        audit.OpCreateEntity,
-		Subject:   audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
+		Subject:   &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
 		Principal: audit.Principal{User: "alice", Tool: audit.ToolCLI},
 		// TriggeredBy and Summary left empty
 	}
@@ -88,5 +88,34 @@ func TestRecord_OmitemptyOnOptionalFields(t *testing.T) {
 	}
 	if strings.Contains(string(data), "summary") {
 		t.Errorf("expected summary to be omitted, got: %s", data)
+	}
+	// Before/After must be omitted entirely (not "before":null nor
+	// "before":{}). encoding/json does not honor omitempty on
+	// non-pointer struct fields, hence Record uses *Subject — pin that.
+	if strings.Contains(string(data), `"before"`) {
+		t.Errorf("expected before to be omitted, got: %s", data)
+	}
+	if strings.Contains(string(data), `"after"`) {
+		t.Errorf("expected after to be omitted, got: %s", data)
+	}
+}
+
+// TestRecord_RenameOmitsSubject pins the wire contract: a rename record
+// must NOT serialize an empty subject (which would be {"kind":"",...})
+// — Subject is *Subject for that reason.
+func TestRecord_RenameOmitsSubject(t *testing.T) {
+	rec := audit.Record{
+		Time:      time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC),
+		Op:        audit.OpRenameEntity,
+		Before:    &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-OLD"},
+		After:     &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-NEW"},
+		Principal: audit.Principal{User: "carol", Tool: audit.ToolCLI},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"subject"`) {
+		t.Errorf("rename record must not include subject, got: %s", data)
 	}
 }

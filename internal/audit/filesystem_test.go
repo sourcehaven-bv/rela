@@ -34,7 +34,7 @@ func TestFilesystem_RecordWritesJSONL(t *testing.T) {
 
 	a.Record(audit.Record{
 		Op:        audit.OpCreateEntity,
-		Subject:   audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
+		Subject:   &audit.Subject{Kind: "entity", Type: "ticket", ID: "TKT-1"},
 		Principal: audit.Principal{User: "alice", Tool: audit.ToolCLI},
 	})
 
@@ -63,11 +63,11 @@ func TestFilesystem_DailyRotation(t *testing.T) {
 		t.Fatalf("NewFilesystem: %v", err)
 	}
 
-	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: audit.Subject{Kind: "entity", ID: "first"}})
+	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", ID: "first"}})
 
 	// Cross midnight UTC.
 	clock.set(time.Date(2026, 5, 18, 0, 1, 0, 0, time.UTC))
-	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: audit.Subject{Kind: "entity", ID: "second"}})
+	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", ID: "second"}})
 
 	day1 := readLines(t, filepath.Join(auditDir, "2026-05-17.jsonl"))
 	day2 := readLines(t, filepath.Join(auditDir, "2026-05-18.jsonl"))
@@ -181,11 +181,66 @@ func TestFilesystem_SymlinkedDirRefused(t *testing.T) {
 	if len(matches) != 0 {
 		t.Errorf("audit wrote into symlink target despite refusal: %v", matches)
 	}
-	// Subsequent records also no-op (backend disabled).
+	// Subsequent records also skip (backend in retry cool-down).
 	a.Record(audit.Record{Op: audit.OpDeleteEntity})
 	matches, _ = filepath.Glob(filepath.Join(realDir, "*.jsonl"))
 	if len(matches) != 0 {
 		t.Errorf("audit kept writing after symlink refusal: %v", matches)
+	}
+}
+
+// TestFilesystem_TransientFailureRecovers verifies the retry behavior:
+// a rotate failure puts the backend into cool-down; once the
+// failure-condition is removed and the cool-down expires, the next
+// Record succeeds. Replaces the previous "permanent disable" bug.
+func TestFilesystem_TransientFailureRecovers(t *testing.T) {
+	if runtimeIsWindows() {
+		t.Skip("symlinks behave differently on windows")
+	}
+	tempBase := t.TempDir()
+	auditDir := filepath.Join(tempBase, "audit")
+	realDir := filepath.Join(tempBase, "real")
+	if err := os.MkdirAll(realDir, 0o700); err != nil {
+		t.Fatalf("mkdir real: %v", err)
+	}
+	if err := os.Symlink(realDir, auditDir); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	// Inject a clock so we can advance past the cool-down without
+	// time.Sleep.
+	clock := fixedClock(time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC))
+	a, err := audit.NewFilesystem(auditDir, audit.WithClock(clock.now))
+	if err != nil {
+		t.Fatalf("NewFilesystem: %v", err)
+	}
+
+	// First record fails (symlinked dir) — cool-down begins.
+	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", ID: "first"}})
+
+	// Remove the symlink and create a real directory in its place.
+	if err := os.Remove(auditDir); err != nil {
+		t.Fatalf("remove symlink: %v", err)
+	}
+
+	// Within cool-down: still skipped even though the underlying
+	// problem is fixed.
+	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", ID: "skipped"}})
+	if _, err := os.Stat(auditDir); !os.IsNotExist(err) {
+		// auditDir created during the skipped Record is a regression.
+		t.Errorf("backend tried to write during cool-down")
+	}
+
+	// Advance past cool-down — next Record retries and succeeds.
+	clock.set(time.Date(2026, 5, 17, 8, 2, 0, 0, time.UTC))
+	a.Record(audit.Record{Op: audit.OpCreateEntity, Subject: &audit.Subject{Kind: "entity", ID: "recovered"}})
+
+	lines := readLines(t, filepath.Join(auditDir, "2026-05-17.jsonl"))
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line after recovery, got %d", len(lines))
+	}
+	if !strings.Contains(lines[0], `"id":"recovered"`) {
+		t.Errorf("recovered line missing expected id: %q", lines[0])
 	}
 }
 
@@ -199,7 +254,7 @@ func TestFilesystem_SanitizationStripsControlChars(t *testing.T) {
 
 	a.Record(audit.Record{
 		Op:        audit.OpCreateEntity,
-		Subject:   audit.Subject{Kind: "entity", Type: "tick\net", ID: "TKT-\x001"},
+		Subject:   &audit.Subject{Kind: "entity", Type: "tick\net", ID: "TKT-\x001"},
 		Principal: audit.Principal{User: "al\x1bice", Tool: audit.ToolCLI},
 		Summary:   "created\nwith newline",
 	})
@@ -238,7 +293,7 @@ func TestFilesystem_SanitizationTruncates(t *testing.T) {
 	long := strings.Repeat("x", 2000)
 	a.Record(audit.Record{
 		Op:      audit.OpCreateEntity,
-		Subject: audit.Subject{Kind: "entity", ID: long},
+		Subject: &audit.Subject{Kind: "entity", ID: long},
 	})
 
 	lines := readLines(t, mustGlobOne(t, filepath.Join(auditDir, "*.jsonl")))

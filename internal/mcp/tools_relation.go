@@ -56,7 +56,6 @@ func (s *Server) handleListRelations(
 func (s *Server) handleCreateRelation(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	ctx = s.principalContext(ctx)
 	fromID, err := request.RequireString("from")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -93,7 +92,6 @@ func (s *Server) handleCreateRelation(
 func (s *Server) handleDeleteRelation(
 	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	ctx = s.principalContext(ctx)
 	fromID, err := request.RequireString("from")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
