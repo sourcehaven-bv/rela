@@ -332,3 +332,17 @@ rela.update_entity("REPORT-traceability", {
     status = #gaps > 0 and "open" or "closed",
 }, body)
 ```
+
+## Audit log
+
+Every write a scheduled task performs (via `rela.create_entity`,
+`rela.update_entity`, etc.) is recorded in
+`.rela/audit/YYYY-MM-DD.jsonl` with `principal.tool: "scheduler"` and
+`triggered_by: "schedule:<task-name>"`. This makes it easy to filter
+the audit log for scheduler-driven changes:
+
+```bash
+cat .rela/audit/*.jsonl | jq 'select(.triggered_by == "schedule:traceability-report")'
+```
+
+See [audit-log.md](audit-log.md) for the full record schema.

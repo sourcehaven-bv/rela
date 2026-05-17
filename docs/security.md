@@ -112,6 +112,22 @@ and a write deadline would kill them mid-flight. Slow-write protection
 is provided by `IdleTimeout` and (in the future) by per-handler context
 deadlines on individual mutating handlers.
 
+## Audit logging
+
+Every entity / relation create / update / delete is recorded as a
+JSONL row under `.rela/audit/YYYY-MM-DD.jsonl`. Records carry the
+operating user (`$USER`), the entry point that initiated the write
+(`cli`, `mcp`, `data-entry`, `scheduler`, `desktop`), and — for
+engine-initiated writes — the originating automation or schedule.
+
+The log is forensic, not authoritative: a process crash between the
+store write and the audit append can leave a write un-audited; see
+[audit-log.md](./audit-log.md) for the durability story, the JSONL
+schema, and `jq` recipes for common queries.
+
+`.rela/audit/` is gitignored by convention — audit content is
+per-machine and should not be committed.
+
 ## Running the Vue dev server (Vite)
 
 If you run the SPA via Vite on `http://localhost:5173`, requests to the Go

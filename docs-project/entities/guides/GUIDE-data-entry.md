@@ -2299,3 +2299,13 @@ renderer on their next reload.
 7. **Views for key entities** - Create detail views for entities that aggregate related data.
    A risk detail view showing assets, controls, and incidents is more useful than viewing the
    risk entity alone.
+
+## Audit log
+
+Every edit performed through the data-entry app is recorded in
+`.rela/audit/YYYY-MM-DD.jsonl` with `principal.tool: "data-entry"`.
+The user is currently stamped as `"unknown"` — recording the server
+process's OS user for every edit would be misleading. Per-request
+user attribution (read from a header / cookie / session) lands in a
+follow-up. See [audit-log.md](audit-log.md) for the full schema and
+operator concerns.

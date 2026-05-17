@@ -164,3 +164,20 @@ Review an entity for completeness and quality. Returns the full entity, its prop
 and validation results.
 
 **Arguments:** `id` (required)
+
+## Audit log
+
+Every entity / relation write performed through MCP tools (including
+`lua_eval` and `lua_run`) is recorded in `.rela/audit/YYYY-MM-DD.jsonl`
+with `principal.tool: "mcp"`. The `principal.user` is the OS user that
+launched `rela mcp` — *not* the LLM caller. MCP's wire protocol has no
+notion of "user", so the host-process user is the right grain for
+forensics: "alice ran an MCP-backed agent that did X".
+
+Filter for MCP-driven changes:
+
+```bash
+cat .rela/audit/*.jsonl | jq 'select(.principal.tool == "mcp")'
+```
+
+See [audit-log.md](audit-log.md) for the full record schema.
