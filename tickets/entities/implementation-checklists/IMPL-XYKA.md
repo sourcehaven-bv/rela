@@ -9,33 +9,21 @@ status: pending
 
 ## Implementation handoff notes
 
-Picking up from PLAN-XKMJ (status: done). All design decisions confirmed with
-the user; no further plan revisions needed before coding. Outstanding choice
-(resolved during planning): **strict nil-rejection** on workspace constructor —
-production `New()` rejects missing audit. Tests get an ergonomic default via
-`NewForTest` (see helper strategy below).
+Picking up from PLAN-XKMJ (status: done, rewritten 2026-05-17 against the
+post-workspace-decomposition codebase). All design decisions confirmed; the plan
+revision reflects the current package layout.
 
-### Helper-first discipline
+### Key shift from the original handoff
 
-User feedback during planning: "if a lot of test refactoring is needed, that's a
-sign we need helpers so future changes don't hit the same code again." This
-applies here — adding a new required collaborator to `workspace.New` /
-`WriteDeps` shouldn't churn 20+ call sites. Build the helpers **first**, then
-thread the collaborator through.
+The original handoff worried about helper extraction across many workspace call
+sites. The workspace-decomposition arc (TKT-QTNX → IU2S → DS43 → UG3C → 64R3 /
+2IAC) already solved that problem: `Manager` is constructed in exactly two
+places — `appbuild.Discover` (production) and `appbuild.NewForTest` (tests).
+Adding a new required `Audit` collaborator now ripples through **zero** test
+files if `NewForTest` defaults to `audit.Nop{}` when no `WithTestAudit` is
+supplied.
 
-**Helper changes to land before the audit wiring:**
-
-1. **`workspace.NewForTest`** auto-populates `Audit` to `audit.Nop{}` if `WithAudit` is not supplied. AC10's "constructor rejects nil" still holds for production `New()`; `NewForTest` is the explicit "give me sensible test defaults" entry point and is allowed to pre-populate. Tests that assert on records use `WithAudit(audit.NewMemory())`.
-
-2. **`internal/cli/root.go` already centralizes `workspace.Discover(...)` for CLI commands** (line 86). Make this the single place that constructs production audit (`audit.NewFilesystem(...)`) and passes it via `WithAudit(...)`. The 7 call sites in `internal/cli/*.go` that currently call `workspace.Discover` directly should be migrated to a shared helper if they aren't already. Validate this when implementing — there may already be a `cliWorkspace()` style helper.
-
-3. **`cmd/rela-server/main.go` and `cmd/rela-desktop/main.go`** each construct workspace from scratch. Consider extracting `cmd/internal/bootstrap` (or similar) with a `BuildWorkspace(paths, audit, scriptExec)` helper. If both binaries plus `cli/root.go` use the same helper, future required collaborators land in one spot. (If the call sites are too divergent for a shared helper, document why.)
-
-4. **`internal/dataentry/test_helpers_test.go`** — wrap workspace construction in a single test helper (e.g. `newTestApp(t, opts...)`). Currently spreads `workspace.NewForTest(meta, workspace.WithFS(...))` across multiple files. Test helper hides audit (`WithAudit(audit.Nop{})`) and any other collaborators, so adding collaborator #N+1 doesn't ripple.
-
-After these helpers exist, threading audit through is small and additive.
-
-### Suggested implementation order (revised)
+### Suggested implementation order
 
 1. **Build `internal/audit/` package first** (zero dependencies on the rest). Files:
    - `audit.go` — `Audit` interface, `Record` struct (JSON tags per plan).
@@ -46,49 +34,43 @@ After these helpers exist, threading audit through is small and additive.
    - `actor.go` — `ResolveActor()` chain: `$RELA_ACTOR` → `$USER` → `git config user.email` → `"system"`. Length-cap, control-char strip.
    - Tests for each (cover all unit-test items from the plan).
 
-2. **Wire `Audit` into `lua.WriteDeps`** (`internal/lua/deps.go`). One field add.
+2. **Add `Audit` to `entitymanager.Deps`** and validate in `New`:
+   - `internal/entitymanager/manager.go` — append `Audit audit.Audit` to `Deps`; add `if d.Audit == nil { return nil, errors.New("entitymanager: New: Audit is required") }`.
+   - Compile will break at `appbuild.New` and `appbuild.NewForTest`. Fix those next.
 
-3. **Refactor test/production setup to use helpers** (helper-first discipline above). This is the step that pays the dividend on future collaborator additions.
+3. **Wire `appbuild`:**
+   - `internal/appbuild/appbuild.go` — `Discover` constructs `audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"), audit.ResolveActor())` and threads through. `New` (low-level constructor) validates required Audit, same error shape as entitymanager.
+   - `internal/appbuild/testfixture.go` — add `WithTestAudit(audit.Audit) TestOption`; in the Manager-construction helper, default `auditImpl := audit.Nop{}` then override if WithTestAudit was supplied. This is the single carve-out that prevents test-file churn.
 
-4. **Update workspace** (`internal/workspace/`):
-   - Add `WithAudit(audit.Audit) Option`.
-   - `Workspace` struct: add `audit audit.Audit` field.
-   - `New(...)` requires audit option to be set; returns error otherwise.
-   - `NewForTest(...)` auto-defaults to `audit.Nop{}` if no `WithAudit` supplied (the helper carve-out).
-   - `LuaWriteDeps()` / `LuaReadDeps()` — set `Audit` on the WriteDeps.
-   - `wsEntityManager` (`manager.go`) — add `recordAudit(ctx, op, entityType, entityID, summary)` helper; invoke on each of the 7 write methods' success paths. Reads `audit.TriggeredByFrom(ctx)`.
+4. **Add `recordAudit` helper to `Manager`:**
+   - `internal/entitymanager/manager.go` — small private helper that reads `audit.TriggeredByFrom(ctx)`, stamps `Time: time.Now().UTC()`, calls `m.deps.Audit.Record(...)`.
+   - Invoke from the 7 write methods on their tail-success branch: CreateEntity, UpdateEntity, DeleteEntity, RenameEntity, CreateRelation, UpdateRelation, DeleteRelation.
 
-5. **Automation engine plumbing** in `workspace.go`. Find the path where the workspace executes Lua actions emitted by automations (`scriptExec.ExecuteCode`/`ExecuteFile` calls in the automation cascade). Wrap the ctx passed to subsequent EntityManager calls with `audit.WithTriggeredBy(ctx, "automation:"+luaToExec.AutomationName)`. Same for direct (non-Lua) automation actions: when the workspace calls back into `createEntity` / `createRelation` / set-property on behalf of an automation, the surrounding ctx should carry the automation label.
+5. **Autocascade plumbing** (`internal/autocascade/runner.go` or its mutator-adapter):
+   - When the cascade re-enters the `Mutator` for a scripted/non-scripted automation action, derive `ctx := audit.WithTriggeredBy(parent, "automation:"+automationName)` first.
+   - The automation name is already in scope in the cascade's action-execution path (verify exact field name during implementation — internals shifted with TKT-6OMC).
 
-Note: `workspace.LuaToExecute.AutomationName` already carries the right value;
-we just need to thread it through the ctx where the workspace re-enters the
-manager.
+6. **Scheduler plumbing** (`internal/scheduler/scheduler.go`):
+   - Locate the script-engine invocation per task.
+   - Derive `ctx := audit.WithTriggeredBy(parent, "schedule:"+task.Name)` immediately before invoking.
 
-6. **Scheduler plumbing** (`internal/scheduler/scheduler.go:170+ doExecuteTask`). Derive `ctx := audit.WithTriggeredBy(parent, "schedule:"+task.Name)` before `engine.ExecuteFile(...)`.
+7. **Integration tests:**
+   - `internal/entitymanager/manager_audit_test.go` — table-driven over the 7 write methods, assert exactly one record per op using `appbuild.NewForTest(meta, appbuild.WithTestAudit(audit.NewMemory()))` (AC1, AC2).
+   - Automation-cascade test in entitymanager (AC4).
+   - Scheduler-driven test in `internal/scheduler/` (AC5) — fixture schedule + Lua script.
+   - Failing-backend test (AC8) — wrap Memory with a stub that triggers slog.Error; assert write succeeds + slog warning captured.
 
-7. **Wire entry points** (now small thanks to the helpers from step 3):
-   - `cmd/rela-server/main.go` and `cmd/rela-desktop/main.go` — through the shared bootstrap helper.
-   - `internal/cli/root.go` — through the shared cliWorkspace helper.
-   - `internal/dataentry/app.go` (`luaWriteDeps`) — propagate from workspace.
-
-8. **Tests** for the integration:
-   - `internal/workspace/manager_audit_test.go` — table-driven over the 7 write methods, assert exactly one record per op (AC1, AC2).
-   - Automation-cascade test (AC4).
-   - Scheduler-driven test (AC5) — fixture schedule + Lua script.
-   - Failing-backend test (AC8) — wrap Memory with a stub that returns errors; assert write succeeds + slog.Error captured.
-
-9. **Manual e2e verification**:
+8. **Manual e2e verification:**
    - `just dev`, perform a write via the data-entry UI, `cat .rela/audit/$(date -u +%Y-%m-%d).jsonl`.
-   - Trigger a metamodel automation, confirm the cascade record carries `triggered_by`.
+   - Trigger a metamodel automation, confirm the cascade record carries `triggered_by: automation:<name>`.
    - Run the scheduler with a fixture schedule, confirm `triggered_by: schedule:<name>`.
 
-### Gotchas surfaced during planning
+### Gotchas (current codebase)
 
-- **Workspace `wsEntityManager` ignores ctx today** (`_ context.Context` in every method). When you fix this to `ctx context.Context`, verify lint exemptions still apply.
-- **Automation cascades ctx propagation**: the workspace re-enters its own manager from automation-execution paths. Make sure those inner calls receive a *child* ctx with `WithTriggeredBy` set, not a fresh `context.Background()`.
-- **Nop-rejection AC10 in production**: don't silently substitute `Nop{}` in `New()`. Must `return nil, errors.New("workspace: audit is required (use WithAudit)")`.
-- **`internal/cli/validate.go` uses `NopScriptExecutor`** because validation doesn't run scripts. It still needs `WithAudit(audit.Nop{})` (or routes through the shared cliWorkspace helper that supplies it). Validation does write nothing, so Nop is appropriate.
-- **The helper extraction (step 3) is real code, not boilerplate**. It needs its own small tests and may surface existing duplicated setup logic worth consolidating.
+- **No `lua.WriteDeps` change needed.** Original plan added `Audit` to `WriteDeps`; the refactor that narrowed `WriteDeps.EntityManager` to `lua.Mutator` made that unnecessary — Lua-driven writes go through `Manager` which audits itself.
+- **`entitymanager.New` already validates required collaborators** (Store, Meta, Templater plus the Automations/Cascade pair-check). Adding the Audit check follows the same pattern.
+- **Automation cascade re-entry**: confirm the cascade calls back through the *Mutator interface* on the Manager (not a separate path). If there's a path that bypasses the Manager, that path needs ctx wrapping too — or it won't be audited.
+- **`appbuild.NewForTest` panics on construction errors** (it's a test helper, panics are appropriate). Make sure the default-audit branch is set *before* the `entitymanager.New` call so the nil-check doesn't trip.
 
 ## Development
 
@@ -105,7 +87,7 @@ manager.
 - [ ] Only specifying values that matter for the test
 - [ ] Interpolated values constructed from objects, not hardcoded
 - [ ] Property comparisons use original object, not hardcoded strings
-- [ ] Test-setup helpers extracted so future collaborators don't ripple
+- [ ] `appbuild.NewForTest` default-audit carve-out keeps audit invisible to tests that don't care
 
 ## Manual Verification
 
@@ -122,4 +104,3 @@ manager.
 - [ ] No security issues introduced
 - [ ] No silent failures (errors logged AND returned)
 - [ ] No debug code left behind
-- [ ] Helpers extracted (step 3) so adding the next required collaborator doesn't churn 20 call sites again
