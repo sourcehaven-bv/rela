@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -145,6 +146,7 @@ func newManager(t *testing.T, automations []automation.Automation) (*entitymanag
 		Store:     cs,
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
@@ -218,12 +220,24 @@ func TestNew_RejectsNilTemplater(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsNilAudit(t *testing.T) {
+	_, err := entitymanager.New(entitymanager.Deps{
+		Store:     memstore.New(),
+		Meta:      parseMeta(t),
+		Templater: nopTemplater{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Audit") {
+		t.Fatalf("expected Audit-required error, got %v", err)
+	}
+}
+
 func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 	engine := automation.NewEngine(nil)
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store:       memstore.New(),
 		Meta:        parseMeta(t),
 		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
 		Automations: engine,
 	})
 	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
@@ -236,6 +250,7 @@ func TestNew_AllowsNoAutomation(t *testing.T) {
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -440,6 +455,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Store:        cs,
 		Meta:         parseMeta(t),
 		Templater:    nopTemplater{},
+		Audit:        audit.Nop{},
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
@@ -700,6 +716,7 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 		Store:     cs,
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -752,6 +769,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		Store:     memstore.New(),
 		Meta:      meta,
 		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -807,6 +825,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		Store:     memstore.New(),
 		Meta:      meta,
 		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
