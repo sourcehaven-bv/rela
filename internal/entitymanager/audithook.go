@@ -60,8 +60,13 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 // populated and Subject empty. The schema asymmetry is intentional —
 // rename is the only op where the identity changes, so it's the only
 // op that needs two subjects.
-func (m *Manager) recordRenameAudit(ctx context.Context, before, after *entity.Entity) {
-	if before == nil || after == nil {
+//
+// Rename preserves entity type, so both Before and After are derived
+// from the post-rename entity (oldID + after.Type for Before,
+// after.ID + after.Type for After). Callers that lose the
+// post-rename fetch log via slog and skip the audit — never silently.
+func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *entity.Entity) {
+	if after == nil {
 		return
 	}
 	m.deps.Audit.Record(audit.Record{
@@ -69,8 +74,8 @@ func (m *Manager) recordRenameAudit(ctx context.Context, before, after *entity.E
 		Op:   audit.OpRenameEntity,
 		Before: &audit.Subject{
 			Kind: "entity",
-			Type: before.Type,
-			ID:   before.ID,
+			Type: after.Type,
+			ID:   oldID,
 		},
 		After: &audit.Subject{
 			Kind: "entity",

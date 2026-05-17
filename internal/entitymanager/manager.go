@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -391,23 +392,25 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	// Fetch pre-rename state so the audit record can include the old
-	// Type. Avoids a second store lookup post-rename which would race
-	// against concurrent deletes / re-renames.
-	preEntity, getErr := m.deps.Store.GetEntity(ctx, oldID)
-	if getErr != nil {
-		// Pass through — renameEntity below will translate this into
-		// the entitymanager.ErrEntityNotFound sentinel.
-		preEntity = nil
-	}
-
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {
 		return res, err
 	}
 
-	postEntity, _ := m.deps.Store.GetEntity(ctx, newID)
-	m.recordRenameAudit(ctx, preEntity, postEntity)
+	// Derive both before/after subjects from the post-rename entity:
+	// type is preserved by rename, so the post entity has the type
+	// for both records. A separate pre-fetch would create a window
+	// where audit silently no-ops if the pre-fetch fails but
+	// rename succeeds (concurrent insert / racy store).
+	postEntity, getErr := m.deps.Store.GetEntity(ctx, newID)
+	if getErr != nil {
+		slog.Error("audit.write_failed",
+			"stage", "rename-postfetch",
+			"new_id", newID,
+			"error", getErr)
+		return res, nil
+	}
+	m.recordRenameAudit(ctx, oldID, postEntity)
 	return res, nil
 }
 

@@ -3,13 +3,20 @@
 // (Tool). Entry-point binaries stamp a [Principal] on the request
 // context once at startup (or per-request for HTTP-style entry
 // points); downstream consumers — audit logging today, access control
-// in subsequent PRs — read it via [PrincipalFrom].
+// in subsequent PRs — read it via [From].
 //
 // This package is deliberately small. It owns the [Principal] type,
 // the Tool* constants, the context plumbing, and the OS-user lookup.
 // It does NOT carry session lifecycle, role mapping, or
 // authentication — those are separate concerns that may grow their
 // own packages.
+//
+// **Growth gated on ACL.** The package was extracted from `audit`
+// specifically so a future ACL ticket can import [Principal] without
+// pulling audit. If that ticket gets de-prioritized and no second
+// consumer materializes, this package should be reabsorbed into the
+// consumer that uses it most — currently `audit`. Don't grow this
+// package speculatively.
 package principal
 
 import (

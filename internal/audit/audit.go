@@ -68,11 +68,17 @@ type Record struct {
 	Summary     string              `json:"summary,omitempty"`
 }
 
-// Audit is the consumer-side write surface every audit backend
-// implements. Single method by design (CLAUDE.md "interfaces at the
-// call site"); the no-return-value signature reflects the project
-// rule that audit failure must never block an entity write (AC10).
-// Backends self-log via slog.Error when a record cannot be persisted.
+// Audit is the package's published sink shape — not a consumer-side
+// abstraction. Three sibling backends ([Nop], [Memory], [Filesystem])
+// implement it; consumers (today: entitymanager.Deps.Audit) take it
+// by value. This is the io.Writer pattern, not the Repository
+// pattern: the interface IS the contract, and moving it
+// consumer-side would force every consumer to redeclare the same
+// single method.
+//
+// The no-return-value signature reflects the project rule that
+// audit failure must never block an entity write — backends
+// self-log via slog.Error when a record cannot be persisted.
 type Audit interface {
 	Record(rec Record)
 }

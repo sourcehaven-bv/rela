@@ -59,7 +59,7 @@ func (h *cascadeHost) CreateEntity(
 		Content:         opts.Content,
 	})
 	if err == nil {
-		h.recordCascadeEntity(ctx, audit.OpCreateEntity, e, "created")
+		h.recordCascade(ctx, audit.OpCreateEntity, entitySubject(e), "created")
 	}
 	return e, err
 }
@@ -89,7 +89,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	if err := upsertRelation(ctx, h.deps.Store, r); err != nil {
 		return err
 	}
-	h.recordCascadeRelation(ctx, audit.OpCreateRelation, r, "created")
+	h.recordCascade(ctx, audit.OpCreateRelation, relationSubject(r), "created")
 	return nil
 }
 
@@ -131,7 +131,7 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 
 			continue
 		}
-		h.recordRelationAuditWithCtx(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+		h.recordCascade(cascadeCtx, audit.OpDeleteRelation, relationSubject(rel), "deleted")
 	}
 	for _, rel := range outgoing {
 		if delErr := h.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
@@ -139,7 +139,7 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 
 			continue
 		}
-		h.recordRelationAuditWithCtx(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+		h.recordCascade(cascadeCtx, audit.OpDeleteRelation, relationSubject(rel), "deleted")
 	}
 
 	if _, delErr := h.deps.Store.DeleteEntity(ctx, id, false); delErr != nil &&
@@ -147,7 +147,7 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 
 		return fmt.Errorf("delete entity: %w", delErr)
 	}
-	h.recordCascadeEntity(ctx, audit.OpDeleteEntity, current, "deleted")
+	h.recordCascade(ctx, audit.OpDeleteEntity, entitySubject(current), "deleted")
 	return nil
 }
 
@@ -159,67 +159,48 @@ func (h *cascadeHost) FindExistingRelationTarget(
 	return findExistingRelationTarget(ctx, h.deps.Store, sourceID, relationType, targetType)
 }
 
-// recordCascadeEntity emits an audit record for a cascade-driven
-// entity write. Carries triggered_by="automation" (a generic label —
-// see runner.go applyRelationCreations for the rationale) plus the
-// originator's Principal inherited from ctx, *unless* ctx already
-// carries a triggered_by (e.g. cascade:delete-entity:X from the
-// IfExistsReplace path), in which case the existing label wins.
-func (h *cascadeHost) recordCascadeEntity(ctx context.Context, op string, e *entity.Entity, summary string) {
-	if e == nil {
-		return
+// entitySubject builds the Subject for an entity-shaped audit record.
+func entitySubject(e *entity.Entity) *audit.Subject {
+	return &audit.Subject{
+		Kind: "entity",
+		Type: e.Type,
+		ID:   e.ID,
 	}
-	cascadeCtx := ctx
-	if audit.TriggeredByFrom(ctx) == "" {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "automation")
-	}
-	h.deps.Audit.Record(audit.Record{
-		Time: time.Now().UTC(),
-		Op:   op,
-		Subject: &audit.Subject{
-			Kind: "entity",
-			Type: e.Type,
-			ID:   e.ID,
-		},
-		Principal:   principal.From(cascadeCtx),
-		TriggeredBy: audit.TriggeredByFrom(cascadeCtx),
-		Summary:     summary,
-	})
 }
 
-// recordCascadeRelation emits an audit record for a cascade-driven
-// relation write. Defaults triggered_by to "automation" when ctx
-// carries none.
-func (h *cascadeHost) recordCascadeRelation(ctx context.Context, op string, r *entity.Relation, summary string) {
-	if r == nil {
-		return
+// relationSubject builds the Subject for a relation-shaped audit record.
+func relationSubject(r *entity.Relation) *audit.Subject {
+	return &audit.Subject{
+		Kind:         "relation",
+		RelationType: r.Type,
+		FromID:       r.From,
+		ToID:         r.To,
 	}
-	cascadeCtx := ctx
-	if audit.TriggeredByFrom(ctx) == "" {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "automation")
-	}
-	h.recordRelationAuditWithCtx(cascadeCtx, op, r, summary)
 }
 
-// recordRelationAuditWithCtx is the raw emitter used by paths that
-// already wrapped ctx with the correct triggered_by (e.g. the
-// cascade-delete loop in DeleteEntity). Skips the
-// "default-to-automation" wrap that recordCascadeRelation applies.
-func (h *cascadeHost) recordRelationAuditWithCtx(
-	ctx context.Context, op string, r *entity.Relation, summary string,
+// recordCascade emits one audit record from the cascade path. If ctx
+// doesn't already carry a triggered_by, "automation" is stamped as
+// the generic label (per runner.go applyRelationCreations rationale —
+// automation.Result doesn't carry per-action names through the
+// engine). Callers that already wrapped ctx with a specific label
+// (e.g. cascade:delete-entity:<id>) keep that label.
+//
+// One emitter for both entity and relation subjects — the Subject
+// pointer carries the shape; the rest of the Record envelope is
+// identical.
+func (h *cascadeHost) recordCascade(
+	ctx context.Context, op string, subject *audit.Subject, summary string,
 ) {
-	if r == nil {
+	if subject == nil {
 		return
 	}
+	if audit.TriggeredByFrom(ctx) == "" {
+		ctx = audit.WithTriggeredBy(ctx, "automation")
+	}
 	h.deps.Audit.Record(audit.Record{
-		Time: time.Now().UTC(),
-		Op:   op,
-		Subject: &audit.Subject{
-			Kind:         "relation",
-			RelationType: r.Type,
-			FromID:       r.From,
-			ToID:         r.To,
-		},
+		Time:        time.Now().UTC(),
+		Op:          op,
+		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     summary,

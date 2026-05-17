@@ -120,6 +120,11 @@ func (f *Filesystem) Record(rec Record) {
 		return
 	}
 	if _, err := f.file.Write(append(line, '\n')); err != nil {
+		// Mid-stream write failures (disk full after file was open,
+		// filesystem detach, etc.) — log and continue. Untested in
+		// the suite because reliably triggering it requires OS-level
+		// fault injection (chmod the open fd, fill the disk). The
+		// rotate-error path covers the at-open failure mode.
 		slog.Error("audit.write_failed", "stage", "write", "error", err)
 	}
 }

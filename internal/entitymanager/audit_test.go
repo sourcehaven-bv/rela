@@ -2,6 +2,7 @@ package entitymanager_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -213,6 +214,29 @@ func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
 	// Subject must be nil for rename (Before/After carry the diff).
 	if renameRec.Subject != nil {
 		t.Errorf("rename should leave Subject nil, got %+v", *renameRec.Subject)
+	}
+	if renameRec.Before == nil || renameRec.After == nil {
+		t.Fatalf("rename must populate both Before and After: before=%v after=%v",
+			renameRec.Before, renameRec.After)
+	}
+
+	// Pin the JSON wire contract too: encoding/json must omit subject
+	// (Subject is *Subject specifically so omitempty fires) and emit
+	// before / after. A regression that changed Subject back to
+	// non-pointer would still pass the nil-check above (Subject would
+	// be a zero struct, not nil) but fail this JSON assertion.
+	data, err := json.Marshal(*renameRec)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"subject"`) {
+		t.Errorf("rename JSON must not include subject, got: %s", data)
+	}
+	if !strings.Contains(string(data), `"before"`) {
+		t.Errorf("rename JSON must include before, got: %s", data)
+	}
+	if !strings.Contains(string(data), `"after"`) {
+		t.Errorf("rename JSON must include after, got: %s", data)
 	}
 }
 
@@ -444,57 +468,150 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 	}
 }
 
-// TestAudit_IfExistsReplaceUsesCascadeLabel verifies that
-// cascadeHost.DeleteEntity (invoked via the IfExistsReplace path)
-// labels cascaded relation deletes with `cascade:delete-entity:<id>`,
-// not the generic "automation" — symmetric with the direct
+// TestAudit_IfExistsReplaceUsesCascadeLabel verifies that the
+// IfExistsReplace path through autocascade.Runner →
+// cascadeHost.DeleteEntity labels the cascaded relation-deletes with
+// `cascade:delete-entity:<id>` — symmetric with the direct
 // Manager.DeleteEntity path. Without this, replace operations would
 // be indistinguishable from automation-generated relation deletes in
 // the audit trail.
+//
+// The test drives the full production path (Manager.UpdateEntity →
+// engine → Runner → host) so a ctx-threading regression in any of
+// the intermediate hops fails this test, not just a direct
+// cascadeHost call.
 func TestAudit_IfExistsReplaceUsesCascadeLabel(t *testing.T) {
-	// We can exercise cascadeHost.DeleteEntity directly — it's the
-	// IfExistsReplace path's entry point and the only place the
-	// cascade label gets stamped. Going through autocascade.Runner
-	// would add a metamodel-with-if_exists:replace fixture that isn't
-	// needed to prove the attribution.
 	mem := audit.NewMemory()
-	mgr := newManagerWithAudit(t, mem, nil)
 
-	// Seed an entity with one incident relation.
-	req, _ := mgr.CreateEntity(context.Background(),
+	// Automation: when requirement.status becomes "active", create a
+	// new checklist via has-checklist with if_exists: replace. The
+	// trigger is a status change so we can seed an existing checklist
+	// first, then drive the replace.
+	autos := []automation.Automation{{
+		Name: "replace-checklist-on-active",
+		On: automation.Trigger{
+			Entity:   []string{"requirement"},
+			Property: "status",
+			Becomes:  "accepted",
+		},
+		Do: []automation.Action{{
+			CreateEntity: &automation.CreateEntityAction{
+				Type:     "checklist",
+				Relation: "has-checklist",
+				IfExists: automation.IfExistsReplace,
+			},
+		}},
+	}}
+	mgr := newManagerWithAudit(t, mem, autos)
+
+	// Seed: create the requirement and an existing checklist with the
+	// has-checklist relation in place. The automation's replace path
+	// will delete the existing checklist, which cascades to the
+	// has-checklist relation.
+	req, err := mgr.CreateEntity(context.Background(),
 		entity.New("", "requirement"), entity.CreateOptions{})
-	dec, _ := mgr.CreateEntity(context.Background(),
-		entity.New("", "decision"), entity.CreateOptions{})
-	_, _ = mgr.CreateRelation(context.Background(),
-		dec.Entity.ID, "addresses", req.Entity.ID, entity.RelationOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity req: %v", err)
+	}
+	cl, err := mgr.CreateEntity(context.Background(),
+		entity.New("", "checklist"), entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity checklist: %v", err)
+	}
+	if _, err := mgr.CreateRelation(context.Background(),
+		req.Entity.ID, "has-checklist", cl.Entity.ID, entity.RelationOptions{}); err != nil {
+		t.Fatalf("CreateRelation: %v", err)
+	}
 
-	// Reach into the manager's cascadeHost. The Deps struct is
-	// unexported but accessible via the manager's package — this
-	// file is in entitymanager_test, so we route through a public
-	// helper that emulates how the runner invokes the host.
 	startLen := len(mem.Records())
 
-	// Construct a cascadeHost the same way Manager does and invoke
-	// DeleteEntity directly. The test thus pins the host's
-	// triggered_by behavior independent of the runner.
-	host := entitymanager.NewCascadeHostForTest(mgr)
-	if err := host.DeleteEntity(context.Background(), "requirement", req.Entity.ID, true); err != nil {
-		t.Fatalf("cascadeHost.DeleteEntity: %v", err)
+	// Drive the replace via UpdateEntity → automation → cascade.
+	updated := req.Entity.Clone()
+	updated.SetString("status", "accepted")
+	if _, err := mgr.UpdateEntity(context.Background(), updated); err != nil {
+		t.Fatalf("UpdateEntity: %v", err)
 	}
 
 	newRecords := mem.Records()[startLen:]
-	want := "cascade:delete-entity:" + req.Entity.ID
+	wantTrigger := "cascade:delete-entity:" + cl.Entity.ID
+
 	var relDeletes int
 	for _, r := range newRecords {
 		if r.Op == audit.OpDeleteRelation {
 			relDeletes++
-			if r.TriggeredBy != want {
-				t.Errorf("relation-delete TriggeredBy = %q, want %q", r.TriggeredBy, want)
+			if r.TriggeredBy != wantTrigger {
+				t.Errorf("relation-delete TriggeredBy = %q, want %q", r.TriggeredBy, wantTrigger)
 			}
 		}
 	}
-	if relDeletes != 1 {
-		t.Errorf("want 1 relation-delete record, got %d", relDeletes)
+	if relDeletes == 0 {
+		t.Fatalf("expected at least one relation-delete record from cascade; got records: %+v", newRecords)
+	}
+}
+
+// TestAudit_CascadeWriteEntityIsSilent pins that
+// autocascade.Host.WriteEntity is *not* audited from cascadeHost.
+// The Runner uses WriteEntity to persist post-cascade property
+// changes onto an entity that was already audited at CreateEntity
+// time; emitting again would double-count the same entity creation.
+// This test sets up an automation chain where a cascade-created
+// entity itself triggers another automation that sets a property —
+// which causes the Runner to call WriteEntity — and asserts no
+// duplicate entity-create record appears.
+func TestAudit_CascadeWriteEntityIsSilent(t *testing.T) {
+	mem := audit.NewMemory()
+
+	autos := []automation.Automation{
+		{
+			Name: "create-checklist-for-req",
+			On: automation.Trigger{
+				Entity:  []string{"requirement"},
+				Created: true,
+			},
+			Do: []automation.Action{{
+				CreateEntity: &automation.CreateEntityAction{
+					Type:     "checklist",
+					Relation: "has-checklist",
+				},
+			}},
+		},
+		{
+			// When the cascade-created checklist fires its own
+			// created-event, set status — this is what makes the
+			// Runner call host.WriteEntity to persist the property.
+			Name: "stamp-status-on-checklist",
+			On: automation.Trigger{
+				Entity:  []string{"checklist"},
+				Created: true,
+			},
+			Do: []automation.Action{{
+				Set:   "status",
+				Value: "draft",
+			}},
+		},
+	}
+	mgr := newManagerWithAudit(t, mem, autos)
+
+	_, err := mgr.CreateEntity(context.Background(),
+		entity.New("", "requirement"), entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+
+	records := mem.Records()
+
+	// Expect exactly ONE create-entity record for the checklist
+	// (not two: one for the create, one for the property-set
+	// WriteEntity). The Set is silent by design.
+	var checklistCreates int
+	for _, r := range records {
+		if r.Op == audit.OpCreateEntity && r.Subject != nil && r.Subject.Type == "checklist" {
+			checklistCreates++
+		}
+	}
+	if checklistCreates != 1 {
+		t.Errorf("want exactly 1 create-entity record for checklist (WriteEntity from "+
+			"property-set cascade should be silent), got %d", checklistCreates)
 	}
 }
 
