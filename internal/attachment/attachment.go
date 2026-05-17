@@ -1,6 +1,5 @@
 // Package attachment exposes the CLI-shaped facade for managing
-// entity file attachments (attach, list). Implementation lifted from
-// the legacy [internal/workspace] package; the service depends only
+// entity file attachments (attach, list). The service depends only
 // on the focused primitives it needs (Store, Meta, EntityManager) so
 // it can be constructed at any wiring site.
 package attachment

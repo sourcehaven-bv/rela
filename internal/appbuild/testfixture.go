@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
+	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -73,68 +74,25 @@ func WithFS(fs storage.FS, paths *project.Context) TestOption {
 // Panics on construction failure: tests have no recovery path, and a
 // loud panic surfaces fixture-setup bugs at their source.
 func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
+	if meta == nil {
+		panic("appbuild.NewForTest: meta is required")
+	}
 	cfg := &testConfig{}
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	if meta == nil {
-		panic("appbuild.NewForTest: meta is required")
-	}
 
-	var searchBackend *bleveindex.Index
-	if idx, err := bleveindex.NewMem(); err == nil {
-		searchBackend = idx
-	} else {
-		slog.Warn("appbuild.NewForTest: failed to create search index", "error", err)
-	}
-
-	st := cfg.store
-	if st == nil {
-		if searchBackend != nil {
-			st = memstore.New(memstore.WithObserver(searchBackend))
-		} else {
-			st = memstore.New()
-		}
-	}
-
+	searchBackend := newTestSearchBackend()
+	st := resolveTestStore(cfg.store, searchBackend)
 	tr := tracer.New(st)
-	var searcher search.Searcher
-	if searchBackend != nil {
-		searcher = search.New(st, searchBackend)
-	} else {
-		searcher = search.ErrSearcher(errors.New("search index not available"))
-	}
+	searcher := resolveTestSearcher(st, searchBackend)
+	readDeps := buildTestReadDeps(st, tr, searcher, meta, cfg.paths)
 
-	root := ""
-	if cfg.paths != nil {
-		root = cfg.paths.Root
-	}
-	readDeps := lua.ReadDeps{
-		Store:       st,
-		Tracer:      tr,
-		Searcher:    searcher,
-		Meta:        meta,
-		ProjectRoot: root,
-	}
-
-	scriptEngine := script.NewEngine()
-
-	var autoEngine *automation.Engine
-	var cascadeRunner *autocascade.Runner
-	if len(meta.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
-		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
-		if rerr != nil {
-			panic(fmt.Sprintf("appbuild.NewForTest: build autocascade runner: %v", rerr))
-		}
-		cascadeRunner = r
-	}
-
+	autoEngine, cascadeRunner := buildTestAutomation(meta)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
-	var cfgLoader config.Loader
-	if cfg.fs != nil && cfg.paths != nil {
-		cfgLoader = config.NewFSLoader(cfg.fs, cfg.paths.Root)
-	}
+	cfgLoader := buildTestConfigLoader(cfg.fs, cfg.paths)
+	stateKV := mustBuildTestStateKV(cfg.fs, cfg.paths)
+	scriptEngine := script.NewEngine()
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        st,
@@ -147,8 +105,6 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
 	if err != nil {
 		panic(fmt.Sprintf("appbuild.NewForTest: build entitymanager: %v", err))
 	}
-
-	val := validator.New(st, meta, readDeps)
 
 	// Backfill the search index when a caller-supplied store is used:
 	// observers are NOT invoked for entities already present at
@@ -168,11 +124,82 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
 		searcher:      searcher,
 		entityManager: mgr,
 		tracer:        tr,
-		validator:     val,
+		validator:     validator.New(st, meta, readDeps),
 		templater:     templater,
 		cfgLoader:     cfgLoader,
-		stateKV:       nopKV{},
+		stateKV:       stateKV,
 		scriptEngine:  scriptEngine,
 		searchBackend: searchBackend,
 	}
+}
+
+func newTestSearchBackend() *bleveindex.Index {
+	idx, err := bleveindex.NewMem()
+	if err != nil {
+		slog.Warn("appbuild.NewForTest: failed to create search index", "error", err)
+		return nil
+	}
+	return idx
+}
+
+func resolveTestStore(custom store.Store, backend *bleveindex.Index) store.Store {
+	if custom != nil {
+		return custom
+	}
+	if backend != nil {
+		return memstore.New(memstore.WithObserver(backend))
+	}
+	return memstore.New()
+}
+
+func resolveTestSearcher(st store.Store, backend *bleveindex.Index) search.Searcher {
+	if backend != nil {
+		return search.New(st, backend)
+	}
+	return search.ErrSearcher(errors.New("search index not available"))
+}
+
+func buildTestReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
+	meta *metamodel.Metamodel, paths *project.Context) lua.ReadDeps {
+	root := ""
+	if paths != nil {
+		root = paths.Root
+	}
+	return lua.ReadDeps{
+		Store:       st,
+		Tracer:      tr,
+		Searcher:    searcher,
+		Meta:        meta,
+		ProjectRoot: root,
+	}
+}
+
+func buildTestAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascade.Runner) {
+	if len(meta.Automations) == 0 {
+		return nil, nil
+	}
+	autoEngine := automation.NewEngineFromMetamodel(meta.Automations)
+	r, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
+	if err != nil {
+		panic(fmt.Sprintf("appbuild.NewForTest: build autocascade runner: %v", err))
+	}
+	return autoEngine, r
+}
+
+func buildTestConfigLoader(fs storage.FS, paths *project.Context) config.Loader {
+	if fs == nil || paths == nil {
+		return nil
+	}
+	return config.NewFSLoader(fs, paths.Root)
+}
+
+// mustBuildTestStateKV mirrors workspace.NewForTest semantics so
+// dataentry tests that exercise per-user state (UIState, UserDefaults)
+// work. Panics on invalid cache root — fixture setup bug.
+func mustBuildTestStateKV(fs storage.FS, paths *project.Context) state.KV {
+	kv, err := buildStateKV(fs, paths)
+	if err != nil {
+		panic(fmt.Sprintf("appbuild.NewForTest: build state KV: %v", err))
+	}
+	return kv
 }

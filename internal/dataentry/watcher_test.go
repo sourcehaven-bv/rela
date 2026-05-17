@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // Minimal metamodel YAML for reload tests.
@@ -108,11 +108,11 @@ status: open
 		App: AppConfig{Name: "Test App"},
 	}
 
-	ws := workspace.NewForTest(meta, workspace.WithFS(fs, ctx))
-	seedFromFixture(ws.Store(), g)
+	svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+	seedFromFixture(svc.Store(), g)
 
 	app := newAppFromParts(cfg, meta, g)
-	rebindApp(app, fs, ctx, ws)
+	rebindApp(app, fs, ctx, svc)
 	app.broker = newEventBroker()
 
 	return app, fs

@@ -37,7 +37,6 @@ components:
   # Application services
   app:              { in: internal/app }
   appbuild:         { in: internal/appbuild }
-  workspace:        { in: internal/workspace }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -195,7 +194,6 @@ deps:
       - templating
       - tracer
       - validator
-      - workspace
     canUse:
       - cobra
       - color
@@ -291,29 +289,6 @@ deps:
       - store
       - templating
       - tracer
-      - validator
-  workspace:
-    mayDependOn:
-      - app
-      - autocascade
-      - automation
-      - bleveindex
-      - config
-      - entitymanager
-      - lua
-      - memstore
-      - metamodel
-      - project
-      - rename
-      - schema
-      - script
-      - search
-      - state
-      - storage
-      - store
-      - templating
-      - tracer
-      - validation
       - validator
   projectsetup:
     mayDependOn:

@@ -1,8 +1,7 @@
-// Package renametype lifts the entity-type rename operation
-// (metamodel + directory + per-file YAML frontmatter + template)
-// out of the legacy [internal/workspace] package. The service
-// depends only on the focused primitives it needs (FS, Meta,
-// Paths) so it can be constructed at any wiring site.
+// Package renametype handles the entity-type rename operation
+// (metamodel + directory + per-file YAML frontmatter + template).
+// The service depends only on the focused primitives it needs
+// (FS, Meta, Paths) so it can be constructed at any wiring site.
 package renametype
 
 import (
