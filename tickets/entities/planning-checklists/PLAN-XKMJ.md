@@ -53,17 +53,21 @@ status: done
 
 **Acceptance Criteria:**
 
-1. **AC1: every entity write produces one audit record.** Create, update, delete, rename — for each, exactly one record reaches the configured backend. Table-driven test in `internal/entitymanager/` using the `Memory` backend.
-2. **AC2: every relation write produces one audit record.** Same shape for create/update/delete relation.
-3. **AC3: Principal flows from ctx into the record.** Set `audit.WithPrincipal(ctx, Principal{User: "alice", Tool: "cli"})` → resulting record carries `principal.user="alice"` and `principal.tool="cli"`. Absence of a principal in ctx → record carries `principal.user="unknown"`, `principal.tool="unknown"`.
-4. **AC4: each entry point stamps the right Tool.** Smoke tests at the wiring layer (one per entry point: cli root, mcp server, data-entry server, scheduler, desktop) confirm `Principal.Tool` is the expected literal.
-5. **AC5: triggered_by populated for automation-driven writes.** Integration test in `internal/entitymanager/`: metamodel with an `on: created` automation that creates a child entity. Triggering write produces two records — the user write with empty `triggered_by`, the cascade with `triggered_by: "automation:<name>"`. Both records carry the same Principal.
+1. **AC1: every entity write produces one audit record with the right Subject.** Create / update / delete each produce one record with `Subject = {kind:"entity", type, id}`. Rename produces one record with `Before` and `After` both populated (`Subject` zero). Table-driven test in `internal/entitymanager/` using the `Memory` backend.
+2. **AC2: every relation write produces one audit record with the right Subject.** Create / update / delete each produce one record with `Subject = {kind:"relation", relation_type, from_id, to_id}`.
+3. **AC3: Principal flows from ctx into the record.** Set `audit.WithPrincipal(ctx, Principal{User:"alice", Tool: audit.ToolCLI})` → record carries `principal.user="alice"`, `principal.tool="cli"`. Absence → `Principal{User:"unknown", Tool:"unknown"}`.
+4. **AC4: each entry point stamps the right Tool.** Entry-point smoke tests (one per: cli root, mcp server, data-entry server, scheduler, desktop) confirm `Principal.Tool` is the expected `ToolXxx` constant. Data-entry stamps `User: "unknown"` per the design-review decision; mcp stamps `User: audit.SystemUser()` of the host process.
+5. **AC5: triggered_by populated for automation-driven writes.** Integration test: metamodel with an `on: created` automation that creates a child entity. Trigger produces ≥2 records — the user write with empty `triggered_by`, the cascade with `triggered_by: "automation:<name>"`. All records inherit the originator's Principal.
 6. **AC6: triggered_by populated for scheduler-driven writes.** Integration test in `internal/scheduler/`: scheduler runs a Lua task that calls `rela.create_entity`; resulting record carries `triggered_by: "schedule:<task-name>"` and `principal.tool="scheduler"`.
-7. **AC7: daily rotation.** With an injected clock, first record lands in `2026-05-10.jsonl`, second (across the boundary) in `2026-05-11.jsonl`.
-8. **AC8: append-only correctness under concurrency.** N parallel writes through Manager produce N intact JSONL lines. (Manager has no shared writer mutex of its own; `Filesystem` carries an internal mutex. Tested explicitly with `-race`.)
-9. **AC9: audit failure does not block the write.** A backend whose `Record` triggers an internal error still allows the entity write to succeed; a `slog.Error` is emitted (`audit.write_failed`). No retry, no buffering. *Note: `Audit.Record` is a no-return-value method — backends self-log; Manager never sees a returned error.*
-10. **AC10: Nop is safe.** `entitymanager.Deps{... Audit: audit.Nop{}}` works without panic and without writing anything.
-11. **AC11: nil Audit is rejected at construction.** `entitymanager.New` validates `Deps.Audit != nil` and returns an error; `appbuild.Discover` validates similarly. (`appbuild.NewForTest` carve-out: substitutes `audit.Nop{}` when no `WithTestAudit` is supplied, so tests don't have to spell it out.)
+7. **AC7: delete-cascade produces 1+N records.** DeleteEntity with `cascade=true` on an entity with N incident relations produces 1 entity-delete record + N relation-delete records. Each relation-delete record carries `triggered_by: "cascade:delete-entity:<root-id>"`.
+8. **AC8: daily rotation under an injected clock.** With `audit.WithClock(...)`, first record at 23:59 UTC lands in `2026-05-10.jsonl`, second at 00:01 UTC (next day) lands in `2026-05-11.jsonl`. Both files exist; first file is closed and unchanged after the rotation.
+9. **AC9: append-only correctness under concurrency including rotation race.** N parallel writes through Manager, with the injected clock crossing midnight during the burst, produce N intact JSONL lines distributed correctly across two files. (`Filesystem` carries an internal mutex over date-check + open + append.) Run with `-race`.
+10. **AC10: audit failure does not block the write.** A Filesystem whose dir is a symlink (or `O_NOFOLLOW` open fails) is silently downgraded to a Nop and the entity write succeeds. `slog.Error("audit.write_failed", ...)` is emitted. Captured slog handler asserts this in tests.
+11. **AC11: Nop is safe and Memory is observable.** `entitymanager.Deps{... Audit: audit.Nop{}}` works without panic or write. `Memory` records all writes and `Records()` returns a snapshot.
+12. **AC12: nil Audit is rejected at construction.** `entitymanager.New` validates `Deps.Audit != nil` and returns an error. `appbuild.New` validates the same. (Discover constructs Audit, so its own nil-check would be unreachable — guarded at the lower layer.) `appbuild.NewForTest` carve-out: substitutes `audit.Nop{}` when no `WithTestAudit` is supplied.
+13. **AC13: Lua scripts cannot rewrite their own attribution.** Negative test: a Lua writer runtime built from `lua.NewWriter(deps)` exposes no `audit` table on `rela.*`. A Lua script calling `rela.audit.with_principal(...)` (or any path that could swap principal) errors out — the binding doesn't exist.
+14. **AC14: symlinked audit dir is refused.** Stat the audit dir; if it's a symlink, the Filesystem backend's open fails on first write, slog.Error fires, audit becomes Nop for the rest of the process. Entity writes succeed regardless.
+15. **AC15: control chars in Record fields are sanitized at the JSONL boundary.** A Record containing `\x00` / `\n` / `\x1b` in any string field round-trips to the Filesystem as printable text only; `jq` consumers see clean lines. Memory backend retains the raw bytes (test asymmetry documented).
 
 ## Research
 
@@ -106,44 +110,103 @@ status: done
    // Principal identifies who is making a request. User is the OS user
    // captured at process start (will be overridable per-request in
    // data-entry, via an HTTP middleware, in a follow-up PR). Tool
-   // identifies the entry point: "cli" | "mcp" | "data-entry" |
-   // "scheduler" | "desktop".
+   // identifies the entry point: one of the ToolXxx constants below.
    type Principal struct {
        User string `json:"user"`
        Tool string `json:"tool"`
    }
 
+   // Tool constants — referenced by entry-point wiring so typos surface
+   // at compile time. Adding a new tool means adding a constant here.
+   const (
+       ToolCLI        = "cli"
+       ToolMCP        = "mcp"
+       ToolDataEntry  = "data-entry"
+       ToolScheduler  = "scheduler"
+       ToolDesktop    = "desktop"
+   )
+
+   // Subject identifies what the op acted on. Exactly one of Entity /
+   // Relation is set per record; readers switch on Kind.
+   //
+   //   - entity:   {kind:"entity",   type, id}
+   //   - relation: {kind:"relation", relation_type, from_id, to_id}
+   type Subject struct {
+       Kind         string `json:"kind"`                    // "entity" | "relation"
+       Type         string `json:"type,omitempty"`          // entity only
+       ID           string `json:"id,omitempty"`            // entity only
+       RelationType string `json:"relation_type,omitempty"` // relation only
+       FromID       string `json:"from_id,omitempty"`       // relation only
+       ToID         string `json:"to_id,omitempty"`         // relation only
+   }
+
+   // Record is one audit row. For rename ops, Before and After are
+   // both populated (and Subject is left zero) so readers can answer
+   // "what was X renamed to?". For every other op exactly Subject is
+   // populated and Before/After are zero.
    type Record struct {
        Time        time.Time `json:"time"`
-       Op          string    `json:"op"`
-       EntityType  string    `json:"entity_type"`
-       EntityID    string    `json:"entity_id"`
+       Op          string    `json:"op"`     // see Op* constants
+       Subject     Subject   `json:"subject,omitempty"`
+       Before      Subject   `json:"before,omitempty"` // rename only
+       After       Subject   `json:"after,omitempty"`  // rename only
        Principal   Principal `json:"principal"`
        TriggeredBy string    `json:"triggered_by,omitempty"`
        Summary     string    `json:"summary,omitempty"`
    }
 
+   // Op* constants — the values that appear in Record.Op. Stable wire
+   // contract.
+   const (
+       OpCreateEntity   = "create-entity"
+       OpUpdateEntity   = "update-entity"
+       OpDeleteEntity   = "delete-entity"
+       OpRenameEntity   = "rename-entity"
+       OpCreateRelation = "create-relation"
+       OpUpdateRelation = "update-relation"
+       OpDeleteRelation = "delete-relation"
+   )
+
    type Audit interface { Record(rec Record) }
 
    type Nop struct{}
    type Memory struct{ /* mutex + records */ }
-   type Filesystem struct{ /* dir, mutex, current file/date */ }
+   type Filesystem struct{ /* dir, mutex, current file/date, clock */ }
 
-   func NewFilesystem(dir string) (*Filesystem, error)
+   func NewFilesystem(dir string, opts ...Option) (*Filesystem, error)
    func NewMemory() *Memory
 
+   // WithClock injects a clock for AC7 (rotation testing). Production
+   // wiring omits this and gets time.Now().UTC.
+   type Option func(*filesystemConfig)
+   func WithClock(now func() time.Time) Option
+
    // SystemUser resolves the OS user at process start: $USER → "unknown".
-   // No git fallback, no $RELA_ACTOR escape hatch — the previous chain
-   // was over-engineered for what's effectively one bit of operator
-   // identity. Operators who need a different identity set $USER (or,
-   // in a future PR, send a header to data-entry).
    func SystemUser() string
    ```
 
-The `Audit` interface is single-method and consumer-side, per CLAUDE.md.
-`Memory.Records()` returns a snapshot for test assertions. The `Filesystem`
-backend no longer captures actor at construction — it reads `Principal` from
-each `Record` instead.
+   The `Audit` interface is single-method and consumer-side, per CLAUDE.md.
+   `Memory.Records()` returns a snapshot for test assertions. The
+   `Filesystem` backend opens files with `O_APPEND|O_CREATE|O_WRONLY|O_NOFOLLOW`
+   and `lstat`s the audit dir on each open to refuse symlinks (defense against
+   redirect-to-elsewhere attacks; documented in Security Considerations).
+
+**Summary-string policy** (one per Op, computed by Manager's `recordAudit`
+helper):
+
+| Op | Summary |
+|---|---|
+| `create-entity` | `"created"` |
+| `update-entity` | `"updated: <comma-separated changed property names>"` (no values; defense against secret leakage) |
+| `delete-entity` | `"deleted"` (cascade: counts of cascaded relations appear in `summary` of the cascade records, not the trigger) |
+| `rename-entity` | `"renamed"` (Before/After carry the identity diff) |
+| `create-relation` | `"created"` |
+| `update-relation` | `"updated: <comma-separated changed meta keys>"` |
+| `delete-relation` | `"deleted"` |
+
+A single policy applied everywhere keeps the log machine-parseable. If a
+caller needs richer per-op metadata later it goes into a separate field, not
+the freeform Summary.
 
 2. **Principal + triggered_by plumbing via `context.Context`** — every
    `Manager` method already takes `ctx`; we start *using* it for two values.
@@ -173,27 +236,71 @@ each `Record` instead.
    write. No new field on `Deps` beyond `Audit` itself. No goroutine-local
    state. No mutex dance.
 
-3. **Manager hooks.** Add a private helper:
+3. **Manager hooks.** Two private helpers — one per Subject shape:
 
    ```go
-   func (m *Manager) recordAudit(ctx context.Context, op, entityType, entityID, summary string)
+   func (m *Manager) recordEntityAudit(
+       ctx context.Context, op string, e *entity.Entity, summary string,
+   )
+   func (m *Manager) recordRelationAudit(
+       ctx context.Context, op string, r *entity.Relation, summary string,
+   )
+   func (m *Manager) recordRenameAudit(
+       ctx context.Context, before, after *entity.Entity,
+   )
    ```
 
-   Invoke on each of the 7 write methods' tail-success branch (CreateEntity,
-   UpdateEntity, DeleteEntity, RenameEntity, CreateRelation, UpdateRelation,
-   DeleteRelation). The helper reads `audit.PrincipalFrom(ctx)` and
-   `audit.TriggeredByFrom(ctx)`.
+   Each helper reads `audit.PrincipalFrom(ctx)`, `audit.TriggeredByFrom(ctx)`,
+   stamps `Time: time.Now().UTC()`, and calls `m.deps.Audit.Record(...)`.
+   Invoked on each of the 7 write methods' tail-success branch.
 
-4. **Autocascade plumbing.** `autocascade.Runner` (or its per-cascade mutator)
-   wraps the ctx with `audit.WithTriggeredBy(ctx, "automation:"+name)` before
-   re-entering `Mutator` methods. Principal is *not* overwritten — the cascade
-   inherits the originator's Principal, which is the desired attribution.
+   **Delete-cascade semantics:** `DeleteEntity` with `cascade=true` removes
+   the entity plus N incident relations. Each persisted mutation produces
+   one record:
+   - 1 record for the entity delete (`op: delete-entity`, summary
+     `"deleted (cascade)"` when cascade=true).
+   - N records for the cascaded relation deletes, each carrying
+     `triggered_by: "cascade:delete-entity:<id>"`.
 
-5. **Scheduler plumbing.** `internal/scheduler/scheduler.go` derives:
+   The cascade records' Principal is inherited from the same ctx — same human
+   ultimately caused the relation deletions.
+
+4. **Crash window — accepted and documented.** A process crash between the
+   `store.Store` write returning success and `Audit.Record` returning leaves
+   an unaudited mutation on disk. The plan accepts this gap explicitly:
+   - Audit is forensic, not authoritative. The store is the source of truth.
+   - Closing the window via audit-before-commit creates a worse failure mode
+     (false-positive audit rows for writes that never landed).
+   - Adding fsync per audit append is rejected for v1 (adds disk latency on
+     every write). Operators wanting stronger guarantees can fsync via
+     filesystem mount options or move to an external append-only sink in a
+     future phase.
+   - Documented in `docs/.../audit.md` so this is a *known* gap, not a
+     surprise during an incident.
+
+5. **Autocascade plumbing.** `autocascade.Runner.executeScriptActions`
+   (`internal/autocascade/runner.go:243-296`) is the precise insertion point:
+   immediately before `scripts.Run(ctx, ...)` on line 268, derive
+
+   ```go
+   actionCtx := audit.WithTriggeredBy(ctx, "automation:"+action.AutomationName)
+   ```
+
+   and pass `actionCtx` to `scripts.Run`. The non-script cascade paths —
+   `applyRelationCreations` (line 207) and `processEntityCreations` — call
+   into `host.WriteRelation` / `host.CreateEntity` / etc. directly; those
+   call sites also need their ctx wrapped with the same triggered-by label
+   so cascade-created relations and entities are attributed to the
+   automation that produced them.
+
+   Principal is *not* overwritten — the cascade inherits the originator's
+   Principal, which is the desired attribution.
+
+6. **Scheduler plumbing.** `internal/scheduler/scheduler.go` derives:
 
    ```go
    ctx := audit.WithPrincipal(parent, audit.Principal{
-       User: audit.SystemUser(), Tool: "scheduler",
+       User: audit.SystemUser(), Tool: audit.ToolScheduler,
    })
    ctx = audit.WithTriggeredBy(ctx, "schedule:"+task.Name)
    ```
@@ -201,20 +308,48 @@ each `Record` instead.
    immediately before invoking the script engine. Lua bindings call Manager
    through the same ctx; both values flow naturally.
 
-6. **Per-entry-point Principal stamping.** Each entry point binary or root
+7. **Per-entry-point Principal stamping.** Each entry point binary or root
    command attaches `Principal` once:
-   - `cmd/rela` / `internal/cli/root.go`: `Tool: "cli"`.
-   - `cmd/rela-server` (the data-entry server): `Tool: "data-entry"`. Per-request override (from a header) is out of scope for this PR; the entry point sets a process-wide default.
-   - `cmd/rela-desktop`: `Tool: "desktop"`.
-   - `internal/mcp` server: `Tool: "mcp"`.
-   - `internal/scheduler`: `Tool: "scheduler"` (set in step 5).
 
-   The `User` is `audit.SystemUser()` everywhere (which is `$USER` with
-   fallback to `"unknown"`).
+   | Entry point | Tool | User |
+   |---|---|---|
+   | `internal/cli/root.go` (cmd/rela, cmd/rela-server when invoked CLI-side) | `ToolCLI` | `audit.SystemUser()` (= `$USER`) |
+   | `cmd/rela-desktop` | `ToolDesktop` | `audit.SystemUser()` |
+   | `internal/scheduler` | `ToolScheduler` | `audit.SystemUser()` (step 6) |
+   | `internal/mcp` server entry | `ToolMCP` | `audit.SystemUser()` of the *host process* — **not** the LLM caller |
+   | `cmd/rela-server` (HTTP serving mode) | `ToolDataEntry` | `"unknown"` (intentional — see below) |
 
-7. **Production wiring.**
+   **Why data-entry uses `User: "unknown"` rather than the server process
+   user (`www-data`, container user, etc.):** the process-user value would
+   be recorded for every edit by every human user of the web app, which is
+   actively misleading — operators reading the audit log would conclude
+   "alice's process made this change" when in reality alice is the
+   *operator running the server*, not the user making edits. Stamping
+   `"unknown"` is honest: per-request user attribution lands in a follow-up
+   PR via an HTTP middleware that reads a header / cookie / session and
+   overrides `Principal.User` per-request.
+
+   **Why MCP stamps the host-process user, not the LLM:** MCP's wire
+   protocol carries no notion of a "user" — it's stdio-bound to a single
+   client. The host process user is the *operator* who launched
+   `rela mcp ...`. The audit log records "alice ran an MCP-backed agent
+   that did X", which is the right grain for forensics. If a future MCP
+   variant transports principal-information per-call, an HTTP middleware
+   analogue applies; not in scope here.
+
+   **Lua-eval inheritance:** `rela lua-eval <file>` and other Lua-driven
+   CLI commands inherit `ToolCLI`. In v1, lua-eval writes are
+   indistinguishable from native CLI writes; a follow-up can introduce
+   `Tool: "lua-eval"` or a per-call sub-tool if forensic granularity
+   demands it.
+
+8. **Lua-binding hardening — Principal/TriggeredBy not exposed.** `audit.WithPrincipal` and `audit.WithTriggeredBy` are Go-only. They are **not** registered on the Lua `rela.*` table, and the Lua write bindings do *not* construct their own contexts — they pass through the ctx supplied by the script runner. This means a Lua script cannot rewrite its own attribution. Enforced by:
+   - No `rela.audit` Lua binding exists (negative test: `lua.NewWriter(deps)` exposes no `audit` table).
+   - The Lua script-runner adapter (`internal/script/luascriptrunner.go`) passes the supplied ctx through verbatim — does not `context.Background()` away the parent ctx, does not strip principal-key values.
+
+9. **Production wiring.**
    - `appbuild.Discover` constructs `audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))` and passes it into `entitymanager.New` via `Deps.Audit`.
-   - `appbuild.New` (the lower-level constructor used by tests-of-Discover and any future custom wiring) requires `Audit` and rejects nil.
+   - `appbuild.New` (the lower-level constructor) requires `Audit` and rejects nil. **AC11 wording corrected:** Discover *constructs* Audit so it can't observe nil; the nil-check guards `appbuild.New` (used today only by `appbuild.NewForTest`, but treated as a public constructor for future custom-wiring callers). The check is defensive but not dead — it documents the contract on `Deps.Audit`.
    - `appbuild.NewForTest` adds `WithTestAudit(audit.Audit) TestOption`; if not supplied, defaults to `audit.Nop{}`.
    - Principal stamping is *not* `appbuild`'s job — it's an entry-point concern (different binaries / root commands use different Tool values). `appbuild` returns a `Services` bundle; the caller wraps its ctx with `WithPrincipal` at the call site.
 
@@ -263,16 +398,42 @@ interface).
 
 **Input Sources & Validation:**
 
-- **`$USER` env var** (via `audit.SystemUser()`) — trimmed; capped at 256 chars; printable UTF-8 only (control chars stripped). Empty or invalid → `"unknown"`. No fancier chain (originally proposed `$RELA_ACTOR` + git fallback; dropped as over-engineered for what's one bit of operator identity).
-- **`Principal.Tool`** — set by the wiring site from a fixed allowlist (`"cli" | "mcp" | "data-entry" | "scheduler" | "desktop"`). Not user-controlled. If a future caller passes an unknown value, it goes through unchanged — type-system enforcement isn't worth a sealed-type pattern in Go, but `audit_test.go` includes a smoke test that enumerates the expected values per entry point.
-- **Entity IDs / types** — already validated upstream; we stringify and let JSON encoding handle escaping.
-- **`triggered_by` value** — sourced from metamodel-loaded automation/schedule names (validated at load). Length-capped + control-char stripped at write time as defense-in-depth against a metamodel author putting a newline in a name and corrupting the JSONL stream.
+- **`$USER` env var** (via `audit.SystemUser()`) — trimmed; sanitized (see policy below). Empty or invalid → `"unknown"`. No fancier chain (originally proposed `$RELA_ACTOR` + git fallback; dropped as over-engineered).
+- **`Principal.Tool`** — set by the wiring site from a fixed allowlist via the `ToolXxx` constants. Not user-controlled. Typed constants surface entry-point typos at compile time; an entry-point smoke test enumerates expected values.
+- **Entity IDs / types / relation types** — already validated upstream by the metamodel (allowlist: lowercase alphanumeric + hyphen + underscore). No untrusted input enters Subject fields.
+- **`triggered_by` value** — sourced from metamodel-loaded automation/schedule names (validated at load against the same allowlist) or constructed by audit itself (`"cascade:delete-entity:<id>"` — `<id>` is metamodel-validated).
+- **Summary string** — constructed entirely by Manager from validated property/meta names. No property *values* are interpolated.
+
+**Sanitization policy — single layer at the Filesystem backend:** all string
+fields on `Record` are sanitized in `Filesystem.Record` before
+`encoding/json.Marshal`:
+
+1. Truncate to 1024 chars per field (UTF-8 safe).
+2. Replace `\x00-\x1f` and `\x7f` (C0/DEL) with ` ` (non-breaking
+   space). Leaves printable UTF-8 untouched.
+
+The sanitization is concentrated at one site (the backend) — Memory and Nop
+do not sanitize (Memory holds the raw Record for test assertions; Nop is a
+no-op). This means a misbehaving caller can put a `\n` in a Subject.ID and
+the Memory backend will see it; the JSONL file will not. Documented as a
+known asymmetry — the rationale is that the JSONL stream is the threat
+surface (downstream `jq` / `tail -f` consumers) and Memory is test-only.
 
 **Security-Sensitive Operations:**
 
-- **File creation under `.rela/audit/`** — `os.MkdirAll(dir, 0o700)`, files opened with `0o600`. Path is `filepath.Join(cacheDir, "audit", date+".jsonl")` where `date` is `time.Now().UTC().Format("2006-01-02")` — no user input enters the path.
+- **File creation under `.rela/audit/`:**
+  - `os.MkdirAll(dir, 0o700)`; files opened with `os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)`. `O_NOFOLLOW` refuses to open if the final path component is a symlink.
+  - Before MkdirAll, `os.Lstat(dir)` checks: if dir exists and is a symlink, refuse to use it (slog.Error + audit becomes a Nop for the rest of the process). Refusing-and-degrading is preferred over panicking in the audit path.
+  - Path is `filepath.Join(cacheDir, "audit", date+".jsonl")` where `date` is `time.Now().UTC().Format("2006-01-02")` — no user input enters the path.
+- **Midnight rotation algorithm (under the Filesystem mutex):**
+  1. On each `Record(rec)` call, compute `today := clock().UTC().Format("2006-01-02")`.
+  2. If `today != f.currentDate` (or `f.file == nil`): close the existing file (if open), open the new file under `today`'s name, update `f.currentDate`.
+  3. Append `json.Marshal(rec) + "\n"`.
+
+  All three steps run under `f.mu` so a concurrent writer can never observe
+  a half-rotated state. AC7 (`-race`) covers concurrent rotation crossing.
 - **Audit records can contain entity IDs and types** — these are not secrets in rela's model (entities are markdown files in the project tree).
-- **No property values logged** in v1's `summary`. Only "created", "updated status: ready→done", "deleted". Property *names* may appear; values do not — defense against secrets accidentally stored in properties.
+- **No property values logged** in v1's `summary`. Only `"created"`, `"updated: status,priority"`, `"deleted"`. Property *names* may appear; values do not — defense against secrets accidentally stored in properties.
 
 ## Test Plan
 
@@ -375,7 +536,7 @@ For enhancements: identify what documentation needs updating.
 
 ## Design Review
 
-- [x] ~~Run `/design-review`~~ (Skipped: plan reviewed via `/crit` instead — see Findings below; all addressed.)
+- [x] Ran `/design-review` (cranky-code-reviewer pass, 2026-05-17)
 - [x] All critical/significant findings addressed in plan
 
 **Design Review Findings:** Reviewed via `crit` (rounds 1–2). Round 1 raised
@@ -393,3 +554,22 @@ acceptance criteria unchanged.
 - **c_45b5a5** (don't try-hard actor resolution): dropped `$RELA_ACTOR` and `git config user.email` from the fallback chain. `audit.SystemUser()` is now just `$USER → "unknown"`. Operators wanting a custom identity set `$USER`; data-entry will support per-request override via header in a follow-up.
 - **c_4b2baf** (Principal type in this PR, not later): added `audit.Principal{User, Tool}` as a first-class type. `Tool` is set by each entry point (cli / mcp / data-entry / scheduler / desktop). Plumbed via `context.Context` (`audit.WithPrincipal` / `PrincipalFrom`). New AC3 / AC4 cover this. Out-of-scope item "Structured Principal type" removed from the scope table.
 - **c_717fd7** (any Go lib with flexible sinks?): researched. `slog.JSONHandler` + `lumberjack` rotates by size not date, hardcodes wrong file modes (0o644 / 0o744), and forces `level`/`msg` keys onto the schema. `rotoslog` uses a different filename pattern. Hand-rolled `encoding/json` + `os.OpenFile` is ~80 lines with zero deps and exact control — that decision stands. Added the full rationale to the Research section.
+
+**Design-review pass (2026-05-17):** cranky-code-reviewer surfaced 14
+findings (4 critical, 9 significant, 1 minor). All critical and significant
+findings addressed before implementation:
+
+- **CRIT — Record can't identify a relation; rename loses the old identity:** Schema redesigned. `Record.Subject` is now polymorphic (`Subject{Kind, Type, ID, RelationType, FromID, ToID}`). Rename adds `Before` / `After` Subject pair. Op constants added.
+- **CRIT — Delete-cascade semantics:** Settled. DeleteEntity(cascade=true) on N relations produces 1+N records; cascade records carry `triggered_by: "cascade:delete-entity:<id>"`. New AC7.
+- **CRIT — Crash window between store-write and audit-append:** Accepted and documented. Audit is forensic, not authoritative; closing the window via audit-before-commit creates worse failure modes. Documented in step 4 of Technical Approach and in user-facing audit docs.
+- **SIG — JSONL stream corruption / control-char policy:** Concentrated at the Filesystem backend. C0 + DEL replaced with non-breaking space; truncate at 1024 chars. Memory backend retains raw bytes (test asymmetry documented). New AC15.
+- **SIG — Symlink / TOCTOU on `.rela/audit/`:** `O_NOFOLLOW` on file open, `Lstat` on dir before MkdirAll. Symlinked dir → audit degrades to Nop, slog.Error. New AC14.
+- **SIG — Midnight rotation algorithm + injected clock:** Algorithm specified (check-then-open under the same mutex). `audit.WithClock(...)` option added to type sketch. New AC8 / AC9.
+- **SIG — Data-entry principal is misleading:** Resolved by stamping `User: "unknown"` for the data-entry server, not the process owner. Per-request override is the explicit follow-up. New AC4 verifies this.
+- **SIG — Principal spoofing from Lua:** Documented and tested. `audit.WithPrincipal` is not exposed in the Lua API; the script-runner adapter passes ctx through verbatim. New AC13.
+- **SIG — `appbuild.New` nil-check potentially dead:** Documented as defensive-but-not-dead — guards future custom-wiring callers; Discover constructs Audit so its own check would be unreachable. AC12 wording corrected.
+- **SIG — Summary policy for 7 ops:** Table added to step 1 of Technical Approach. One policy applied everywhere; per-op richer metadata goes into separate fields, not freeform Summary.
+- **SIG — Autocascade insertion point research-still-needed:** Resolved. Read `internal/autocascade/runner.go` directly; insertion point is line 268 (before `scripts.Run`), with parallel wraps at line 207 (`applyRelationCreations`) and the relation/entity-creation calls in `processEntityCreations`.
+- **SIG — Tool allowlist not enforced:** Added `audit.ToolCLI` / `ToolMCP` / `ToolDataEntry` / `ToolScheduler` / `ToolDesktop` constants. Entry points reference constants, not string literals.
+- **SIG — MCP principal semantics undefined:** Documented. MCP records the host-process user (the operator who launched `rela mcp ...`), not the LLM caller. Per-call principal-from-protocol is a future-MCP-variant concern, not in scope.
+- **MINOR — Lua-eval inheritance implicit:** Documented as a known v1 limitation. Lua-eval writes carry `Tool: "cli"` in v1; future sub-tool field can disambiguate if forensic granularity demands it.
