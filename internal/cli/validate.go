@@ -11,12 +11,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 	"github.com/Sourcehaven-BV/rela/internal/schema"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // metamodelAccessor is the narrow consumer-side interface
@@ -88,7 +90,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Always validate config files first
-	result, err := workspace.Validate(startDir)
+	result, err := projectsetup.Validate(startDir)
 	if err != nil {
 		return err
 	}
@@ -127,26 +129,29 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		return errors.NewExitError(1)
 	}
 
-	// Initialize workspace for entity checks (no Lua executor needed for validation)
-	checkWs, err := workspace.Discover(startDir, workspace.NopScriptExecutor)
+	// Initialize project services for entity checks. The Lua engine is
+	// cheap to construct; validation rules load lazily, so paying the
+	// engine-init cost here is fine even though most validate runs
+	// don't execute Lua.
+	checkSvc, err := appbuild.Discover(startDir, script.NewEngine())
 	if err != nil {
-		return fmt.Errorf("failed to initialize workspace: %w", err)
+		return fmt.Errorf("failed to initialize project services: %w", err)
 	}
 	checkAnalysis, err := analysis.New(analysis.Deps{
-		Store:       checkWs.Store(),
-		Meta:        checkWs.Meta(),
-		Tracer:      checkWs.Tracer(),
-		LuaReadDeps: checkWs.LuaReadDeps(),
-		LuaCache:    checkWs.LuaCache(),
-		FS:          checkWs.FS(),
-		Paths:       checkWs.Paths(),
+		Store:       checkSvc.Store(),
+		Meta:        checkSvc.Meta(),
+		Tracer:      checkSvc.Tracer(),
+		LuaReadDeps: checkSvc.LuaReadDeps(),
+		LuaCache:    checkSvc.ScriptEngine().LuaCache(),
+		FS:          checkSvc.FS(),
+		Paths:       checkSvc.Paths(),
 	})
 	if err != nil {
 		return fmt.Errorf("initialize analysis service: %w", err)
 	}
 
 	// Run requested checks
-	checkErrors, err := runValidationChecks(cmd.Context(), checkWs, checkAnalysis, out, result.Metamodel)
+	checkErrors, err := runValidationChecks(cmd.Context(), checkSvc, checkAnalysis, out, result.Metamodel)
 	if err != nil {
 		return err
 	}
@@ -168,7 +173,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 // runValidationChecks runs the requested validation checks and returns true if errors were found.
 func runValidationChecks(
 	ctx context.Context,
-	checkWs *workspace.Workspace,
+	checkSvc *appbuild.Services,
 	checkAnalysis *analysis.Service,
 	checkOut *output.Writer,
 	meta metamodelAccessor,
@@ -189,7 +194,7 @@ func runValidationChecks(
 	}
 
 	if checks.properties {
-		if runPropertiesCheck(checkWs, checkOut, opts) {
+		if runPropertiesCheck(checkSvc, checkOut, opts) {
 			hasErrors = true
 		}
 	}
@@ -238,11 +243,11 @@ func runCardinalityCheck(checkAnalysis *analysis.Service, checkOut *output.Write
 }
 
 // runPropertiesCheck runs property validation. Returns true if errors found.
-func runPropertiesCheck(checkWs *workspace.Workspace, checkOut *output.Writer, opts analysis.Options) bool {
+func runPropertiesCheck(checkSvc *appbuild.Services, checkOut *output.Writer, opts analysis.Options) bool {
 	if !quiet {
 		fmt.Println("\nValidating entity properties...")
 	}
-	propErrors := schema.ValidateEntityProperties(checkWs.Store(), checkWs.Meta())
+	propErrors := schema.ValidateEntityProperties(checkSvc.Store(), checkSvc.Meta())
 	if opts.Scope != nil {
 		filtered := propErrors[:0]
 		for _, pe := range propErrors {
@@ -480,7 +485,7 @@ func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.V
 }
 
 // reportDataEntryValidation reports data-entry.yaml validation results.
-func reportDataEntryValidation(result *workspace.ValidateResult, hasErrors bool) bool {
+func reportDataEntryValidation(result *projectsetup.ValidateResult, hasErrors bool) bool {
 	if result.DataEntrySkipped {
 		if quiet {
 			return hasErrors

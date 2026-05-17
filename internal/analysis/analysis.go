@@ -1,14 +1,9 @@
 // Package analysis exposes the read-only analysis facades the CLI
 // uses to surface graph health: orphans, duplicates, gaps, cardinality
 // violations, custom Lua validations, and orphan temp files left by
-// interrupted writes. Implementation lifted from the legacy
-// [internal/workspace] package; the service depends only on the focused
+// interrupted writes. The service depends only on the focused
 // primitives it needs (Store, Meta, Tracer, FS, Paths, Lua deps) so it
 // can be constructed at any wiring site.
-//
-// Type names that previously lived in internal/workspace
-// (Options, CardinalityViolation, etc.) live here now. CLI
-// imports follow the package rename mechanically.
 package analysis
 
 import (

@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 )
 
 var initCmd = &cobra.Command{
@@ -20,7 +20,7 @@ var initCmd = &cobra.Command{
 			targetDir = os.Getenv("RELA_PROJECT")
 		}
 
-		result, err := workspace.Initialize(targetDir)
+		result, err := projectsetup.Initialize(targetDir)
 		if err != nil {
 			return err
 		}

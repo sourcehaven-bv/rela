@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -12,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // seedEntity writes an entity directly into the app's store.
@@ -104,29 +104,29 @@ func bindRepo(app *App, root string) {
 	)
 }
 
-// bindRepoWithFS rewires the given app to a workspace rooted at the given
-// filesystem + paths, preserving fixtures. Use when the test needs to
-// share a specific filesystem (e.g., an in-memory FS across multiple
-// App instances).
+// bindRepoWithFS rewires the given app to project services rooted at
+// the given filesystem + paths, preserving fixtures. Use when the test
+// needs to share a specific filesystem (e.g., an in-memory FS across
+// multiple App instances).
 func bindRepoWithFS(app *App, fs storage.FS, paths *project.Context) {
-	newWs := workspace.NewForTest(app.Meta(), workspace.WithFS(fs, paths))
-	reseedStore(newWs.Store(), app.store)
-	rebindApp(app, fs, paths, newWs)
+	newSvc := appbuild.NewForTest(app.Meta(), appbuild.WithFS(fs, paths))
+	reseedStore(newSvc.Store(), app.store)
+	rebindApp(app, fs, paths, newSvc)
 }
 
-// rebindApp repoints the app's service fields at the given workspace.
+// rebindApp repoints the app's service fields at the given services bundle.
 // Used by bindRepoWithFS.
-func rebindApp(app *App, fs storage.FS, paths *project.Context, ws *workspace.Workspace) {
+func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Services) {
 	app.fs = fs
 	app.paths = paths
-	app.store = ws.Store()
-	app.entityManager = ws.EntityManager()
-	app.searcher = ws.Searcher()
-	app.tracer = ws.Tracer()
-	app.validator = ws.Validator()
-	app.templater = ws.Templater()
-	app.cfgLoader = ws.Config()
-	app.kv = ws.State()
+	app.store = svc.Store()
+	app.entityManager = svc.EntityManager()
+	app.searcher = svc.Searcher()
+	app.tracer = svc.Tracer()
+	app.validator = svc.Validator()
+	app.templater = svc.Templater()
+	app.cfgLoader = svc.Config()
+	app.kv = svc.State()
 	// Wire a minimal documentService for tests that hit the documents
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).
@@ -178,8 +178,8 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		ws := workspace.NewForTest(meta, workspace.WithFS(fs, ctx))
-		rebindApp(app, fs, ctx, ws)
+		svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+		rebindApp(app, fs, ctx, svc)
 		seedFromFixture(app.store, f)
 	}
 	if cfg == nil {
@@ -249,11 +249,11 @@ func newHandlerTestApp(t *testing.T) *App {
 	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 
-	ws := workspace.NewForTest(meta, workspace.WithFS(fs, ctx))
-	seedFromFixture(ws.Store(), g)
+	svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+	seedFromFixture(svc.Store(), g)
 
 	app := &App{}
-	rebindApp(app, fs, ctx, ws)
+	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)
 	if err != nil {

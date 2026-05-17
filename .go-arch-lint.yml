@@ -36,7 +36,7 @@ components:
 
   # Application services
   app:              { in: internal/app }
-  workspace:        { in: internal/workspace }
+  appbuild:         { in: internal/appbuild }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -71,6 +71,9 @@ components:
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
   storeutil:        { in: internal/store/storeutil }
+
+  # Project bootstrap utilities
+  projectsetup:     { in: internal/projectsetup }
 
   # Infrastructure
   ai:               { in: internal/ai }
@@ -136,30 +139,23 @@ deps:
       - cli
   cmdServer:
     mayDependOn:
-      - app
+      - appbuild
       - dataentry
-      - lua
-      - metamodel
-      - project
       - scheduler
       - script
-      - storage
-      - workspace
     canUse:
       - http2
   cmdDesktop:
     mayDependOn:
-      - app
+      - appbuild
       - dataentry
       - desktop
       - git
-      - lua
       - metamodel
       - project
       - scheduler
       - script
       - storage
-      - workspace
     canUse:
       - wails
 
@@ -169,6 +165,7 @@ deps:
       - ai
       - analysis
       - app
+      - appbuild
       - attachment
       - autocascade
       - automation
@@ -184,6 +181,7 @@ deps:
       - metamodel
       - output
       - project
+      - projectsetup
       - rename
       - renametype
       - scheduler
@@ -196,7 +194,6 @@ deps:
       - templating
       - tracer
       - validator
-      - workspace
     canUse:
       - cobra
       - color
@@ -273,22 +270,18 @@ deps:
       - project
       - storage
       - store
-  workspace:
+  appbuild:
     mayDependOn:
       - app
       - autocascade
       - automation
       - bleveindex
       - config
-      - dataentryconfig
       - entitymanager
       - lua
       - memstore
       - metamodel
-      - migration
       - project
-      - rename
-      - schema
       - script
       - search
       - state
@@ -296,8 +289,14 @@ deps:
       - store
       - templating
       - tracer
-      - validation
       - validator
+  projectsetup:
+    mayDependOn:
+      - dataentryconfig
+      - metamodel
+      - migration
+      - project
+      - storage
 
   # Domain services
   analysis:

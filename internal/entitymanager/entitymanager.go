@@ -20,13 +20,9 @@ import (
 //
 // **Transitional.** This is a producer-side interface (defined alongside
 // its sole implementation, [Manager]), which the project explicitly
-// avoids per CLAUDE.md "consumer-side interfaces" rule. It exists today
-// because the legacy [internal/workspace] shim returns it from
-// `Workspace.Manager()` and several call sites depend on it. As call
-// sites are migrated off workspace, each one should declare its own
-// narrow consumer-side interface naming only the methods it invokes.
-// This interface is scheduled for removal after TKT-64R3 deletes the
-// workspace shim.
+// avoids per CLAUDE.md "consumer-side interfaces" rule. Slated for
+// removal: each call site should declare its own narrow consumer-side
+// interface naming only the methods it invokes.
 //
 // Read operations are intentionally NOT on this interface — consumers
 // read directly from [store.Store].

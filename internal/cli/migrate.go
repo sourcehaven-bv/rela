@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
+	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 )
 
 var (
@@ -41,7 +41,7 @@ Examples:
 }
 
 func runMigrateCheck(startDir string) error {
-	detections, err := workspace.DetectMigrations(startDir)
+	detections, err := projectsetup.DetectMigrations(startDir)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func runMigrateCheck(startDir string) error {
 }
 
 func runMigrate(startDir string) error {
-	result, err := workspace.Migrate(startDir)
+	result, err := projectsetup.Migrate(startDir)
 	if err != nil {
 		return err
 	}

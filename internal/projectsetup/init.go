@@ -1,4 +1,4 @@
-package workspace
+package projectsetup
 
 import (
 	"errors"
@@ -86,17 +86,4 @@ func InitializeWithFS(targetDir string, fs storage.FS) (*InitResult, error) {
 	}
 
 	return result, nil
-}
-
-// NewAfterInit creates a workspace for a newly initialized project.
-// Use this after Initialize() when you need a workspace immediately.
-// Uses NopScriptExecutor since newly initialized projects don't have
-// Lua automations configured.
-func NewAfterInit(targetDir string) (*Workspace, error) {
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	ctx, err := project.Discover(targetDir, fs)
-	if err != nil {
-		return nil, err
-	}
-	return New(fs, ctx, NopScriptExecutor)
 }

@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/workspace"
 )
 
 // renameTestEnv is the bundle returned by setupRenameTestEnv; the
@@ -53,15 +53,17 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
 
-	// Set up workspace backed by a real filesystem so the rename
-	// command can modify files on disk. Use NewForTest rather than
-	// workspace.New here because SimpleMetamodelYAML deliberately uses
-	// pre-migration syntax, which workspace.New rejects.
+	// Set up project services backed by a real filesystem so the
+	// rename command can modify files on disk. NewForTest takes
+	// *Metamodel directly (bypassing the loader) because
+	// SimpleMetamodelYAML deliberately uses pre-migration syntax which
+	// the loader rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	ws := workspace.NewForTest(meta, workspace.WithFS(fs, paths))
-	svc, err := newCLIServicesFromWorkspace(ws)
+	svc, err := newCLIServicesFromAppbuild(
+		appbuild.NewForTest(meta, appbuild.WithFS(fs, paths)),
+	)
 	if err != nil {
-		t.Fatalf("newCLIServicesFromWorkspace: %v", err)
+		t.Fatalf("newCLIServicesFromAppbuild: %v", err)
 	}
 	//nolint:fatcontext // test setup
 	testCtx = attachServices(t.Context(), svc)

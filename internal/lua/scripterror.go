@@ -180,10 +180,7 @@ func trimFrames(in []StackFrame) []StackFrame {
 
 // Error renders the failure as "<path>:<line>: <message>", deliberately
 // matching gopher-lua's stock format so log lines are pasteable into
-// editor "go to file:line" affordances. This format is also what the
-// workspace automation layer flattens into its []string error slice
-// (see internal/workspace.formatAutomationError) — changing the layout
-// here changes what those log lines look like.
+// editor "go to file:line" affordances.
 func (e *ScriptError) Error() string {
 	if e == nil {
 		return ""
