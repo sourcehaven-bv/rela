@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -104,6 +106,13 @@ type Deps struct {
 	// supplied by Manager via [autocascade.Request.Mutator] (see
 	// internal/script/luascriptrunner.go for the Lua adapter).
 	ScriptRunner autocascade.ScriptRunner
+
+	// Audit receives one record per successful entity / relation write.
+	// Required. Production wiring passes a [audit.Filesystem]; tests use
+	// [audit.NewMemory] or [audit.Nop]. Never substitute a silent nil —
+	// the constructor rejects nil so missing audit fails fast at wiring
+	// time, not later as silently-dropped forensic data.
+	Audit audit.Audit
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -116,6 +125,9 @@ func New(d Deps) (*Manager, error) {
 	}
 	if d.Templater == nil {
 		return nil, errors.New("entitymanager: New: Templater is required")
+	}
+	if d.Audit == nil {
+		return nil, errors.New("entitymanager: New: Audit is required (use audit.Nop{} to opt out)")
 	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
@@ -173,6 +185,7 @@ func (m *Manager) CreateEntity(
 
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {
+		m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 		return result, nil
 	}
 
@@ -212,6 +225,7 @@ func (m *Manager) CreateEntity(
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
+	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	return result, nil
 }
 
@@ -276,7 +290,10 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
+	updateSummary := updateEntitySummary(oldEntity, e)
+
 	if !runAutomation {
+		m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 		return result, nil
 	}
 
@@ -295,6 +312,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
+	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 	return result, nil
 }
 
@@ -316,6 +334,16 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, ErrHasRelations
 	}
 
+	// Cascade-deleted relations get triggered_by set so the audit log
+	// records the parent op that caused them. Wrap ctx once before the
+	// delete loop — recordRelationAudit reads triggered_by from this
+	// derived ctx, the original ctx still flows to anything else that
+	// needs the un-decorated principal context.
+	cascadeCtx := ctx
+	if cascade && totalRelations > 0 {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
+	}
+
 	deletedRelations := make([]*entity.Relation, 0, totalRelations)
 	for _, rel := range incoming {
 		if delErr := m.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
@@ -324,6 +352,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 			continue
 		}
 		deletedRelations = append(deletedRelations, rel)
+		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 	for _, rel := range outgoing {
 		if delErr := m.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
@@ -332,6 +361,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 			continue
 		}
 		deletedRelations = append(deletedRelations, rel)
+		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 
 	if _, delErr := m.deps.Store.DeleteEntity(ctx, id, false); delErr != nil &&
@@ -339,6 +369,12 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 
 		return nil, fmt.Errorf("delete entity: %w", delErr)
 	}
+
+	deleteSummary := "deleted"
+	if cascade && totalRelations > 0 {
+		deleteSummary = fmt.Sprintf("deleted (cascade: %d relations)", totalRelations)
+	}
+	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, deleteSummary)
 
 	return &entity.DeleteResult{
 		DeletedEntities:  []*entity.Entity{current},
@@ -351,11 +387,31 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 // of the post-rename state** (preserved verbatim from pre-refactor
 // workspace behavior).
 //
-// If opts.DryRun is true, no changes are persisted.
+// If opts.DryRun is true, no changes are persisted (and no audit
+// record is emitted — dry runs do not show up in the audit log).
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	return renameEntity(ctx, m.deps.Store, oldID, newID, opts)
+	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
+	if err != nil || opts.DryRun {
+		return res, err
+	}
+
+	// Derive both before/after subjects from the post-rename entity:
+	// type is preserved by rename, so the post entity has the type
+	// for both records. A separate pre-fetch would create a window
+	// where audit silently no-ops if the pre-fetch fails but
+	// rename succeeds (concurrent insert / racy store).
+	postEntity, getErr := m.deps.Store.GetEntity(ctx, newID)
+	if getErr != nil {
+		slog.Error("audit.write_failed",
+			"stage", "rename-postfetch",
+			"new_id", newID,
+			"error", getErr)
+		return res, nil
+	}
+	m.recordRenameAudit(ctx, oldID, postEntity)
+	return res, nil
 }
 
 // CreateRelation creates a new relation, validating endpoints and
@@ -401,6 +457,7 @@ func (m *Manager) CreateRelation(
 	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
 		return nil, err
 	}
+	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
 	return rel, nil
 }
 
@@ -414,6 +471,10 @@ func (m *Manager) UpdateRelation(
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
 	}
+
+	// Snapshot pre-update meta keys so the audit summary names exactly
+	// which keys changed (values never appear).
+	oldProps := cloneProperties(rel.Properties)
 
 	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
 		rel.Properties = make(map[string]interface{})
@@ -431,13 +492,21 @@ func (m *Manager) UpdateRelation(
 	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
 		return nil, err
 	}
+	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))
 	return rel, nil
 }
 
 // DeleteRelation removes a relation. **No automation.**
 func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	// Fetch pre-delete so the audit record carries the full Subject
+	// (relation type + from + to). The relation may not exist — in
+	// that case the store delete returns an error and we skip audit.
+	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
 	if err := m.deps.Store.DeleteRelation(ctx, from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
+	}
+	if getErr == nil {
+		m.recordRelationAudit(ctx, audit.OpDeleteRelation, rel, "deleted")
 	}
 	return nil
 }

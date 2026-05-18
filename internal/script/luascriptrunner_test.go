@@ -28,12 +28,12 @@ type recordedExec struct {
 	oldEntity *entity.Entity
 }
 
-func (r *recordingScriptExecutor) ExecuteCode(code string, _ lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
+func (r *recordingScriptExecutor) ExecuteCode(_ context.Context, code string, _ lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
 	r.codeCalls = append(r.codeCalls, recordedExec{code: code, newEntity: newEntity, oldEntity: oldEntity})
 	return r.err
 }
 
-func (r *recordingScriptExecutor) ExecuteFile(path string, _ lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
+func (r *recordingScriptExecutor) ExecuteFile(_ context.Context, path string, _ lua.WriteDeps, newEntity, oldEntity *entity.Entity) error {
 	r.fileCalls = append(r.fileCalls, recordedExec{path: path, newEntity: newEntity, oldEntity: oldEntity})
 	return r.err
 }

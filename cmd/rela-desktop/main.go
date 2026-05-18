@@ -29,10 +29,12 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -77,7 +79,10 @@ type cloneAuthState struct {
 
 // coverage-ignore: Wails lifecycle callback
 func (d *Desktop) startup(ctx context.Context) {
-	d.ctx = ctx
+	d.ctx = principal.With(ctx, principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolDesktop,
+	})
 }
 
 // OpenProject opens a native directory picker and loads the selected project.
@@ -131,7 +136,14 @@ func (d *Desktop) LoadProject(dir string) string {
 		return "needs_setup"
 	}
 
-	svc, svcErr := appbuild.New(fs, projCtx, script.NewEngine())
+	auditSink, auditErr := audit.NewFilesystem(filepath.Join(projCtx.CacheDir, "audit"))
+	if auditErr != nil {
+		d.mu.Lock()
+		d.loadErr = auditErr.Error()
+		d.mu.Unlock()
+		return auditErr.Error()
+	}
+	svc, svcErr := appbuild.New(fs, projCtx, script.NewEngine(), auditSink)
 	if svcErr != nil {
 		d.mu.Lock()
 		d.loadErr = svcErr.Error()

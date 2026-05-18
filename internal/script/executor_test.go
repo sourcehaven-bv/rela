@@ -2,6 +2,7 @@ package script
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func testWriteDeps(projectRoot string) lua.WriteDeps {
 
 func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
 	engine := NewEngine()
-	err := engine.ExecuteFile("../../../etc/passwd", testWriteDeps("/project"), nil, nil)
+	err := engine.ExecuteFile(context.Background(), "../../../etc/passwd", testWriteDeps("/project"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for path traversal, got none")
 	}
@@ -39,7 +40,7 @@ func TestEngine_ExecuteFile_PathTraversal(t *testing.T) {
 
 func TestEngine_ExecuteFile_AbsolutePath(t *testing.T) {
 	engine := NewEngine()
-	err := engine.ExecuteFile("/etc/passwd", testWriteDeps("/project"), nil, nil)
+	err := engine.ExecuteFile(context.Background(), "/etc/passwd", testWriteDeps("/project"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for absolute path, got none")
 	}
@@ -50,7 +51,7 @@ func TestEngine_ExecuteFile_AbsolutePath(t *testing.T) {
 
 func TestEngine_ExecuteFile_WrongExtension(t *testing.T) {
 	engine := NewEngine()
-	err := engine.ExecuteFile("script.txt", testWriteDeps("/project"), nil, nil)
+	err := engine.ExecuteFile(context.Background(), "script.txt", testWriteDeps("/project"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for wrong extension, got none")
 	}
@@ -61,7 +62,7 @@ func TestEngine_ExecuteFile_WrongExtension(t *testing.T) {
 
 func TestEngine_ExecuteFile_ValidPath(t *testing.T) {
 	engine := NewEngine()
-	err := engine.ExecuteFile("test.lua", testWriteDeps("/nonexistent"), nil, nil)
+	err := engine.ExecuteFile(context.Background(), "test.lua", testWriteDeps("/nonexistent"), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing project directory")
 	}

@@ -9,6 +9,7 @@ import (
 
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // coverage-ignore: MCP command - requires stdio server
@@ -65,7 +66,17 @@ func runMCPServer() error {
 	}
 	defer svc.Close()
 
-	srv := relamcp.NewServer(svc, Version)
+	// Override the cli-stamped Principal with Tool=mcp. Every audit
+	// record produced by tool handlers within this server inherits
+	// this Principal via the request ctx. See plan AC4.
+	mcpPrincipal := principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolMCP,
+	}
+	srv, srvErr := relamcp.NewServer(svc, Version, relamcp.WithPrincipal(mcpPrincipal))
+	if srvErr != nil {
+		return fmt.Errorf("mcp startup: %w", srvErr)
+	}
 	return srv.Serve()
 }
 

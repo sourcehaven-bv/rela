@@ -146,6 +146,22 @@ The metamodel is your project's schema. It defines:
 This is stored in `metamodel.yaml`. See [Metamodel Reference](metamodel.md) for
 details.
 
+## Audit Log
+
+Every write rela performs — through any entry point (CLI, MCP, the
+data-entry web app, the scheduler, the desktop app) — is recorded as
+an append-only JSONL line under `.rela/audit/YYYY-MM-DD.jsonl`. The
+log answers "what changed, when, and on whose behalf"; common
+questions a user might have:
+
+- **Who changed entity X today?** `jq 'select(.subject.id == "X")' .rela/audit/$(date -u +%Y-%m-%d).jsonl`
+- **What did the scheduler do this week?** `cat .rela/audit/*.jsonl | jq 'select(.principal.tool == "scheduler")'`
+- **What automation cascaded from my last edit?** Look for records with `triggered_by: "automation:<name>"` near your write.
+
+See [audit-log.md](audit-log.md) for the full record schema, the
+`Principal{user, tool}` contract, durability caveats, and operator
+concerns (retention, rotation).
+
 ## Storage Format
 
 Entities are stored as Markdown files with YAML frontmatter:

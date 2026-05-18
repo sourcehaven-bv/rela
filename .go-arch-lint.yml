@@ -77,6 +77,8 @@ components:
 
   # Infrastructure
   ai:               { in: internal/ai }
+  audit:            { in: internal/audit }
+  principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
@@ -140,7 +142,9 @@ deps:
   cmdServer:
     mayDependOn:
       - appbuild
+      - audit
       - dataentry
+      - principal
       - scheduler
       - script
     canUse:
@@ -148,10 +152,12 @@ deps:
   cmdDesktop:
     mayDependOn:
       - appbuild
+      - audit
       - dataentry
       - desktop
       - git
       - metamodel
+      - principal
       - project
       - scheduler
       - script
@@ -167,6 +173,7 @@ deps:
       - app
       - appbuild
       - attachment
+      - audit
       - autocascade
       - automation
       - bleveindex
@@ -180,6 +187,7 @@ deps:
       - mcp
       - metamodel
       - output
+      - principal
       - project
       - projectsetup
       - rename
@@ -204,11 +212,13 @@ deps:
   # Web / UI layer
   dataentry:
     mayDependOn:
+      - audit
       - config
       - conflict
       - dataentryconfig
       - entitymanager
       - filter
+      - principal
       - git
       - htmlutil
       - lua
@@ -241,10 +251,12 @@ deps:
   mcp:
     mayDependOn:
       - ai
+      - audit
       - config
       - dataentryconfig
       - entitymanager
       - filter
+      - principal
       - lua
       - metamodel
       - project
@@ -273,6 +285,7 @@ deps:
   appbuild:
     mayDependOn:
       - app
+      - audit
       - autocascade
       - automation
       - bleveindex
@@ -314,6 +327,9 @@ deps:
       - entitymanager
       - metamodel
       - store
+  audit:
+    mayDependOn:
+      - principal
   renametype:
     mayDependOn:
       - metamodel
@@ -321,6 +337,7 @@ deps:
       - storage
   autocascade:
     mayDependOn:
+      - audit
       - automation
   automation:
     mayDependOn:
@@ -333,9 +350,11 @@ deps:
       - project
   entitymanager:
     mayDependOn:
+      - audit
       - autocascade
       - automation
       - metamodel
+      - principal
       - rename
       - store
       - templating
@@ -413,9 +432,11 @@ deps:
       - rrulego
   scheduler:
     mayDependOn:
+      - audit
       - config
       - lua
       - metamodel
+      - principal
       - project
       - script
       - state

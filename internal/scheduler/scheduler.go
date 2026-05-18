@@ -25,8 +25,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -76,6 +78,21 @@ func StartBackground(
 			logger.Error("scheduler stopped with error", "error", runErr)
 		}
 	}()
+}
+
+// stampTaskAuditContext stamps the scheduler-specific Principal and
+// the per-task triggered_by label on a child context so audit records
+// produced by the Lua script (directly via rela.create_entity, or
+// indirectly via automation cascades) carry the right attribution.
+//
+// Extracted so the stamping logic can be unit-tested without booting
+// the script engine.
+func stampTaskAuditContext(ctx context.Context, taskName string) context.Context {
+	out := principal.With(ctx, principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolScheduler,
+	})
+	return audit.WithTriggeredBy(out, "schedule:"+taskName)
 }
 
 // Scheduler runs Lua scripts sequentially on simple recurring schedules.
@@ -183,7 +200,8 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	err := s.engine.ExecuteFile(task.Script, s.ws.LuaWriteDeps(), nil, nil)
+	taskCtx := stampTaskAuditContext(ctx, task.Name)
+	err := s.engine.ExecuteFile(taskCtx, task.Script, s.ws.LuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {

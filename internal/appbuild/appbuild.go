@@ -25,9 +25,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -143,23 +145,68 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 	}
 }
 
+// buildSearcher returns a Searcher backed by the supplied bleve
+// index, or an error-Searcher placeholder when the index is nil.
+// Callers see "search index not available" for every query — but the
+// rest of the services bundle still works (read/write paths don't
+// depend on search).
+func buildSearcher(st store.Store, backend *bleveindex.Index) search.Searcher {
+	if backend != nil {
+		return search.New(st, backend)
+	}
+	return search.ErrSearcher(errors.New("search index not available"))
+}
+
+// buildAutomation wires the automation engine + cascade runner from
+// the metamodel. Returns (nil, nil, nil) when the metamodel declares
+// no automations — Manager treats that as "automation disabled".
+func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascade.Runner, error) {
+	if len(meta.Automations) == 0 {
+		return nil, nil, nil
+	}
+	autoEngine := automation.NewEngineFromMetamodel(meta.Automations)
+	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
+	if err != nil {
+		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
+	}
+	return autoEngine, cascadeRunner, nil
+}
+
 // Discover resolves the project at startDir and constructs every
 // service the entry points need. scriptEngine is the long-lived Lua
 // engine; production callers pass [script.NewEngine].
+//
+// Discover constructs a production [audit.Filesystem] under
+// .rela/audit/. The entry point caller is responsible for stamping
+// [principal.Principal] onto the request context (this varies per
+// binary — cli, mcp, scheduler, data-entry server).
 func Discover(startDir string, scriptEngine *script.Engine) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(startDir, fs)
 	if err != nil {
 		return nil, fmt.Errorf("discover project: %w", err)
 	}
-	return New(fs, paths, scriptEngine)
+	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
+	if auditErr != nil {
+		return nil, fmt.Errorf("build audit sink: %w", auditErr)
+	}
+	return New(fs, paths, scriptEngine, auditSink)
 }
 
 // New builds the focused services bundle over a caller-supplied
-// filesystem and project context. Used directly by rela-desktop
-// (which constructs its own per-project FS) and indirectly by
-// [Discover].
-func New(fs storage.FS, paths *project.Context, scriptEngine *script.Engine) (*Services, error) {
+// filesystem, project context, script engine, and audit sink. Used
+// directly by rela-desktop (which constructs its own per-project FS)
+// and indirectly by [Discover].
+//
+// auditSink is a required collaborator — pass [audit.Nop] explicitly
+// to opt out. Silently substituting a Nop would mask wiring bugs that
+// drop forensic data on the floor.
+func New(
+	fs storage.FS,
+	paths *project.Context,
+	scriptEngine *script.Engine,
+	auditSink audit.Audit,
+) (*Services, error) {
 	if fs == nil {
 		return nil, errors.New("appbuild.New: fs is required")
 	}
@@ -168,6 +215,9 @@ func New(fs storage.FS, paths *project.Context, scriptEngine *script.Engine) (*S
 	}
 	if scriptEngine == nil {
 		return nil, errors.New("appbuild.New: scriptEngine is required")
+	}
+	if auditSink == nil {
+		return nil, errors.New("appbuild.New: auditSink is required (use audit.Nop{} to opt out)")
 	}
 
 	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
@@ -202,27 +252,13 @@ func New(fs storage.FS, paths *project.Context, scriptEngine *script.Engine) (*S
 		}
 	}
 
-	// Wire automation engine + cascade runner; both optional, the
-	// pair is supplied to Manager together (Manager's constructor
-	// enforces "both or neither").
-	var autoEngine *automation.Engine
-	var cascadeRunner *autocascade.Runner
-	if len(meta.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
-		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
-		if rerr != nil {
-			return nil, fmt.Errorf("build autocascade runner: %w", rerr)
-		}
-		cascadeRunner = r
+	autoEngine, cascadeRunner, err := buildAutomation(meta)
+	if err != nil {
+		return nil, err
 	}
 
 	tr := tracer.New(st)
-	var searcher search.Searcher
-	if searchBackend != nil {
-		searcher = search.New(st, searchBackend)
-	} else {
-		searcher = search.ErrSearcher(errors.New("search index not available"))
-	}
+	searcher := buildSearcher(st, searchBackend)
 	templater := templating.NewFSTemplater(fs, paths)
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
 
@@ -241,6 +277,7 @@ func New(fs storage.FS, paths *project.Context, scriptEngine *script.Engine) (*S
 		Store:        st,
 		Meta:         meta,
 		Templater:    templater,
+		Audit:        auditSink,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(scriptEngine, readDeps),

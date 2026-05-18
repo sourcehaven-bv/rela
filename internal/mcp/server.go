@@ -21,6 +21,8 @@
 package mcp
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -30,6 +32,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -70,16 +73,55 @@ type Watcher interface {
 
 // Server wraps the MCP server with rela-specific state.
 type Server struct {
-	mcp    *server.MCPServer
-	ws     Services
-	logger *slog.Logger
+	mcp       *server.MCPServer
+	ws        Services
+	logger    *slog.Logger
+	principal principal.Principal
 }
 
-// NewServer creates a new MCP server for a rela project.
-func NewServer(ws Services, version string) *Server {
+// Option configures a [Server] at construction.
+type Option func(*Server)
+
+// WithPrincipal stamps p onto every tool-handler ctx via a server
+// middleware so downstream audit records are correctly attributed.
+// Applies to every registered tool — including lua_eval / lua_run /
+// any future write tool — because the middleware runs ahead of all
+// handlers (registration-time wrapping, not per-handler opt-in).
+func WithPrincipal(p principal.Principal) Option {
+	return func(s *Server) { s.principal = p }
+}
+
+// principalMiddleware is the mcp-go ToolHandlerMiddleware that
+// stamps the server's Principal on every tool ctx. Registered once
+// in NewServer via server.WithToolHandlerMiddleware so no per-handler
+// opt-in is required (CLAUDE.md: "make the wrong thing impossible to
+// write" — a new write tool added to the server inherits the stamp
+// automatically).
+//
+// NewServer guarantees s.principal is non-zero by the time this
+// middleware is registered, so there's no "no Principal" branch here.
+func (s *Server) principalMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		return next(principal.With(ctx, s.principal), req)
+	}
+}
+
+// NewServer creates a new MCP server for a rela project. Returns an
+// error if [WithPrincipal] was not supplied — silently degrading to
+// `unknown/unknown` audit attribution would be an invisible
+// production bug (CLAUDE.md "constructors reject nil required
+// fields"). Tests must pass a non-zero Principal too — use any
+// non-empty `principal.Principal{User: ..., Tool: ...}`.
+func NewServer(ws Services, version string, opts ...Option) (*Server, error) {
 	s := &Server{
 		ws:     ws,
 		logger: slog.Default().With("component", "mcp"),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.principal == (principal.Principal{}) {
+		return nil, errors.New("mcp.NewServer: Principal is required (use WithPrincipal)")
 	}
 
 	mcpServer := server.NewMCPServer(
@@ -89,6 +131,7 @@ func NewServer(ws Services, version string) *Server {
 		server.WithResourceCapabilities(false, true),
 		server.WithPromptCapabilities(true),
 		server.WithRecovery(),
+		server.WithToolHandlerMiddleware(s.principalMiddleware),
 		server.WithInstructions(
 			"rela is a schema-driven entity-graph platform. The domain is defined by a "+
 				"YAML metamodel (entity types, relation types, properties, validation rules); "+
@@ -107,7 +150,7 @@ func NewServer(ws Services, version string) *Server {
 	s.registerResources()
 	s.registerPrompts()
 
-	return s
+	return s, nil
 }
 
 // Serve starts the MCP server on stdio.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -32,6 +33,7 @@ type testConfig struct {
 	fs    storage.FS
 	paths *project.Context
 	store store.Store
+	audit audit.Audit
 }
 
 // WithTestStore replaces the default empty memstore with a
@@ -58,6 +60,14 @@ func WithFS(fs storage.FS, paths *project.Context) TestOption {
 		c.fs = fs
 		c.paths = paths
 	}
+}
+
+// WithTestAudit replaces the default [audit.Nop] sink with a
+// caller-supplied audit backend. Tests that assert on audit records
+// pass [audit.NewMemory]; tests that don't care can omit this option
+// and rely on the default Nop.
+func WithTestAudit(a audit.Audit) TestOption {
+	return func(c *testConfig) { c.audit = a }
 }
 
 // NewForTest constructs a *Services bundle suitable for tests. By
@@ -93,11 +103,16 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
 	cfgLoader := buildTestConfigLoader(cfg.fs, cfg.paths)
 	stateKV := mustBuildTestStateKV(cfg.fs, cfg.paths)
 	scriptEngine := script.NewEngine()
+	auditSink := cfg.audit
+	if auditSink == nil {
+		auditSink = audit.Nop{}
+	}
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        st,
 		Meta:         meta,
 		Templater:    templater,
+		Audit:        auditSink,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(scriptEngine, readDeps),

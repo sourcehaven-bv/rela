@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // configureLogging sets the default slog logger based on the global
@@ -109,6 +110,15 @@ func run() int {
 	// in-flight operations, including embedded Lua execution.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Stamp the audit Principal once for the entire CLI invocation.
+	// Subcommands that take a different identity (e.g. `rela mcp`) re-
+	// stamp the ctx with their own Tool value before invoking domain
+	// code. See principal.With for the contract.
+	ctx = principal.With(ctx, principal.Principal{
+		User: principal.SystemUser(),
+		Tool: principal.ToolCLI,
+	})
 
 	err := rootCmd.ExecuteContext(ctx)
 	if err == nil {

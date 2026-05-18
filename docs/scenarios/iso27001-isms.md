@@ -61,7 +61,12 @@ The relationships between these are crucial:
 3. **Management Reporting** - Dashboards showing ISMS health, outstanding
    actions, coverage metrics
 4. **Version History** - Git-based audit trail showing who changed what, when,
-   and why
+   and why. The Git history captures the *content* of every edit; the per-process
+   [audit log](audit-log.md) captures the *attribution* — which user, which
+   tool (CLI / MCP / data-entry web app / scheduler), and any automation
+   or scheduled-task chain that led to the write. Together they answer
+   ISO 27001's A.12.4 "Logging and monitoring" requirements without
+   requiring an external SIEM.
 
 ## Proposed Metamodel
 

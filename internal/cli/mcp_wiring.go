@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -122,10 +124,16 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		}
 		cascadeRunner = r
 	}
+	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
+	if auditErr != nil {
+		return nil, fmt.Errorf("build audit sink: %w", auditErr)
+	}
+
 	mgr, mgrErr := entitymanager.New(entitymanager.Deps{
 		Store:        st,
 		Meta:         mm,
 		Templater:    templating.NewFSTemplater(fs, paths),
+		Audit:        auditSink,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(svc.scriptEngine, svc.luaReadDeps()),

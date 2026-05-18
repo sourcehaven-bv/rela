@@ -47,7 +47,7 @@ type stubHost struct {
 	Calls []string
 }
 
-func (h *stubHost) CreateEntity(entityType string, opts autocascade.CreateEntityOptions) (*entity.Entity, error) {
+func (h *stubHost) CreateEntity(ctx context.Context, entityType string, opts autocascade.CreateEntityOptions) (*entity.Entity, error) {
 	h.Calls = append(h.Calls, "CreateEntity:"+entityType)
 	if h.createErr != nil {
 		return nil, h.createErr
@@ -62,14 +62,14 @@ func (h *stubHost) CreateEntity(entityType string, opts autocascade.CreateEntity
 		e.Properties[k] = v
 	}
 	if h.store != nil {
-		if err := h.store.CreateEntity(context.Background(), e); err != nil {
+		if err := h.store.CreateEntity(ctx, e); err != nil {
 			h.t.Fatalf("stub CreateEntity: %v", err)
 		}
 	}
 	return e, nil
 }
 
-func (h *stubHost) WriteEntity(e *entity.Entity) error {
+func (h *stubHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
 	h.Calls = append(h.Calls, "WriteEntity:"+e.ID)
 	if h.store == nil {
 		return nil
@@ -77,22 +77,22 @@ func (h *stubHost) WriteEntity(e *entity.Entity) error {
 	// WriteEntity is an upsert in workspace; reproduce that here by
 	// trying Create first, then Update if-and-only-if the failure is
 	// store.ErrConflict. Any other error propagates.
-	if err := h.store.CreateEntity(context.Background(), e); err != nil {
+	if err := h.store.CreateEntity(ctx, e); err != nil {
 		if !errors.Is(err, store.ErrConflict) {
 			return err
 		}
-		return h.store.UpdateEntity(context.Background(), e)
+		return h.store.UpdateEntity(ctx, e)
 	}
 	return nil
 }
 
-func (h *stubHost) WriteRelation(r *entity.Relation) error {
+func (h *stubHost) WriteRelation(ctx context.Context, r *entity.Relation) error {
 	h.Calls = append(h.Calls, "WriteRelation:"+r.From+"--"+r.Type+"-->"+r.To)
 	if h.writeRelErr != nil {
 		return h.writeRelErr
 	}
 	if h.store != nil {
-		if _, err := h.store.CreateRelation(context.Background(), r.From, r.Type, r.To, nil); err != nil {
+		if _, err := h.store.CreateRelation(ctx, r.From, r.Type, r.To, nil); err != nil {
 			return err
 		}
 	}
@@ -118,7 +118,7 @@ func (h *stubHost) ValidateRelation(relType, fromType, toType string) error {
 	return h.meta.ValidateRelation(relType, fromType, toType)
 }
 
-func (h *stubHost) FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity {
+func (h *stubHost) FindExistingRelationTarget(_ context.Context, sourceID, relationType, targetType string) *entity.Entity {
 	h.Calls = append(h.Calls, "FindExistingRelationTarget:"+sourceID+":"+relationType+":"+targetType)
 	return h.existingTarget
 }

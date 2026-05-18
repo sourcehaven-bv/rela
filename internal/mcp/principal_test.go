@@ -1,0 +1,76 @@
+package mcp
+
+import (
+	"context"
+	"testing"
+
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+)
+
+// TestNewServer_RejectsZeroPrincipal verifies that NewServer refuses
+// construction without WithPrincipal — silently degrading to
+// unknown/unknown audit attribution in production would be an
+// invisible bug.
+func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
+	_, err := NewServer(nil, "0.0.0")
+	if err == nil {
+		t.Fatal("expected error when WithPrincipal is omitted")
+	}
+}
+
+// TestPrincipalMiddleware_WithOption verifies AC4 for the MCP entry
+// point — the configured Principal flows into every tool ctx via the
+// middleware. Registered handlers (including new write tools added
+// later) inherit the stamp automatically; no per-handler opt-in.
+func TestPrincipalMiddleware_WithOption(t *testing.T) {
+	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
+	s := &Server{principal: want}
+
+	var captured principal.Principal
+	handler := s.principalMiddleware(func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		captured = principal.From(ctx)
+		return mcpgo.NewToolResultText("ok"), nil
+	})
+
+	_, _ = handler(context.Background(), mcpgo.CallToolRequest{})
+
+	if captured != want {
+		t.Errorf("Principal = %+v, want %+v", captured, want)
+	}
+}
+
+// TestPrincipalMiddleware_RegisteredOnEveryTool is the regression
+// guard for the cranky-reviewer finding: handlers that don't
+// explicitly call s.principalContext (lua_eval, lua_run, future
+// write tools) still inherit the Principal stamp because the
+// middleware sits in front of every registered handler.
+func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
+	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
+	s := &Server{principal: want}
+
+	srv := server.NewMCPServer("test", "0.0.0",
+		server.WithToolCapabilities(true),
+		server.WithToolHandlerMiddleware(s.principalMiddleware),
+	)
+
+	var captured principal.Principal
+	srv.AddTool(mcpgo.Tool{Name: "any-write-tool"},
+		func(ctx context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			captured = principal.From(ctx)
+			return mcpgo.NewToolResultText("ok"), nil
+		})
+
+	result := srv.HandleMessage(context.Background(), []byte(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"any-write-tool"}}`,
+	))
+	if result == nil {
+		t.Fatal("nil result")
+	}
+
+	if captured != want {
+		t.Errorf("Principal stamped on handler ctx = %+v, want %+v", captured, want)
+	}
+}

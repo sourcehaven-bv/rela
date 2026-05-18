@@ -14,8 +14,8 @@ import (
 // structurally; tests can pass a stub that only implements these
 // methods.
 type Executor interface {
-	ExecuteCode(code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
-	ExecuteFile(path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+	ExecuteCode(ctx context.Context, code string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
+	ExecuteFile(ctx context.Context, path string, deps lua.WriteDeps, newEntity, oldEntity *entity.Entity) error
 }
 
 // LuaScriptRunner adapts a Lua-based [Executor] to the
@@ -65,7 +65,7 @@ func NewLuaScriptRunner(exec Executor, readDeps lua.ReadDeps) *LuaScriptRunner {
 // Lua-error-path patching: Runner.executeScriptActions slog-Warns
 // with the automation name and appends err.Error() to Outcome.Errors,
 // which is the surface the API layer reads.
-func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction, m autocascade.Mutator) error {
+func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptAction, m autocascade.Mutator) error {
 	if action.Code == "" && action.FilePath == "" {
 		return nil
 	}
@@ -86,9 +86,9 @@ func (l *LuaScriptRunner) Run(_ context.Context, action autocascade.ScriptAction
 	var err error
 	switch {
 	case action.Code != "":
-		err = l.exec.ExecuteCode(action.Code, deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteCode(ctx, action.Code, deps, action.NewEntity, action.OldEntity)
 	case action.FilePath != "":
-		err = l.exec.ExecuteFile(action.FilePath, deps, action.NewEntity, action.OldEntity)
+		err = l.exec.ExecuteFile(ctx, action.FilePath, deps, action.NewEntity, action.OldEntity)
 	}
 	if err == nil {
 		return nil
