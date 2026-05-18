@@ -86,6 +86,7 @@ go build -o rela ./cmd/rela
 | [Lua Scripting](docs/lua-scripting.md) | Programmable automation with embedded Lua |
 | [Encrypting a rela repo with git-crypt](docs/git-crypt.md) | Use git-crypt for confidentiality when pushing to untrusted git hosts |
 | [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
+| [Audit Log](docs/audit-log.md) | Forensic JSONL log of every entity / relation write |
 
 ### Tutorials
 

@@ -1,6 +1,12 @@
-<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
-
-# Audit Log
+---
+audience: intermediate
+id: GUIDE-audit-log
+order: 12
+status: published
+summary: Forensic JSONL log of every entity / relation write
+title: Audit Log
+type: guide
+---
 
 rela writes one append-only JSONL record per entity / relation
 create / update / delete to `.rela/audit/YYYY-MM-DD.jsonl`. The log
