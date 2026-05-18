@@ -155,7 +155,8 @@ jq 'select(.subject.id == "TKT-001")' .rela/audit/$(date -u +%Y-%m-%d).jsonl
 cat .rela/audit/*.jsonl | jq 'select(.principal.tool == "scheduler")'
 
 # All automation cascades for entity TKT-007
-cat .rela/audit/*.jsonl | jq 'select(.triggered_by | startswith("automation") and (.subject.id == "TKT-007" or .before.id == "TKT-007"))'
+cat .rela/audit/*.jsonl | jq 'select(.triggered_by | startswith("automation")
+  and (.subject.id == "TKT-007" or .before.id == "TKT-007"))'
 
 # Count writes per user in May 2026
 cat .rela/audit/2026-05-*.jsonl | jq -r '.principal.user' | sort | uniq -c | sort -rn
