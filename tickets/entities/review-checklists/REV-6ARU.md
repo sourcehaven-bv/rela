@@ -53,5 +53,5 @@ tests, all green; `internal/acl/` coverage remains at 100%.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** <!-- filled in after push -->TBD — opening immediately after this
-commit.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/772 (base = `feat/acl-v0`;
+will auto-retarget to `develop` after #769 merges)
