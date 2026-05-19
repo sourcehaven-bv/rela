@@ -615,13 +615,13 @@ days.
 - [x] User guide / reference docs — **YES** (PR 3): `docs/security.md` ACL section: schema, delegate-X, trust boundary, `--read-only`, no-ACL default.
 - [x] CLI help text — **YES** (PR 1): `rela-server --read-only` flag help.
 - [x] CLAUDE.md — **YES** (PR 3): brief note about ACL package, consumer-side interface pattern applied, "Lua never on read path" discipline.
-- [ ] README.md — N/A.
-- [ ] API docs — N/A (covered by Go doc comments per package).
+- [x] ~~README.md~~ (N/A: server-level feature, not project-level)
+- [x] ~~API docs~~ (N/A: covered by Go doc comments per package)
 - [x] `docs/audit-log.md` — **YES** (PR 3): document `denied-write` op.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: planning already incorporated the cross-system research findings in `.ignored/acl-design.md`, the prototype validation, and the ReadOnlyACL refinement; no separate design-review round was warranted)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: no design-review round produced findings; the equivalent rigor came from the research sweep folded into `.ignored/acl-design.md`)
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** None — see above.

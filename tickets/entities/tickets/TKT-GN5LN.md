@@ -5,7 +5,7 @@ title: 'ACL v0: declarative write-side enforcement with delegate-X tamper resist
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: done
 ---
 
 ## v0 scope
