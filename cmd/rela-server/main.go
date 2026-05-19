@@ -128,6 +128,17 @@ func main() {
 	if !isLoopbackHost(*bind) {
 		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
 			"bind", *bind)
+		if *principalHeader != "" {
+			// The combination — exposed bind + header-trusted principal —
+			// is exactly the deployment the security doc warns against.
+			// Log a second time so an operator scanning startup output
+			// sees the explicit hazard, not just the generic bind warning.
+			slog.Warn("--principal-header set on non-loopback bind: "+
+				"audit attribution trusts an HTTP header from the network; "+
+				"only safe if a reverse proxy strips + replaces the header. "+
+				"See docs/security.md.",
+				"bind", *bind, "header", *principalHeader)
+		}
 	}
 	// Start background scheduler if schedules.yaml exists.
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider

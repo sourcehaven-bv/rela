@@ -143,32 +143,38 @@ func TestHeaderPrincipalResolver_EmptyHeaderFallsThrough(t *testing.T) {
 	}
 }
 
+// resolveHeaderRaw builds a request that bypasses http.Header.Set's
+// CR/LF rejection by writing the canonical-form map directly. Used
+// for sanitization tests whose inputs would otherwise be silently
+// dropped by net/http.
+func resolveHeaderRaw(t *testing.T, headerName, value string) principal.Principal {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.Header[headerName] = []string{value}
+	return HeaderPrincipalResolver(headerName)(req)
+}
+
 // AC4: header value is sanitized.
 func TestHeaderPrincipalResolver_Sanitizes(t *testing.T) {
 	t.Run("control chars replaced", func(t *testing.T) {
-		// Go's http.Header.Set will reject \n in a value; pass via
-		// the canonical-form map instead. r.Header.Get reads through
-		// the same map.
-		got := runResolver(t,
-			ChainResolvers(HeaderPrincipalResolver("X-User")),
-			nil)
-		// Inject the raw value at the resolver layer via t.Run with
-		// a constructed Request — runResolver's path uses Set which
-		// strips. Test directly via the resolver.
-		_ = got
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header["X-User"] = []string{"alice\nbob"}
-		p := HeaderPrincipalResolver("X-User")(req)
+		p := resolveHeaderRaw(t, "X-User", "alice\nbob")
 		if p.User != "alice bob" {
 			t.Errorf("User = %q, want 'alice bob' (newline replaced with space)", p.User)
 		}
 	})
 	t.Run("null byte replaced", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header["X-User"] = []string{"ali\x00ce"}
-		p := HeaderPrincipalResolver("X-User")(req)
+		p := resolveHeaderRaw(t, "X-User", "ali\x00ce")
 		if p.User != "ali ce" {
 			t.Errorf("User = %q, want 'ali ce'", p.User)
+		}
+	})
+	t.Run("control-only payload sanitizes to empty (no spoof via NULs)", func(t *testing.T) {
+		// Regression for the cranky review: a header value of pure NULs
+		// must NOT survive sanitization as literal spaces. TrimSpace
+		// after replacement catches it.
+		p := resolveHeaderRaw(t, "X-User", "\x00\x00\x00")
+		if p.User != "" {
+			t.Errorf("User = %q, want '' (control-only payload must sanitize to empty)", p.User)
 		}
 	})
 	t.Run("truncated at 256 runes", func(t *testing.T) {
@@ -247,6 +253,10 @@ func TestHeaderPrincipalResolver_ToolUnchanged(t *testing.T) {
 		{"header", HeaderPrincipalResolver("X-User"), "", map[string]string{"X-User": "alice"}},
 		{"env", EnvPrincipalResolver(), "operator", nil},
 		{"default", defaultPrincipalResolver, "", nil},
+		// chain-fallback: nothing resolves, ChainResolvers falls back
+		// to defaultPrincipalResolver — verify the fallback path
+		// itself returns Tool=ToolDataEntry, not just the bare default.
+		{"chain-fallback", ChainResolvers(HeaderPrincipalResolver("X-User")), "", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

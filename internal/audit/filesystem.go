@@ -30,8 +30,8 @@ import (
 //
 // Sanitization: every string field on Record is sanitized at this
 // layer — truncated to 1024 chars (UTF-8 safe) and C0/DEL control
-// chars replaced with non-breaking space. [Memory] retains raw bytes
-// for test assertions; that asymmetry is documented (AC15).
+// chars replaced with a regular space (U+0020). [Memory] retains
+// raw bytes for test assertions; that asymmetry is documented (AC15).
 type Filesystem struct {
 	dir   string
 	clock func() time.Time
@@ -191,7 +191,7 @@ const (
 
 // sanitize returns a copy of rec with every string field truncated
 // and control chars replaced. C0 (\x00-\x1f) and DEL (\x7f) become
-// non-breaking space ( ); printable UTF-8 is untouched.
+// a regular space (U+0020); printable UTF-8 is untouched.
 //
 // Sanitization runs once at the JSONL boundary because that's the
 // stream consumers actually see — Memory holds raw bytes for tests.
@@ -222,7 +222,7 @@ func sanitizeSubject(s *Subject) *Subject {
 }
 
 // clean truncates s to fieldLimit (UTF-8 safe) and replaces control
-// chars with non-breaking space.
+// chars with a regular space (U+0020).
 func clean(s string) string {
 	if s == "" {
 		return s
@@ -266,5 +266,5 @@ func needsControlCharReplace(s string) bool {
 }
 
 func isControlRune(r rune) bool {
-	return (r >= 0 && r <= 0x1f) || r == 0x7f
+	return r <= 0x1f || r == 0x7f
 }

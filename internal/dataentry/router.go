@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -124,10 +123,13 @@ func defaultPrincipalResolver(_ *http.Request) principal.Principal {
 }
 
 // HeaderPrincipalResolver reads Principal.User from headerName on
-// each request, stamping Tool=data-entry. An empty headerName
-// disables the resolver — it returns a zero principal so a chained
-// resolver can take over (the typical wiring is env → header →
-// default, with empty results falling through).
+// each request, stamping Tool=data-entry.
+//
+// The returned resolver is never nil. An empty headerName yields a
+// resolver that always returns a zero Principal — the [ChainResolvers]
+// composition relies on this shape, so callers don't need to special-
+// case the disabled state. Production wiring in cmd/rela-server
+// passes the raw flag value; the empty-default flag stays inert.
 //
 // **Trust boundary.** The header value is only as trustworthy as
 // the reverse proxy that sets it. Operators serving data-entry
@@ -135,9 +137,10 @@ func defaultPrincipalResolver(_ *http.Request) principal.Principal {
 // can spoof identity by setting the header on the wire. See
 // docs/security.md for the deployment guidance.
 //
-// Sanitization: the header value is trimmed, length-capped at 256
-// runes, and C0/DEL control characters are replaced with a regular
-// space. Same policy audit.Filesystem applies to record fields.
+// Sanitization: control characters (C0 + DEL) in the header value
+// are replaced with regular spaces, the value is truncated to 256
+// runes (UTF-8 safe), and surrounding whitespace is trimmed.
+// Control-only values therefore sanitize to "" and fall through.
 func HeaderPrincipalResolver(headerName string) PrincipalResolver {
 	if headerName == "" {
 		return func(*http.Request) principal.Principal {
@@ -158,6 +161,12 @@ func HeaderPrincipalResolver(headerName string) PrincipalResolver {
 // unset or whitespace-only — chain it (typically first) so it acts
 // as a local-dev escape hatch that overrides any incoming header.
 //
+// The env var is read on *every* request rather than cached at
+// construction so test fixtures using `t.Setenv` work without
+// rebuilding the resolver. The cost is one map lookup per request
+// (Go runtime takes a RLock); negligible relative to the per-request
+// work of the audit middleware that follows.
+//
 // Sanitization mirrors [HeaderPrincipalResolver].
 func EnvPrincipalResolver() PrincipalResolver {
 	return func(*http.Request) principal.Principal {
@@ -174,6 +183,14 @@ func EnvPrincipalResolver() PrincipalResolver {
 // non-empty. If no resolver yields a user, falls back to
 // [defaultPrincipalResolver] (Tool=data-entry, User=unknown). Used
 // by cmd/rela-server to layer env → header → default.
+//
+// **Chain contract for resolver authors.** Return a zero
+// [principal.Principal] (User=="") to signal fall-through. The
+// chain advances on `p.User == ""` and *ignores* Tool — every
+// data-entry resolver hard-codes Tool=ToolDataEntry today, so
+// distinguishing on Tool would be cosmetic. If a future resolver
+// needs to return a different Tool, give it a non-empty User too
+// and the chain will honor both.
 func ChainResolvers(resolvers ...PrincipalResolver) PrincipalResolver {
 	return func(r *http.Request) principal.Principal {
 		for _, resolve := range resolvers {
@@ -186,56 +203,42 @@ func ChainResolvers(resolvers ...PrincipalResolver) PrincipalResolver {
 	}
 }
 
-// sanitizeUser is the shared input filter for principal.User values
-// derived from an HTTP header or env var. Trims surrounding
-// whitespace, truncates to [principalUserMaxLen] runes (UTF-8
-// safe), and replaces C0 (\x00-\x1f) and DEL (\x7f) with a regular
-// space. Returns "" when the cleaned value is empty so chained
+// sanitizeUser is the input filter for principal.User values derived
+// from an HTTP header or env var. Replaces C0 (\x00-\x1f) and DEL
+// (\x7f) with regular spaces in a single pass, truncates to
+// [principalUserMaxLen] runes (UTF-8 safe), and trims surrounding
+// whitespace. Returns "" when the cleaned value is empty so chained
 // resolvers can fall through.
+//
+// **Important — order matters.** Control-char replacement runs
+// *before* the final whitespace trim. A value of `"\x00\x00"`
+// would survive `strings.TrimSpace` (NULs are not whitespace),
+// then become `"  "` after substitution; the final trim catches it
+// and returns "". Trimming first would let such payloads through
+// as literal-space user attribution in the audit log.
 func sanitizeUser(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
+	if raw == "" {
 		return ""
 	}
-	if utf8.RuneCountInString(s) > principalUserMaxLen {
-		s = truncateRunes(s, principalUserMaxLen)
-	}
-	if !hasControlRune(s) {
-		return s
-	}
-	out := make([]rune, 0, len(s))
-	for _, r := range s {
-		if isControlRune(r) {
-			out = append(out, ' ')
-			continue
-		}
-		out = append(out, r)
-	}
-	return string(out)
-}
-
-func truncateRunes(s string, limit int) string {
-	out := make([]rune, 0, limit)
-	for i, r := range []rune(s) {
-		if i >= limit {
+	// Single pass: replace control chars + length-cap.
+	out := make([]rune, 0, principalUserMaxLen)
+	var n int
+	for _, r := range raw {
+		if n >= principalUserMaxLen {
 			break
 		}
-		out = append(out, r)
-	}
-	return string(out)
-}
-
-func hasControlRune(s string) bool {
-	for _, r := range s {
 		if isControlRune(r) {
-			return true
+			out = append(out, ' ')
+		} else {
+			out = append(out, r)
 		}
+		n++
 	}
-	return false
+	return strings.TrimSpace(string(out))
 }
 
 func isControlRune(r rune) bool {
-	return (r >= 0 && r <= 0x1f) || r == 0x7f
+	return r <= 0x1f || r == 0x7f
 }
 
 // stampAuditPrincipal stamps a Principal (resolved by resolve) on

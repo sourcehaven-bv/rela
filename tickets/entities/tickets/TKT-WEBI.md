@@ -5,7 +5,7 @@ title: 'data-entry: per-request Principal from HTTP header'
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 The data-entry server currently stamps every request with
