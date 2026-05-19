@@ -48,6 +48,12 @@ func main() {
 	debugPprof := flag.String("debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
+	principalHeader := flag.String("principal-header", "",
+		"HTTP header to read for audit Principal.User (e.g. X-Forwarded-User). "+
+			"Default empty: do not read any header. Operators can override per-process via "+
+			"$RELA_DATAENTRY_USER (wins over the header). "+
+			"WARNING: the header is only as trustworthy as the upstream proxy that sets it. "+
+			"See docs/security.md.")
 	flag.Parse()
 
 	configureLogging(*verbose, *quiet)
@@ -107,6 +113,15 @@ func main() {
 		slog.Error("invalid security configuration", "error", err)
 		os.Exit(1)
 	}
+
+	// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch)
+	// wins over an incoming header; either falls through to
+	// "unknown" when both are absent. Empty --principal-header
+	// keeps the legacy default behavior.
+	app.SetPrincipalResolver(dataentry.ChainResolvers(
+		dataentry.EnvPrincipalResolver(),
+		dataentry.HeaderPrincipalResolver(*principalHeader),
+	))
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

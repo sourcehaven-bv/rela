@@ -76,13 +76,33 @@ startup and stamps it on every audit record. If `$USER` is unset,
 | `scheduler`   | The background scheduler running a Lua task              |
 | `desktop`     | The rela-desktop Wails app                               |
 
-### `data-entry` user is `"unknown"`
+### `data-entry` user attribution
 
-The data-entry server stamps `Principal.User = "unknown"` rather than
-the server process owner (e.g. `www-data`). Recording the operator's
-`$USER` for every edit by every human web user would be actively
-misleading. Per-request principal override (read user from a header /
-cookie / session) is on the roadmap.
+The data-entry server stamps `Principal.User` from one of these
+sources, in order:
+
+1. `$RELA_DATAENTRY_USER` (process-wide env override — local-dev
+   escape hatch).
+2. The HTTP header named by `--principal-header` on `rela-server`
+   (typically `X-Forwarded-User`, set by an SSO reverse proxy like
+   oauth2-proxy / Vouch / traefik forward-auth).
+3. `"unknown"` when neither is set or both resolve to an empty
+   value.
+
+Recording the server process owner (e.g. `www-data`) for every
+edit by every human web user would be actively misleading, so a
+direct, unproxied deployment that hasn't configured either source
+records `"unknown"` — honest about the gap.
+
+**Trust boundary**: enabling `--principal-header` only makes sense
+behind a reverse proxy that *strips the same header from inbound
+requests* and *sets it from an authenticated source*. A direct
+client can otherwise spoof the header at will. See
+[`docs/security.md`](../security.md) for deployment guidance.
+
+Header values are trimmed, length-capped at 256 runes, and have
+control characters replaced with a space — defense-in-depth against
+header-injection corrupting the JSONL stream.
 
 ### `mcp` user is the host process owner
 

@@ -147,6 +147,13 @@ type App struct {
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
 	security *security
+
+	// principalResolver is the per-request audit Principal resolver.
+	// Set via SetPrincipalResolver before NewRouter; nil falls back
+	// to defaultPrincipalResolver (Tool=data-entry, User=unknown).
+	// cmd/rela-server chains an env resolver + a header resolver
+	// here when --principal-header is set.
+	principalResolver PrincipalResolver
 }
 
 // StopWatching releases the data-entry.yaml subscription started by
@@ -217,6 +224,20 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 	}
 	a.security = s
 	return nil
+}
+
+// SetPrincipalResolver installs a custom [PrincipalResolver] used by
+// the router's audit-stamp middleware. Must be called before
+// [App.NewRouter]; subsequent changes have no effect on already-built
+// routers.
+//
+// The typical wiring (in cmd/rela-server) chains
+// [EnvPrincipalResolver] and [HeaderPrincipalResolver] so a
+// `$RELA_DATAENTRY_USER` env var overrides any incoming header and
+// the header itself overrides the default. Passing nil restores
+// [defaultPrincipalResolver] behavior.
+func (a *App) SetPrincipalResolver(r PrincipalResolver) {
+	a.principalResolver = r
 }
 
 // NewApp creates and initializes an App. Callers pass in the
