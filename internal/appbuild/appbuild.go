@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -172,6 +173,46 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	return autoEngine, cascadeRunner, nil
 }
 
+// Option configures construction of a [Services] bundle. Options are
+// optional; production callers typically pass none. Used by entry
+// points that need to swap a focused collaborator at startup —
+// today, `rela-server --read-only` injects [acl.ReadOnlyACL] via
+// [WithACL]. PR 3 will extend this to load `acl.yaml` from the
+// project root.
+type Option func(*options)
+
+type options struct {
+	acl acl.ACL
+}
+
+// WithACL overrides the default [acl.NopACL]. Entry points that
+// support a `--read-only` flag (or future ACL configuration) pass
+// the chosen implementation here. Tests should prefer
+// [NewForTest] + [WithTestACL] over driving this path.
+func WithACL(a acl.ACL) Option {
+	return func(o *options) { o.acl = a }
+}
+
+// validateNewArgs nil-checks the four required collaborators of [New].
+// Extracted so [New] stays under the linter's function-length budget
+// — the validation block is mechanical and obscures the construction
+// flow when inlined.
+func validateNewArgs(fs storage.FS, paths *project.Context, scriptEngine *script.Engine, auditSink audit.Audit) error {
+	if fs == nil {
+		return errors.New("appbuild.New: fs is required")
+	}
+	if paths == nil {
+		return errors.New("appbuild.New: paths is required")
+	}
+	if scriptEngine == nil {
+		return errors.New("appbuild.New: scriptEngine is required")
+	}
+	if auditSink == nil {
+		return errors.New("appbuild.New: auditSink is required (use audit.Nop{} to opt out)")
+	}
+	return nil
+}
+
 // Discover resolves the project at startDir and constructs every
 // service the entry points need. scriptEngine is the long-lived Lua
 // engine; production callers pass [script.NewEngine].
@@ -180,7 +221,7 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 // .rela/audit/. The entry point caller is responsible for stamping
 // [principal.Principal] onto the request context (this varies per
 // binary — cli, mcp, scheduler, data-entry server).
-func Discover(startDir string, scriptEngine *script.Engine) (*Services, error) {
+func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(startDir, fs)
 	if err != nil {
@@ -190,7 +231,7 @@ func Discover(startDir string, scriptEngine *script.Engine) (*Services, error) {
 	if auditErr != nil {
 		return nil, fmt.Errorf("build audit sink: %w", auditErr)
 	}
-	return New(fs, paths, scriptEngine, auditSink)
+	return New(fs, paths, scriptEngine, auditSink, opts...)
 }
 
 // New builds the focused services bundle over a caller-supplied
@@ -206,18 +247,15 @@ func New(
 	paths *project.Context,
 	scriptEngine *script.Engine,
 	auditSink audit.Audit,
+	opts ...Option,
 ) (*Services, error) {
-	if fs == nil {
-		return nil, errors.New("appbuild.New: fs is required")
+	if err := validateNewArgs(fs, paths, scriptEngine, auditSink); err != nil {
+		return nil, err
 	}
-	if paths == nil {
-		return nil, errors.New("appbuild.New: paths is required")
-	}
-	if scriptEngine == nil {
-		return nil, errors.New("appbuild.New: scriptEngine is required")
-	}
-	if auditSink == nil {
-		return nil, errors.New("appbuild.New: auditSink is required (use audit.Nop{} to opt out)")
+
+	o := options{acl: acl.NopACL{}}
+	for _, opt := range opts {
+		opt(&o)
 	}
 
 	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
@@ -278,6 +316,7 @@ func New(
 		Meta:         meta,
 		Templater:    templater,
 		Audit:        auditSink,
+		ACL:          o.acl,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(scriptEngine, readDeps),

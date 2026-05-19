@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -134,6 +135,7 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		Meta:         mm,
 		Templater:    templating.NewFSTemplater(fs, paths),
 		Audit:        auditSink,
+		ACL:          acl.NopACL{},
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(svc.scriptEngine, svc.luaReadDeps()),

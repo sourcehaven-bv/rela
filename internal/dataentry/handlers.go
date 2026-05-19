@@ -73,6 +73,9 @@ func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
 	updated := live.Clone()
 	updated.Content = newContent
 	if _, err := a.entityManager.UpdateEntity(r.Context(), updated); err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
 		return
 	}
