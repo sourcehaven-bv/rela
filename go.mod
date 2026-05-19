@@ -9,7 +9,7 @@ require (
 	github.com/chromedp/chromedp v0.15.1
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-git/go-git/v5 v5.19.0
+	github.com/go-git/go-git/v5 v5.19.1
 	github.com/mark3labs/mcp-go v0.54.0
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/mitchellh/go-wordwrap v1.0.1
