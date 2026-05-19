@@ -48,6 +48,12 @@ func main() {
 	debugPprof := flag.String("debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
+	principalHeader := flag.String("principal-header", "",
+		"HTTP header to read for audit Principal.User (e.g. X-Forwarded-User). "+
+			"Default empty: do not read any header. Operators can override per-process via "+
+			"$RELA_DATAENTRY_USER (wins over the header). "+
+			"WARNING: the header is only as trustworthy as the upstream proxy that sets it. "+
+			"See docs/security.md.")
 	flag.Parse()
 
 	configureLogging(*verbose, *quiet)
@@ -108,11 +114,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch)
+	// wins over an incoming header; either falls through to
+	// "unknown" when both are absent. Empty --principal-header
+	// keeps the legacy default behavior.
+	app.SetPrincipalResolver(dataentry.ChainResolvers(
+		dataentry.EnvPrincipalResolver(),
+		dataentry.HeaderPrincipalResolver(*principalHeader),
+	))
+
 	srv := newHTTPServer(addr, app.NewRouter())
 
 	if !isLoopbackHost(*bind) {
 		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
 			"bind", *bind)
+		if *principalHeader != "" {
+			// The combination — exposed bind + header-trusted principal —
+			// is exactly the deployment the security doc warns against.
+			// Log a second time so an operator scanning startup output
+			// sees the explicit hazard, not just the generic bind warning.
+			slog.Warn("--principal-header set on non-loopback bind: "+
+				"audit attribution trusts an HTTP header from the network; "+
+				"only safe if a reverse proxy strips + replaces the header. "+
+				"See docs/security.md.",
+				"bind", *bind, "header", *principalHeader)
+		}
 	}
 	// Start background scheduler if schedules.yaml exists.
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider

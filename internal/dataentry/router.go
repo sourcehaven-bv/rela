@@ -4,10 +4,22 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
+
+// envDataEntryUser is the local-dev escape hatch: if this env var is
+// set, EnvPrincipalResolver returns its value as the principal user.
+// Documented in docs/security.md alongside the --principal-header
+// flag.
+const envDataEntryUser = "RELA_DATAENTRY_USER"
+
+// principalUserMaxLen caps the principal.User value at 256 UTF-8
+// chars. Mirrors the cap audit.Filesystem applies to record fields —
+// defense-in-depth against a misconfigured proxy sending huge values.
+const principalUserMaxLen = 256
 
 // CheckEmbeddedSPA verifies that the embedded Vue SPA bundle is present and
 // usable. Production entry points (cmd/rela-server, cmd/rela-desktop) should
@@ -83,27 +95,150 @@ func (a *App) NewRouter() http.Handler {
 		handler = a.security.requireSameOrigin(handler)
 		handler = a.security.requireLocalHost(handler)
 	}
-	handler = stampAuditPrincipal(handler, defaultPrincipalResolver)
+	resolver := a.principalResolver
+	if resolver == nil {
+		resolver = defaultPrincipalResolver
+	}
+	handler = stampAuditPrincipal(handler, resolver)
 	return handler
 }
 
 // PrincipalResolver maps an incoming HTTP request to the audit
-// Principal that should be stamped on its context. A follow-up PR
-// will replace the default with a header/cookie/session-aware
-// resolver that derives User per request.
+// Principal that should be stamped on its context. Compose multiple
+// resolvers via [ChainResolvers] to layer (e.g.) an env-var override
+// over a header reader over the default.
 type PrincipalResolver func(*http.Request) principal.Principal
 
 // defaultPrincipalResolver stamps Principal{User: "unknown", Tool:
-// "data-entry"} on every request. The User is intentionally
-// "unknown" (not the server process owner) — recording the
-// operator's $USER for every edit by every human web user would be
-// actively misleading. Per-request override is the explicit
-// follow-up; this resolver is the seam where that change plugs in.
+// "data-entry"} on every request. Used when neither the
+// `--principal-header` flag nor `$RELA_DATAENTRY_USER` yields a
+// user. The "unknown" placeholder is intentional — recording the
+// server process owner for every edit by every human web user would
+// be actively misleading.
 func defaultPrincipalResolver(_ *http.Request) principal.Principal {
 	return principal.Principal{
 		User: "unknown",
 		Tool: principal.ToolDataEntry,
 	}
+}
+
+// HeaderPrincipalResolver reads Principal.User from headerName on
+// each request, stamping Tool=data-entry.
+//
+// The returned resolver is never nil. An empty headerName yields a
+// resolver that always returns a zero Principal — the [ChainResolvers]
+// composition relies on this shape, so callers don't need to special-
+// case the disabled state. Production wiring in cmd/rela-server
+// passes the raw flag value; the empty-default flag stays inert.
+//
+// **Trust boundary.** The header value is only as trustworthy as
+// the reverse proxy that sets it. Operators serving data-entry
+// without a trusted proxy must not enable this resolver — anyone
+// can spoof identity by setting the header on the wire. See
+// docs/security.md for the deployment guidance.
+//
+// Sanitization: control characters (C0 + DEL) in the header value
+// are replaced with regular spaces, the value is truncated to 256
+// runes (UTF-8 safe), and surrounding whitespace is trimmed.
+// Control-only values therefore sanitize to "" and fall through.
+func HeaderPrincipalResolver(headerName string) PrincipalResolver {
+	if headerName == "" {
+		return func(*http.Request) principal.Principal {
+			return principal.Principal{}
+		}
+	}
+	return func(r *http.Request) principal.Principal {
+		user := sanitizeUser(r.Header.Get(headerName))
+		if user == "" {
+			return principal.Principal{}
+		}
+		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+	}
+}
+
+// EnvPrincipalResolver reads Principal.User from
+// $RELA_DATAENTRY_USER. Returns a zero principal when the env is
+// unset or whitespace-only — chain it (typically first) so it acts
+// as a local-dev escape hatch that overrides any incoming header.
+//
+// The env var is read on *every* request rather than cached at
+// construction so test fixtures using `t.Setenv` work without
+// rebuilding the resolver. The cost is one map lookup per request
+// (Go runtime takes a RLock); negligible relative to the per-request
+// work of the audit middleware that follows.
+//
+// Sanitization mirrors [HeaderPrincipalResolver].
+func EnvPrincipalResolver() PrincipalResolver {
+	return func(*http.Request) principal.Principal {
+		user := sanitizeUser(os.Getenv(envDataEntryUser))
+		if user == "" {
+			return principal.Principal{}
+		}
+		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+	}
+}
+
+// ChainResolvers returns a resolver that tries each supplied
+// resolver in order and returns the first one whose User is
+// non-empty. If no resolver yields a user, falls back to
+// [defaultPrincipalResolver] (Tool=data-entry, User=unknown). Used
+// by cmd/rela-server to layer env → header → default.
+//
+// **Chain contract for resolver authors.** Return a zero
+// [principal.Principal] (User=="") to signal fall-through. The
+// chain advances on `p.User == ""` and *ignores* Tool — every
+// data-entry resolver hard-codes Tool=ToolDataEntry today, so
+// distinguishing on Tool would be cosmetic. If a future resolver
+// needs to return a different Tool, give it a non-empty User too
+// and the chain will honor both.
+func ChainResolvers(resolvers ...PrincipalResolver) PrincipalResolver {
+	return func(r *http.Request) principal.Principal {
+		for _, resolve := range resolvers {
+			p := resolve(r)
+			if p.User != "" {
+				return p
+			}
+		}
+		return defaultPrincipalResolver(r)
+	}
+}
+
+// sanitizeUser is the input filter for principal.User values derived
+// from an HTTP header or env var. Replaces C0 (\x00-\x1f) and DEL
+// (\x7f) with regular spaces in a single pass, truncates to
+// [principalUserMaxLen] runes (UTF-8 safe), and trims surrounding
+// whitespace. Returns "" when the cleaned value is empty so chained
+// resolvers can fall through.
+//
+// **Important — order matters.** Control-char replacement runs
+// *before* the final whitespace trim. A value of `"\x00\x00"`
+// would survive `strings.TrimSpace` (NULs are not whitespace),
+// then become `"  "` after substitution; the final trim catches it
+// and returns "". Trimming first would let such payloads through
+// as literal-space user attribution in the audit log.
+func sanitizeUser(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	// Single pass: replace control chars + length-cap.
+	out := make([]rune, 0, principalUserMaxLen)
+	var n int
+	for _, r := range raw {
+		if n >= principalUserMaxLen {
+			break
+		}
+		if isControlRune(r) {
+			out = append(out, ' ')
+		} else {
+			out = append(out, r)
+		}
+		n++
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func isControlRune(r rune) bool {
+	return r <= 0x1f || r == 0x7f
 }
 
 // stampAuditPrincipal stamps a Principal (resolved by resolve) on

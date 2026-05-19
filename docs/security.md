@@ -128,6 +128,36 @@ schema, and `jq` recipes for common queries.
 `.rela/audit/` is gitignored by convention — audit content is
 per-machine and should not be committed.
 
+### `data-entry` user attribution
+
+By default the data-entry server records `principal.user: "unknown"`
+on every audit row — the server-process `$USER` would be misleading
+for human web users. Two opt-in sources can replace the placeholder:
+
+- **`--principal-header X-Forwarded-User`** (or any header name) on
+  `rela-server`. The middleware reads the named header on every
+  request and stamps its value as `principal.user`.
+- **`$RELA_DATAENTRY_USER`** env var, set on the `rela-server`
+  process. Useful for local development where there's no proxy.
+  The env value wins over the header.
+
+**Trust boundary**: the `--principal-header` flag is only safe
+behind a reverse proxy that
+
+1. **strips** the same header from inbound requests, and
+2. **sets** it from an authenticated source (oauth2-proxy, Vouch,
+   traefik forward-auth, etc.).
+
+A direct-to-data-entry deployment must not enable this flag —
+clients can spoof the header at will. If `rela-server` is bound
+beyond loopback (`--bind` non-loopback) and `--principal-header`
+is set, audit attribution is only as trustworthy as the network
+path between the client and the proxy.
+
+Header values are sanitized at the middleware (trim, 256-rune cap,
+control-char strip) as defense-in-depth against header-injection
+corrupting the JSONL stream.
+
 ## Running the Vue dev server (Vite)
 
 If you run the SPA via Vite on `http://localhost:5173`, requests to the Go
