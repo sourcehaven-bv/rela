@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -27,6 +28,7 @@ func newManagerWithAudit(
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
 		Audit:     sink,
+		ACL:       acl.NopACL{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)

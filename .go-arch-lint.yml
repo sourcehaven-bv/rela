@@ -76,6 +76,7 @@ components:
   projectsetup:     { in: internal/projectsetup }
 
   # Infrastructure
+  acl:              { in: internal/acl }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
   principal:        { in: internal/principal }
@@ -141,6 +142,7 @@ deps:
       - cli
   cmdServer:
     mayDependOn:
+      - acl
       - appbuild
       - audit
       - dataentry
@@ -168,6 +170,7 @@ deps:
   # CLI layer — orchestrates everything
   cli:
     mayDependOn:
+      - acl
       - ai
       - analysis
       - app
@@ -212,6 +215,7 @@ deps:
   # Web / UI layer
   dataentry:
     mayDependOn:
+      - acl
       - audit
       - config
       - conflict
@@ -284,6 +288,7 @@ deps:
       - store
   appbuild:
     mayDependOn:
+      - acl
       - app
       - audit
       - autocascade
@@ -327,6 +332,9 @@ deps:
       - entitymanager
       - metamodel
       - store
+  acl:
+    mayDependOn:
+      - principal
   audit:
     mayDependOn:
       - principal
@@ -350,6 +358,7 @@ deps:
       - project
   entitymanager:
     mayDependOn:
+      - acl
       - audit
       - autocascade
       - automation

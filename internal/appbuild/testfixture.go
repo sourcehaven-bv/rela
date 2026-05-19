@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -34,6 +35,7 @@ type testConfig struct {
 	paths *project.Context
 	store store.Store
 	audit audit.Audit
+	acl   acl.ACL
 }
 
 // WithTestStore replaces the default empty memstore with a
@@ -68,6 +70,14 @@ func WithFS(fs storage.FS, paths *project.Context) TestOption {
 // and rely on the default Nop.
 func WithTestAudit(a audit.Audit) TestOption {
 	return func(c *testConfig) { c.audit = a }
+}
+
+// WithTestACL replaces the default [acl.NopACL] with a caller-supplied
+// ACL backend. Tests that assert on the deny path pass
+// [acl.ReadOnlyACL]; tests that don't care can omit this option and
+// rely on the allow-all default.
+func WithTestACL(a acl.ACL) TestOption {
+	return func(c *testConfig) { c.acl = a }
 }
 
 // NewForTest constructs a *Services bundle suitable for tests. By
@@ -107,12 +117,17 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
 	if auditSink == nil {
 		auditSink = audit.Nop{}
 	}
+	aclImpl := cfg.acl
+	if aclImpl == nil {
+		aclImpl = acl.NopACL{}
+	}
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        st,
 		Meta:         meta,
 		Templater:    templater,
 		Audit:        auditSink,
+		ACL:          aclImpl,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(scriptEngine, readDeps),

@@ -10,6 +10,7 @@ import (
 
 	"errors"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -88,6 +89,7 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		Meta:      meta,
 		Templater: templating.NewFSTemplater(fs, ctx),
 		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

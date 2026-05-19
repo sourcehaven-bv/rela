@@ -458,12 +458,18 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		entityPkg.CreateOptions{ID: req.ID, Prefix: req.Prefix},
 	)
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}
 	created := createResult.Entity
 
 	if err := a.reconcileOutgoingRelations(r.Context(), created.ID, req.Relations); err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relations", reconcileDetail(err))
 		return
 	}
@@ -635,6 +641,9 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	if entityChanged {
 		updateResult, err := a.entityManager.UpdateEntity(r.Context(), entity)
 		if err != nil {
+			if writeForbiddenIfACLDenied(w, err) {
+				return
+			}
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 			return
 		}
@@ -660,6 +669,9 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	case req.Relations.Legacy != nil:
 		if err := a.reconcileOutgoingRelations(r.Context(), entityID, req.Relations.Legacy); err != nil {
+			if writeForbiddenIfACLDenied(w, err) {
+				return
+			}
 			writeV1Error(w, r, http.StatusUnprocessableEntity,
 				"relation_failed", "Failed to update relations", reconcileDetail(err))
 			return
@@ -701,8 +713,13 @@ func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Reque
 
 // writeRelationsApplyError maps a Phase C write error to a 500 — the
 // entity may already have been updated, so a partial state is on disk.
-// This is the documented atomicity gap.
+// This is the documented atomicity gap. ACL denials short-circuit to
+// the structured 403 path; everything else falls through to the
+// 500-with-detail body.
 func (a *App) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeForbiddenIfACLDenied(w, err) {
+		return
+	}
 	writeV1Error(w, r, http.StatusInternalServerError,
 		"relation_write_failed",
 		"Failed to apply relation changes after entity update; the entity may have been updated",
@@ -721,6 +738,9 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	if _, err := a.entityManager.DeleteEntity(r.Context(), entityID, true); err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusInternalServerError, "delete_failed", "Failed to delete entity", err.Error())
 		return
 	}
@@ -871,6 +891,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta})
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
 		return
 	}
@@ -915,6 +938,9 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 		Properties: req.Meta,
 	})
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
 		return
 	}
@@ -945,6 +971,9 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	from, to := resolveRelationEndpoints(entity.ID, targetID, r.URL.Query().Get("direction"))
 
 	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
 		return
 	}
@@ -995,6 +1024,9 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		entityPkg.CreateOptions{},
 	)
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeV1Error(w, r, http.StatusInternalServerError, "clone_failed", "Failed to clone entity", err.Error())
 		return
 	}

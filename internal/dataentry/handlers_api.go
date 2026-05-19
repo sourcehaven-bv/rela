@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -339,6 +340,34 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
+// writeForbiddenIfACLDenied checks whether err is an ACL deny and, if
+// so, emits the structured 403 body documented in TKT-GN5LN. Returns
+// true when the response has been written and the caller should
+// return. The structured body — `{error, rule_kind, rule_id, reason}`
+// — lets the SPA surface the specific rule that fired (the AWS IAM
+// lesson: opaque denials are unsupportable).
+//
+// Every handler that calls a write entry point on
+// [entitymanager.EntityManager] must invoke this *before* falling
+// back to the generic 500 path. The check is cheap (an errors.As
+// type assertion) and centralizing the 403 body shape here keeps the
+// wire contract identical across all handlers.
+func writeForbiddenIfACLDenied(w http.ResponseWriter, err error) bool {
+	var fe *acl.ForbiddenError
+	if !errors.As(err, &fe) {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":     "forbidden",
+		"rule_kind": fe.Decision.RuleKind,
+		"rule_id":   fe.Decision.RuleID,
+		"reason":    fe.Decision.Reason,
+	})
+	return true
+}
+
 // --- JSON API CRUD Handlers ---
 // These endpoints support POST/PUT/DELETE for mobile clients.
 
@@ -408,6 +437,9 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.entityManager.CreateEntity(r.Context(), newEntity, entity.CreateOptions{ID: req.ID, Prefix: req.Prefix})
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		var valErr *entitymanager.ValidationError
 		if errors.As(err, &valErr) {
 			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
@@ -464,6 +496,9 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	result, err := a.entityManager.UpdateEntity(r.Context(), e)
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		var valErr *entitymanager.ValidationError
 		if errors.As(err, &valErr) {
 			writeJSONError(w, http.StatusBadRequest, "validation error: "+valErr.Errors[0].Error())
@@ -495,6 +530,9 @@ func (a *App) handleAPIDeleteEntity(w http.ResponseWriter, r *http.Request) {
 	defer a.writeMu.Unlock()
 
 	if _, err := a.entityManager.DeleteEntity(r.Context(), path, true); err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete entity: "+err.Error())
 		return
 	}
@@ -527,6 +565,9 @@ func (a *App) handleAPICreateRelation(w http.ResponseWriter, r *http.Request) {
 		Properties: req.Properties,
 	})
 	if err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeJSONError(w, http.StatusInternalServerError, "failed to create relation: "+err.Error())
 		return
 	}
@@ -566,6 +607,9 @@ func (a *App) handleAPIDeleteRelation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
+		if writeForbiddenIfACLDenied(w, err) {
+			return
+		}
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete relation: "+err.Error())
 		return
 	}

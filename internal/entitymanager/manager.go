@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -113,6 +116,15 @@ type Deps struct {
 	// the constructor rejects nil so missing audit fails fast at wiring
 	// time, not later as silently-dropped forensic data.
 	Audit audit.Audit
+
+	// ACL gates every write entry point. Required. Production wiring
+	// passes [acl.NopACL] (no acl.yaml) or [acl.Declarative] (acl.yaml
+	// present); `rela-server --read-only` injects [acl.ReadOnlyACL].
+	// Tests use [acl.NopACL] unless they assert on the deny path.
+	// Never substitute a silent nil — the constructor rejects nil so
+	// missing ACL fails fast at wiring time, not later as a silently
+	// disabled authz gate.
+	ACL acl.ACL
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -129,12 +141,54 @@ func New(d Deps) (*Manager, error) {
 	if d.Audit == nil {
 		return nil, errors.New("entitymanager: New: Audit is required (use audit.Nop{} to opt out)")
 	}
+	if d.ACL == nil {
+		return nil, errors.New("entitymanager: New: ACL is required (use acl.NopACL{} to opt out)")
+	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
 			"entitymanager: New: Automations and Cascade must be supplied together (both non-nil or both nil)",
 		)
 	}
 	return &Manager{deps: d}, nil
+}
+
+// authorizeAndAudit consults the ACL and, on deny, records a
+// `denied-write` audit row and returns [*acl.ForbiddenError]. On allow,
+// returns nil and the caller proceeds. Called as the first
+// non-validation step in every write entry point.
+//
+// The denied-write audit happens regardless of audit backend
+// (Filesystem / Memory / Nop) — forensic posture demands recording
+// what was attempted, not just what landed.
+func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
+	decision := m.deps.ACL.AuthorizeWrite(ctx, req)
+	if decision.Allow {
+		return nil
+	}
+	m.recordDeniedWrite(ctx, decision, req)
+	return &acl.ForbiddenError{Decision: decision}
+}
+
+// recordDeniedWrite emits one audit row describing the refused
+// attempt. Subject names the would-be target (entity or relation);
+// Summary carries the deny rule_kind / rule_id / reason and the
+// attempted op so jq filters can ask "what did Alice try to do?".
+func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl.WriteRequest) {
+	var subject *audit.Subject
+	if req.RelationType != "" {
+		subject = &audit.Subject{Kind: "relation", RelationType: req.RelationType}
+	} else {
+		subject = &audit.Subject{Kind: "entity", Type: req.EntityType}
+	}
+	m.deps.Audit.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpDeniedWrite,
+		Subject:     subject,
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s) attempted op=%s",
+			d.Reason, d.RuleKind, d.RuleID, req.Op),
+	})
 }
 
 // CreateEntity creates a new entity, runs on-create automations, and
@@ -160,6 +214,11 @@ func (m *Manager) CreateEntity(
 ) (*entity.CreateResult, error) {
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
+	}
+	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpCreate, EntityType: e.Type,
+	}); err != nil {
+		return nil, err
 	}
 	if opts.ID != "" {
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
@@ -245,6 +304,11 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	if e == nil {
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
+	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpUpdate, EntityType: e.Type,
+	}); err != nil {
+		return nil, err
+	}
 	// DEC-HWZHA: partition validation errors once. Hard errors abort;
 	// soft conditions populate Result.Warnings. If automation runs and
 	// mutates properties, we recompute warnings against the post-
@@ -325,6 +389,14 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
+	// ACL check happens after the lookup so the request carries the
+	// real entity type; a deny on a non-existent entity would be more
+	// confusing than the ErrEntityNotFound returned above.
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpDelete, EntityType: current.Type,
+	}); aclErr != nil {
+		return nil, aclErr
+	}
 
 	incoming := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
 	outgoing := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
@@ -392,6 +464,17 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
+	// ACL needs the entity type, so we fetch first. If the entity
+	// doesn't exist, renameEntity below returns the same error with
+	// a clearer message; we only consult the ACL when there's an
+	// entity to authorize against.
+	if current, err := m.deps.Store.GetEntity(ctx, oldID); err == nil {
+		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+			Op: acl.OpRename, EntityType: current.Type,
+		}); aclErr != nil {
+			return nil, aclErr
+		}
+	}
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {
 		return res, err
@@ -426,6 +509,11 @@ func (m *Manager) CreateRelation(
 	toEntity, err := m.deps.Store.GetEntity(ctx, to)
 	if err != nil {
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpCreate, EntityType: fromEntity.Type, RelationType: relType,
+	}); aclErr != nil {
+		return nil, aclErr
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
@@ -471,6 +559,16 @@ func (m *Manager) UpdateRelation(
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
 	}
+	// ACL needs the source entity type for the type-level write check.
+	var sourceType string
+	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+		sourceType = fromEntity.Type
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpUpdate, EntityType: sourceType, RelationType: relType,
+	}); aclErr != nil {
+		return nil, aclErr
+	}
 
 	// Snapshot pre-update meta keys so the audit summary names exactly
 	// which keys changed (values never appear).
@@ -502,6 +600,16 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 	// (relation type + from + to). The relation may not exist — in
 	// that case the store delete returns an error and we skip audit.
 	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
+	// ACL needs the source entity type for the type-level write check.
+	var sourceType string
+	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+		sourceType = fromEntity.Type
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpDelete, EntityType: sourceType, RelationType: relType,
+	}); aclErr != nil {
+		return aclErr
+	}
 	if err := m.deps.Store.DeleteRelation(ctx, from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)
 	}

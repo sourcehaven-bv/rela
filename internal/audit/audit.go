@@ -29,6 +29,13 @@ const (
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"
+
+	// OpDeniedWrite records a write attempt that the ACL refused.
+	// Subject names the would-be target (entity type or relation type);
+	// Summary carries the deny rule_kind / rule_id / reason and the
+	// attempted op (one of the Op* above). Forensic: denials answer
+	// "what did this user try to do that they weren't allowed to?"
+	OpDeniedWrite = "denied-write"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

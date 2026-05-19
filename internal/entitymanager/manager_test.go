@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -147,6 +148,7 @@ func newManager(t *testing.T, automations []automation.Automation) (*entitymanag
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
 		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
@@ -231,6 +233,18 @@ func TestNew_RejectsNilAudit(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsNilACL(t *testing.T) {
+	_, err := entitymanager.New(entitymanager.Deps{
+		Store:     memstore.New(),
+		Meta:      parseMeta(t),
+		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "ACL") {
+		t.Fatalf("expected ACL-required error, got %v", err)
+	}
+}
+
 func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 	engine := automation.NewEngine(nil)
 	_, err := entitymanager.New(entitymanager.Deps{
@@ -238,6 +252,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 		Meta:        parseMeta(t),
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
 		Automations: engine,
 	})
 	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
@@ -251,6 +266,7 @@ func TestNew_AllowsNoAutomation(t *testing.T) {
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
 		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -456,6 +472,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Meta:         parseMeta(t),
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
+		ACL:          acl.NopACL{},
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
@@ -717,6 +734,7 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
 		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -770,6 +788,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		Meta:      meta,
 		Templater: nopTemplater{},
 		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -826,6 +845,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		Meta:      meta,
 		Templater: nopTemplater{},
 		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

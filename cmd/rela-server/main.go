@@ -22,6 +22,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -34,44 +35,79 @@ type stringSliceFlag []string
 func (s *stringSliceFlag) String() string     { return strings.Join(*s, ",") }
 func (s *stringSliceFlag) Set(v string) error { *s = append(*s, v); return nil }
 
-// coverage-ignore: main function - entry point
-func main() {
-	projectDir := flag.String("project", ".", "Path to the rela project directory")
-	port := flag.String("port", "8080", "HTTP port to listen on")
-	bind := flag.String("bind", "127.0.0.1",
+// serverFlags collects every command-line flag for rela-server.
+// Extracting this lets main() stay under the funlen budget while
+// keeping flag definitions in one readable block.
+type serverFlags struct {
+	projectDir      string
+	port            string
+	bind            string
+	allowedOrigins  stringSliceFlag
+	verbose         bool
+	quiet           bool
+	debugPprof      string
+	principalHeader string
+	readOnly        bool
+}
+
+// coverage-ignore: flag wiring — exercised at startup, not in tests
+func parseFlags() *serverFlags {
+	f := &serverFlags{}
+	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
+	flag.StringVar(&f.port, "port", "8080", "HTTP port to listen on")
+	flag.StringVar(&f.bind, "bind", "127.0.0.1",
 		"Network interface to bind to. Defaults to loopback. Use 0.0.0.0 to expose on the LAN (see docs/security.md).")
-	var allowedOrigins stringSliceFlag
-	flag.Var(&allowedOrigins, "allowed-origin",
+	flag.Var(&f.allowedOrigins, "allowed-origin",
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
-	verbose := flag.Bool("verbose", false, "Verbose (debug) logging")
-	quiet := flag.Bool("quiet", false, "Quiet (warn-only) logging")
-	debugPprof := flag.String("debug-pprof", "",
+	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
+	flag.BoolVar(&f.quiet, "quiet", false, "Quiet (warn-only) logging")
+	flag.StringVar(&f.debugPprof, "debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
-	principalHeader := flag.String("principal-header", "",
+	flag.StringVar(&f.principalHeader, "principal-header", "",
 		"HTTP header to read for audit Principal.User (e.g. X-Forwarded-User). "+
 			"Default empty: do not read any header. Operators can override per-process via "+
 			"$RELA_DATAENTRY_USER (wins over the header). "+
 			"WARNING: the header is only as trustworthy as the upstream proxy that sets it. "+
 			"See docs/security.md.")
+	flag.BoolVar(&f.readOnly, "read-only", false,
+		"Refuse all writes. Useful for demos, maintenance windows, "+
+			"observe-only deployments, and post-incident forensic mode. "+
+			"Also enabled by RELA_READ_ONLY=1.")
 	flag.Parse()
+	if os.Getenv("RELA_READ_ONLY") == "1" {
+		f.readOnly = true
+	}
+	return f
+}
 
-	configureLogging(*verbose, *quiet)
+// coverage-ignore: main function - entry point
+func main() {
+	f := parseFlags()
+
+	configureLogging(f.verbose, f.quiet)
 
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {
 		slog.Error("embedded SPA check failed", "error", err)
 		os.Exit(1)
 	}
 
-	absDir, err := filepath.Abs(*projectDir)
+	absDir, err := filepath.Abs(f.projectDir)
 	if err != nil {
 		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	svc, err := appbuild.Discover(absDir, script.NewEngine())
+	var discoverOpts []appbuild.Option
+	if f.readOnly {
+		discoverOpts = append(discoverOpts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOpts...)
 	if err != nil {
 		slog.Error("failed to initialize project services", "error", err)
 		os.Exit(1)
+	}
+	if f.readOnly {
+		slog.Warn("rela-server is read-only; every write request will be refused")
 	}
 	// No defer svc.Close(): rela-server is a daemon — it runs until
 	// the process exits, at which point the OS reclaims file
@@ -105,10 +141,10 @@ func main() {
 		slog.Info("file watcher started for live-reload")
 	}
 
-	addr := net.JoinHostPort(*bind, *port)
+	addr := net.JoinHostPort(f.bind, f.port)
 	if err := app.SetSecurityConfig(dataentry.SecurityConfig{
 		BindAddress:    addr,
-		AllowedOrigins: allowedOrigins,
+		AllowedOrigins: f.allowedOrigins,
 	}); err != nil {
 		slog.Error("invalid security configuration", "error", err)
 		os.Exit(1)
@@ -120,15 +156,15 @@ func main() {
 	// keeps the legacy default behavior.
 	app.SetPrincipalResolver(dataentry.ChainResolvers(
 		dataentry.EnvPrincipalResolver(),
-		dataentry.HeaderPrincipalResolver(*principalHeader),
+		dataentry.HeaderPrincipalResolver(f.principalHeader),
 	))
 
 	srv := newHTTPServer(addr, app.NewRouter())
 
-	if !isLoopbackHost(*bind) {
+	if !isLoopbackHost(f.bind) {
 		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
-			"bind", *bind)
-		if *principalHeader != "" {
+			"bind", f.bind)
+		if f.principalHeader != "" {
 			// The combination — exposed bind + header-trusted principal —
 			// is exactly the deployment the security doc warns against.
 			// Log a second time so an operator scanning startup output
@@ -137,7 +173,7 @@ func main() {
 				"audit attribution trusts an HTTP header from the network; "+
 				"only safe if a reverse proxy strips + replaces the header. "+
 				"See docs/security.md.",
-				"bind", *bind, "header", *principalHeader)
+				"bind", f.bind, "header", f.principalHeader)
 		}
 	}
 	// Start background scheduler if schedules.yaml exists.
@@ -146,7 +182,7 @@ func main() {
 	// The goroutine is cleaned up on process exit.
 	scheduler.StartBackground(context.Background(), svc, slog.Default())
 
-	if err := startPprofIfRequested(*debugPprof); err != nil {
+	if err := startPprofIfRequested(f.debugPprof); err != nil {
 		slog.Error("pprof startup failed", "error", err)
 		os.Exit(1)
 	}
