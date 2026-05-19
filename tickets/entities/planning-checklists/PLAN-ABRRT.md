@@ -57,7 +57,7 @@ commits to a model that scales.
 
 10. **Search index.** Inaccessible entities are indexed by ID + Type only (no property values). They are findable by ID/type but do not match property-value searches. A `:locked` filter (or similar) may be added later — out of scope.
 
-11. **Unit tests** cover header detection (zero-byte file, 8-byte file, 9-byte exact match, header followed by ciphertext, partial header `\0GITCRYP\0`, all-NUL file, UTF-8 BOM, normal markdown, ciphertext that contains a git-conflict-marker substring (seven `<` chars at column 0) — must classify as inaccessible not git-conflict; check ordering: magic-header check FIRST).
+11. **Unit tests** cover header detection (zero-byte file, 8-byte file, 9-byte exact match, header followed by ciphertext, partial header `\0GITCRYP\0`, all-NUL file, UTF-8 BOM, normal markdown, ciphertext that contains a `<<<<<<<` substring — must classify as inaccessible not git-conflict; check ordering: magic-header check FIRST).
 
 12. **Integration tests** cover: (a) loading a project with one encrypted entity + one encrypted relation + cleartext metamodel via `fsstore.New` produces entities with full schema in `Inaccessible`, (b) PATCH against an encrypted entity preserves on-disk content and ignores submitted values, (c) PATCH against a normal entity in a project containing encrypted files succeeds (validator does not abort).
 
@@ -242,7 +242,7 @@ implementation, not in plan.**
 | all-NUL file | `\x00\x00\x00...` | false |
 | UTF-8 BOM | `\xEF\xBB\xBF# Title` | false |
 | normal frontmatter | `---\ntype: feature\n---\n` | false |
-| ciphertext with conflict-marker substring | magic + bytes containing seven `<` chars | true (regression: ordering — magic check FIRST) |
+| ciphertext with conflict-marker substring | magic + bytes containing `<<<<<<<` | true (regression: ordering — magic check FIRST) |
 
 ### Integration tests (fsstore)
 
