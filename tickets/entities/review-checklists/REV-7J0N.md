@@ -56,4 +56,5 @@ on REV-7J0N.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** TBD — opening immediately after commit; will record URL here.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/773 (base =
+`feat/acl-v0-pr2`; will auto-retarget to `develop` after #769 and #772 merge)
