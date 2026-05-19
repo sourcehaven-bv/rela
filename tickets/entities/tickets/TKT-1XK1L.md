@@ -5,7 +5,7 @@ title: 'ACL v0 PR 2: Declarative ACL + Policy loading (acl.yaml)'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Scope
