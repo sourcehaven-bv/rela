@@ -72,6 +72,7 @@ type Services struct {
 	stateKV       state.KV
 	scriptEngine  *script.Engine
 	searchBackend *bleveindex.Index
+	acl           acl.ACL
 
 	closeOnce sync.Once
 	closeErr  error
@@ -95,6 +96,13 @@ func (s *Services) Searcher() search.Searcher { return s.searcher }
 
 // EntityManager returns the production write path.
 func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
+
+// ACL returns the authorization gate wired into entitymanager. Exposed
+// so entry points (rela-server) can render operator warnings based on
+// the active policy — e.g. "non-loopback bind without an acl.yaml" —
+// without re-reading the file. The returned value is the exact ACL
+// the Manager consults.
+func (s *Services) ACL() acl.ACL { return s.acl }
 
 // Tracer returns the graph-traversal service.
 func (s *Services) Tracer() tracer.Tracer { return s.tracer }
@@ -177,20 +185,44 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 // optional; production callers typically pass none. Used by entry
 // points that need to swap a focused collaborator at startup —
 // today, `rela-server --read-only` injects [acl.ReadOnlyACL] via
-// [WithACL]. PR 3 will extend this to load `acl.yaml` from the
-// project root.
+// [WithACL].
 type Option func(*options)
 
 type options struct {
 	acl acl.ACL
 }
 
-// WithACL overrides the default [acl.NopACL]. Entry points that
-// support a `--read-only` flag (or future ACL configuration) pass
-// the chosen implementation here. Tests should prefer
-// [NewForTest] + [WithTestACL] over driving this path.
+// WithACL overrides the auto-loaded ACL with the supplied
+// implementation. Default behavior (no option) is to load `acl.yaml`
+// from the project root via [acl.LoadPolicy]; on `os.ErrNotExist`
+// the default falls back to [acl.NopACL] (allow-all). WithACL is
+// how `rela-server --read-only` injects [acl.ReadOnlyACL]: the
+// option always wins, even when an `acl.yaml` is present, so the
+// flag is an unconditional override.
+//
+// Tests should prefer [NewForTest] + [WithTestACL] over driving this
+// path directly.
 func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }
+}
+
+// loadACL reads `acl.yaml` from projectRoot and returns the
+// appropriate [acl.ACL] implementation. Missing file → [acl.NopACL]
+// (allow-all). Other load errors are logged and downgraded to
+// NopACL so a malformed policy never bricks the server — the
+// operator sees the error in logs and can fix the file without
+// restarting. This is the same "tolerate, warn" philosophy the
+// metamodel loader uses.
+func loadACL(projectRoot string) acl.ACL {
+	policy, err := acl.LoadPolicy(filepath.Join(projectRoot, "acl.yaml"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return acl.NopACL{}
+		}
+		slog.Warn("appbuild: failed to load acl.yaml; falling back to NopACL", "error", err)
+		return acl.NopACL{}
+	}
+	return acl.NewDeclarative(policy)
 }
 
 // validateNewArgs nil-checks the four required collaborators of [New].
@@ -253,9 +285,18 @@ func New(
 		return nil, err
 	}
 
-	o := options{acl: acl.NopACL{}}
+	// Apply options first so a caller-supplied [WithACL] wins over
+	// the auto-loaded policy. Defaulting after this lets us tell
+	// "operator chose NopACL explicitly" from "operator passed
+	// nothing and the project has no acl.yaml" — both end up as
+	// NopACL, but only the latter triggers the "consider adding an
+	// acl.yaml" warning the entry point may render.
+	var o options
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if o.acl == nil {
+		o.acl = loadACL(paths.Root)
 	}
 
 	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
@@ -345,6 +386,7 @@ func New(
 		stateKV:       stateKV,
 		scriptEngine:  scriptEngine,
 		searchBackend: searchBackend,
+		acl:           o.acl,
 	}, nil
 }
 
