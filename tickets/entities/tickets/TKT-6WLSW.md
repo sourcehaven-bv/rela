@@ -5,7 +5,7 @@ title: Extend PATCH /entities/{id} relations to carry per-edge meta + content
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Problem

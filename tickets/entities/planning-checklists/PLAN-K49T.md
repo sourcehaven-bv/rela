@@ -2,16 +2,16 @@
 id: PLAN-K49T
 type: planning-checklist
 title: 'Planning: Reject inverse-name collisions and shadowing in metamodel loader'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] ~~Problem/requirements clearly understood~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Scope defined (what's in/out documented below)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Acceptance criteria documented with specific test scenarios~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Scope:**
 <!-- Document explicitly what IS and IS NOT in scope -->
@@ -22,10 +22,10 @@ status: in-progress
 
 ## Research
 
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] ~~Searched for existing libraries that solve this problem~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Checked codebase for similar patterns or reusable code~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Looked for reference implementations in other projects~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Reviewed relevant rela concepts for prior art~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Existing Solutions:**
 <!-- Document what you found:
@@ -37,10 +37,10 @@ status: in-progress
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] ~~Technical approach chosen and documented~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Approach builds on existing patterns (not reinventing)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Alternatives considered (document why rejected)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Dependencies identified (packages, APIs, types)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Technical Approach:**
 <!-- Document the approach with enough detail that implementation is mechanical -->
@@ -50,10 +50,10 @@ status: in-progress
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] ~~Input sources identified (user input, config, external APIs)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Input validation approach defined (allowlist preferred over blocklist)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Security-sensitive operations identified (file access, auth, crypto)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Error handling doesn't leak sensitive information~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Input Sources & Validation:**
 <!-- For each input: source, validation approach, what happens on invalid input -->
@@ -63,10 +63,10 @@ status: in-progress
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] ~~Test scenarios documented for each acceptance criterion~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Edge cases identified and documented~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Negative test cases defined (invalid input, error conditions)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Integration test approach defined (not just unit tests)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Test Scenarios:**
 <!-- Map each acceptance criterion to how it will be tested -->
@@ -85,9 +85,9 @@ status: in-progress
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] ~~Technical risks assessed with mitigations~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Security risks assessed (see Security Considerations)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Effort estimated (xs/s/m/l/xl)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Risks:**
 <!-- List risks and how they will be mitigated -->
@@ -96,22 +96,22 @@ status: in-progress
 
 For enhancements: identify what documentation needs updating.
 
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~User-facing docs identified (skip if internal refactor)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Documentation Impact:**
 <!-- Which docs need updating? Check all that apply:
-- [ ] User guide / reference docs
-- [ ] CLI help text (if commands changed)
-- [ ] CLAUDE.md (if new patterns)
-- [ ] README.md (if project-level changes)
-- [ ] API docs (if applicable)
-- [ ] N/A - Internal change, no user-facing docs needed
+- [x] ~~User guide / reference docs~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~CLI help text (if commands changed)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~CLAUDE.md (if new patterns)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~README.md (if project-level changes)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~API docs (if applicable)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~N/A - Internal change, no user-facing docs needed~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 -->
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->

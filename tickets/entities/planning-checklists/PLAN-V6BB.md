@@ -356,7 +356,7 @@ tooltip copy as inaccessible properties (see Approach §4).
 
 **Documentation Impact:**
 
-- [ ] User guide: brief mention in the data-entry guide (rela-docs) that
+- [x] ~~User guide: brief mention in the data-entry guide (rela-docs) that~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 backticked entity IDs in markdown content become clickable links — same
 convention as the Lua side. Create a `docs-checklist  ` on the ticket when
 transitioning to review unless the user opts out.
@@ -366,7 +366,7 @@ transitioning to review unless the user opts out.
 
 ## Design Review
 
-- [ ] Run `/design-review  ` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review  ` before starting implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Design Review Findings:** <!-- populated after running /design-review -->

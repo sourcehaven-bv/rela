@@ -5,7 +5,7 @@ title: Clean tickets/ data debt that surfaces once conflict-marker detector is f
 kind: chore
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Context

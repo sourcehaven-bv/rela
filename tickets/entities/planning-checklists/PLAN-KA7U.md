@@ -2,7 +2,7 @@
 id: PLAN-KA7U
 type: planning-checklist
 title: 'Planning: Extract shared workspace bootstrap helpers (production + tests)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -240,15 +240,15 @@ day docs + cleanup. ~2 days end-to-end.
 
 **Documentation Impact:**
 
-- [ ] User guide / reference docs — N/A (internal refactor).
-- [ ] CLI help text — N/A (no commands changed).
+- [x] ~~User guide / reference docs — N/A (internal refactor).~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~CLI help text — N/A (no commands changed).~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 - [x] CLAUDE.md — add a one-line entry under "Rules for new code" pointing at the `workspace.Discover` doc comment as the canonical place to thread new required collaborators in production, and at the `NewForTest` doc comment for the test-side defaulting policy.
-- [ ] README.md — N/A.
-- [ ] API docs — N/A.
+- [x] ~~README.md — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~API docs — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Design Review
 
-- [ ] Plan reviewed (`/crit`, cranky-code-reviewer, go-architect)
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Plan reviewed (`/crit`, cranky-code-reviewer, go-architect)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Design Review Findings:** *to be populated after review*

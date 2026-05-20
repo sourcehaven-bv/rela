@@ -466,7 +466,7 @@ For enhancements: identify what documentation needs updating.
 - [x] CLAUDE.md — add Validation policy section linking DEC-HWZHA AND a "Unified PATCH endpoint" subsection in data-entry
 - [x] README.md — N/A
 - [x] API docs — `internal/openapi/openapi.yaml` regenerated
-- [ ] N/A — Internal change, no user-facing docs needed
+- [x] ~~N/A — Internal change, no user-facing docs needed~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Design Review
 

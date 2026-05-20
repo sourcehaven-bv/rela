@@ -78,9 +78,9 @@ guide changes.)
 
 ## Pull Request
 
-- [ ] Run `/pr` to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] ~~Run `/pr` to create PR and monitor CI~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All CI checks pass~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~PR URL documented below~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **PR:** <!-- pending /pr -->
 

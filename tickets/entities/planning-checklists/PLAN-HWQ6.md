@@ -187,7 +187,7 @@ told; none is known to exist.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 - [x] All critical/significant findings addressed in plan
 
 **Design Review Findings:**

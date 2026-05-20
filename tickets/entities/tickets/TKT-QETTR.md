@@ -5,7 +5,7 @@ title: Soften workspace write validation per DEC-HWZHA
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Problem

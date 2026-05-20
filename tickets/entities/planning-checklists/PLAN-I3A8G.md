@@ -452,11 +452,11 @@ of focused work.
 - [x] User guide / reference docs — `docs/data-entry/api-reference.md` adds three new entity-level warning codes (`required_property_unset`, `property_type_mismatch`, `property_value_invalid`)
 - [x] CLI help text — `rela create` / `update` / `set` help mentions `--strict` flag
 - [x] CLAUDE.md — already covers the policy; verify the example codes match
-- [ ] frontend/CLAUDE.md — N/A (no frontend changes here)
-- [ ] README.md — N/A
+- [x] ~~frontend/CLAUDE.md — N/A (no frontend changes here)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~README.md — N/A~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 - [x] API docs — `internal/openapi/openapi.yaml` regenerated to reflect the new warning codes
 - [x] Lua API docs — multi-return contract documented with explicit "string.gsub-style, not io.open-style" framing. Covers entity AND relation Lua APIs (per RR-FX5GZ).
-- [ ] N/A
+- [x] ~~N/A~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Design Review
 

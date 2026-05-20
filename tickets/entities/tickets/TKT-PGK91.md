@@ -5,7 +5,7 @@ title: Detect git-crypt encrypted files at fsstore and show inaccessible placeho
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem

@@ -18,5 +18,23 @@ description: |-
     **Related:** TKT-GN5LN (where the issue surfaced) and the data-debt cleanup ticket (filed alongside).
 priority: medium
 effort: s
-status: ready
+why1: rela's entity loader treated any substring match of `<<<<<<<` as a conflict, refusing to load the file.
+why2: The detector used strings.Contains / bytes.Contains rather than a line-anchored predicate.
+why3: When the detector was originally written, no quoted-marker case existed in the test corpus, so substring matching was good enough and the line-anchor distinction wasn't surfaced.
+why4: The corpus didn't include tickets-about-the-detector because rela's design-doc-as-tickets workflow hadn't been established yet — early tickets were short prose, not multi-page planning checklists with quoted code samples.
+why5: rela has parallel implementations of the same predicate (`internal/markdown/parser.go` and `internal/store/fsstore/markdown.go`) and no shared test corpus enforcing the semantics across both. Duplicated logic with no shared contract drifts silently — the bug pattern would have been visible if both implementations were exercised against the same edge-case suite.
+prevention: |-
+    Pin the line-anchor semantic with the regression tests in
+    `internal/markdown/parser_test.go` (`TestParseDocument_ConflictMarkerInCodespan_NotAConflict`,
+    `TestHasConflictMarkers_LineAnchored`) and
+    `internal/store/fsstore/conflict_detection_test.go`
+    (`TestParseDocument_ConflictMarker_LineAnchored`,
+    `TestHasLineAnchoredConflict`). Future refactors that drop the
+    anchor predicate fail these tests.
+
+    The deeper systemic preventive: the two parallel implementations
+    (`internal/markdown/parser.go` and `internal/store/fsstore/markdown.go`)
+    duplicate the same predicate. Deduplicating is tracked separately
+    so this fix stays small.
+status: done
 ---

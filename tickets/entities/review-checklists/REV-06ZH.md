@@ -2,31 +2,31 @@
 id: REV-06ZH
 type: review-checklist
 title: 'Review: Reject inverse-name collisions and shadowing in metamodel loader'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] ~~All tests pass (`just test`)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Lint clean (`just lint`)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] ~~Run `/code-review` command (invokes cranky-code-reviewer agent)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical review-responses addressed~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All significant review-responses addressed~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Self-reviewed the diff for unrelated changes~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Review Responses:** <!-- List IDs of review-response entities created, e.g.,
 RR-xxxx -->
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] ~~Each acceptance criterion tested (reference planning checklist)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Test evidence documented in implementation checklist~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Acceptance Status:**
 <!-- For each acceptance criterion, state PASS/FAIL with evidence -->
@@ -35,22 +35,22 @@ RR-xxxx -->
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~User-facing documentation updated~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Docs-checklist marked as done~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Docs Checklist:** <!-- e.g., DOCS-xxxx -->
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] ~~Commit message explains the why, not just what~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~No TODOs or FIXMEs left unaddressed~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~Ready for another developer to use~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All CI checks pass~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~PR URL documented below~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->

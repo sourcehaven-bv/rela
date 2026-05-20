@@ -398,9 +398,12 @@ Different content
 			expected: false,
 		},
 		{
-			name:     "full start marker",
+			// BUG-WN6D: a substring `<<<<<<<` mid-line is NOT a
+			// conflict — git only writes the marker at column 0.
+			// Detection is line-anchored.
+			name:     "full marker mid-line is not a conflict (BUG-WN6D)",
 			content:  "Some text with <<<<<<< HEAD somewhere",
-			expected: true,
+			expected: false,
 		},
 	}
 
@@ -457,6 +460,98 @@ This is the incoming content.
 
 	if !errors.Is(err, ErrConflictedFile) {
 		t.Errorf("expected ErrConflictedFile, got %v", err)
+	}
+}
+
+// BUG-WN6D: the conflict-marker detector matched the substring
+// anywhere, false-positiving on legitimate content (markdown
+// codespans, quoted prose). Detection must be line-anchored:
+// the marker is meaningful only at column 0.
+func TestParseDocument_ConflictMarkerInCodespan_NotAConflict(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "marker inside an inline code span",
+			content: `---
+id: REQ-001
+title: How conflict markers look
+status: draft
+---
+
+# Spec
+
+The detector triggers on ` + "`<<<<<<<`" + ` at column 0.
+`,
+		},
+		{
+			name: "marker quoted in prose, indented two spaces",
+			content: `---
+id: REQ-002
+title: Detector spec
+status: draft
+---
+
+Notes:
+
+  Git writes ` + "`<<<<<<<`" + ` at the start of a line when a merge
+  conflicts. We must not treat the substring inline as one.
+`,
+		},
+		{
+			name: "marker mid-line in YAML scalar value",
+			content: `---
+id: REQ-003
+title: contains <<<<<<< as a literal description
+status: draft
+---
+
+# Body
+
+Plain text.
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := ParseDocument(tt.content)
+			if err != nil {
+				t.Fatalf("ParseDocument returned %v, want nil (substring should not trigger conflict detection)", err)
+			}
+			if doc == nil {
+				t.Fatal("ParseDocument returned nil doc")
+			}
+		})
+	}
+}
+
+// Pin the line-anchor predicate directly so a future refactor that
+// drops the helper doesn't quietly regress the semantic.
+func TestHasConflictMarkers_LineAnchored(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"empty", "", false},
+		{"plain prose", "hello world\n", false},
+		{"marker at column 0", "<<<<<<< HEAD\nfoo\n=======\nbar\n>>>>>>> branch\n", true},
+		{"marker at column 0 of second line", "first line\n<<<<<<< HEAD\nbody\n", true},
+		{"marker preceded by spaces (indented)", "  <<<<<<< HEAD\n", false},
+		{"marker inside codespan", "use `<<<<<<<` to spot conflicts\n", false},
+		{"marker mid-line", "the prefix <<<<<<< appears here\n", false},
+		{"marker after CRLF (Windows line ending)", "line\r\n<<<<<<< HEAD\n", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasConflictMarkersString(tt.content); got != tt.want {
+				t.Errorf("HasConflictMarkersString(%q) = %v, want %v", tt.content, got, tt.want)
+			}
+			if got := HasConflictMarkers([]byte(tt.content)); got != tt.want {
+				t.Errorf("HasConflictMarkers([]byte(%q)) = %v, want %v", tt.content, got, tt.want)
+			}
+		})
 	}
 }
 
