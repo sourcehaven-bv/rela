@@ -175,6 +175,20 @@ func main() {
 				"See docs/security.md.",
 				"bind", f.bind, "header", f.principalHeader)
 		}
+		if shouldWarnNoACL(svc.ACL(), f.readOnly) {
+			// Non-loopback bind without `acl.yaml` and without
+			// `--read-only` means anyone reaching this server can write.
+			// The Origin / Host hardening from FEAT-ESLP still blocks
+			// browser-driven cross-origin writes, but a direct API call
+			// from inside the network is unauthenticated by design.
+			// Operators serving multi-user need either `acl.yaml` or a
+			// reverse proxy that enforces access; the warning surfaces
+			// the gap at startup rather than at first-incident time.
+			slog.Warn("rela-server bound beyond loopback without acl.yaml: "+
+				"every reachable client can write. Add an acl.yaml at the project "+
+				"root or pass --read-only. See docs/security.md.",
+				"bind", f.bind)
+		}
 	}
 	// Start background scheduler if schedules.yaml exists.
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider
@@ -223,6 +237,25 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// shouldWarnNoACL reports whether the operator should be told they
+// are running with no access control on a non-loopback bind.
+//
+// True iff:
+//   - The active ACL is [acl.NopACL] (i.e. no `acl.yaml`, and the
+//     operator didn't pass `--read-only`).
+//   - `--read-only` is NOT set (read-only is a stronger guarantee
+//     than `acl.yaml` — no need to nag).
+//
+// Extracted so the warning logic is unit-testable without spinning
+// up a server.
+func shouldWarnNoACL(active acl.ACL, readOnly bool) bool {
+	if readOnly {
+		return false
+	}
+	_, isNop := active.(acl.NopACL)
+	return isNop
 }
 
 // configureLogging sets the default slog logger based on verbose/quiet flags.

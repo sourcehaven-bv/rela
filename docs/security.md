@@ -158,6 +158,123 @@ Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.
 
+## Access control (`acl.yaml`)
+
+rela-server enforces a declarative ACL at every write entry point.
+The policy lives at `acl.yaml` at the project root (alongside
+`metamodel.yaml`). Three modes:
+
+| Mode | How | Behavior |
+|---|---|---|
+| **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
+| **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are unaffected in v0; read filtering arrives with v1. |
+
+A startup warning fires when the server binds **beyond loopback**
+(`--bind` non-loopback) **without** `acl.yaml` AND **without**
+`--read-only` — that combination means anyone reachable on the
+network can write to the project.
+
+### Minimal `acl.yaml`
+
+```yaml
+user_entity_type: person   # which entity type represents a user
+
+roles:
+  admin:
+    write: ["*"]           # wildcard: allow writes on every entity type
+    read: ["*"]
+    permissions:
+      - delegate-admin
+      - delegate-contributor
+      - delegate-reviewer
+
+  contributor:
+    write: [ticket, concept]
+    read: ["*"]
+    permissions:
+      - delegate-reviewer
+
+  reviewer:
+    write: [review-response]
+    read: ["*"]
+
+  default:                  # applied to every principal not in `assignments`
+    read: ["*"]
+    # no `write` → unassigned principals can read but not write
+
+assignments:
+  jeroen: admin
+  alice:  contributor
+  bob:    reviewer
+
+role_relations:
+  ticket-owner:
+    confers: contributor
+    requires_permission: delegate-contributor
+```
+
+### Semantics
+
+- **Union + explicit-deny.** A write is allowed if **any** role in
+  the principal's effective set grants it. The first matching role
+  is named in the deny/allow rule for debuggability.
+- **Default role applies to everyone.** The `default` role is
+  appended to every principal's effective set. Omit it to make
+  unassigned principals capability-free.
+- **Empty `acl.yaml` denies everything.** A file with no roles or
+  assignments produces an empty effective set for every principal —
+  every write returns 403. Operators who want allow-all should
+  simply delete `acl.yaml` (which falls back to `NopACL`).
+- **Unknown top-level keys produce warnings, not errors.** Typos
+  surface in the server log; the rest of the policy still loads.
+
+### Delegate-X tamper resistance
+
+A `role_relations` entry that declares `requires_permission: NAME`
+means writes to that relation type are gated by whether the writer
+holds permission `NAME`. The convention is to name the permission
+`delegate-<role>`:
+
+- `role_relations.ticket-owner.requires_permission: delegate-contributor`
+- `roles.admin.permissions: [delegate-contributor, ...]`
+- `roles.contributor.permissions: [delegate-reviewer]` — contributors
+  can promote reviewers but cannot make new contributors
+
+This is the Plone pattern: granting role X requires permission
+delegate-X, so principals with access are distinct from principals
+who can hand out access. It prevents a contributor from making
+themselves admin by writing their own role-binding relation.
+
+### Trust boundary
+
+`acl.yaml` is only meaningful when combined with a trusted source of
+`principal.user`. Without it, every request claims to be `unknown`
+and the default role is the entire access surface. To get
+meaningful user attribution:
+
+- Run behind a reverse proxy that **strips** the configured header
+  from inbound requests and **sets** it from an authenticated
+  source (oauth2-proxy, Vouch, traefik forward-auth).
+- Pass `--principal-header X-Forwarded-User` (or your proxy's
+  header name) on `rela-server`.
+
+A non-loopback bind + `--principal-header` *without* a proxy stripping
+the header is a spoofable identity surface; the security model
+falls apart. The non-loopback warning at startup nags about both
+gaps independently.
+
+### What the ACL covers in v0
+
+- ✅ Write authz at every `Manager.{Create,Update,Delete}{Entity,Relation}` + `RenameEntity`.
+- ✅ HTTP 403 with structured `{error, rule_kind, rule_id, reason}` body.
+- ✅ Audit log records every deny as `denied-write` (see
+  [audit-log](./audit-log.md)).
+- ❌ Read filtering, property redaction — deferred to v1.
+- ❌ Group expansion (`member-of` transitive) — deferred to v1.
+- ❌ MCP transport intersection (filtering the tool list per principal) — deferred to a follow-up.
+- ❌ Containment inheritance — deferred to v2.
+
 ## Running the Vue dev server (Vite)
 
 If you run the SPA via Vite on `http://localhost:5173`, requests to the Go

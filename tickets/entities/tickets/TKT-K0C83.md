@@ -5,7 +5,7 @@ title: 'ACL v0 PR 3: Wire acl.yaml into appbuild + non-loopback warning + docs'
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+status: done
 ---
 
 ## Scope

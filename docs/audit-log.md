@@ -45,13 +45,40 @@ Every record is one line of JSON:
 | Field         | Meaning                                                             |
 |---------------|---------------------------------------------------------------------|
 | `time`        | UTC timestamp                                                        |
-| `op`          | `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `create-relation`, `update-relation`, `delete-relation` |
+| `op`          | `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `create-relation`, `update-relation`, `delete-relation`, `denied-write` |
 | `subject`     | The thing acted on (see "Subject shape" below)                       |
 | `before` / `after` | For `rename-entity` only — the identity diff                   |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
 | `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, or `desktop`             |
 | `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
+
+### `denied-write` records
+
+When an ACL refuses a write (see [security](../security.md)
+"Access control"), the audit log records a `denied-write` row with
+the would-be `subject` and a `summary` carrying the deny reason.
+The record never produces side-effects on the store itself — the
+deny short-circuits before any persistence.
+
+Example:
+
+```json
+{
+  "time": "2026-05-19T20:30:00Z",
+  "op": "denied-write",
+  "subject": {"kind": "entity", "type": "ticket"},
+  "principal": {"user": "alice", "tool": "data-entry"},
+  "summary": "denied: no role grants write on type 'ticket' (rule_kind=role-grant rule_id=-) attempted op=create"
+}
+```
+
+The `summary` always names the **rule that fired** (rule_kind +
+rule_id) and the attempted op so forensic queries can answer "what
+did this user try to do that they weren't allowed to?".
+
+For relation writes the `subject` carries `relation_type` instead of
+`type` — same shape as the corresponding successful relation ops.
 
 ### Subject shape
 
