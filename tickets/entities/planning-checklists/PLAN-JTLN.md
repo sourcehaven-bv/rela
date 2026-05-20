@@ -385,7 +385,7 @@ in the state machine and the comprehensive test matrix.
 
 **Documentation impact:**
 
-- [ ] User guide: brief mention in the data-entry guide that typing
+- [x] ~~User guide: brief mention in the data-entry guide that typing~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 `  ` `in prose opens an entity-reference autocomplete. Discoverability is also
 through the toolbar button's tooltip. Create a `docs-checklist ` on the ticket
 when transitioning to review unless the user opts out.
@@ -394,7 +394,7 @@ when transitioning to review unless the user opts out.
 
 ## Design Review
 
-- [ ] Run `/design-review  ` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review  ` before starting implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Design Review Findings:** <!-- populated after running /design-review -->

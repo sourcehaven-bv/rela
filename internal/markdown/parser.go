@@ -16,7 +16,13 @@ var ErrConflictedFile = errors.New("file has unresolved git conflicts")
 
 const frontmatterDelimiter = "---"
 
-// Git conflict marker for detecting conflicts.
+// conflictMarkerStart is the canonical opening-marker pattern Git
+// writes when a merge produces a conflict (`<<<<<<< <ref>`).
+// Detection MUST be line-anchored: the marker is meaningful only at
+// column 0. Matching it as a substring anywhere triggers a
+// false-positive on legitimate content (BUG-WN6D) — e.g. a markdown
+// codespan or quoted prose mentioning the marker — which silently
+// excludes the file from rela's validator and search index.
 var conflictMarkerStart = []byte("<<<<<<<")
 
 // Document represents a parsed markdown document with YAML frontmatter
@@ -25,14 +31,43 @@ type Document struct {
 	Content     string
 }
 
-// HasConflictMarkers checks if content contains git conflict markers.
+// HasConflictMarkers reports whether content begins a conflict block
+// — i.e. contains the opening marker (`<<<<<<<`) at column 0 of any
+// line. A substring match anywhere else (inline code, prose) is
+// NOT a conflict; see [BUG-WN6D] for the regression that motivated
+// the line-anchoring.
 func HasConflictMarkers(content []byte) bool {
-	return bytes.Contains(content, conflictMarkerStart)
+	return hasLineAnchoredMarker(content, conflictMarkerStart)
 }
 
-// HasConflictMarkersString checks if content contains git conflict markers.
+// HasConflictMarkersString is the string-typed companion of
+// [HasConflictMarkers]; same semantics.
 func HasConflictMarkersString(content string) bool {
-	return strings.Contains(content, string(conflictMarkerStart))
+	return hasLineAnchoredMarker([]byte(content), conflictMarkerStart)
+}
+
+// hasLineAnchoredMarker reports whether content contains marker at
+// the start of any line (i.e. either at offset 0 or immediately
+// after a `\n`). Pure-Go scan; cheaper than compiling a regex for
+// the same predicate.
+func hasLineAnchoredMarker(content, marker []byte) bool {
+	// Fast path: cheap substring check first — most content won't
+	// contain the marker at all. The line-anchor check only runs
+	// when the substring exists.
+	idx := bytes.Index(content, marker)
+	for idx >= 0 {
+		if idx == 0 || content[idx-1] == '\n' {
+			return true
+		}
+		// Search the remainder.
+		offset := idx + len(marker)
+		rest := bytes.Index(content[offset:], marker)
+		if rest < 0 {
+			return false
+		}
+		idx = offset + rest
+	}
+	return false
 }
 
 // ParseDocument parses a markdown document with YAML frontmatter.

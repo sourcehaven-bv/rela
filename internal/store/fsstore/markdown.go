@@ -26,10 +26,40 @@ const (
 	defaultLineWidth     = 80
 )
 
+// conflictMarkerStart is git's opening conflict marker. Detection
+// MUST be line-anchored — see [hasLineAnchoredConflict] and BUG-WN6D
+// for why a substring match false-positives on legitimate content
+// (markdown codespans or quoted prose mentioning the marker).
 var conflictMarkerStart = []byte("<<<<<<<")
 
 // orderedListPattern matches ordered list items (e.g., "1. ", "2. ").
 var orderedListPattern = regexp.MustCompile(`^\d+\.\s`)
+
+// hasLineAnchoredConflict reports whether `raw` contains the
+// conflict marker at column 0 of any line. Returns false for
+// substring matches inside inline text — those are not real
+// conflicts.
+//
+// NOTE: a near-duplicate of [markdown.HasConflictMarkers] exists in
+// the markdown package. Both live behind the same line-anchored
+// semantics; deduplicating into one shared helper is tracked
+// separately (the dependency widening of fsstore→markdown is the
+// reason for keeping it local for now).
+func hasLineAnchoredConflict(raw string) bool {
+	idx := strings.Index(raw, string(conflictMarkerStart))
+	for idx >= 0 {
+		if idx == 0 || raw[idx-1] == '\n' {
+			return true
+		}
+		offset := idx + len(conflictMarkerStart)
+		rest := strings.Index(raw[offset:], string(conflictMarkerStart))
+		if rest < 0 {
+			return false
+		}
+		idx = offset + rest
+	}
+	return false
+}
 
 // --- document parsing ---
 
@@ -53,7 +83,7 @@ func (d *document) getString(key string) string {
 
 // parseDocument parses a markdown file with YAML frontmatter.
 func parseDocument(raw string) (*document, error) {
-	if strings.Contains(raw, string(conflictMarkerStart)) {
+	if hasLineAnchoredConflict(raw) {
 		return nil, errConflictedFile
 	}
 

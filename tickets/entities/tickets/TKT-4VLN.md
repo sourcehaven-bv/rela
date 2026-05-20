@@ -5,7 +5,7 @@ title: Reject inverse-name collisions and shadowing in metamodel loader
 kind: refactor
 priority: high
 effort: s
-status: review
+status: done
 ---
 
 ## Problem

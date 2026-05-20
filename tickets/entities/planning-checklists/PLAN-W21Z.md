@@ -2,7 +2,7 @@
 id: PLAN-W21Z
 type: planning-checklist
 title: 'Planning: Migrate MCP server to wire its own services (off Workspace)'
-status: in-progress
+status: done
 ---
 
 ## Understanding

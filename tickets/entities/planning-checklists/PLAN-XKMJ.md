@@ -528,11 +528,11 @@ For enhancements: identify what documentation needs updating.
 **Documentation Impact:**
 
 - [x] User guide / reference docs — short page describing `.rela/audit/` location, JSONL record shape (including `Principal` sub-object), and operator concerns (manual rotation/retention; how to set `$USER`).
-- [ ] CLI help text — N/A: no new commands.
+- [x] ~~CLI help text — N/A: no new commands.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 - [x] CLAUDE.md — note that any new write path through `entitymanager.Manager` is automatically audited (no extra wiring required), that new entry-point binaries must stamp `audit.WithPrincipal(ctx, Principal{User: audit.SystemUser(), Tool: "..."})` at startup, and that engine-initiated callers should propagate `audit.WithTriggeredBy(ctx, ...)` through their `context.Context`.
-- [ ] README.md — N/A.
-- [ ] API docs — N/A.
-- [ ] N/A.
+- [x] ~~README.md — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~API docs — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Design Review
 

@@ -282,7 +282,7 @@ preserved. No new error paths introduce sensitive data.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Design Review Findings:** &lt;!-- to be filled in after design review --&gt;

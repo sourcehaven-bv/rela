@@ -4,5 +4,7 @@ type: review-response
 title: buildPluralToTypeMap rebuilt per watcher event — cache it once at construction
 finding: watcher.go:279 entityIdentityFromPath calls buildPluralToTypeMap on every encrypted-entity event. Schemas are immutable after fsstore.New. Same code path is also in index.go:172 at startup. Cache the map on FSStore at construction. Negligible production cost today but it's the kind of regression you'd flag elsewhere.
 severity: minor
-status: open
+status: deferred
+reason: |-
+    Parent ticket TKT-PGK91 (git-crypt detection) shipped via PR #668 without addressing this finding. Captured here so the gap remains visible; will be revisited if the underlying code path becomes a problem in practice. Closed as deferred via the TKT-5S8T data-debt sweep — the alternative is leaving the RR open indefinitely while it blocks every unrelated PR.
 ---

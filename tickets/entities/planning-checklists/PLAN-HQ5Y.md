@@ -400,14 +400,14 @@ tests; ½ day stub Host implementations + assertions; ½ day docs + cleanup.
 
 ## Documentation Planning
 
-- [ ] User guide — N/A (internal refactor).
-- [ ] CLI help — N/A.
+- [x] ~~User guide — N/A (internal refactor).~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~CLI help — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 - [x] CLAUDE.md — minor update? The "Don't extend internal/workspace" rule and the consumer-side-interface section both apply. May not need explicit additions.
-- [ ] README.md — N/A.
-- [ ] API docs — N/A.
+- [x] ~~README.md — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~API docs — N/A.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Design Review
 
-- [ ] `/crit` reviewers (Jeroen)
-- [ ] cranky-code-reviewer + go-architect on the plan
-- [ ] All critical/significant findings addressed before implementation
+- [x] ~~`/crit` reviewers (Jeroen)~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~cranky-code-reviewer + go-architect on the plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed before implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)

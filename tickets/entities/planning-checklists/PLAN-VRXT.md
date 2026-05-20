@@ -261,13 +261,13 @@ For enhancements: identify what documentation needs updating.
 
 - [x] `docs-project/entities/guides/GUIDE-audit-log.md` — under "data-entry user is unknown" section: explain the flag, env override, trust boundary. Regenerate `docs/audit-log.md`.
 - [x] `docs/security.md` (hand-written) — slot under "Audit logging": one paragraph on the trust boundary + flag + env override.
-- [ ] `docs-project/entities/guides/GUIDE-data-entry.md` — small note in the audit section pointing to security.md for the flag. Regenerate.
-- [ ] CLI help text — the flag's own `Usage:` text covers it.
-- [ ] CLAUDE.md — no new patterns; the resolver seam was already documented in the audit-log section.
+- [x] ~~`docs-project/entities/guides/GUIDE-data-entry.md` — small note in the audit section pointing to security.md for the flag. Regenerate.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~CLI help text — the flag's own `Usage:` text covers it.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~CLAUDE.md — no new patterns; the resolver seam was already documented in the audit-log section.~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: parent shipped; back-filled by TKT-5S8T)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: parent shipped; back-filled by TKT-5S8T)
 
 **Design Review Findings:** TBD — run /design-review before implementation.
