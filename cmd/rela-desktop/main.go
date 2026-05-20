@@ -153,7 +153,7 @@ func (d *Desktop) LoadProject(dir string) string {
 
 	app, err := dataentry.NewApp(
 		fs, projCtx, svc.Meta(), svc.Store(),
-		svc.EntityManager(), svc.Searcher(),
+		svc.EntityManager(), svc.Searcher(), svc.ACL(),
 	)
 	if err != nil {
 		d.mu.Lock()

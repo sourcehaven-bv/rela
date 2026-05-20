@@ -328,6 +328,34 @@ See `docs/security.md` for the user-facing schema reference,
 model (users → groups → roles → local roles), and `docs/audit-log.md`
 for the `denied-write` audit op.
 
+### Action affordances (`_actions`)
+
+The data-entry API attaches a per-resource `_actions: map[string]bool`
+to every entity and list response. The SPA reads it to decide which
+write controls to render. The map is a **UI hint** — the server
+re-authorizes every write.
+
+Rules for new write code in `internal/dataentry`:
+
+- **Route every `acl.WriteRequest{Op:...}` through `translateVerb`**
+  in `internal/dataentry/affordances.go`. A grep test
+  (`lint_test.go`) enforces this: no other file in `internal/dataentry`
+  may construct the literal. The shared constructor is the structural
+  guarantee that the affordance map and the actual write resolve to
+  the same ACL request.
+- **Don't trust `_actions` for authorization decisions.** The write
+  endpoint must re-authorize. The bidirectional contract test in
+  `affordances_contract_test.go` pins the invariant: every
+  `_actions[v] == false` ⇒ 403 on the corresponding write, every
+  `true` ⇒ 2xx.
+- **New verbs require coordinated changes:** add an `acl.Op`
+  constant, add a `translateVerb` case, and update
+  `docs/data-entry/api-reference.md`. Old SPAs ignore unknown keys;
+  removing or renaming a verb is a major API version bump.
+- **Phase 1 verbs:** `create` (per-collection), `update` / `delete` /
+  `rename` (per-item). `transition:*` and `relation:*` are deferred
+  until ACL gains Op variants or extension fields.
+
 ## Architecture
 
 rela is a schema-driven entity-graph platform. You define the shape of your

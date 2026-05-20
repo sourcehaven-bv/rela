@@ -7,7 +7,14 @@ export interface Entity {
   relations?: Record<string, string[]>
   included?: Record<string, Entity>
   _self?: string
-  _actions?: EntityActions
+  // Per-resource verb-verdict map driven by the backend ACL. Keys are
+  // verbs (phase 1: `update`, `delete`, `rename` per-item; `create`
+  // on collection responses); values are booleans. Absent =
+  // anonymous fallback or pre-rollout server — UI should render
+  // affordances unconditionally. Empty {} = authenticated principal
+  // with all verbs denied — UI should hide all affordances.
+  // See .ignored/action-affordances-design.md for the full contract.
+  _actions?: Record<string, boolean>
   inaccessible?: InaccessibleField[]
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
@@ -51,14 +58,6 @@ export interface InaccessibleField {
   reason: string
 }
 
-export interface EntityActions {
-  delete?: {
-    allowed: boolean
-    reason?: string
-  }
-  transitions?: string[]
-}
-
 export interface CreateEntity {
   id?: string
   prefix?: string
@@ -86,6 +85,10 @@ export interface ListResponse<T> {
   data: T[]
   meta: ListMeta
   included?: Record<string, T>
+  // Collection-scope verb verdicts (phase 1: just `create`). Same
+  // semantics as Entity._actions: absent = anonymous/pre-rollout
+  // fallback; empty {} = all denied.
+  _actions?: Record<string, boolean>
 }
 
 export interface ListMeta {

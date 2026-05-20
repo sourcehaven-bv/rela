@@ -1052,7 +1052,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=_actions", http.NoBody)
+	req := withTestPrincipal(httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody))
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
@@ -1065,11 +1065,10 @@ func TestV1GetEntityWithActions(t *testing.T) {
 	}
 
 	if entity.Actions == nil {
-		t.Error("expected actions in response")
+		t.Fatal("expected actions in response")
 	}
-
-	if entity.Actions != nil && entity.Actions.Delete == nil {
-		t.Error("expected delete action status")
+	if _, ok := entity.Actions["delete"]; !ok {
+		t.Error("expected 'delete' key in actions map")
 	}
 }
 
@@ -1638,7 +1637,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 		Type: "implements",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001?include=_actions", http.NoBody)
+	req := withTestPrincipal(httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody))
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
 	var entity V1Entity
@@ -1646,12 +1645,13 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Delete should be allowed even with incoming relations (cascade handles cleanup)
-	if entity.Actions == nil || entity.Actions.Delete == nil {
-		t.Fatal("expected delete action")
+	// Delete should be allowed even with incoming relations (cascade handles cleanup).
+	// Under acl.NopACL (the test-app default), every per-item verb is true.
+	if entity.Actions == nil {
+		t.Fatal("expected _actions on response")
 	}
-	if !entity.Actions.Delete.Allowed {
-		t.Error("expected delete to be allowed (cascade removes relations)")
+	if !entity.Actions["delete"] {
+		t.Error("expected _actions.delete=true under NopACL (cascade removes relations)")
 	}
 }
 
@@ -2035,21 +2035,18 @@ func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
 	}
 }
 
-func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
+// TestV1ComputeEntityActions_VerbVocabulary asserts the phase-1 verb
+// vocabulary (update / delete / rename) is present on every entity
+// response under NopACL. Workflow-transition verbs are out of phase 1;
+// they will return when ACL v0.5 lands transition Op support.
+func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 	app := newTestAppV1(t)
 
-	// Set up status property with custom type
-	app.Meta().Types = map[string]metamodel.CustomType{
-		"ticket_status": {
-			Values:  []string{"open", "in_progress", "closed"},
-			Default: "open",
-		},
-	}
 	app.Meta().Entities["ticket"] = metamodel.EntityDef{
 		Label: "Ticket",
 		Properties: map[string]metamodel.PropertyDef{
 			"title":  {Type: "string", Required: true},
-			"status": {Type: "ticket_status"},
+			"status": {Type: "string", Values: []string{"open", "closed"}},
 		},
 	}
 
@@ -2062,7 +2059,7 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=_actions", http.NoBody)
+	req := withTestPrincipal(httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody))
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	var entity V1Entity
@@ -2070,15 +2067,12 @@ func TestV1ComputeEntityActionsWithCustomType(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Should have transitions from custom type
-	if entity.Actions == nil || len(entity.Actions.Transitions) == 0 {
-		t.Error("expected transitions in actions")
+	if entity.Actions == nil {
+		t.Fatal("expected _actions on response")
 	}
-
-	// Current status should be filtered out
-	for _, tr := range entity.Actions.Transitions {
-		if tr == "open" {
-			t.Error("current status 'open' should be filtered out of transitions")
+	for _, verb := range []string{"update", "delete", "rename"} {
+		if _, ok := entity.Actions[verb]; !ok {
+			t.Errorf("expected verb %q in _actions; got %v", verb, entity.Actions)
 		}
 	}
 }

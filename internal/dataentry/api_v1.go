@@ -36,7 +36,7 @@ type V1Entity struct {
 	Relations    map[string][]string    `json:"relations,omitempty"`
 	Included     map[string]V1Entity    `json:"included,omitempty"`
 	Self         string                 `json:"_self,omitempty"`
-	Actions      *V1Actions             `json:"_actions,omitempty"`
+	Actions      map[string]bool        `json:"_actions,omitempty"`
 	Inaccessible []V1InaccessibleField  `json:"inaccessible,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
@@ -53,22 +53,11 @@ type V1InaccessibleField struct {
 	Reason string `json:"reason"`
 }
 
-// V1Actions describes available actions for an entity.
-type V1Actions struct {
-	Delete      *V1ActionStatus `json:"delete,omitempty"`
-	Transitions []string        `json:"transitions,omitempty"`
-}
-
-// V1ActionStatus describes whether an action is allowed.
-type V1ActionStatus struct {
-	Allowed bool   `json:"allowed"`
-	Reason  string `json:"reason,omitempty"`
-}
-
 // V1ListResponse is the response for listing entities.
 type V1ListResponse struct {
-	Data []V1Entity `json:"data"`
-	Meta V1ListMeta `json:"meta"`
+	Data    []V1Entity      `json:"data"`
+	Meta    V1ListMeta      `json:"meta"`
+	Actions map[string]bool `json:"_actions,omitempty"`
 }
 
 // V1ListMeta contains pagination metadata.
@@ -370,12 +359,12 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	data := make([]V1Entity, 0, len(entities))
 	included := make(map[string]V1Entity)
 	for _, e := range entities {
-		v1Entity := a.entityToV1(e, plural, true, false)
+		v1Entity := a.entityToV1(r.Context(), e, plural, true)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
 		if wantIncludes {
-			for id, inc := range a.resolveV1Includes(e, includes) {
+			for id, inc := range a.resolveV1Includes(r.Context(), e, includes) {
 				included[id] = inc
 			}
 		}
@@ -389,6 +378,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			PerPage: perPage,
 			HasMore: end < total,
 		},
+		Actions: a.computeCollectionActions(r.Context(), typeName),
 	}
 
 	// Add Link header for pagination (RFC 5988)
@@ -406,11 +396,13 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			Data     []V1Entity          `json:"data"`
 			Meta     V1ListMeta          `json:"meta"`
 			Included map[string]V1Entity `json:"included,omitempty"`
+			Actions  map[string]bool     `json:"_actions,omitempty"`
 		}
 		writeV1JSON(w, http.StatusOK, listWithIncludes{
 			Data:     resp.Data,
 			Meta:     resp.Meta,
 			Included: included,
+			Actions:  resp.Actions,
 		})
 		return
 	}
@@ -474,7 +466,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	result := a.entityToV1(created, plural, true, false)
+	result := a.entityToV1(r.Context(), created, plural, true)
 	// DEC-HWZHA: surface entity-level soft validation findings (e.g.
 	// required-field-missing) as warnings on the 201 response.
 	if len(createResult.Warnings) > 0 {
@@ -517,13 +509,12 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	query := r.URL.Query()
 	includeRelations := true
-	includeActions := strings.Contains(query.Get("include"), "_actions")
 
-	result := a.entityToV1(entity, plural, includeRelations, includeActions)
+	result := a.entityToV1(r.Context(), entity, plural, includeRelations)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
-		result.Included = a.resolveV1Includes(entity, includes)
+		result.Included = a.resolveV1Includes(r.Context(), entity, includes)
 	}
 
 	// ETag for caching
@@ -678,7 +669,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.entityToV1(entity, plural, true, false)
+	result := a.entityToV1(r.Context(), entity, plural, true)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -1034,7 +1025,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 
 	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetPlural(typeName)
-	result := a.entityToV1(newEntity, plural, false, false)
+	result := a.entityToV1(r.Context(), newEntity, plural, false)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
 	writeV1JSON(w, http.StatusCreated, result)
@@ -1238,7 +1229,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
-		data = append(data, a.entityToV1(e, plural, false, false))
+		data = append(data, a.entityToV1(r.Context(), e, plural, false))
 	}
 
 	resp := V1ListResponse{
@@ -1297,7 +1288,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 
 // --- Helper Functions ---
 
-func (a *App) entityToV1(e *entityPkg.Entity, plural string, includeRelations, includeActions bool) V1Entity {
+func (a *App) entityToV1(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
 	s := a.State()
 	v1 := V1Entity{
 		ID:         e.ID,
@@ -1306,6 +1297,7 @@ func (a *App) entityToV1(e *entityPkg.Entity, plural string, includeRelations, i
 		Properties: make(map[string]interface{}),
 		Content:    e.Content,
 		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
+		Actions:    a.computeActions(ctx, e),
 	}
 
 	for k, v := range e.Properties {
@@ -1329,43 +1321,10 @@ func (a *App) entityToV1(e *entityPkg.Entity, plural string, includeRelations, i
 		}
 	}
 
-	if includeActions {
-		v1.Actions = a.computeEntityActions(s, e)
-	}
-
 	return v1
 }
 
-func (a *App) computeEntityActions(s *AppState, e *entityPkg.Entity) *V1Actions {
-	actions := &V1Actions{}
-
-	// Delete is always allowed; cascade removes associated relations.
-	actions.Delete = &V1ActionStatus{Allowed: true}
-
-	// Get valid status transitions
-	if status, ok := e.Properties["status"].(string); ok {
-		entityDef := s.Meta.Entities[e.Type]
-		if statusProp, ok := entityDef.Properties["status"]; ok {
-			if ct, ok := s.Meta.Types[statusProp.Type]; ok {
-				actions.Transitions = ct.Values
-			} else if len(statusProp.Values) > 0 {
-				actions.Transitions = statusProp.Values
-			}
-		}
-		// Filter out current status
-		filtered := make([]string, 0)
-		for _, t := range actions.Transitions {
-			if t != status {
-				filtered = append(filtered, t)
-			}
-		}
-		actions.Transitions = filtered
-	}
-
-	return actions
-}
-
-func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[string]V1Entity {
+func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]V1Entity {
 	s := a.State()
 	included := make(map[string]V1Entity)
 
@@ -1379,7 +1338,7 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 			}
 			entityDef := s.Meta.Entities[target.Type]
 			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.entityToV1(target, plural, false, false)
+			included[target.ID] = a.entityToV1(ctx, target, plural, false)
 		}
 		// Include all incoming relations
 		for _, edge := range a.incomingRelations(entity.ID) {
@@ -1389,7 +1348,7 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 			}
 			entityDef := s.Meta.Entities[source.Type]
 			plural := entityDef.GetPlural(source.Type)
-			included[source.ID] = a.entityToV1(source, plural, false, false)
+			included[source.ID] = a.entityToV1(ctx, source, plural, false)
 		}
 		return included
 	}
@@ -1397,7 +1356,7 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 	parts := strings.Split(includes, ",")
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if part == "" || part == "_actions" {
+		if part == "" {
 			continue
 		}
 
@@ -1415,11 +1374,11 @@ func (a *App) resolveV1Includes(entity *entityPkg.Entity, includes string) map[s
 			}
 			entityDef := s.Meta.Entities[target.Type]
 			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.entityToV1(target, plural, false, false)
+			included[target.ID] = a.entityToV1(ctx, target, plural, false)
 
 			// Handle nested includes
 			if len(relParts) > 1 {
-				nested := a.resolveV1Includes(target, relParts[1])
+				nested := a.resolveV1Includes(ctx, target, relParts[1])
 				for k, v := range nested {
 					included[k] = v
 				}
@@ -2675,7 +2634,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	plural := entityDef.GetPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
-		Entry:    a.entityToV1(result.Entry, plural, true, false),
+		Entry:    a.entityToV1(r.Context(), result.Entry, plural, true),
 		Sections: make([]V1ViewSection, 0, len(sections)),
 	}
 

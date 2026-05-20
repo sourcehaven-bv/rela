@@ -270,10 +270,24 @@ gaps independently.
 - ✅ HTTP 403 with structured `{error, rule_kind, rule_id, reason}` body.
 - ✅ Audit log records every deny as `denied-write` (see
   [audit-log](./audit-log.md)).
+- ✅ Data-entry SPA hides write controls based on the per-resource
+  `_actions` verdict map — read-only mode produces a button-less UI
+  driven by the ACL, no frontend flag. See the [API reference
+  action-affordances section](./data-entry/api-reference.md#action-affordances-_actions)
+  for the wire shape and contract.
 - ❌ Read filtering, property redaction — deferred to v1.
 - ❌ Group expansion (`member-of` transitive) — deferred to v1.
 - ❌ MCP transport intersection (filtering the tool list per principal) — deferred to a follow-up.
 - ❌ Containment inheritance — deferred to v2.
+
+> **`_actions` is a UI hint, not an authorization layer.** The
+> data-entry server re-authorizes every write — a client that
+> bypasses the affordance map (forges `delete: true` and issues
+> DELETE anyway) gets the same `403` the policy would have produced
+> for any other denied request. The scope of the affordance
+> invariant is HTTP write endpoints reached by the SPA; MCP / Lua /
+> scheduler write paths share the same enforcement but do not emit
+> or consult `_actions`.
 
 ## Running the Vue dev server (Vite)
 

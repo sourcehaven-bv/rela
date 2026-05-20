@@ -5,7 +5,7 @@ title: 'Response-level action affordances: backend declares per-resource verbs t
 kind: enhancement
 priority: medium
 effort: xl
-status: backlog
+status: in-progress
 ---
 
 ## Goal
