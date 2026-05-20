@@ -296,6 +296,37 @@ dissolved at the same time.
   god-object aggregate; deleted in the workspace-decomposition arc.
   New code wires services individually via `appbuild.Discover` /
   `appbuild.New` or takes focused interfaces at the call site.
+- **Don't run user-supplied Lua on the read path.** ACL gates and
+  filters evaluate against declarative policy (`acl.yaml`) and the
+  graph; Lua participates only at *write time* via the automation
+  engine (which produces graph relations the ACL reads). The
+  cross-system survey behind `internal/acl/` (see
+  `.ignored/acl-design.md`) shows that per-row Lua on reads is the
+  perf cliff every comparable system regrets; the project avoids it
+  by design.
+
+### Authorization (`internal/acl`)
+
+The ACL is consumed by `entitymanager.Manager` (a required
+collaborator via `Deps.ACL`) and surfaces structured 403s in
+`internal/dataentry`. Three production implementations live in
+`internal/acl`:
+
+- `NopACL` — allow-all; default when no `acl.yaml` is present.
+- `ReadOnlyACL` — deny-all; wired via `rela-server --read-only`.
+- `Declarative` — policy-driven, composed with a `Policy` loaded
+  from `acl.yaml` at the project root.
+
+Consumer-side interface rule: code that calls into the ACL declares
+the narrowest contract it needs at the call site, not `acl.ACL`
+in full, when only a subset of methods are invoked. `entitymanager`
+is the exception — it owns the constructor field so the wiring
+boundary is explicit.
+
+See `docs/security.md` for the user-facing schema reference,
+`.ignored/acl-design.md` for the design rationale and the four-layer
+model (users → groups → roles → local roles), and `docs/audit-log.md`
+for the `denied-write` audit op.
 
 ## Architecture
 

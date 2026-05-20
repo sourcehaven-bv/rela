@@ -160,6 +160,7 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
 		stateKV:       stateKV,
 		scriptEngine:  scriptEngine,
 		searchBackend: searchBackend,
+		acl:           aclImpl,
 	}
 }
 
