@@ -221,6 +221,199 @@ func TestValidateConfig_UnknownFormRelation(t *testing.T) {
 	}
 }
 
+// inverseTestMetamodel parses a metamodel via the real loader so
+// inverseOwners is populated — needed for tests that exercise the
+// inverse-name and wrong-side branches in validateForms.
+func inverseTestMetamodel(t *testing.T) *metamodel.Metamodel {
+	t.Helper()
+	yaml := `version: "1.0"
+entities:
+  from_entity:
+    label: From
+    id_prefix: "FROM-"
+    properties:
+      title:
+        type: string
+        required: true
+  to_entity:
+    label: To
+    id_prefix: "TO-"
+    properties:
+      title:
+        type: string
+        required: true
+  other_entity:
+    label: Other
+    id_prefix: "OTH-"
+    properties:
+      title:
+        type: string
+        required: true
+relations:
+  connects_to:
+    label: connects to
+    from: [from_entity]
+    to: [to_entity]
+    inverse: connects_from
+  multi_source:
+    label: multi source
+    from: [from_entity, other_entity]
+    to: [to_entity]
+`
+	m, err := metamodel.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse inverse test metamodel: %v", err)
+	}
+	return m
+}
+
+func TestValidateConfig_FormRelationInverseName(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_to": {
+				EntityType: "to_entity",
+				Relations:  []FormRelation{{Relation: "connects_from"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for inverse-name relation")
+	}
+	msg := err.Error()
+	// Error must identify the inverse name and point the user at the
+	// canonical relation plus direction: incoming.
+	if !strings.Contains(msg, `"connects_from"`) {
+		t.Errorf("expected error to mention inverse name, got: %v", err)
+	}
+	if !strings.Contains(msg, `"connects_to"`) {
+		t.Errorf("expected error to point at canonical name, got: %v", err)
+	}
+	if !strings.Contains(msg, "direction: incoming") {
+		t.Errorf("expected error to mention direction: incoming, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FormRelationWrongSide_HintsIncoming(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// to_entity is on the TO side of connects_to; the default outgoing
+	// direction makes this form silently broken.
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_to": {
+				EntityType: "to_entity",
+				Relations:  []FormRelation{{Relation: "connects_to"}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for form entity not on the source side of an outgoing relation")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `"to_entity"`) {
+		t.Errorf("expected error to mention form entity type, got: %v", err)
+	}
+	if !strings.Contains(msg, `"connects_to"`) {
+		t.Errorf("expected error to mention the relation, got: %v", err)
+	}
+	if !strings.Contains(msg, "direction: incoming") {
+		t.Errorf("expected hint to set direction: incoming, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FormRelationWrongSide_NoHintWhenDirectionExplicit(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// Explicit outgoing with form entity on the wrong side — flipping the
+	// direction would help, but the user has explicitly chosen outgoing,
+	// so we error without a "did you mean" hint.
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_to": {
+				EntityType: "to_entity",
+				Relations:  []FormRelation{{Relation: "connects_to", Direction: DirectionOutgoing}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for form entity not on the source side")
+	}
+	if !strings.Contains(err.Error(), `"to_entity"`) {
+		t.Errorf("expected error to mention form entity type, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FormRelationIncomingWrongSide(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// from_entity is the SOURCE side; declaring direction: incoming on it
+	// for connects_to is a configuration error.
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_from": {
+				EntityType: "from_entity",
+				Relations:  []FormRelation{{Relation: "connects_to", Direction: DirectionIncoming}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for direction: incoming on the source side")
+	}
+	if !strings.Contains(err.Error(), `"from_entity"`) {
+		t.Errorf("expected error to mention form entity type, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FormRelationCorrectSide(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// from_entity → connects_to (outgoing default) is the correct shape.
+	// to_entity   → connects_to with direction: incoming is also correct.
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_from": {
+				EntityType: "from_entity",
+				Relations:  []FormRelation{{Relation: "connects_to"}},
+			},
+			"edit_to": {
+				EntityType: "to_entity",
+				Relations:  []FormRelation{{Relation: "connects_to", Direction: DirectionIncoming}},
+			},
+		},
+	}
+
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Errorf("expected valid config to pass, got: %v", err)
+	}
+}
+
+func TestValidateConfig_FormRelationMultiSourceSide(t *testing.T) {
+	meta := inverseTestMetamodel(t)
+	// multi_source allows from_entity OR other_entity as the source.
+	// Both should pass when used as the form entity with outgoing default.
+	cfg := &Config{
+		Forms: map[string]Form{
+			"edit_from": {
+				EntityType: "from_entity",
+				Relations:  []FormRelation{{Relation: "multi_source"}},
+			},
+			"edit_other": {
+				EntityType: "other_entity",
+				Relations:  []FormRelation{{Relation: "multi_source"}},
+			},
+		},
+	}
+
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Errorf("expected valid config with multi-type source to pass, got: %v", err)
+	}
+}
+
 func TestValidateConfig_InvalidRelationDirection(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

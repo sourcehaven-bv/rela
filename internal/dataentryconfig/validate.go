@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -241,10 +242,25 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate relations
 		for i, r := range form.Relations {
-			if _, ok := meta.GetRelationDef(r.Relation); !ok {
-				errs = append(errs, fmt.Sprintf(
-					"form %q: relation[%d] references unknown relation %q",
-					formID, i, r.Relation))
+			relDef, ok := meta.GetRelationDef(r.Relation)
+			switch {
+			case ok:
+				// Canonical name resolved — check that the form's entity
+				// type is on the correct side of the edge for the chosen
+				// direction. Wrong-side configs are silently broken
+				// otherwise: the widget searches the wrong target type
+				// and never shows existing edges.
+				errs = append(errs, validateFormRelationSide(formID, i, form.EntityType, r, relDef)...)
+			default:
+				if canonical, isInverse := meta.InverseOwner(r.Relation); isInverse {
+					errs = append(errs, fmt.Sprintf(
+						"form %q: relation[%d] uses inverse name %q; use `relation: %s` with `direction: incoming` to bind the inverse of %q",
+						formID, i, r.Relation, canonical, canonical))
+				} else {
+					errs = append(errs, fmt.Sprintf(
+						"form %q: relation[%d] references unknown relation %q",
+						formID, i, r.Relation))
+				}
 			}
 
 			// Validate direction
@@ -273,6 +289,37 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	}
 
 	return errs
+}
+
+// validateFormRelationSide checks that the form's entity type sits on
+// the side of the relation that matches the chosen direction. An
+// outgoing relation must be authored from a `From:` type; an incoming
+// one must be authored from a `To:` type. Mismatch returns an error;
+// when the entity is on the opposite side the message hints at
+// flipping the direction.
+func validateFormRelationSide(formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef) []string {
+	if entityType == "" {
+		return nil
+	}
+	incoming := r.Direction.IsIncoming()
+	expected, opposite := relDef.From, relDef.To
+	expectedSide, oppositeSide := "from", "to"
+	flipDir := DirectionIncoming
+	if incoming {
+		expected, opposite = relDef.To, relDef.From
+		expectedSide, oppositeSide = "to", "from"
+		flipDir = DirectionOutgoing
+	}
+	if slices.Contains(expected, entityType) {
+		return nil
+	}
+	hint := ""
+	if r.Direction == "" && slices.Contains(opposite, entityType) {
+		hint = fmt.Sprintf(" (set `direction: %s` to bind the %s side of %q)", flipDir, oppositeSide, r.Relation)
+	}
+	return []string{fmt.Sprintf(
+		"form %q: relation[%d] entity type %q is not a %s of relation %q (valid: %s)%s",
+		formID, i, entityType, expectedSide, r.Relation, strings.Join(expected, ", "), hint)}
 }
 
 // validateTransitions checks that transition values are valid for the property's type.
