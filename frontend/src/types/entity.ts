@@ -9,10 +9,9 @@ export interface Entity {
   _self?: string
   // Per-resource verb-verdict map driven by the backend ACL. Keys are
   // verbs (phase 1: `update`, `delete`, `rename` per-item; `create`
-  // on collection responses); values are booleans. Absent =
-  // anonymous fallback or pre-rollout server — UI should render
-  // affordances unconditionally. Empty {} = authenticated principal
-  // with all verbs denied — UI should hide all affordances.
+  // on collection responses); values are booleans. Always present
+  // on responses from the data-entry server. An empty map means the
+  // principal has every verb denied — UI should hide all affordances.
   // See .ignored/action-affordances-design.md for the full contract.
   _actions?: Record<string, boolean>
   inaccessible?: InaccessibleField[]

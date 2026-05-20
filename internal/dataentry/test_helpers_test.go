@@ -2,31 +2,18 @@ package dataentry
 
 import (
 	"context"
-	"net/http"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
-
-// withTestPrincipal returns req with a synthetic test principal stamped
-// on its context — mirrors what the production router middleware does
-// for every incoming request. Use this on httptest.NewRequest results
-// so the handler doesn't see an unstamped (anonymous) context.
-func withTestPrincipal(req *http.Request) *http.Request {
-	return req.WithContext(principal.With(req.Context(), principal.Principal{
-		User: "test-user",
-		Tool: principal.ToolDataEntry,
-	}))
-}
 
 // seedEntity writes an entity directly into the app's store.
 func seedEntity(app *App, e *entity.Entity) {

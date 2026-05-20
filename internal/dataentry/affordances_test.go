@@ -1,13 +1,11 @@
 package dataentry
 
 import (
-	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // TestTranslateVerb_Roundtrip pins the phase-1 verb vocabulary against
@@ -26,10 +24,7 @@ func TestTranslateVerb_Roundtrip(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.verb, func(t *testing.T) {
-			req, ok := translateVerb(c.verb, "ticket")
-			if !ok {
-				t.Fatalf("translateVerb(%q) returned ok=false", c.verb)
-			}
+			req := translateVerb(c.verb, "ticket")
 			if req.Op != c.op {
 				t.Errorf("Op = %q, want %q", req.Op, c.op)
 			}
@@ -40,16 +35,19 @@ func TestTranslateVerb_Roundtrip(t *testing.T) {
 	}
 }
 
-// TestTranslateVerb_Unknown asserts unknown verbs return ok=false so
-// computeActions can skip them silently.
-func TestTranslateVerb_Unknown(t *testing.T) {
-	req, ok := translateVerb("transition:done", "ticket")
-	if ok {
-		t.Errorf("translateVerb(transition:done) returned ok=true; phase 1 doesn't support transition verbs yet")
-	}
-	if req != (acl.WriteRequest{}) {
-		t.Errorf("expected zero WriteRequest on unknown verb, got %+v", req)
-	}
+// TestTranslateVerb_UnknownPanics asserts the "unreachable for the
+// closed set" contract. If a future change adds a verb to
+// [perItemVerbs] / [perCollectionVerbs] without adding the matching
+// translateVerb case, this is the test that fails loudly instead of
+// the production deserializer silently returning the zero WriteRequest
+// (which would map every misspelled verb to OpCreate).
+func TestTranslateVerb_UnknownPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic on unknown verb; got none")
+		}
+	}()
+	translateVerb("transition:done", "ticket")
 }
 
 // AC1: read-only principal sees all per-item verbs as false.
@@ -57,13 +55,9 @@ func TestComputeActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
 	app.acl = acl.ReadOnlyACL{}
 
-	ctx := authedCtx(t)
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
-	got := app.computeActions(ctx, e)
+	got := app.computeActions(t.Context(), e)
 
-	if got == nil {
-		t.Fatal("computeActions returned nil for authenticated principal")
-	}
 	for _, v := range []string{"update", "delete", "rename"} {
 		if got[v] {
 			t.Errorf("_actions[%q] = true under ReadOnlyACL, want false", v)
@@ -76,13 +70,9 @@ func TestComputeActions_NopACL(t *testing.T) {
 	app := newTestAppV1(t)
 	// app.acl is already acl.NopACL via the test fixture wiring.
 
-	ctx := authedCtx(t)
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
-	got := app.computeActions(ctx, e)
+	got := app.computeActions(t.Context(), e)
 
-	if got == nil {
-		t.Fatal("computeActions returned nil for authenticated principal")
-	}
 	for _, v := range []string{"update", "delete", "rename"} {
 		if !got[v] {
 			t.Errorf("_actions[%q] = false under NopACL, want true", v)
@@ -90,57 +80,15 @@ func TestComputeActions_NopACL(t *testing.T) {
 	}
 }
 
-// TestComputeActions_AnonymousOmits asserts that an anonymous request
-// (no Principal stamped) returns a nil map so the serializer omits the
-// field — the SPA's fallback distinguishes anonymous (show all,
-// silent) from authenticated-but-missing (show all, warn).
-func TestComputeActions_AnonymousOmits(t *testing.T) {
-	app := newTestAppV1(t)
-
-	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
-	got := app.computeActions(context.Background(), e)
-
-	if got != nil {
-		t.Errorf("expected nil _actions for anonymous principal, got %v", got)
-	}
-}
-
-// AC4 part: collection actions returns nil for anonymous, expected
-// verb set for authenticated.
-func TestComputeCollectionActions_Anonymous(t *testing.T) {
-	app := newTestAppV1(t)
-
-	if got := app.computeCollectionActions(context.Background(), "ticket"); got != nil {
-		t.Errorf("expected nil collection actions for anonymous, got %v", got)
-	}
-}
-
-func TestComputeCollectionActions_Authenticated(t *testing.T) {
+// AC4: collection-scope verb computed under ReadOnlyACL is false.
+func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
 	app.acl = acl.ReadOnlyACL{}
 
-	got := app.computeCollectionActions(authedCtx(t), "ticket")
-	if got == nil {
-		t.Fatal("expected non-nil collection actions for authenticated principal")
-	}
-	if _, ok := got["create"]; !ok {
-		t.Errorf("expected 'create' key in collection actions; got %v", got)
-	}
+	got := app.computeCollectionActions(t.Context(), "ticket")
 	if got["create"] {
-		t.Errorf("expected create=false under ReadOnlyACL, got true")
+		t.Errorf("_actions.create = true under ReadOnlyACL, want false")
 	}
-}
-
-// authedCtx returns a context with a non-anonymous Principal stamped,
-// so computeActions doesn't take the anonymous-fallback branch. Tool
-// is ToolDataEntry to match production wiring; user is any non-empty
-// string.
-func authedCtx(t *testing.T) context.Context {
-	t.Helper()
-	return principal.With(context.Background(), principal.Principal{
-		User: "test-user",
-		Tool: principal.ToolDataEntry,
-	})
 }
 
 // TestComputeActions_NoAuditNoise is AC8 — read-time `AuthorizeWrite`

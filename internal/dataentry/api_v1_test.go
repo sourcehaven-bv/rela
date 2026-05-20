@@ -1052,7 +1052,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		},
 	})
 
-	req := withTestPrincipal(httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
@@ -1637,7 +1637,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 		Type: "implements",
 	})
 
-	req := withTestPrincipal(httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
 	var entity V1Entity
@@ -2059,7 +2059,7 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 		},
 	})
 
-	req := withTestPrincipal(httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
 	var entity V1Entity

@@ -73,17 +73,6 @@ func From(ctx context.Context) Principal {
 	return Principal{User: "unknown", Tool: "unknown"}
 }
 
-// HasPrincipal reports whether ctx carries a Principal value stamped
-// via [With]. Unlike [From] (which returns a sentinel default for
-// unstamped contexts), HasPrincipal lets callers distinguish "no
-// principal at all" from "principal stamped as unknown" — needed by
-// the data-entry serializer to decide whether to omit the `_actions`
-// field on responses.
-func HasPrincipal(ctx context.Context) bool {
-	_, ok := ctx.Value(principalKey{}).(Principal)
-	return ok
-}
-
 // SystemUser returns the OS user running this process — $USER
 // trimmed, or "unknown" if $USER is unset or whitespace-only. Used by
 // entry-point wiring to populate [Principal.User].

@@ -298,13 +298,15 @@ work item). Until then the SPA continues to render workflow controls
 unconditionally and falls back to the server's 403 on disallowed
 transitions.
 
-### Anonymous fallback
+### Always present
 
-Anonymous requests (no `Principal` stamped on the request context)
-receive the `_actions` field **omitted entirely**. The SPA's fallback
-in that case is "render all affordances; let the server reject on
-click." An authenticated principal with all verbs denied receives
-`_actions: {}` — distinct from absent.
+Every HTTP response from the data-entry server carries `_actions`.
+The router unconditionally stamps a Principal on each request (a
+`{User: "unknown", Tool: "data-entry"}` sentinel when no header /
+environment override is configured), so there is no "anonymous"
+branch in production. A principal with all verbs denied receives
+`_actions: {}` — same shape, all values false. A principal with
+every verb granted receives `_actions` with all values true.
 
 ### The cardinal rule
 
