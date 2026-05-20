@@ -1,0 +1,67 @@
+---
+id: TKT-LFT2
+type: ticket
+title: 'Action affordances phase 2: frontend consumption + AWM6L payoff'
+kind: enhancement
+priority: medium
+effort: m
+status: backlog
+---
+
+## Goal
+
+Make the Vue SPA actually consume the `_actions: map[string]bool` map shipped by
+the backend in phase 1 (TKT-Y72A, PR #779). Read-only mode should produce a
+button-less data-entry UI driven entirely by the backend's verdict — the
+original deliverable that TKT-AWM6L was chasing.
+
+## Why now
+
+Phase 1 landed the wire shape, the `translateVerb` source-of-truth, and the
+bidirectional contract test. The SPA's type already declares `_actions?:
+Record<string, boolean>` on `Entity` and `ListResponse`. What's missing is the
+UI integration.
+
+## Scope
+
+- Vue components that render write affordances (delete buttons,
+update forms, create-new buttons on list pages) consult `entity._actions[verb]`.
+Semantics:
+  - `false` → omit the control.
+  - `true` → render.
+  - Absent → render unconditionally (anonymous / pre-rollout
+fallback).
+- **Dev-mode warning.** When the SPA receives an authenticated
+response without `_actions`, log a `console.warn` so a future server-side
+regression (handler forgot to populate the field) is visible in development.
+Production builds suppress the warning.
+- **AC4 (list endpoint) — dedicated test.** Backend wiring already
+exists (`computeCollectionActions`); add a handler test asserting per-row
+`_actions` differs across rows when the ACL gates by entity type / ID.
+- **AC5 (frontend consumption) — component unit tests.** Fixture
+responses with various `_actions` shapes; assert button render presence/absence.
+- **AC6 (additive vocabulary) — synthetic verb test.** Backend emits
+`noop` from one handler; assert frontend doesn't crash or warn for unknown keys.
+- **AC7 (AWM6L payoff) — E2E.** Boot data-entry with
+`--read-only`; navigate the SPA; assert no write controls render anywhere
+(delete button, edit form fields, create button).
+
+## Profile gate (decision)
+
+Before merging, benchmark list response time at 100 / 1k / 10k entities × 3-verb
+computation under `Declarative` ACL. If p95 > 200ms, land the per-row verdict
+cache in this ticket; key shape is `(principal_id, entity_id,
+entity_updated_at)`, TTL 60s, explicit invalidation on writes. Otherwise defer
+the cache.
+
+## Out of scope
+
+- `transition:*` and `relation:*` verbs (gated on ACL v0.5).
+- MCP / Lua / scheduler write-path affordance integration.
+- SSE policy-changed events.
+
+## References
+
+- Phase 1: TKT-Y72A, PR #779
+- Design: `.ignored/action-affordances-design.md`
+- Predecessor (wont-fix): TKT-AWM6L

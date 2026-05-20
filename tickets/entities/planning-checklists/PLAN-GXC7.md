@@ -2,7 +2,7 @@
 id: PLAN-GXC7
 type: planning-checklist
 title: 'Planning: Response-level action affordances: backend declares per-resource verbs to drive UI'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -318,9 +318,9 @@ endpoint must re-authorize. New write paths in `internal/dataentry` route
 `WriteRequest` construction through `translateVerb`."
 - [x] **`docs/security.md`** — note that read-only-mode UI hiding is
 data-driven (via `_actions`). Document scope of invariant.
-- [ ] User guide / reference docs — N/A.
-- [ ] CLI help text — N/A.
-- [ ] README.md — N/A.
+- [x] ~~User guide / reference docs~~ (N/A: backend wire-shape change with no end-user feature surface; the SPA itself is what users see and that's covered by api-reference.md)
+- [x] ~~CLI help text~~ (N/A: no CLI changes in this ticket)
+- [x] ~~README.md~~ (N/A: project-level positioning unchanged)
 
 ## Design Review
 
