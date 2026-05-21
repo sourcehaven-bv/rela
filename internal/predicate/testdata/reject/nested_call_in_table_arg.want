@@ -1,0 +1,1 @@
+CompileError	table value for "nested": must be a constant (string, number, bool, or nil); got function call

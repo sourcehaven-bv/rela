@@ -1,0 +1,1 @@
+CompileError	table keys must be bare identifiers ({key='value'} form)

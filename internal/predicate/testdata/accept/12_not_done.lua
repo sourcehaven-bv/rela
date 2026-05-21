@@ -1,0 +1,1 @@
+not (entity.status == 'done')
