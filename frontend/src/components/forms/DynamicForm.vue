@@ -4,6 +4,7 @@ import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
+import { actionAllowed } from '@/utils/affordancesWarning'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import type { PropertyDef, FormFieldOrRelation, Template, ModernRelationsField } from '@/types'
@@ -139,7 +140,7 @@ async function loadEntity() {
     // render an inline "not editable" message instead of the form.
     // The EntityDetail Edit button already hides for the same
     // verdict, so this branch fires only for direct-URL navigation.
-    notEditable.value = entity._actions?.update === false
+    notEditable.value = !actionAllowed(entity, 'update')
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''

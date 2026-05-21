@@ -1,4 +1,4 @@
-// Dev-mode diagnostic for the `_actions` affordance field.
+// Helpers for the `_actions` affordance field.
 //
 // The data-entry server always emits `_actions` on entity / list
 // responses (see internal/dataentry/affordances.go). When a
@@ -13,6 +13,26 @@
 
 interface AffordanceCarrier {
   _actions?: Record<string, boolean>
+}
+
+/**
+ * Returns true when the given verb should render — i.e. the server's
+ * verdict for that verb is anything other than explicit `false`.
+ *
+ * The defensive-fallback contract (per phase-2 design): false hides
+ * the control; anything else (true, undefined, absent map) renders.
+ * Absent → render covers non-data-entry callers and pre-rollout
+ * servers; the server still 403s on the actual write.
+ *
+ * Use this everywhere a Vue template / handler gates on an `_actions`
+ * verb. Keeps the contract in one place — a future change (e.g. flip
+ * to `=== true`) is a single edit, not a sweep across N call sites.
+ */
+export function actionAllowed(
+  carrier: AffordanceCarrier | undefined | null,
+  verb: string,
+): boolean {
+  return carrier?._actions?.[verb] !== false
 }
 
 const seen = new Set<string>()

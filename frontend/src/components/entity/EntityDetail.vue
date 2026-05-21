@@ -10,6 +10,7 @@ import type { ViewResponse, ViewSectionField } from '@/api'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { actionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import {
@@ -82,10 +83,10 @@ const inaccessibleByName = computed<Map<string, string>>(() => {
 const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) > 0)
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
-// anything else (including absent / true) → render. See
-// docs/data-entry/api-reference.md.
-const canUpdate = computed(() => entry.value?._actions?.update !== false)
-const canDelete = computed(() => entry.value?._actions?.delete !== false)
+// anything else → render. Helper keeps the contract DRY across
+// components; see frontend/src/utils/affordancesWarning.ts.
+const canUpdate = computed(() => actionAllowed(entry.value, 'update'))
+const canDelete = computed(() => actionAllowed(entry.value, 'delete'))
 
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content

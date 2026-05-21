@@ -9,6 +9,7 @@ import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
@@ -52,16 +53,17 @@ const includedEntities = ref<Record<string, Entity>>({})
 // still 403s on click). See `_actions` in api-reference.md.
 const collectionActions = ref<Record<string, boolean> | undefined>(undefined)
 
-// Affordance gates for collection-scope and per-item verbs.
-// `false` from server → hide; anything else → render.
+// Affordance gates: `_actions` map from the server. `false` → hide;
+// anything else → render. Helper keeps the contract DRY across
+// components; see frontend/src/utils/affordancesWarning.ts.
 function canCreate(): boolean {
-  return collectionActions.value?.create !== false
+  return actionAllowed({ _actions: collectionActions.value }, 'create')
 }
 function canDelete(entity: Entity): boolean {
-  return entity._actions?.delete !== false
+  return actionAllowed(entity, 'delete')
 }
 function canUpdate(entity: Entity): boolean {
-  return entity._actions?.update !== false
+  return actionAllowed(entity, 'update')
 }
 // Bulk-action visibility: an action shows iff at least one selected
 // entity permits the underlying `update` write. (All bulk actions

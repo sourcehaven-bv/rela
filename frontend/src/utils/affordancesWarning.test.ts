@@ -1,8 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   _resetAffordancesWarningForTests,
+  actionAllowed,
   warnIfMissingActions,
 } from './affordancesWarning'
+
+describe('actionAllowed', () => {
+  it('returns false only when the verb is explicitly false', () => {
+    expect(actionAllowed({ _actions: { delete: false } }, 'delete')).toBe(false)
+  })
+
+  it('returns true when the verb is explicitly true', () => {
+    expect(actionAllowed({ _actions: { update: true } }, 'update')).toBe(true)
+  })
+
+  it('returns true when the verb is absent from a present map (defensive)', () => {
+    expect(actionAllowed({ _actions: { delete: false } }, 'update')).toBe(true)
+  })
+
+  it('returns true when _actions is absent entirely', () => {
+    expect(actionAllowed({}, 'update')).toBe(true)
+  })
+
+  it('returns true when _actions is an empty map (two-state collapse)', () => {
+    expect(actionAllowed({ _actions: {} }, 'update')).toBe(true)
+  })
+
+  it('returns true for null / undefined carriers', () => {
+    expect(actionAllowed(undefined, 'update')).toBe(true)
+    expect(actionAllowed(null, 'update')).toBe(true)
+  })
+})
 
 describe('warnIfMissingActions', () => {
   beforeEach(() => {

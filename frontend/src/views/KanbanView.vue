@@ -7,6 +7,7 @@ import type { Entity, KanbanConfig } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
+import { actionAllowed } from '@/utils/affordancesWarning'
 
 const props = defineProps<{
   id: string
@@ -26,13 +27,14 @@ const filterValues = ref<Record<string, string>>({})
 const draggedCard = ref<Entity | null>(null)
 const collectionActions = ref<Record<string, boolean> | undefined>(undefined)
 
-// Affordance gates: `_actions` from server. `false` → hide / disallow;
-// anything else → allow.
+// Affordance gates: `_actions` map from the server. `false` → hide;
+// anything else → render. Helper keeps the contract DRY across
+// components; see frontend/src/utils/affordancesWarning.ts.
 function canCreate(): boolean {
-  return collectionActions.value?.create !== false
+  return actionAllowed({ _actions: collectionActions.value }, 'create')
 }
 function canUpdate(entity: Entity): boolean {
-  return entity._actions?.update !== false
+  return actionAllowed(entity, 'update')
 }
 
 // Computed
