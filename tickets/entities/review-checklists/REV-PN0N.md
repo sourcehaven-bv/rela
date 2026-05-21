@@ -2,7 +2,7 @@
 id: REV-PN0N
 type: review-checklist
 title: 'Review: Predicate language: gopher-lua expression subset for declarative conditions'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -108,8 +108,8 @@ Nit (addressed):
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (after Rela-Tickets self-merge unblock)
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/787

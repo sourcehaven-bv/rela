@@ -5,7 +5,7 @@ title: 'Predicate language: gopher-lua expression subset for declarative conditi
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Goal

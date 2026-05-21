@@ -705,16 +705,16 @@ For enhancements: identify what documentation needs updating.
 
 **Documentation Impact:**
 
-- [ ] User guide / reference docs (defer to ACL integration PR —
-      no caller exists yet)
-- [ ] CLI help text (no command changes)
-- [ ] CLAUDE.md (defer to ACL integration PR — the only rule that
-      affects other contributors today is "no Lua on the read
-      path," already documented; the predicate package satisfies
-      it but doesn't introduce a new rule yet)
-- [ ] README.md (no project-level surface change)
-- [ ] API docs (godoc on `doc.go` and exported types is enough for
-      this PR; no external doc site)
+- [x] ~~User guide / reference docs~~ (N/A: deferred to ACL
+      integration PR — no caller exists yet)
+- [x] ~~CLI help text~~ (N/A: no command changes)
+- [x] ~~CLAUDE.md~~ (N/A: deferred to ACL integration PR — the only
+      rule that affects other contributors today is "no Lua on the
+      read path," already documented; the predicate package
+      satisfies it but doesn't introduce a new rule yet)
+- [x] ~~README.md~~ (N/A: no project-level surface change)
+- [x] ~~API docs~~ (N/A: godoc on `doc.go` and exported types is
+      enough for this PR; no external doc site)
 - [x] N/A for user-facing docs in this PR — internal package, no
       consumers yet (RR-S40W)
 
