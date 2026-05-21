@@ -356,6 +356,22 @@ Rules for new write code in `internal/dataentry`:
   `rename` (per-item). `transition:*` and `relation:*` are deferred
   until ACL gains Op variants or extension fields.
 
+Rules for new write affordances in the Vue SPA:
+
+- **Gate every entity-CRUD button on `entity._actions?.[verb] !== false`**
+  (or `listResponse._actions?.create !== false` for collection-scope
+  verbs). False → hide; anything else (true, undefined, absent) →
+  render. Absent is the defensive-render fallback for non-data-entry
+  callers; the server still 403s on the actual write.
+- **Don't introduce a `useACL()` composable or any client-side ACL
+  evaluator.** TKT-AWM6L's wont-fix rejected this direction. The SPA
+  reads booleans the server computed; no computation, no merging,
+  no prediction.
+- **Adding a new write affordance** requires (a) a backend
+  `translateVerb` entry + `perItemVerbs`/`perCollectionVerbs` update
+  (see above), and (b) the inline `v-if` on the component. There is
+  no ESLint enforcement; code review catches drift.
+
 ## Architecture
 
 rela is a schema-driven entity-graph platform. You define the shape of your

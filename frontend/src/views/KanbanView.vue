@@ -24,6 +24,16 @@ const loading = ref(true)
 const entities = ref<Entity[]>([])
 const filterValues = ref<Record<string, string>>({})
 const draggedCard = ref<Entity | null>(null)
+const collectionActions = ref<Record<string, boolean> | undefined>(undefined)
+
+// Affordance gates: `_actions` from server. `false` → hide / disallow;
+// anything else → allow.
+function canCreate(): boolean {
+  return collectionActions.value?.create !== false
+}
+function canUpdate(entity: Entity): boolean {
+  return entity._actions?.update !== false
+}
 
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
@@ -184,6 +194,7 @@ async function loadEntities() {
   try {
     const response = await listEntities(kanbanConfig.value.entity)
     entities.value = response.data
+    collectionActions.value = response._actions
   } catch (err) {
     console.error('Kanban load error:', err)
   } finally {
@@ -232,6 +243,14 @@ async function onDrop(event: DragEvent, columnValue: string, swimlaneValue?: str
   if (!draggedCard.value || !kanbanConfig.value) return
 
   const entity = draggedCard.value
+  // Defence in depth: `:draggable="false"` prevents drag-from-Kanban
+  // starting, but external drag sources (text drag from another tab,
+  // file drag) can still trigger this handler. Early-return on a
+  // denied entity so we don't fire an update the server will 403.
+  if (!canUpdate(entity)) {
+    draggedCard.value = null
+    return
+  }
   const colProp = kanbanConfig.value.column_property
   const swimProp = kanbanConfig.value.swimlane_property
 
@@ -318,7 +337,7 @@ watch(() => entitiesStore.cacheVersion, () => {
         <h1>{{ kanbanConfig?.title || props.id }}</h1>
       </div>
       <div class="header-actions">
-        <button v-if="kanbanConfig?.create_form" class="btn btn-primary" @click="createNew">
+        <button v-if="kanbanConfig?.create_form && canCreate()" class="btn btn-primary" @click="createNew">
           + New
         </button>
       </div>
@@ -365,7 +384,7 @@ watch(() => entitiesStore.cacheVersion, () => {
             v-for="entity in entitiesByColumn[column.value]"
             :key="entity.id"
             class="kanban-card"
-            draggable="true"
+            :draggable="canUpdate(entity) ? 'true' : 'false'"
             @dragstart="onDragStart($event, entity)"
             @dragend="onDragEnd"
             @click="openCard(entity)"

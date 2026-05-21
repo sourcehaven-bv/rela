@@ -57,6 +57,13 @@ const relations = ref<Record<string, string[]>>({})
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
 const loading = ref(true)
+// Set to true in edit mode when the loaded entity's `_actions.update`
+// is explicitly false. The template renders an inline "not editable"
+// message instead of the form. The EntityDetail Edit button already
+// gates on the same verdict, so this branch only fires for direct-URL
+// navigation (bookmark, paste) or when the policy tightened after the
+// detail view loaded.
+const notEditable = ref(false)
 const saveGeneration = ref(0) // Incremented after save to reset RelationCards
 const saving = ref(false)
 const dirty = ref(false)
@@ -128,6 +135,11 @@ async function loadEntity() {
       formConfig.value.entity,
       props.entityId
     )
+    // Route-guard: if the server says this entity is not updatable,
+    // render an inline "not editable" message instead of the form.
+    // The EntityDetail Edit button already hides for the same
+    // verdict, so this branch fires only for direct-URL navigation.
+    notEditable.value = entity._actions?.update === false
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
@@ -813,6 +825,22 @@ onBeforeRouteLeave(async () => {
       <div v-if="loading" class="loading-state">
         <div class="spinner"/>
         <span>Loading...</span>
+      </div>
+
+      <div v-else-if="notEditable" class="not-editable-state">
+        <h2>This entity is not editable</h2>
+        <p>
+          Your current permissions don't allow updating
+          <code>{{ entityId }}</code>. Return to the entity view to see
+          available actions.
+        </p>
+        <router-link
+          v-if="formConfig && entityId"
+          :to="`/entity/${formConfig.entity}/${entityId}`"
+          class="btn btn-secondary"
+        >
+          ← Back to entity
+        </router-link>
       </div>
 
       <form v-else @submit.prevent="handleSubmit">
