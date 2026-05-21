@@ -1,9 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import {
   _resetAffordancesWarningForTests,
   actionAllowed,
+  computeActionAllowed,
   warnIfMissingActions,
 } from './affordancesWarning'
+
+describe('computeActionAllowed', () => {
+  it('returns a reactive computed that reflects the carrier verdict', () => {
+    const carrier = ref<{ _actions?: Record<string, boolean> } | null>({
+      _actions: { delete: false },
+    })
+    const canDelete = computeActionAllowed(carrier, 'delete')
+    expect(canDelete.value).toBe(false)
+
+    carrier.value = { _actions: { delete: true } }
+    expect(canDelete.value).toBe(true)
+
+    carrier.value = null
+    expect(canDelete.value).toBe(true)
+  })
+
+  it('handles different verbs from the same carrier independently', () => {
+    const carrier = ref({ _actions: { delete: false, update: true } })
+    const canDelete = computeActionAllowed(carrier, 'delete')
+    const canUpdate = computeActionAllowed(carrier, 'update')
+    expect(canDelete.value).toBe(false)
+    expect(canUpdate.value).toBe(true)
+  })
+})
 
 describe('actionAllowed', () => {
   it('returns false only when the verb is explicitly false', () => {

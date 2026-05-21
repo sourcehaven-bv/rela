@@ -11,6 +11,8 @@
 // from flooding the dev console on SSE refresh / cache invalidation.
 // HMR clears the Set so a code change during dev re-arms the warning.
 
+import { computed, type ComputedRef, type Ref } from 'vue'
+
 interface AffordanceCarrier {
   _actions?: Record<string, boolean>
 }
@@ -33,6 +35,23 @@ export function actionAllowed(
   verb: string,
 ): boolean {
   return carrier?._actions?.[verb] !== false
+}
+
+/**
+ * Reactive wrapper around [actionAllowed]: returns a Vue computed ref
+ * tracking the carrier's `_actions[verb]` verdict. Use this in setup
+ * blocks where the carrier is a ref or computed; templates can then
+ * bind `v-if="canX"` directly.
+ *
+ * Equivalent to `computed(() => actionAllowed(carrier.value, verb))`
+ * but expresses the intent in one call so authors don't repeat the
+ * `computed()` boilerplate.
+ */
+export function computeActionAllowed(
+  carrier: Ref<AffordanceCarrier | undefined | null> | ComputedRef<AffordanceCarrier | undefined | null>,
+  verb: string,
+): ComputedRef<boolean> {
+  return computed(() => actionAllowed(carrier.value, verb))
 }
 
 const seen = new Set<string>()
