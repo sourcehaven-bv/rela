@@ -50,6 +50,7 @@ components:
   renametype:       { in: internal/renametype }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
+  predicate:        { in: internal/predicate }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
   validator:        { in: internal/validator }
@@ -108,7 +109,7 @@ vendors:
       - github.com/teekennedy/goldmark-markdown
       - github.com/mitchellh/go-wordwrap
   gogit:       { in: github.com/go-git/go-git/** }
-  gopherlua:   { in: github.com/yuin/gopher-lua }
+  gopherlua:   { in: [github.com/yuin/gopher-lua, github.com/yuin/gopher-lua/**] }
   runewidth:   { in: github.com/mattn/go-runewidth }
   rrulego:     { in: github.com/teambition/rrule-go }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
@@ -390,6 +391,10 @@ deps:
       - storage
     canUse:
       - goldmark
+  predicate:
+    mayDependOn: []
+    canUse:
+      - gopherlua
   tracer:
     mayDependOn:
       - store
