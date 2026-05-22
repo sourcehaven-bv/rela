@@ -248,6 +248,98 @@ boundary semantics:
   (matches the user-intuition that `content = ""` means empty). To leave
   alone, omit the field.
 
+## Action affordances (`_actions`)
+
+Every entity and list response carries an `_actions` map describing
+which write verbs the **current principal** can apply to the resource.
+The Vue SPA consults this map to render write controls (buttons, menu
+items); `false` verbs are hidden, `true` verbs render.
+
+### Per-item shape
+
+```json
+{
+  "id": "TKT-001",
+  "type": "ticket",
+  "_actions": {
+    "update": true,
+    "delete": false,
+    "rename": true
+  }
+}
+```
+
+### Per-collection shape
+
+```json
+{
+  "data": [...],
+  "meta": {...},
+  "_actions": {
+    "create": true
+  }
+}
+```
+
+### Phase 1 verb vocabulary
+
+The closed set of verbs in phase 1, matching `acl.Op` exactly:
+
+| Verb | Scope | `acl.Op` |
+|---|---|---|
+| `create` | per-collection | `OpCreate` |
+| `update` | per-item | `OpUpdate` |
+| `delete` | per-item | `OpDelete` |
+| `rename` | per-item | `OpRename` |
+
+`transition:<state>` and `relation:<type>:add/remove` will follow once
+the ACL layer learns to represent them (gated on a separate ACL v0.5
+work item). Until then the SPA continues to render workflow controls
+unconditionally and falls back to the server's 403 on disallowed
+transitions.
+
+### Always present
+
+Every HTTP response from the data-entry server carries `_actions`.
+The router unconditionally stamps a Principal on each request (a
+`{User: "unknown", Tool: "data-entry"}` sentinel when no header /
+environment override is configured), so there is no "anonymous"
+branch in production. A principal with all verbs denied receives
+`_actions: {}` — same shape, all values false. A principal with
+every verb granted receives `_actions` with all values true.
+
+### The cardinal rule
+
+**`_actions` is a UI hint, not authorization.** The server
+re-authorizes every write. A client that forges
+`_actions: {delete: true}` and issues DELETE still gets the same
+`403 *acl.ForbiddenError` the policy would have produced. This is
+asserted as an integration test:
+`internal/dataentry/affordances_contract_test.go` runs both halves
+of the contract (true → 2xx, false → 403) across `NopACL`,
+`ReadOnlyACL`, and `Declarative` policies. The single source of
+truth for the verb→`acl.WriteRequest` translation is the
+`translateVerb` function in `internal/dataentry/affordances.go`; a
+grep test forbids direct `acl.WriteRequest{Op:` construction
+anywhere else in the package.
+
+### Additive evolution
+
+New verbs are added by appending entries to `translateVerb` (and the
+corresponding `acl.Op` constants in `internal/acl/`). Older SPAs
+silently ignore unknown verb keys. Removing or renaming a verb is a
+breaking change requiring a major API version bump.
+
+### Scope of the invariant
+
+The wire-vs-policy guarantee covers HTTP write endpoints reached by
+the SPA. MCP write tools, Lua write paths, and scheduler-driven
+writes go through the same `entitymanager.Manager` (so they are
+re-authorized) but do not consult or emit `_actions`. A Lua
+automation can therefore perform a write whose corresponding
+`_actions[verb]` would have been `false` for the SPA principal —
+that's expected and documents the scope.
+
 ## Out of scope
 
 - **Symmetric / inverse propagation of per-edge meta.** The current write

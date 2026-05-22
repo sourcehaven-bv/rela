@@ -5,79 +5,48 @@ title: Hide / disable write affordances when the server is read-only (or when an
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
 
-## Context
+## Superseded
 
-PR 1 of the ACL work ships the wire-level deny path: writes return HTTP 403 with
-a structured body. But the SPA still **shows** create / update / delete buttons
-that the backend will refuse. Demo'd against `rela-server --read-only`:
+**Closed `wont-fix` on 2026-05-20 — superseded by TKT-Y72A (response-level
+action affordances).**
 
-- "+ Create" buttons on list views: present, click → 403 toast.
-- Delete actions in detail views: present, click → 403 toast.
-- Chip-picker "+ add" / inline relation editors: present, drop → 403 toast.
-- Property auto-save in DynamicForm: still attempts the PATCH on every keystroke; UI feels broken because edits never persist.
+The planning exercise for this ticket (see PLAN-B0CI) uncovered an architectural
+smell during crit review: gating write affordances on the frontend with a
+`useACL()` composable + per-component `v-if` commits the SPA to maintaining its
+own authorization evaluator that must track every evolution of the backend ACL
+(binary read-only now → per-type in v1 → per-role in v1.5 → per-entity-state in
+v2 → …). That's the **duplication trap**.
 
-Better UX: hide or disable the affordance up front and render a calm "read-only"
-banner instead of letting users discover the limitation by failure.
+The right architectural seam is **backend-driven response-level action
+affordances** (HATEOAS-flavored): each list / entity / relation / form response
+carries the verbs the principal can apply to that specific resource. The SPA
+renders affordances iff the corresponding action is present in the response.
+Authorization computed once, on the server, per resource.
 
-## Scope
+Read-only mode then **falls out for free**: when ACL is `ReadOnlyACL`, no
+`_actions` are emitted on any resource → SPA hides everything → effectively the
+same UX this ticket was trying to engineer, but data-driven instead of
+flag-driven.
 
-Two pieces:
+## What survives
 
-### Backend: expose ACL mode in `/api/v1/_config`
+The 31-affordance survey in PLAN-B0CI is still valuable — not as a list of
+gating sites, but as the inventory of **response shapes that need `_actions` in
+their wire contract** (list responses, entity detail responses, relation
+responses, form spec responses, settings responses). TKT-Y72A will consume this
+inventory.
 
-Add a small `acl` field to the existing config endpoint:
+## See also
 
-```json
-{
-  "acl": {
-    "mode": "open" | "read-only" | "policy",
-    "writes_allowed_for": ["ticket", "concept", ...]   // optional, populated when mode == "policy"
-  }
-}
-```
+- Replacement: **TKT-Y72A** — "Response-level action affordances: backend declares per-resource verbs to drive UI"
+- Backend gate this depends on: TKT-GN5LN (ACL v0 PR 1)
+- Original design: DEC-RG878 (four-layer ACL model)
 
-For v0:
+## Original content
 
-- `mode: "open"` when the server's ACL is `acl.NopACL{}`.
-- `mode: "read-only"` when the server's ACL is `acl.ReadOnlyACL{}` (i.e., `--read-only`).
-- `mode: "policy"` reserved for the v1 `Declarative` ACL; v0 doesn't emit it.
-
-`writes_allowed_for` is empty / absent for v0 — v1 will populate it from the
-principal's effective roles.
-
-### Frontend: gate affordances
-
-When `acl.mode == "read-only"`:
-
-- Hide or disable every "Create", "Delete", and inline-edit affordance across the SPA.
-- Render a persistent banner: "This rela instance is read-only" with a brief explanation.
-- DynamicForm: disable inputs, skip auto-save PATCHes (or show them as no-ops with the banner explaining why).
-
-When `acl.mode == "open"`: behave exactly as today (no gating, no banner).
-
-## Acceptance criteria
-
-1. `rela-server` (no flag) → SPA shows full editing UI, no banner. Regression-test the no-ACL path.
-2. `rela-server --read-only` → SPA shows banner, all write affordances hidden or disabled, no surprise 403s from the UI itself.
-3. The frontend treats `acl.mode` absence as `"open"` for backwards-compat with older servers.
-4. The `_config` response shape stays additive — existing fields unchanged.
-
-## Out of scope
-
-- Per-entity-type gating (waits for v1 `Declarative` ACL with `writes_allowed_for`).
-- Per-principal customization (v1).
-- MCP transport (separate ticket).
-
-## Discussion
-
-The `mode` enum keeps the wire contract small and extensible. Frontend gating is
-a single check per affordance; no per-route conditional needed.
-
-## References
-
-- TKT-GN5LN (ACL v0 PR 1)
-- DEC-RG878
-- Will be ground truth for the v1 ticket that adds per-type `writes_allowed_for`.
+The original ticket body (before this closure note) lives in `git log` and in
+PLAN-B0CI's revision history. Both remain useful reference material for
+TKT-Y72A's planning.

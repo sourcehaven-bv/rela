@@ -118,7 +118,7 @@ func main() {
 
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
-		svc.EntityManager(), svc.Searcher(),
+		svc.EntityManager(), svc.Searcher(), svc.ACL(),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

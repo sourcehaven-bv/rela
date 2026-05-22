@@ -16,6 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -112,6 +113,7 @@ type App struct {
 	templater     templating.Templater
 	cfgLoader     config.Loader
 	kv            state.KV
+	acl           acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -258,6 +260,7 @@ func NewApp(
 	st store.Store,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
+	aclImpl acl.ACL,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -275,6 +278,9 @@ func NewApp(
 	}
 	if searcher == nil {
 		return nil, errors.New("dataentry.NewApp: searcher is required")
+	}
+	if aclImpl == nil {
+		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
 	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
@@ -362,6 +368,7 @@ func NewApp(
 		templater:     templater,
 		cfgLoader:     cfgLoader,
 		kv:            kv,
+		acl:           aclImpl,
 		broker:        newEventBroker(),
 		scriptEngine:  scriptEngine,
 	}
