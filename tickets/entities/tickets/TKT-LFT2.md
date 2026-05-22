@@ -5,7 +5,7 @@ title: 'Action affordances phase 2: frontend consumption + AWM6L payoff'
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Goal

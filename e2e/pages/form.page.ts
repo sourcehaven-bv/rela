@@ -52,6 +52,16 @@ export class FormPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  /** Assert the form route guard rendered the "not editable" inline
+   *  message (instead of the form). Triggered when the server says
+   *  `_actions.update === false` for the target entity — AC10 of the
+   *  read-only payoff. */
+  async expectNotEditableMessage(timeoutMs = 10_000) {
+    const banner = this.page.locator('.not-editable-state');
+    await expect(banner).toBeVisible({ timeout: timeoutMs });
+    await expect(banner).toContainText(/not editable/i);
+  }
+
   /** Wait for the URL to be the edit form for the given form/entity. Used
    *  when navigation is triggered by another page (e.g. Edit button on the
    *  document view). */

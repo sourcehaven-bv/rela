@@ -27,6 +27,28 @@ export class ListPage extends BasePage {
     await expect(anyRow.or(empty)).toBeVisible();
   }
 
+  /** Wait for at least one row cell to render. Covers both the desktop
+   *  table layout (`td`) and the mobile card layout (`.mobile-card-title`).
+   *  Use when navigating to a list page directly (without
+   *  `navigateToList`, which already waits). */
+  async waitForRowsRendered(timeoutMs = 10_000) {
+    await this.page.locator('td, .mobile-card-title').first().waitFor({ timeout: timeoutMs });
+  }
+
+  /** Assert no `+ New …` link is rendered on the page. Used to verify
+   *  the AC10 read-only payoff: collection `_actions.create=false`
+   *  hides the create affordance. */
+  async expectNoCreateAffordance() {
+    await expect(this.page.getByRole('link', { name: /^\+ New/ })).toHaveCount(0);
+  }
+
+  /** Assert no row-level delete buttons are rendered. Used to verify
+   *  the AC10 read-only payoff: per-entity `_actions.delete=false`
+   *  hides the per-row x. */
+  async expectNoRowDeleteButtons() {
+    await expect(this.page.locator('button.delete-btn')).toHaveCount(0);
+  }
+
   async expectListHeading(title: string) {
     await expect(this.page.locator('h1', { hasText: title })).toBeVisible();
   }

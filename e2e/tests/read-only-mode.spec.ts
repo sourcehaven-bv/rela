@@ -16,7 +16,8 @@
  * it). The spawn logic is a slim copy of the fixture's; if it ever
  * grows, factor a `spawnReadOnlyServer` helper into fixtures.ts.
  */
-import { test as base, expect } from './fixtures';
+import { test as base } from './fixtures';
+import { EntityPage, FormPage, ListPage } from '../pages';
 import { spawn, type ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -93,6 +94,7 @@ const test = base.extend<{ readOnlyServerUrl: string }>({
         // attach() doesn't fire when the fixture itself throws.
         throw new Error(
           `${e instanceof Error ? e.message : String(e)}\n--- server stdout ---\n${stdout}\n--- server stderr ---\n${stderr}`,
+          { cause: e },
         );
       }
       await use(url);
@@ -121,16 +123,13 @@ test.describe('Read-only mode hides entity-CRUD controls (AC10)', () => {
     const page = await context.newPage();
     await page.goto(`${readOnlyServerUrl}/list/features`);
 
-    // Wait for the list to render at least one row.
-    await page.waitForSelector('td, .mobile-card-title', { timeout: 10_000 });
-
-    // "+ New" button is gated on collection `_actions.create`, which
-    // ReadOnlyACL sets to false. The button shouldn't render.
-    await expect(page.getByRole('link', { name: /^\+ New/ })).toHaveCount(0);
-
-    // Row delete buttons are gated on per-entity `_actions.delete`,
-    // which ReadOnlyACL also denies. Neither layout should show any.
-    await expect(page.locator('button.delete-btn')).toHaveCount(0);
+    const listPage = new ListPage(page);
+    await listPage.waitForRowsRendered();
+    // "+ New" gated on collection `_actions.create=false`; row delete
+    // buttons gated on per-entity `_actions.delete=false`. Both denied
+    // under ReadOnlyACL.
+    await listPage.expectNoCreateAffordance();
+    await listPage.expectNoRowDeleteButtons();
 
     await context.close();
   });
@@ -145,13 +144,12 @@ test.describe('Read-only mode hides entity-CRUD controls (AC10)', () => {
     const page = await context.newPage();
     await page.goto(`${readOnlyServerUrl}/entity/feature/FEAT-001`);
 
-    // Wait for the detail header to render.
-    await page.waitForSelector('h1', { timeout: 10_000 });
-
-    // Edit + Delete buttons gated on _actions.{update, delete},
-    // both false under ReadOnlyACL.
-    await expect(page.getByRole('button', { name: /^Edit/ })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /^Delete/ })).toHaveCount(0);
+    const entityPage = new EntityPage(page);
+    await entityPage.waitForHeading();
+    // Edit + Delete gated on _actions.{update, delete}, both false
+    // under ReadOnlyACL.
+    await entityPage.expectNoEditButton();
+    await entityPage.expectNoDeleteButton();
 
     await context.close();
   });
@@ -166,10 +164,10 @@ test.describe('Read-only mode hides entity-CRUD controls (AC10)', () => {
     const page = await context.newPage();
     await page.goto(`${readOnlyServerUrl}/form/feature/FEAT-001`);
 
-    // The Form route guard should detect _actions.update === false
-    // and render an inline message instead of the form.
-    await expect(page.locator('.not-editable-state')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('.not-editable-state')).toContainText(/not editable/i);
+    // Form route guard detects _actions.update === false and renders
+    // an inline message instead of the form.
+    const formPage = new FormPage(page);
+    await formPage.expectNotEditableMessage();
 
     await context.close();
   });
