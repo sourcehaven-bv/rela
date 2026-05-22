@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -786,5 +787,28 @@ func TestAnalyzeValidationsWithChecklistAllowSkipped(t *testing.T) {
 	}
 	if section.Issues[0].EntityID != "CHK-002" {
 		t.Errorf("expected violation on CHK-002, got %s", section.Issues[0].EntityID)
+	}
+}
+
+// TestRunAnalysisSectionNames pins the ordered list of section names that
+// runAnalysis() publishes. These names are load-bearing across the wire:
+// the data-entry SPA (frontend/src/views/AnalyzeView.vue CHECK_TYPES) keys
+// off them to render check-cards, and the e2e suite
+// (e2e/tests/fixtures.ts ANALYSIS_CHECKS) asserts the same ordered list.
+// Renaming a section here without updating both consumers silently
+// regresses the GH#785 hidden-card bug.
+func TestRunAnalysisSectionNames(t *testing.T) {
+	app := newTestApp(newFixture(), &metamodel.Metamodel{})
+	result := app.runAnalysis()
+	got := make([]string, len(result.Sections))
+	for i, s := range result.Sections {
+		got[i] = s.Name
+	}
+	want := []string{"Properties", "Cardinality", "Validations", "Orphans", "Duplicates", "ID Gaps"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("runAnalysis section names changed: got %v, want %v.\n"+
+			"If this is intentional, update frontend/src/views/AnalyzeView.vue\n"+
+			"CHECK_TYPES and e2e/tests/fixtures.ts ANALYSIS_CHECKS in lockstep.",
+			got, want)
 	}
 }

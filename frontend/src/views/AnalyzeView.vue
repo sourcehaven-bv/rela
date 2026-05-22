@@ -13,7 +13,15 @@ const schemaStore = useSchemaStore()
 const scriptErrorStore = useScriptErrorStore()
 const backTarget = useBackTarget()
 
-// Check type definitions with descriptions (matching v1)
+// Check type definitions with descriptions. Three-way contract:
+//   1. `runAnalysis()` in internal/dataentry/analyze.go produces sections
+//      with these names, in this order.
+//   2. The keys below match those `section.Name` values exactly
+//      (`byCheck` is keyed by them).
+//   3. `e2e/tests/fixtures.ts` ANALYSIS_CHECKS asserts the same ordered
+//      list against the rendered cards.
+// `TestRunAnalysisSectionNames` in analyze_test.go pins the Go side so a
+// rename can't silently regress GH#785 (hidden cards inflating the badge).
 const CHECK_TYPES = [
   {
     key: 'Properties',
@@ -34,6 +42,16 @@ const CHECK_TYPES = [
     key: 'Orphans',
     label: 'Orphans',
     description: 'Entities with no incoming or outgoing relations',
+  },
+  {
+    key: 'Duplicates',
+    label: 'Duplicates',
+    description: 'Entities with identical titles',
+  },
+  {
+    key: 'ID Gaps',
+    label: 'ID Gaps',
+    description: 'Missing numbers in auto-generated ID sequences',
   },
 ]
 
