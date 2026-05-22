@@ -13,7 +13,15 @@ const schemaStore = useSchemaStore()
 const scriptErrorStore = useScriptErrorStore()
 const backTarget = useBackTarget()
 
-// Check type definitions with descriptions (matching v1)
+// Check type definitions with descriptions. Three-way contract:
+//   1. `runAnalysis()` in internal/dataentry/analyze.go produces sections
+//      with these names, in this order.
+//   2. The keys below match those `section.Name` values exactly
+//      (`byCheck` is keyed by them).
+//   3. `e2e/tests/fixtures.ts` ANALYSIS_CHECKS asserts the same ordered
+//      list against the rendered cards.
+// `TestRunAnalysisSectionNames` in analyze_test.go pins the Go side so a
+// rename can't silently regress GH#785 (hidden cards inflating the badge).
 const CHECK_TYPES = [
   {
     key: 'Properties',
@@ -34,6 +42,16 @@ const CHECK_TYPES = [
     key: 'Orphans',
     label: 'Orphans',
     description: 'Entities with no incoming or outgoing relations',
+  },
+  {
+    key: 'Duplicates',
+    label: 'Duplicates',
+    description: 'Entities with identical titles',
+  },
+  {
+    key: 'ID Gaps',
+    label: 'ID Gaps',
+    description: 'Missing numbers in auto-generated ID sequences',
   },
 ]
 
@@ -444,18 +462,19 @@ onMounted(() => {
   border-bottom: none;
 }
 
-.entity-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+/* `display: flex` on the <td> collapses the cell box so its border
+ * doesn't span the row height (visible discontinuity between rows).
+ * Keep the td as a normal table-cell and stack the two spans with
+ * block display + margin instead. */
 .entity-title {
+  display: block;
   color: var(--accent-color, #6366f1);
   font-weight: 500;
 }
 
 .entity-id {
+  display: block;
+  margin-top: 2px;
   font-family: monospace;
   font-size: 12px;
   color: var(--muted-text);

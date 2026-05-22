@@ -39,11 +39,14 @@ export const PRIORITY = {
   high: 'high',
 } as const;
 
-/** The metamodel analysis check types the backend emits and the SPA renders
- *  as check-cards at /analyze. Mirrors CHECK_TYPES in
- *  frontend/src/views/AnalyzeView.vue; if that list grows the spec will fail
- *  and the list here should be updated in lockstep. */
-export const ANALYSIS_CHECKS = ['Properties', 'Cardinality', 'Validations', 'Orphans'] as const;
+/** The metamodel analysis check types the backend emits (via runAnalysis()
+ *  in internal/dataentry/analyze.go) and the SPA renders as check-cards at
+ *  /analyze. Order matters: Playwright's `toContainText([...])` matches
+ *  array entries in sequence, and `expectCheckCardCount` asserts the count.
+ *  Keep in lockstep with runAnalysis() and with CHECK_TYPES in
+ *  frontend/src/views/AnalyzeView.vue. The Go-side test
+ *  TestRunAnalysisSectionNames pins the wire contract. */
+export const ANALYSIS_CHECKS = ['Properties', 'Cardinality', 'Validations', 'Orphans', 'Duplicates', 'ID Gaps'] as const;
 
 /** Seed entity IDs present in every fresh test project. Assumes the inline
  *  seed data below, in insertion order. Import from specs instead of

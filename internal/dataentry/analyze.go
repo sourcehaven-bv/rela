@@ -188,13 +188,18 @@ func (a *App) analyzeGaps() AnalysisSection {
 		Description: "Missing numbers in auto-generated ID sequences",
 	}
 
-	// Build set of manual ID prefixes to skip
+	// Build prefix → entity type lookup and the manual-prefix skip set
+	// in a single pass over the metamodel.
 	manualPrefixes := make(map[string]bool)
-	for _, entityDef := range s.Meta.Entities {
-		if entityDef.IsManualID() {
-			for _, idPrefix := range entityDef.GetIDPrefixes() {
-				manualPrefixes[strings.TrimSuffix(idPrefix, "-")] = true
+	typeByPrefix := make(map[string]string)
+	for typeName, entityDef := range s.Meta.Entities {
+		for _, idPrefix := range entityDef.GetIDPrefixes() {
+			trimmed := strings.TrimSuffix(idPrefix, "-")
+			if entityDef.IsManualID() {
+				manualPrefixes[trimmed] = true
+				continue
 			}
+			typeByPrefix[trimmed] = typeName
 		}
 	}
 
@@ -233,11 +238,17 @@ func (a *App) analyzeGaps() AnalysisSection {
 			}
 		}
 
+		// EntityType is populated from the prefix → type map so the
+		// data-entry UI's type column renders the type badge. The row
+		// stays inert (EntityID is empty), so isClickable in the SPA
+		// remains false; the type is informational only.
+		entityType := typeByPrefix[strings.TrimSuffix(prefix, "-")]
 		for _, n := range gaps {
 			missingID := fmt.Sprintf("%s%03d", prefix, n)
 			section.Issues = append(section.Issues, AnalysisIssue{
-				Message:  "Missing ID: " + missingID,
-				Severity: "warning",
+				EntityType: entityType,
+				Message:    "Missing ID: " + missingID,
+				Severity:   "warning",
 			})
 		}
 	}

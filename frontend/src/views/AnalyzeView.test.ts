@@ -158,4 +158,117 @@ describe('AnalyzeView click discrimination', () => {
     // The em-dash character should be present.
     expect(row.text()).toContain('—')
   })
+
+})
+
+// GH#785: every warning counted in the summary badge must be visible on
+// the page. Before the fix, the Duplicates and ID Gaps sections were
+// summed into the badge but never rendered, producing a count > visible
+// rows. These tests pin the rendering of those new cards.
+describe('AnalyzeView section rendering (GH#785)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    routerPush.mockReset()
+    analyzeMock.mockReset()
+    const schema = useSchemaStore()
+    schema.entityTypes.set('note', { label: 'Note' } as never)
+  })
+
+  async function mountWith(issues: AnalyzeIssue[]) {
+    analyzeMock.mockResolvedValue(makeResult(issues))
+    const wrapper = mount(AnalyzeView, { attachTo: document.body })
+    await flushPromises()
+    return wrapper
+  }
+
+  // Match by .check-title's leading text rather than substring-includes
+  // on the whole card; the latter is brittle against future card-copy
+  // changes ("Orphans card mentions 'duplicated entities'" would
+  // collide with a substring of 'Duplicates').
+  function findCard(wrapper: ReturnType<typeof mount>, label: string) {
+    return wrapper
+      .findAll('.check-card')
+      .find((c) => c.find('.check-title').text().trim().startsWith(label))
+  }
+
+  it('renders a Duplicates card with clickable rows showing duplicate messages', async () => {
+    const duplicateMessage = 'Duplicate title (shared by note-1, note-2)'
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'note-1',
+        entityType: 'note',
+        message: duplicateMessage,
+        severity: 'warning',
+        checkType: 'Duplicates',
+      }),
+      makeIssue({
+        entityId: 'note-2',
+        entityType: 'note',
+        message: duplicateMessage,
+        severity: 'warning',
+        checkType: 'Duplicates',
+      }),
+    ])
+
+    const duplicates = findCard(wrapper, 'Duplicates')
+    expect(duplicates).toBeTruthy()
+    expect(duplicates!.find('.check-count').text()).toBe('2')
+
+    const rows = duplicates!.findAll('.issue-row')
+    expect(rows).toHaveLength(2)
+    // Rows carry the duplicate message — pins the message-cell rendering,
+    // not just the row count.
+    expect(rows[0].text()).toContain(duplicateMessage)
+    // Duplicates rows have real entities, so they must be clickable.
+    expect(rows[0].classes()).toContain('clickable')
+  })
+
+  it('renders an ID Gaps card with inert rows for each missing ID', async () => {
+    const gapMessage = 'Missing ID: TKT-005'
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: '',
+        entityType: '',
+        message: gapMessage,
+        severity: 'warning',
+        checkType: 'ID Gaps',
+      }),
+    ])
+
+    const gaps = findCard(wrapper, 'ID Gaps')
+    expect(gaps).toBeTruthy()
+    expect(gaps!.find('.check-count').text()).toBe('1')
+
+    const rows = gaps!.findAll('.issue-row')
+    expect(rows).toHaveLength(1)
+    // Gap rows have no entity, so they must not be clickable.
+    expect(rows[0].classes()).not.toContain('clickable')
+    expect(rows[0].text()).toContain(gapMessage)
+  })
+
+  it('summary badge total equals sum of visible card counts', async () => {
+    const issues = [
+      makeIssue({ entityId: 'n-1', entityType: 'note', severity: 'error', checkType: 'Properties' }),
+      makeIssue({ entityId: 'n-2', entityType: 'note', severity: 'error', checkType: 'Cardinality' }),
+      makeIssue({ entityId: 'n-3', entityType: 'note', severity: 'warning', checkType: 'Validations' }),
+      makeIssue({ entityId: 'n-4', entityType: 'note', severity: 'warning', checkType: 'Orphans' }),
+      makeIssue({ entityId: 'n-5', entityType: 'note', severity: 'warning', checkType: 'Duplicates' }),
+      makeIssue({ entityId: '', entityType: '', severity: 'warning', checkType: 'ID Gaps' }),
+    ]
+    const wrapper = await mountWith(issues)
+
+    // The invariant from GH#785: badge total == sum of per-card counts.
+    // Derive both sides from the rendered DOM so the test fails the same
+    // way the user-visible bug fails.
+    const badgeErrors = Number(wrapper.find('.badge.error').text().trim().split(/\s+/)[0])
+    const badgeWarnings = Number(wrapper.find('.badge.warning').text().trim().split(/\s+/)[0])
+    const cardSum = wrapper
+      .findAll('.check-card .check-count')
+      .map((el) => Number(el.text()))
+      .reduce((a, b) => a + b, 0)
+
+    expect(badgeErrors + badgeWarnings).toBe(cardSum)
+    // Sanity: must equal the seeded count (one issue per check type).
+    expect(cardSum).toBe(issues.length)
+  })
 })
