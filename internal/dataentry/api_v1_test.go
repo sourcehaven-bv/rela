@@ -2989,7 +2989,10 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 
 	body := `{
 		"properties": {"title":"New","status":"open"},
-		"relations": {"implements": ["FEAT-001","FEAT-002"]}
+		"relations": {"implements": {"data": [
+			{"type":"feature","id":"FEAT-001"},
+			{"type":"feature","id":"FEAT-002"}
+		]}}
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -3055,40 +3058,40 @@ func TestV1UpdateEntity_SavesRelations(t *testing.T) {
 	}
 
 	// Add an edge via PATCH.
-	patch(t, `{"relations":{"implements":["FEAT-001"]}}`)
+	patch(t, `{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`)
 	if got := implementsTargets(app, "TKT-001"); !got["FEAT-001"] || len(got) != 1 {
 		t.Fatalf("after add: outgoing implements edges = %v, want only FEAT-001", got)
 	}
 
 	// Adding a second target leaves the first in place.
-	patch(t, `{"relations":{"implements":["FEAT-001","FEAT-002"]}}`)
+	patch(t, `{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"},{"type":"feature","id":"FEAT-002"}]}}}`)
 	got := implementsTargets(app, "TKT-001")
 	if !got["FEAT-001"] || !got["FEAT-002"] || len(got) != 2 {
 		t.Fatalf("after second add: outgoing implements edges = %v, want FEAT-001+FEAT-002", got)
 	}
 
 	// Shrinking the list removes the dropped target.
-	patch(t, `{"relations":{"implements":["FEAT-001"]}}`)
+	patch(t, `{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`)
 	got = implementsTargets(app, "TKT-001")
 	if !got["FEAT-001"] || got["FEAT-002"] || len(got) != 1 {
 		t.Fatalf("after remove: outgoing implements edges = %v, want only FEAT-001", got)
 	}
 
 	// An empty list for a relation type removes all of its edges.
-	patch(t, `{"relations":{"implements":[]}}`)
+	patch(t, `{"relations":{"implements":{"data":[]}}}`)
 	if got := implementsTargets(app, "TKT-001"); len(got) != 0 {
 		t.Fatalf("after empty list: outgoing implements edges = %v, want none", got)
 	}
 
 	// A PATCH that omits the relations key must leave existing edges alone.
-	patch(t, `{"relations":{"implements":["FEAT-002"]}}`)
+	patch(t, `{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`)
 	patch(t, `{"properties":{"title":"Renamed"}}`)
 	if got := implementsTargets(app, "TKT-001"); !got["FEAT-002"] || len(got) != 1 {
 		t.Fatalf("after properties-only PATCH: edges = %v, want FEAT-002 preserved", got)
 	}
 
 	// Duplicate ids in the caller-supplied list collapse to the same edge.
-	patch(t, `{"relations":{"implements":["FEAT-001","FEAT-001"]}}`)
+	patch(t, `{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"},{"type":"feature","id":"FEAT-001"}]}}}`)
 	if got := implementsTargets(app, "TKT-001"); !got["FEAT-001"] || len(got) != 1 {
 		t.Fatalf("after duplicate-id list: edges = %v, want single FEAT-001", got)
 	}
@@ -3112,7 +3115,7 @@ func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
 
 	// PATCH implements only — blocks must be untouched.
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
-		strings.NewReader(`{"relations":{"implements":["FEAT-002"]}}`))
+		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
@@ -3149,7 +3152,7 @@ func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
-		strings.NewReader(`{"relations":{"implements":["FEAT-001"],"blocks":["TKT-002"]}}`))
+		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]},"blocks":{"data":[{"type":"ticket","id":"TKT-002"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
@@ -3176,7 +3179,7 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
-		strings.NewReader(`{"relations":{"bogus":["FEAT-001"]}}`))
+		strings.NewReader(`{"relations":{"bogus":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -3190,8 +3193,11 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	}
 }
 
-// TestV1UpdateEntity_Relations_UnknownTarget asserts that a missing target
-// id surfaces cleanly with the id in the detail and no writes happen.
+// TestV1UpdateEntity_Relations_UnknownTarget asserts that a missing
+// target id surfaces as a warning (DEC-HWZHA: soft condition, 200 with
+// structured warning) rather than a hard rejection. The edge is
+// written referencing a missing peer; analyze_orphans surfaces it on
+// the next run.
 func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
@@ -3200,23 +3206,22 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
-		strings.NewReader(`{"relations":{"implements":["FEAT-999"]}}`))
+		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-999"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (soft condition), got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "target_not_found") || !strings.Contains(rec.Body.String(), "FEAT-999") {
-		t.Fatalf("detail missing structured reason/target, got: %s", rec.Body.String())
-	}
-	if len(app.outgoingRelations("TKT-001")) != 0 {
-		t.Fatalf("no edges should have been written on a rejected target")
+		t.Fatalf("response missing warning code/target, got: %s", rec.Body.String())
 	}
 }
 
 // TestV1UpdateEntity_Relations_SourceTypeMismatch asserts that using a
-// relation whose `from` list doesn't include the source type is rejected
-// by the up-front validation rather than swallowed as a Go error string.
+// relation whose `from` list doesn't include the source type surfaces
+// as a warning (DEC-HWZHA: soft condition, 200 with structured warning).
+// The edge is written so analyze_* can surface the inconsistency on the
+// next run; the storage layer is intentionally permissive.
 func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
@@ -3228,14 +3233,14 @@ func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]interface{}{"title": "F2"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-001",
-		strings.NewReader(`{"relations":{"implements":["FEAT-002"]}}`))
+		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-001")
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (soft condition), got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "source_type_not_allowed") {
-		t.Fatalf("detail missing source_type_not_allowed reason, got: %s", rec.Body.String())
+		t.Fatalf("response missing source_type_not_allowed warning, got: %s", rec.Body.String())
 	}
 }
 
@@ -3257,7 +3262,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	etagBefore := app.computeEntityETag(entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
-		strings.NewReader(`{"relations":{"implements":["FEAT-001"]}}`))
+		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {

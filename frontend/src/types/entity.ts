@@ -62,7 +62,9 @@ export interface CreateEntity {
   prefix?: string
   properties: Record<string, unknown>
   content?: string
-  relations?: Record<string, string[]>
+  // Modern JSON:API §9 wrapper shape only. The legacy IDs-only form
+  // (`Record<string, string[]>`) is no longer accepted on the wire.
+  relations?: ModernRelationsField
 }
 
 export interface RelationEntry {

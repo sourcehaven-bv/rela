@@ -146,7 +146,7 @@ test.describe('Edit Form - Default Relation Picker Save (BUG-UNEBR regression)',
 
     const task = await api.createEntity('tasks', {
       properties: { title: `Picker Task ${suffix}`, status: 'draft', assignee: 'tester' },
-      relations: { implements: [featA.id] },
+      relations: { implements: { data: [{ type: 'feature', id: featA.id }] } },
     });
     taskId = task.id;
   });
