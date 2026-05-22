@@ -270,11 +270,16 @@ gaps independently.
 - ✅ HTTP 403 with structured `{error, rule_kind, rule_id, reason}` body.
 - ✅ Audit log records every deny as `denied-write` (see
   [audit-log](./audit-log.md)).
-- ✅ Data-entry SPA hides write controls based on the per-resource
-  `_actions` verdict map — read-only mode produces a button-less UI
-  driven by the ACL, no frontend flag. See the [API reference
-  action-affordances section](./data-entry/api-reference.md#action-affordances-_actions)
-  for the wire shape and contract.
+- ✅ Data-entry SPA hides entity-CRUD write controls based on the
+  per-resource `_actions` verdict map — read-only mode produces a
+  UI with no "+ New", delete, or Edit buttons for entities,
+  driven by the ACL with no frontend flag. Deferred phase-2 sites
+  (Lua command buttons, settings / theme / git writes, relation
+  add/remove inside form widgets) remain visible and 403 at the
+  server on click; later phases gate them as new verbs land. See
+  the [API reference action-affordances
+  section](./data-entry/api-reference.md#how-the-spa-consumes-_actions)
+  for the consumer contract.
 - ❌ Read filtering, property redaction — deferred to v1.
 - ❌ Group expansion (`member-of` transitive) — deferred to v1.
 - ❌ MCP transport intersection (filtering the tool list per principal) — deferred to a follow-up.

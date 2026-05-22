@@ -32,6 +32,11 @@ status: pending
 ## Quality
 
 - [ ] Code follows project patterns (check similar code)
+- [ ] Checked for DRY opportunities — repeated literals, expressions, or
+      patterns extracted to a helper / constant / type where it
+      sharpens the contract (don't extract for its own sake; CLAUDE.md
+      "three similar lines is better than a premature abstraction"
+      still holds)
 - [ ] No security issues introduced
 - [ ] No silent failures (errors logged AND returned)
 - [ ] No debug code left behind

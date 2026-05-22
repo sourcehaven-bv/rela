@@ -10,6 +10,7 @@ import type {
   ModernRelationsField,
 } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
+import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
 function getPlural(type: string): string {
   const schema = useSchemaStore()
@@ -21,7 +22,10 @@ export async function listEntities(
   type: string,
   params?: ListParams
 ): Promise<ListResponse<Entity>> {
-  return api.get<ListResponse<Entity>>(`/${getPlural(type)}`, params as Record<string, unknown>)
+  const path = `/${getPlural(type)}`
+  const res = await api.get<ListResponse<Entity>>(path, params as Record<string, unknown>)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 export async function getEntity(
@@ -29,11 +33,17 @@ export async function getEntity(
   id: string,
   params?: { include?: string; fields?: string }
 ): Promise<Entity> {
-  return api.get<Entity>(`/${getPlural(type)}/${id}`, params)
+  const path = `/${getPlural(type)}/${id}`
+  const res = await api.get<Entity>(path, params)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 export async function createEntity(type: string, entity: CreateEntity): Promise<Entity> {
-  return api.post<Entity>(`/${getPlural(type)}`, entity)
+  const path = `/${getPlural(type)}`
+  const res = await api.post<Entity>(path, entity)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 // EntityPatch is the union of legacy IDs-only and modern JSON:API §9
@@ -56,7 +66,10 @@ export async function updateEntity(
   etag?: string,
   signal?: AbortSignal,
 ): Promise<Entity> {
-  return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag, signal)
+  const path = `/${getPlural(type)}/${id}`
+  const res = await api.patch<Entity>(path, patch, etag, signal)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 export async function deleteEntity(type: string, id: string): Promise<void> {

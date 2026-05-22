@@ -10,6 +10,7 @@ import type { ViewResponse, ViewSectionField } from '@/api'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { computeActionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
 import { isAnyModalOpen } from '@/composables/modalStack'
 import {
@@ -80,6 +81,11 @@ const inaccessibleByName = computed<Map<string, string>>(() => {
 })
 
 const isInaccessible = computed(() => (entry.value?.inaccessible?.length ?? 0) > 0)
+
+// Affordance gates: `_actions` map from the server. `false` → hide;
+// anything else → render. See frontend/src/utils/affordancesWarning.ts.
+const canUpdate = computeActionAllowed(entry, 'update')
+const canDelete = computeActionAllowed(entry, 'delete')
 
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
@@ -161,10 +167,18 @@ function handleKeydown(e: KeyboardEvent) {
 
   if (e.key === 'e' || e.key === 'E') {
     e.preventDefault()
+    if (!canUpdate.value) {
+      uiStore.warning('Edit not permitted for this entity')
+      return
+    }
     editEntity()
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && entry.value) {
     e.preventDefault()
+    if (!canDelete.value) {
+      uiStore.warning('Delete not permitted for this entity')
+      return
+    }
     void requestDelete()
   }
   if (e.key === 'p' && scopeNav.value?.prevId) {
@@ -377,13 +391,13 @@ watch(
             {{ cmd.label }}
           </button>
           <button
-            v-if="editFormId && !isInaccessible"
+            v-if="editFormId && !isInaccessible && canUpdate"
             class="btn btn-secondary"
             @click="editEntity"
           >
             Edit <kbd>E</kbd>
           </button>
-          <button class="btn btn-danger" @click="requestDelete">
+          <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
         </div>
@@ -391,13 +405,13 @@ watch(
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div class="header-actions mobile-actions">
           <button
-            v-if="editFormId && !isInaccessible"
+            v-if="editFormId && !isInaccessible && canUpdate"
             class="btn btn-secondary"
             @click="editEntity"
           >
             Edit
           </button>
-          <button class="btn btn-danger mobile-delete-btn" aria-label="Delete" @click="requestDelete">
+          <button v-if="canDelete" class="btn btn-danger mobile-delete-btn" aria-label="Delete" @click="requestDelete">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>

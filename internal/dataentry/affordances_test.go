@@ -6,6 +6,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // TestTranslateVerb_Roundtrip pins the phase-1 verb vocabulary against
@@ -88,6 +89,48 @@ func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 	got := app.computeCollectionActions(t.Context(), "ticket")
 	if got["create"] {
 		t.Errorf("_actions.create = true under ReadOnlyACL, want false")
+	}
+}
+
+// TestComputeActions_MixedTypeDeclarative is AC12 (TKT-LFT2). A
+// Declarative policy grants write on `ticket` but not on `feature`;
+// `computeActions` should return all-true for the ticket and
+// all-false for the feature, demonstrating cross-type variance.
+// (Per-row within-type variance is gated on TKT-XZEY since ACL v0's
+// WriteRequest carries no entity ID.)
+func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
+	app := newTestAppV1(t)
+	app.acl = acl.NewDeclarative(&acl.Policy{
+		UserEntityType: "person",
+		Roles: map[string]acl.RoleDef{
+			"ticket-writer": {Write: []string{"ticket"}},
+		},
+		Assignments: map[string]string{
+			"test-user": "ticket-writer",
+		},
+	})
+
+	// Declarative looks up the principal by Principal.User against
+	// Assignments. Stamp a matching User on ctx.
+	ctx := principal.With(t.Context(), principal.Principal{
+		User: "test-user",
+		Tool: principal.ToolDataEntry,
+	})
+
+	ticket := &entity.Entity{ID: "TKT-001", Type: "ticket"}
+	got := app.computeActions(ctx, ticket)
+	for _, v := range []string{"update", "delete", "rename"} {
+		if !got[v] {
+			t.Errorf("ticket _actions[%q] = false under ticket-writer role, want true", v)
+		}
+	}
+
+	feature := &entity.Entity{ID: "FEAT-001", Type: "feature"}
+	got = app.computeActions(ctx, feature)
+	for _, v := range []string{"update", "delete", "rename"} {
+		if got[v] {
+			t.Errorf("feature _actions[%q] = true under ticket-writer role, want false", v)
+		}
 	}
 }
 

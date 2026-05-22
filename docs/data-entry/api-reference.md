@@ -308,6 +308,37 @@ branch in production. A principal with all verbs denied receives
 `_actions: {}` — same shape, all values false. A principal with
 every verb granted receives `_actions` with all values true.
 
+### How the SPA consumes `_actions`
+
+Phase 2 (TKT-LFT2) ships the SPA consumers. Each write affordance
+(delete button, edit button, "+ New" button, drag-drop, Del-key
+handler) consults `entity._actions[verb]` and renders only when the
+verdict is anything other than explicit `false`. Concretely:
+
+- `entity._actions?.delete !== false` → render the delete button.
+- `entity._actions?.update !== false` → render the edit button and
+  enable drag-drop in Kanban.
+- `listResponse._actions?.create !== false` → render the "+ New"
+  button on list / Kanban pages.
+- Absent `_actions` (non-data-entry callers, pre-rollout servers) →
+  defensive render; the server still 403s on the actual write.
+- Direct-URL navigation to `/form/:id/:entityId` when the loaded
+  entity's `_actions.update === false` → renders a "This entity is
+  not editable" message in place of the form.
+
+In **read-only mode** (`rela-server --read-only`), entity-CRUD
+controls are absent across the SPA — no "+ New", no delete buttons,
+no Edit buttons, drag-drop disabled. Deferred phase-2 sites (Lua
+command buttons, settings / theme / git writes, relation add/remove
+inside form widgets, inline-edit buttons in related-entity cards)
+remain visible and 403 at the server on click; future phases gate
+them as new verbs land in the ACL primitive (see TKT-XZEY).
+
+A development-mode console warning fires once per request path when
+a whitelisted API response (`listEntities`, `getEntity`,
+`createEntity`, `updateEntity`) omits `_actions`. Production builds
+suppress it.
+
 ### The cardinal rule
 
 **`_actions` is a UI hint, not authorization.** The server

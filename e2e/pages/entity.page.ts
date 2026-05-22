@@ -77,6 +77,26 @@ export class EntityPage extends BasePage {
     await this.page.waitForURL(/\/form\//);
   }
 
+  /** Wait for the page heading to render. Use after navigating to a
+   *  detail URL directly without going through navigateToEntity. */
+  async waitForHeading(timeoutMs = 10_000) {
+    await this.heading.waitFor({ timeout: timeoutMs });
+  }
+
+  /** Assert no Edit button is rendered. Used to verify the AC10
+   *  read-only payoff: per-entity `_actions.update=false` hides the
+   *  Edit affordance. */
+  async expectNoEditButton() {
+    await expect(this.page.getByRole('button', { name: /^Edit/ })).toHaveCount(0);
+  }
+
+  /** Assert no Delete button is rendered. Used to verify the AC10
+   *  read-only payoff: per-entity `_actions.delete=false` hides the
+   *  Delete affordance. */
+  async expectNoDeleteButton() {
+    await expect(this.page.getByRole('button', { name: /^Delete/ })).toHaveCount(0);
+  }
+
   async clickRelationLink(targetId: string) {
     // Detail screens render related entities as cards / list items with a
     // data-entity-id attribute on the row root and a clickable header
