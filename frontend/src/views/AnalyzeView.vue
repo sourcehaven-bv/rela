@@ -462,18 +462,19 @@ onMounted(() => {
   border-bottom: none;
 }
 
-.entity-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+/* `display: flex` on the <td> collapses the cell box so its border
+ * doesn't span the row height (visible discontinuity between rows).
+ * Keep the td as a normal table-cell and stack the two spans with
+ * block display + margin instead. */
 .entity-title {
+  display: block;
   color: var(--accent-color, #6366f1);
   font-weight: 500;
 }
 
 .entity-id {
+  display: block;
+  margin-top: 2px;
   font-family: monospace;
   font-size: 12px;
   color: var(--muted-text);
