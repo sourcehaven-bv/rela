@@ -19,9 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
-
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -208,24 +205,27 @@ func main() {
 	}
 }
 
-// newHTTPServer wraps the data-entry handler with cleartext HTTP/2 (h2c)
+// newHTTPServer serves the data-entry handler with cleartext HTTP/2
 // alongside HTTP/1.1. Go's http.Server only negotiates HTTP/2 automatically
-// when serving TLS, so for plaintext we opt in via h2c.NewHandler. This
-// matters because the data-entry SPA holds a permanent EventSource to
+// when serving TLS, so for plaintext we opt in via Protocols.SetUnencryptedHTTP2.
+// This matters because the data-entry SPA holds a permanent EventSource to
 // /api/v1/_events — under HTTP/1.1 that eats one of the browser's per-host
 // connection slots (Firefox default 6), and under concurrent navigation the
 // pool runs dry. HTTP/2 multiplexes many streams over a single connection
-// so the per-host limit becomes irrelevant. The wrapper is transparent to
+// so the per-host limit becomes irrelevant. The opt-in is transparent to
 // HTTP/1.1 clients (curl without --http2) and to all existing middlewares —
 // they still see a normal *http.Request with Host/Origin/etc. populated the
 // same way.
 //
 // coverage-ignore: server construction, exercised via integration tests
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
-	h2s := &http2.Server{}
+	protocols := &http.Protocols{}
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
 	return &http.Server{
 		Addr:              addr,
-		Handler:           h2c.NewHandler(handler, h2s),
+		Handler:           handler,
+		Protocols:         protocols,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// WriteTimeout intentionally 0: SSE and command-exec stream
