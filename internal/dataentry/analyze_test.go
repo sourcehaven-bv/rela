@@ -132,8 +132,19 @@ func TestAnalyzeGaps(t *testing.T) {
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 gap issue, got %d", len(section.Issues))
 	}
-	if section.Issues[0].Message != "Missing ID: T-002" {
-		t.Errorf("expected 'Missing ID: T-002', got %q", section.Issues[0].Message)
+	issue := section.Issues[0]
+	if issue.Message != "Missing ID: T-002" {
+		t.Errorf("expected 'Missing ID: T-002', got %q", issue.Message)
+	}
+	// EntityType is populated from the prefix → type map so the
+	// data-entry SPA can render a type badge on gap rows. EntityID
+	// stays empty (no entity exists at that ID), which keeps the row
+	// non-clickable.
+	if issue.EntityType != "ticket" {
+		t.Errorf("expected EntityType 'ticket', got %q", issue.EntityType)
+	}
+	if issue.EntityID != "" {
+		t.Errorf("expected empty EntityID for gap row, got %q", issue.EntityID)
 	}
 }
 
@@ -153,6 +164,34 @@ func TestAnalyzeGaps_ManualIDsSkipped(t *testing.T) {
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 gap issues for manual ID type, got %d", len(section.Issues))
+	}
+}
+
+// Entity types with multiple ID prefixes (id_prefixes plural) must still
+// resolve each prefix to the same entity type for gap-row attribution.
+func TestAnalyzeGaps_MultiplePrefixes(t *testing.T) {
+	g := newFixture()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"feature": {
+				IDPrefixes: []string{"FEAT-", "F-"},
+				Properties: map[string]metamodel.PropertyDef{},
+			},
+		},
+	}
+
+	g.AddNode(&entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{}})
+	// FEAT-002 missing
+	g.AddNode(&entity.Entity{ID: "FEAT-003", Type: "feature", Properties: map[string]interface{}{}})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeGaps()
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 gap issue, got %d", len(section.Issues))
+	}
+	if section.Issues[0].EntityType != "feature" {
+		t.Errorf("expected EntityType 'feature' (resolved via id_prefixes), got %q", section.Issues[0].EntityType)
 	}
 }
 
