@@ -6,20 +6,26 @@ import (
 	"testing"
 )
 
-func TestV1RelationsField_LegacyShape(t *testing.T) {
-	body := `{"tagged": ["L-001", "L-002"], "belongs-to": ["C-1"]}`
+func TestV1RelationsField_LegacyShape_Rejected(t *testing.T) {
+	// The legacy IDs-only shape (`["<id>", ...]`) is no longer
+	// accepted on the wire. Every relation value must be the JSON:API
+	// §9 wrapper. The first occurrence wins so the error path is
+	// deterministic.
+	body := `{"tagged": ["L-001", "L-002"]}`
 	var f V1RelationsField
-	if err := json.Unmarshal([]byte(body), &f); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	err := json.Unmarshal([]byte(body), &f)
+	if err == nil {
+		t.Fatal("expected error for legacy shape")
 	}
-	if f.Modern != nil {
-		t.Errorf("Modern should be nil, got %v", f.Modern)
+	var werr *wireError
+	if !errors.As(err, &werr) {
+		t.Fatalf("error is not *wireError: %v", err)
 	}
-	if got := f.Legacy["tagged"]; len(got) != 2 || got[0] != "L-001" || got[1] != "L-002" {
-		t.Errorf("Legacy[tagged] = %v, want [L-001 L-002]", got)
+	if werr.Code != "legacy_shape_unsupported" {
+		t.Errorf("code=%s, want legacy_shape_unsupported", werr.Code)
 	}
-	if got := f.Legacy["belongs-to"]; len(got) != 1 || got[0] != "C-1" {
-		t.Errorf("Legacy[belongs-to] = %v, want [C-1]", got)
+	if werr.Path != "/relations/tagged" {
+		t.Errorf("path=%s, want /relations/tagged", werr.Path)
 	}
 }
 
@@ -33,9 +39,6 @@ func TestV1RelationsField_ModernShape(t *testing.T) {
 	var f V1RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
-	}
-	if f.Legacy != nil {
-		t.Errorf("Legacy should be nil, got %v", f.Legacy)
 	}
 	upd, ok := f.Modern["tagged"]
 	if !ok {
@@ -55,40 +58,6 @@ func TestV1RelationsField_ModernShape(t *testing.T) {
 	}
 	if len(upd.Data[0].MetaUnset) != 1 || upd.Data[0].MetaUnset[0] != "added_by" {
 		t.Errorf("Data[0].MetaUnset = %v", upd.Data[0].MetaUnset)
-	}
-}
-
-func TestV1RelationsField_MixedShapes_ReturnsShapeMixed(t *testing.T) {
-	// Test both iteration orders by including legacy and modern in
-	// the same body. Run twice to maximize the chance of catching
-	// non-determinism (if the implementation accidentally introduced
-	// any).
-	bodies := []string{
-		`{"tagged": ["L-001"], "belongs-to": {"data": [{"type":"category","id":"C-1"}]}}`,
-		`{"belongs-to": {"data": [{"type":"category","id":"C-1"}]}, "tagged": ["L-001"]}`,
-	}
-	for _, body := range bodies {
-		for i := range 5 { // run multiple iterations to catch flakiness
-			var f V1RelationsField
-			err := json.Unmarshal([]byte(body), &f)
-			if err == nil {
-				t.Errorf("body=%s: expected error", body)
-				continue
-			}
-			var werr *wireError
-			if !errors.As(err, &werr) {
-				t.Errorf("body=%s: error is not *wireError: %v", body, err)
-				continue
-			}
-			if werr.Code != "shape_mixed" {
-				t.Errorf("body=%s iter=%d: code=%s, want shape_mixed", body, i, werr.Code)
-			}
-			// Detail must NOT name a relation type — it would be
-			// non-deterministic across map iterations.
-			if werr.Path != "" {
-				t.Errorf("body=%s iter=%d: path=%q, want empty (Go map iteration is randomized)", body, i, werr.Path)
-			}
-		}
 	}
 }
 
@@ -307,9 +276,9 @@ func TestV1RelationsField_IsEmpty(t *testing.T) {
 	if !f.IsEmpty() {
 		t.Error("zero-value should be empty")
 	}
-	f.Legacy = map[string][]string{"a": {"b"}}
+	f.Modern = map[string]V1RelationsUpdate{"a": {Data: []V1ResourceIdentifier{{Type: "x", ID: "y"}}, DataPresent: true}}
 	if f.IsEmpty() {
-		t.Error("legacy populated should not be empty")
+		t.Error("modern populated should not be empty")
 	}
 }
 

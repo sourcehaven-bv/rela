@@ -36,17 +36,16 @@ export async function createEntity(type: string, entity: CreateEntity): Promise<
   return api.post<Entity>(`/${getPlural(type)}`, entity)
 }
 
-// EntityPatch is the union of legacy IDs-only and modern JSON:API §9
-// relation shapes the unified PATCH endpoint accepts. The body must
-// not mix shapes (`shape_mixed` 400); the SPA's body-assembly helper
-// in DynamicForm ensures all-modern-or-all-legacy.
+// EntityPatch is the body shape for the unified PATCH endpoint.
+// `relations` uses the JSON:API §9 wrapper exclusively; the legacy
+// IDs-only form was removed in chore/drop-legacy-relations-shape.
 //
 // `properties_unset` (TKT-E6094) lets callers express "user cleared
 // this field" distinct from "field was untouched". Autosave uses it
 // to delete keys atomically alongside property upserts.
 export type EntityPatch = Omit<Partial<Entity>, 'relations'> & {
   properties_unset?: string[]
-  relations?: Record<string, string[]> | ModernRelationsField
+  relations?: ModernRelationsField
 }
 
 export async function updateEntity(

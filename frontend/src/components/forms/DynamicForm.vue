@@ -362,13 +362,11 @@ async function handleSubmit() {
       }
     }
 
-    // Build modern relations from card edits. If any card was touched
-    // (outgoing or incoming), the entire body uses modern shape — the
-    // wire format forbids mixing legacy and modern (`shape_mixed` 400).
-    // Reshape the legacy picker IDs via `pickerTypes`; if any picker
-    // target has no resolved type, fall back to legacy + warn
-    // (TKT-ZEKO4 Q5). Incoming-suffix entries become inverse-named
-    // body keys via the inverseByRelation lookup (TKT-GFQK).
+    // Build the modern relations body. Picker selections (IDs-only
+    // in memory) are reshaped to JSON:API §9 wrappers via pickerTypes;
+    // card edits already carry per-edge meta. Incoming-suffix entries
+    // become inverse-named body keys via the inverseByRelation lookup
+    // (TKT-GFQK).
     const inverseByRelation = new Map<string, string>()
     for (const f of fields.value) {
       if (!f.relation) continue
@@ -376,32 +374,30 @@ async function handleSubmit() {
       if (inverse) inverseByRelation.set(f.relation, inverse)
     }
     const modernRelations = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
-    const hasModernCardEntries = Object.keys(modernRelations).length > 0
-    let relationsPayload: Record<string, string[]> | ModernRelationsField = filteredRelations
-    if (hasModernCardEntries) {
-      const reshaped = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
-      if (reshaped) {
-        relationsPayload = { ...reshaped, ...modernRelations }
-      } else {
-        // Pathological form — surface and stay legacy for THIS save.
-        // Per-edge card meta is lost; user is told to reload to get
-        // fresh edge types from backend Step 0.
-        uiStore.error(
-          'Some related entities have unknown types. Card-only changes are not saved. Reload the form and try again.',
-        )
-        // Drop the outgoing card-edit Map entries so they aren't
-        // mistakenly cleared on success below.
-        for (const key of Array.from(pendingCardChanges.value.keys())) {
-          if (key.endsWith(OUTGOING_SUFFIX)) pendingCardChanges.value.delete(key)
-        }
+    const reshapedPickers = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
+    if (!reshapedPickers) {
+      // Pathological form — no resolved type for some picker target,
+      // so we cannot emit a modern resource identifier. Abort the save
+      // and tell the user to reload (the type comes from backend Step 0
+      // and is normally always present).
+      uiStore.error(
+        'Some related entities have unknown types. Save aborted; reload the form and try again.',
+      )
+      // Drop the outgoing card-edit Map entries so they aren't
+      // mistakenly cleared on success below.
+      for (const key of Array.from(pendingCardChanges.value.keys())) {
+        if (key.endsWith(OUTGOING_SUFFIX)) pendingCardChanges.value.delete(key)
       }
+      saving.value = false
+      return
     }
+    const relationsPayload: ModernRelationsField = { ...reshapedPickers, ...modernRelations }
 
     const payload: {
       id?: string
       prefix?: string
       properties: Record<string, unknown>
-      relations: Record<string, string[]> | ModernRelationsField
+      relations: ModernRelationsField
       content?: string
     } = {
       properties: formData.value,
@@ -419,16 +415,12 @@ async function handleSubmit() {
       surfaceWarnings(updated.warnings)
       uiStore.success('Entity updated successfully')
     } else {
-      // Create path stays legacy: POST handler hard-codes
-      // `map[string][]string`, modern shape is not accepted. Cards
-      // never render in create mode (they require entityId), so
-      // `pendingCardChanges` is empty and relationsPayload is the
-      // legacy `filteredRelations`. The cast is safe by construction.
+      // Create path uses the same modern shape as edit. Cards never
+      // render in create mode (they require entityId), so
+      // pendingCardChanges is empty and relationsPayload is composed
+      // entirely from reshaped picker selections.
       Object.assign(payload, idControls.buildPayloadFields())
-      const entity = await entitiesStore.create(formConfig.value.entity, {
-        ...payload,
-        relations: filteredRelations,
-      })
+      const entity = await entitiesStore.create(formConfig.value.entity, payload)
 
       // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
       // For link_as=to, the relation is already included in relations.value (pre-filled)

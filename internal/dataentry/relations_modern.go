@@ -257,15 +257,24 @@ func (a *App) applyRelationsModern(
 		relDef := meta.Relations[canonical]
 		direction := directionLabel(incoming)
 
+		// Dedup by ID. Duplicate resource identifiers in the body
+		// collapse to a single edge — matches the legacy IDs-only
+		// reconciler's set semantics and is what callers expect when
+		// e.g. a picker re-emits the same selection twice.
 		desiredByID := make(map[string]V1ResourceIdentifier, len(upd.Data))
+		desiredOrder := make([]string, 0, len(upd.Data))
 		for _, ref := range upd.Data {
+			if _, dup := desiredByID[ref.ID]; !dup {
+				desiredOrder = append(desiredOrder, ref.ID)
+			}
 			desiredByID[ref.ID] = ref
 		}
 
 		current := a.currentEdgesByPeer(entityID, canonical, incoming)
 
 		// Adds and upserts.
-		for _, ref := range upd.Data {
+		for _, id := range desiredOrder {
+			ref := desiredByID[id]
 			finalProps, finalContent, contentSet := mergeEdgeMeta(current[ref.ID], ref)
 
 			ws := requiredMetaWarnings(canonical, &relDef, ref, finalProps,

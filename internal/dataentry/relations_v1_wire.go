@@ -10,25 +10,24 @@ import (
 )
 
 // V1RelationsField is the top-level value of the `relations` key in a
-// PATCH /api/v1/{plural}/{id} request body. It accepts EITHER the
-// legacy IDs-only shape (`map[string][]string`) OR the JSON:API §9-shaped
-// object form (`map[string]V1RelationsUpdate`). Mixing the two in a
-// single request body is rejected at unmarshal time with a stable
-// `shape_mixed` error.
+// PATCH /api/v1/{plural}/{id} or POST /api/v1/{plural} request body.
+// Every relation type's value must be the JSON:API §9-shaped wrapper:
+// `{"data": [{type, id, meta?, meta_unset?, content?}, ...]}`.
+//
+// The legacy IDs-only shape (`{"relations": {"<type>": ["<id>", ...]}}`)
+// is rejected at unmarshal time with a stable `legacy_shape_unsupported`
+// error. The SPA emits modern shape exclusively; external clients should
+// follow suit.
 type V1RelationsField struct {
-	// Legacy holds the IDs-only form when every relation type in the
-	// body used `[<id>, <id>, ...]`. Mutually exclusive with Modern.
-	Legacy map[string][]string
-
-	// Modern holds the JSON:API §9-shaped form when every relation type
-	// in the body used `{"data": [...]}`. Mutually exclusive with Legacy.
+	// Modern holds the JSON:API §9-shaped form, the only shape the
+	// wire accepts.
 	Modern map[string]V1RelationsUpdate
 }
 
-// IsEmpty reports whether neither shape was populated (the relations
-// field was absent or `{}` in the request body).
+// IsEmpty reports whether the relations field was absent or `{}` in the
+// request body.
 func (f V1RelationsField) IsEmpty() bool {
-	return len(f.Legacy) == 0 && len(f.Modern) == 0
+	return len(f.Modern) == 0
 }
 
 // V1RelationsUpdate is the JSON:API §9 wrapper for one relation type's
@@ -78,23 +77,18 @@ func (e *wireError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Detail)
 }
 
-// UnmarshalJSON decodes the relations field. It scans every relation
-// type to detect which shape the caller used. If both shapes appear in
-// the same body the call returns a `shape_mixed` error with no key
-// names (Go map iteration is randomized; naming a "second" key would
-// produce non-deterministic error messages).
+// UnmarshalJSON decodes the relations field. Every value must be the
+// JSON:API §9-shaped wrapper `{"data": [...]}`. Array-shaped values
+// (the legacy IDs-only form) are rejected with `legacy_shape_unsupported`
+// so callers see a clear "update your client" error rather than a
+// generic JSON decode failure.
 func (f *V1RelationsField) UnmarshalJSON(b []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
 
-	var (
-		sawLegacy bool
-		sawModern bool
-		legacy    = make(map[string][]string)
-		modern    = make(map[string]V1RelationsUpdate)
-	)
+	modern := make(map[string]V1RelationsUpdate)
 
 	for relType, val := range raw {
 		trimmed := bytes.TrimLeftFunc(val, unicode.IsSpace)
@@ -107,18 +101,13 @@ func (f *V1RelationsField) UnmarshalJSON(b []byte) error {
 		}
 		switch trimmed[0] {
 		case '[':
-			sawLegacy = true
-			var ids []string
-			if err := json.Unmarshal(val, &ids); err != nil {
-				return &wireError{
-					Code:   "legacy_value_invalid",
-					Path:   "/relations/" + jsonPointerEscape(relType),
-					Detail: "legacy IDs-only relation must be an array of strings: " + err.Error(),
-				}
+			return &wireError{
+				Code: "legacy_shape_unsupported",
+				Path: "/relations/" + jsonPointerEscape(relType),
+				Detail: "legacy IDs-only relation shape (`[\"<id>\", ...]`) is no longer accepted; " +
+					"use the JSON:API §9 wrapper `{\"data\": [{\"type\": \"...\", \"id\": \"...\"}, ...]}`",
 			}
-			legacy[relType] = ids
 		case '{':
-			sawModern = true
 			update, err := decodeRelationsUpdate(relType, val)
 			if err != nil {
 				return err
@@ -135,28 +124,18 @@ func (f *V1RelationsField) UnmarshalJSON(b []byte) error {
 			return &wireError{
 				Code:   "relation_value_invalid",
 				Path:   "/relations/" + jsonPointerEscape(relType),
-				Detail: "relation type value must be an array (legacy) or object (JSON:API)",
+				Detail: "relation type value must be the JSON:API §9 wrapper `{\"data\": [...]}`",
 			}
 		default:
 			return &wireError{
 				Code:   "relation_value_invalid",
 				Path:   "/relations/" + jsonPointerEscape(relType),
-				Detail: "relation type value must be an array (legacy) or object (JSON:API)",
+				Detail: "relation type value must be the JSON:API §9 wrapper `{\"data\": [...]}`",
 			}
 		}
 	}
 
-	if sawLegacy && sawModern {
-		return &wireError{
-			Code:   "shape_mixed",
-			Detail: "request mixes legacy and JSON:API relation shapes; use one or the other",
-		}
-	}
-
-	if sawLegacy {
-		f.Legacy = legacy
-	}
-	if sawModern {
+	if len(modern) > 0 {
 		f.Modern = modern
 	}
 	return nil

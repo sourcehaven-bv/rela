@@ -420,10 +420,15 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Prefix     string                 `json:"prefix,omitempty"`
 		Properties map[string]interface{} `json:"properties"`
 		Content    string                 `json:"content,omitempty"`
-		Relations  map[string][]string    `json:"relations,omitempty"`
+		Relations  V1RelationsField       `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var werr *wireError
+		if errors.As(err, &werr) {
+			writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
+			return
+		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
 		return
 	}
@@ -458,15 +463,33 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 	created := createResult.Entity
 
-	if err := a.reconcileOutgoingRelations(r.Context(), created.ID, req.Relations); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+	// Phase A: relation validation (mirrors the PATCH path). Soft
+	// conditions surface as warnings; hard wire/structural failures
+	// return immediately without applying.
+	var relWarnings []Warning
+	if req.Relations.Modern != nil {
+		ws, err := a.validateRelationsModern(r.Context(), created.ID, created.Type, req.Relations.Modern)
+		if err != nil {
+			a.writeRelationsValidationError(w, r, err)
 			return
 		}
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relations", reconcileDetail(err))
-		return
+		relWarnings = ws
+	}
+
+	// Phase B: relation writes.
+	if req.Relations.Modern != nil {
+		ws, err := a.applyRelationsModern(r.Context(), created.ID, req.Relations.Modern)
+		relWarnings = append(relWarnings, ws...)
+		if err != nil {
+			a.writeRelationsApplyError(w, r, err)
+			return
+		}
 	}
 
 	result := a.entityToV1(r.Context(), created, plural, true)
+	if len(relWarnings) > 0 {
+		result.Warnings = append(result.Warnings, relWarnings...)
+	}
 	// DEC-HWZHA: surface entity-level soft validation findings (e.g.
 	// required-field-missing) as warnings on the 201 response.
 	if len(createResult.Warnings) > 0 {
@@ -646,25 +669,13 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	// Phase C: relation writes. Modern reconciler is dispatched when
-	// the modern shape was used; legacy reconciler otherwise. Both
-	// produce warnings on soft conditions and structured errors on
-	// hard failures.
-	switch {
-	case req.Relations.Modern != nil:
+	// Phase C: relation writes. Produces warnings on soft conditions
+	// and structured errors on hard failures.
+	if req.Relations.Modern != nil {
 		ws, err := a.applyRelationsModern(r.Context(), entityID, req.Relations.Modern)
 		warnings = append(warnings, ws...)
 		if err != nil {
 			a.writeRelationsApplyError(w, r, err)
-			return
-		}
-	case req.Relations.Legacy != nil:
-		if err := a.reconcileOutgoingRelations(r.Context(), entityID, req.Relations.Legacy); err != nil {
-			if writeForbiddenIfACLDenied(w, err) {
-				return
-			}
-			writeV1Error(w, r, http.StatusUnprocessableEntity,
-				"relation_failed", "Failed to update relations", reconcileDetail(err))
 			return
 		}
 	}
