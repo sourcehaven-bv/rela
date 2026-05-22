@@ -75,6 +75,9 @@ export interface EntityResponse {
   id: string;
   type: string;
   properties: Record<string, unknown>;
+  /** Server emits outgoing relations as a flat IDs-only map on GET responses
+   *  (the readback shape). The write-side accepts only the JSON:API §9
+   *  wrapper — see ModernRelationsField below. */
   relations?: Record<string, string[]>;
   /** Set when fsstore could not read the file (today: git-crypt
    *  encrypted, no key locally). Each entry names a schema property —
@@ -82,13 +85,21 @@ export interface EntityResponse {
   inaccessible?: Array<{ name: string; reason: string }>;
 }
 
+/** Modern JSON:API §9-style relations body for create/update. The
+ *  server rejects the legacy IDs-only form (`["id-1", "id-2"]`) with a
+ *  400 `legacy_shape_unsupported`. */
+export type ModernRelationsField = Record<
+  string,
+  { data: Array<{ type: string; id: string; meta?: Record<string, unknown> }> }
+>;
+
 export interface PaginatedResponse<T = EntityResponse> {
   data: T[];
   meta: { total: number; page: number; per_page: number; has_more: boolean };
 }
 
 export interface ApiHelpers {
-  createEntity(plural: string, data: { properties: Record<string, unknown>; content?: string; relations?: Record<string, string[]>; id?: string; prefix?: string }): Promise<EntityResponse>;
+  createEntity(plural: string, data: { properties: Record<string, unknown>; content?: string; relations?: ModernRelationsField; id?: string; prefix?: string }): Promise<EntityResponse>;
   getEntity(plural: string, id: string): Promise<EntityResponse>;
   updateEntity(plural: string, id: string, properties: Record<string, unknown>): Promise<EntityResponse>;
   deleteEntity(plural: string, id: string): Promise<void>;
