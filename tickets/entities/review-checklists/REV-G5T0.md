@@ -78,4 +78,4 @@ Skip this section for bugs and internal refactors.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** _to be filled once `gh pr create` returns the URL_
+**PR:** https://github.com/sourcehaven-bv/rela/pull/821
