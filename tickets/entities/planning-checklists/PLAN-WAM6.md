@@ -212,7 +212,7 @@ the placeholder behaviour. No CLI / API / CLAUDE.md changes.
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (Skipped: one-line frontend fix; replaces a placeholder body with `issue.title?.trim() || issue.entityId`. Design review's purpose is to catch architectural mistakes before implementation; no architectural surface here)
+- [x] ~~All critical/significant findings addressed in plan~~ (N/A: design review skipped; code review via cranky-code-reviewer ran in the review phase instead — 0 critical/significant findings)
 
-**Design Review Findings:** *(none yet — pending /design-review)*
+**Design Review Findings:** N/A — design review skipped for this scope (see strikethrough rationale above).
