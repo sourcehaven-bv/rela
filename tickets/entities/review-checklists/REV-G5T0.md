@@ -41,6 +41,25 @@ Minor — fixed in `54b848d4`:
 Minor — deferred with reason in ticket follow-ups (#5, #7, #8, #9):
 all dissolve when the two composition roots unify into one.
 
+Inline `crit` review (round 1) — fixed in `e816a309`:
+
+- `Collaborators` had FS/Paths/Templater/CfgLoader/StateKV as optional;
+  reviewer flagged this as a test-fixture concern leaking into the
+  production contract. All five are now required; `appbuildtest.New`
+  supplies a default in-memory FS+paths when the caller doesn't pass
+  `WithFS`. The dead `if svc.FS() != nil` guard in
+  `cli/cli_wiring.go:277` and the matching `RenameEntityType` panic
+  were deleted.
+
+Inline `crit` review (round 2) — design discussion:
+
+- Reviewer noted the service-layering in `Collaborators` is uneven
+  (`FS` infra vs. `EntityManager` orchestrator). Agreed; rolling
+  into a follow-up PR. Plan: define a read-side facade
+  (Store+Meta+Tracer+Searcher), push `EntityManager` as canonical
+  write surface, narrow `FS`/`Paths`/`StateKV` to per-callsite
+  interfaces. To be aligned with reviewer before any code lands.
+
 ## Acceptance Verification
 
 - [x] Each acceptance criterion tested (reference planning checklist)

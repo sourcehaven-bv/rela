@@ -173,14 +173,6 @@ func (s *cliServices) RunValidationsFiltered(
 }
 
 func (s *cliServices) RenameEntityType(oldType, newType, newPlural string) (int, error) {
-	if s.renametype == nil {
-		// Reached only when a test built cliServices from an
-		// FS-less appbuildtest.New fixture and then drove a
-		// rename. Production wiring always populates renametype
-		// (appbuild.Discover guarantees FS + Paths). Panic loudly
-		// so the test setup gap is unmistakable.
-		panic("cli: renametype service not wired — test fixture must use appbuildtest.WithFS")
-	}
 	return s.renametype.Rename(oldType, newType, newPlural)
 }
 
@@ -268,21 +260,13 @@ func newCLIServicesFromAppbuild(svc *appbuild.Services) (*cliServices, error) {
 	if err != nil {
 		return nil, fmt.Errorf("attachment service: %w", err)
 	}
-	// renametype needs FS + Paths; the FS-less appbuildtest.New
-	// fixture skips both. Skip wiring renametype when either is
-	// absent — handlers panic clearly via the unset-service check
-	// rather than nil-deref when an FS-less fixture is given to a
-	// rename test by accident.
-	var rt *renametype.Service
-	if svc.FS() != nil && svc.Paths() != nil {
-		rt, err = renametype.New(renametype.Deps{
-			FS:    svc.FS(),
-			Meta:  svc.Meta(),
-			Paths: svc.Paths(),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("renametype service: %w", err)
-		}
+	rt, err := renametype.New(renametype.Deps{
+		FS:    svc.FS(),
+		Meta:  svc.Meta(),
+		Paths: svc.Paths(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("renametype service: %w", err)
 	}
 	an, err := analysis.New(analysis.Deps{
 		Store:       svc.Store(),

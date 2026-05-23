@@ -158,46 +158,33 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 // poking at unexported fields. Production callers go through [New] /
 // [Discover] instead.
 //
-// Field requirements: see per-field doc comments. [NewFromCollaborators]
-// validates the required ones; the optional ones are surfaced as nil
-// via the corresponding accessor on [Services], and callers that
-// depend on them must guard themselves.
+// Every field is required. [NewFromCollaborators] validates them. The
+// production wiring builds a Services from a real filesystem, real
+// metamodel, real entity manager, etc.; test fixtures supply
+// in-memory equivalents (see `appbuildtest`). There is no production
+// code path that runs without a complete Services — making any of
+// these optional would force every downstream consumer to nil-check
+// what it depends on.
+//
+// The one nuance: SearchCloser may be nil when the search backend
+// does not own a closable resource (the error-Searcher placeholder
+// has nothing to close).
 type Collaborators struct {
-	// Meta is required.
-	Meta *metamodel.Metamodel
-	// Store is required.
-	Store store.Store
-	// Searcher is required.
-	Searcher search.Searcher
-	// EntityManager is required.
+	FS            storage.FS
+	Paths         *project.Context
+	Meta          *metamodel.Metamodel
+	Store         store.Store
+	Searcher      search.Searcher
 	EntityManager entitymanager.EntityManager
-	// Tracer is required.
-	Tracer tracer.Tracer
-	// Validator is required.
-	Validator validator.Validator
-	// ScriptEngine is required.
-	ScriptEngine *script.Engine
-	// ACL is required.
-	ACL acl.ACL
+	Tracer        tracer.Tracer
+	Validator     validator.Validator
+	Templater     templating.Templater
+	CfgLoader     config.Loader
+	StateKV       state.KV
+	ScriptEngine  *script.Engine
+	ACL           acl.ACL
 
-	// FS is optional. Services.FS() returns nil when unset.
-	// Callers (templating, project-file readers) that need filesystem
-	// access must check before use.
-	FS storage.FS
-	// Paths is optional. Services.Paths() returns nil when unset.
-	// renametype and any code that walks project paths require it.
-	Paths *project.Context
-	// Templater is optional. Services.Templater() returns nil when
-	// unset; entity creation falls back to no-template behavior.
-	Templater templating.Templater
-	// CfgLoader is optional. Services.Config() returns nil when unset;
-	// dataentry config readers must guard.
-	CfgLoader config.Loader
-	// StateKV is optional. Services.State() returns nil when unset;
-	// scheduler-style state callers must guard.
-	StateKV state.KV
-	// SearchCloser is optional. Services.Close() skips the search
-	// teardown when unset.
+	// SearchCloser may be nil — see type doc.
 	SearchCloser io.Closer
 }
 
@@ -206,9 +193,15 @@ type Collaborators struct {
 // individual collaborators (e.g. inject a fake store) without going
 // through the full production wiring of [New].
 //
-// Returns an error when a required field is nil. See [Collaborators]
-// for which fields are required vs. optional.
+// Returns an error when any required field is nil. See [Collaborators]
+// for the contract.
 func NewFromCollaborators(c Collaborators) (*Services, error) {
+	if c.FS == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: FS is required")
+	}
+	if c.Paths == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Paths is required")
+	}
 	if c.Meta == nil {
 		return nil, errors.New("appbuild.NewFromCollaborators: Meta is required")
 	}
@@ -226,6 +219,15 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	}
 	if c.Validator == nil {
 		return nil, errors.New("appbuild.NewFromCollaborators: Validator is required")
+	}
+	if c.Templater == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Templater is required")
+	}
+	if c.CfgLoader == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: CfgLoader is required")
+	}
+	if c.StateKV == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: StateKV is required")
 	}
 	if c.ScriptEngine == nil {
 		return nil, errors.New("appbuild.NewFromCollaborators: ScriptEngine is required")

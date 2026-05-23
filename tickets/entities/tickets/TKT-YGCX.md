@@ -49,3 +49,11 @@ the smell, not the seams themselves).
 - Move triplicated `backfill` helper into `internal/search` after the
 composition roots unify.
 - Implement the `postgres` companion files when SaaS deployment lands.
+- **Service layering in `appbuild.Collaborators`** (raised in crit review,
+  round 2): the bundle mixes infra (`FS`, `Paths`, `Store`, `Searcher`,
+  `StateKV`), domain (`Meta`, `Tracer`, `Validator`, `Templater`,
+  `CfgLoader`, `ACL`), and orchestrator (`EntityManager`) at the same
+  level. Plan: define a read-side facade
+  (`Store`+`Meta`+`Tracer`+`Searcher`), make `EntityManager` the
+  canonical write surface, narrow `FS`/`Paths`/`StateKV` to per-callsite
+  interfaces. Discuss plan with reviewer before any code lands.

@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -68,9 +67,15 @@ func WithStore(s store.Store) Option {
 	return func(c *testConfig) { c.store = s }
 }
 
-// WithFS attaches a filesystem and project paths to the test fixture,
-// enabling paths-aware behavior (Paths(), Config(), templating against
-// project files). Without this, those accessors return zero values.
+// WithFS overrides the default in-memory filesystem and project
+// context with caller-supplied ones. Use this when a test wants to
+// seed project files (metamodel.yaml, templates, data-entry.yaml)
+// or assert on paths the fixture's default location does not match.
+//
+// Without this option, [New] supplies a default in-memory FS rooted
+// at `/project` with a `.rela` cache subdir, so [appbuild.Services]
+// always has a valid FS + Paths (matching production where they are
+// required).
 func WithFS(fs storage.FS, paths *project.Context) Option {
 	return func(c *testConfig) {
 		c.fs = fs
@@ -95,10 +100,10 @@ func WithACL(a acl.ACL) Option {
 }
 
 // New constructs a *appbuild.Services bundle suitable for tests. By
-// default the fixture has no filesystem, an empty memstore, and a real
-// script engine (cheap to construct; only exercised when automations
-// fire, which require WithFS-backed automation config). Use
-// [WithFS] / [WithStore] to customize.
+// default the fixture has an in-memory filesystem rooted at
+// `/project`, an empty memstore, and a real script engine (cheap to
+// construct; only exercised when automations fire). Use [WithFS] /
+// [WithStore] to customize.
 //
 // New takes *Metamodel directly and bypasses the loader, so test
 // metamodels that use pre-migration syntax work without running
@@ -114,6 +119,16 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	if cfg.fs == nil || cfg.paths == nil {
+		cfg.fs, cfg.paths = defaultMemFS()
+	} else if cfg.paths.CacheDir == "" {
+		// Caller-supplied Paths without CacheDir is a common test
+		// oversight; default it to <root>/.rela so the fixture's
+		// state.KV setup still works. Production project.Discover
+		// always sets this. The path doesn't have to exist on the
+		// FS yet — state.NewFSKV creates it lazily on first write.
+		cfg.paths.CacheDir = cfg.paths.Root + "/.rela"
+	}
 
 	searchBackend := newSearchBackend()
 	st := resolveStore(cfg.store, searchBackend)
@@ -123,7 +138,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 
 	autoEngine, cascadeRunner := buildAutomation(meta)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
-	cfgLoader := buildConfigLoader(cfg.fs, cfg.paths)
+	cfgLoader := config.NewFSLoader(cfg.fs, cfg.paths.Root)
 	stateKV := mustBuildStateKV(cfg.fs, cfg.paths)
 	scriptEngine := script.NewEngine()
 	auditSink := cfg.audit
@@ -270,20 +285,9 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	return autoEngine, r
 }
 
-func buildConfigLoader(fs storage.FS, paths *project.Context) config.Loader {
-	if fs == nil || paths == nil {
-		return nil
-	}
-	return config.NewFSLoader(fs, paths.Root)
-}
-
-// mustBuildStateKV mirrors the production buildStateKV semantics so
-// dataentry tests that exercise per-user state (UIState, UserDefaults)
-// work. Panics on invalid cache root — fixture setup bug.
+// mustBuildStateKV roots a state.KV at paths.CacheDir; panics on an
+// invalid root since that's a fixture setup bug.
 func mustBuildStateKV(fs storage.FS, paths *project.Context) state.KV {
-	if fs == nil || paths == nil || paths.CacheDir == "" {
-		return nopKV{}
-	}
 	rfs, err := storage.NewRootedFS(fs, paths.CacheDir)
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build state KV: invalid root %q: %v", paths.CacheDir, err))
@@ -291,11 +295,16 @@ func mustBuildStateKV(fs storage.FS, paths *project.Context) state.KV {
 	return state.NewFSKV(rfs)
 }
 
-// nopKV is the fallback state.KV used when no cache directory is
-// available. Mirrors appbuild.nopKV — scheduler-style state callers
-// expect missing-key to be silent, not a hard error.
-type nopKV struct{}
-
-func (nopKV) Get(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
-func (nopKV) Put(context.Context, string, []byte) error   { return nil }
-func (nopKV) Delete(context.Context, string) error        { return nil }
+// defaultMemFS returns an in-memory filesystem rooted at `/project`
+// with the `.rela` cache subdirectory pre-created. Used when the
+// caller does not supply [WithFS] — appbuild.Collaborators requires
+// non-nil FS + Paths, so the fixture always produces a valid pair.
+func defaultMemFS() (storage.FS, *project.Context) {
+	fs := storage.NewMemFS()
+	root := "/project"
+	cacheDir := root + "/.rela"
+	if err := fs.MkdirAll(cacheDir, 0o755); err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: build default mem FS: %v", err))
+	}
+	return fs, &project.Context{Root: root, CacheDir: cacheDir}
+}
