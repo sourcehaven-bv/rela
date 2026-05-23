@@ -7,6 +7,17 @@ const props = defineProps<{
   modelValue: string[]
   options: string[]
   placeholder?: string
+  // disabled mirrors the standard HTML attribute — SlimSelect honors
+  // it by suppressing user input on the wrapped select. Used by form
+  // affordance plumbing (TKT-G7N5) to render a read-only multi-select.
+  disabled?: boolean
+  // optionVerdicts: per-option allow map. Sparse — only `false`
+  // entries appear; absent keys default to allowed. Matches the
+  // scalar-select option-filter shape (FieldRenderer). When provided,
+  // values currently in modelValue that are denied are still
+  // displayed (so the user can see + remove them) but are flagged
+  // disabled in the dropdown so they can't be re-added.
+  optionVerdicts?: Record<string, boolean>
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +28,9 @@ const data = computed(() =>
   props.options.map((opt) => ({
     text: opt,
     value: opt,
+    // Server-side affordance verdict denies this option → render
+    // disabled in the dropdown so the user can't pick it.
+    disabled: props.optionVerdicts?.[opt] === false,
   }))
 )
 
@@ -39,6 +53,7 @@ function handleUpdate(value: string[]) {
     :data="data"
     :settings="settings"
     :multiple="true"
+    :disabled="disabled"
     @update:model-value="handleUpdate"
   />
 </template>

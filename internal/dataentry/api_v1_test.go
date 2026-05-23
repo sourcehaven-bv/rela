@@ -4392,12 +4392,10 @@ func seedDemoTicketForPatch(t *testing.T) *App {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
-		fv: FieldVerdicts{
-			Writable: map[string]bool{"status": false}, // read-only
-			Options:  map[string]map[string]bool{"title": {"forbidden-title": false}},
-		},
-	}
+	app.fieldResolver = newVerdicts().
+		ReadOnly("status").
+		EnumDeny("title", "forbidden-title").
+		Build()
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
@@ -4563,6 +4561,49 @@ func TestAppRouter_PatchFilteredOption_Forbidden(t *testing.T) {
 
 	t.Run("allowed value succeeds", func(t *testing.T) {
 		code, body := patchTicketRaw(t, app, `{"properties":{"title":"any-other-value"}}`)
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", code, body)
+		}
+	})
+}
+
+// TestAppRouter_PatchFilteredListEnum_Forbidden proves the
+// list-typed enum option-filter now rejects rather than silently
+// allowing. Before this change, a `tags: [allowed, denied]` PATCH
+// would slip through because the validator only knew how to inspect
+// scalar string values. This is the security-soft-spot the cranky
+// reviewer flagged as S5.
+func TestAppRouter_PatchFilteredListEnum_Forbidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Options: map[string]map[string]bool{
+				"tags": {"forbidden-tag": false},
+			},
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x", "status": "open"},
+	})
+
+	t.Run("forbidden element rejects the whole list", func(t *testing.T) {
+		code, body := patchTicketRaw(t, app,
+			`{"properties":{"tags":["ok-tag","forbidden-tag"]}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"field-affordance:enum-filtered:tags=forbidden-tag"`) {
+			t.Errorf("body must name the forbidden element: %s", body)
+		}
+	})
+
+	t.Run("all-allowed list succeeds", func(t *testing.T) {
+		code, body := patchTicketRaw(t, app,
+			`{"properties":{"tags":["a","b","c"]}}`)
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, body)
 		}

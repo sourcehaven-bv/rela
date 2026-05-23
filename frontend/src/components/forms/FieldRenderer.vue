@@ -157,6 +157,8 @@ function handleTagSelect(value: string[]) {
       :model-value="arrayValue.map(String)"
       :options="options"
       :placeholder="placeholder || 'Select...'"
+      :disabled="readonly"
+      :option-verdicts="optionVerdicts"
       @update:model-value="handleTagSelect"
     />
 
