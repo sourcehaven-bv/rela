@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
@@ -122,40 +122,61 @@ const refResolver = computed<EntityRefResolver | undefined>(() => {
 
 const renderedEntryContent = computed(() =>
   entryContentSection.value
-    ? renderMarkdown(entryContentSection.value.content || '', refResolver.value)
+    ? renderMarkdown(entryContentSection.value.content || '', {
+        refResolver: refResolver.value,
+        interactive: true,
+      })
     : '',
 )
 
-watch(renderedEntryContent, async () => {
-  await nextTick()
-  if (contentRef.value) {
-    await renderMermaidDiagrams(contentRef.value)
-    setupCheckboxHandlers()
-  }
-})
+// Re-renders re-process mermaid diagrams inside the content body. Checkbox
+// clicks are handled via delegation on contentRef (see contentClick), which
+// doesn't need re-binding on every content swap.
+//
+// flush: 'post' so the watch fires after the v-html update has landed in the
+// DOM — otherwise contentRef.value is the previous (or null) element and
+// mermaid diagrams render on stale content. nextTick alone is not enough
+// because the watch can fire in the same tick as loading→entry visibility.
+watch(
+  renderedEntryContent,
+  async () => {
+    if (contentRef.value) {
+      await renderMermaidDiagrams(contentRef.value)
+    }
+  },
+  { flush: 'post' },
+)
 
-function setupCheckboxHandlers() {
-  if (!contentRef.value) return
-  const checkboxes = contentRef.value.querySelectorAll('input[type="checkbox"][data-cb-idx]')
-  checkboxes.forEach((cb) => {
-    const checkbox = cb as HTMLInputElement
-    checkbox.onclick = null
-    checkbox.addEventListener('click', async (e) => {
-      e.preventDefault()
-      const idx = parseInt(checkbox.dataset.cbIdx || '0', 10)
-      await handleCheckboxToggle(idx)
-    })
-  })
+// Tracks toggle requests still in flight, keyed by data-cb-idx. Without
+// this, a rapid double-click queues two toggles that net to zero — the
+// user sees the click "do nothing". The server's writeMu serializes
+// writes but does not collapse them; deduping at the client is the only
+// place we can suppress the second click before it leaves the browser.
+const togglingIndices = new Set<number>()
+
+function contentClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-cb-idx]')
+  if (!checkbox) return
+  event.preventDefault()
+  const raw = checkbox.dataset.cbIdx
+  if (raw === undefined) return
+  const idx = parseInt(raw, 10)
+  if (Number.isNaN(idx) || togglingIndices.has(idx)) return
+  void handleCheckboxToggle(idx)
 }
 
 async function handleCheckboxToggle(index: number) {
   if (!entry.value) return
+  togglingIndices.add(index)
   try {
     await toggleCheckbox(entry.value.id, index)
     await loadView()
   } catch (err) {
     uiStore.error('Failed to toggle checkbox')
     console.error(err)
+  } finally {
+    togglingIndices.delete(index)
   }
 }
 
@@ -505,6 +526,7 @@ watch(
             v-else-if="section === entryContentSection"
             :ref="(el) => { contentRef = el as HTMLElement | null }"
             class="content-body"
+            @click="contentClick"
             v-html="renderedEntryContent"
           />
 

@@ -1,4 +1,4 @@
-import { marked, type Tokens } from 'marked'
+import { Marked, type Tokens } from 'marked'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
 
@@ -42,10 +42,47 @@ export type EntityRefResolver = (id: string) => EntityRef | null
  * alone. Inaccessible targets (e.g. git-crypt encrypted) render as
  * `<a>ID 🔒</a>` with a tooltip mirroring `PropertyDisplay.vue`.
  */
-export function renderMarkdown(content: string, refResolver?: EntityRefResolver): string {
+export interface RenderMarkdownOptions {
+  refResolver?: EntityRefResolver
+  /**
+   * When true, render task-list checkboxes as enabled inputs tagged with
+   * `data-cb-idx="N"` so a delegated click handler can toggle them via the
+   * server. Use this only at call sites that actually wire up the handler
+   * (entry-content body in EntityDetail.vue). Defaults to false: checkboxes
+   * render `disabled`, matching marked's default, so users in card/content
+   * views aren't misled into thinking inert checkboxes are clickable.
+   */
+  interactive?: boolean
+}
+
+export function renderMarkdown(
+  content: string,
+  refResolverOrOptions?: EntityRefResolver | RenderMarkdownOptions,
+): string {
   if (!content) return ''
 
-  const rawHtml = marked.parse(content, {
+  const options: RenderMarkdownOptions =
+    typeof refResolverOrOptions === 'function'
+      ? { refResolver: refResolverOrOptions }
+      : refResolverOrOptions ?? {}
+
+  // Per-render Marked instance + counter so each call numbers its own
+  // checkboxes from 0. EntityDetail.vue maps data-cb-idx back to the
+  // source-line index when toggling; the renderer hook is the only thing
+  // producing the attribute, so its sequence is the authoritative one.
+  //
+  // For interactive renders we emit an enabled `<input>` (no `disabled`)
+  // because the browser swallows click events on disabled inputs even when
+  // a JS listener is attached. The Vue handler calls `e.preventDefault()`
+  // and reloads the view from the server, which re-renders the checkbox
+  // with the new state.
+  //
+  // For non-interactive renders we keep marked's default `disabled` so the
+  // checkbox is clearly inert — without that, users get clickable-looking
+  // checkboxes whose clicks silently no-op.
+  let cbIdx = 0
+  const refResolver = options.refResolver
+  const instance = new Marked({
     gfm: true,
     // Soft line breaks are whitespace (CommonMark default). Entity content
     // is hard-wrapped at ~80 chars in source markdown; treating each newline
@@ -53,18 +90,25 @@ export function renderMarkdown(content: string, refResolver?: EntityRefResolver)
     // reflowing to the viewport. Authors who want a hard break use the
     // CommonMark two-trailing-spaces form ("foo  \n").
     breaks: false,
-    walkTokens: refResolver ? (token) => rewriteEntityRefToken(token, refResolver) : undefined,
-  }) as string
+    renderer: {
+      checkbox({ checked }) {
+        const checkedAttr = checked ? ' checked=""' : ''
+        if (!options.interactive) {
+          return `<input disabled="" type="checkbox"${checkedAttr}> `
+        }
+        const idx = cbIdx++
+        return `<input data-cb-idx="${idx}" type="checkbox"${checkedAttr}> `
+      },
+    },
+    walkTokens: refResolver
+      ? (token) => rewriteEntityRefToken(token, refResolver)
+      : undefined,
+  })
 
-  // Add data-cb-idx to checkboxes for toggle support
-  let cbIdx = 0
-  const htmlWithCbIdx = rawHtml.replace(
-    /<input\s+type="checkbox"([^>]*)>/gi,
-    (_match, attrs) => `<input type="checkbox" data-cb-idx="${cbIdx++}"${attrs}>`
-  )
+  const rawHtml = instance.parse(content) as string
 
   // Allow data-cb-idx attribute through DOMPurify
-  return DOMPurify.sanitize(htmlWithCbIdx, {
+  return DOMPurify.sanitize(rawHtml, {
     ADD_ATTR: ['data-cb-idx'],
   })
 }

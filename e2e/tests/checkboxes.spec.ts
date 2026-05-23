@@ -23,12 +23,7 @@ test.describe('Checkbox toggling', () => {
     expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(2);
   });
 
-  // Skipped: tracked by BUG-9RANL (Playwright's `force: true` click on the
-  // disabled <input type="checkbox"> doesn't reliably fire the Vue click
-  // handler in this harness). The product behaviour works for real users;
-  // the gap is test-harness-only. See the bug for the repro harness needed
-  // to unskip this test.
-  test.skip('clicking a checkbox persists the toggle on the server', async ({ appPage, api }) => {
+  test('clicking a checkbox persists the toggle on the server', async ({ appPage, api }) => {
     const entity = new EntityPage(appPage);
     await entity.navigateToEntity('feature', SEED.features.checkboxBody);
 
@@ -48,5 +43,10 @@ test.describe('Checkbox toggling', () => {
         { timeout: 5000 },
       )
       .toBe(true);
+
+    // ...and the SPA's rendered state must visibly reflect the new value.
+    // Server-state alone passing would be the exact failure shape of the
+    // original bug (API works, UI doesn't); assert end-to-end.
+    await expect.poll(() => entity.contentCheckboxIsChecked(0), { timeout: 2000 }).toBe(true);
   });
 });
