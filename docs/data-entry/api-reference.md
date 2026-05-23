@@ -489,8 +489,6 @@ for defense against hand-crafted clients.
 - **Per-link verdicts** (different verdicts for different links of the
   same relation type). Deferred to the predicate-engine ticket — requires
   state-dependent gates.
-- **List-typed enum option-filter** (e.g. `tags` with `list: true`).
-  Wire shape supports it; the v1 PATCH validator only walks scalar enums.
 - **Create-mode affordances.** Stub doesn't gate creates; the create form
   renders unrestricted. The predicate ticket will introduce
   collection-level `_fields` / `_relations` on `V1ListResponse` for

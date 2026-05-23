@@ -327,6 +327,109 @@ func appWithResolver(r FieldVerdictResolver) *App {
 	return &App{fieldResolver: r}
 }
 
+// verdictBuilder is a fluent helper for constructing fakeResolver
+// fixtures without nested struct literals. Each setter mutates and
+// returns the builder so calls chain; Build() snapshots a
+// fakeResolver suitable for assignment to App.fieldResolver.
+//
+// Conventions:
+//   - ReadOnly("field") marks a field non-writable.
+//   - Hidden("field") marks a field non-visible.
+//   - EnumDeny("field", "value") filters out a single enum option;
+//     repeat per option to deny several.
+//   - RelationDenyCreate / DenyRemove / DenyMeta wire the matching
+//     relation verdicts.
+//
+// Defaults are permissive: any field / option / relation not
+// explicitly denied is allowed. Matches the production semantics.
+type verdictBuilder struct {
+	fv FieldVerdicts
+	rv RelationVerdicts
+}
+
+// newVerdicts starts an empty builder.
+func newVerdicts() *verdictBuilder { return &verdictBuilder{} }
+
+// ReadOnly marks a field as non-writable.
+func (b *verdictBuilder) ReadOnly(field string) *verdictBuilder {
+	if b.fv.Writable == nil {
+		b.fv.Writable = make(map[string]bool)
+	}
+	b.fv.Writable[field] = false
+	return b
+}
+
+// Hidden marks a field as non-visible.
+func (b *verdictBuilder) Hidden(field string) *verdictBuilder {
+	if b.fv.Visible == nil {
+		b.fv.Visible = make(map[string]bool)
+	}
+	b.fv.Visible[field] = false
+	return b
+}
+
+// EnumDeny filters out a single enum option for the named field.
+// Call repeatedly to deny multiple options.
+func (b *verdictBuilder) EnumDeny(field, option string) *verdictBuilder {
+	if b.fv.Options == nil {
+		b.fv.Options = make(map[string]map[string]bool)
+	}
+	if b.fv.Options[field] == nil {
+		b.fv.Options[field] = make(map[string]bool)
+	}
+	b.fv.Options[field][option] = false
+	return b
+}
+
+// RelationDenyCreate denies create on the named relation type.
+// Removable + meta-field grants stay at their previous values (or
+// permissive default).
+func (b *verdictBuilder) RelationDenyCreate(relType string) *verdictBuilder {
+	rv := b.relationVerdict(relType)
+	rv.Creatable = false
+	b.rv.Types[relType] = rv
+	return b
+}
+
+// RelationDenyRemove denies remove on the named relation type.
+func (b *verdictBuilder) RelationDenyRemove(relType string) *verdictBuilder {
+	rv := b.relationVerdict(relType)
+	rv.Removable = false
+	b.rv.Types[relType] = rv
+	return b
+}
+
+// RelationDenyMeta denies write on a named meta field of the named
+// relation type. Creatable / Removable default to true (permissive)
+// so the test focuses on the meta-field gate alone.
+func (b *verdictBuilder) RelationDenyMeta(relType, metaField string) *verdictBuilder {
+	rv := b.relationVerdict(relType)
+	if rv.Fields == nil {
+		rv.Fields = make(map[string]bool)
+	}
+	rv.Fields[metaField] = false
+	b.rv.Types[relType] = rv
+	return b
+}
+
+// relationVerdict returns the entry for relType, lazily initializing
+// the Types map and applying permissive defaults for first-touch.
+func (b *verdictBuilder) relationVerdict(relType string) RelationVerdict {
+	if b.rv.Types == nil {
+		b.rv.Types = make(map[string]RelationVerdict)
+	}
+	rv, ok := b.rv.Types[relType]
+	if !ok {
+		rv = RelationVerdict{Creatable: true, Removable: true}
+	}
+	return rv
+}
+
+// Build snapshots the builder into a fakeResolver.
+func (b *verdictBuilder) Build() fakeResolver {
+	return fakeResolver{fv: b.fv, rv: b.rv}
+}
+
 func TestComputeFieldAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
 	a := appWithResolver(NopFieldVerdictResolver{})
 	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})

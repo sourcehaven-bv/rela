@@ -119,4 +119,10 @@ describe('FieldRenderer affordance plumbing', () => {
     expect(byValue['review'].attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
+
+  // TagSelect readonly/option-verdict plumbing is verified by the
+  // wire-shape contract in api_v1_test.go (server-side
+  // checkEnumOption coverage) plus by the typecheck — happy-dom
+  // can't mount SlimSelect's MutationObserver cleanly, so a direct
+  // component test isn't worth the harness fight here.
 })

@@ -218,7 +218,7 @@ func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKe
 			}
 		}
 		// Hidden via resolver verdict.
-		if visible, ok := v.Visible[key]; ok && !visible {
+		if !v.IsVisible(key) {
 			return &AffordanceDenialError{
 				Rule:   RuleFieldHidden,
 				Path:   key,
@@ -226,7 +226,7 @@ func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKe
 			}
 		}
 		// Read-only via resolver verdict.
-		if writable, ok := v.Writable[key]; ok && !writable {
+		if !v.IsWritable(key) {
 			return &AffordanceDenialError{
 				Rule:   RuleFieldReadOnly,
 				Path:   key,
@@ -234,17 +234,14 @@ func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKe
 			}
 		}
 		// Enum-filter (only for set, not unset, and only when a value
-		// is provided — unset has no value to check).
+		// is provided — unset has no value to check). Handles both
+		// scalar enums and list-typed enums (e.g. tags); for the list
+		// case every element is checked against the allow-set and the
+		// first disallowed value triggers the denial.
 		if present && value != nil {
 			if opts, ok := v.Options[key]; ok {
-				if str, isStr := value.(string); isStr {
-					if allowed, ok := opts[str]; ok && !allowed {
-						return &AffordanceDenialError{
-							Rule:   RuleFieldEnumFiltered,
-							Path:   key + "=" + str,
-							Reason: fmt.Sprintf("option %q is not allowed for field %q", str, key),
-						}
-					}
+				if d := checkEnumOption(key, value, opts); d != nil {
+					return d
 				}
 			}
 		}
@@ -260,6 +257,42 @@ func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKe
 	for _, k := range unsetKeys {
 		if d := check(k, nil, false); d != nil {
 			return d
+		}
+	}
+	return nil
+}
+
+// checkEnumOption rejects an enum value that isn't in the allow-set.
+// Handles both scalar enums (`string`) and list-typed enums
+// (`[]interface{}` — the JSON decoder's shape for a YAML
+// `list: true` enum like `tags`). For lists, the first disallowed
+// element produces the denial. Returns nil when the value passes.
+//
+// Non-string/non-list values fall through silently — the existing
+// type-validation pipeline catches those upstream; the affordance
+// gate only cares about disallowed-but-otherwise-valid values.
+func checkEnumOption(key string, value interface{}, opts map[string]bool) *AffordanceDenialError {
+	deny := func(option string) *AffordanceDenialError {
+		return &AffordanceDenialError{
+			Rule:   RuleFieldEnumFiltered,
+			Path:   key + "=" + option,
+			Reason: fmt.Sprintf("option %q is not allowed for field %q", option, key),
+		}
+	}
+	switch v := value.(type) {
+	case string:
+		if allowed, ok := opts[v]; ok && !allowed {
+			return deny(v)
+		}
+	case []interface{}:
+		for _, elem := range v {
+			str, ok := elem.(string)
+			if !ok {
+				continue
+			}
+			if allowed, ok := opts[str]; ok && !allowed {
+				return deny(str)
+			}
 		}
 	}
 	return nil
@@ -584,12 +617,40 @@ func (a *App) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) 
 	return out
 }
 
-// isHidden reports whether v marks name as hidden. Returns false for
-// the absent-key case (default is visible).
-func (v FieldVerdicts) isHidden(name string) bool {
-	visible, ok := v.Visible[name]
-	return ok && !visible
+// IsWritable reports whether name is writable. The default is true —
+// absent or true-valued entries both yield true; only explicit false
+// values are denials.
+func (v FieldVerdicts) IsWritable(name string) bool {
+	writable, ok := v.Writable[name]
+	return !ok || writable
 }
+
+// IsVisible reports whether name is visible. The default is true —
+// absent or true-valued entries both yield true; only explicit false
+// values hide the field.
+func (v FieldVerdicts) IsVisible(name string) bool {
+	visible, ok := v.Visible[name]
+	return !ok || visible
+}
+
+// IsOptionAllowed reports whether option `opt` is allowed for the
+// enum-typed field `name`. The default is allowed — absent or
+// true-valued entries both yield true; only explicit false values
+// filter the option out.
+func (v FieldVerdicts) IsOptionAllowed(name, opt string) bool {
+	opts, ok := v.Options[name]
+	if !ok {
+		return true
+	}
+	allowed, ok := opts[opt]
+	return !ok || allowed
+}
+
+// isHidden reports whether v marks name as hidden. Returns false for
+// the absent-key case (default is visible). Internal sibling to
+// [FieldVerdicts.IsVisible] — kept for the existing callers that
+// phrase the check in the negative form.
+func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 
 // hiddenProperties returns the set of property names that should be
 // stripped from V1Entity.Properties before serialization. Caller uses
