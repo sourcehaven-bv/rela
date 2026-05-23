@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -109,7 +110,7 @@ func bindRepo(app *App, root string) {
 // needs to share a specific filesystem (e.g., an in-memory FS across
 // multiple App instances).
 func bindRepoWithFS(app *App, fs storage.FS, paths *project.Context) {
-	newSvc := appbuild.NewForTest(app.Meta(), appbuild.WithFS(fs, paths))
+	newSvc := appbuildtest.New(app.Meta(), appbuildtest.WithFS(fs, paths))
 	reseedStore(newSvc.Store(), app.store)
 	rebindApp(app, fs, paths, newSvc)
 }
@@ -179,7 +180,7 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+		svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 		rebindApp(app, fs, ctx, svc)
 		seedFromFixture(app.store, f)
 	}
@@ -250,7 +251,7 @@ func newHandlerTestApp(t *testing.T) *App {
 	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 
-	svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 	seedFromFixture(svc.Store(), g)
 
 	app := &App{}

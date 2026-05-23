@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
@@ -86,7 +86,7 @@ func setupTestGraph(t *testing.T) *metamodel.Metamodel {
 	seedR("CTRL-001", "evidencedBy", "EV-001")
 
 	svc, err := newCLIServicesFromAppbuild(
-		appbuild.NewForTest(meta, appbuild.WithTestStore(s)),
+		appbuildtest.New(meta, appbuildtest.WithStore(s)),
 	)
 	if err != nil {
 		t.Fatalf("newCLIServicesFromAppbuild: %v", err)

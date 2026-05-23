@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -96,7 +96,7 @@ func (ss *storeSeeder) addRelation(from, relType, to string) {
 // share the same appbuild-backed implementation production uses.
 func (ss *storeSeeder) build() *cliServices {
 	svc, err := newCLIServicesFromAppbuild(
-		appbuild.NewForTest(ss.meta, appbuild.WithTestStore(ss.s)),
+		appbuildtest.New(ss.meta, appbuildtest.WithStore(ss.s)),
 	)
 	if err != nil {
 		panic("storeSeeder.build: " + err.Error())

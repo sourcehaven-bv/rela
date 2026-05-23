@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -60,7 +60,7 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	// the loader rejects.
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	svc, err := newCLIServicesFromAppbuild(
-		appbuild.NewForTest(meta, appbuild.WithFS(fs, paths)),
+		appbuildtest.New(meta, appbuildtest.WithFS(fs, paths)),
 	)
 	if err != nil {
 		t.Fatalf("newCLIServicesFromAppbuild: %v", err)

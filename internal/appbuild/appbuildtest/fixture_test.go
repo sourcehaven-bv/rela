@@ -1,12 +1,24 @@
-package appbuild_test
+package appbuildtest_test
 
 import (
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
+
+const metamodelYAML = `version: "1.0"
+entities:
+  item:
+    label: Item
+    plural: items
+    id_prefix: "ITEM-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+`
 
 func parseTestMetamodel(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
@@ -17,12 +29,12 @@ func parseTestMetamodel(t *testing.T) *metamodel.Metamodel {
 	return meta
 }
 
-func TestNewForTest_Defaults(t *testing.T) {
+func TestNew_Defaults(t *testing.T) {
 	meta := parseTestMetamodel(t)
 
-	svc := appbuild.NewForTest(meta)
+	svc := appbuildtest.New(meta)
 	if svc == nil {
-		t.Fatal("NewForTest returned nil")
+		t.Fatal("New returned nil")
 	}
 	if svc.Store() == nil {
 		t.Error("Store() == nil")
@@ -41,21 +53,21 @@ func TestNewForTest_Defaults(t *testing.T) {
 	}
 }
 
-func TestNewForTest_WithTestStore(t *testing.T) {
+func TestNew_WithStore(t *testing.T) {
 	meta := parseTestMetamodel(t)
 	customStore := memstore.New()
 
-	svc := appbuild.NewForTest(meta, appbuild.WithTestStore(customStore))
+	svc := appbuildtest.New(meta, appbuildtest.WithStore(customStore))
 	if svc.Store() != customStore {
-		t.Error("WithTestStore did not install the supplied store")
+		t.Error("WithStore did not install the supplied store")
 	}
 }
 
-func TestNewForTest_NilMetaPanics(t *testing.T) {
+func TestNew_NilMetaPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("expected panic on nil metamodel, got none")
 		}
 	}()
-	_ = appbuild.NewForTest(nil)
+	_ = appbuildtest.New(nil)
 }

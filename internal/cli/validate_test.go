@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
@@ -106,7 +107,7 @@ func seedServices(meta *metamodel.Metamodel, seed func(*storeSeeder)) *appbuild.
 	if seed != nil {
 		seed(seeder)
 	}
-	return appbuild.NewForTest(meta, appbuild.WithTestStore(seeder.s))
+	return appbuildtest.New(meta, appbuildtest.WithStore(seeder.s))
 }
 
 // TestRunValidationChecks_JSONOutput exercises the CLI JSON output

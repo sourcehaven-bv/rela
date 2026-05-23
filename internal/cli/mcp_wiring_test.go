@@ -121,10 +121,6 @@ func TestMCPServices_CloseIdempotent(t *testing.T) {
 	require.NoError(t, svc.Close())
 }
 
-func TestBackfillBackend_NilSafe(t *testing.T) {
-	assert.NoError(t, backfillBackend(context.Background(), nil, memstore.New()))
-}
-
 func TestMCPWatcher_NoOpWhenStoreLacksWatcher(t *testing.T) {
 	// memstore doesn't implement storeStartStopper; the adapter's
 	// Start/Stop must be safe no-ops.

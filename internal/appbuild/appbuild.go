@@ -23,25 +23,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -71,7 +69,7 @@ type Services struct {
 	cfgLoader     config.Loader
 	stateKV       state.KV
 	scriptEngine  *script.Engine
-	searchBackend *bleveindex.Index
+	searchCloser  io.Closer
 	acl           acl.ACL
 
 	closeOnce sync.Once
@@ -154,16 +152,79 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 	}
 }
 
-// buildSearcher returns a Searcher backed by the supplied bleve
-// index, or an error-Searcher placeholder when the index is nil.
-// Callers see "search index not available" for every query — but the
-// rest of the services bundle still works (read/write paths don't
-// depend on search).
-func buildSearcher(st store.Store, backend *bleveindex.Index) search.Searcher {
-	if backend != nil {
-		return search.New(st, backend)
+// Collaborators bundles the fully-built dependencies of a [Services]
+// instance. Exposed so external test fixtures (`appbuildtest`) can
+// assemble a Services without poking at unexported fields. Production
+// callers go through [New] / [Discover] instead.
+//
+// All fields except Paths and FS are required. Use [NewFromCollaborators]
+// to construct the [Services]; that constructor enforces nil checks.
+type Collaborators struct {
+	FS            storage.FS
+	Paths         *project.Context
+	Meta          *metamodel.Metamodel
+	Store         store.Store
+	Searcher      search.Searcher
+	EntityManager entitymanager.EntityManager
+	Tracer        tracer.Tracer
+	Validator     validator.Validator
+	Templater     templating.Templater
+	CfgLoader     config.Loader
+	StateKV       state.KV
+	ScriptEngine  *script.Engine
+	SearchCloser  io.Closer
+	ACL           acl.ACL
+}
+
+// NewFromCollaborators assembles a [Services] from pre-built
+// collaborators. Used by external test packages that want to swap
+// individual collaborators (e.g. inject a fake store) without going
+// through the full production wiring of [New].
+//
+// Returns an error when a required field is nil. The optional ones —
+// FS, Paths, SearchCloser — may be nil; SearchCloser nil means
+// [Services.Close] won't try to close anything search-related.
+func NewFromCollaborators(c Collaborators) (*Services, error) {
+	if c.Meta == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Meta is required")
 	}
-	return search.ErrSearcher(errors.New("search index not available"))
+	if c.Store == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Store is required")
+	}
+	if c.Searcher == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Searcher is required")
+	}
+	if c.EntityManager == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: EntityManager is required")
+	}
+	if c.Tracer == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Tracer is required")
+	}
+	if c.Validator == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Validator is required")
+	}
+	if c.ScriptEngine == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: ScriptEngine is required")
+	}
+	if c.ACL == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: ACL is required")
+	}
+	return &Services{
+		fs:            c.FS,
+		paths:         c.Paths,
+		meta:          c.Meta,
+		store:         c.Store,
+		searcher:      c.Searcher,
+		entityManager: c.EntityManager,
+		tracer:        c.Tracer,
+		validator:     c.Validator,
+		templater:     c.Templater,
+		cfgLoader:     c.CfgLoader,
+		stateKV:       c.StateKV,
+		scriptEngine:  c.ScriptEngine,
+		searchCloser:  c.SearchCloser,
+		acl:           c.ACL,
+	}, nil
 }
 
 // buildAutomation wires the automation engine + cascade runner from
@@ -304,31 +365,14 @@ func New(
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	// Search backend BEFORE store so it can be installed as an
-	// observer at open time. Backend failure is non-fatal — Searcher
-	// surfaces an explicit error when queried.
-	var searchBackend *bleveindex.Index
-	if idx, idxErr := bleveindex.NewMem(); idxErr == nil {
-		searchBackend = idx
-	} else {
-		slog.Warn("appbuild: failed to create search index", "error", idxErr)
-	}
-
-	factory := &app.FSFactory{FS: fs, Paths: paths}
-	if searchBackend != nil {
-		factory.AddObserver(searchBackend)
-	}
-	st, err := factory.OpenStore(meta)
+	// Build the search observer BEFORE opening the store so it can be
+	// installed as a [store.EntityObserver] at open time. The FS build
+	// returns a bleve index; a future Postgres build returns nil here
+	// because Postgres indexes inside the store itself.
+	storeObserver := newSearchObserver()
+	st, err := openStore(fs, paths, meta, storeObserver)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
-	}
-
-	// Backfill the search index — observers are NOT invoked for
-	// entities already on disk at open time.
-	if searchBackend != nil {
-		if backfillErr := backfillSearchBackend(context.Background(), searchBackend, st); backfillErr != nil {
-			slog.Warn("appbuild: failed to index entities", "error", backfillErr)
-		}
 	}
 
 	autoEngine, cascadeRunner, err := buildAutomation(meta)
@@ -337,7 +381,10 @@ func New(
 	}
 
 	tr := tracer.New(st)
-	searcher := buildSearcher(st, searchBackend)
+	searcher, searchCloser, err := buildSearcher(context.Background(), st, storeObserver)
+	if err != nil {
+		return nil, fmt.Errorf("build searcher: %w", err)
+	}
 	templater := templating.NewFSTemplater(fs, paths)
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
 
@@ -385,7 +432,7 @@ func New(
 		cfgLoader:     cfgLoader,
 		stateKV:       stateKV,
 		scriptEngine:  scriptEngine,
-		searchBackend: searchBackend,
+		searchCloser:  searchCloser,
 		acl:           o.acl,
 	}, nil
 }
@@ -406,9 +453,9 @@ func (s *Services) Close() error {
 				}
 			}
 		}
-		if s.searchBackend != nil {
-			_ = s.searchBackend.Close()
-			s.searchBackend = nil
+		if s.searchCloser != nil {
+			_ = s.searchCloser.Close()
+			s.searchCloser = nil
 		}
 	})
 	return s.closeErr
@@ -448,28 +495,3 @@ type nopKV struct{}
 func (nopKV) Get(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
 func (nopKV) Put(context.Context, string, []byte) error   { return nil }
 func (nopKV) Delete(context.Context, string) error        { return nil }
-
-// backfillSearchBackend populates a search backend with every entity
-// currently in the store. Errors from individual entities are
-// collected and returned together so callers see the complete picture.
-func backfillSearchBackend(ctx context.Context, backend *bleveindex.Index, s store.Store) error {
-	if backend == nil || s == nil {
-		return nil
-	}
-	entities := make([]*entity.Entity, 0)
-	var listErrs []error
-	for e, err := range s.ListEntities(ctx, store.EntityQuery{}) {
-		if err != nil {
-			listErrs = append(listErrs, err)
-			continue
-		}
-		entities = append(entities, e)
-	}
-	indexed, indexErr := backend.IndexBatch(entities)
-	if len(listErrs) == 0 && indexErr == nil {
-		return nil
-	}
-	skipped := len(entities) - indexed
-	return fmt.Errorf("backfill indexed %d entities, skipped %d, list errors: %v, index error: %w",
-		indexed, skipped, listErrs, indexErr)
-}

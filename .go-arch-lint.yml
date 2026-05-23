@@ -37,6 +37,7 @@ components:
   # Application services
   app:              { in: internal/app }
   appbuild:         { in: internal/appbuild }
+  appbuildtest:     { in: internal/appbuild/appbuildtest }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -189,6 +190,7 @@ deps:
       - lua
       - markdown
       - mcp
+      - memstore
       - metamodel
       - output
       - principal
@@ -296,6 +298,29 @@ deps:
       - automation
       - bleveindex
       - config
+      - entitymanager
+      - lua
+      - memstore
+      - metamodel
+      - project
+      - script
+      - search
+      - state
+      - storage
+      - store
+      - templating
+      - tracer
+      - validator
+  appbuildtest:
+    mayDependOn:
+      - acl
+      - appbuild
+      - audit
+      - autocascade
+      - automation
+      - bleveindex
+      - config
+      - entity
       - entitymanager
       - lua
       - memstore
