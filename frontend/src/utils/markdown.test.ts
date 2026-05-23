@@ -403,6 +403,15 @@ describe('markdown', () => {
       const result = getCheckboxStats('- normal item\n- [ ] checkbox item')
       expect(result).toEqual({ checked: 0, total: 1 })
     })
+
+    it('counts checkboxes across the marked-accepted bullet set', () => {
+      // Same set as the toggler (parseCheckboxLine in checkboxToggle.ts):
+      // `-`, `*`, `+`, and `N.`. The counter and the toggler MUST agree
+      // or the (n/m) widget and the click-handler disagree on which
+      // checkbox is which.
+      const result = getCheckboxStats('- [x] a\n* [ ] b\n+ [x] c\n1. [ ] d')
+      expect(result).toEqual({ checked: 2, total: 4 })
+    })
   })
 
   describe('renderMermaidDiagrams', () => {

@@ -5,8 +5,10 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { fetchView, getCommands, toggleCheckbox } from '@/api'
+import { fetchView, getCommands, updateEntity } from '@/api'
 import type { ViewResponse, ViewSectionField } from '@/api'
+import type { Entity } from '@/types'
+import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
 import { entityDetailHref } from '@/utils/entityRoute'
@@ -90,10 +92,17 @@ const canDelete = computeActionAllowed(entry, 'delete')
 // The entry's content section gets a custom renderer (mermaid + interactive
 // checkboxes) instead of the generic section render-path. Other content
 // sections — content cards from configured views — use the generic path.
+//
+// Shared predicate so the section-finding (entryContentSection) and section-
+// mutating (handleCheckboxToggle) paths stay in sync — drift between the two
+// would silently update the wrong section's content.
+function isEntryContentSection(s: { display?: string; hasContent?: boolean; content?: string }) {
+  return s.display === 'content' && s.hasContent === true && !!s.content
+}
 const entryContentSection = computed(() => {
   const sections = viewData.value?.sections
   if (!sections) return null
-  return sections.find((s) => s.display === 'content' && s.hasContent && !!s.content) || null
+  return sections.find(isEntryContentSection) || null
 })
 
 const checkboxStats = computed(() => {
@@ -167,11 +176,55 @@ function contentClick(event: MouseEvent) {
 }
 
 async function handleCheckboxToggle(index: number) {
-  if (!entry.value) return
+  const current = entry.value
+  const view = viewData.value
+  if (!current || !view) return
+  // Reserve the index BEFORE the synchronous toggler runs so a rapid
+  // double-click on a checkbox the toggler rejects (e.g. an unsupported
+  // bullet shape) doesn't fire two error toasts.
   togglingIndices.add(index)
   try {
-    await toggleCheckbox(entry.value.id, index)
-    await loadView()
+    let newContent: string
+    try {
+      newContent = toggleCheckboxInSource(current.content || '', index)
+    } catch (err) {
+      // The toggler is intentionally narrower than the renderer (see
+      // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
+      // task items in marked but are rejected here). Surface the thrown
+      // detail so users know which line of the source the click missed.
+      const detail = err instanceof Error ? err.message : 'unknown error'
+      uiStore.error(`Failed to toggle checkbox: ${detail}`)
+      console.error(err)
+      return
+    }
+    // No If-Match — toggles are commutative-ish (last-write-wins is
+    // acceptable for two users racing the same checkbox) and the
+    // ViewResponse doesn't currently surface an ETag for us to thread
+    // through. Matches the prior /api/toggle-checkbox behavior.
+    const updated: Entity = await updateEntity(current.type, current.id, { content: newContent })
+    // Route may have changed while the PATCH was in flight (entity nav,
+    // back-button, etc.); the watch on entityType/entityId would have
+    // refetched a different viewData. Detect via reference identity
+    // and bail rather than splice updates into a stale snapshot that
+    // would clobber the destination entity's view.
+    if (viewData.value !== view) return
+    // Mutate view state in place so Vue's reactivity re-renders only the
+    // dependents (content body via renderedEntryContent, stats counter via
+    // checkboxStats). Replacing viewData entirely keeps everything else —
+    // header, scope nav, properties, relations, documents panel —
+    // referentially stable. The entry-content section's content field is
+    // what renderedEntryContent reads, so it must mirror the updated
+    // entity content alongside viewData.entry.
+    //
+    // ASSUMPTION: PATCH side-effects are limited to entry.content. True for
+    // checkbox toggles today. If a future caller routes property edits or
+    // automation-triggering changes through this path, properties/relations
+    // sections will display stale fetchView data — fall back to loadView()
+    // or re-derive sections from `updated` for those cases.
+    const nextSections = view.sections.map((s) =>
+      isEntryContentSection(s) ? { ...s, content: updated.content || '' } : s,
+    )
+    viewData.value = { ...view, entry: updated, sections: nextSections }
   } catch (err) {
     uiStore.error('Failed to toggle checkbox')
     console.error(err)
@@ -361,7 +414,15 @@ onUnmounted(() => document.removeEventListener('click', closeOverflow))
 // Watch for route changes
 watch(
   () => [props.entityType, props.entityId],
-  () => loadView(),
+  () => {
+    // Drop any toggles that were in-flight against the previous entity —
+    // their PATCH responses (if they ever come back) will be discarded by
+    // the viewData identity check in handleCheckboxToggle, but clearing
+    // here also lets the new entity's checkboxes at the same index respond
+    // to clicks immediately instead of being silently swallowed.
+    togglingIndices.clear()
+    loadView()
+  },
 )
 </script>
 
@@ -501,7 +562,10 @@ watch(
           :key="section.sectionId"
           class="view-section"
         >
-          <h2 v-if="section.heading" class="section-heading">
+          <h2
+            v-if="section.heading || (section === entryContentSection && checkboxStats)"
+            class="section-heading"
+          >
             {{ section.heading }}
             <span
               v-if="section === entryContentSection && checkboxStats"

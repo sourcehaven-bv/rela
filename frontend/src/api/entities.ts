@@ -156,21 +156,3 @@ export async function deleteRelation(
   return api.delete(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}${query}`)
 }
 
-export async function toggleCheckbox(entityId: string, index: number): Promise<string> {
-  // URL-encoded body. The server handler calls r.ParseForm() and then
-  // r.FormValue, which only reads body fields for application/x-www-form-
-  // urlencoded. A multipart body (what FormData produces) would leave both
-  // fields empty and the handler would 400 with "Invalid checkbox index".
-  const body = new URLSearchParams({ entity_id: entityId, index: String(index) })
-
-  const response = await fetch('/api/toggle-checkbox', {
-    method: 'POST',
-    body,
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to toggle checkbox')
-  }
-
-  return response.text()
-}

@@ -180,18 +180,10 @@ function inaccessibleTooltipFor(reason: string | undefined): string {
 /**
  * Get checkbox stats from content (checked/total).
  */
-export function getCheckboxStats(content: string): { checked: number; total: number } | null {
-  if (!content) return null
-
-  const checkboxPattern = /^\s*- \[([ xX])\]/gm
-  const matches = content.match(checkboxPattern)
-  if (!matches || matches.length === 0) return null
-
-  const total = matches.length
-  const checked = matches.filter((m) => /\[[xX]\]/.test(m)).length
-
-  return { checked, total }
-}
+// Re-exported from checkboxToggle so the stats counter and the click-handler
+// route through the exact same line-parser. A divergence between the two
+// would silently mis-align the (n/m) widget with which line a click toggles.
+export { checkboxStats as getCheckboxStats } from './checkboxToggle'
 
 /**
  * Render markdown and then process mermaid diagrams.
