@@ -15,21 +15,31 @@ import (
 // in-memory substring matching with no external dependencies. Slow on
 // large stores but zero-bytes-of-bleve in the resulting binary, which
 // is the point of this build.
-func newSearchObserver() store.EntityObserver {
+func newSearchObserver() *search.LinearSearch {
 	return search.NewLinearSearch()
 }
 
+// asObserver widens the per-build search backend to
+// [store.EntityObserver] without the typed-nil-into-interface trap.
+// Mirrors the FS-build helper of the same name.
+func asObserver(b *search.LinearSearch) store.EntityObserver {
+	if b == nil {
+		return nil
+	}
+	return b
+}
+
 // buildSearcher — `memorybackend` build. Reuses the
-// [search.LinearSearch] passed in as obs. LinearSearch self-populates
-// via its EntityObserver hook, so no separate backfill is required
-// for stores that wire the observer at open time (memstore does).
+// [search.LinearSearch] passed in as backend. LinearSearch
+// self-populates via its EntityObserver hook, so no separate backfill
+// is required for stores that wire the observer at open time
+// (memstore does).
 func buildSearcher(
 	_ context.Context,
 	st store.Store,
-	obs store.EntityObserver,
+	backend *search.LinearSearch,
 ) (search.Searcher, io.Closer, error) {
-	backend, ok := obs.(*search.LinearSearch)
-	if !ok || backend == nil {
+	if backend == nil {
 		return search.ErrSearcher(errors.New("search index not available")), noopCloser{}, nil
 	}
 	return search.New(st, backend), backend, nil

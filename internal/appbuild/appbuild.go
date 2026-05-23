@@ -153,27 +153,52 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
-// instance. Exposed so external test fixtures (`appbuildtest`) can
-// assemble a Services without poking at unexported fields. Production
-// callers go through [New] / [Discover] instead.
+// instance. Exposed so external test fixtures (`appbuildtest`) and
+// alternative composition roots can assemble a Services without
+// poking at unexported fields. Production callers go through [New] /
+// [Discover] instead.
 //
-// All fields except Paths and FS are required. Use [NewFromCollaborators]
-// to construct the [Services]; that constructor enforces nil checks.
+// Field requirements: see per-field doc comments. [NewFromCollaborators]
+// validates the required ones; the optional ones are surfaced as nil
+// via the corresponding accessor on [Services], and callers that
+// depend on them must guard themselves.
 type Collaborators struct {
-	FS            storage.FS
-	Paths         *project.Context
-	Meta          *metamodel.Metamodel
-	Store         store.Store
-	Searcher      search.Searcher
+	// Meta is required.
+	Meta *metamodel.Metamodel
+	// Store is required.
+	Store store.Store
+	// Searcher is required.
+	Searcher search.Searcher
+	// EntityManager is required.
 	EntityManager entitymanager.EntityManager
-	Tracer        tracer.Tracer
-	Validator     validator.Validator
-	Templater     templating.Templater
-	CfgLoader     config.Loader
-	StateKV       state.KV
-	ScriptEngine  *script.Engine
-	SearchCloser  io.Closer
-	ACL           acl.ACL
+	// Tracer is required.
+	Tracer tracer.Tracer
+	// Validator is required.
+	Validator validator.Validator
+	// ScriptEngine is required.
+	ScriptEngine *script.Engine
+	// ACL is required.
+	ACL acl.ACL
+
+	// FS is optional. Services.FS() returns nil when unset.
+	// Callers (templating, project-file readers) that need filesystem
+	// access must check before use.
+	FS storage.FS
+	// Paths is optional. Services.Paths() returns nil when unset.
+	// renametype and any code that walks project paths require it.
+	Paths *project.Context
+	// Templater is optional. Services.Templater() returns nil when
+	// unset; entity creation falls back to no-template behavior.
+	Templater templating.Templater
+	// CfgLoader is optional. Services.Config() returns nil when unset;
+	// dataentry config readers must guard.
+	CfgLoader config.Loader
+	// StateKV is optional. Services.State() returns nil when unset;
+	// scheduler-style state callers must guard.
+	StateKV state.KV
+	// SearchCloser is optional. Services.Close() skips the search
+	// teardown when unset.
+	SearchCloser io.Closer
 }
 
 // NewFromCollaborators assembles a [Services] from pre-built
@@ -181,9 +206,8 @@ type Collaborators struct {
 // individual collaborators (e.g. inject a fake store) without going
 // through the full production wiring of [New].
 //
-// Returns an error when a required field is nil. The optional ones —
-// FS, Paths, SearchCloser — may be nil; SearchCloser nil means
-// [Services.Close] won't try to close anything search-related.
+// Returns an error when a required field is nil. See [Collaborators]
+// for which fields are required vs. optional.
 func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if c.Meta == nil {
 		return nil, errors.New("appbuild.NewFromCollaborators: Meta is required")
@@ -365,12 +389,12 @@ func New(
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	// Build the search observer BEFORE opening the store so it can be
-	// installed as a [store.EntityObserver] at open time. The FS build
-	// returns a bleve index; a future Postgres build returns nil here
-	// because Postgres indexes inside the store itself.
-	storeObserver := newSearchObserver()
-	st, err := openStore(fs, paths, meta, storeObserver)
+	// Build the search backend BEFORE opening the store so it can be
+	// installed as an observer at open time. The FS build returns a
+	// bleve index; a future Postgres build returns nil here because
+	// Postgres indexes inside the store itself.
+	searchBackend := newSearchObserver()
+	st, err := openStore(fs, paths, meta, asObserver(searchBackend))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -381,7 +405,7 @@ func New(
 	}
 
 	tr := tracer.New(st)
-	searcher, searchCloser, err := buildSearcher(context.Background(), st, storeObserver)
+	searcher, searchCloser, err := buildSearcher(context.Background(), st, searchBackend)
 	if err != nil {
 		return nil, fmt.Errorf("build searcher: %w", err)
 	}

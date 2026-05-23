@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -40,6 +42,8 @@ type mcpServices struct {
 	cfg          config.Loader
 	scriptEngine *script.Engine
 	watcher      relamcp.Watcher
+
+	closeOnce sync.Once
 }
 
 // compile-time check that *mcpServices satisfies mcp.Services so a
@@ -62,17 +66,18 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		return nil, fmt.Errorf("load metamodel: %w", metaErr)
 	}
 
-	// Build the search observer BEFORE opening the store so the store
-	// hooks it in as a synchronous observer (TKT-Q1JT pattern). The FS
-	// build supplies an in-memory bleve index here; a future Postgres
-	// build returns nil and indexes inside the store itself.
-	storeObserver := newMCPSearchObserver()
-	st, openErr := openMCPStore(fs, paths, mm, storeObserver)
+	// Build the search backend BEFORE opening the store so it can be
+	// installed as a synchronous observer at open time (TKT-Q1JT
+	// pattern). The FS build supplies an in-memory bleve index; a
+	// future Postgres build returns nil because Postgres indexes
+	// inside the store itself.
+	searchBackend := newMCPSearchObserver()
+	st, openErr := openMCPStore(fs, paths, mm, asMCPObserver(searchBackend))
 	if openErr != nil {
 		return nil, fmt.Errorf("open store: %w", openErr)
 	}
 
-	searcher, searchCloser, searchErr := buildMCPSearcher(context.Background(), st, storeObserver)
+	searcher, searchCloser, searchErr := buildMCPSearcher(context.Background(), st, searchBackend)
 	if searchErr != nil {
 		return nil, fmt.Errorf("build searcher: %w", searchErr)
 	}
@@ -164,25 +169,34 @@ func (s *mcpServices) luaReadDeps() lua.ReadDeps {
 
 // Close releases the search backend and store. Store close before
 // search close so no observer callbacks land on a closed index.
+//
+// Safe to call repeatedly and from multiple goroutines (defer +
+// signal-driven shutdown): the close sequence runs exactly once via
+// sync.Once. Mirrors appbuild.Services.Close semantics.
 func (s *mcpServices) Close() error {
-	if s.watcher != nil {
-		s.watcher.Stop()
-	}
-	if lc, ok := s.store.(store.Lifecycle); ok {
-		_ = lc.Close()
-	}
-	if s.searchCloser != nil {
-		_ = s.searchCloser.Close()
-		s.searchCloser = nil
-	}
+	s.closeOnce.Do(func() {
+		if s.watcher != nil {
+			s.watcher.Stop()
+		}
+		if lc, ok := s.store.(store.Lifecycle); ok {
+			_ = lc.Close()
+		}
+		if s.searchCloser != nil {
+			_ = s.searchCloser.Close()
+			s.searchCloser = nil
+		}
+	})
 	return nil
 }
 
 // --- Watcher adapter ---
 
 // storeStartStopper is the optional capability MCP needs from the
-// store to start / stop its file watcher. fsstore implements it; the
-// adapter no-ops when the store doesn't.
+// store to start / stop its file watcher. Only fsstore implements it;
+// in-memory store backends (memstore, used under //go:build
+// memorybackend) cannot watch a filesystem and therefore opt out.
+// The adapter silently no-ops in that case — see [mcpWatcher.Start]
+// for the operator-visible warning log.
 type storeStartStopper interface {
 	StartWatching() error
 	StopWatching()
@@ -202,10 +216,16 @@ type mcpWatcher struct {
 
 func (w *mcpWatcher) Start(onChange func()) error {
 	w.onChange = onChange
-	if sw, ok := w.store.(storeStartStopper); ok {
-		return sw.StartWatching()
+	sw, ok := w.store.(storeStartStopper)
+	if !ok {
+		// Backend doesn't watch (memstore under -tags memorybackend);
+		// MCP change notifications will not fire. Warn so operators
+		// running a non-FS build see this rather than silently
+		// wondering why subscriptions never deliver.
+		slog.Warn("mcp: store backend does not support file watching; change notifications are disabled")
+		return nil
 	}
-	return nil
+	return sw.StartWatching()
 }
 
 func (w *mcpWatcher) Stop() {

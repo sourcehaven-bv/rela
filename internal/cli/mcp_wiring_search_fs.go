@@ -15,10 +15,16 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// newMCPSearchObserver builds the search backend installed as a store
-// observer at open time. FS build: in-memory bleve. Future Postgres
-// build: nil (Postgres indexes inside the store itself).
-func newMCPSearchObserver() store.EntityObserver {
+// newMCPSearchObserver builds the bleve search index installed as a
+// store observer at open time. Returns nil when bleve construction
+// fails — non-fatal: [buildMCPSearcher] downstream returns an
+// error-Searcher.
+//
+// Returning the concrete *bleveindex.Index (not store.EntityObserver)
+// lets the caller plumb the same value into [openMCPStore] (via
+// [asMCPObserver]) and [buildMCPSearcher] (which needs the bleve
+// handle for backfill) without a runtime type assertion.
+func newMCPSearchObserver() *bleveindex.Index {
 	idx, err := bleveindex.NewMem()
 	if err != nil {
 		slog.Warn("search backend unavailable; MCP search tool will return errors", "error", err)
@@ -28,22 +34,30 @@ func newMCPSearchObserver() store.EntityObserver {
 }
 
 // buildMCPSearcher returns the Searcher backed by the store and the
-// observer previously installed at OpenStore time. Backfill is run
+// bleve index previously installed at OpenStore time. Backfill is run
 // synchronously because the observer is not invoked for entities
 // already on disk at open time.
 func buildMCPSearcher(
 	ctx context.Context,
 	st store.Store,
-	obs store.EntityObserver,
+	backend *bleveindex.Index,
 ) (search.Searcher, io.Closer, error) {
-	backend, ok := obs.(*bleveindex.Index)
-	if !ok || backend == nil {
+	if backend == nil {
 		return search.ErrSearcher(errors.New("search index not available")), mcpNoopCloser{}, nil
 	}
 	if err := backfillMCPBackend(ctx, backend, st); err != nil {
 		slog.Warn("search index backfill incomplete", "error", err)
 	}
 	return search.New(st, backend), backend, nil
+}
+
+// asMCPObserver widens the per-build search backend to
+// [store.EntityObserver] without the typed-nil-into-interface trap.
+func asMCPObserver(b *bleveindex.Index) store.EntityObserver {
+	if b == nil {
+		return nil
+	}
+	return b
 }
 
 // backfillMCPBackend populates the search backend from the store at

@@ -169,7 +169,10 @@ deps:
     canUse:
       - wails
 
-  # CLI layer — orchestrates everything
+  # CLI layer — orchestrates everything. memstore is here because
+  # cli/mcp_wiring has its own per-build store seam (the FS variant
+  # uses app+bleveindex, the -tags memorybackend variant uses
+  # memstore). Union over build tags, same rationale as appbuild.
   cli:
     mayDependOn:
       - acl
@@ -289,6 +292,11 @@ deps:
       - project
       - storage
       - store
+  # appbuild deps are the union across build tags. Default build
+  # (!postgres && !memorybackend) imports app + bleveindex via the
+  # FS seam files; -tags memorybackend imports memstore via its
+  # alternative seam. arch-lint sees the whole graph reachable under
+  # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
       - acl

@@ -19,9 +19,6 @@ func openMCPStore(
 	_ *metamodel.Metamodel,
 	obs store.EntityObserver,
 ) (store.Store, error) {
-	opts := []memstore.Option{}
-	if obs != nil {
-		opts = append(opts, memstore.WithObserver(obs))
-	}
-	return memstore.New(opts...), nil
+	// memstore.WithObserver drops nil observers — no caller-side guard needed.
+	return memstore.New(memstore.WithObserver(obs)), nil
 }

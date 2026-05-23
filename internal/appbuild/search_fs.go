@@ -15,15 +15,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// newSearchObserver builds the search backend that should be wired as a
-// store observer at OpenStore time. For the FS build this is an
-// in-memory bleve index; for a future Postgres build the searcher
-// indexes inside the store, so this returns (nil, nil) there.
+// newSearchObserver builds the search index that should be wired as a
+// store observer at OpenStore time. The FS build returns an in-memory
+// bleve index. Returns nil when index creation fails — non-fatal:
+// [buildSearcher] downstream returns an error-Searcher so callers
+// receive an explicit "search not available" message instead of
+// crashing.
 //
-// A nil observer is non-fatal: [buildSearcher] downstream returns an
-// error-Searcher so callers receive an explicit "search not available"
-// message instead of crashing.
-func newSearchObserver() store.EntityObserver {
+// The concrete return type lets the caller plumb the same value into
+// [openStore] (which takes [store.EntityObserver]) and [buildSearcher]
+// (which needs the bleve handle for backfill) without a runtime type
+// assertion. A future Postgres build returns a different concrete from
+// its own newSearchObserver; the wiring shape stays per-build.
+func newSearchObserver() *bleveindex.Index {
 	idx, err := bleveindex.NewMem()
 	if err != nil {
 		slog.Warn("appbuild: failed to create search index", "error", err)
@@ -32,21 +36,31 @@ func newSearchObserver() store.EntityObserver {
 	return idx
 }
 
+// asObserver widens the per-build search backend to
+// [store.EntityObserver] without the typed-nil-into-interface trap.
+// A nil concrete becomes a nil interface (rather than a non-nil
+// interface holding a nil pointer), so downstream `if obs != nil`
+// checks at the store layer behave as intended.
+func asObserver(b *bleveindex.Index) store.EntityObserver {
+	if b == nil {
+		return nil
+	}
+	return b
+}
+
 // buildSearcher returns the Searcher backed by the store and the
-// observer previously installed at OpenStore time. The FS path requires
-// the observer to be the bleve index from [newSearchObserver]; if it is
-// nil or a different concrete type the searcher returns errors.
+// bleve index previously installed at OpenStore time. A nil index
+// yields an error-Searcher so the rest of the services bundle still
+// works (read/write paths don't depend on search).
 //
-// Returns the searcher, a closer that releases the index resources, and
-// any backfill error. Backfill is run synchronously here because the
-// observer is not invoked for entities already on disk at open time.
+// Backfill is run synchronously because the observer is not invoked
+// for entities already on disk at open time.
 func buildSearcher(
 	ctx context.Context,
 	st store.Store,
-	obs store.EntityObserver,
+	backend *bleveindex.Index,
 ) (search.Searcher, io.Closer, error) {
-	backend, ok := obs.(*bleveindex.Index)
-	if !ok || backend == nil {
+	if backend == nil {
 		return search.ErrSearcher(errors.New("search index not available")), noopCloser{}, nil
 	}
 	if err := backfillSearchBackend(ctx, backend, st); err != nil {
