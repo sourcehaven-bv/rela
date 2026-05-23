@@ -71,6 +71,28 @@ describe('markdown', () => {
       expect(result).toContain('checked')
     })
 
+    it('omits data-cb-idx and keeps disabled by default (non-interactive)', () => {
+      const result = renderMarkdown('- [ ] one\n- [x] two')
+      expect(result).not.toContain('data-cb-idx')
+      expect(result).toContain('disabled="" type="checkbox"')
+    })
+
+    it('tags each rendered checkbox with sequential data-cb-idx when interactive', () => {
+      const result = renderMarkdown('- [ ] one\n- [x] two\n- [ ] three', { interactive: true })
+      expect(result).toContain('data-cb-idx="0"')
+      expect(result).toContain('data-cb-idx="1"')
+      expect(result).toContain('data-cb-idx="2"')
+      expect(result).not.toContain('disabled')
+    })
+
+    it('resets data-cb-idx counter per render', () => {
+      renderMarkdown('- [ ] a\n- [ ] b', { interactive: true })
+      const second = renderMarkdown('- [ ] c\n- [ ] d', { interactive: true })
+      // Exact-count assertion: exactly two checkboxes, indices 0 and 1.
+      const matches = second.match(/data-cb-idx="\d+"/g) ?? []
+      expect(matches).toEqual(['data-cb-idx="0"', 'data-cb-idx="1"'])
+    })
+
     it('sanitizes dangerous HTML', () => {
       const result = renderMarkdown('<script>alert("xss")</script>')
       expect(result).not.toContain('<script>')
@@ -380,6 +402,15 @@ describe('markdown', () => {
     it('ignores non-checkbox list items', () => {
       const result = getCheckboxStats('- normal item\n- [ ] checkbox item')
       expect(result).toEqual({ checked: 0, total: 1 })
+    })
+
+    it('counts checkboxes across the marked-accepted bullet set', () => {
+      // Same set as the toggler (parseCheckboxLine in checkboxToggle.ts):
+      // `-`, `*`, `+`, and `N.`. The counter and the toggler MUST agree
+      // or the (n/m) widget and the click-handler disagree on which
+      // checkbox is which.
+      const result = getCheckboxStats('- [x] a\n* [ ] b\n+ [x] c\n1. [ ] d')
+      expect(result).toEqual({ checked: 2, total: 4 })
     })
   })
 

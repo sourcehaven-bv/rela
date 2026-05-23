@@ -178,12 +178,15 @@ export class EntityPage extends BasePage {
   }
 
   /** Click the checkbox with data-cb-idx="index" in the content body.
-   *  `force: true` because GFM-rendered checkboxes are disabled by default —
-   *  Vue installs a click handler that toggles via the API regardless. */
+   *  The Vue handler calls preventDefault(), PATCHes the entity with the
+   *  toggled content, and reactively splices the updated entity back into
+   *  viewData — so the rendered checked state tracks the server source
+   *  without a full-view refetch (and without the flicker that refetching
+   *  the entity detail tree would cause). */
   async clickContentCheckbox(index: number): Promise<void> {
     await this.contentBody
       .locator(`input[type="checkbox"][data-cb-idx="${index}"]`)
-      .click({ force: true });
+      .click();
   }
 
   async contentCheckboxIsChecked(index: number): Promise<boolean> {
