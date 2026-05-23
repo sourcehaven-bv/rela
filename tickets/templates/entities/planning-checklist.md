@@ -101,11 +101,11 @@ For enhancements: identify what documentation needs updating.
 
 **Documentation Impact:**
 <!-- Which docs need updating? Check all that apply:
-- [ ] User guide / reference docs
-- [ ] CLI help text (if commands changed)
-- [ ] CLAUDE.md (if new patterns)
-- [ ] README.md (if project-level changes)
-- [ ] API docs (if applicable)
+- [ ] docs/metamodel.md - New metamodel features
+- [ ] docs/cli-reference.md - New/changed commands
+- [ ] docs/data-entry.md - UI changes
+- [ ] CLAUDE.md - New patterns or conventions
+- [ ] README.md - Project-level changes
 - [ ] N/A - Internal change, no user-facing docs needed
 -->
 
