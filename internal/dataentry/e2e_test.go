@@ -57,6 +57,8 @@ func newE2ETestApp(t *testing.T) (*App, string, func()) {
 	app, err := NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
 		svc.EntityManager(), svc.Searcher(), svc.ACL(),
+		NopFieldVerdictResolver{},
+		svc.Audit(),
 	)
 	if err != nil {
 		svc.Close()

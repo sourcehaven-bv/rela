@@ -10,6 +10,11 @@ const props = defineProps<{
   value: unknown
   error?: string
   readonly?: boolean
+  // Sparse per-option allow map: only `false` entries appear; absent
+  // keys default to allowed. An option is disabled when EITHER this
+  // map denies it or the existing transition rules deny it — the two
+  // signals are independent and either one is sufficient.
+  optionVerdicts?: Record<string, boolean>
 }>()
 
 const emit = defineEmits<{
@@ -60,8 +65,10 @@ const hasTransitions = computed(() => {
   return props.field.transitions && Object.keys(props.field.transitions).length > 0
 })
 
-// Check if an option is disabled due to transition rules
 function isOptionDisabled(opt: string): boolean {
+  if (props.optionVerdicts && props.optionVerdicts[opt] === false) {
+    return true
+  }
   if (!hasTransitions.value || !props.field.transitions) {
     return false
   }

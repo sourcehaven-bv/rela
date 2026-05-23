@@ -382,3 +382,116 @@ that's expected and documents the scope.
   v1 is replacement-only at the list level + upsert at the per-edge level.
 - **Cross-entity atomic transactions.** A single PATCH targets one entity;
   there is no batch / transaction surface across entities.
+
+## Affordances: `_fields` and `_relations` (TKT-G7N5)
+
+Per-entity GET responses carry two affordance maps alongside the entity
+payload: `_fields` (field-level write / option verdicts) and `_relations`
+(relation-type-level create / remove / meta-field verdicts). The SPA reads
+these to render disabled inputs, filtered enum selects, and hidden + Add /
+x buttons. Writes that contradict a verdict return 403.
+
+### Verdict source
+
+In v1, verdicts come from a hardcoded stub selected by the
+`RELA_AFFORDANCE_PROFILE` env var (read once at server startup; tests pass
+the resolver directly):
+
+| Value | Behavior |
+|---|---|
+| unset / `none` | Permissive default — every field writable, every option allowed, every relation creatable/removable. Both wire maps emit as `{}`. |
+| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path so the SPA work has an observable end-to-end behavior. |
+| any other | Unknown — logs a warning and falls back to `none`. Never panics. |
+
+The eventual predicate-engine ticket replaces the stub with an `acl.yaml`-
+driven implementation via the same `FieldVerdictResolver` Go interface; the
+wire shape and SPA rendering stay unchanged.
+
+### Wire shape
+
+```json
+{
+  "id": "TKT-001",
+  "type": "ticket",
+  "properties": { /* hidden fields are OMITTED entirely */ },
+  "_fields": {
+    "kind": { "writable": false },
+    "status": { "options": { "done": false } }
+  },
+  "_relations": {
+    "affects":    { "creatable": false },
+    "implements": { "removable": false },
+    "has-planning": { "fields": { "note": { "writable": false } } }
+  }
+}
+```
+
+Both `_fields` and `_relations` are **sparse**: only entries that deviate
+from the permissive default appear. An absent key in either map means
+"default" — writable, all options allowed, creatable / removable. Under the
+`none` profile both maps emit as `{}` (present, empty) — a closed-world
+signal letting the SPA distinguish "evaluated, no deviations" from
+"affordances not available" (anonymous fallback / pre-rollout server).
+
+Hidden fields are doubly invisible: omitted from `properties` AND absent
+from `_fields`. The SPA filters its config-driven form-field list against
+both: a field declared in `data-entry.yaml` is rendered only if it appears
+in `_fields` OR `properties`. This makes "hidden = omitted" actually hide
+the input.
+
+### Write-side parity
+
+Every relevant PATCH / POST / DELETE handler consults the same resolver as
+the GET. A stale SPA client that submits a write contradicting a verdict
+receives 403:
+
+| Operation | Verdict checked | 403 `rule_id` shape |
+|---|---|---|
+| `PATCH /entities/<type>/<id>` with hidden field set or unset | `_fields.<name>` visibility | `field-affordance:hidden:<name>` |
+| Same, with read-only field set or unset | `_fields.<name>.writable` | `field-affordance:read-only:<name>` |
+| Same, with disallowed enum value | `_fields.<name>.options.<value>` | `field-affordance:enum-filtered:<name>=<value>` |
+| `POST /entities/<type>/<id>/relations/<rel>` | `_relations.<rel>.creatable` | `relation-affordance:not-creatable:<rel>` |
+| `DELETE /entities/<type>/<id>/relations/<rel>/<peer>` | `_relations.<rel>.removable` | `relation-affordance:not-removable:<rel>` |
+| `PATCH /entities/<type>/<id>/relations/<rel>/<peer>` with non-writable meta | `_relations.<rel>.fields.<meta>.writable` | `relation-affordance:meta-read-only:<rel>.<meta>` |
+| Unified `PATCH /entities/<type>/<id>` adding / removing edges or writing meta | as above | as above |
+
+Unknown fields (declared neither in the metamodel nor by the resolver)
+return 403 with the SAME `field-affordance:hidden:<name>` shape as
+genuinely-hidden fields. This closes the side channel where an attacker
+could otherwise distinguish "hidden from me" from "doesn't exist."
+
+The 403 body shape is the same as for ACL denials:
+
+```json
+{
+  "error": "forbidden",
+  "rule_kind": "affordance",
+  "rule_id": "field-affordance:read-only:kind",
+  "reason": "field \"kind\" is not writable"
+}
+```
+
+Audit log entries for these 403s use the existing `denied-write` op with
+the `reason` field prefixed `affordance:<rule>:<path>` (vs `acl:` for true
+ACL denials), so log readers can distinguish the two sources.
+
+Read-only fields use strict 403 semantics: any presence of a read-only
+field in `properties` or `properties_unset` rejects the whole PATCH,
+including any writable fields in the same body. The SPA's `useAutoSave`
+suppresses no-op PATCHes client-side via its `lastSeenServer` snapshot,
+so no real SPA path produces a same-value PATCH; the rejection exists
+for defense against hand-crafted clients.
+
+### Out of scope (this ticket)
+
+- **List-query affordances.** `_fields` and `_relations` ride only on
+  per-entity GET; list / collection responses keep their existing shape.
+- **Per-link verdicts** (different verdicts for different links of the
+  same relation type). Deferred to the predicate-engine ticket — requires
+  state-dependent gates.
+- **List-typed enum option-filter** (e.g. `tags` with `list: true`).
+  Wire shape supports it; the v1 PATCH validator only walks scalar enums.
+- **Create-mode affordances.** Stub doesn't gate creates; the create form
+  renders unrestricted. The predicate ticket will introduce
+  collection-level `_fields` / `_relations` on `V1ListResponse` for
+  create-mode gating.

@@ -38,11 +38,44 @@ type V1Entity struct {
 	Self         string                 `json:"_self,omitempty"`
 	Actions      map[string]bool        `json:"_actions,omitempty"`
 	Inaccessible []V1InaccessibleField  `json:"inaccessible,omitempty"`
+	// FieldAffordances carries per-field write affordances on per-entity
+	// GET responses. Sparse: only fields whose verdict deviates from the
+	// permissive default appear. Hidden fields are omitted from
+	// `Properties` AND from this map entirely. Pointer semantics
+	// distinguish "absent on the wire" (nil pointer; list / mutation
+	// responses) from "present and empty" (`{}`; per-entity GET with no
+	// deviations under nop resolver — closed-world signal matching the
+	// `_actions` precedent).
+	FieldAffordances *map[string]V1FieldAffordance `json:"_fields,omitempty"`
+	// RelationAffordances carries per-relation-type affordances on
+	// per-entity GET responses. Same pointer / closed-world semantics
+	// as FieldAffordances.
+	RelationAffordances *map[string]V1RelationAffordance `json:"_relations,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
 	// JSON Pointer `path`, and a human-readable `detail`.
 	Warnings []Warning `json:"warnings,omitempty"`
+}
+
+// V1FieldAffordance describes per-field write / option affordances on
+// the wire. Sparse: `Writable` is nil when the default (writable)
+// holds; `Options` lists only the false entries (allowed options are
+// implicit via the metamodel). See the closed-world contract in
+// docs/data-entry/api-reference.md.
+type V1FieldAffordance struct {
+	Writable *bool           `json:"writable,omitempty"`
+	Options  map[string]bool `json:"options,omitempty"`
+}
+
+// V1RelationAffordance describes per-relation-type affordances on the
+// wire. Sparse: `Creatable` and `Removable` are nil when the default
+// (true) holds. `Fields` lists meta-field writability overrides, also
+// sparse.
+type V1RelationAffordance struct {
+	Creatable *bool                        `json:"creatable,omitempty"`
+	Removable *bool                        `json:"removable,omitempty"`
+	Fields    map[string]V1FieldAffordance `json:"fields,omitempty"`
 }
 
 // V1InaccessibleField describes a property that is known to exist but
@@ -359,7 +392,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	data := make([]V1Entity, 0, len(entities))
 	included := make(map[string]V1Entity)
 	for _, e := range entities {
-		v1Entity := a.entityToV1(r.Context(), e, plural, true)
+		v1Entity := a.serializeRelatedEntityForWire(r.Context(), e, plural, true)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -486,7 +519,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.entityToV1(r.Context(), created, plural, true)
+	result := a.serializeEntityForWire(r.Context(), created, plural, true)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -533,7 +566,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	query := r.URL.Query()
 	includeRelations := true
 
-	result := a.entityToV1(r.Context(), entity, plural, includeRelations)
+	// Single per-entity serialization: strips hidden + attaches
+	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
+	result := a.serializeEntityForWire(r.Context(), entity, plural, includeRelations)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -604,6 +639,21 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
 		return
+	}
+
+	// Affordance parity (TKT-G7N5): reject writes that conflict with
+	// what the resolver would have surfaced on GET. Runs before any
+	// other validation so the failure mode is identical regardless of
+	// what else the PATCH body would have triggered.
+	if denial := a.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
+		a.denyAffordance(r.Context(), w, entity, *denial)
+		return
+	}
+	if req.Relations.Modern != nil {
+		if denial := a.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
+			a.denyAffordance(r.Context(), w, entity, *denial)
+			return
+		}
 	}
 
 	// Phase A: validate relations (no writes). Returns warnings (will
@@ -680,7 +730,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.entityToV1(r.Context(), entity, plural, true)
+	result := a.serializeEntityForWire(r.Context(), entity, plural, true)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -889,6 +939,21 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
+	// Affordance gates: creatable + meta-writable, evaluated against
+	// the SOURCE of the new edge (not necessarily the path entity —
+	// for incoming-direction creates the path entity is the target).
+	source := a.relationSourceEntity(entity, req.ID, req.Direction)
+	// Audit subject is the source of the new edge, matching the
+	// entity whose policy gated the write.
+	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
+		a.denyAffordance(r.Context(), w, source, *denial)
+		return
+	}
+	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+		a.denyAffordance(r.Context(), w, source, *denial)
+		return
+	}
+
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
 	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta})
@@ -934,6 +999,16 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
+	// Affordance gate: meta-writable, evaluated against the SOURCE of
+	// the edge (the path entity for outgoing; the peer for incoming).
+	// The edge already exists (PATCH is meta-only), so the create /
+	// remove gates don't apply.
+	source := a.relationSourceEntity(entity, targetID, req.Direction)
+	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+		a.denyAffordance(r.Context(), w, source, *denial)
+		return
+	}
+
 	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
 
 	rel, err := a.entityManager.UpdateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{
@@ -970,7 +1045,18 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	from, to := resolveRelationEndpoints(entity.ID, targetID, r.URL.Query().Get("direction"))
+	// Affordance gate: removable check, evaluated against the SOURCE
+	// of the edge (the path entity for outgoing; the peer for
+	// incoming). Per-relation-type uniform — a removable=false
+	// verdict applies to every link of this type.
+	direction := r.URL.Query().Get("direction")
+	source := a.relationSourceEntity(entity, targetID, direction)
+	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
+		a.denyAffordance(r.Context(), w, source, *denial)
+		return
+	}
+
+	from, to := resolveRelationEndpoints(entity.ID, targetID, direction)
 
 	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
@@ -1036,7 +1122,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 
 	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetPlural(typeName)
-	result := a.entityToV1(r.Context(), newEntity, plural, false)
+	result := a.serializeEntityForWire(r.Context(), newEntity, plural, false)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
 	writeV1JSON(w, http.StatusCreated, result)
@@ -1240,7 +1326,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
-		data = append(data, a.entityToV1(r.Context(), e, plural, false))
+		data = append(data, a.serializeRelatedEntityForWire(r.Context(), e, plural, false))
 	}
 
 	resp := V1ListResponse{
@@ -1349,7 +1435,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 			entityDef := s.Meta.Entities[target.Type]
 			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.entityToV1(ctx, target, plural, false)
+			included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
 		}
 		// Include all incoming relations
 		for _, edge := range a.incomingRelations(entity.ID) {
@@ -1359,7 +1445,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 			entityDef := s.Meta.Entities[source.Type]
 			plural := entityDef.GetPlural(source.Type)
-			included[source.ID] = a.entityToV1(ctx, source, plural, false)
+			included[source.ID] = a.serializeRelatedEntityForWire(ctx, source, plural, false)
 		}
 		return included
 	}
@@ -1385,7 +1471,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 			entityDef := s.Meta.Entities[target.Type]
 			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.entityToV1(ctx, target, plural, false)
+			included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
 
 			// Handle nested includes
 			if len(relParts) > 1 {
@@ -2645,7 +2731,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	plural := entityDef.GetPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
-		Entry:    a.entityToV1(r.Context(), result.Entry, plural, true),
+		Entry:    a.serializeEntityForWire(r.Context(), result.Entry, plural, true),
 		Sections: make([]V1ViewSection, 0, len(sections)),
 	}
 

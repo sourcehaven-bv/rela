@@ -73,6 +73,7 @@ type Services struct {
 	scriptEngine  *script.Engine
 	searchBackend *bleveindex.Index
 	acl           acl.ACL
+	audit         audit.Audit
 
 	closeOnce sync.Once
 	closeErr  error
@@ -103,6 +104,11 @@ func (s *Services) EntityManager() entitymanager.EntityManager { return s.entity
 // without re-reading the file. The returned value is the exact ACL
 // the Manager consults.
 func (s *Services) ACL() acl.ACL { return s.acl }
+
+// Audit returns the audit sink wired into entitymanager. Exposed so
+// dataentry handlers can emit `denied-write` rows for short-circuit
+// rejections (affordance gates) that never reach the manager.
+func (s *Services) Audit() audit.Audit { return s.audit }
 
 // Tracer returns the graph-traversal service.
 func (s *Services) Tracer() tracer.Tracer { return s.tracer }
@@ -387,6 +393,7 @@ func New(
 		scriptEngine:  scriptEngine,
 		searchBackend: searchBackend,
 		acl:           o.acl,
+		audit:         auditSink,
 	}, nil
 }
 

@@ -2,9 +2,16 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // translateVerb maps a wire-format verb to the [acl.WriteRequest] that
@@ -64,4 +71,649 @@ func (a *App) computeCollectionActions(ctx context.Context, entityType string) m
 		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, entityType)).Allow
 	}
 	return out
+}
+
+// FieldVerdictResolver decides per-entity affordances for fields, enum
+// options, and relation-meta fields. The wire shape it feeds into is
+// documented in docs/data-entry/api-reference.md.
+//
+// v1 ships two implementations:
+//
+//   - [NopFieldVerdictResolver] — returns zero verdicts; every field,
+//     option, and relation is permitted. Default unless
+//     RELA_AFFORDANCE_PROFILE selects another.
+//   - [DemoFieldVerdictResolver] — a hardcoded fixture against the
+//     ticket type, exercising every affordance code path so the SPA
+//     work in TKT-G7N5 has an observable end-to-end behavior to test
+//     against.
+//
+// The eventual predicate-engine ticket replaces both with a
+// policy-driven implementation that reads acl.yaml. The interface
+// shape is intentionally narrow so the swap is mechanical.
+type FieldVerdictResolver interface {
+	FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts
+	RelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
+}
+
+// FieldVerdicts carries per-entity field-level affordance decisions.
+// All maps use sparse semantics: absence of a key means "default" (the
+// permissive default — writable, visible, all options allowed). Only
+// deviations need to be populated.
+type FieldVerdicts struct {
+	// Writable maps fieldName → writable. Absence = writable.
+	Writable map[string]bool
+
+	// Visible maps fieldName → visible. Absence = visible. False means
+	// the property is omitted from the wire `properties` map AND from
+	// `_fields`; the SPA's filter never sees the key.
+	Visible map[string]bool
+
+	// Options maps fieldName → optionValue → allowed. Absence of the
+	// field OR absence of an option means allowed. Used for enum-typed
+	// properties.
+	Options map[string]map[string]bool
+}
+
+// RelationVerdicts carries per-entity relation-level affordance
+// decisions. The map is sparse: relation types not listed default to
+// fully-permitted ({creatable: true, removable: true} with no
+// meta-field restrictions).
+type RelationVerdicts struct {
+	Types map[string]RelationVerdict
+}
+
+// RelationVerdict carries the affordance decision for a single
+// relation type. Zero-value (Creatable=false, Removable=false, Fields=nil)
+// would deny everything; callers always populate explicitly.
+type RelationVerdict struct {
+	Creatable bool
+	Removable bool
+	// Fields maps metaField → writable. Absence = writable. Applies
+	// uniformly to every link of this relation type (per-link
+	// affordances are predicate territory, deferred).
+	Fields map[string]bool
+}
+
+// AffordanceDenialRule is the stable identifier surfaced in 403
+// responses when an affordance validator rejects a write. The full
+// rule_id on the wire is "<rule>:<path>" so a UI or audit reader can
+// reconstruct what was denied.
+//
+// Rule names are part of the wire contract — changing them is a wire
+// break.
+type AffordanceDenialRule string
+
+const (
+	RuleFieldHidden          AffordanceDenialRule = "field-affordance:hidden"
+	RuleFieldReadOnly        AffordanceDenialRule = "field-affordance:read-only"
+	RuleFieldEnumFiltered    AffordanceDenialRule = "field-affordance:enum-filtered"
+	RuleRelationNotCreatable AffordanceDenialRule = "relation-affordance:not-creatable"
+	RuleRelationNotRemovable AffordanceDenialRule = "relation-affordance:not-removable"
+	RuleRelationMetaReadOnly AffordanceDenialRule = "relation-affordance:meta-read-only"
+)
+
+// AffordanceDenialError reports why a write was rejected by the
+// affordance validator. The rule and path together form the wire
+// rule_id (e.g. "field-affordance:hidden:priority"). Reason is a
+// short human-readable explanation; UIs surface it as-is.
+type AffordanceDenialError struct {
+	Rule   AffordanceDenialRule
+	Path   string // property name, relation type, or "<relation-type>.<meta-field>"
+	Reason string
+}
+
+// RuleID returns the wire-stable identifier for this denial.
+func (d AffordanceDenialError) RuleID() string {
+	if d.Path == "" {
+		return string(d.Rule)
+	}
+	return string(d.Rule) + ":" + d.Path
+}
+
+// Error makes AffordanceDenialError satisfy the error interface so it can
+// flow back through caller chains. The format mirrors RuleID() plus
+// the reason.
+func (d AffordanceDenialError) Error() string {
+	return d.RuleID() + ": " + d.Reason
+}
+
+// validateFieldWrite reports the first AffordanceDenialError that the
+// proposed property writes trigger. Returns nil when every requested
+// field is permitted.
+//
+// The validator handles four classes of denial:
+//
+//  1. Unknown fields (not declared in the metamodel) — rejected with
+//     RuleFieldHidden so the response is byte-equivalent to a true
+//     hidden-field rejection. This closes the F8 side channel.
+//  2. Hidden fields — Visible[name] == false in the resolver verdict.
+//  3. Read-only fields — Writable[name] == false. Strict: same-value
+//     writes are not exempted (useAutoSave does no-op suppression
+//     client-side; the server doesn't repeat that logic).
+//  4. Filtered enum options — Options[name][value] == false.
+//
+// `setKeys` is the set of property names being written (from
+// `properties` in the PATCH body); `unsetKeys` is the set being
+// removed (`properties_unset`). Both are checked against the same
+// rules: hidden/read-only fields cannot be set OR unset.
+//
+// Values are required only for the enum-filter check; pass the
+// requested value for each key in setValues. Unknown values default
+// to allowed (an option entry of `nil` means "no override").
+func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKeys map[string]interface{}, unsetKeys []string) *AffordanceDenialError {
+	if e == nil {
+		return nil
+	}
+	v := a.fieldResolver.FieldVerdicts(ctx, e)
+	declared := declaredProperties(a.State().Meta, e.Type)
+
+	check := func(key string, value interface{}, present bool) *AffordanceDenialError {
+		// Unknown field (not in metamodel, not in resolver overrides) →
+		// hidden-shape rejection (F8 side-channel closure).
+		if !declared[key] && !knownToResolver(v, key) {
+			return &AffordanceDenialError{
+				Rule:   RuleFieldHidden,
+				Path:   key,
+				Reason: fmt.Sprintf("field %q is not visible", key),
+			}
+		}
+		// Hidden via resolver verdict.
+		if visible, ok := v.Visible[key]; ok && !visible {
+			return &AffordanceDenialError{
+				Rule:   RuleFieldHidden,
+				Path:   key,
+				Reason: fmt.Sprintf("field %q is not visible", key),
+			}
+		}
+		// Read-only via resolver verdict.
+		if writable, ok := v.Writable[key]; ok && !writable {
+			return &AffordanceDenialError{
+				Rule:   RuleFieldReadOnly,
+				Path:   key,
+				Reason: fmt.Sprintf("field %q is not writable", key),
+			}
+		}
+		// Enum-filter (only for set, not unset, and only when a value
+		// is provided — unset has no value to check).
+		if present && value != nil {
+			if opts, ok := v.Options[key]; ok {
+				if str, isStr := value.(string); isStr {
+					if allowed, ok := opts[str]; ok && !allowed {
+						return &AffordanceDenialError{
+							Rule:   RuleFieldEnumFiltered,
+							Path:   key + "=" + str,
+							Reason: fmt.Sprintf("option %q is not allowed for field %q", str, key),
+						}
+					}
+				}
+			}
+		}
+		return nil
+	}
+
+	// Check sets first, then unsets. First denial wins.
+	for k, val := range setKeys {
+		if d := check(k, val, true); d != nil {
+			return d
+		}
+	}
+	for _, k := range unsetKeys {
+		if d := check(k, nil, false); d != nil {
+			return d
+		}
+	}
+	return nil
+}
+
+// declaredProperties returns the set of property names that the
+// metamodel declares for entityType. Returns an empty (non-nil) map
+// when the entity type is unknown — callers should treat that as
+// "nothing is declared," which causes the unknown-field rule to
+// reject every PATCH key. That's deliberate: an unknown entity type
+// should never reach this code path (the GET handler returns 404
+// upstream), but if it does the safe-fail behavior is reject-all.
+func declaredProperties(meta *metamodel.Metamodel, entityType string) map[string]bool {
+	out := make(map[string]bool)
+	if meta == nil {
+		return out
+	}
+	def, ok := meta.Entities[entityType]
+	if !ok {
+		return out
+	}
+	for name := range def.Properties {
+		out[name] = true
+	}
+	return out
+}
+
+// knownToResolver reports whether the resolver has any verdict
+// (writable, visible, or options) covering the given field name.
+// Used as the "known field" fallback for fields the metamodel does
+// not declare but the resolver has explicit opinions on.
+func knownToResolver(v FieldVerdicts, name string) bool {
+	if _, ok := v.Writable[name]; ok {
+		return true
+	}
+	if _, ok := v.Visible[name]; ok {
+		return true
+	}
+	if _, ok := v.Options[name]; ok {
+		return true
+	}
+	return false
+}
+
+// writeAffordanceDenialError renders an AffordanceDenialError as a 403
+// response. The wire shape mirrors writeForbiddenIfACLDenied (the
+// ACL helper) so SPA error-handling can treat the two uniformly.
+//
+// Prefer [App.denyAffordance] when handler context is available — it
+// emits the audit row in addition to writing the response.
+func writeAffordanceDenialError(w http.ResponseWriter, denial AffordanceDenialError) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":     "forbidden",
+		"rule_kind": "affordance",
+		"rule_id":   denial.RuleID(),
+		"reason":    denial.Reason,
+	})
+}
+
+// denyAffordance writes the 403 response AND records a `denied-write`
+// audit row attributed to the request principal. Use from every
+// affordance-gate site so the audit stream is uniform with ACL
+// denials (which the entitymanager emits the same op for).
+//
+// `target` is the entity the gate fired on — used to populate the
+// audit Subject so log readers can attribute the denial. Nil is
+// tolerated (subject left empty); callers always have it in practice.
+func (a *App) denyAffordance(ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError) {
+	var subject *audit.Subject
+	if target != nil {
+		subject = &audit.Subject{
+			Kind: "entity",
+			Type: target.Type,
+			ID:   target.ID,
+		}
+	}
+	a.auditSink.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpDeniedWrite,
+		Subject:     subject,
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary: fmt.Sprintf("denied: %s (rule_kind=affordance rule_id=%s)",
+			denial.Reason, denial.RuleID()),
+	})
+	writeAffordanceDenialError(w, denial)
+}
+
+// RelationOp identifies which relation-write operation a caller is
+// gating. Pass via [App.validateRelationOp].
+type RelationOp int
+
+const (
+	// RelationOpCreate gates adding an edge of the given type.
+	RelationOpCreate RelationOp = iota
+	// RelationOpRemove gates removing any edge of the given type.
+	RelationOpRemove
+)
+
+// relationSourceEntity returns the entity whose verdict should gate a
+// per-relation write. For outgoing-direction operations the source IS
+// the path entity (the canonical case). For incoming-direction
+// operations the path entity is the TARGET; the source is the peer,
+// so the resolver must be asked about the peer's affordance, not the
+// path entity's.
+//
+// Returns the path entity when the peer can't be found locally (404
+// upstream — should not happen in practice; safe-fail).
+func (a *App) relationSourceEntity(pathEntity *entityPkg.Entity, peerID, direction string) *entityPkg.Entity {
+	if direction != string(DirectionIncoming) {
+		return pathEntity
+	}
+	peer, ok := a.getEntity(peerID)
+	if !ok {
+		return pathEntity
+	}
+	return peer
+}
+
+// validateRelationOp reports the first AffordanceDenialError that the
+// proposed relation operation triggers. Returns nil when permitted.
+// `relType` is the canonical relation type; `op` selects between
+// create / remove. The verdict is per-relation-type uniform —
+// per-link affordances are predicate territory.
+func (a *App) validateRelationOp(ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp) *AffordanceDenialError {
+	if e == nil {
+		return nil
+	}
+	v := a.fieldResolver.RelationVerdicts(ctx, e)
+	rv, ok := v.Types[relType]
+	if !ok {
+		return nil // default-permissive
+	}
+	switch op {
+	case RelationOpCreate:
+		if !rv.Creatable {
+			return &AffordanceDenialError{
+				Rule:   RuleRelationNotCreatable,
+				Path:   relType,
+				Reason: fmt.Sprintf("relation %q is not creatable", relType),
+			}
+		}
+	case RelationOpRemove:
+		if !rv.Removable {
+			return &AffordanceDenialError{
+				Rule:   RuleRelationNotRemovable,
+				Path:   relType,
+				Reason: fmt.Sprintf("relation %q is not removable", relType),
+			}
+		}
+	}
+	return nil
+}
+
+// validateRelationsModernAffordances reports the first
+// AffordanceDenialError that any of the proposed relation diffs trigger
+// across the unified-PATCH modern body. Diffs against current edges
+// to identify true adds and removes (rather than upserts), and
+// inspects per-edge meta against [RelationVerdict.Fields].
+//
+// Called from the unified PATCH handler before
+// [App.applyRelationsModern]. Returns nil when every relation
+// operation is permitted.
+func (a *App) validateRelationsModernAffordances(
+	ctx context.Context, entityID string, e *entityPkg.Entity,
+	desired map[string]V1RelationsUpdate,
+) *AffordanceDenialError {
+	if e == nil || len(desired) == 0 {
+		return nil
+	}
+	meta := a.State().Meta
+	for bodyKey, upd := range desired {
+		if !upd.DataPresent {
+			continue
+		}
+		canonical, incoming, ok := resolveDirection(meta, bodyKey)
+		if !ok {
+			continue // structural error surfaces via the existing validator
+		}
+
+		desiredByID := make(map[string]V1ResourceIdentifier, len(upd.Data))
+		for _, ref := range upd.Data {
+			desiredByID[ref.ID] = ref
+		}
+		current := a.currentEdgesByPeer(entityID, canonical, incoming)
+
+		// For incoming-direction body keys the SOURCE of every edge is
+		// the peer entity, not the path entity. Verdicts are evaluated
+		// against the source — see [App.relationSourceEntity] for the
+		// rationale. Outgoing edges resolve to the path entity.
+		direction := ""
+		if incoming {
+			direction = string(DirectionIncoming)
+		}
+
+		// Adds: any desired edge whose peer isn't currently linked.
+		for _, ref := range upd.Data {
+			source := a.relationSourceEntity(e, ref.ID, direction)
+			if _, exists := current[ref.ID]; exists {
+				// Upsert path: not a create, but the meta may change.
+				if denial := a.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+					return denial
+				}
+				continue
+			}
+			if denial := a.validateRelationOp(ctx, source, canonical, RelationOpCreate); denial != nil {
+				return denial
+			}
+			if denial := a.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+				return denial
+			}
+		}
+
+		// Removes: any current edge not in the desired set.
+		for peerID := range current {
+			if _, kept := desiredByID[peerID]; kept {
+				continue
+			}
+			source := a.relationSourceEntity(e, peerID, direction)
+			if denial := a.validateRelationOp(ctx, source, canonical, RelationOpRemove); denial != nil {
+				return denial
+			}
+		}
+	}
+	return nil
+}
+
+// validateRelationMetaWrite reports the first AffordanceDenialError that
+// the proposed relation-meta writes trigger. Set+unset are both
+// treated as writes (F16). Returns nil when permitted.
+//
+// `meta` is the proposed property map; `metaUnset` lists keys being
+// removed. Unknown meta keys (not in the resolver's Fields map AND
+// not declared in the metamodel for this relation type) are not
+// rejected here — they're a separate concern handled by the existing
+// relation validation. The affordance check focuses on rejecting
+// keys explicitly marked non-writable.
+func (a *App) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]interface{}, metaUnset []string) *AffordanceDenialError {
+	if e == nil {
+		return nil
+	}
+	v := a.fieldResolver.RelationVerdicts(ctx, e)
+	rv, ok := v.Types[relType]
+	if !ok || rv.Fields == nil {
+		return nil
+	}
+	deny := func(key string) *AffordanceDenialError {
+		if writable, ok := rv.Fields[key]; ok && !writable {
+			return &AffordanceDenialError{
+				Rule:   RuleRelationMetaReadOnly,
+				Path:   relType + "." + key,
+				Reason: fmt.Sprintf("meta field %q on relation %q is not writable", key, relType),
+			}
+		}
+		return nil
+	}
+	for k := range meta {
+		if d := deny(k); d != nil {
+			return d
+		}
+	}
+	for _, k := range metaUnset {
+		if d := deny(k); d != nil {
+			return d
+		}
+	}
+	return nil
+}
+
+// computeFieldAffordances returns the sparse `_fields` wire map for
+// entity e: only fields whose verdict deviates from the permissive
+// default appear. Hidden fields (Visible[name] == false) are absent
+// from the returned map AND must be omitted from the entity's
+// Properties by the caller — they are doubly-invisible to the client.
+//
+// Empty input verdicts yield an empty (non-nil) map so the wire shape
+// is consistent: `_fields: {}` under the nop resolver, sparse entries
+// under any other.
+func (a *App) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1FieldAffordance {
+	v := a.fieldResolver.FieldVerdicts(ctx, e)
+	out := make(map[string]V1FieldAffordance)
+
+	// writable=false entries
+	for name, writable := range v.Writable {
+		if writable {
+			continue // sparse: default is writable
+		}
+		if !v.Visible[name] && v.isHidden(name) {
+			continue // hidden takes precedence; skip from _fields entirely
+		}
+		entry := out[name]
+		f := false
+		entry.Writable = &f
+		out[name] = entry
+	}
+
+	// option-filter entries
+	for name, opts := range v.Options {
+		if v.isHidden(name) {
+			continue
+		}
+		var falseOpts map[string]bool
+		for opt, allowed := range opts {
+			if allowed {
+				continue
+			}
+			if falseOpts == nil {
+				falseOpts = make(map[string]bool)
+			}
+			falseOpts[opt] = false
+		}
+		if falseOpts == nil {
+			continue
+		}
+		entry := out[name]
+		entry.Options = falseOpts
+		out[name] = entry
+	}
+
+	return out
+}
+
+// isHidden reports whether v marks name as hidden. Returns false for
+// the absent-key case (default is visible).
+func (v FieldVerdicts) isHidden(name string) bool {
+	visible, ok := v.Visible[name]
+	return ok && !visible
+}
+
+// hiddenProperties returns the set of property names that should be
+// stripped from V1Entity.Properties before serialization. Caller uses
+// this to enforce the omit-on-hidden invariant.
+func (a *App) hiddenProperties(ctx context.Context, e *entityPkg.Entity) map[string]struct{} {
+	v := a.fieldResolver.FieldVerdicts(ctx, e)
+	if len(v.Visible) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{})
+	for name, visible := range v.Visible {
+		if !visible {
+			out[name] = struct{}{}
+		}
+	}
+	return out
+}
+
+// computeRelationAffordances returns the sparse `_relations` wire map
+// for entity e. Only relation types with at least one deviation
+// (creatable=false, removable=false, or any meta-field writable=false)
+// appear in the map. Default-permissive types are absent — the SPA's
+// "no entry = default" path handles them.
+func (a *App) computeRelationAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1RelationAffordance {
+	v := a.fieldResolver.RelationVerdicts(ctx, e)
+	out := make(map[string]V1RelationAffordance)
+	for relType, rv := range v.Types {
+		var entry V1RelationAffordance
+		emit := false
+		if !rv.Creatable {
+			f := false
+			entry.Creatable = &f
+			emit = true
+		}
+		if !rv.Removable {
+			f := false
+			entry.Removable = &f
+			emit = true
+		}
+		var fields map[string]V1FieldAffordance
+		for metaField, writable := range rv.Fields {
+			if writable {
+				continue
+			}
+			if fields == nil {
+				fields = make(map[string]V1FieldAffordance)
+			}
+			f := false
+			fields[metaField] = V1FieldAffordance{Writable: &f}
+		}
+		if fields != nil {
+			entry.Fields = fields
+			emit = true
+		}
+		if emit {
+			out[relType] = entry
+		}
+	}
+	return out
+}
+
+// stripHiddenProperties removes hidden field names from result.Properties
+// in-place. Centralizes the "hidden = omitted from wire" invariant so
+// every entity-returning response (GET, PATCH, POST, clone, action,
+// includes) honors it consistently.
+//
+// Also rewrites `_title` to the entity ID when the entity-type's
+// display property is hidden — otherwise the display title would leak
+// the hidden value through the wire's secondary channel.
+func (a *App) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
+	hidden := a.hiddenProperties(ctx, e)
+	for name := range hidden {
+		delete(result.Properties, name)
+	}
+	if len(hidden) == 0 {
+		return
+	}
+	def, ok := a.State().Meta.Entities[e.Type]
+	if !ok {
+		return
+	}
+	primary := def.GetPrimaryProperty()
+	if primary == "" {
+		return
+	}
+	if _, hiddenPrimary := hidden[primary]; hiddenPrimary {
+		// Fall back to the entity ID, matching DisplayTitle's
+		// missing-property branch. The ID is non-secret by design.
+		result.Title = e.ID
+	}
+}
+
+// attachEntityAffordances writes the per-entity `_fields` and
+// `_relations` wire maps onto result. Called by paths that return a
+// per-entity response (GET, PATCH, POST, clone, action) — list rows
+// and includes get [App.stripHiddenProperties] only.
+func (a *App) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
+	fields := a.computeFieldAffordances(ctx, e)
+	relations := a.computeRelationAffordances(ctx, e)
+	result.FieldAffordances = &fields
+	result.RelationAffordances = &relations
+}
+
+// serializeEntityForWire is the single entry-point every handler that
+// returns a per-entity V1Entity should use. It calls entityToV1, strips
+// hidden properties, and attaches the affordance maps. Use
+// [App.serializeRelatedEntityForWire] for entities that appear as
+// list rows or under `included` (no affordance maps, but still strip).
+func (a *App) serializeEntityForWire(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
+	result := a.entityToV1(ctx, e, plural, includeRelations)
+	a.stripHiddenProperties(ctx, e, &result)
+	a.attachEntityAffordances(ctx, e, &result)
+	return result
+}
+
+// serializeRelatedEntityForWire renders an entity that is NOT the
+// per-entity response root — used for list rows, `?include=*` peers,
+// and the search-result include map. Strips hidden properties but
+// omits the `_fields` / `_relations` maps (they ride on per-entity
+// responses only). Hidden-field stripping still applies because the
+// wire contract is "hidden values never reach the client, regardless
+// of which response shape they ride in."
+func (a *App) serializeRelatedEntityForWire(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
+	result := a.entityToV1(ctx, e, plural, includeRelations)
+	a.stripHiddenProperties(ctx, e, &result)
+	return result
 }
