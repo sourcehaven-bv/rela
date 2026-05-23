@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -156,6 +157,22 @@ type App struct {
 	// cmd/rela-server chains an env resolver + a header resolver
 	// here when --principal-header is set.
 	principalResolver PrincipalResolver
+
+	// fieldResolver decides per-entity field, option, and
+	// relation-meta affordances surfaced as `_fields` / `_relations`
+	// on the wire and enforced on writes. Required (never nil) —
+	// callers that don't want affordances pass NopFieldVerdictResolver{}.
+	// The eventual predicate-engine ticket replaces the stub
+	// implementations with a policy-driven resolver via the same
+	// interface.
+	fieldResolver FieldVerdictResolver
+
+	// auditSink records short-circuit rejections (affordance gates)
+	// that never reach the entitymanager. ACL denials already get a
+	// `denied-write` row from the manager; affordance denials emit
+	// the same op via this sink so log readers see a unified stream.
+	// Required (never nil) — callers pass [audit.Nop] to opt out.
+	auditSink audit.Audit
 }
 
 // StopWatching releases the data-entry.yaml subscription started by
@@ -261,6 +278,8 @@ func NewApp(
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
 	aclImpl acl.ACL,
+	fieldResolver FieldVerdictResolver,
+	auditSink audit.Audit,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -281,6 +300,12 @@ func NewApp(
 	}
 	if aclImpl == nil {
 		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
+	}
+	if fieldResolver == nil {
+		return nil, errors.New("dataentry.NewApp: fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)")
+	}
+	if auditSink == nil {
+		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
 	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
@@ -371,6 +396,8 @@ func NewApp(
 		acl:           aclImpl,
 		broker:        newEventBroker(),
 		scriptEngine:  scriptEngine,
+		fieldResolver: fieldResolver,
+		auditSink:     auditSink,
 	}
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).

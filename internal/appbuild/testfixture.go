@@ -161,6 +161,7 @@ func NewForTest(meta *metamodel.Metamodel, opts ...TestOption) *Services {
 		scriptEngine:  scriptEngine,
 		searchBackend: searchBackend,
 		acl:           aclImpl,
+		audit:         auditSink,
 	}
 }
 

@@ -14,10 +14,40 @@ export interface Entity {
   // principal has every verb denied — UI should hide all affordances.
   // See .ignored/action-affordances-design.md for the full contract.
   _actions?: Record<string, boolean>
+  // Per-field write affordances on per-entity GET responses.
+  // Sparse: only fields whose verdict deviates from default appear.
+  // Hidden fields are omitted from `properties` AND from `_fields`.
+  // Absent on list / mutation responses; present (possibly empty) on
+  // per-entity GET (closed-world signal — empty means "evaluated, no
+  // deviations"). See docs/data-entry/api-reference.md.
+  _fields?: Record<string, FieldAffordance>
+  // Per-relation-type affordances on per-entity GET responses. Same
+  // sparse / closed-world semantics as _fields. Per-relation-type
+  // uniform — per-link verdicts are predicate territory (deferred).
+  _relations?: Record<string, RelationAffordance>
   inaccessible?: InaccessibleField[]
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
   warnings?: Warning[]
+}
+
+// FieldAffordance carries per-field write / option affordances on
+// the wire. Sparse: `writable` undefined means default (writable);
+// `options` lists only the false entries (allowed options are
+// implicit via the metamodel).
+export interface FieldAffordance {
+  writable?: boolean
+  options?: Record<string, boolean>
+}
+
+// RelationAffordance carries per-relation-type affordances on the
+// wire. Same sparse semantics as FieldAffordance: `creatable` /
+// `removable` undefined means default (true). `fields` is the
+// per-meta-field writability map, also sparse.
+export interface RelationAffordance {
+  creatable?: boolean
+  removable?: boolean
+  fields?: Record<string, FieldAffordance>
 }
 
 // Warning is a soft validation finding returned alongside a successful
