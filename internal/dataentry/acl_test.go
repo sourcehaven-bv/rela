@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -27,9 +27,9 @@ func TestHandler_ACLDeny_Returns403Structured(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	svc := appbuild.NewForTest(meta,
-		appbuild.WithFS(fs, ctx),
-		appbuild.WithTestACL(acl.ReadOnlyACL{}),
+	svc := appbuildtest.New(meta,
+		appbuildtest.WithFS(fs, ctx),
+		appbuildtest.WithACL(acl.ReadOnlyACL{}),
 	)
 	rebindApp(app, fs, ctx, svc)
 

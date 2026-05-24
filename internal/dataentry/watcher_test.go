@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -108,7 +108,7 @@ status: open
 		App: AppConfig{Name: "Test App"},
 	}
 
-	svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 	seedFromFixture(svc.Store(), g)
 
 	app := newAppFromParts(cfg, meta, g)
