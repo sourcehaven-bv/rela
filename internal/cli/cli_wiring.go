@@ -73,6 +73,7 @@ type cliAnalyze interface {
 	cliRead
 	AnalyzeAll(ctx context.Context, opts analysis.Options) *analysis.Summary
 	CheckCardinality(opts analysis.Options) []analysis.CardinalityViolation
+	CheckRelationOrder(opts analysis.Options) []analysis.RelationOrderIssue
 	FindDuplicates(opts analysis.Options) []analysis.DuplicateGroup
 	FindGaps(opts analysis.Options) []analysis.GapResult
 	FindOrphansWithScope(opts analysis.Options) []*entity.Entity
@@ -138,6 +139,10 @@ func (s *cliServices) AnalyzeAll(ctx context.Context, opts analysis.Options) *an
 
 func (s *cliServices) CheckCardinality(opts analysis.Options) []analysis.CardinalityViolation {
 	return s.analysis.CheckCardinality(opts)
+}
+
+func (s *cliServices) CheckRelationOrder(opts analysis.Options) []analysis.RelationOrderIssue {
+	return s.analysis.CheckRelationOrder(opts)
 }
 
 func (s *cliServices) FindDuplicates(opts analysis.Options) []analysis.DuplicateGroup {

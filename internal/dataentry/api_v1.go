@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -159,6 +160,16 @@ type V1RelationType struct {
 	MinIncoming *int                     `json:"min_incoming,omitempty"`
 	MaxIncoming *int                     `json:"max_incoming,omitempty"`
 	Properties  map[string]V1PropertyDef `json:"properties,omitempty"`
+	// Orderable, when set, declares that the frontend may offer drag-to-reorder
+	// controls on the corresponding side. The managed property names are
+	// always the reserved `_order_out` (outgoing) and `_order_in` (incoming).
+	Orderable *V1RelationOrderable `json:"orderable,omitempty"`
+}
+
+// V1RelationOrderable describes per-side orderability for a relation type.
+type V1RelationOrderable struct {
+	Outgoing bool `json:"outgoing,omitempty"`
+	Incoming bool `json:"incoming,omitempty"`
 }
 
 // V1InverseDef mirrors metamodel.InverseDef on the wire. The SPA reads
@@ -818,6 +829,10 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 
 	relations := make(map[string][]map[string]interface{})
 
+	// Track the sort property per group, derived from the relation type's
+	// Orderable mode. Empty string disables sorting for that group.
+	groupSortProp := make(map[string]string)
+
 	for _, edge := range outgoing {
 		rel := map[string]interface{}{
 			"id":        edge.To,
@@ -828,6 +843,11 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 			rel["meta"] = edge.Properties
 		}
 		relations[edge.Type] = append(relations[edge.Type], rel)
+		if relDef, ok := s.Meta.Relations[edge.Type]; ok {
+			if p := relDef.OutgoingOrderProperty(); p != "" {
+				groupSortProp[edge.Type] = p
+			}
+		}
 	}
 
 	for _, edge := range incoming {
@@ -848,9 +868,49 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 			rel["meta"] = edge.Properties
 		}
 		relations[inverseName] = append(relations[inverseName], rel)
+		if p := relDef.IncomingOrderProperty(); p != "" {
+			groupSortProp[inverseName] = p
+		}
+	}
+
+	// Sort each group by its managed order property; missing values last;
+	// ties stable on insertion order.
+	for groupName, prop := range groupSortProp {
+		if prop == "" {
+			continue
+		}
+		sortRelationGroup(relations[groupName], prop)
 	}
 
 	writeV1JSON(w, http.StatusOK, relations)
+}
+
+// sortRelationGroup sorts a relation group in place by a numeric meta key.
+// Entries without a finite numeric value at prop sort last; ties stable.
+func sortRelationGroup(group []map[string]interface{}, prop string) {
+	if len(group) < 2 || prop == "" {
+		return
+	}
+	value := func(m map[string]interface{}) (float64, bool) {
+		meta, ok := m["meta"].(map[string]interface{})
+		if !ok {
+			return 0, false
+		}
+		return entitymanager.FiniteOrder(meta[prop])
+	}
+	sort.SliceStable(group, func(i, j int) bool {
+		vi, oki := value(group[i])
+		vj, okj := value(group[j])
+		switch {
+		case oki && !okj:
+			return true
+		case !oki && okj:
+			return false
+		case !oki && !okj:
+			return false
+		}
+		return vi < vj
+	})
 }
 
 func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
@@ -907,6 +967,19 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 			rel["meta"] = edge.Properties
 		}
 		relations = append(relations, rel)
+	}
+
+	// Apply orderable sort when the type declares the relevant side.
+	if relDef, ok := a.State().Meta.Relations[relType]; ok {
+		var prop string
+		if incoming {
+			prop = relDef.IncomingOrderProperty()
+		} else {
+			prop = relDef.OutgoingOrderProperty()
+		}
+		if prop != "" {
+			sortRelationGroup(relations, prop)
+		}
 	}
 
 	writeV1JSON(w, http.StatusOK, relations)
@@ -1007,6 +1080,27 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
+	}
+
+	// Managed order properties must be finite numbers when present. Fast
+	// 400 here so wire-format errors don't surface as 422-from-manager.
+	if relDef, ok := a.State().Meta.Relations[relType]; ok {
+		for _, prop := range []string{metamodel.OrderPropertyOut, metamodel.OrderPropertyIn} {
+			if (prop == metamodel.OrderPropertyOut && relDef.OutgoingOrderProperty() == "") ||
+				(prop == metamodel.OrderPropertyIn && relDef.IncomingOrderProperty() == "") {
+
+				continue
+			}
+			v, present := req.Meta[prop]
+			if !present {
+				continue
+			}
+			if _, ok := entitymanager.FiniteOrder(v); !ok {
+				writeV1Error(w, r, http.StatusBadRequest, "order_value_invalid",
+					"managed order property must be a finite number", prop)
+				return
+			}
+		}
 	}
 
 	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
@@ -1182,6 +1276,12 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			rt.Properties = make(map[string]V1PropertyDef, len(def.Properties))
 			for propName, propDef := range def.Properties {
 				rt.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
+			}
+		}
+		if def.OutgoingOrderProperty() != "" || def.IncomingOrderProperty() != "" {
+			rt.Orderable = &V1RelationOrderable{
+				Outgoing: def.OutgoingOrderProperty() != "",
+				Incoming: def.IncomingOrderProperty() != "",
 			}
 		}
 		schema.Relations[name] = rt
