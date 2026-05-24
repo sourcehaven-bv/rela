@@ -2243,6 +2243,240 @@ func TestWithContext_CancellationInterruptsBusyLoop(t *testing.T) {
 	}
 }
 
+// ctxMarkerKey is the context.Value key used by TestReadBindings_UseCallerContext
+// to detect that the runtime's parent ctx (not context.Background()) flows
+// into each read binding. A struct{} key avoids any string-key collisions.
+type ctxMarkerKey struct{}
+
+// ctxCall records a single ctx-bearing call captured by a spy: which
+// collaborator method ran and what marker value (if any) the ctx carried.
+// Marker is the extracted string value rather than the ctx itself so the
+// recorder stays free of the containedctx anti-pattern and assertions
+// compare simple types.
+type ctxCall struct {
+	method    string
+	marker    string
+	hasMarker bool
+}
+
+// ctxRecorder collects every spied call as a slice so the search binding
+// (which invokes two distinct collaborator methods) can be verified per
+// call site. A single accumulator that overwrote on each call would hide
+// regressions where one of the two sites silently drops the ctx.
+type ctxRecorder struct {
+	calls []ctxCall
+}
+
+func (c *ctxRecorder) record(ctx context.Context, method string) {
+	v, ok := ctx.Value(ctxMarkerKey{}).(string)
+	c.calls = append(c.calls, ctxCall{method: method, marker: v, hasMarker: ok})
+}
+
+// ctxSpyStore captures the ctx supplied to the EntityReader /
+// RelationReader methods Lua read bindings invoke. It embeds store.Store
+// because the runtime requires the full Store surface, but only the three
+// methods listed below are recorded.
+//
+// IMPORTANT: if a new Lua read binding starts calling a different Store
+// method (e.g. CountEntities, GetRelation, HighestID), ADD AN OVERRIDE
+// HERE — otherwise the call passes through to the embedded store and the
+// regression net silently misses the new surface. The compile-time
+// assertion on `readStore` below documents the methods currently in scope.
+type ctxSpyStore struct {
+	store.Store
+	rec *ctxRecorder
+}
+
+func (s *ctxSpyStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	s.rec.record(ctx, "Store.GetEntity")
+	return s.Store.GetEntity(ctx, id)
+}
+
+func (s *ctxSpyStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	s.rec.record(ctx, "Store.ListEntities")
+	return s.Store.ListEntities(ctx, q)
+}
+
+func (s *ctxSpyStore) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	s.rec.record(ctx, "Store.ListRelations")
+	return s.Store.ListRelations(ctx, q)
+}
+
+// readStore is the consumer-side narrowed Store surface Lua read bindings
+// actually invoke today. ctxSpyStore must satisfy this so the test
+// declares which Store methods are recorded and tooling can flag drift.
+type readStore interface {
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+}
+
+var _ readStore = (*ctxSpyStore)(nil)
+
+// ctxSpyTracer captures the ctx supplied to the three Tracer methods Lua
+// trace bindings invoke. Only the recorded methods are declared; the
+// remaining Tracer surface (FindOrphans, HasCycle) is unused by any
+// binding and would be dead weight in the test.
+type ctxSpyTracer struct {
+	inner tracer.Tracer
+	rec   *ctxRecorder
+}
+
+type traceReader interface {
+	TraceFrom(ctx context.Context, id string, maxDepth int) *tracer.TraceResult
+	TraceTo(ctx context.Context, id string, maxDepth int) *tracer.TraceResult
+	FindPath(ctx context.Context, fromID, toID string) []tracer.PathStep
+}
+
+var _ traceReader = (*ctxSpyTracer)(nil)
+
+func (t *ctxSpyTracer) TraceFrom(ctx context.Context, id string, maxDepth int) *tracer.TraceResult {
+	t.rec.record(ctx, "Tracer.TraceFrom")
+	return t.inner.TraceFrom(ctx, id, maxDepth)
+}
+
+func (t *ctxSpyTracer) TraceTo(ctx context.Context, id string, maxDepth int) *tracer.TraceResult {
+	t.rec.record(ctx, "Tracer.TraceTo")
+	return t.inner.TraceTo(ctx, id, maxDepth)
+}
+
+func (t *ctxSpyTracer) FindPath(ctx context.Context, fromID, toID string) []tracer.PathStep {
+	t.rec.record(ctx, "Tracer.FindPath")
+	return t.inner.FindPath(ctx, fromID, toID)
+}
+
+func (t *ctxSpyTracer) FindOrphans(ctx context.Context) ([]string, error) {
+	return t.inner.FindOrphans(ctx)
+}
+
+func (t *ctxSpyTracer) HasCycle(ctx context.Context, startID string) bool {
+	return t.inner.HasCycle(ctx, startID)
+}
+
+var _ tracer.Tracer = (*ctxSpyTracer)(nil)
+
+// ctxSpySearcher captures the ctx supplied to Search.
+type ctxSpySearcher struct {
+	inner search.Searcher
+	rec   *ctxRecorder
+}
+
+var _ search.Searcher = (*ctxSpySearcher)(nil)
+
+func (s *ctxSpySearcher) Search(ctx context.Context, q search.Query) iter.Seq2[search.Hit, error] {
+	s.rec.record(ctx, "Searcher.Search")
+	return s.inner.Search(ctx, q)
+}
+
+// spiedDeps wraps the real workspace's WriteDeps with ctx-recording spies.
+func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
+	return WriteDeps{
+		ReadDeps: ReadDeps{
+			Store:       &ctxSpyStore{Store: realDeps.Store, rec: rec},
+			Tracer:      &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
+			Searcher:    &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
+			Meta:        realDeps.Meta,
+			ProjectRoot: realDeps.ProjectRoot,
+		},
+		EntityManager: realDeps.EntityManager,
+	}
+}
+
+// TestReadBindings_UseCallerContext verifies that all Lua read bindings
+// thread the runtime's parent ctx (set via WithContext) into the underlying
+// Store / Tracer / Searcher, rather than dropping it for context.Background().
+//
+// Two-axis assertion: (1) at least one spied collaborator call occurred —
+// proves the binding did invoke the spied surface; (2) EVERY spied call
+// carries the parent marker — proves no individual call site drops the
+// ctx. luaSearch invokes two collaborator methods (Search + GetEntity),
+// so per-call recording is necessary to catch a regression at either site.
+func TestReadBindings_UseCallerContext(t *testing.T) {
+	const ticketID, featureID = "TKT-001", "FEAT-001"
+	const searchTerm = "Test" // matches the "Test Ticket" / "Test Feature" seeds
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{"get_entity", fmt.Sprintf(`rela.get_entity(%q)`, ticketID)},
+		{"list_entities", `rela.list_entities("ticket")`},
+		{"get_relations", fmt.Sprintf(`rela.get_relations({from = %q})`, ticketID)},
+		{"trace_from", fmt.Sprintf(`rela.trace_from(%q)`, ticketID)},
+		{"trace_to", fmt.Sprintf(`rela.trace_to(%q)`, featureID)},
+		{"search", fmt.Sprintf(`rela.search(%q)`, searchTerm)},
+		{"find_path", fmt.Sprintf(`rela.find_path(%q, %q)`, ticketID, featureID)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := newMockWorkspace(t)
+			// Sanity: confirm the seeds the scripts depend on really exist.
+			// Stops silent test no-ops if a future refactor renames seeds.
+			if _, ok := ws.GetEntity(ticketID); !ok {
+				t.Fatalf("mockWorkspace missing seed %s; update the test or the seeds", ticketID)
+			}
+			if _, ok := ws.GetEntity(featureID); !ok {
+				t.Fatalf("mockWorkspace missing seed %s; update the test or the seeds", featureID)
+			}
+
+			rec := &ctxRecorder{}
+			deps := spiedDeps(ws.services(t.TempDir()), rec)
+
+			parent := context.WithValue(context.Background(), ctxMarkerKey{}, "parent-marker")
+
+			var buf bytes.Buffer
+			r := NewWriter(deps, &buf, WithContext(parent))
+			defer r.Close()
+
+			if err := r.RunString(tc.script); err != nil {
+				t.Fatalf("RunString(%q) failed: %v", tc.script, err)
+			}
+
+			if len(rec.calls) == 0 {
+				t.Fatal("binding did not invoke any spied collaborator")
+			}
+			for _, c := range rec.calls {
+				if !c.hasMarker || c.marker != "parent-marker" {
+					t.Errorf("call %s used a ctx without the parent marker: marker=%q hasMarker=%v",
+						c.method, c.marker, c.hasMarker)
+				}
+			}
+		})
+	}
+}
+
+// TestReadBindings_FallbackWhenNoParentContext verifies the callerCtx()
+// fallback path: when WithContext is not used, bindings still operate with
+// the package-default background ctx and don't crash.
+//
+// Locks in the fallback so a future "optimization" that bypasses
+// callerCtx() in favor of a hardcoded context.Background() — i.e. a
+// regression to the bug this ticket fixes — would also have to break
+// this test to land.
+func TestReadBindings_FallbackWhenNoParentContext(t *testing.T) {
+	ws := newMockWorkspace(t)
+	rec := &ctxRecorder{}
+	deps := spiedDeps(ws.services(t.TempDir()), rec)
+
+	var buf bytes.Buffer
+	r := NewWriter(deps, &buf) // no WithContext
+	defer r.Close()
+
+	if err := r.RunString(`rela.get_entity("TKT-001")`); err != nil {
+		t.Fatalf("RunString without WithContext failed: %v", err)
+	}
+
+	if len(rec.calls) == 0 {
+		t.Fatal("binding did not invoke any spied collaborator")
+	}
+	for _, c := range rec.calls {
+		if c.hasMarker {
+			t.Errorf("call %s carried a marker without WithContext: marker=%q", c.method, c.marker)
+		}
+	}
+}
+
 // TestWithContext_NoTimeoutStillCancels verifies that even with the internal
 // timeout disabled, a cancelled parent context interrupts execution.
 func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
