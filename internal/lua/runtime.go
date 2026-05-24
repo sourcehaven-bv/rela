@@ -737,7 +737,7 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	e, err := r.deps.Store.GetEntity(context.Background(), id)
+	e, err := r.deps.Store.GetEntity(r.callerCtx(), id)
 	if err != nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -757,7 +757,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	filterExpr := ls.OptString(2, "")
 
 	entities := make([]*entity.Entity, 0)
-	for e, err := range r.deps.Store.ListEntities(context.Background(), store.EntityQuery{Type: entityType}) {
+	for e, err := range r.deps.Store.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
 		if err != nil {
 			break
 		}
@@ -824,7 +824,7 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 	q := store.RelationQuery{From: fromFilter, Type: typeFilter, To: toFilter}
 	result := ls.NewTable()
 	idx := 1
-	for rel, err := range r.deps.Store.ListRelations(context.Background(), q) {
+	for rel, err := range r.deps.Store.ListRelations(r.callerCtx(), q) {
 		if err != nil {
 			break
 		}
@@ -844,7 +844,7 @@ func (r *Runtime) luaTraceFrom(ls *lua.LState) int {
 	}
 	maxDepth := ls.OptInt(2, 0)
 
-	trace := r.deps.Tracer.TraceFrom(context.Background(), id, maxDepth)
+	trace := r.deps.Tracer.TraceFrom(r.callerCtx(), id, maxDepth)
 	if trace == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -862,7 +862,7 @@ func (r *Runtime) luaTraceTo(ls *lua.LState) int {
 	}
 	maxDepth := ls.OptInt(2, 0)
 
-	trace := r.deps.Tracer.TraceTo(context.Background(), id, maxDepth)
+	trace := r.deps.Tracer.TraceTo(r.callerCtx(), id, maxDepth)
 	if trace == nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -1261,13 +1261,14 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 	}
 	result := ls.NewTable()
 	i := 1
-	for hit, err := range r.deps.Searcher.Search(context.Background(), search.Query{Text: query, Limit: limit}) {
+	ctx := r.callerCtx()
+	for hit, err := range r.deps.Searcher.Search(ctx, search.Query{Text: query, Limit: limit}) {
 		if err != nil {
 			ls.RaiseError("search error: %s", err.Error())
 			return 0
 		}
 		// Fetch the full entity for the lua table (search hits are minimal).
-		e, err := r.deps.Store.GetEntity(context.Background(), hit.ID)
+		e, err := r.deps.Store.GetEntity(ctx, hit.ID)
 		if err != nil {
 			continue
 		}
@@ -1471,7 +1472,7 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 		return 0
 	}
 
-	path := r.deps.Tracer.FindPath(context.Background(), from, to)
+	path := r.deps.Tracer.FindPath(r.callerCtx(), from, to)
 	if path == nil {
 		ls.Push(lua.LNil)
 		return 1
