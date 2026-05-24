@@ -103,12 +103,8 @@ function shouldShowIssues(checkKey: string): boolean {
   return filterCheckType.value === checkKey
 }
 
-// Get the entity title from the graph (fallback to ID)
 function getEntityTitle(issue: AnalyzeIssue): string {
-  // For now, capitalize first letter as title approximation
-  // In v1, this comes from the entity properties
-  const id = issue.entityId
-  return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ')
+  return issue.title?.trim() || issue.entityId
 }
 
 // Methods

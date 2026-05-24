@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -4105,5 +4107,788 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 	// documented wire contract.
 	if strings.Contains(rec.Body.String(), `"mentions"`) {
 		t.Errorf("response must omit mentions when none collected; body: %s", rec.Body.String())
+	}
+}
+
+// TKT-G7N5 wire-shape tests (AC1, AC2).
+
+// TestAppRouter_PerEntityGet_NoneProfile asserts AC1: under the nop
+// resolver, per-entity GET responses contain `_fields: {}` and
+// `_relations: {}` (present-but-empty closed-world signal), and no
+// properties are omitted.
+func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = NopFieldVerdictResolver{}
+
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Test Ticket",
+			"status": "open",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	raw := rec.Body.String()
+
+	var got V1Entity
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if got.FieldAffordances == nil {
+		t.Fatal("FieldAffordances pointer should be non-nil (closed-world signal)")
+	}
+	if len(*got.FieldAffordances) != 0 {
+		t.Errorf("FieldAffordances: got %v, want empty (sparse, no deviations)", *got.FieldAffordances)
+	}
+	if got.RelationAffordances == nil {
+		t.Fatal("RelationAffordances pointer should be non-nil")
+	}
+	if len(*got.RelationAffordances) != 0 {
+		t.Errorf("RelationAffordances: got %v, want empty", *got.RelationAffordances)
+	}
+
+	if _, ok := got.Properties["title"]; !ok {
+		t.Errorf("properties.title missing under nop")
+	}
+	if _, ok := got.Properties["status"]; !ok {
+		t.Errorf("properties.status missing under nop")
+	}
+
+	// Wire format: both keys must appear in the raw JSON as `{}` so
+	// the SPA distinguishes "anonymous fallback" (absent) from
+	// "evaluated with no deviations" (present-empty). Round-tripping
+	// V1Entity through omitempty proves this for pointer fields.
+	if !strings.Contains(raw, `"_fields":{}`) {
+		t.Errorf("raw body should contain \"_fields\":{}; got: %s", raw)
+	}
+	if !strings.Contains(raw, `"_relations":{}`) {
+		t.Errorf("raw body should contain \"_relations\":{}; got: %s", raw)
+	}
+}
+
+// TestAppRouter_PerEntityGet_DemoFixture asserts AC2: the demo
+// resolver populates the expected sparse fixture verdicts. Uses a
+// hand-rolled fixture resolver to keep the test independent of the
+// project's real metamodel (which doesn't have all the demo fields).
+func TestAppRouter_PerEntityGet_DemoFixture(t *testing.T) {
+	app := newTestAppV1(t)
+	falseVal := false
+
+	// Inline fixture: read-only on `status`, hidden on `priority`,
+	// option-filter on `status`. The newTestAppV1 metamodel declares
+	// `title` and `status` on ticket; we add `priority` to the entity
+	// via the seed.
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Writable: map[string]bool{"status": false},
+			Visible:  map[string]bool{"priority": false},
+			Options:  map[string]map[string]bool{"status": {"done": false}},
+		},
+		rv: RelationVerdicts{
+			Types: map[string]RelationVerdict{
+				"implements": {Creatable: true, Removable: false},
+				"blocks":     {Creatable: false, Removable: true},
+			},
+		},
+	}
+
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-002",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":    "Demo Ticket",
+			"status":   "open",
+			"priority": "high",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-002", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-002")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var got V1Entity
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Hidden property is omitted.
+	if _, ok := got.Properties["priority"]; ok {
+		t.Errorf("properties.priority must be omitted (hidden); got %v", got.Properties)
+	}
+	if _, ok := got.Properties["title"]; !ok {
+		t.Errorf("properties.title should still be present")
+	}
+
+	// FieldAffordances: sparse — status is read-only AND has option filter,
+	// merged into one entry.
+	if got.FieldAffordances == nil {
+		t.Fatal("FieldAffordances nil")
+	}
+	fa := *got.FieldAffordances
+	if _, ok := fa["priority"]; ok {
+		t.Errorf("priority must be absent from _fields (hidden): %v", fa)
+	}
+	if _, ok := fa["title"]; ok {
+		t.Errorf("title must be absent from _fields (default writable): %v", fa)
+	}
+	status, ok := fa["status"]
+	if !ok {
+		t.Fatalf("status missing from _fields: %v", fa)
+	}
+	if status.Writable == nil || *status.Writable != falseVal {
+		t.Errorf("status.writable: got %v, want false-pointer", status.Writable)
+	}
+	if allowed, present := status.Options["done"]; !present || allowed {
+		t.Errorf("status.options.done: got %v present=%v, want false", allowed, present)
+	}
+
+	// RelationAffordances: sparse — implements (removable=false),
+	// blocks (creatable=false).
+	if got.RelationAffordances == nil {
+		t.Fatal("RelationAffordances nil")
+	}
+	ra := *got.RelationAffordances
+	impl, ok := ra["implements"]
+	if !ok {
+		t.Fatalf("implements missing from _relations: %v", ra)
+	}
+	if impl.Creatable != nil {
+		t.Errorf("implements.creatable: got %v, want nil (default)", impl.Creatable)
+	}
+	if impl.Removable == nil || *impl.Removable {
+		t.Errorf("implements.removable: got %v, want false-pointer", impl.Removable)
+	}
+	blocks, ok := ra["blocks"]
+	if !ok {
+		t.Fatalf("blocks missing from _relations: %v", ra)
+	}
+	if blocks.Creatable == nil || *blocks.Creatable {
+		t.Errorf("blocks.creatable: got %v, want false-pointer", blocks.Creatable)
+	}
+}
+
+// TestAppRouter_PatchEcho_StripsHidden proves the C2 fix: PATCH
+// responses must run through the same strip-hidden invariant as GET.
+// Before the fix, the PATCH success response echoed the full entity
+// including hidden properties, so a stale client could observe the
+// hidden value via its own write response.
+func TestAppRouter_PatchEcho_StripsHidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Visible: map[string]bool{"title": false}, // hide the title field
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "secret", "status": "open"},
+	})
+
+	// PATCH an unrelated property (status) and inspect the echo.
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"properties":{"status":"in-progress"}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `"title"`) || strings.Contains(body, "secret") {
+		t.Errorf("PATCH echo must NOT contain hidden field; got: %s", body)
+	}
+}
+
+// TestAppRouter_Includes_StripHidden proves the C3 fix: ?include=*
+// (and named includes) must strip hidden properties from related
+// entities. Before the fix, a related entity's hidden field could
+// leak through the `included` map.
+func TestAppRouter_Includes_StripHidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Visible: map[string]bool{"title": false}, // hide title on every entity
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "ticket-secret"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID:         "FEAT-001",
+		Type:       "feature",
+		Properties: map[string]interface{}{"title": "feature-secret"},
+	})
+	bindEdge(app, "TKT-001", "implements", "FEAT-001")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001?include=*", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET returned %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "ticket-secret") {
+		t.Errorf("body must NOT contain ticket's hidden title; got: %s", body)
+	}
+	if strings.Contains(body, "feature-secret") {
+		t.Errorf("body must NOT contain included feature's hidden title; got: %s", body)
+	}
+}
+
+// TestAppRouter_CollectionList_StripHidden asserts that list rows
+// (which use serializeRelatedEntityForWire) strip hidden properties
+// too — the wire invariant holds regardless of which response shape
+// the entity rides in.
+func TestAppRouter_CollectionList_StripHidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Visible: map[string]bool{"title": false},
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "list-secret"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1EntityCollection(rec, req, "ticket", "tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET returned %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "list-secret") {
+		t.Errorf("list row must NOT contain hidden title; got: %s", body)
+	}
+}
+
+// seedDemoTicketForPatch wires a fakeResolver fixture appropriate for
+// the AC3-AC5 PATCH tests and seeds TKT-PATCH. Returns the
+// patchTicket-style raw helper bound to this entity.
+func seedDemoTicketForPatch(t *testing.T) *App {
+	t.Helper()
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = newVerdicts().
+		ReadOnly("status").
+		EnumDeny("title", "forbidden-title").
+		Build()
+	seedEntity(app, &entity.Entity{
+		ID:   "TKT-001",
+		Type: "ticket",
+		Properties: map[string]interface{}{
+			"title":  "Original",
+			"status": "open",
+		},
+	})
+	return app
+}
+
+// AC3: hidden + unknown fields produce structurally identical 403
+// responses (F8 side channel closure).
+func TestAppRouter_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Visible: map[string]bool{"title": false}, // hide a declared field
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x", "status": "open"},
+	})
+
+	hiddenCode, hiddenBody := patchTicketRaw(t, app, `{"properties":{"title":"new"}}`)
+	if hiddenCode != http.StatusForbidden {
+		t.Fatalf("hidden field: got %d, want 403; body=%s", hiddenCode, hiddenBody)
+	}
+	unknownCode, unknownBody := patchTicketRaw(t, app, `{"properties":{"bogus_field":"v"}}`)
+	if unknownCode != http.StatusForbidden {
+		t.Fatalf("unknown field: got %d, want 403; body=%s", unknownCode, unknownBody)
+	}
+
+	// Both must use the same rule_kind and rule_id prefix; only the
+	// field name in the path varies. This is the F8 side-channel
+	// closure assertion.
+	for _, body := range []string{hiddenBody, unknownBody} {
+		if !strings.Contains(body, `"rule_kind":"affordance"`) {
+			t.Errorf("body must name rule_kind=affordance: %s", body)
+		}
+		if !strings.Contains(body, `"rule_id":"field-affordance:hidden:`) {
+			t.Errorf("body must use field-affordance:hidden prefix: %s", body)
+		}
+	}
+}
+
+// AC4: read-only fields reject writes regardless of value.
+func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
+	t.Run("different value", func(t *testing.T) {
+		app := seedDemoTicketForPatch(t)
+		code, body := patchTicketRaw(t, app, `{"properties":{"status":"closed"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"rule_id":"field-affordance:read-only:status"`) {
+			t.Errorf("body must name read-only rule: %s", body)
+		}
+	})
+
+	t.Run("same value", func(t *testing.T) {
+		// F12: read-only is strict — same-value writes still 403.
+		// useAutoSave suppresses no-op PATCHes client-side, so no real
+		// SPA path exercises this; the rejection exists for defense
+		// against hand-crafted clients.
+		app := seedDemoTicketForPatch(t)
+		code, body := patchTicketRaw(t, app, `{"properties":{"status":"open"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+	})
+
+	t.Run("mixed with writable; whole PATCH rejected", func(t *testing.T) {
+		app := seedDemoTicketForPatch(t)
+		code, body := patchTicketRaw(t, app, `{"properties":{"status":"closed","title":"New"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		// Verify title was NOT updated.
+		e, _ := app.getEntity("TKT-001")
+		if e.Properties["title"] != "Original" {
+			t.Errorf("title must not be applied when status fails: got %v", e.Properties["title"])
+		}
+	})
+
+	t.Run("unset is a write", func(t *testing.T) {
+		// F16: properties_unset on a read-only field is also a write.
+		app := seedDemoTicketForPatch(t)
+		code, body := patchTicketRaw(t, app, `{"properties_unset":["status"]}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"field-affordance:read-only:status"`) {
+			t.Errorf("body must name read-only rule: %s", body)
+		}
+	})
+}
+
+// TestAppRouter_AffordanceDenial_EmitsAudit proves the C5 fix: every
+// affordance-gate rejection produces a `denied-write` audit row
+// attributed to the request principal. The wire stream is uniform
+// with ACL denials (which the entitymanager emits the same op for),
+// so log readers see one stream for every denied write regardless of
+// whether the gate fired in the manager or in the dataentry handler.
+func TestAppRouter_AffordanceDenial_EmitsAudit(t *testing.T) {
+	sink := audit.NewMemory()
+	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Writable: map[string]bool{"status": false},
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x", "status": "open"},
+	})
+
+	// Trigger a read-only denial via PATCH.
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"properties":{"status":"closed"}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("PATCH: got %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+
+	records := sink.Records()
+	if len(records) != 1 {
+		t.Fatalf("audit records: got %d, want 1; records=%+v", len(records), records)
+	}
+	rec0 := records[0]
+	if rec0.Op != audit.OpDeniedWrite {
+		t.Errorf("audit op: got %q, want %q", rec0.Op, audit.OpDeniedWrite)
+	}
+	if rec0.Subject == nil || rec0.Subject.ID != "TKT-001" || rec0.Subject.Type != "ticket" {
+		t.Errorf("audit subject: got %+v, want entity:ticket:TKT-001", rec0.Subject)
+	}
+	if !strings.Contains(rec0.Summary, "rule_kind=affordance") {
+		t.Errorf("audit summary missing rule_kind=affordance: %q", rec0.Summary)
+	}
+	if !strings.Contains(rec0.Summary, "rule_id=field-affordance:read-only:status") {
+		t.Errorf("audit summary missing rule_id: %q", rec0.Summary)
+	}
+}
+
+// AC5: filtered enum options reject writes.
+func TestAppRouter_PatchFilteredOption_Forbidden(t *testing.T) {
+	app := seedDemoTicketForPatch(t)
+
+	t.Run("filtered value rejected", func(t *testing.T) {
+		code, body := patchTicketRaw(t, app, `{"properties":{"title":"forbidden-title"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"field-affordance:enum-filtered:title=forbidden-title"`) {
+			t.Errorf("body must name enum-filtered rule with value: %s", body)
+		}
+	})
+
+	t.Run("allowed value succeeds", func(t *testing.T) {
+		code, body := patchTicketRaw(t, app, `{"properties":{"title":"any-other-value"}}`)
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", code, body)
+		}
+	})
+}
+
+// TestAppRouter_PatchFilteredListEnum_Forbidden proves the
+// list-typed enum option-filter now rejects rather than silently
+// allowing. Before this change, a `tags: [allowed, denied]` PATCH
+// would slip through because the validator only knew how to inspect
+// scalar string values. This is the security-soft-spot the cranky
+// reviewer flagged as S5.
+func TestAppRouter_PatchFilteredListEnum_Forbidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{
+			Options: map[string]map[string]bool{
+				"tags": {"forbidden-tag": false},
+			},
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x", "status": "open"},
+	})
+
+	t.Run("forbidden element rejects the whole list", func(t *testing.T) {
+		code, body := patchTicketRaw(t, app,
+			`{"properties":{"tags":["ok-tag","forbidden-tag"]}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"field-affordance:enum-filtered:tags=forbidden-tag"`) {
+			t.Errorf("body must name the forbidden element: %s", body)
+		}
+	})
+
+	t.Run("all-allowed list succeeds", func(t *testing.T) {
+		code, body := patchTicketRaw(t, app,
+			`{"properties":{"tags":["a","b","c"]}}`)
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", code, body)
+		}
+	})
+}
+
+// bindEdge inserts an edge directly through the store. Used by tests
+// that need a pre-existing edge to remove or update via the API.
+// relType is parameterized intentionally; today every caller passes
+// "implements" but the helper exists to be used with any relation
+// type as new tests need them.
+//
+//nolint:unparam // see preceding doc comment
+func bindEdge(app *App, from, relType, to string) {
+	if _, err := app.store.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+		panic(err)
+	}
+}
+
+// seedTicketWithRelationVerdicts wires fake relation verdicts and
+// seeds a ticket plus a peer feature so create/delete can target a
+// real edge.
+func seedTicketWithRelationVerdicts(t *testing.T, rv RelationVerdicts) *App {
+	t.Helper()
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = fakeResolver{rv: rv}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x", "status": "open"},
+	})
+	seedEntity(app, &entity.Entity{
+		ID:         "FEAT-001",
+		Type:       "feature",
+		Properties: map[string]interface{}{"title": "Feature"},
+	})
+	return app
+}
+
+// AC6: per-relation POST is gated by creatable; per-relation DELETE
+// is gated by removable. Per-relation-type uniform: the 403 response
+// names the relation type but no link identifier (F5).
+func TestAppRouter_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
+	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
+		Types: map[string]RelationVerdict{
+			"implements": {Creatable: false, Removable: true},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/TKT-001/relations/implements",
+		strings.NewReader(`{"id":"FEAT-001"}`))
+	rec := httptest.NewRecorder()
+	app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"rule_id":"relation-affordance:not-creatable:implements"`) {
+		t.Errorf("body must name not-creatable rule with type; got: %s", body)
+	}
+	if strings.Contains(body, "FEAT-001") {
+		t.Errorf("body must NOT contain the link identifier (per-type uniform); got: %s", body)
+	}
+}
+
+func TestAppRouter_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
+	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
+		Types: map[string]RelationVerdict{
+			"implements": {Creatable: true, Removable: false},
+		},
+	})
+	// Pre-link the edge so DELETE has something to remove.
+	bindEdge(app, "TKT-001", "implements", "FEAT-001")
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/tickets/TKT-001/relations/implements/FEAT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1DeleteRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"rule_id":"relation-affordance:not-removable:implements"`) {
+		t.Errorf("body must name not-removable rule with type; got: %s", body)
+	}
+}
+
+func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
+	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
+		Types: map[string]RelationVerdict{
+			"implements": {Creatable: true, Removable: true},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/TKT-001/relations/implements",
+		strings.NewReader(`{"id":"FEAT-001"}`))
+	rec := httptest.NewRecorder()
+	app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("got %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource proves
+// the C4 fix: an incoming-direction POST creates an edge whose SOURCE
+// is the peer, not the path entity. The affordance verdict must be
+// evaluated against the source's type.
+//
+// Setup: path entity is `concept`, peer is `ticket`. The ticket type's
+// verdict denies create of `affects`; the concept's verdict permits
+// it. A direction=incoming POST to /concepts/<id>/relations/affects
+// creates a ticket --affects--> concept edge — the source is the
+// ticket, so the deny must fire.
+//
+// Before the C4 fix this returned 201 (verdict evaluated against the
+// concept, which permitted it). After the fix it returns 403.
+func TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = byTypeResolver{
+		rvByType: map[string]RelationVerdicts{
+			"ticket": {
+				Types: map[string]RelationVerdict{
+					"affects": {Creatable: false, Removable: true},
+				},
+			},
+			// concept verdict: implicit defaults (everything permitted).
+		},
+	}
+	// The test metamodel doesn't declare `affects`, but the demo
+	// metamodel does. We seed both ticket + concept entities; the
+	// relation create path doesn't validate against the metamodel
+	// here — it's the resolver's job that we're testing.
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "CONC-001", Type: "concept", Properties: map[string]interface{}{"title": "C"}})
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/concepts/CONC-001/relations/affects",
+		strings.NewReader(`{"id":"TKT-001","direction":"incoming"}`))
+	rec := httptest.NewRecorder()
+	app.handleV1CreateRelation(rec, req, "concept", "CONC-001", "affects")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403 (incoming-direction must resolve verdict against source); body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"rule_id":"relation-affordance:not-creatable:affects"`) {
+		t.Errorf("body must name not-creatable rule: %s", rec.Body.String())
+	}
+}
+
+// AC6: unified PATCH path that ADDS or REMOVES relations is gated by
+// the same verdicts.
+func TestAppRouter_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.T) {
+	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
+		Types: map[string]RelationVerdict{
+			"implements": {Creatable: false, Removable: true},
+		},
+	})
+	code, body := patchTicketRaw(t, app,
+		`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`)
+	if code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403; body=%s", code, body)
+	}
+	if !strings.Contains(body, `"rule_id":"relation-affordance:not-creatable:implements"`) {
+		t.Errorf("body must name not-creatable rule: %s", body)
+	}
+}
+
+func TestAppRouter_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testing.T) {
+	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
+		Types: map[string]RelationVerdict{
+			"implements": {Creatable: true, Removable: false},
+		},
+	})
+	// Pre-link the edge so the empty desired set is a true removal.
+	bindEdge(app, "TKT-001", "implements", "FEAT-001")
+
+	code, body := patchTicketRaw(t, app,
+		`{"relations":{"implements":{"data":[]}}}`)
+	if code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403; body=%s", code, body)
+	}
+	if !strings.Contains(body, `"rule_id":"relation-affordance:not-removable:implements"`) {
+		t.Errorf("body must name not-removable rule: %s", body)
+	}
+}
+
+// AC7: relation-meta gate. Same shape across the three meta-write
+// paths: POST creates with meta, PATCH /relations/<t>/<id> updates
+// meta, unified PATCH upserts meta.
+func TestAppRouter_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
+	rv := RelationVerdicts{
+		Types: map[string]RelationVerdict{
+			"implements": {
+				Creatable: true,
+				Removable: true,
+				Fields:    map[string]bool{"note": false},
+			},
+		},
+	}
+
+	t.Run("POST /relations/<type> with non-writable meta", func(t *testing.T) {
+		app := seedTicketWithRelationVerdicts(t, rv)
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/tickets/TKT-001/relations/implements",
+			strings.NewReader(`{"id":"FEAT-001","meta":{"note":"hi"}}`))
+		rec := httptest.NewRecorder()
+		app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"rule_id":"relation-affordance:meta-read-only:implements.note"`) {
+			t.Errorf("body must name meta-read-only rule: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("PATCH /relations/<type>/<id> with non-writable meta", func(t *testing.T) {
+		app := seedTicketWithRelationVerdicts(t, rv)
+		bindEdge(app, "TKT-001", "implements", "FEAT-001")
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/tickets/TKT-001/relations/implements/FEAT-001",
+			strings.NewReader(`{"meta":{"note":"hi"}}`))
+		rec := httptest.NewRecorder()
+		app.handleV1UpdateRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `"rule_id":"relation-affordance:meta-read-only:implements.note"`) {
+			t.Errorf("body must name meta-read-only rule: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("unified PATCH upserting meta", func(t *testing.T) {
+		app := seedTicketWithRelationVerdicts(t, rv)
+		code, body := patchTicketRaw(t, app,
+			`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001","meta":{"note":"hi"}}]}}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"rule_id":"relation-affordance:meta-read-only:implements.note"`) {
+			t.Errorf("body must name meta-read-only rule: %s", body)
+		}
+	})
+
+	t.Run("writable meta succeeds", func(t *testing.T) {
+		// "role" not in Fields → default writable.
+		app := seedTicketWithRelationVerdicts(t, rv)
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/tickets/TKT-001/relations/implements",
+			strings.NewReader(`{"id":"FEAT-001","meta":{"role":"primary"}}`))
+		rec := httptest.NewRecorder()
+		app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("got %d, want 201; body=%s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// AC11: collection-level GET does NOT emit _fields or _relations (the
+// new wire keys are per-entity only in v1). The collection-level
+// response retains its existing shape; per-entity affordances ride on
+// per-entity responses.
+func TestAppRouter_CollectionGet_NoFieldVerdicts(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	app.fieldResolver = DemoFieldVerdictResolver{}
+
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]interface{}{"title": "x", "status": "open"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1EntityCollection(rec, req, "ticket", "tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `"_fields"`) {
+		t.Errorf("collection response must NOT contain _fields; got: %s", body)
+	}
+	if strings.Contains(body, `"_relations"`) {
+		t.Errorf("collection response must NOT contain _relations; got: %s", body)
 	}
 }

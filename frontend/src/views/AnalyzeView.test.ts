@@ -272,3 +272,91 @@ describe('AnalyzeView section rendering (GH#785)', () => {
     expect(cardSum).toBe(issues.length)
   })
 })
+
+// The Entity cell renders two stacked lines: the entity's display title
+// on top and the ID below. The backend supplies the title via
+// AnalyzeIssue.title (DisplayTitle from the metamodel); the renderer must
+// honour that field and fall back to the ID only when title is absent.
+describe('AnalyzeView entity title rendering', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    routerPush.mockReset()
+    analyzeMock.mockReset()
+    const schema = useSchemaStore()
+    schema.entityTypes.set('note', { label: 'Note' } as never)
+  })
+
+  async function mountWith(issues: AnalyzeIssue[]) {
+    analyzeMock.mockResolvedValue(makeResult(issues))
+    const wrapper = mount(AnalyzeView, { attachTo: document.body })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('renders the backend-supplied title on the title line and ID below', async () => {
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'note-2',
+        entityType: 'note',
+        title: 'My Important Note',
+        message: 'priority must be normal',
+        severity: 'error',
+        checkType: 'Properties',
+      }),
+    ])
+
+    const row = wrapper.find('.issue-row')
+    expect(row.find('.entity-title').text()).toBe('My Important Note')
+    expect(row.find('.entity-id').text()).toBe('note-2')
+  })
+
+  it('falls back to the entityId on the title line when title is empty', async () => {
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'note-2',
+        entityType: 'note',
+        title: '',
+        message: 'priority must be normal',
+        severity: 'error',
+        checkType: 'Properties',
+      }),
+    ])
+
+    const row = wrapper.find('.issue-row')
+    // Title line shows the raw ID (not a cosmetic transform of it).
+    expect(row.find('.entity-title').text()).toBe('note-2')
+    expect(row.find('.entity-id').text()).toBe('note-2')
+  })
+
+  it('falls back to the entityId on the title line when title is omitted', async () => {
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'note-2',
+        entityType: 'note',
+        message: 'priority must be normal',
+        severity: 'error',
+        checkType: 'Properties',
+      }),
+    ])
+
+    const row = wrapper.find('.issue-row')
+    expect(row.find('.entity-title').text()).toBe('note-2')
+    expect(row.find('.entity-id').text()).toBe('note-2')
+  })
+
+  it('falls back to the entityId on the title line when title is whitespace-only', async () => {
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'note-2',
+        entityType: 'note',
+        title: '   ',
+        message: 'priority must be normal',
+        severity: 'error',
+        checkType: 'Properties',
+      }),
+    ])
+
+    const row = wrapper.find('.issue-row')
+    expect(row.find('.entity-title').text()).toBe('note-2')
+  })
+})

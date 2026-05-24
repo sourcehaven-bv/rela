@@ -7,7 +7,14 @@ import { readReturnTo } from '@/utils/returnPath'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
-import type { PropertyDef, FormFieldOrRelation, Template, ModernRelationsField } from '@/types'
+import type {
+  PropertyDef,
+  FormFieldOrRelation,
+  Template,
+  ModernRelationsField,
+  FieldAffordance,
+  RelationAffordance,
+} from '@/types'
 import { getTemplates, createRelation } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
@@ -51,6 +58,14 @@ const returnTo = ref<string | null>(null)
 // State
 const formData = ref<Record<string, unknown>>({})
 const relations = ref<Record<string, string[]>>({})
+// Per-entity field affordances from the server. Loaded together with
+// the entity in edit mode; populated as `_fields` from the API. Drives
+// readonly + option-filter rendering and the F1 hidden-field filter
+// (TKT-G7N5).
+const fieldAffordances = ref<Record<string, FieldAffordance>>({})
+// Same for relation affordances. Drives RelationCards' +Add / x button
+// visibility and meta-field disable.
+const relationAffordances = ref<Record<string, RelationAffordance>>({})
 // Per-relation `id -> entity type` map, fed by RelationPicker's
 // `update:types` emit. Required by the unified PATCH builder to emit
 // JSON:API §9 resource identifiers without guessing target types
@@ -103,7 +118,7 @@ const title = computed(() => {
   return isEdit.value ? `Edit ${label}` : `New ${label}`
 })
 
-const fields = computed((): FormFieldOrRelation[] => {
+const allFields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []
   if (formConfig.value.sections?.length) {
     return formConfig.value.sections.flatMap((s) => s.fields) as FormFieldOrRelation[]
@@ -113,6 +128,51 @@ const fields = computed((): FormFieldOrRelation[] => {
   const relFields = (formConfig.value.relations || []) as FormFieldOrRelation[]
   return [...propFields, ...relFields]
 })
+
+// TKT-G7N5 F1: filter the config-driven field list against the
+// loaded entity's affordances. A property field is rendered only if
+// either (a) it appears in `entity._fields` (server explicitly
+// emitted a verdict — including the implicit "writable default") or
+// (b) it appears in `entity.properties` (server didn't strip it as
+// hidden). In create mode, no entity is loaded — render everything.
+//
+// F19 flicker prevention: during load (`loading === true`) we render
+// the unfiltered list to avoid a "fields disappear mid-render" jump
+// from the post-load filter. In practice this works out because
+// `loading` flips false synchronously after `loadEntity` populates
+// affordances + formData, so the filtered render is the FIRST paint
+// the user sees in edit mode.
+const fields = computed((): FormFieldOrRelation[] => {
+  const all = allFields.value
+  if (!isEdit.value || loading.value) return all
+  return all.filter((f) => {
+    if (!f.property) return true // relations / non-property fields untouched
+    if (f.property in fieldAffordances.value) return true
+    if (f.property in formData.value) return true
+    return false
+  })
+})
+
+// TKT-G7N5 readonly helper: the rendered field is readonly if either
+// the config marks it so OR the server's _fields verdict reports
+// writable=false. Both sources are honored — the server's affordance
+// is the strongest signal but the config can still set its own
+// readonly for static cases (e.g. ID display).
+function isFieldReadonly(field: FormFieldOrRelation): boolean {
+  if (field.readonly) return true
+  if (!field.property) return false
+  const verdict = fieldAffordances.value[field.property]
+  return verdict?.writable === false
+}
+
+// TKT-G7N5 option-verdict helper: pulls per-option allowed-map from
+// the server's _fields verdict. Undefined if no verdict for this
+// field (all options allowed by default). Sparse: only false entries
+// appear in the map.
+function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> | undefined {
+  if (!field.property) return undefined
+  return fieldAffordances.value[field.property]?.options
+}
 
 // Helper to look up entity type from ID prefix (e.g., "TKT-001" -> "ticket")
 function getTypeFromId(entityId: string): string | undefined {
@@ -144,6 +204,12 @@ async function loadEntity() {
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
+    // TKT-G7N5: per-entity affordances from the server. The wire keys
+    // are always present on per-entity GET (possibly empty); we
+    // default to empty maps so the filter / readonly / options paths
+    // can treat absence as "default everything".
+    fieldAffordances.value = entity._fields ?? {}
+    relationAffordances.value = entity._relations ?? {}
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
@@ -872,7 +938,8 @@ onBeforeRouteLeave(async () => {
                   :property-def="getPropertyDef(field.property)"
                   :value="formData[field.property]"
                   :error="errors[field.property]"
-                  :readonly="field.readonly"
+                  :readonly="isFieldReadonly(field)"
+                  :option-verdicts="optionVerdictsFor(field)"
                   @update="updateField(field.property!, $event)"
                 />
                 <RelationCards
@@ -881,6 +948,7 @@ onBeforeRouteLeave(async () => {
                   :field="field"
                   :entity-type="formConfig.entity"
                   :entity-id="entityId"
+                  :verdict="relationAffordances[field.relation!]"
                   @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
                 />
                 <RelationPicker
@@ -890,6 +958,7 @@ onBeforeRouteLeave(async () => {
                   :entity-type="formConfig.entity"
                   :entity-id="entityId"
                   :value="relations[field.relation] || []"
+                  :verdict="relationAffordances[field.relation!]"
                   @update="updateRelation(field.relation!, $event)"
                   @update:types="(types) => updateRelationTypes(field.relation!, types)"
                   @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
@@ -907,7 +976,8 @@ onBeforeRouteLeave(async () => {
               :property-def="getPropertyDef(field.property)"
               :value="formData[field.property]"
               :error="errors[field.property]"
-              :readonly="field.readonly"
+              :readonly="isFieldReadonly(field)"
+              :option-verdicts="optionVerdictsFor(field)"
               @update="updateField(field.property!, $event)"
             />
             <RelationCards
@@ -916,6 +986,7 @@ onBeforeRouteLeave(async () => {
               :field="field"
               :entity-type="formConfig.entity"
               :entity-id="entityId"
+              :verdict="relationAffordances[field.relation!]"
               @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
             />
             <RelationPicker
@@ -925,6 +996,7 @@ onBeforeRouteLeave(async () => {
               :entity-type="formConfig.entity"
               :entity-id="entityId"
               :value="relations[field.relation] || []"
+              :verdict="relationAffordances[field.relation!]"
               @update="updateRelation(field.relation!, $event)"
               @update:types="(types) => updateRelationTypes(field.relation!, types)"
               @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"

@@ -23,12 +23,7 @@ test.describe('Checkbox toggling', () => {
     expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(2);
   });
 
-  // Skipped: tracked by BUG-9RANL (Playwright's `force: true` click on the
-  // disabled <input type="checkbox"> doesn't reliably fire the Vue click
-  // handler in this harness). The product behaviour works for real users;
-  // the gap is test-harness-only. See the bug for the repro harness needed
-  // to unskip this test.
-  test.skip('clicking a checkbox persists the toggle on the server', async ({ appPage, api }) => {
+  test('clicking a checkbox persists the toggle on the server', async ({ appPage, api }) => {
     const entity = new EntityPage(appPage);
     await entity.navigateToEntity('feature', SEED.features.checkboxBody);
 
@@ -48,5 +43,53 @@ test.describe('Checkbox toggling', () => {
         { timeout: 5000 },
       )
       .toBe(true);
+
+    // ...and the SPA's rendered state must visibly reflect the new value.
+    // Server-state alone passing would be the exact failure shape of the
+    // original bug (API works, UI doesn't); assert end-to-end.
+    await expect.poll(() => entity.contentCheckboxIsChecked(0), { timeout: 2000 }).toBe(true);
+  });
+
+  test('toggling a checkbox does not flicker the entity detail tree', async ({ appPage }) => {
+    const entity = new EntityPage(appPage);
+    await entity.navigateToEntity('feature', SEED.features.checkboxBody);
+    expect(await entity.contentCheckboxCount()).toBeGreaterThanOrEqual(2);
+
+    // The pre-TKT-R7Q9 toggle path called loadView() after every click,
+    // which flipped loading.value=true → v-if="loading" branch → entire
+    // entity-detail tree torn down and rebuilt (visible flicker). The
+    // PATCH-based reactive flow mutates only viewData.entry.content +
+    // the entry-content section, so the EntityDetail's .loading-state
+    // spinner must never appear during a toggle.
+    //
+    // Install a MutationObserver inside the page BEFORE the click so a
+    // sub-frame loading flip can't slip between polls. Scoped to
+    // `.entity-detail > .loading-state` (direct child) so we don't catch
+    // unrelated DocumentsPanel / SidePanel / HelpModal spinners that share
+    // the same CSS class.
+    await appPage.evaluate(() => {
+      const w = window as unknown as { __entityDetailLoadingSeen?: boolean };
+      w.__entityDetailLoadingSeen = false;
+      const observer = new MutationObserver(() => {
+        if (document.querySelector('.entity-detail > .loading-state')) {
+          w.__entityDetailLoadingSeen = true;
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      // Also capture state at install time (in case it's already showing).
+      if (document.querySelector('.entity-detail > .loading-state')) {
+        w.__entityDetailLoadingSeen = true;
+      }
+    });
+
+    await entity.clickContentCheckbox(0);
+    await expect
+      .poll(() => entity.contentCheckboxIsChecked(0), { timeout: 2000 })
+      .toBe(true);
+
+    const loadingSeen = await appPage.evaluate(
+      () => (window as unknown as { __entityDetailLoadingSeen?: boolean }).__entityDetailLoadingSeen ?? false,
+    );
+    expect(loadingSeen, 'entity-detail loading spinner appeared during checkbox toggle').toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
 import type { PropertyDef } from '@/types/schema'
 import type { RelationCardState } from './relationsPatch'
+import type { RelationAffordance } from '@/types'
 
 // Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
 // callers keep working without a churn rename.
@@ -22,6 +23,12 @@ const props = defineProps<{
   field: FormFieldOrRelation
   entityType: string
   entityId: string
+  // TKT-G7N5: per-relation-type affordance verdict from the server.
+  // Undefined / fields all-undefined = default (everything allowed).
+  // `creatable === false` hides the + Add button; `removable === false`
+  // hides every per-link x; `fields[name].writable === false` disables
+  // the inline meta-field input. Per-relation-type uniform.
+  verdict?: RelationAffordance
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +59,18 @@ const selectedTarget = ref<Entity | null>(null)
 const newMeta = ref<Record<string, unknown>>({})
 
 const isIncoming = computed(() => props.field.direction === 'incoming')
+
+// TKT-G7N5: per-relation-type affordance helpers. Defaults preserve
+// today's behavior — buttons render unless explicitly denied.
+const canCreate = computed(() => props.verdict?.creatable !== false)
+const canRemove = computed(() => props.verdict?.removable !== false)
+
+// Per-meta-field disabled lookup. Returns true when the verdict
+// reports writable=false for the named meta field. Absence in the
+// fields map = writable default.
+function isMetaFieldDisabled(propName: string): boolean {
+  return props.verdict?.fields?.[propName]?.writable === false
+}
 
 const relationType = computed(() => {
   if (!props.field.relation) return undefined
@@ -364,7 +383,13 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               {{ getEntityTitle(entry.id) }}
             </span>
           </div>
-          <button type="button" class="remove-btn" title="Remove relation" @click="removeRelation(entry.id)">
+          <button
+            v-if="canRemove"
+            type="button"
+            class="remove-btn"
+            title="Remove relation"
+            @click="removeRelation(entry.id)"
+          >
             &times;
           </button>
         </div>
@@ -381,6 +406,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               :model-value="String(entry.meta?.[prop.property] || '')"
               :data="slimSelectData(prop.property)"
               :settings="slimSettings"
+              :disabled="isMetaFieldDisabled(prop.property)"
               @update:model-value="handleSlimUpdate(entry.id, prop.property, $event)"
             />
 
@@ -390,6 +416,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               :checked="!!entry.meta?.[prop.property]"
               type="checkbox"
               class="inline-edit-checkbox"
+              :disabled="isMetaFieldDisabled(prop.property)"
               @change="updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).checked)"
             />
 
@@ -399,6 +426,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               :value="entry.meta?.[prop.property] ?? ''"
               :type="getInputType(prop.property)"
               class="inline-edit"
+              :disabled="isMetaFieldDisabled(prop.property)"
               @input="updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).value)"
             />
           </div>
@@ -496,7 +524,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
       </button>
     </div>
 
-    <button v-if="!showAddSearch" type="button" class="add-btn" @click="showAddSearch = true">
+    <button v-if="!showAddSearch && canCreate" type="button" class="add-btn" @click="showAddSearch = true">
       + Add {{ field.label || field.relation }}
     </button>
   </div>

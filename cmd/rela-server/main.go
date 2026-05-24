@@ -116,6 +116,8 @@ func main() {
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
 		svc.EntityManager(), svc.Searcher(), svc.ACL(),
+		dataentry.ResolverFromProfile(os.Getenv("RELA_AFFORDANCE_PROFILE")),
+		svc.Audit(),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

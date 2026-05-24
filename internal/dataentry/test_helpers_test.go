@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -129,6 +130,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
 	app.acl = svc.ACL()
+	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).
@@ -171,7 +173,11 @@ func reseedStore(dst, src store.Store) {
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
-	app := &App{scriptEngine: script.NewEngine()}
+	app := &App{
+		scriptEngine:  script.NewEngine(),
+		fieldResolver: NopFieldVerdictResolver{},
+		auditSink:     audit.Nop{},
+	}
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,

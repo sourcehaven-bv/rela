@@ -189,6 +189,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		ScriptEngine:  scriptEngine,
 		SearchCloser:  searchCloser(searchBackend),
 		ACL:           aclImpl,
+		Audit:         auditSink,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: assemble services: %v", err))

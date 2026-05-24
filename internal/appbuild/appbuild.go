@@ -71,6 +71,7 @@ type Services struct {
 	scriptEngine  *script.Engine
 	searchCloser  io.Closer
 	acl           acl.ACL
+	audit         audit.Audit
 
 	closeOnce sync.Once
 	closeErr  error
@@ -101,6 +102,11 @@ func (s *Services) EntityManager() entitymanager.EntityManager { return s.entity
 // without re-reading the file. The returned value is the exact ACL
 // the Manager consults.
 func (s *Services) ACL() acl.ACL { return s.acl }
+
+// Audit returns the audit sink wired into entitymanager. Exposed so
+// dataentry handlers can emit `denied-write` rows for short-circuit
+// rejections (affordance gates) that never reach the manager.
+func (s *Services) Audit() audit.Audit { return s.audit }
 
 // Tracer returns the graph-traversal service.
 func (s *Services) Tracer() tracer.Tracer { return s.tracer }
@@ -183,6 +189,7 @@ type Collaborators struct {
 	StateKV       state.KV
 	ScriptEngine  *script.Engine
 	ACL           acl.ACL
+	Audit         audit.Audit
 
 	// SearchCloser may be nil — see type doc.
 	SearchCloser io.Closer
@@ -235,6 +242,9 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if c.ACL == nil {
 		return nil, errors.New("appbuild.NewFromCollaborators: ACL is required")
 	}
+	if c.Audit == nil {
+		return nil, errors.New("appbuild.NewFromCollaborators: Audit is required (use audit.Nop{} to opt out)")
+	}
 	return &Services{
 		fs:            c.FS,
 		paths:         c.Paths,
@@ -250,6 +260,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		scriptEngine:  c.ScriptEngine,
 		searchCloser:  c.SearchCloser,
 		acl:           c.ACL,
+		audit:         c.Audit,
 	}, nil
 }
 
@@ -460,6 +471,7 @@ func New(
 		scriptEngine:  scriptEngine,
 		searchCloser:  searchCloser,
 		acl:           o.acl,
+		audit:         auditSink,
 	}, nil
 }
 
