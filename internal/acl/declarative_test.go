@@ -11,7 +11,8 @@ import (
 
 // testPolicy is the fixture used across declarative tests. Mirrors the
 // example operators see in docs/security.md (PR 3): three real roles +
-// a default, with one role-relation gated by a delegate permission.
+// the built-in everyone role, with one role-relation gated by a
+// delegate permission.
 func testPolicy() *acl.Policy {
 	return &acl.Policy{
 		UserEntityType: "person",
@@ -30,7 +31,7 @@ func testPolicy() *acl.Policy {
 				Write: []string{"review-response"},
 				Read:  []string{"*"},
 			},
-			"default": {
+			acl.EveryoneRole: {
 				Read: []string{"*"},
 			},
 		},
@@ -165,14 +166,14 @@ func TestAuthorizeWrite_RoleRelation_NoDelegateRequired_Allows(t *testing.T) {
 	}
 }
 
-// AC2.6: a principal with no Assignments entry inherits the `default`
+// AC2.6: a principal with no Assignments entry inherits the `everyone`
 // role's capabilities.
 func TestAuthorizeWrite_UnknownPrincipal_GetsDefaultRole(t *testing.T) {
 	d := acl.NewDeclarative(testPolicy())
 
-	// `default` has no write entries — every write is denied, but the
-	// deny RuleKind is role-grant (not "no roles at all"), proving
-	// default was consulted.
+	// `everyone` has no write entries — every write is denied, but the
+	// deny RuleKind is role-grant (not "no roles at all"), proving the
+	// everyone role was consulted.
 	got := d.AuthorizeWrite(ctxAs("carol"), acl.WriteRequest{Op: acl.OpCreate, EntityType: "ticket"})
 	if got.Allow {
 		t.Fatalf("Allow = true, want false (default has no writes). Decision = %+v", got)
@@ -182,11 +183,11 @@ func TestAuthorizeWrite_UnknownPrincipal_GetsDefaultRole(t *testing.T) {
 	}
 }
 
-// AC2.6 + AC2.7: when `default` grants writes, an unknown principal
-// gets them via the default role. RuleID surfaces "default".
+// AC2.6 + AC2.7: when the everyone role grants writes, an unknown
+// principal gets them via it. RuleID surfaces "everyone".
 func TestAuthorizeWrite_DefaultRoleGrantsWrites(t *testing.T) {
 	policy := testPolicy()
-	policy.Roles["default"] = acl.RoleDef{
+	policy.Roles[acl.EveryoneRole] = acl.RoleDef{
 		Write: []string{"comment"},
 		Read:  []string{"*"},
 	}
@@ -196,32 +197,32 @@ func TestAuthorizeWrite_DefaultRoleGrantsWrites(t *testing.T) {
 	if !got.Allow {
 		t.Fatalf("Allow = false, want true. Decision = %+v", got)
 	}
-	if got.RuleID != "default" {
-		t.Errorf("RuleID = %q, want %q", got.RuleID, "default")
+	if got.RuleID != acl.EveryoneRole {
+		t.Errorf("RuleID = %q, want %q", got.RuleID, acl.EveryoneRole)
 	}
 }
 
-// AC2.7: a principal with explicit role X *plus* the default role
+// AC2.7: a principal with explicit role X *plus* the everyone role
 // gets the union of writes. The explicit role takes priority for
 // RuleID when it covers the type.
 func TestAuthorizeWrite_MultipleRoles_Unions(t *testing.T) {
 	policy := testPolicy()
-	// Make default also grant writes on a type the explicit role
+	// Make everyone also grant writes on a type the explicit role
 	// doesn't cover, so we can prove the union.
-	policy.Roles["default"] = acl.RoleDef{
+	policy.Roles[acl.EveryoneRole] = acl.RoleDef{
 		Write: []string{"comment"},
 		Read:  []string{"*"},
 	}
 	d := acl.NewDeclarative(policy)
 
-	// bob is reviewer (writes review-response). With default also
+	// bob is reviewer (writes review-response). With everyone also
 	// granting "comment", bob should be able to write both.
 	for _, tc := range []struct {
 		etype  string
 		wantID string
 	}{
 		{"review-response", "reviewer"}, // explicit role wins
-		{"comment", "default"},          // only default covers this
+		{"comment", acl.EveryoneRole},   // only everyone covers this
 	} {
 		got := d.AuthorizeWrite(ctxAs("bob"), acl.WriteRequest{Op: acl.OpCreate, EntityType: tc.etype})
 		if !got.Allow {
@@ -241,7 +242,7 @@ func TestAuthorizeWrite_AssignmentToUndefinedRole_DropsToDefault(t *testing.T) {
 	policy.Assignments["typo"] = "contribtuor" // misspelled role name
 	d := acl.NewDeclarative(policy)
 
-	// "default" has no writes → deny on ticket. If the bad
+	// the everyone role has no writes → deny on ticket. If the bad
 	// assignment leaked through, RuleID would be "contribtuor" (or
 	// the eval would Allow if we resolved the typo).
 	got := d.AuthorizeWrite(ctxAs("typo"), acl.WriteRequest{Op: acl.OpCreate, EntityType: "ticket"})

@@ -2,18 +2,26 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// AffordanceProfile names a verdict-source preset. v1 ships two:
-// "none" (permissive default) and "demo" (a fixture against the
-// ticket type that exercises every affordance code path).
+// AffordanceProfile names a verdict-source preset. "none" is the
+// permissive default; "demo" is a fixture against the ticket type
+// exercising every affordance code path. Absent an explicit profile,
+// a policy carrying affordance grants selects the policy-backed
+// resolver.
 //
-// The env var RELA_AFFORDANCE_PROFILE selects between them at
-// startup. cmd/rela-server and cmd/rela-desktop parse the var and
-// pass the resolver into NewApp; tests pass the resolver directly.
+// The env var RELA_AFFORDANCE_PROFILE selects the override at startup.
+// cmd/rela-server and cmd/rela-desktop parse the var and pass the
+// resolver into NewApp; tests pass the resolver directly.
 type AffordanceProfile string
 
 const (
@@ -21,23 +29,65 @@ const (
 	AffordanceProfileDemo AffordanceProfile = "demo"
 )
 
-// ResolverFromProfile returns the [FieldVerdictResolver] for the named
-// profile. An empty string or "none" yields [NopFieldVerdictResolver].
-// An unknown profile name logs a warning and falls back to none —
-// never panics, never errors. Operators see the warning at startup
-// and can correct the env var.
-func ResolverFromProfile(profile string) FieldVerdictResolver {
+// ResolverFromProfile returns the [FieldVerdictResolver] for the given
+// profile, policy, and metamodel. Selection order (DR-M3):
+//
+//  1. profile == "demo" → [DemoFieldVerdictResolver] (hard override,
+//     for dev / e2e fixtures even when a policy is present).
+//  2. profile == "none" → [NopFieldVerdictResolver] (hard opt-out).
+//  3. profile == "" and the policy declares any affordance grants →
+//     the policy-backed resolver.
+//  4. otherwise → [NopFieldVerdictResolver].
+//
+// An unknown profile logs a warning and falls back to step 3/4. A
+// policy-backed resolver whose predicates fail to compile returns an
+// error — the caller fails startup loudly (DR-M4), matching the
+// acl.yaml hard-fail posture for genuinely broken config.
+func ResolverFromProfile(
+	profile string, policy *acl.Policy, meta *metamodel.Metamodel, st store.Store,
+) (FieldVerdictResolver, error) {
 	switch AffordanceProfile(profile) {
-	case "", AffordanceProfileNone:
-		return NopFieldVerdictResolver{}
 	case AffordanceProfileDemo:
-		return DemoFieldVerdictResolver{}
+		return DemoFieldVerdictResolver{}, nil
+	case AffordanceProfileNone:
+		return NopFieldVerdictResolver{}, nil
+	case "":
+		// fall through to policy-based selection
 	default:
-		slog.Warn("dataentry: unknown RELA_AFFORDANCE_PROFILE; using 'none'",
+		slog.Warn("dataentry: unknown RELA_AFFORDANCE_PROFILE; using policy or 'none'",
 			"value", profile,
 			"allowed", []string{string(AffordanceProfileNone), string(AffordanceProfileDemo)})
-		return NopFieldVerdictResolver{}
 	}
+
+	if policy == nil || !policy.HasAffordanceGrants() {
+		return NopFieldVerdictResolver{}, nil
+	}
+	resolver, err := affordances.New(policy, meta, storeRelationLookup{st: st})
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: compiling acl.yaml affordance predicates: %w", err)
+	}
+	return &policyResolver{inner: resolver}, nil
+}
+
+// ResolverServices is the slice of [appbuild.Services] that
+// [ResolverFromServices] needs. Declared here at the call site so the
+// entry points pass `svc` directly without each re-spelling the
+// env-read + three accessors.
+type ResolverServices interface {
+	ACLPolicy() *acl.Policy
+	Meta() *metamodel.Metamodel
+	Store() store.Store
+}
+
+// ResolverFromServices builds the affordance resolver for an entry
+// point, reading RELA_AFFORDANCE_PROFILE from the environment and the
+// policy / metamodel / store from svc. Both cmd entry points call this;
+// they differ only in how they handle the returned error (rela-server
+// exits, rela-desktop surfaces it to the UI), so error handling stays
+// at the call site.
+func ResolverFromServices(svc ResolverServices) (FieldVerdictResolver, error) {
+	return ResolverFromProfile(
+		os.Getenv("RELA_AFFORDANCE_PROFILE"), svc.ACLPolicy(), svc.Meta(), svc.Store())
 }
 
 // NopFieldVerdictResolver returns empty verdicts for every entity.

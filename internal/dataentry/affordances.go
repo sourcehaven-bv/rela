@@ -112,6 +112,12 @@ type FieldVerdicts struct {
 	// field OR absence of an option means allowed. Used for enum-typed
 	// properties.
 	Options map[string]map[string]bool
+
+	// Attribution maps a denied path (field name, or "field=option")
+	// to the role/grant that produced the deny. Audit-only — never
+	// serialized to the wire. Sparse: only denials appear. Empty for
+	// resolvers (Nop / Demo) that don't track attribution.
+	Attribution map[string]string
 }
 
 // RelationVerdicts carries per-entity relation-level affordance
@@ -132,6 +138,11 @@ type RelationVerdict struct {
 	// uniformly to every link of this relation type (per-link
 	// affordances are predicate territory, deferred).
 	Fields map[string]bool
+
+	// Attribution maps a denied dimension ("create", "remove",
+	// "fields.<name>") to the role/grant that denied it. Audit-only,
+	// never serialized. Sparse.
+	Attribution map[string]string
 }
 
 // AffordanceDenialRule is the stable identifier surfaced in 403
@@ -160,6 +171,10 @@ type AffordanceDenialError struct {
 	Rule   AffordanceDenialRule
 	Path   string // property name, relation type, or "<relation-type>.<meta-field>"
 	Reason string
+	// Attribution names the role/grant that produced the deny, for the
+	// audit Summary channel (DR-C5). Empty for resolvers that don't
+	// track it. Never serialized to the wire 403 body.
+	Attribution string
 }
 
 // RuleID returns the wire-stable identifier for this denial.
@@ -220,17 +235,19 @@ func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKe
 		// Hidden via resolver verdict.
 		if !v.IsVisible(key) {
 			return &AffordanceDenialError{
-				Rule:   RuleFieldHidden,
-				Path:   key,
-				Reason: fmt.Sprintf("field %q is not visible", key),
+				Rule:        RuleFieldHidden,
+				Path:        key,
+				Reason:      fmt.Sprintf("field %q is not visible", key),
+				Attribution: v.Attribution[key],
 			}
 		}
 		// Read-only via resolver verdict.
 		if !v.IsWritable(key) {
 			return &AffordanceDenialError{
-				Rule:   RuleFieldReadOnly,
-				Path:   key,
-				Reason: fmt.Sprintf("field %q is not writable", key),
+				Rule:        RuleFieldReadOnly,
+				Path:        key,
+				Reason:      fmt.Sprintf("field %q is not writable", key),
+				Attribution: v.Attribution[key],
 			}
 		}
 		// Enum-filter (only for set, not unset, and only when a value
@@ -241,6 +258,9 @@ func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKe
 		if present && value != nil {
 			if opts, ok := v.Options[key]; ok {
 				if d := checkEnumOption(key, value, opts); d != nil {
+					// checkEnumOption sets Path to "field=option", the
+					// same key the resolver attributes options under.
+					d.Attribution = v.Attribution[d.Path]
 					return d
 				}
 			}
@@ -371,14 +391,18 @@ func (a *App) denyAffordance(ctx context.Context, w http.ResponseWriter, target 
 			ID:   target.ID,
 		}
 	}
+	summary := fmt.Sprintf("denied: %s (rule_kind=affordance rule_id=%s)",
+		denial.Reason, denial.RuleID())
+	if denial.Attribution != "" {
+		summary += " attribution=" + denial.Attribution
+	}
 	a.auditSink.Record(audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpDeniedWrite,
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary: fmt.Sprintf("denied: %s (rule_kind=affordance rule_id=%s)",
-			denial.Reason, denial.RuleID()),
+		Summary:     summary,
 	})
 	writeAffordanceDenialError(w, denial)
 }
@@ -432,17 +456,19 @@ func (a *App) validateRelationOp(ctx context.Context, e *entityPkg.Entity, relTy
 	case RelationOpCreate:
 		if !rv.Creatable {
 			return &AffordanceDenialError{
-				Rule:   RuleRelationNotCreatable,
-				Path:   relType,
-				Reason: fmt.Sprintf("relation %q is not creatable", relType),
+				Rule:        RuleRelationNotCreatable,
+				Path:        relType,
+				Reason:      fmt.Sprintf("relation %q is not creatable", relType),
+				Attribution: rv.Attribution["create"],
 			}
 		}
 	case RelationOpRemove:
 		if !rv.Removable {
 			return &AffordanceDenialError{
-				Rule:   RuleRelationNotRemovable,
-				Path:   relType,
-				Reason: fmt.Sprintf("relation %q is not removable", relType),
+				Rule:        RuleRelationNotRemovable,
+				Path:        relType,
+				Reason:      fmt.Sprintf("relation %q is not removable", relType),
+				Attribution: rv.Attribution["remove"],
 			}
 		}
 	}
@@ -544,9 +570,10 @@ func (a *App) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity
 	deny := func(key string) *AffordanceDenialError {
 		if writable, ok := rv.Fields[key]; ok && !writable {
 			return &AffordanceDenialError{
-				Rule:   RuleRelationMetaReadOnly,
-				Path:   relType + "." + key,
-				Reason: fmt.Sprintf("meta field %q on relation %q is not writable", key, relType),
+				Rule:        RuleRelationMetaReadOnly,
+				Path:        relType + "." + key,
+				Reason:      fmt.Sprintf("meta field %q on relation %q is not writable", key, relType),
+				Attribution: rv.Attribution["fields."+key],
 			}
 		}
 		return nil

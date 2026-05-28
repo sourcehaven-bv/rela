@@ -164,10 +164,14 @@ func TestComputeActions_NoAuditNoise(t *testing.T) {
 	}
 }
 
+// With no policy, "" and "none" both yield the permissive Nop.
 func TestResolverFromProfile_None(t *testing.T) {
 	for _, in := range []string{"", "none"} {
 		t.Run(in, func(t *testing.T) {
-			r := ResolverFromProfile(in)
+			r, err := ResolverFromProfile(in, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("ResolverFromProfile(%q): %v", in, err)
+			}
 			if _, ok := r.(NopFieldVerdictResolver); !ok {
 				t.Fatalf("ResolverFromProfile(%q): got %T, want NopFieldVerdictResolver", in, r)
 			}
@@ -175,17 +179,25 @@ func TestResolverFromProfile_None(t *testing.T) {
 	}
 }
 
+// "demo" is a hard override — selected even when a policy with
+// affordance grants is present (AC6).
 func TestResolverFromProfile_Demo(t *testing.T) {
-	r := ResolverFromProfile("demo")
+	r, err := ResolverFromProfile("demo", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ResolverFromProfile(demo): %v", err)
+	}
 	if _, ok := r.(DemoFieldVerdictResolver); !ok {
 		t.Fatalf("ResolverFromProfile(demo): got %T, want DemoFieldVerdictResolver", r)
 	}
 }
 
-func TestResolverFromProfile_Unknown_FallsBackToNone(t *testing.T) {
-	// Unknown values must not panic and must fall back to none. The
-	// warning log is observable in stderr; we don't capture it here.
-	r := ResolverFromProfile("not-a-real-profile")
+func TestResolverFromProfile_Unknown_FallsBackToPolicyOrNone(t *testing.T) {
+	// Unknown values must not panic and (absent a policy) fall back to
+	// none. The warning log is observable in stderr; not captured here.
+	r, err := ResolverFromProfile("not-a-real-profile", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("unknown profile: %v", err)
+	}
 	if _, ok := r.(NopFieldVerdictResolver); !ok {
 		t.Fatalf("unknown profile: got %T, want NopFieldVerdictResolver", r)
 	}

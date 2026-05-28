@@ -113,14 +113,20 @@ func (d *Desktop) OpenRecentProject(path string) string {
 	return errMsg
 }
 
+// failLoad records err as the current load error and returns its
+// string form, so LoadProject's error branches stay one line each.
+func (d *Desktop) failLoad(err error) string {
+	d.mu.Lock()
+	d.loadErr = err.Error()
+	d.mu.Unlock()
+	return err.Error()
+}
+
 // LoadProject loads a rela project from the given directory.
 func (d *Desktop) LoadProject(dir string) string {
 	fs, projCtx, err := discoverProject(dir)
 	if err != nil {
-		d.mu.Lock()
-		d.loadErr = err.Error()
-		d.mu.Unlock()
-		return err.Error()
+		return d.failLoad(err)
 	}
 
 	// Check if data-entry.yaml exists
@@ -151,17 +157,19 @@ func (d *Desktop) LoadProject(dir string) string {
 		return svcErr.Error()
 	}
 
+	fieldResolver, err := dataentry.ResolverFromServices(svc)
+	if err != nil {
+		return d.failLoad(err)
+	}
+
 	app, err := dataentry.NewApp(
 		fs, projCtx, svc.Meta(), svc.Store(),
 		svc.EntityManager(), svc.Searcher(), svc.ACL(),
-		dataentry.ResolverFromProfile(os.Getenv("RELA_AFFORDANCE_PROFILE")),
+		fieldResolver,
 		svc.Audit(),
 	)
 	if err != nil {
-		d.mu.Lock()
-		d.loadErr = err.Error()
-		d.mu.Unlock()
-		return err.Error()
+		return d.failLoad(err)
 	}
 	d.mu.Lock()
 	// Stop previous scheduler and close previous services in

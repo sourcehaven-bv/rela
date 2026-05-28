@@ -71,6 +71,7 @@ type Services struct {
 	scriptEngine  *script.Engine
 	searchCloser  io.Closer
 	acl           acl.ACL
+	aclPolicy     *acl.Policy
 	audit         audit.Audit
 
 	closeOnce sync.Once
@@ -102,6 +103,13 @@ func (s *Services) EntityManager() entitymanager.EntityManager { return s.entity
 // without re-reading the file. The returned value is the exact ACL
 // the Manager consults.
 func (s *Services) ACL() acl.ACL { return s.acl }
+
+// ACLPolicy returns the *acl.Policy parsed from acl.yaml, or nil when
+// no policy file was present or the ACL was injected via [WithACL].
+// Exposed so the data-entry server can build the policy-backed
+// affordance resolver from the same policy the Manager authorizes
+// against, without re-reading the file.
+func (s *Services) ACLPolicy() *acl.Policy { return s.aclPolicy }
 
 // Audit returns the audit sink wired into entitymanager. Exposed so
 // dataentry handlers can emit `denied-write` rows for short-circuit
@@ -305,22 +313,24 @@ func WithACL(a acl.ACL) Option {
 }
 
 // loadACL reads `acl.yaml` from projectRoot and returns the
-// appropriate [acl.ACL] implementation. Missing file → [acl.NopACL]
-// (allow-all). Other load errors are logged and downgraded to
-// NopACL so a malformed policy never bricks the server — the
-// operator sees the error in logs and can fix the file without
-// restarting. This is the same "tolerate, warn" philosophy the
-// metamodel loader uses.
-func loadACL(projectRoot string) acl.ACL {
+// appropriate [acl.ACL] implementation plus, when one was parsed, the
+// underlying *acl.Policy (nil otherwise — the policy is retained so the
+// data-entry server can build a policy-backed affordance resolver from
+// the same source). Missing file → [acl.NopACL] (allow-all). Other
+// load errors are logged and downgraded to NopACL so a malformed
+// policy never bricks the server — the operator sees the error in logs
+// and can fix the file without restarting. Same "tolerate, warn"
+// philosophy the metamodel loader uses.
+func loadACL(projectRoot string) (acl.ACL, *acl.Policy) {
 	policy, err := acl.LoadPolicy(filepath.Join(projectRoot, "acl.yaml"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return acl.NopACL{}
+			return acl.NopACL{}, nil
 		}
 		slog.Warn("appbuild: failed to load acl.yaml; falling back to NopACL", "error", err)
-		return acl.NopACL{}
+		return acl.NopACL{}, nil
 	}
-	return acl.NewDeclarative(policy)
+	return acl.NewDeclarative(policy), policy
 }
 
 // validateNewArgs nil-checks the four required collaborators of [New].
@@ -393,8 +403,9 @@ func New(
 	for _, opt := range opts {
 		opt(&o)
 	}
+	var aclPolicy *acl.Policy
 	if o.acl == nil {
-		o.acl = loadACL(paths.Root)
+		o.acl, aclPolicy = loadACL(paths.Root)
 	}
 
 	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
@@ -471,6 +482,7 @@ func New(
 		scriptEngine:  scriptEngine,
 		searchCloser:  searchCloser,
 		acl:           o.acl,
+		aclPolicy:     aclPolicy,
 		audit:         auditSink,
 	}, nil
 }
