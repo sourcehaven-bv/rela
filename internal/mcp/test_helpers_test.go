@@ -101,7 +101,8 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 			},
 			EntityManager: mgr,
 		},
-		Watcher: nopWatcher{},
+		Watcher:     nopWatcher{},
+		ProjectRoot: t.TempDir(),
 	}
 }
 

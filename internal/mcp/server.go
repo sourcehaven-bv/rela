@@ -64,6 +64,38 @@ type Deps struct {
 	ProjectRoot   string
 }
 
+// validate rejects a Deps missing any field whose zero value would
+// defer a failure to request time — a nil collaborator panics inside a
+// tool handler, and an empty ProjectRoot makes lua_list silently walk
+// the process CWD instead of the project's scripts/ dir. Catching these
+// at construction keeps the failure where it can be diagnosed.
+//
+// LuaCache is intentionally absent: a nil cache is a valid "no cache"
+// signal that lua.WithCache tolerates.
+func (d Deps) validate() error {
+	switch {
+	case d.Store == nil:
+		return errors.New("mcp: Deps.Store is required")
+	case d.Meta == nil:
+		return errors.New("mcp: Deps.Meta is required")
+	case d.Tracer == nil:
+		return errors.New("mcp: Deps.Tracer is required")
+	case d.Searcher == nil:
+		return errors.New("mcp: Deps.Searcher is required")
+	case d.Validator == nil:
+		return errors.New("mcp: Deps.Validator is required")
+	case d.EntityManager == nil:
+		return errors.New("mcp: Deps.EntityManager is required")
+	case d.Config == nil:
+		return errors.New("mcp: Deps.Config is required")
+	case d.Watcher == nil:
+		return errors.New("mcp: Deps.Watcher is required")
+	case d.ProjectRoot == "":
+		return errors.New("mcp: Deps.ProjectRoot is required")
+	}
+	return nil
+}
+
 // Watcher is the narrow file-watching capability MCP requires from
 // its wiring site. Start arms the watcher with an opaque "something
 // changed" callback; Pause / Resume temporarily suppress callbacks
@@ -128,6 +160,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	}
 	if s.principal == (principal.Principal{}) {
 		return nil, errors.New("mcp.NewServer: Principal is required (use WithPrincipal)")
+	}
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
 
 	mcpServer := server.NewMCPServer(
