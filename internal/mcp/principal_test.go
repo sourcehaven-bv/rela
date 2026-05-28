@@ -15,7 +15,7 @@ import (
 // unknown/unknown audit attribution in production would be an
 // invisible bug.
 func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
-	_, err := NewServer(nil, "0.0.0")
+	_, err := NewServer(Deps{}, "0.0.0")
 	if err == nil {
 		t.Fatal("expected error when WithPrincipal is omitted")
 	}

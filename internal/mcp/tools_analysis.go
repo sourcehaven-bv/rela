@@ -19,9 +19,9 @@ func (s *Server) handleAnalyzeOrphans(
 ) (*mcp.CallToolResult, error) {
 	entityType := request.GetString("type", "")
 
-	orphanIDs, _ := s.ws.Tracer().FindOrphans(ctx)
+	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	resolved := ""
 	if entityType != "" {
 		resolved = s.resolveType(entityType)
@@ -70,7 +70,7 @@ func (s *Server) handleAnalyzeCardinality(
 ) (*mcp.CallToolResult, error) {
 	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
-	for relName, relDef := range s.ws.Meta().Relations {
+	for relName, relDef := range s.deps.Meta.Relations {
 		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
 	}
 
@@ -106,7 +106,7 @@ func (s *Server) checkCardinalityBound(
 	var violations []cardinalityViolation
 
 	ctx := context.Background()
-	st := s.ws.Store()
+	st := s.deps.Store
 	for _, entityType := range entityTypes {
 		for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
 			if err != nil {
@@ -161,8 +161,8 @@ func (s *Server) handleAnalyzeProperties(
 		Errors       []string `json:"errors"`
 	}
 
-	meta := s.ws.Meta()
-	st := s.ws.Store()
+	meta := s.deps.Meta
+	st := s.deps.Store
 	var allEntityErrors []entityErrors
 
 	// Validate entity properties
@@ -185,7 +185,7 @@ func (s *Server) handleAnalyzeProperties(
 	}
 
 	// Validate relation properties
-	relErrors := schema.ValidateRelationProperties(s.ws.Store(), s.ws.Meta())
+	relErrors := schema.ValidateRelationProperties(s.deps.Store, s.deps.Meta)
 	allRelationErrors := make([]relationErrors, 0, len(relErrors))
 	for _, rpe := range relErrors {
 		errStrings := make([]string, len(rpe.Errors))
@@ -236,7 +236,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	rules := s.ws.Meta().Validations
+	rules := s.deps.Meta.Validations
 	if len(rules) == 0 {
 		return mcp.NewToolResultText("No custom validation rules defined in metamodel"), nil
 	}
@@ -247,7 +247,7 @@ func (s *Server) handleAnalyzeValidations(
 		Violations []string `json:"violations"`
 	}
 
-	validator := s.ws.Validator()
+	validator := s.deps.Validator
 	var results []ruleResult
 	for _, rule := range rules {
 		ids, err := validator.CheckRule(ctx, rule)
@@ -283,8 +283,8 @@ func (s *Server) handleAnalyzeSchema(
 
 	dataEntry := s.loadDataEntryConfig()
 
-	counter := &schema.StoreCounter{Store: s.ws.Store()}
-	analysis := schema.Analyze(s.ws.Meta(), counter, dataEntry, threshold)
+	counter := &schema.StoreCounter{Store: s.deps.Store}
+	analysis := schema.Analyze(s.deps.Meta, counter, dataEntry, threshold)
 
 	if !analysis.HasIssues() {
 		return mcp.NewToolResultText("All schema types are in use"), nil
@@ -311,7 +311,7 @@ func (s *Server) handleAnalyzeSchema(
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func (s *Server) loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := s.ws.Config().Load(context.Background(), dataentryconfig.ConfigFile)
+	data, err := s.deps.Config.Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

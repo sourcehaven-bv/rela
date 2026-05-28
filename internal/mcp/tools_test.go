@@ -64,10 +64,8 @@ func makeTestServer(t *testing.T) *Server {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	svc := newTestServices(t, meta, st)
-
 	return &Server{
-		ws:     svc,
+		deps:   newTestDeps(t, meta, st),
 		logger: slog.New(slog.DiscardHandler),
 	}
 }
@@ -272,7 +270,7 @@ func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, getErr := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, getErr := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if getErr != nil {
 		t.Fatalf("get entity: %v", getErr)
 	}
@@ -304,7 +302,7 @@ func TestHandleUpdateEntity_DeleteOnlyCallSurvivesGuard(t *testing.T) {
 func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 	// `priority` is in the metamodel but not set on REQ-001; deleting it should be a no-op.
 	s := makeTestServer(t)
-	before, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := before.Properties["priority"]; present {
 		t.Fatalf("test setup: REQ-001 should not have a priority property")
 	}
@@ -320,7 +318,7 @@ func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success on no-op delete, got error: %s", getResultText(t, result))
 	}
-	after, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	after, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := after.Properties["priority"]; present {
 		t.Errorf("priority should remain absent")
 	}
@@ -333,7 +331,7 @@ func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
 	// `title` is required; attempting to delete it must surface an actionable error
 	// rather than silently producing a now-invalid entity.
 	s := makeTestServer(t)
-	before, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	beforeTitle := before.GetString("title")
 
 	req := makeToolRequest(map[string]interface{}{
@@ -351,7 +349,7 @@ func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
 		t.Errorf("expected 'required' in error message, got %s", getResultText(t, result))
 	}
 	// Entity must be unchanged.
-	after, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	after, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if after.GetString("title") != beforeTitle {
 		t.Errorf("entity must be unchanged after rejected delete: title was %q, now %q", beforeTitle, after.GetString("title"))
 	}
@@ -371,7 +369,7 @@ func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := updated.Properties["status"]; present {
 		t.Errorf("status should be removed when sent as JSON string with null")
 	}
@@ -411,7 +409,7 @@ func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := updated.Properties["status"]; present {
 		t.Errorf("status should be removed")
 	}
@@ -440,7 +438,7 @@ func TestHandleUpdateEntity_EmptyStringIsNoOp(t *testing.T) {
 		t.Errorf("expected 'no updates specified', got %s", getResultText(t, result))
 	}
 	// And the existing status is untouched.
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if got := updated.GetString("status"); got != "accepted" {
 		t.Errorf("status should remain 'accepted', got %q", got)
 	}
@@ -460,7 +458,7 @@ func TestHandleUpdateEntity_SetAndOverwriteStillWorks(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if got := updated.GetString("status"); got != "rejected" {
 		t.Errorf("expected status 'rejected', got %q", got)
 	}
@@ -579,7 +577,7 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 func TestHandleListRelations_Pagination(t *testing.T) {
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	if _, err := s.ws.Store().CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
+	if _, err := s.deps.Store.CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -819,7 +817,7 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	meta := s.ws.Meta()
+	meta := s.deps.Meta
 	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},

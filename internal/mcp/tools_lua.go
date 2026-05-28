@@ -64,8 +64,8 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// Capture output
 	var output bytes.Buffer
 
-	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), "",
-		&output, lua.WithContext(ctx), lua.WithCache(s.ws.LuaCache()))
+	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, "",
+		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
 		return mcp.NewToolResultError("config error: " + err.Error()), nil
 	}
@@ -110,7 +110,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Parse args if provided
 	args := req.GetStringSlice("args", nil)
 
-	projectRoot := s.ws.Paths().Root
+	projectRoot := s.deps.ProjectRoot
 
 	// Security: Scripts must be in the scripts/ directory
 	// Use os.Root for traversal-resistant path access
@@ -143,8 +143,8 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Capture output
 	var output bytes.Buffer
 
-	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), path,
-		&output, lua.WithContext(ctx), lua.WithCache(s.ws.LuaCache()))
+	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, path,
+		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
 		return mcp.NewToolResultError("config error: " + err.Error()), nil
 	}
@@ -208,7 +208,7 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 }
 
 func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectRoot := s.ws.Paths().Root
+	projectRoot := s.deps.ProjectRoot
 
 	// Only search the scripts/ directory (security restriction)
 	scriptsPath := filepath.Join(projectRoot, scriptsDir)
