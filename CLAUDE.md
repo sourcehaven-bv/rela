@@ -607,6 +607,7 @@ approaches and document tradeoffs. This creates a `research` entity (RES-xxxx)
 with structured sections: Problem, Context, Options, Recommendation.
 
 **Workflow:**
+
 1. `/research` creates the entity in `in-progress` and links it to concepts
 2. The agent surveys the codebase and external approaches
 3. Options are documented with pros/cons/effort
