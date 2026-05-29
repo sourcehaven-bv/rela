@@ -485,14 +485,57 @@ suppresses no-op PATCHes client-side via its `lastSeenServer` snapshot,
 so no real SPA path produces a same-value PATCH; the rejection exists
 for defense against hand-crafted clients.
 
+### Create-mode affordances: dry-run (`?dry_run=true`) (TKT-3I5U)
+
+The create form has no persisted entity to derive `_fields` from, and
+verdicts can depend on the candidate's field *values* (value-dependent
+`when:` predicates), so a static per-type verdict won't do. Instead the
+create path is evaluated as a **dry run**:
+
+```
+POST /api/v1/<plural>?dry_run=true
+{ "properties": { ... }, "content": "..." }
+```
+
+The handler runs the same defaults + affordance evaluation the real
+create would, against the candidate (type + supplied properties, no
+persisted ID), and returns a normal per-entity response shape —
+`_fields`, `_relations`, stripped hidden `properties`, and DEC-HWZHA
+soft `warnings` — **without persisting anything, without an audit row,
+and without taking the write lock** (it is a read-shaped operation).
+The response is `Cache-Control: no-store` with no ETag.
+
+Properties:
+
+- **Advisory only.** The verdicts are a UI hint. The real create
+  (`POST` without `?dry_run`) re-runs the affordance gate and is the
+  sole authorization point — a client that POSTs a denied field still
+  gets the 403 from the [write-side parity](#write-side-parity) table.
+- **Value-dependent.** Because verdicts are computed against the
+  supplied values, the SPA re-requests (debounced) as the user types so
+  a field whose writability depends on another field updates live.
+- **Relations not staged.** A candidate has no real ID, so edges can't
+  be staged; `_relations` reflects the per-type verdict only.
+- **Fail-open client.** If the dry-run request fails, the SPA renders
+  the form unrestricted — the commit gate, not the hint, is the
+  boundary.
+
+The SPA create form (`DynamicForm`) consumes this to disable read-only
+fields, omit hidden fields, and filter enum options, then commits only
+the visible + writable keys; the server fills hidden / read-only
+defaults itself (downstream of the gate).
+
 ### Out of scope (this ticket)
 
 - **List-query affordances.** `_fields` and `_relations` ride only on
-  per-entity GET; list / collection responses keep their existing shape.
+  per-entity GET and the dry-run create; list / collection responses
+  keep their existing shape.
 - **Per-link verdicts** (different verdicts for different links of the
-  same relation type). Deferred to the predicate-engine ticket — requires
-  state-dependent gates.
-- **Create-mode affordances.** Stub doesn't gate creates; the create form
-  renders unrestricted. The predicate ticket will introduce
-  collection-level `_fields` / `_relations` on `V1ListResponse` for
-  create-mode gating.
+  same relation type). Deferred — requires per-link state-dependent
+  gates.
+- **Staged-relation validation.** The create form's relation pickers are
+  gated only at commit, not during the dry-run (no candidate ID to hang
+  edges on).
+- **Inline dry-run warning display.** The dry-run returns soft
+  `warnings`, but the create form does not yet render them per-field;
+  they still surface on the commit response.
