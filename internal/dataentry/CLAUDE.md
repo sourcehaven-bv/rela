@@ -62,5 +62,5 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   wont-fix rejected this. The SPA reads booleans the server computed — no
   computation, merging, or prediction.
 - **Adding a write affordance** requires (a) a backend `translateVerb` entry
-  + `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline `v-if` on
-  the component. No ESLint enforcement; code review catches drift.
+  plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
+  `v-if` on the component. No ESLint enforcement; code review catches drift.
