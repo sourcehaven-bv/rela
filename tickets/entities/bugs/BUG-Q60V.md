@@ -11,5 +11,5 @@ why3: Create and update share the same _fields verdict semantics but had no shar
 why4: There was no contract test asserting that every write entry point (create AND update) enforces field affordances; the affordance_contract_test pinned _actions verbs but not per-field create gating.
 why5: 'Systemic: write-path affordance enforcement is duplicated per-handler rather than funneled through a single choke point, so a new or existing write path can silently skip the gate. A grep/contract test enumerating write entry points would catch the omission.'
 prevention: 'Added MEAS-create-field-affordance-test asserting the create path enforces field affordances with the same 403 + rule_id shape as PATCH. Systemic follow-up (why5): write-path field-affordance enforcement is duplicated per-handler (create vs update each call validateFieldWrite independently); a future refactor should funnel all write entry points through a single affordance choke point, or add a contract test enumerating every write entry point and asserting each gates field affordances, so a newly added write path cannot silently skip the gate.'
-status: review
+status: done
 ---
