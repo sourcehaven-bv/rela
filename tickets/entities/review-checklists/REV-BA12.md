@@ -2,7 +2,7 @@
 id: REV-BA12
 type: review-checklist
 title: 'Review: ACL: predicate-backed _fields and _relations resolver (replace stub)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -92,8 +92,10 @@ Plus DR-C5 two-channel: `TestPolicyResolver_AuditCarriesAttribution`
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Ran `/pr` — PR created and CI monitored
+- [x] All CI checks pass (the `Rela Tickets` dogfood job clears once
+  this ticket transitions to `done`; all build/test/lint/coverage/
+  arch/e2e/docs jobs green)
+- [x] PR URL documented below
 
-**PR:** <!-- filled by /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/841

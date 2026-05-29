@@ -5,7 +5,7 @@ title: 'ACL: predicate-backed _fields and _relations resolver (replace stub)'
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Goal

@@ -593,11 +593,13 @@ changes are mechanical.
 - [x] User guide / reference docs — `docs/security.md` gets a new
   "Affordances" section under the ACL reference. Schema +
   examples for `fields:`, `visible:`, `options:`, `relations:`.
-- [ ] CLI help text — N/A
-- [ ] CLAUDE.md — possibly a small note under "Authorization
-  (`internal/acl`)" referencing the new sub-package; decide
-  during implementation.
-- [ ] README.md — N/A
+- [x] ~~CLI help text~~ (N/A: no CLI command changes; the only knob
+  is the existing `RELA_AFFORDANCE_PROFILE` env var)
+- [x] ~~CLAUDE.md~~ (N/A: no new cross-cutting pattern — the
+  consumer-side-interface and capability-bundle patterns the code
+  follows are already documented there; decided during
+  implementation, see DOCS-Z3XV)
+- [x] ~~README.md~~ (N/A: no project-level surface change)
 - [x] API docs — `docs/data-entry/api-reference.md` note that
   affordances are now policy-driven; link to security.md for
   the schema.
