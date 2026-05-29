@@ -385,6 +385,8 @@ forms:
     fields:
       - property: title
         placeholder: "What needs to be done?"
+      - property: description
+        widget: textarea
       - property: kind
       - property: priority
       - property: effort
@@ -406,6 +408,8 @@ forms:
     body: true
     fields:
       - property: title
+      - property: description
+        widget: textarea
       - property: kind
       - property: priority
       - property: effort
@@ -712,6 +716,7 @@ lists:
         widget: select
     create_form: create_idea
     edit_form: edit_idea
+    detail_view: idea_detail
     page_size: 25
   active_ideas:
     entity_type: idea
@@ -783,6 +788,7 @@ lists:
         widget: select
     create_form: create_future_concept
     edit_form: edit_future_concept
+    detail_view: future_concept_detail
     page_size: 25
   # ─────────────────────────────────────────────────
   # Features
@@ -808,6 +814,7 @@ lists:
         widget: select
     create_form: create_feature
     edit_form: edit_feature
+    detail_view: feature_detail
     page_size: 25
   # ─────────────────────────────────────────────────
   # Tickets & Bugs
@@ -908,6 +915,7 @@ lists:
         widget: select
     create_form: create_concept
     edit_form: edit_concept
+    detail_view: concept_detail
     page_size: 50
   all_decisions:
     entity_type: decision
@@ -933,7 +941,7 @@ lists:
 # Views (detail pages)
 # ══════════════════════════════════════════════════
 views:
-  idea:
+  idea_detail:
     title: "Idea"
     entry:
       type: idea
@@ -994,7 +1002,7 @@ views:
         fields:
           - property: status
         empty_message: "Not yet promoted"
-  future-concept:
+  future_concept_detail:
     title: "Future Concept"
     entry:
       type: future-concept
@@ -1071,7 +1079,7 @@ views:
         fields:
           - property: status
         empty_message: "No blockers"
-  feature:
+  feature_detail:
     title: "Feature"
     entry:
       type: feature
@@ -1141,7 +1149,7 @@ views:
           - property: category
           - property: status
         empty_message: "No linked ideas"
-  concept:
+  concept_detail:
     title: "Concept"
     entry:
       type: concept
@@ -1454,3 +1462,5 @@ navigation:
         list: all_concepts
       - label: "Decisions"
         list: all_decisions
+  - label: "Graph"
+    graph: true

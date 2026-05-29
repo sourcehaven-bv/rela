@@ -19,10 +19,13 @@ status: pending
 
 ## Research
 
+- [ ] For larger features: run `/research` to create a structured research doc
 - [ ] Searched for existing libraries that solve this problem
 - [ ] Checked codebase for similar patterns or reusable code
 - [ ] Looked for reference implementations in other projects
 - [ ] Reviewed relevant rela concepts for prior art
+
+**Research Doc:** <!-- Link RES-xxxx if created, or N/A for small changes -->
 
 **Existing Solutions:**
 <!-- Document what you found:
