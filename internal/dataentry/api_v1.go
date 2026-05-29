@@ -479,6 +479,20 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
+	// Affordance parity (BUG-Q60V): a `fields:` policy that hides or
+	// freezes a field must gate it on create too, not just PATCH —
+	// otherwise the value can be smuggled in at create time. Validate
+	// against the candidate entity (type + proposed properties, no ID
+	// yet). Relation-dependent predicates fail closed for an
+	// unpersisted entity, which is the safe direction; only global-role
+	// grants apply at create. Collection-level create authorization is
+	// enforced separately inside CreateEntity (acl.OpCreate).
+	candidate := &entityPkg.Entity{Type: typeName, Properties: req.Properties}
+	if denial := a.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
+		a.denyAffordance(r.Context(), w, candidate, *denial)
+		return
+	}
+
 	createResult, err := a.entityManager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
 			Type:       typeName,

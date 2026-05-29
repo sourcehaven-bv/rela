@@ -4610,6 +4610,130 @@ func TestAppRouter_PatchFilteredListEnum_Forbidden(t *testing.T) {
 	})
 }
 
+// createTicketRaw POSTs a raw body to the v1 create handler and returns
+// the status code and response body. Mirrors patchTicketRaw for the
+// create path.
+func createTicketRaw(t *testing.T, app *App, body string) (code int, respBody string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.handleV1CreateEntity(rec, req, "ticket", "tickets")
+	return rec.Code, rec.Body.String()
+}
+
+// TestHandleV1CreateEntity_FieldAffordances proves the BUG-Q60V fix: a
+// `fields:` policy that hides, freezes, or filters a field gates it on
+// CREATE, not just PATCH. Before the fix, POST went straight to
+// entityManager.CreateEntity, so a denied field could be smuggled in at
+// create time. The create gate must produce the same 403 + rule_id as
+// the PATCH gate (TestAppRouter_Patch* above).
+func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
+	t.Run("hidden field rejected", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().Hidden("title").Build()
+
+		code, body := createTicketRaw(t, app, `{"properties":{"title":"new"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"rule_id":"field-affordance:hidden:title"`) {
+			t.Errorf("body must name hidden rule: %s", body)
+		}
+	})
+
+	t.Run("unknown field rejected with same shape (F8)", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = NopFieldVerdictResolver{}
+
+		code, body := createTicketRaw(t, app, `{"properties":{"bogus_field":"v"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"rule_id":"field-affordance:hidden:`) {
+			t.Errorf("unknown field must use hidden-shape rule: %s", body)
+		}
+	})
+
+	t.Run("read-only field rejected", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+
+		code, body := createTicketRaw(t, app, `{"properties":{"title":"ok","status":"open"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"rule_id":"field-affordance:read-only:status"`) {
+			t.Errorf("body must name read-only rule: %s", body)
+		}
+	})
+
+	t.Run("filtered enum option rejected", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().EnumDeny("title", "forbidden-title").Build()
+
+		code, body := createTicketRaw(t, app, `{"properties":{"title":"forbidden-title"}}`)
+		if code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", code, body)
+		}
+		if !strings.Contains(body, `"field-affordance:enum-filtered:title=forbidden-title"`) {
+			t.Errorf("body must name enum-filtered rule: %s", body)
+		}
+	})
+
+	t.Run("allowed fields create succeeds", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+
+		// `title` is writable; `status` is omitted, so the read-only gate
+		// never fires. The create must succeed end-to-end.
+		code, body := createTicketRaw(t, app, `{"properties":{"title":"ok"}}`)
+		if code != http.StatusCreated {
+			t.Fatalf("got %d, want 201; body=%s", code, body)
+		}
+	})
+}
+
+// TestHandleV1CreateEntity_AffordanceDenial_EmitsAudit proves the create
+// gate audits its denials on the same `denied-write` op as the PATCH
+// gate, so the audit stream is uniform across write paths. The audit
+// subject carries the type but an empty ID (the entity was never
+// created).
+func TestHandleV1CreateEntity_AffordanceDenial_EmitsAudit(t *testing.T) {
+	sink := audit.NewMemory()
+	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
+	app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+
+	code, body := createTicketRaw(t, app, `{"properties":{"title":"ok","status":"open"}}`)
+	if code != http.StatusForbidden {
+		t.Fatalf("create: got %d, want 403; body=%s", code, body)
+	}
+
+	records := sink.Records()
+	if len(records) != 1 {
+		t.Fatalf("audit records: got %d, want 1; records=%+v", len(records), records)
+	}
+	rec0 := records[0]
+	if rec0.Op != audit.OpDeniedWrite {
+		t.Errorf("audit op: got %q, want %q", rec0.Op, audit.OpDeniedWrite)
+	}
+	if rec0.Subject == nil || rec0.Subject.Type != "ticket" {
+		t.Errorf("audit subject: got %+v, want entity:ticket:<empty-id>", rec0.Subject)
+	}
+	if !strings.Contains(rec0.Summary, "rule_id=field-affordance:read-only:status") {
+		t.Errorf("audit summary missing rule_id: %q", rec0.Summary)
+	}
+}
+
 // bindEdge inserts an edge directly through the store. Used by tests
 // that need a pre-existing edge to remove or update via the API.
 // relType is parameterized intentionally; today every caller passes
