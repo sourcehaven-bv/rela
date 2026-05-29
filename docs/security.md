@@ -199,7 +199,7 @@ roles:
     write: [review-response]
     read: ["*"]
 
-  default:                  # applied to every principal not in `assignments`
+  everyone:                 # built-in role held implicitly by every principal
     read: ["*"]
     # no `write` → unassigned principals can read but not write
 
@@ -219,9 +219,10 @@ role_relations:
 - **Union + explicit-deny.** A write is allowed if **any** role in
   the principal's effective set grants it. The first matching role
   is named in the deny/allow rule for debuggability.
-- **Default role applies to everyone.** The `default` role is
-  appended to every principal's effective set. Omit it to make
-  unassigned principals capability-free.
+- **The `everyone` role applies to everyone.** This one built-in
+  role name is appended to every principal's effective set (whether or
+  not they appear in `assignments`). Omit it to make unassigned
+  principals capability-free.
 - **Empty `acl.yaml` denies everything.** A file with no roles or
   assignments produces an empty effective set for every principal —
   every write returns 403. Operators who want allow-all should
@@ -250,7 +251,7 @@ themselves admin by writing their own role-binding relation.
 
 `acl.yaml` is only meaningful when combined with a trusted source of
 `principal.user`. Without it, every request claims to be `unknown`
-and the default role is the entire access surface. To get
+and the `everyone` role is the entire access surface. To get
 meaningful user attribution:
 
 - Run behind a reverse proxy that **strips** the configured header
@@ -280,8 +281,16 @@ gaps independently.
   the [API reference action-affordances
   section](./data-entry/api-reference.md#how-the-spa-consumes-_actions)
   for the consumer contract.
-- ❌ Read filtering, property redaction — deferred to v1.
+- ✅ Field-, option-, and relation-level affordances driven by
+  per-role `fields:` / `visible:` / `options:` / `relations:` grants
+  with optional `when:` predicates. See [Field- and relation-level
+  affordances](#field--and-relation-level-affordances).
+- ❌ Read filtering, property redaction — deferred to v1. (Field
+  *visibility* via `visible:` omits a property from the write-form
+  response, but list-query reads are not filtered.)
 - ❌ Group expansion (`member-of` transitive) — deferred to v1.
+- ❌ Inherited local roles (containment) — deferred to v1; direct
+  local roles are honored.
 - ❌ MCP transport intersection (filtering the tool list per principal) — deferred to a follow-up.
 - ❌ Containment inheritance — deferred to v2.
 
@@ -293,6 +302,141 @@ gaps independently.
 > invariant is HTTP write endpoints reached by the SPA; MCP / Lua /
 > scheduler write paths share the same enforcement but do not emit
 > or consult `_actions`.
+
+### Field- and relation-level affordances
+
+Beyond the per-resource `_actions` verb map, a role can grant
+**field-, option-, and relation-level** affordances. These drive the
+`_fields` and `_relations` maps the data-entry server emits on
+per-entity GET (see the [API reference affordances
+section](./data-entry/api-reference.md#affordances-_fields-and-_relations)),
+and they gate the corresponding writes server-side.
+
+Each grant may carry a `when:` predicate — a single expression in the
+[predicate language](#affordance-predicates) — evaluated against the
+entity and the requesting principal. An absent `when:` grants
+unconditionally.
+
+```yaml
+roles:
+  triager:
+    write: [ticket]            # per-type write grant (as before)
+
+    # Per-field write grants. A role that declares `fields:` for a
+    # type is closed-world for that type: only listed fields are
+    # writable; everything else renders read-only.
+    fields:
+      ticket:
+        - field: status
+          when: "entity.assignee == current_user.id"
+        - field: description    # unconditional
+
+    # Per-field visibility. Same closed-world rule; a field denied
+    # here is OMITTED from the response entirely (not just read-only).
+    visible:
+      ticket:
+        - field: internal_notes
+          when: "has_global_role(current_user, 'admin')"
+
+    # Per-enum-option grants. Closed-world per field: only listed
+    # options are selectable; others are filtered out and rejected
+    # on write.
+    options:
+      ticket:
+        - field: status
+          option: open
+        - field: status
+          option: review
+
+    # Per-relation-type grants. create/remove default to true when the
+    # grant exists; set them false to deny. `fields:` grants per-meta-
+    # field writability on links of that type.
+    relations:
+      ticket:
+        - relation: implements
+          create: true
+          remove: false
+          when: "entity.status == 'ready'"
+        - relation: has-planning
+          fields:
+            - field: note
+```
+
+**Opt-in is per type, by key presence.** A role that does *not*
+declare a block (e.g. no `fields:` key for `ticket`) leaves that
+dimension fully permissive for the type. A role that declares the key
+— even as an empty list (`fields: {ticket: []}`) or null
+(`fields: {ticket:}`) — makes it closed-world: anything not granted is
+denied. This mirrors how `write:` already works.
+
+**Cross-role union, monotonic.** When a principal holds several roles,
+a field/option/relation is allowed if *any* role grants it under a
+passing predicate. Adding a role can only widen access, never narrow
+it.
+
+**Effective roles are entity-scoped.** The role set for a given
+`(principal, entity)` is the principal's global roles (from
+`assignments` plus the built-in `everyone`) unioned with **local
+roles** conferred
+on that entity by a `role_relations` edge from the principal (e.g.
+`alice --owner-of--> TKT-001` confers `owner` on `TKT-001` only).
+Grant blocks keyed on a local role therefore apply only to the
+entities where the principal holds that role. v1 resolves *direct*
+local roles only; inherited local roles (containment) are deferred.
+
+#### Affordance predicates
+
+Predicates are compiled at server startup. A compile error — a syntax
+error, an unknown variable, a type mismatch, or a reference to a
+property the metamodel doesn't declare — **aborts startup** with the
+offending grant path in the error. This is stricter than a malformed
+`acl.yaml` (which downgrades to allow-all): a broken predicate is an
+operator typo with a deterministic fix, so it surfaces loudly rather
+than silently disabling a gate.
+
+Available in a predicate:
+
+| Symbol | Meaning |
+|--------|---------|
+| `entity.<property>` | The evaluated entity's property value. Missing or off-type values bind as `nil`. |
+| `entity.id`, `entity.type` | The entity's identity. |
+| `current_user.id`, `current_user.type` | The requesting principal. |
+| `has_role(current_user, entity, 'name')` | Holds `name` scoped to this entity (global ∪ local roles). |
+| `has_global_role(current_user, 'name')` | Holds `name` as a global (assignment) role; ignores local roles. |
+| `has_relation(entity, 'type')` | Entity has an outgoing relation of `type`. |
+| `count_relations(entity, 'type')` | Count of outgoing relations of `type`. |
+| `string_in_list(value, entity.<listprop>)` | `value` is an element of a list-typed property. The list argument must be a list-typed property — inline list literals are not supported. |
+
+Combine conditions with `and` / `or` / `not` inside the expression.
+
+> - **Predicates evaluate server-side against the full entity**,
+>   including properties that will be visibility-stripped from the
+>   response. A predicate may key a visible field's verdict on a hidden
+>   property; that is intentional.
+> - **Predicate failures fail closed.** A runtime error in a `when:`
+>   predicate (e.g. a host-function error) denies the grant rather than
+>   allowing it, and logs a warning for operator visibility. It never
+>   500s the GET.
+> - **Adding a property referenced by a predicate requires a server
+>   restart.** Predicates compile against the metamodel at startup; a
+>   hot metamodel reload does not recompile them.
+
+#### Selecting the affordance source
+
+The data-entry server picks its affordance source at startup via
+`RELA_AFFORDANCE_PROFILE`:
+
+| `RELA_AFFORDANCE_PROFILE` | Source |
+|---------------------------|--------|
+| unset / empty | Policy-backed if `acl.yaml` declares any affordance block; otherwise permissive (no deviations). |
+| `none` | Permissive — explicit opt-out even when a policy has affordance blocks. |
+| `demo` | A hardcoded dev fixture against the `ticket` type (for manual UI testing); overrides the policy. |
+
+Like `_actions`, `_fields` / `_relations` are **UI hints** — the
+server re-authorizes every write. The role and predicate that produced
+a deny are recorded in the audit log's `Summary` (not the wire 403
+body), so operators can attribute a denial without exposing policy
+internals to clients.
 
 ## Running the Vue dev server (Vite)
 

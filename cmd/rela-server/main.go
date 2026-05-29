@@ -113,10 +113,12 @@ func main() {
 	// Close() *is* required in long-running hosts that switch
 	// projects (see rela-desktop); this is the daemon-lifetime case.
 
+	fieldResolver := buildFieldResolver(svc)
+
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
 		svc.EntityManager(), svc.Searcher(), svc.ACL(),
-		dataentry.ResolverFromProfile(os.Getenv("RELA_AFFORDANCE_PROFILE")),
+		fieldResolver,
 		svc.Audit(),
 	)
 	if err != nil {
@@ -239,6 +241,18 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// buildFieldResolver constructs the data-entry affordance resolver
+// from the active services. A predicate compile error in acl.yaml is
+// fatal — surfaced loudly rather than silently disabling a gate.
+func buildFieldResolver(svc *appbuild.Services) dataentry.FieldVerdictResolver {
+	resolver, err := dataentry.ResolverFromServices(svc)
+	if err != nil {
+		slog.Error("failed to build affordance resolver", "error", err)
+		os.Exit(1)
+	}
+	return resolver
 }
 
 // shouldWarnNoACL reports whether the operator should be told they

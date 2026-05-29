@@ -393,19 +393,22 @@ x buttons. Writes that contradict a verdict return 403.
 
 ### Verdict source
 
-In v1, verdicts come from a hardcoded stub selected by the
-`RELA_AFFORDANCE_PROFILE` env var (read once at server startup; tests pass
-the resolver directly):
+Verdicts come from one of three sources, selected at server startup by the
+`RELA_AFFORDANCE_PROFILE` env var (tests pass the resolver directly):
 
 | Value | Behavior |
 |---|---|
-| unset / `none` | Permissive default — every field writable, every option allowed, every relation creatable/removable. Both wire maps emit as `{}`. |
-| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path so the SPA work has an observable end-to-end behavior. |
-| any other | Unknown — logs a warning and falls back to `none`. Never panics. |
+| unset / empty | **Policy-backed** when `acl.yaml` declares any affordance block (`fields:` / `visible:` / `options:` / `relations:`); otherwise permissive (both wire maps emit as `{}`). |
+| `none` | Permissive — explicit opt-out even when a policy has affordance blocks. |
+| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Overrides the policy. |
+| any other | Unknown — logs a warning and falls back to policy / permissive. Never panics. |
 
-The eventual predicate-engine ticket replaces the stub with an `acl.yaml`-
-driven implementation via the same `FieldVerdictResolver` Go interface; the
-wire shape and SPA rendering stay unchanged.
+The policy-backed resolver compiles `when:` predicates from `acl.yaml` at
+startup and evaluates them per entity. See the [security model
+affordances section](../security.md#field--and-relation-level-affordances)
+for the `acl.yaml` schema, the predicate language, and the closed-world /
+cross-role semantics. The wire shape and SPA rendering below are identical
+regardless of source.
 
 ### Wire shape
 

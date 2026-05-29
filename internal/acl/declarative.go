@@ -108,7 +108,7 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 // `Assignments[user]` names an undefined role, it is dropped (a
 // load-time warning will have been emitted in v1; v0 silently
 // ignores — operators discover the typo via `analyze_*` style
-// follow-up tickets). `default` is always appended last if defined.
+// follow-up tickets). [EveryoneRole] is always appended last if defined.
 func (d *Declarative) effectiveRoles(p principal.Principal) []string {
 	var out []string
 	if name, ok := d.policy.Assignments[p.User]; ok {
@@ -116,11 +116,11 @@ func (d *Declarative) effectiveRoles(p principal.Principal) []string {
 			out = append(out, name)
 		}
 	}
-	if _, ok := d.policy.Roles["default"]; ok {
-		// Only append default if it isn't already the principal's
-		// explicit role (defensive against `assignments: {alice: default}`).
-		if !slices.Contains(out, "default") {
-			out = append(out, "default")
+	if _, ok := d.policy.Roles[EveryoneRole]; ok {
+		// Only append it if it isn't already the principal's explicit
+		// role (defensive against `assignments: {alice: everyone}`).
+		if !slices.Contains(out, EveryoneRole) {
+			out = append(out, EveryoneRole)
 		}
 	}
 	return out
