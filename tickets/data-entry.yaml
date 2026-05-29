@@ -385,8 +385,6 @@ forms:
     fields:
       - property: title
         placeholder: "What needs to be done?"
-      - property: description
-        widget: textarea
       - property: kind
       - property: priority
       - property: effort
@@ -408,8 +406,6 @@ forms:
     body: true
     fields:
       - property: title
-      - property: description
-        widget: textarea
       - property: kind
       - property: priority
       - property: effort
