@@ -30,6 +30,15 @@ type EntityManager interface {
 	// CreateEntity creates a new entity, running on-create automations.
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 
+	// ValidateCreate runs the create path's defaults + validation against
+	// a candidate WITHOUT persisting, authorizing, auditing, or running
+	// automation. Returns the would-be entity (post-defaults) and soft
+	// warnings. Advisory only — the real CreateEntity remains the sole
+	// authorization/audit point.
+	ValidateCreate(
+		ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
+	) (*entity.Entity, []entity.Warning, error)
+
 	// UpdateEntity updates an existing entity and runs on-update automations.
 	// The caller passes the modified entity; the manager detects changes.
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)

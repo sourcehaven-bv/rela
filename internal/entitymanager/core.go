@@ -33,6 +33,28 @@ type createCoreOpts struct {
 func createCore(
 	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
 ) (*entity.Entity, []entity.Warning, error) {
+	e, warnings, err := buildCandidateEntity(ctx, deps, entityType, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := upsertEntity(ctx, deps.Store, e); err != nil {
+		return nil, nil, fmt.Errorf("write entity: %w", err)
+	}
+
+	return e, warnings, nil
+}
+
+// buildCandidateEntity resolves the ID, applies template + status
+// defaults, merges caller properties, and partitions validation errors
+// per DEC-HWZHA (hard errors abort; soft conditions return as warnings)
+// — everything [createCore] does except the final persist. Shared by
+// createCore (which then writes) and [Manager.ValidateCreate] (which
+// returns the would-be entity + warnings without writing), so dry-run
+// validation cannot drift from the real create path.
+func buildCandidateEntity(
+	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
+) (*entity.Entity, []entity.Warning, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
@@ -89,10 +111,6 @@ func createCore(
 			return nil, nil, newValidationError(hard)
 		}
 		warnings = soft
-	}
-
-	if err := upsertEntity(ctx, deps.Store, e); err != nil {
-		return nil, nil, fmt.Errorf("write entity: %w", err)
 	}
 
 	return e, warnings, nil

@@ -285,6 +285,93 @@ func TestCreate_WritesOnceWithoutAutomation(t *testing.T) {
 	}
 }
 
+// TestValidateCreate_PersistsNothing pins the core dry-run contract:
+// ValidateCreate runs the create-path validation but performs no store
+// write (TKT-3I5U).
+func TestValidateCreate_PersistsNothing(t *testing.T) {
+	mgr, cs := newManager(t, nil)
+	e := entity.New("", "requirement")
+	e.SetString("title", "Candidate")
+
+	got, warnings, err := mgr.ValidateCreate(context.Background(), e, entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("ValidateCreate: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ValidateCreate returned nil candidate entity")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("clean candidate should have no warnings; got %+v", warnings)
+	}
+	if c := cs.creates.Load(); c != 0 {
+		t.Errorf("ValidateCreate must not write: CreateEntity calls = %d, want 0", c)
+	}
+	if u := cs.updates.Load(); u != 0 {
+		t.Errorf("ValidateCreate must not write: UpdateEntity calls = %d, want 0", u)
+	}
+}
+
+// TestValidateCreate_SoftWarningForRequiredUnset proves a required-but-
+// unset field returns as a soft warning (not a hard error), matching
+// what CreateEntity would surface on the persisted result.
+func TestValidateCreate_SoftWarningForRequiredUnset(t *testing.T) {
+	mgr, _ := newManager(t, nil)
+	e := entity.New("", "requirement") // title is required, omitted
+
+	_, warnings, err := mgr.ValidateCreate(context.Background(), e, entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("ValidateCreate should not hard-error on required-unset: %v", err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Path, "title") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a required-unset warning for title; got %+v", warnings)
+	}
+}
+
+// TestValidateCreate_MatchesCreateWarnings proves dry-run and real
+// create produce the SAME soft warnings for the same candidate — the
+// shared buildCandidateEntity guarantees no drift (RR-Y85M).
+func TestValidateCreate_MatchesCreateWarnings(t *testing.T) {
+	dryMgr, _ := newManager(t, nil)
+	realMgr, _ := newManager(t, nil)
+
+	mk := func() *entity.Entity {
+		e := entity.New("", "requirement") // omit required title
+		return e
+	}
+
+	_, dryWarnings, err := dryMgr.ValidateCreate(context.Background(), mk(), entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("ValidateCreate: %v", err)
+	}
+	res, err := realMgr.CreateEntity(context.Background(), mk(), entity.CreateOptions{})
+	if err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+
+	if len(dryWarnings) != len(res.Warnings) {
+		t.Fatalf("warning count differs: dry=%d real=%d", len(dryWarnings), len(res.Warnings))
+	}
+	for i := range dryWarnings {
+		if dryWarnings[i] != res.Warnings[i] {
+			t.Errorf("warning %d differs: dry=%+v real=%+v", i, dryWarnings[i], res.Warnings[i])
+		}
+	}
+}
+
+// TestValidateCreate_NilEntity rejects a nil candidate.
+func TestValidateCreate_NilEntity(t *testing.T) {
+	mgr, _ := newManager(t, nil)
+	if _, _, err := mgr.ValidateCreate(context.Background(), nil, entity.CreateOptions{}); err == nil {
+		t.Error("ValidateCreate(nil) should error")
+	}
+}
+
 // TestCreate_WritesTwiceWithAutomationProperty pins the
 // "two writes when automation sets a property" pipeline shape.
 func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
