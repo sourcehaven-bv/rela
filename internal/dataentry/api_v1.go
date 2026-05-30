@@ -583,6 +583,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	s := a.State()
 
+	// Mirror of handleV1CreateEntity's request body MINUS `relations`
+	// — staged relations are deferred (a candidate has no real source
+	// ID to hang edges on). When a new field is added to the real
+	// create body, decide explicitly whether dry-run should accept it
+	// and update both structs together (RR-GOR8 drift guard).
 	var req struct {
 		ID         string                 `json:"id,omitempty"`
 		Prefix     string                 `json:"prefix,omitempty"`
@@ -594,9 +599,22 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	if _, ok := s.Meta.Entities[typeName]; !ok {
+	entityDef, ok := s.Meta.Entities[typeName]
+	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", typeName)
 		return
+	}
+
+	reqID := strings.TrimSpace(req.ID)
+	reqPrefix := strings.TrimSpace(req.Prefix)
+
+	// RR-9JOH: surface ID/prefix problems as a soft warning rather than
+	// 422 so the create form learns at typing time instead of at submit.
+	// The real commit's validateCreateIDOpts still hard-rejects — this
+	// is advisory parity with the rest of the dry-run.
+	var idWarning *Warning
+	if msg := validateCreateIDOpts(&entityDef, reqID, reqPrefix); msg != "" {
+		idWarning = &Warning{Code: "id_opts_invalid", Path: "/id", Detail: msg}
 	}
 
 	// Resolve the would-be entity (post template / status defaults) and
@@ -604,7 +622,7 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// no audit, no automation. Hard structural errors surface as 422.
 	candidate, warnings, err := a.entityManager.ValidateCreate(r.Context(),
 		&entityPkg.Entity{Type: typeName, Properties: req.Properties, Content: req.Content},
-		entityPkg.CreateOptions{ID: strings.TrimSpace(req.ID), Prefix: strings.TrimSpace(req.Prefix)},
+		entityPkg.CreateOptions{ID: reqID, Prefix: reqPrefix},
 	)
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
@@ -616,6 +634,9 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// re-derive as the form changes. includeRelations=false: no edges
 	// exist for an unsaved entity.
 	result := a.serializeEntityForWire(r.Context(), candidate, plural, false)
+	if idWarning != nil {
+		result.Warnings = append(result.Warnings, *idWarning)
+	}
 	if len(warnings) > 0 {
 		result.Warnings = append(result.Warnings, warnings...)
 	}

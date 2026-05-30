@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -89,6 +90,9 @@ type countingStore struct {
 	creates atomic.Int32
 	updates atomic.Int32
 	deletes atomic.Int32
+	// scans counts ListEntities calls; used to pin that the dry-run
+	// validate path doesn't scan the store (RR-8I07).
+	scans atomic.Int32
 }
 
 func (s *countingStore) CreateEntity(ctx context.Context, e *entity.Entity) error {
@@ -102,6 +106,10 @@ func (s *countingStore) UpdateEntity(ctx context.Context, e *entity.Entity) erro
 func (s *countingStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	s.deletes.Add(1)
 	return s.Store.DeleteEntity(ctx, id, cascade)
+}
+func (s *countingStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	s.scans.Add(1)
+	return s.Store.ListEntities(ctx, q)
 }
 
 // failingCreateStore wraps a store and forces the next N CreateEntity
@@ -369,6 +377,27 @@ func TestValidateCreate_NilEntity(t *testing.T) {
 	mgr, _ := newManager(t, nil)
 	if _, _, err := mgr.ValidateCreate(context.Background(), nil, entity.CreateOptions{}); err == nil {
 		t.Error("ValidateCreate(nil) should error")
+	}
+}
+
+// TestValidateCreate_SkipsIDGeneration pins RR-8I07: ValidateCreate must
+// NOT scan the entity store to generate a real ID, because the dry-run
+// runs per debounced keystroke on the create form. A store-wide scan
+// per keystroke would hitch the UI and pile on backend load.
+func TestValidateCreate_SkipsIDGeneration(t *testing.T) {
+	mgr, cs := newManager(t, nil)
+	// Seed two entities so an ID-gen path WOULD see them via ListEntities.
+	createReq(t, mgr, "Seed 1")
+	createReq(t, mgr, "Seed 2")
+	scansBefore := cs.scans.Load()
+
+	e := entity.New("", "requirement")
+	e.SetString("title", "Candidate")
+	if _, _, err := mgr.ValidateCreate(context.Background(), e, entity.CreateOptions{}); err != nil {
+		t.Fatalf("ValidateCreate: %v", err)
+	}
+	if scans := cs.scans.Load() - scansBefore; scans != 0 {
+		t.Errorf("ValidateCreate must not scan the store; got %d ListEntities scans", scans)
 	}
 }
 

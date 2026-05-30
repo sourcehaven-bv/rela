@@ -78,6 +78,13 @@ const stagedVisibleProps = ref<Set<string>>(new Set())
 // filter switches from "render everything" (first paint, F19) to the
 // affordance-filtered list. Stays false in edit mode.
 const stagedAffordancesReady = ref(false)
+// Property keys the user has explicitly edited via updateField in
+// create mode. The commit-side filter always preserves these keys even
+// when the dry-run hasn't reported them as visible-writable yet (debounce
+// race, RR-2U2D), and they're authoritative over a stale metamodel
+// default for "what was the user's intent" — the server's gate (BUG-Q60V)
+// is the boundary that rejects a touched key the policy denies.
+const userTouched = ref<Set<string>>(new Set())
 // Per-relation `id -> entity type` map, fed by RelationPicker's
 // `update:types` emit. Required by the unified PATCH builder to emit
 // JSON:API §9 resource identifiers without guessing target types
@@ -204,6 +211,16 @@ function visibleWritablePropertiesForCommit(): Record<string, unknown> {
   }
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(formData.value)) {
+    // RR-2U2D: never drop a key the user explicitly typed into — the
+    // dry-run may not have resolved yet for that key (debounce in
+    // flight) and silently dropping the value would lose user intent.
+    // The server's affordance gate (BUG-Q60V) rejects denied writes,
+    // so this is safe: an under-resolved touched key that the policy
+    // actually denies still 403s at commit, with a clear rule_id.
+    if (userTouched.value.has(key)) {
+      out[key] = value
+      continue
+    }
     if (!stagedVisibleProps.value.has(key)) continue // hidden → omit
     if (fieldAffordances.value[key]?.writable === false) continue // read-only → omit
     out[key] = value
@@ -307,8 +324,13 @@ function initializeDefaults() {
     }
   }
 
-  // Apply form-level defaults
-  for (const field of fields.value) {
+  // Apply form-level defaults. Iterate `allFields.value` directly
+  // (not the affordance-filtered `fields` computed): defaults must seed
+  // from every configured field, independent of any incidental
+  // affordance state. RR-00VT made this dependency explicit so a
+  // future change to `fields`'s early-return can't silently drop
+  // create-mode defaults.
+  for (const field of allFields.value) {
     if (field.property && field.default !== undefined) {
       formData.value[field.property] = field.default
     }
@@ -378,6 +400,9 @@ async function loadTemplates() {
 const STAGED_DRYRUN_DEBOUNCE_MS = 400
 let stagedDryRunController: AbortController | null = null
 let stagedDryRunTimer: ReturnType<typeof setTimeout> | null = null
+// RR-2PZB: signals that the component is gone so a dry-run response
+// arriving post-unmount doesn't write to refs of a destroyed component.
+let stagedUnmounted = false
 
 async function refreshStagedAffordances() {
   if (isEdit.value || !formConfig.value) return
@@ -395,6 +420,9 @@ async function refreshStagedAffordances() {
     )
     // A newer request superseded this one between await points — discard.
     if (controller !== stagedDryRunController) return
+    // Component is gone (unmount fired between resolve and here) — bail
+    // so we don't write to dead refs (RR-2PZB).
+    if (stagedUnmounted) return
 
     fieldAffordances.value = candidate._fields ?? {}
     relationAffordances.value = candidate._relations ?? {}
@@ -410,6 +438,7 @@ async function refreshStagedAffordances() {
     stagedAffordancesReady.value = true
   } catch (err) {
     if (isCancelledFetch(err)) return // superseded / unmounted — not an error
+    if (stagedUnmounted) return // post-unmount; don't write to dead refs
     // Fail open: leave whatever affordances we have (possibly none) and
     // let the form render. The commit gate is the real boundary.
     console.warn('Dry-run affordance check failed; create form left unfiltered:', err)
@@ -675,8 +704,12 @@ function updateField(property: string, value: unknown) {
   formData.value[property] = value
   checkDirty()
   // TKT-3I5U: in create mode, re-derive affordances from the staged
-  // entity's new values (value-dependent verdicts) — debounced.
+  // entity's new values (value-dependent verdicts) — debounced. Also
+  // track that the user explicitly touched this key (RR-2U2D) so the
+  // commit-side filter never drops it even if the dry-run hasn't
+  // resolved yet for it.
   if (!isEdit.value) {
+    userTouched.value.add(property)
     scheduleStagedAffordances()
     return
   }
@@ -928,7 +961,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
-  // TKT-3I5U: cancel any pending / in-flight staged dry-run.
+  // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
+  // the component as gone so a response that has already arrived (but
+  // is awaiting the microtask queue) doesn't write to dead refs
+  // (RR-2PZB).
+  stagedUnmounted = true
   if (stagedDryRunTimer) clearTimeout(stagedDryRunTimer)
   stagedDryRunController?.abort()
 })

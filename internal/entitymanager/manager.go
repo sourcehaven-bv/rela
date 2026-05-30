@@ -318,6 +318,10 @@ func (m *Manager) ValidateCreate(
 		TemplateVariant: opts.Variant,
 		Properties:      e.Properties,
 		Content:         e.Content,
+		// Skip the full-store scan generateID would do — dry-run runs
+		// per debounced keystroke and a real ID is not needed for
+		// validation. RR-8I07.
+		SkipIDGeneration: true,
 	})
 }
 

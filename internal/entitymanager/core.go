@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -20,6 +21,29 @@ type createCoreOpts struct {
 	TemplateVariant string                 // Template variant name (empty = default)
 	Properties      map[string]interface{} // Properties to set (overrides template defaults)
 	Content         string                 // Body content (overrides template content when non-empty)
+	// SkipIDGeneration tells [buildCandidateEntity] to skip real ID
+	// allocation when ID is empty and the type uses auto-IDs.
+	// [Manager.ValidateCreate] sets this so a per-keystroke dry-run does
+	// not scan the entire store to pick a never-used ID. The resulting
+	// entity gets a stable placeholder ID; validation that depends on
+	// the actual ID (ID-prefix check) is not relevant in that path.
+	SkipIDGeneration bool
+}
+
+// candidatePlaceholderID returns the synthetic ID to use for a dry-run
+// candidate entity when no real ID is supplied. It pairs the requested
+// prefix (or the type's first declared prefix) with a fixed suffix so
+// metamodel ID-prefix validation passes. The result is never persisted
+// — only [Manager.ValidateCreate] (which never writes) uses this path.
+func candidatePlaceholderID(def *metamodel.EntityDef, requestedPrefix string) string {
+	const candidateSuffix = "DRYRUN"
+	if requestedPrefix != "" {
+		return requestedPrefix + candidateSuffix
+	}
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+		return prefixes[0] + candidateSuffix
+	}
+	return candidateSuffix
 }
 
 // createCore is the shared bare-write entity-creation path: resolve
@@ -62,11 +86,21 @@ func buildCandidateEntity(
 
 	entityID := opts.ID
 	if entityID == "" {
-		id, err := generateID(ctx, deps, entityType, opts.IDPrefix)
-		if err != nil {
-			return nil, nil, err
+		if opts.SkipIDGeneration {
+			// Dry-run / validation path: skip the full-store scan
+			// generateID would do. We still need an ID that passes
+			// metamodel ID-prefix validation (hard error), so we
+			// synthesize one from the type's first prefix. The result
+			// is never persisted — only [Manager.ValidateCreate] sets
+			// this flag.
+			entityID = candidatePlaceholderID(entityDef, opts.IDPrefix)
+		} else {
+			id, err := generateID(ctx, deps, entityType, opts.IDPrefix)
+			if err != nil {
+				return nil, nil, err
+			}
+			entityID = id
 		}
-		entityID = id
 	} else {
 		if !entityDef.IsManualID() {
 			return nil, nil, customIDNotAllowedError(entityType, entityDef, entityID)
