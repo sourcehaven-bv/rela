@@ -5,7 +5,7 @@ title: Extract shared widget registry from FieldRenderer
 kind: enhancement
 priority: high
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Goal
