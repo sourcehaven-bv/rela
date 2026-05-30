@@ -437,8 +437,7 @@ func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.R
 	s.entityOrder = storeutil.SortedRemove(s.entityOrder, oldID)
 	s.entities[newID] = entityMeta{ID: newID, Type: meta.Type}
 	s.entityOrder = storeutil.SortedInsert(s.entityOrder, newID)
-	s.notifyDelete(oldID)
-	s.notifyPut(renamed)
+	s.notifyRenamed(oldID, renamed)
 
 	// Update relation index.
 	for _, rm := range toUpdate {

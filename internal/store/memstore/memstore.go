@@ -108,6 +108,15 @@ func (m *MemStore) notifyDelete(id string) {
 	}
 }
 
+// notifyRenamed fans out a rename to all observers. The rename code
+// path emits this INSTEAD OF the EntityDelete(oldID)+EntityPut(renamed)
+// pair — see store.EntityObserver.EntityRenamed.
+func (m *MemStore) notifyRenamed(oldID string, renamed *entity.Entity) {
+	for _, o := range m.observers {
+		_ = o.EntityRenamed(oldID, renamed)
+	}
+}
+
 // compile-time interface check
 var _ store.Store = (*MemStore)(nil)
 
@@ -416,8 +425,7 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 	delete(m.entities, oldID)
 	m.entityOrder = sortedRemove(m.entityOrder, oldID)
 	m.entityOrder = sortedInsert(m.entityOrder, newID)
-	m.notifyDelete(oldID)
-	m.notifyPut(renamed)
+	m.notifyRenamed(oldID, renamed)
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0

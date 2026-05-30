@@ -96,6 +96,29 @@ func TestIndex_Remove(t *testing.T) {
 	assert.Empty(t, ids)
 }
 
+func TestIndex_EntityRenamed(t *testing.T) {
+	// EntityRenamed must atomically drop the old key and index the
+	// new content. After the rename: a search for the title still
+	// finds the entity, but only under newID — the oldID must be
+	// gone from the index.
+	idx := newTestIndex(t)
+
+	old := entity.New("REQ-1", "requirement")
+	old.SetString("title", "Atomic rename")
+	require.NoError(t, idx.EntityPut(old))
+
+	renamed := entity.New("REQ-99", "requirement")
+	renamed.SetString("title", "Atomic rename")
+	require.NoError(t, idx.EntityRenamed("REQ-1", renamed))
+
+	ids, err := idx.Search("Atomic rename", 10)
+	require.NoError(t, err)
+	assert.Contains(t, ids, "REQ-99",
+		"renamed entity should be findable under the new ID")
+	assert.NotContains(t, ids, "REQ-1",
+		"old ID must be gone from the index after rename")
+}
+
 func TestIndex_UpdateOverwrites(t *testing.T) {
 	idx := newTestIndex(t)
 

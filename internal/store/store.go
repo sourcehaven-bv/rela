@@ -239,7 +239,7 @@ type Formatter interface {
 }
 
 // EntityObserver receives notifications when entities are created, updated,
-// or deleted. Stores call observers synchronously after each write.
+// deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.
 //
 // This is the hook mechanism for building derived state (search indexes,
@@ -251,6 +251,20 @@ type EntityObserver interface {
 
 	// EntityDelete is called when an entity is removed.
 	EntityDelete(id string) error
+
+	// EntityRenamed is called when an entity's ID changes. The renamed
+	// argument carries the entity AFTER the rename (renamed.ID == newID)
+	// so content-driven observers (search indexes, projections that
+	// hold a copy) have everything they need without a follow-up
+	// store lookup, and ID-keyed observers (waiver stores, anything
+	// that stores references by entity ID) can rewrite those
+	// references in one step.
+	//
+	// Rename emits EXACTLY this one callback — not EntityDelete(oldID)
+	// + EntityPut(renamed). Implementations of search-index-style
+	// backends should atomically delete the old key and index the new
+	// content in their EntityRenamed body.
+	EntityRenamed(oldID string, renamed *entity.Entity) error
 }
 
 // Event represents a change that occurred in the store.
