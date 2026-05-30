@@ -30,6 +30,38 @@ type createCoreOpts struct {
 	SkipIDGeneration bool
 }
 
+// resolveCandidateID returns the ID to use for the candidate entity
+// being built by [buildCandidateEntity]. Three branches:
+//   - User-supplied ID → validated (manual-ID types only).
+//   - Empty ID + SkipIDGeneration → synthesized placeholder
+//     (dry-run / validation path; no store scan).
+//   - Empty ID + auto-ID → generated via the full-store scan.
+//
+// Extracted from [buildCandidateEntity] to keep that function's
+// top-level flow flat (avoids the nestif lint warning).
+func resolveCandidateID(
+	ctx context.Context, deps Deps, entityType string, entityDef *metamodel.EntityDef, opts createCoreOpts,
+) (string, error) {
+	if opts.ID != "" {
+		if !entityDef.IsManualID() {
+			return "", customIDNotAllowedError(entityType, entityDef, opts.ID)
+		}
+		if err := entity.ValidateID(opts.ID); err != nil {
+			return "", err
+		}
+		return opts.ID, nil
+	}
+	if opts.SkipIDGeneration {
+		// Dry-run / validation path: skip the full-store scan
+		// generateID would do. The placeholder must pass metamodel
+		// ID-prefix validation; [candidatePlaceholderID] synthesizes
+		// one from the type's first prefix. Never persisted — only
+		// [Manager.ValidateCreate] sets SkipIDGeneration.
+		return candidatePlaceholderID(entityDef, opts.IDPrefix), nil
+	}
+	return generateID(ctx, deps, entityType, opts.IDPrefix)
+}
+
 // candidatePlaceholderID returns the synthetic ID to use for a dry-run
 // candidate entity when no real ID is supplied. It pairs the requested
 // prefix (or the type's first declared prefix) with a fixed suffix so
@@ -84,30 +116,9 @@ func buildCandidateEntity(
 		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
-	entityID := opts.ID
-	if entityID == "" {
-		if opts.SkipIDGeneration {
-			// Dry-run / validation path: skip the full-store scan
-			// generateID would do. We still need an ID that passes
-			// metamodel ID-prefix validation (hard error), so we
-			// synthesize one from the type's first prefix. The result
-			// is never persisted — only [Manager.ValidateCreate] sets
-			// this flag.
-			entityID = candidatePlaceholderID(entityDef, opts.IDPrefix)
-		} else {
-			id, err := generateID(ctx, deps, entityType, opts.IDPrefix)
-			if err != nil {
-				return nil, nil, err
-			}
-			entityID = id
-		}
-	} else {
-		if !entityDef.IsManualID() {
-			return nil, nil, customIDNotAllowedError(entityType, entityDef, entityID)
-		}
-		if err := entity.ValidateID(entityID); err != nil {
-			return nil, nil, err
-		}
+	entityID, err := resolveCandidateID(ctx, deps, entityType, entityDef, opts)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	e := entity.New(entityID, entityType)

@@ -4891,6 +4891,46 @@ func TestHandleV1DryRunCreate_SoftWarnings(t *testing.T) {
 	}
 }
 
+// TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps
+// pins the contract the SPA's create-form filter relies on: every
+// declared, visible property appears in the response's `properties`
+// (with nil for keys the user hasn't set), so the form's
+// `_fields OR properties` filter can identify visible-by-default
+// fields. Without this, a visible-by-default field with no value
+// (e.g. `title` before the user types it) would be filtered out of
+// the create form entirely.
+func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	// Hide one field; the rest should all appear in `properties`.
+	app.fieldResolver = newVerdicts().Hidden("status").Build()
+
+	code, rec := dryRunCreateRaw(t, app, `{"properties":{}}`)
+	if code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
+	}
+	var v V1Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	// Every declared property on the ticket type EXCEPT the hidden one
+	// must appear in properties (with nil values).
+	def := app.State().Meta.Entities["ticket"]
+	for name := range def.Properties {
+		_, present := v.Properties[name]
+		if name == "status" {
+			if present {
+				t.Errorf("hidden field %q must NOT appear in response properties; got %v", name, v.Properties)
+			}
+			continue
+		}
+		if !present {
+			t.Errorf("visible declared field %q must appear in response properties (with nil); got %v", name, v.Properties)
+		}
+	}
+}
+
 // TestHandleV1DryRunCreate_UnknownType returns 404, matching the real
 // create handler.
 func TestHandleV1DryRunCreate_UnknownType(t *testing.T) {

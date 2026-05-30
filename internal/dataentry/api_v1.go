@@ -629,6 +629,25 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
+	// Seed missing-but-declared property keys with nil values BEFORE
+	// serialization. The SPA's create-mode field filter uses the
+	// response's `properties` keys to know which declared fields are
+	// visible (hidden fields get stripped by serializeEntityForWire's
+	// hidden-property filter). Without this, a visible-by-default field
+	// whose value the user hasn't set yet (e.g. a required `title`)
+	// would be absent from both `_fields` (sparse: no deviation) and
+	// `properties` (no value yet), so the filter would drop it.
+	if def, ok := s.Meta.Entities[typeName]; ok {
+		if candidate.Properties == nil {
+			candidate.Properties = make(map[string]interface{})
+		}
+		for name := range def.Properties {
+			if _, present := candidate.Properties[name]; !present {
+				candidate.Properties[name] = nil
+			}
+		}
+	}
+
 	// Affordances are computed against the candidate's CURRENT values, so
 	// value-dependent predicates (e.g. field B read-only when A == x)
 	// re-derive as the form changes. includeRelations=false: no edges

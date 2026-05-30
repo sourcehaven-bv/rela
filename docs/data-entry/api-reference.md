@@ -492,8 +492,10 @@ verdicts can depend on the candidate's field *values* (value-dependent
 `when:` predicates), so a static per-type verdict won't do. Instead the
 create path is evaluated as a **dry run**:
 
-```
+```http
 POST /api/v1/<plural>?dry_run=true
+Content-Type: application/json
+
 { "properties": { ... }, "content": "..." }
 ```
 
