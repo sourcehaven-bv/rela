@@ -260,6 +260,12 @@ deps:
       - wails
 
   # Server protocols
+  #
+  # mcp takes a focused mcp.Deps struct (domain types only) from the
+  # cli wiring site; it holds no composition-root aggregate, so
+  # appbuild is deliberately absent from this whitelist. The project
+  # context no longer leaks in either — mcp.Deps carries ProjectRoot
+  # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
       - ai
@@ -271,7 +277,6 @@ deps:
       - principal
       - lua
       - metamodel
-      - project
       - rename
       - schema
       - script

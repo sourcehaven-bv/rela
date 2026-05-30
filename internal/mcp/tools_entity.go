@@ -24,7 +24,7 @@ func (s *Server) handleListEntities(
 	limit := request.GetInt("limit", 0)
 	offset := request.GetInt("offset", 0)
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	q := store.EntityQuery{}
 	if entityType != "" {
 		q.Type = s.resolveType(entityType)
@@ -81,7 +81,7 @@ func (s *Server) handleShowEntity(
 	}
 	id = trimID(id)
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return mcp.NewToolResultError("entity not found: " + id), nil
@@ -110,9 +110,9 @@ func (s *Server) handleSearchEntities(
 		q.Types = []string{s.resolveType(entityType)}
 	}
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	summaries := make([]map[string]interface{}, 0)
-	for hit, searchErr := range s.ws.Searcher().Search(ctx, q) {
+	for hit, searchErr := range s.deps.Searcher.Search(ctx, q) {
 		if searchErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
@@ -159,7 +159,7 @@ func (s *Server) handleCreateEntity(
 		return errResult, nil
 	}
 
-	result, createErr := s.ws.EntityManager().CreateEntity(ctx,
+	result, createErr := s.deps.EntityManager.CreateEntity(ctx,
 		&entity.Entity{
 			Type:       resolvedType,
 			Properties: properties,
@@ -172,7 +172,7 @@ func (s *Server) handleCreateEntity(
 	}
 	created := result.Entity
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	e, _ := st.GetEntity(ctx, created.ID)
 	if e == nil {
 		// Fallback: return minimal info
@@ -196,7 +196,7 @@ func (s *Server) handleUpdateEntity(
 	}
 	id = trimID(id)
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return mcp.NewToolResultError("entity not found: " + id), nil
@@ -226,7 +226,7 @@ func (s *Server) handleUpdateEntity(
 		e.Content = content
 	}
 
-	updateResult, updateErr := s.ws.EntityManager().UpdateEntity(ctx, e)
+	updateResult, updateErr := s.deps.EntityManager.UpdateEntity(ctx, e)
 	if updateErr != nil {
 		return mcp.NewToolResultError(updateErr.Error()), nil
 	}
@@ -281,7 +281,7 @@ func (s *Server) handleDeleteEntity(
 	id = trimID(id)
 	cascade := request.GetBool("cascade", false)
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return mcp.NewToolResultError("entity not found: " + id), nil
@@ -296,7 +296,7 @@ func (s *Server) handleDeleteEntity(
 		}
 	}
 
-	result, delErr := s.ws.EntityManager().DeleteEntity(ctx, id, cascade)
+	result, delErr := s.deps.EntityManager.DeleteEntity(ctx, id, cascade)
 	if delErr != nil {
 		return mcp.NewToolResultError(delErr.Error()), nil
 	}
@@ -327,10 +327,10 @@ func (s *Server) handleRenameEntity(
 	dryRun := request.GetBool("dry_run", false)
 
 	// Pause watcher during rename
-	s.ws.Watcher().Pause()
-	defer s.ws.Watcher().Resume()
+	s.deps.Watcher.Pause()
+	defer s.deps.Watcher.Resume()
 
-	result, renameErr := s.ws.EntityManager().RenameEntity(
+	result, renameErr := s.deps.EntityManager.RenameEntity(
 		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
 		return mcp.NewToolResultError(renameErr.Error()), nil

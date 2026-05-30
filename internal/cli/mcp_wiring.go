@@ -27,9 +27,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// mcpServices is the focused-services bundle MCP needs. It satisfies
-// [mcp.Services] without going through workspace. Constructed once by
-// [newMCPServices] and held for the lifetime of the MCP process.
+// mcpServices owns the per-project services the MCP process needs and
+// their lifecycle (Close). It is constructed once by [newMCPServices]
+// and held for the lifetime of the MCP process. The MCP server itself
+// receives a flattened [mcp.Deps] via [mcpServices.Deps] — it never
+// holds a reference to this struct, so `internal/mcp` does not depend
+// on this wiring code.
 type mcpServices struct {
 	paths        *project.Context
 	meta         *metamodel.Metamodel
@@ -46,15 +49,10 @@ type mcpServices struct {
 	closeOnce sync.Once
 }
 
-// compile-time check that *mcpServices satisfies mcp.Services so a
-// method-signature drift surfaces here rather than at the call site
-// where the value is handed to relamcp.NewServer.
-var _ relamcp.Services = (*mcpServices)(nil)
-
 // newMCPServices discovers the project at startDir, opens its store
 // with the search backend pre-wired as an [store.EntityObserver],
 // constructs the focused services MCP needs, and returns a bundle
-// that satisfies [mcp.Services].
+// whose [mcpServices.Deps] builds the [mcp.Deps] handed to the server.
 func newMCPServices(startDir string) (*mcpServices, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, discErr := project.Discover(startDir, fs)
@@ -136,21 +134,28 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 	return svc, nil
 }
 
-// --- mcp.Services satisfaction ---
-
-func (s *mcpServices) Store() store.Store                         { return s.store }
-func (s *mcpServices) Meta() *metamodel.Metamodel                 { return s.meta }
-func (s *mcpServices) Tracer() tracer.Tracer                      { return s.tracer }
-func (s *mcpServices) Searcher() search.Searcher                  { return s.searcher }
-func (s *mcpServices) Validator() validator.Validator             { return s.validator }
-func (s *mcpServices) EntityManager() entitymanager.EntityManager { return s.manager }
-func (s *mcpServices) Config() config.Loader                      { return s.cfg }
-func (s *mcpServices) Paths() *project.Context                    { return s.paths }
-func (s *mcpServices) LuaCache() *lua.Cache                       { return s.scriptEngine.LuaCache() }
-func (s *mcpServices) Watcher() relamcp.Watcher                   { return s.watcher }
-
-func (s *mcpServices) LuaWriteDeps() lua.WriteDeps {
-	return lua.WriteDeps{ReadDeps: s.luaReadDeps(), EntityManager: s.manager}
+// Deps flattens the per-project services into the focused [mcp.Deps]
+// the MCP server consumes. Built once at wiring time; the resulting
+// value holds domain types only, so the server has no path back to
+// this struct or to any composition-root aggregate.
+func (s *mcpServices) Deps() relamcp.Deps {
+	var root string
+	if s.paths != nil {
+		root = s.paths.Root
+	}
+	return relamcp.Deps{
+		Store:         s.store,
+		Meta:          s.meta,
+		Tracer:        s.tracer,
+		Searcher:      s.searcher,
+		Validator:     s.validator,
+		EntityManager: s.manager,
+		Config:        s.cfg,
+		LuaWriteDeps:  lua.WriteDeps{ReadDeps: s.luaReadDeps(), EntityManager: s.manager},
+		LuaCache:      s.scriptEngine.LuaCache(),
+		Watcher:       s.watcher,
+		ProjectRoot:   root,
+	}
 }
 
 func (s *mcpServices) luaReadDeps() lua.ReadDeps {

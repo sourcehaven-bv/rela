@@ -47,7 +47,7 @@ func (s *Server) registerResources() {
 func (s *Server) handleReadMetamodel(
 	_ context.Context, _ mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
-	meta := s.ws.Meta()
+	meta := s.deps.Meta
 	result := map[string]interface{}{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
@@ -86,7 +86,7 @@ func (s *Server) handleReadEntity(
 	}
 	entityType, id := segments[0], segments[1]
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	e, getErr := st.GetEntity(context.Background(), id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -122,7 +122,7 @@ func (s *Server) handleReadRelation(
 	}
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	relation, getErr := st.GetRelation(context.Background(), fromID, relType, toID)
 	if getErr != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)

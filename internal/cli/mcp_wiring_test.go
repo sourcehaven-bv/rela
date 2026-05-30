@@ -12,7 +12,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
-	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -72,19 +71,17 @@ func TestNewMCPServices_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	assert.NotNil(t, svc.Store())
-	assert.NotNil(t, svc.Meta())
-	assert.NotNil(t, svc.Tracer())
-	assert.NotNil(t, svc.Searcher())
-	assert.NotNil(t, svc.Validator())
-	assert.NotNil(t, svc.EntityManager())
-	assert.NotNil(t, svc.Config())
-	assert.NotNil(t, svc.Paths())
-	assert.NotNil(t, svc.LuaCache())
-	assert.NotNil(t, svc.Watcher())
-	// Variadic var _ = (*mcpServices)(nil) on the type already
-	// pins the Services interface assertion at compile time.
-	var _ relamcp.Services = svc
+	deps := svc.Deps()
+	assert.NotNil(t, deps.Store)
+	assert.NotNil(t, deps.Meta)
+	assert.NotNil(t, deps.Tracer)
+	assert.NotNil(t, deps.Searcher)
+	assert.NotNil(t, deps.Validator)
+	assert.NotNil(t, deps.EntityManager)
+	assert.NotNil(t, deps.Config)
+	assert.NotNil(t, deps.LuaCache)
+	assert.NotNil(t, deps.Watcher)
+	assert.NotEmpty(t, deps.ProjectRoot)
 }
 
 func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
@@ -95,14 +92,15 @@ func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Close() })
 
 	ctx := context.Background()
-	require.NoError(t, svc.Store().CreateEntity(ctx, &entity.Entity{
+	deps := svc.Deps()
+	require.NoError(t, deps.Store.CreateEntity(ctx, &entity.Entity{
 		ID:         "ITEM-1",
 		Type:       "item",
 		Properties: map[string]interface{}{"title": "Synchronous indexing"},
 	}))
 
 	hits := make([]string, 0, 1)
-	for hit, hitErr := range svc.Searcher().Search(ctx, search.Query{Text: "Synchronous"}) {
+	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Synchronous"}) {
 		require.NoError(t, hitErr)
 		hits = append(hits, hit.ID)
 	}
