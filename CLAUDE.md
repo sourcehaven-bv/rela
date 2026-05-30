@@ -4,8 +4,11 @@
 
 - **Define interfaces at the call site, not next to the implementation.**
   Producer-side interfaces couple consumers to every method the producer
-  exposes. Each consumer declares the minimum interface it needs —
-  usually one to three methods.
+  exposes. Each consumer declares the minimum interface it needs (one to
+  three methods). When a callback would create a constructor cycle, the
+  consumer defines the narrow interface and the wiring site supplies it —
+  see `docs/architecture/consumer-side-interfaces.md` and the godoc on
+  `autocascade.Host`, `mcp.Services`, `scheduler.WorkspaceProvider`.
 - **Capability bundles, not service locators.** When a subsystem needs
   several collaborators, group them in a purpose-specific struct (see
   `internal/lua/deps.go` with `ReadDeps` / `WriteDeps`), split by read vs.
@@ -42,245 +45,6 @@
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 
-### Consumer-side interfaces for callbacks and cycles
-
-The "interfaces at the call site" rule has a specific application that is
-worth calling out: **when service A needs to call back into something that
-also holds A, do not reach for the concrete type or a shared interface
-package — define a small interface in A's package describing the methods
-A actually invokes, and have the wiring site supply an implementation.**
-
-This is how rela avoids constructor cycles, how it keeps interface
-surfaces small, and how it prevents new collaborators from leaking into
-unrelated test setups.
-
-**Why it matters.** If service A imports type B because A needs to call
-B's methods, and B imports A as a dependency, you have a constructor
-cycle. The reflexive fixes — late-binding setters, a shared interface
-package, passing pointers around — all add indirection without solving
-the underlying design problem. A consumer-side interface dissolves the
-cycle by letting A declare *exactly the contract A needs* without A
-having to know which concrete type satisfies it.
-
-**Three layers, in order:**
-
-1. **A defines a small interface (`Host`, `Mutator`, `Provider`, etc.)**
-   in its own package. The interface names only the methods A invokes —
-   typically two to four. No options structs A doesn't pass; no methods
-   A never calls.
-
-2. **A's constructor and methods accept that interface.** Either as a
-   constructor field (if A holds the relationship for its lifetime) or
-   as a per-call argument (if the relationship is per-invocation).
-   Per-call is cleaner when the implementer is the *caller* of A's
-   method — the cycle disappears entirely because A has no permanent
-   reference.
-
-3. **The wiring site supplies the implementation.** This is usually the
-   concrete type that *also* depends on A. The wiring is straightforward
-   because both types exist by the time the wiring code runs.
-
-**Worked example — what the pattern looks like.** The
-`autocascade.Runner` service (in `internal/autocascade`) needs entity-
-and relation-creating callbacks during automation cascades. Today
-`Workspace` satisfies its `Host` interface; once `entitymanager.Manager`
-exists, that will satisfy it instead. Both can hold the Runner without
-a constructor cycle because Host is supplied per-call.
-
-```go
-// internal/autocascade/host.go
-package autocascade
-
-// Host is what Runner needs from its caller. Defined here, at the
-// consumer, naming only the methods Runner invokes — not the full
-// EntityManager / Workspace surface.
-type Host interface {
-    Meta() *metamodel.Metamodel
-    Store() store.Store
-    CreateEntityNoCascade(entityType string, opts CreateEntityOptions) (*entity.Entity, error)
-    WriteEntity(e *entity.Entity) error
-    WriteRelation(r *entity.Relation) error
-    DeleteEntity(ctx context.Context, entityType, id string, cascade bool) error
-    FindExistingRelationTarget(sourceID, relationType, targetType string) *entity.Entity
-}
-
-type Runner struct {
-    engine  *automation.Engine
-    scripts script.Executor
-    // No Host field — Host is per-call.
-}
-
-// Process accepts Host on the call, not at construction.
-func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, error) {
-    // ... uses host.CreateEntityNoCascade, host.WriteRelation, etc. ...
-}
-```
-
-```go
-// internal/entitymanager/manager.go (future — TKT-QTNX)
-package entitymanager
-
-type Manager struct {
-    store  store.Store
-    runner *autocascade.Runner // Manager holds Runner.
-    // ... no late-binding back-reference; no setter; no cycle ...
-}
-
-func (m *Manager) CreateEntity(ctx context.Context, e *entity.Entity) (*Result, error) {
-    // ... validate, write to store ...
-    outcome, err := m.runner.Process(ctx, m, autocascade.Request{Trigger: e, ...})
-    //                                  ^ m satisfies autocascade.Host implicitly
-    // ... merge outcome, return ...
-}
-```
-
-`Manager` satisfies `autocascade.Host` *structurally* — there is no
-import of `autocascade.Host` in `entitymanager`, no declaration of
-"implements," nothing. The cycle disappears because `Runner` doesn't
-hold a reference; it borrows one for the duration of `Process`.
-
-**When to use which form:**
-
-- **Per-call argument** when the implementer is the *caller* of the
-  consumer's method (as in the example above). This is the form that
-  fully dissolves cycles.
-- **Constructor field** when the consumer holds the relationship across
-  many calls (e.g., `mcp.Services` in `internal/mcp/server.go`,
-  `scheduler.WorkspaceProvider` in `internal/scheduler/scheduler.go`).
-  Used when there is no cycle, just a desire to keep the consumer's
-  contract narrow.
-
-**Existing examples in the codebase to study:**
-
-- **`mcp.Services`** at `internal/mcp/server.go` — scoped consumer-side
-  interface; Workspace satisfies it. Constructor-field form. Keeps MCP
-  independent of Workspace's full surface.
-- **`scheduler.WorkspaceProvider`** at `internal/scheduler/scheduler.go`
-  — four-method interface for what the scheduler needs from a
-  workspace. Constructor-field form.
-- **`store.EntityObserver`** at `internal/store/store.go` — the
-  *inverse* shape: store calls *out* to its observers, and observers
-  declare what they implement. Search index uses it. Per-call form
-  (observer is invoked per event).
-
-**What this pattern rules out:**
-
-- **Concrete type back-references** (`A holds *B; B holds *A`).
-- **Late-binding setters** (`a.SetB(b)` after construction). They turn
-  type errors into runtime nil-deref bugs.
-- **Shared "interfaces" package** that exists only to break cycles.
-  Dissolving cycles with a single shared package leaks every
-  participating type into every consumer's test imports.
-- **Producer-side interfaces** that publish every method a service
-  exposes, on the theory that "consumers can pick what to use." They
-  can't — Go doesn't unify partial implementations of a wide interface
-  into a narrow one. The narrow interface has to live with the
-  consumer.
-
-**Test consequence.** A test for the consumer becomes a stub of the
-narrow interface — three methods to mock, not the full producer
-surface. Tests that ran with a real `Workspace` fixture in 30 lines of
-setup can run with a 5-line stub.
-
-#### Narrow on returns, not just methods
-
-If a consumer-side interface returns a broad type only so the caller
-can invoke one or two methods on it, declare those methods on the
-interface directly. Returning the wide type is a soft leak — it tells
-the implementer "I need everything this type can do" when in fact you
-only need a slice.
-
-```go
-// Wrong: leaks the whole metamodel + store surface for two narrow uses.
-type Host interface {
-    Meta() *metamodel.Metamodel  // only used for meta.ValidateRelation(...)
-    Store() store.Store          // only used for store.GetEntity(ctx, id)
-}
-
-// Right: declares the actual operations.
-type Host interface {
-    ValidateRelation(relType, fromType, toType string) error
-    GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-}
-```
-
-The narrow form's payoff is concrete: `autocascade.Host` collapsed
-its arch-lint footprint from `[automation, metamodel, store]` to
-`[automation]` once `Meta()` and `Store()` were replaced with the
-methods Runner actually invoked.
-
-The verification question is "where does the consumer call this?"
-If the answer is "in exactly one place to call exactly one method,"
-that's the method that should be on the interface.
-
-#### Names declare contracts; docs declare invariants
-
-Method names should describe *what's requested*. Behavioral
-constraints belong in the doc comment, not in the name.
-
-```go
-// Wrong: name encodes a "must not" into the contract surface.
-CreateEntityNoCascade(...) (*entity.Entity, error)
-
-// Right: name describes the operation; doc carries the constraint.
-//
-// CreateEntity creates a new entity from the supplied options.
-//
-// Contract: the implementation must NOT fire follow-up automation
-// cascades from within this call. Runner is the one that schedules
-// cascade evaluation on the returned entity; double-cascading would
-// enforce MaxDepth twice.
-CreateEntity(...) (*entity.Entity, error)
-```
-
-Behavioral negatives in names ("NoX", "WithoutY", "NonZ") are usually
-the author prescribing implementation strategy. The doc form is more
-honest — implementers are free to satisfy the constraint however they
-want.
-
-#### Transport-specific types belong at adapter layers
-
-If a consumer's interface references types from a specific runtime
-(`lua.WriteDeps`, `http.Request`, `*sql.Rows`), the consumer has
-absorbed knowledge it doesn't need. The package now imports the
-runtime's package, and every alternative implementation must speak
-that runtime's vocabulary.
-
-The fix: define an abstract interface in the consumer; build a
-per-request adapter at the wiring site that holds the transport-
-specific state.
-
-```go
-// Wrong: consumer's interface is shaped by Lua's API.
-type Executor interface {
-    ExecuteCode(code string, deps lua.WriteDeps, e, old *entity.Entity) error
-    ExecuteFile(path string, deps lua.WriteDeps, e, old *entity.Entity) error
-}
-
-// Right: consumer declares only what it needs to ask for; transport
-// lives in the adapter at the wiring site.
-type ScriptRunner interface {
-    Run(ctx context.Context, action ScriptAction) error
-}
-
-// In workspace (the wiring site), per-request:
-type luaScriptRunner struct {
-    exec script.Executor
-    deps lua.WriteDeps  // bound at this layer
-}
-func (l *luaScriptRunner) Run(ctx context.Context, a ScriptAction) error {
-    // engine-specific dispatch + error formatting lives here
-}
-```
-
-The cost is one adapter file per transport. The win is that the
-consumer's package doesn't import the transport's package and a
-second transport can plug in without touching the consumer. Concrete
-example: `autocascade` stopped importing `internal/lua` once the
-`ScriptRunner` adapter pattern landed; the cycle that would have
-blocked `entitymanager.Manager → autocascade → lua → entitymanager`
-dissolved at the same time.
-
 ### Don't do this
 
 - **Don't import `internal/graph` or `internal/model`** — both deleted.
@@ -296,81 +60,19 @@ dissolved at the same time.
   god-object aggregate; deleted in the workspace-decomposition arc.
   New code wires services individually via `appbuild.Discover` /
   `appbuild.New` or takes focused interfaces at the call site.
-- **Don't run user-supplied Lua on the read path.** ACL gates and
-  filters evaluate against declarative policy (`acl.yaml`) and the
-  graph; Lua participates only at *write time* via the automation
-  engine (which produces graph relations the ACL reads). The
-  cross-system survey behind `internal/acl/` (see
-  `.ignored/acl-design.md`) shows that per-row Lua on reads is the
-  perf cliff every comparable system regrets; the project avoids it
-  by design.
+- **Don't run user-supplied Lua on the read path.** ACL gates evaluate
+  against declarative policy + the graph; Lua participates only at write
+  time. See `internal/entitymanager/CLAUDE.md`.
 
-### Authorization (`internal/acl`)
+### Subsystem-specific rules (nested CLAUDE.md / godoc)
 
-The ACL is consumed by `entitymanager.Manager` (a required
-collaborator via `Deps.ACL`) and surfaces structured 403s in
-`internal/dataentry`. Three production implementations live in
-`internal/acl`:
-
-- `NopACL` — allow-all; default when no `acl.yaml` is present.
-- `ReadOnlyACL` — deny-all; wired via `rela-server --read-only`.
-- `Declarative` — policy-driven, composed with a `Policy` loaded
-  from `acl.yaml` at the project root.
-
-Consumer-side interface rule: code that calls into the ACL declares
-the narrowest contract it needs at the call site, not `acl.ACL`
-in full, when only a subset of methods are invoked. `entitymanager`
-is the exception — it owns the constructor field so the wiring
-boundary is explicit.
-
-See `docs/security.md` for the user-facing schema reference,
-`.ignored/acl-design.md` for the design rationale and the four-layer
-model (users → groups → roles → local roles), and `docs/audit-log.md`
-for the `denied-write` audit op.
-
-### Action affordances (`_actions`)
-
-The data-entry API attaches a per-resource `_actions: map[string]bool`
-to every entity and list response. The SPA reads it to decide which
-write controls to render. The map is a **UI hint** — the server
-re-authorizes every write.
-
-Rules for new write code in `internal/dataentry`:
-
-- **Route every `acl.WriteRequest{Op:...}` through `translateVerb`**
-  in `internal/dataentry/affordances.go`. A grep test
-  (`lint_test.go`) enforces this: no other file in `internal/dataentry`
-  may construct the literal. The shared constructor is the structural
-  guarantee that the affordance map and the actual write resolve to
-  the same ACL request.
-- **Don't trust `_actions` for authorization decisions.** The write
-  endpoint must re-authorize. The bidirectional contract test in
-  `affordances_contract_test.go` pins the invariant: every
-  `_actions[v] == false` ⇒ 403 on the corresponding write, every
-  `true` ⇒ 2xx.
-- **New verbs require coordinated changes:** add an `acl.Op`
-  constant, add a `translateVerb` case, and update
-  `docs/data-entry/api-reference.md`. Old SPAs ignore unknown keys;
-  removing or renaming a verb is a major API version bump.
-- **Phase 1 verbs:** `create` (per-collection), `update` / `delete` /
-  `rename` (per-item). `transition:*` and `relation:*` are deferred
-  until ACL gains Op variants or extension fields.
-
-Rules for new write affordances in the Vue SPA:
-
-- **Gate every entity-CRUD button on `entity._actions?.[verb] !== false`**
-  (or `listResponse._actions?.create !== false` for collection-scope
-  verbs). False → hide; anything else (true, undefined, absent) →
-  render. Absent is the defensive-render fallback for non-data-entry
-  callers; the server still 403s on the actual write.
-- **Don't introduce a `useACL()` composable or any client-side ACL
-  evaluator.** TKT-AWM6L's wont-fix rejected this direction. The SPA
-  reads booleans the server computed; no computation, no merging,
-  no prediction.
-- **Adding a new write affordance** requires (a) a backend
-  `translateVerb` entry + `perItemVerbs`/`perCollectionVerbs` update
-  (see above), and (b) the inline `v-if` on the component. There is
-  no ESLint enforcement; code review catches drift.
+- **Writes, audit, ACL** → `internal/entitymanager/CLAUDE.md`. All writes
+  go through `entitymanager.Manager`; do not write to `store.Store`
+  directly from a write path.
+- **Data-entry API + `_actions` affordances + write-validation policy** →
+  `internal/dataentry/CLAUDE.md`.
+- **Vue SPA build/test/architecture** → `frontend/CLAUDE.md`.
+- **E2E tests** → `e2e/tests/AGENTS.md`.
 
 ## Architecture
 
@@ -401,65 +103,9 @@ The store is the source of truth. `search` maintains a derived index as a
 derived state. `entitymanager` is the "human intent" write path that runs
 automations and validation on top of the store.
 
-### Validation policy for write APIs
-
-rela's storage format is permissive: markdown + YAML frontmatter, edited
-freely by external tools alongside the API. The philosophy is **tolerate
-temporarily invalid data**; the `analyze_*` tools surface inconsistencies
-that the storage layer doesn't reject.
-
-Write-time checks split into three classes (DEC-HWZHA):
-
-| Class | When | HTTP |
-|---|---|---|
-| **Hard 400 — malformed wire format** | Request structure is broken, detectable without the metamodel | 400 |
-| **Hard 422 — structural impossibilities** | Storage layer literally cannot persist this | 422 |
-| **Write-with-warnings (200 + warnings)** | Soft conditions: target type mismatch, missing target, unknown meta keys, required-meta unset, meta type mismatches | 200 |
-
-The 200-with-warnings path performs the requested write and returns
-warnings in the response body so UIs surface them non-blockingly. Each
-warning is `{code, path, detail}` where `code` matches the corresponding
-`analyze_*` finding code so UIs can de-duplicate against analyze runs.
-
-Resist drift toward hard rejection on soft conditions. JSON:API and
-similar wire formats bring a "validate-then-422" mental model from
-REST-over-database stacks where wire and storage share a closed schema;
-rela's storage is intentionally more permissive than that. If you find
-yourself adding a 422 on a write path, ask: "could a hand-editor produce
-this state in a markdown file? If yes, it's a soft condition — warn,
-don't reject."
-
-### Audit log
-
-Every successful entity / relation create / update / delete /
-rename is audited by `entitymanager.Manager` as a JSONL record
-under `.rela/audit/YYYY-MM-DD.jsonl`. See `docs/audit-log.md` for
-the user-facing reference; rules for new code:
-
-- **New write paths inherit audit automatically.** Any code that
-  calls `entitymanager.Manager.{Create,Update,Delete,Rename}{Entity,Relation}`
-  produces a record without further wiring. Do not bypass Manager
-  by writing directly to `store.Store` from a write path — the
-  audit record won't be emitted.
-- **New entry-point binaries stamp Principal at startup.** Each
-  binary or root command attaches a Principal once:
-  `ctx = principal.With(ctx, principal.Principal{User: principal.SystemUser(), Tool: principal.ToolXxx})`.
-  Use one of the `principal.ToolCLI` / `ToolMCP` / `ToolDataEntry` /
-  `ToolScheduler` / `ToolDesktop` constants — string literals will
-  not surface typos until the entry-point smoke test catches them.
-- **Engine-initiated paths stamp `triggered_by`.** Scheduler tasks
-  wrap the per-task ctx with `audit.WithTriggeredBy(ctx, "schedule:"+task.Name)`;
-  the autocascade runner does the analogous thing for automation
-  cascades. Direct user actions leave `triggered_by` empty.
-- **Lua bindings do not expose audit primitives.** A Lua script
-  must not be able to call `principal.With` or rewrite its
-  own attribution — the spoofing test in `internal/lua/audit_spoofing_test.go`
-  guards this. Do not register `rela.audit` or `rela.principal`
-  on the runtime.
-- **Constructor takes `Audit` as a required collaborator.**
-  `entitymanager.Deps.Audit` and `appbuild.New` reject nil.
-  Tests use `audit.Nop{}` (an explicit opt-out) or `audit.NewMemory()`
-  when they assert on records.
+Write-path rules — validation policy (400/422/200-with-warnings), the
+audit log, and ACL — live in the nested files
+`internal/dataentry/CLAUDE.md` and `internal/entitymanager/CLAUDE.md`.
 
 ### Packages
 
@@ -528,27 +174,17 @@ magic numbers. Cobra `cmd`/`args` unused parameters allowed. Line length: 120.
 
 ## Security
 
-`govulncheck` runs on every PR that touches `go.mod` / `go.sum` (blocking,
-`vulncheck` job in `ci.yml`) and weekly from `security.yml`. The weekly run
-auto-updates called-and-fixable vulns via `go get` + `go mod tidy` and opens
-an auto-merge PR on success, or files / updates a deduplicated issue on
-failure.
-
-Known-unfixable vulnerabilities are filtered via
-`scripts/govulncheck-filtered.sh`; keep `IGNORED_OSVS` in sync between that
-script and `scripts/govulncheck-fixable.sh`. Run locally: `just govulncheck`.
+`govulncheck` runs on every PR touching `go.mod` / `go.sum` (the `vulncheck`
+job in `ci.yml`) and weekly from `security.yml`. Known-unfixable vulns are
+filtered via `scripts/govulncheck-filtered.sh` — keep `IGNORED_OSVS` in sync
+with `scripts/govulncheck-fixable.sh`. Run locally: `just govulncheck`.
 
 ## Commands
 
-Read the `justfile` for the full set. The shortcuts used most often:
-
-- `just build` — build all binaries
-- `just test` — race-enabled test run
-- `just lint` / `just lint-fix` — golangci-lint
-- `just arch-lint` — package boundary check
-- `just ci` — run the full CI pipeline
-- `just dev` — run the data entry server locally
-- `go test -run TestName ./...` — single test
+Read the `justfile` for the full set. The non-obvious ones: `just arch-lint`
+(package boundary check), `just ci` (full pipeline), `just dev` (data-entry
+server locally), `just coverage-check`. `go test -run TestName ./...` for a
+single test.
 
 ## Project files
 
@@ -793,202 +429,14 @@ Minor/nit findings may remain open with warnings.
 
 ### Automation Actions
 
-The automation engine supports these action types in `metamodel.yaml`:
+Status transitions auto-create checklists (and similar side effects) via
+automations declared in the project's `metamodel.yaml`. Action types
+(`set`, `create_relation`, `create_entity` with `if_exists`) and
+interpolation patterns (`{{new.property}}`, `{{entity.id}}`, `{{today}}`)
+are documented in `docs/metamodel.md` and exemplified in the live
+`metamodel.yaml`. Read those rather than relying on a copy here — a stale
+copy is worse than a pointer.
 
-**set**: Set a property value on the triggering entity
-
-```yaml
-automations:
-  - name: set-date-on-done
-    on:
-      entity: [ticket]
-      property: status
-      becomes: done
-    do:
-      - set: completed_at
-        value: "{{today}}"
-```
-
-**create_relation**: Create a relation from the triggering entity
-
-```yaml
-automations:
-  - name: link-on-assignment
-    on:
-      entity: [ticket]
-      property: assignee
-    do:
-      - create_relation:
-          relation: assigned-to
-          to: "{{new.assignee}}"
-```
-
-**create_entity**: Create a new entity (with optional relation to trigger)
-
-```yaml
-automations:
-  - name: create-checklist-on-ready
-    on:
-      entity: [ticket]
-      property: status
-      becomes: ready
-    do:
-      - create_entity:
-          type: planning-checklist
-          properties:
-            title: "Planning: {{new.title}}"
-            status: open
-          relation: has-planning    # Creates relation FROM trigger TO new entity
-          if_exists: skip           # What to do if relation already exists
-```
-
-**if_exists options** (for `create_entity` with `relation`):
-
-| Value | Behavior |
-|-------|----------|
-| `skip` | Skip creation if relation to same entity type exists (default) |
-| `error` | Return error if relation to same entity type exists |
-| `replace` | Delete existing target entity and create new one |
-
-The `if_exists` check uses the relation to detect duplicates: if the trigger entity
-already has a relation of the specified type pointing to an entity of the same type
-being created, the action is considered a duplicate.
-
-### Interpolation Syntax
-
-Automation properties support template interpolation:
-
-| Pattern | Description |
-|---------|-------------|
-| `{{new.property}}` | Property from new/current entity |
-| `{{entity.id}}` | ID of the triggering entity |
-| `{{today}}` | Current date (YYYY-MM-DD) |
-
-Common mistake: `{{entity.title}}` is WRONG, use `{{new.title}}` instead.
-
-### Test Writing Best Practices
-
-Follow these patterns to make tests clearer and more maintainable.
-
-**Use Fluent Test Builders:**
-
-Create fluent builder APIs for test fixtures. Only specify values that matter for the specific
-test - let builders handle defaults, auto-generate IDs, and fill required fields with random data.
-
-```python
-# BAD - verbose, specifies irrelevant details
-config = AutomationConfig(
-    name="test-automation",
-    trigger=Trigger(entity_types=["ticket"], event="created"),
-    actions=[Action(type="set", property="status", value="open")]
-)
-entity = Entity(id="T-001", type="ticket", properties={})
-
-# GOOD - fluent, only specifies what matters
-config = automation().on_create("ticket").set("status", "open").build()
-entity = entity("ticket").build()  # ID auto-generated
-```
-
-**Auto-Generate Identifiers:**
-
-Builders should auto-generate IDs, names, and other identifiers when not explicitly set.
-This catches bugs where code accidentally depends on specific values and reduces test noise.
-
-```python
-# BAD - hardcoded ID that test doesn't care about
-user = create_user(id="user-123", name="Test User")
-
-# GOOD - auto-generated, test doesn't depend on specific value
-user = user_builder().with_name("Test User").build()
-```
-
-**Minimize Test Setup:**
-
-If test setup takes more than a few lines, create a builder or helper. Common patterns to simplify:
-
-| Verbose Pattern | Fluent Alternative |
-|-----------------|-------------------|
-| Nested object construction | Chained builder methods |
-| Multiple required fields | Sensible defaults in builder |
-| Repeated boilerplate | Shared test fixtures |
-| Complex state setup | Purpose-named factory methods |
-
-**Avoid Hardcoded Values in Assertions:**
-
-Don't compare against hardcoded strings when the object is in scope:
-
-```python
-# BAD - couples test to specific value
-entity = create_entity(id="T-001")
-assert relation.source == "T-001"
-
-# GOOD - uses object reference
-entity = create_entity()
-assert relation.source == entity.id
-```
-
-For interpolated values, construct the expected value from the object:
-
-```python
-# BAD
-assert result.title == "Checklist for T-001"
-
-# GOOD
-assert result.title == "Checklist for " + entity.id
-```
-
-For preserved properties, compare against the original object:
-
-```python
-# BAD
-assert updated.title == "Original Title"
-
-# GOOD
-assert updated.title == original.title
-```
-
-**When Hardcoded Values ARE Appropriate:**
-
-- **Ordering tests**: Verifying sort order requires deterministic values
-- **Parse/read tests**: Verifying parser reads specific values from fixtures
-- **Trigger values**: Testing rules that trigger on specific values (e.g., status="done")
-- **Format validation**: Testing specific formats, patterns, or error messages
-
-**Use Local Variables for Repeated Values:**
-
-When values are passed to helpers and then asserted, extract to variables:
-
-```python
-# BAD - duplicated string
-create_entity(id="REQ-001")
-assert relation.source == "REQ-001"
-
-# GOOD - single source of truth
-req_id = "REQ-001"
-create_entity(id=req_id)
-assert relation.source == req_id
-```
-
-**Clone for Variations:**
-
-When testing state changes, clone the original rather than creating two separate objects:
-
-```python
-# BAD - duplicates setup, easy to get out of sync
-old_entity = entity("ticket").with_status("backlog").with_title("Fix bug").build()
-new_entity = entity("ticket").with_status("done").with_title("Fix bug").build()
-
-# GOOD - clone ensures consistency
-old_entity = entity("ticket").with_status("backlog").with_title("Fix bug").build()
-new_entity = old_entity.clone()
-new_entity.status = "done"
-```
-
-**Benefits:**
-
-1. **Random test data**: Catches bugs where code accidentally depends on specific values
-2. **Clearer intent**: Only explicitly set values that matter for the test
-3. **Less boilerplate**: Builders handle defaults and required fields
-4. **Easier refactoring**: Change formats/schemas without updating every test
-5. **Better coverage**: Random values may catch edge cases hardcoded values miss
+Common mistake: `{{entity.title}}` is wrong; use `{{new.title}}` for a
+property of the triggering entity.
 <!-- @managed: claude-workflow end -->
