@@ -61,7 +61,9 @@ defineProps<{
   gap: 8px;
 }
 
-.checkbox-wrapper :deep(input) {
+/* Scoped to the direct checkbox input only — a future widget rendered
+   with labelPosition='after' should NOT have its inputs miniaturised. */
+.checkbox-wrapper :deep(input[type='checkbox']) {
   width: 18px;
   height: 18px;
   cursor: pointer;
@@ -71,46 +73,9 @@ defineProps<{
   cursor: pointer;
 }
 
-.form-field :deep(input[type='text']),
-.form-field :deep(input[type='number']),
-.form-field :deep(input[type='date']),
-.form-field :deep(textarea),
-.form-field :deep(select) {
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
-  transition: all 0.15s;
-}
-
-.form-field :deep(input:focus),
-.form-field :deep(textarea:focus),
-.form-field :deep(select:focus) {
-  outline: none;
-  border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-}
-
-.form-field :deep(input:disabled),
-.form-field :deep(textarea:disabled),
-.form-field :deep(select:disabled) {
-  background: var(--hover-bg);
-  cursor: not-allowed;
-}
-
-.has-error :deep(input),
-.has-error :deep(textarea),
-.has-error :deep(select) {
-  border-color: var(--error-color, #ef4444);
-}
-
-.has-error :deep(input:focus),
-.has-error :deep(textarea:focus),
-.has-error :deep(select:focus) {
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
-}
+/* Input/textarea/select typography and focus/disabled/error visuals live
+   on each widget so they don't cross component boundaries via :deep().
+   FieldShell owns only label/help/error chrome and layout. */
 
 .field-help {
   font-size: 13px;

@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import RruleBuilder from '@/components/forms/RruleBuilder.vue'
 import type { WidgetProps } from './types'
+import { useStringValue } from './useStringValue'
 
 const props = defineProps<WidgetProps>()
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
+  'update:modelValue': [value: unknown]
 }>()
 
-const stringValue = computed(() => {
-  if (props.modelValue === null || props.modelValue === undefined) return ''
-  return String(props.modelValue)
-})
+const stringValue = useStringValue(() => props.modelValue)
 </script>
 
 <template>

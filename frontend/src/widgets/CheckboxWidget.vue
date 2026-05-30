@@ -5,7 +5,7 @@ import type { WidgetProps } from './types'
 const props = defineProps<WidgetProps>()
 
 const emit = defineEmits<{
-  'update:modelValue': [value: boolean]
+  'update:modelValue': [value: unknown]
 }>()
 
 const boolValue = computed(() => props.modelValue === true || props.modelValue === 'true')

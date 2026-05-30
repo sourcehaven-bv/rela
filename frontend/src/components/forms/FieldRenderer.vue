@@ -38,9 +38,6 @@ const widgetComponent = computed(() =>
 )
 
 const isCheckbox = computed(() => resolvedWidgetName.value === 'checkbox')
-// rrule renders its own help inside the builder; preserve the pre-refactor
-// behaviour of forwarding help only to that widget.
-const isRrule = computed(() => resolvedWidgetName.value === 'rrule')
 </script>
 
 <template>
@@ -61,7 +58,7 @@ const isRrule = computed(() => resolvedWidgetName.value === 'rrule')
       :required="propertyDef?.required"
       :error="error"
       :placeholder="placeholder"
-      :help="isRrule ? help : undefined"
+      :help="help"
       :option-verdicts="optionVerdicts"
       :transitions="field.transitions"
       @update:model-value="emit('update', $event)"

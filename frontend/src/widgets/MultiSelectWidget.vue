@@ -6,7 +6,7 @@ import type { WidgetProps } from './types'
 const props = defineProps<WidgetProps>()
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string[]]
+  'update:modelValue': [value: unknown]
 }>()
 
 const options = computed(() => props.propertyDef?.values || [])

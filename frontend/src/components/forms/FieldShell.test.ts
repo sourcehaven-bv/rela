@@ -53,4 +53,13 @@ describe('FieldShell', () => {
     expect(w.find('.checkbox-wrapper label').exists()).toBe(false)
     expect(w.find('.widget').exists()).toBe(true)
   })
+
+  it('omits the for attribute on the label when fieldId is undefined', () => {
+    // Defensive shape check — happens whenever a field config arrives
+    // without a property name. Harmless but must not blow up rendering.
+    const w = shell({ label: 'X' })
+    const label = w.find('label')
+    expect(label.exists()).toBe(true)
+    expect(label.attributes('for')).toBeUndefined()
+  })
 })

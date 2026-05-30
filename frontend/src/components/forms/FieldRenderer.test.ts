@@ -125,4 +125,23 @@ describe('FieldRenderer affordance plumbing', () => {
   // checkEnumOption coverage) plus by the typecheck — happy-dom
   // can't mount SlimSelect's MutationObserver cleanly, so a direct
   // component test isn't worth the harness fight here.
+
+  it('composes label and checkbox input under a single id for click-to-toggle', () => {
+    // A boolean property routes through CheckboxWidget, FieldShell
+    // renders the label AFTER the input (.checkbox-wrapper). The
+    // label's for= and the checkbox's id must match so a label-click
+    // toggles the box — the contract that survives the FieldShell +
+    // widget split.
+    const wrapper = renderField({
+      field: { property: 'automated', label: 'Automated' },
+      propertyDef: { type: 'boolean' },
+      value: false,
+    })
+    expect(wrapper.find('.checkbox-wrapper').exists()).toBe(true)
+    const input = wrapper.find('input[type="checkbox"]')
+    const label = wrapper.find('.checkbox-wrapper label')
+    expect(input.attributes('id')).toBe('field-automated')
+    expect(label.attributes('for')).toBe('field-automated')
+    wrapper.unmount()
+  })
 })

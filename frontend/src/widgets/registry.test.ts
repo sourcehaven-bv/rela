@@ -149,4 +149,24 @@ describe('defaultRegistry', () => {
     expect(defaultRegistry.resolve(undefined, { list: true, type: 'enum' })).toBe(MultiSelectWidget)
     expect(defaultRegistry.resolve(undefined, { type: 'string' })).toBe(TextWidget)
   })
+
+  it('falls back to the property-type default when the explicit name is unknown', () => {
+    // Pin the warn-then-default path on a non-string property so the
+    // fallback is observably not just the universal text widget.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(defaultRegistry.resolve('does-not-exist', { type: 'boolean' })).toBe(CheckboxWidget)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unknown widget "does-not-exist"'))
+    warnSpy.mockRestore()
+  })
+
+  it('warns when something double-registers a name into defaultRegistry', () => {
+    // Mirrors what would happen if a plugin (or an accidental double
+    // import) tried to clobber a production widget.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    defaultRegistry.register('text', { component: makeStub('PluginText') })
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('re-registering widget "text"'))
+    // Restore the production widget so subsequent tests see the canonical state.
+    defaultRegistry.register('text', { component: TextWidget })
+    warnSpy.mockRestore()
+  })
 })

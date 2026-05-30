@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { WidgetProps } from './types'
+import { useStringValue } from './useStringValue'
 
 const props = defineProps<WidgetProps>()
 
@@ -8,10 +9,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: unknown]
 }>()
 
-const stringValue = computed(() => {
-  if (props.modelValue === null || props.modelValue === undefined) return ''
-  return String(props.modelValue)
-})
+const stringValue = useStringValue(() => props.modelValue)
 
 const options = computed(() => props.propertyDef?.values || [])
 
@@ -49,7 +47,13 @@ function onChange(event: Event) {
 
 <template>
   <div class="select-widget">
-    <select :id="id" :value="stringValue" :disabled="disabled" @change="onChange">
+    <select
+      :id="id"
+      :class="{ 'is-error': !!error }"
+      :value="stringValue"
+      :disabled="disabled"
+      @change="onChange"
+    >
       <option value="">Select...</option>
       <option
         v-for="opt in options"
@@ -101,7 +105,20 @@ select:disabled {
   cursor: not-allowed;
 }
 
+select.is-error {
+  border-color: var(--error-color, #ef4444);
+}
+
+select.is-error:focus {
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
+}
+
+/* Restores the pre-refactor 14px stack: old layout had .form-field
+   gap:6px plus .transitions-info margin-top:8px = 14px. The new
+   .select-widget wrapper uses gap:8px; the 6px top here makes the
+   combined gap 14px. */
 .transitions-info {
+  margin-top: 6px;
   padding: 12px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
