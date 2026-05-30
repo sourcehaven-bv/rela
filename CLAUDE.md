@@ -598,6 +598,26 @@ When creating or updating entities in `rela-issues-and-design-tickets`:
 | feature | `requires` → concept (min 1) |
 | test-case/test-suite | `test-covers` → concept (min 1), `verifies` → feature/ticket (min 1) |
 | doc-task | `affects` → concept (min 1), `triggered-by` → ticket/feature/decision (min 1), `updates` → guide/tutorial/scenario (min 1) |
+| research | `researches` → concept (min 1) |
+
+### Research Documents
+
+For larger features, run `/research <topic>` before planning to survey
+approaches and document tradeoffs. This creates a `research` entity (RES-xxxx)
+with structured sections: Problem, Context, Options, Recommendation.
+
+**Workflow:**
+
+1. `/research` creates the entity in `in-progress` and links it to concepts
+2. The agent surveys the codebase and external approaches
+3. Options are documented with pros/cons/effort
+4. A recommendation is made and presented for user review
+5. The research is linked to the ticket/feature via `has-research`
+
+**When to use:** Enhancements or features where the approach isn't obvious,
+multiple viable options exist, or the change touches unfamiliar subsystems.
+The planning checklist has a research item that can be skipped with N/A for
+smaller work.
 
 ### Validation Rules
 

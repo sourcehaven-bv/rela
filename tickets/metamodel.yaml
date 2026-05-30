@@ -42,6 +42,9 @@ types:
   doc_status:
     values: [stub, draft, review, published, outdated]
     default: stub
+  research_status:
+    values: [open, in-progress, done, superseded]
+    default: open
   # Enums
   priority:
     values: [critical, high, medium, low]
@@ -212,6 +215,32 @@ entities:
     default_sort:
       - property: date
         direction: desc
+  research:
+    label: Research
+    aliases: [research-doc, spike]
+    id_prefix: "RES-"
+    id_type: short
+    color: "#E8EAF6"
+    border_color: "#5C6BC0"
+    description: Structured research document surveying approaches before implementation
+    properties:
+      title:
+        type: string
+        required: true
+      summary:
+        type: string
+        description: One-line summary of what was researched and the conclusion
+      status:
+        type: research_status
+        required: true
+    default_sort:
+      - property: status
+      - property: title
+    content:
+      required-headers:
+        - "## Problem"
+        - "## Options"
+        - "## Recommendation"
   # ===================
   # Planning
   # ===================
@@ -963,6 +992,29 @@ relations:
     inverse: triggers
     min_outgoing: 1 # Doc tasks must be triggered by something
   # ===================
+  # Research Relations
+  # ===================
+  has-research:
+    label: has research
+    description: Research document informing this work
+    from: [ticket, feature]
+    to: [research]
+    inverse: researches-for
+    max_outgoing: 3
+  researches:
+    label: researches
+    description: Research touches this architectural concept
+    from: [research]
+    to: [concept]
+    inverse: researchedBy
+    min_outgoing: 1
+  informs:
+    label: informs
+    description: Research findings inform this decision or ticket
+    from: [research]
+    to: [decision, ticket]
+    inverse: informedBy
+  # ===================
   # Workflow Checklist Relations
   # ===================
   has-planning:
@@ -1010,6 +1062,15 @@ relations:
 # Validation Rules
 # ===================
 validations:
+  # --- Research completeness (progressive) ---
+  - name: done-research-needs-summary
+    description: "Done research must have a summary of findings"
+    entity_type: research
+    when:
+      - "status=done"
+    then:
+      - "summary!="
+    severity: error
   # --- Ticket completeness (progressive) ---
   - name: ready-tickets-need-effort
     description: "Ready tickets must have effort estimated"
@@ -1906,6 +1967,15 @@ validations:
       - "status=blocked"
     then:
       - "status!=blocked"
+    severity: error
+  # --- Research in progress ---
+  - name: ci-no-in-progress-research
+    description: "CI: Research in 'in-progress' status cannot be merged - complete or revert"
+    entity_type: research
+    when:
+      - "status=in-progress"
+    then:
+      - "status!=in-progress"
     severity: error
   # --- Checklists in progress ---
   - name: ci-no-in-progress-checklists-planning
