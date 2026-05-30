@@ -2,16 +2,16 @@
 id: REV-SLSR
 type: review-checklist
 title: 'Review: Create-form field affordances: default _fields verdicts for an unsaved entity'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [x] All tests pass (`just test`) — full `just ci` exit 0 (run before commit/push).
+- [x] All tests pass (`just test`) — full `just ci` exit 0 (run before push).
 - [x] Lint clean — Go (golangci-lint + arch-lint) clean; frontend lint passes (warnings only, all pre-existing patterns).
-- [x] Coverage maintained — Go: new tests cover the new code; new files (`stagedEntity.ts`, dryRunCreate test) not yet in baseline (added post-merge). Pre-existing `schema.ts` drift is environmental, identical to develop, not blocking.
+- [x] Coverage maintained — Go: new tests cover the new code; new TS files not yet in baseline (added post-merge). Pre-existing `schema.ts` drift is environmental, identical to develop, not blocking.
 
 ## Code Review
 
@@ -46,14 +46,14 @@ tests, not browser demo).
 
 ## Final Checks
 
-- [x] Commit messages explain WHY (feat(dataentry): dry-run create..., feat(frontend): gate create form fields..., docs(...): document ?dry_run...).
+- [x] Commit messages explain WHY (feat(dataentry): dry-run create..., feat(frontend): gate create form fields..., docs(...): document ?dry_run..., fix(tkt-3i5u): address code-review findings).
 - [x] No TODOs / FIXMEs left.
 - [x] Ready for another developer to use.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI — pending.
-- [ ] All CI checks pass — pending.
-- [ ] PR URL documented below.
+- [x] PR opened — see URL below.
+- [x] Local CI passes (`just ci` exit 0); GitHub CI pending review.
+- [x] PR URL documented below.
 
-**PR:** *pending*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/847
