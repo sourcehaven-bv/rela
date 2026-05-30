@@ -150,21 +150,21 @@ type commandProjectInfo struct {
 	Metamodel string `json:"metamodel"`
 }
 
-func (a *App) buildEntityInput(e *entity.Entity) *commandInput {
+func (a *App) buildEntityInput(ctx context.Context, e *entity.Entity) *commandInput {
 	return &commandInput{
 		Context:   "entity",
 		Entity:    e,
-		Relations: relationsForEntity(a.Services(), e.ID),
+		Relations: relationsForEntity(ctx, a.Services(), e.ID),
 		Project:   a.projectInfo(),
 	}
 }
 
 // relationsForEntity loads every relation where id is either endpoint
 // and returns them as []*entity.Relation for the command-input payload.
-func relationsForEntity(svc Services, id string) []*entity.Relation {
+func relationsForEntity(ctx context.Context, svc Services, id string) []*entity.Relation {
 	rels := make([]*entity.Relation, 0)
 	q := store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}
-	for r, err := range svc.Store.ListRelations(context.Background(), q) {
+	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
 			return rels
 		}
@@ -182,7 +182,7 @@ func (a *App) buildListInput(listID string, entities []*entity.Entity) *commandI
 	}
 }
 
-func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
+func (a *App) buildViewInput(ctx context.Context, viewID string, vr *viewResult) *commandInput {
 	// Collect all entity IDs in the result set.
 	idSet := map[string]bool{vr.Entry.ID: true}
 	for _, entities := range vr.Collections {
@@ -196,7 +196,7 @@ func (a *App) buildViewInput(viewID string, vr *viewResult) *commandInput {
 	var rels []*entity.Relation
 	for id := range idSet {
 		q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
-		for r, err := range svc.Store.ListRelations(context.Background(), q) {
+		for r, err := range svc.Store.ListRelations(ctx, q) {
 			if err != nil {
 				break
 			}
@@ -306,12 +306,12 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
 		svc := a.Services()
-		entityDomain, err := svc.Store.GetEntity(context.Background(), entityID)
+		entityDomain, err := svc.Store.GetEntity(r.Context(), entityID)
 		if err != nil {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}
-		input = a.buildEntityInput(entityDomain)
+		input = a.buildEntityInput(r.Context(), entityDomain)
 	case "list":
 		listID := r.URL.Query().Get("list_id")
 		listCfg, found := s.Cfg.Lists[listID]
@@ -319,7 +319,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "List not found: "+listID, http.StatusNotFound)
 			return
 		}
-		entities := listFromStoreByTypes(a.Services(), []string{listCfg.EntityType})
+		entities := listFromStoreByTypes(r.Context(), a.Services(), []string{listCfg.EntityType})
 		entities = applyFilters(entities, listCfg.Filters)
 		input = a.buildListInput(listID, entities)
 	case "view":
@@ -330,12 +330,12 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
 			return
 		}
-		vr, err := a.executeView(viewCfg, entityID)
+		vr, err := a.executeView(r.Context(), viewCfg, entityID)
 		if err != nil {
 			http.Error(w, "View error: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		input = a.buildViewInput(viewID, vr)
+		input = a.buildViewInput(r.Context(), viewID, vr)
 	case "global":
 		input = a.buildGlobalInput()
 	default:

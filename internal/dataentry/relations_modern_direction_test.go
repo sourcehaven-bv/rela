@@ -96,7 +96,7 @@ func TestApplyRelationsModern_IncomingBodyKey_BothEndpoints(t *testing.T) {
 	}
 
 	// outgoingRelations(source) must include the edge.
-	outEdges := app.outgoingRelations(sourceID)
+	outEdges := app.outgoingRelations(context.Background(), sourceID)
 	if len(outEdges) != 1 {
 		t.Fatalf("expected 1 outgoing edge from %s, got %d", sourceID, len(outEdges))
 	}
@@ -110,7 +110,7 @@ func TestApplyRelationsModern_IncomingBodyKey_BothEndpoints(t *testing.T) {
 	}
 
 	// incomingRelations(target) must include the SAME edge.
-	inEdges := app.incomingRelations(targetID)
+	inEdges := app.incomingRelations(context.Background(), targetID)
 	if len(inEdges) != 1 {
 		t.Fatalf("expected 1 incoming edge to %s, got %d", targetID, len(inEdges))
 	}
@@ -135,10 +135,10 @@ func TestApplyRelationsModern_IncomingDelete(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := len(app.outgoingRelations(sourceID)); got != 0 {
+	if got := len(app.outgoingRelations(context.Background(), sourceID)); got != 0 {
 		t.Errorf("expected 0 outgoing from %s after delete, got %d", sourceID, got)
 	}
-	if got := len(app.incomingRelations(targetID)); got != 0 {
+	if got := len(app.incomingRelations(context.Background(), targetID)); got != 0 {
 		t.Errorf("expected 0 incoming to %s after delete, got %d", targetID, got)
 	}
 }
@@ -150,7 +150,7 @@ func TestApplyRelationsModern_IncomingNoOp(t *testing.T) {
 	app := newDirectionTestApp(t)
 	sourceID, targetID := seedDirectionFixture(t, app)
 
-	preEdge := app.outgoingRelations(sourceID)[0]
+	preEdge := app.outgoingRelations(context.Background(), sourceID)[0]
 	body := `{"relations":{"blockedBy":{"data":[{"type":"feature","id":"` + sourceID + `","meta":{"reason":"test block"}}]}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/"+targetID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -159,7 +159,7 @@ func TestApplyRelationsModern_IncomingNoOp(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	postEdge := app.outgoingRelations(sourceID)[0]
+	postEdge := app.outgoingRelations(context.Background(), sourceID)[0]
 	// No new edge, no property drift.
 	if postEdge.Properties["reason"] != preEdge.Properties["reason"] {
 		t.Errorf("no-op should not change properties: before=%v after=%v",
@@ -229,12 +229,12 @@ func TestApplyRelationsModern_MixedCanonicalAndInverse(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	// FEAT-A → FEAT-B (outgoing)
-	outA := app.outgoingRelations("FEAT-A")
+	outA := app.outgoingRelations(context.Background(), "FEAT-A")
 	if len(outA) != 1 || outA[0].To != "FEAT-B" {
 		t.Errorf("FEAT-A should have 1 outgoing to FEAT-B, got %+v", outA)
 	}
 	// FEAT-C → FEAT-A (incoming view from FEAT-A's perspective)
-	inA := app.incomingRelations("FEAT-A")
+	inA := app.incomingRelations(context.Background(), "FEAT-A")
 	if len(inA) != 1 || inA[0].From != "FEAT-C" {
 		t.Errorf("FEAT-A should have 1 incoming from FEAT-C, got %+v", inA)
 	}

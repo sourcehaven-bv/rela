@@ -13,10 +13,7 @@ linters:
   enable:
     - bodyclose
     - containedctx
-    # contextcheck: surfaces 84 real ctx-threading gaps across dataentry/mcp/workspace.
-    # Enabling requires a ~15-file refactor that's out of scope for this lint
-    # expansion; tracked as a follow-up ticket.
-    # - contextcheck
+    - contextcheck
     - copyloopvar
     - depguard
     - dogsled

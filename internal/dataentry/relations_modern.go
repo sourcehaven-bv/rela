@@ -292,7 +292,7 @@ func (a *App) applyRelationsModern(
 			desiredByID[ref.ID] = ref
 		}
 
-		current := a.currentEdgesByPeer(entityID, canonical, incoming)
+		current := a.currentEdgesByPeer(ctx, entityID, canonical, incoming)
 
 		// Adds and upserts.
 		for _, id := range desiredOrder {

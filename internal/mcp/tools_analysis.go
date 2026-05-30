@@ -66,12 +66,12 @@ type cardinalityViolation struct {
 }
 
 func (s *Server) handleAnalyzeCardinality(
-	_ context.Context, _ mcp.CallToolRequest,
+	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	for relName, relDef := range s.deps.Meta.Relations {
-		violations = append(violations, s.checkCardinalityForRelation(relName, relDef)...)
+		violations = append(violations, s.checkCardinalityForRelation(ctx, relName, relDef)...)
 	}
 
 	if len(violations) == 0 {
@@ -87,25 +87,24 @@ func (s *Server) handleAnalyzeCardinality(
 }
 
 func (s *Server) checkCardinalityForRelation(
-	relName string, relDef metamodel.RelationDef,
+	ctx context.Context, relName string, relDef metamodel.RelationDef,
 ) []cardinalityViolation {
 	violations := make([]cardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	violations = append(violations,
-		s.checkCardinalityBound(relName, relDef.From, relDef.MinOutgoing, relDef.MaxOutgoing, true)...)
+		s.checkCardinalityBound(ctx, relName, relDef.From, relDef.MinOutgoing, relDef.MaxOutgoing, true)...)
 
 	violations = append(violations,
-		s.checkCardinalityBound(relName, relDef.To, relDef.MinIncoming, relDef.MaxIncoming, false)...)
+		s.checkCardinalityBound(ctx, relName, relDef.To, relDef.MinIncoming, relDef.MaxIncoming, false)...)
 
 	return violations
 }
 
 func (s *Server) checkCardinalityBound(
-	relName string, entityTypes []string, minVal, maxVal *int, outgoing bool,
+	ctx context.Context, relName string, entityTypes []string, minVal, maxVal *int, outgoing bool,
 ) []cardinalityViolation {
 	var violations []cardinalityViolation
 
-	ctx := context.Background()
 	st := s.deps.Store
 	for _, entityType := range entityTypes {
 		for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
@@ -185,7 +184,7 @@ func (s *Server) handleAnalyzeProperties(
 	}
 
 	// Validate relation properties
-	relErrors := schema.ValidateRelationProperties(s.deps.Store, s.deps.Meta)
+	relErrors := schema.ValidateRelationProperties(ctx, s.deps.Store, s.deps.Meta)
 	allRelationErrors := make([]relationErrors, 0, len(relErrors))
 	for _, rpe := range relErrors {
 		errStrings := make([]string, len(rpe.Errors))
@@ -277,11 +276,11 @@ func (s *Server) handleAnalyzeValidations(
 }
 
 func (s *Server) handleAnalyzeSchema(
-	_ context.Context, request mcp.CallToolRequest,
+	ctx context.Context, request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	threshold := request.GetInt("threshold", 0)
 
-	dataEntry := s.loadDataEntryConfig()
+	dataEntry := s.loadDataEntryConfig(ctx)
 
 	counter := &schema.StoreCounter{Store: s.deps.Store}
 	analysis := schema.Analyze(s.deps.Meta, counter, dataEntry, threshold)
@@ -310,8 +309,8 @@ func (s *Server) handleAnalyzeSchema(
 }
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
-func (s *Server) loadDataEntryConfig() *dataentryconfig.Config {
-	data, err := s.deps.Config.Load(context.Background(), dataentryconfig.ConfigFile)
+func (s *Server) loadDataEntryConfig(ctx context.Context) *dataentryconfig.Config {
+	data, err := s.deps.Config.Load(ctx, dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

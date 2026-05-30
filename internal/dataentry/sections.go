@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -140,7 +141,7 @@ type SectionData struct {
 }
 
 // buildSections builds template-ready section data from view sections and a view result.
-func (a *App) buildSections(sections []ViewSection, result *viewResult) []SectionData {
+func (a *App) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := a.State()
 	out := make([]SectionData, 0, len(sections))
 
@@ -226,7 +227,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 							Link: a.resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Values = a.resolveRelationColumnValues(e.ID, col.Relation, col.Direction)
+							cell.Values = a.resolveRelationColumnValues(ctx, e.ID, col.Relation, col.Direction)
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {
@@ -316,7 +317,7 @@ func (a *App) buildSections(sections []ViewSection, result *viewResult) []Sectio
 
 // executeSidePanel runs the side panel traversal and builds section data.
 // Returns nil if the form has no side panel or the entity doesn't exist.
-func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType string) []SectionData {
+func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, entityID, entityType string) []SectionData {
 	if panel == nil || entityID == "" {
 		return nil
 	}
@@ -328,12 +329,12 @@ func (a *App) executeSidePanel(panel *SidePanelConfig, entityID, entityType stri
 		Sections: panel.Sections,
 	}
 
-	result, err := a.executeView(viewCfg, entityID)
+	result, err := a.executeView(ctx, viewCfg, entityID)
 	if err != nil {
 		return nil
 	}
 
-	return a.buildSections(panel.Sections, result)
+	return a.buildSections(ctx, panel.Sections, result)
 }
 
 // resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on

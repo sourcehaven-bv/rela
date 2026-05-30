@@ -136,9 +136,9 @@ func (m *mockWorkspace) Meta() *metamodel.Metamodel {
 }
 
 // entityCount returns the number of entities currently in the mock's store.
-func (m *mockWorkspace) entityCount() int {
+func (m *mockWorkspace) entityCount(ctx context.Context) int {
 	n := 0
-	for _, err := range m.store.ListEntities(context.Background(), store.EntityQuery{}) {
+	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			continue
 		}
@@ -169,7 +169,7 @@ func (m *mockManager) CreateEntity(
 	}
 	id := opts.ID
 	if id == "" {
-		id = fmt.Sprintf("%s-%03d", strings.ToUpper(e.Type[:3]), m.ws.entityCount()+1)
+		id = fmt.Sprintf("%s-%03d", strings.ToUpper(e.Type[:3]), m.ws.entityCount(ctx)+1)
 	}
 	newE := &entity.Entity{
 		ID:         id,

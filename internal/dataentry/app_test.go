@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -493,7 +494,7 @@ func TestNavElements(t *testing.T) {
 	app, _ := testAppInstance()
 
 	t.Run("flat items with counts", func(t *testing.T) {
-		elements := app.navElements("")
+		elements := app.navElements(context.Background(), "")
 		if len(elements) != 2 {
 			t.Fatalf("expected 2 elements, got %d", len(elements))
 		}
@@ -528,7 +529,7 @@ func TestNavElements(t *testing.T) {
 			{Label: "Dashboard", Dashboard: true},
 			{Label: "Tickets", List: "tickets"},
 		}
-		elements := app2.navElements("")
+		elements := app2.navElements(context.Background(), "")
 		if len(elements) != 2 {
 			t.Fatalf("expected 2 elements, got %d", len(elements))
 		}
@@ -548,7 +549,7 @@ func TestNavElements(t *testing.T) {
 				{Property: "status", Operator: "=", Value: "open"},
 			},
 		}
-		elements := app2.navElements("")
+		elements := app2.navElements(context.Background(), "")
 		// Only TKT-001 has status=open
 		if elements[0].Item == nil {
 			t.Fatal("expected first element to be an item")
@@ -570,7 +571,7 @@ func TestNavElements(t *testing.T) {
 			},
 			{Label: "Components", List: "components"},
 		}
-		elements := app2.navElements("")
+		elements := app2.navElements(context.Background(), "")
 		if len(elements) != 3 {
 			t.Fatalf("expected 3 elements, got %d", len(elements))
 		}
@@ -612,7 +613,7 @@ func TestNavElements(t *testing.T) {
 				},
 			},
 		}
-		elements := app2.navElements("")
+		elements := app2.navElements(context.Background(), "")
 		if elements[0].Group == nil {
 			t.Fatal("expected group element")
 		}
@@ -632,7 +633,7 @@ func TestNavElements(t *testing.T) {
 				},
 			},
 		}
-		elements := app2.navElements("tickets")
+		elements := app2.navElements(context.Background(), "tickets")
 		if elements[0].Group == nil {
 			t.Fatal("expected group element")
 		}
@@ -710,7 +711,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	bindRepoWithFS(app, fs, ctx)
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
-		state := app.loadUIState()
+		state := app.loadUIState(context.Background())
 		if len(state.CollapsedGroups) != 0 {
 			t.Errorf("expected empty collapsed groups, got %v", state.CollapsedGroups)
 		}
@@ -721,7 +722,7 @@ func TestUIStateLoadSave(t *testing.T) {
 		if err := app.saveUIState(state); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
-		loaded := app.loadUIState()
+		loaded := app.loadUIState(context.Background())
 		if !loaded.CollapsedGroups["Tickets"] {
 			t.Error("expected Tickets to be collapsed after load")
 		}
@@ -744,7 +745,7 @@ func TestUIStateLoadSave(t *testing.T) {
 		if err := app2.saveUIState(state); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
-		elements := app2.navElements("")
+		elements := app2.navElements(context.Background(), "")
 		if elements[0].Group == nil {
 			t.Fatal("expected group element")
 		}
@@ -756,7 +757,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		app2.kv = nil
-		state := app2.loadUIState()
+		state := app2.loadUIState(context.Background())
 		if len(state.CollapsedGroups) != 0 {
 			t.Error("expected empty state")
 		}
@@ -796,7 +797,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 				},
 			},
 		}
-		if err := app.saveUserDefaults(ud); err != nil {
+		if err := app.saveUserDefaults(context.Background(), ud); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
 		loaded := app.loadUserDefaults()
@@ -827,7 +828,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
 		}
-		if err := app2.saveUserDefaults(&UserDefaults{}); err != nil {
+		if err := app2.saveUserDefaults(context.Background(), &UserDefaults{}); err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 	})

@@ -87,7 +87,7 @@ func (s *Server) handleShowEntity(
 		return mcp.NewToolResultError("entity not found: " + id), nil
 	}
 
-	text, err := convertStoreEntity(e, st, true)
+	text, err := convertStoreEntity(ctx, e, st, true)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -179,7 +179,7 @@ func (s *Server) handleCreateEntity(
 		return mcp.NewToolResultText(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
 	}
 
-	text, err := convertStoreEntity(e, st, false)
+	text, err := convertStoreEntity(ctx, e, st, false)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -236,7 +236,7 @@ func (s *Server) handleUpdateEntity(
 		return mcp.NewToolResultText(prefixWarnings(updateResult.Warnings) + "Updated " + id), nil
 	}
 
-	text, convertErr := convertStoreEntity(updated, st, true)
+	text, convertErr := convertStoreEntity(ctx, updated, st, true)
 	if convertErr != nil {
 		return mcp.NewToolResultError(convertErr.Error()), nil
 	}

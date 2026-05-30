@@ -118,7 +118,7 @@ func TestDocumentService_ScriptRender_CapturesMarkdown(t *testing.T) {
 	s, fake := newTestService(t, reqEntity())
 	fake.stdout = func(_ fakeScriptCall) string { return "# Heading\n\nbody" }
 
-	result, err := s.Render("REQ-001", documentRenderConfig{
+	result, err := s.Render(context.Background(), "REQ-001", documentRenderConfig{
 		ConfigID: "notes",
 		Script:   "docs/notes.lua",
 		Timeout:  5 * time.Second,
@@ -159,7 +159,7 @@ func TestDocumentService_ScriptRender_NoDiskCacheWrite(t *testing.T) {
 	s, fake := newTestService(t, reqEntity())
 	fake.stdout = func(_ fakeScriptCall) string { return "lua output" }
 
-	if _, err := s.Render("REQ-001", documentRenderConfig{
+	if _, err := s.Render(context.Background(), "REQ-001", documentRenderConfig{
 		ConfigID: "notes",
 		Script:   "docs/notes.lua",
 	}); err != nil {
@@ -167,7 +167,7 @@ func TestDocumentService_ScriptRender_NoDiskCacheWrite(t *testing.T) {
 	}
 
 	// After render, GetCached should return nil — nothing was written.
-	if result := s.GetCached("REQ-001"); result != nil {
+	if result := s.GetCached(context.Background(), "REQ-001"); result != nil {
 		t.Errorf("expected no cache entry after script render, got %q", result.HTML)
 	}
 }
@@ -187,7 +187,7 @@ func TestDocumentService_ScriptRender_StaleCommandCacheIgnored(t *testing.T) {
 	fake.stdout = func(_ fakeScriptCall) string { return "fresh lua output" }
 
 	// Manually seed a stale command-era cache entry.
-	_, hash, err := s.computeDocumentHash("REQ-001")
+	_, hash, err := s.computeDocumentHash(context.Background(), "REQ-001")
 	if err != nil {
 		t.Fatalf("computeDocumentHash: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestDocumentService_ScriptRender_StaleCommandCacheIgnored(t *testing.T) {
 		t.Fatalf("seed stale cache: %v", putErr)
 	}
 
-	result, err := s.Render("REQ-001", documentRenderConfig{
+	result, err := s.Render(context.Background(), "REQ-001", documentRenderConfig{
 		ConfigID: "notes",
 		Script:   "docs/notes.lua",
 	})
@@ -238,7 +238,7 @@ func TestDocumentService_SingleflightNoCollapseAcrossConfigs(t *testing.T) {
 	resultsCh := make(chan renderResult, 2)
 	for _, docID := range []string{"docA", "docB"} {
 		go func(d string) {
-			r, err := s.Render("REQ-001", documentRenderConfig{
+			r, err := s.Render(context.Background(), "REQ-001", documentRenderConfig{
 				ConfigID: d,
 				Script:   "docs/" + d + ".lua",
 			})
@@ -283,7 +283,7 @@ func TestDocumentService_SingleflightCollapsesSameConfig(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = s.Render("REQ-001", documentRenderConfig{
+			_, _ = s.Render(context.Background(), "REQ-001", documentRenderConfig{
 				ConfigID: "same",
 				Script:   "docs/same.lua",
 			})
@@ -301,7 +301,7 @@ func TestDocumentService_ScriptError(t *testing.T) {
 	s, fake := newTestService(t, reqEntity())
 	fake.err = errors.New("lua blew up")
 
-	_, err := s.Render("REQ-001", documentRenderConfig{
+	_, err := s.Render(context.Background(), "REQ-001", documentRenderConfig{
 		ConfigID: "notes",
 		Script:   "docs/notes.lua",
 	})
@@ -378,7 +378,7 @@ print(got)
 	}
 
 	for i := range 2 {
-		if _, renderErr := s.Render("REQ-001", cfg); renderErr != nil {
+		if _, renderErr := s.Render(context.Background(), "REQ-001", cfg); renderErr != nil {
 			t.Fatalf("render %d: %v", i, renderErr)
 		}
 	}

@@ -130,10 +130,10 @@ func newTestScheduler(
 		logger: discardLogger(),
 		now:    func() time.Time { return now },
 	}
-	s.executeTaskFunc = func(_ context.Context, task TaskConfig) {
+	s.executeTaskFunc = func(ctx context.Context, task TaskConfig) {
 		tracker.record(task.Script)
 		s.state.Tasks[task.Name] = s.now()
-		s.saveState()
+		s.saveState(ctx)
 	}
 	return s, ws, tracker
 }
@@ -284,7 +284,7 @@ func TestScheduler_loadState_noFile(t *testing.T) {
 
 	ws := newMockWorkspace(t)
 	s := &Scheduler{ws: ws, logger: discardLogger()}
-	s.loadState()
+	s.loadState(context.Background())
 
 	if s.state == nil || s.state.Tasks == nil {
 		t.Fatal("expected initialized state")
@@ -300,7 +300,7 @@ func TestScheduler_loadState_existing(t *testing.T) {
 	ws.cacheFiles[stateFile] = stateData
 
 	s := &Scheduler{ws: ws, logger: discardLogger()}
-	s.loadState()
+	s.loadState(context.Background())
 
 	if got := s.state.Tasks["daily"]; !got.Equal(ts) {
 		t.Errorf("loaded state: daily = %v, want %v", got, ts)

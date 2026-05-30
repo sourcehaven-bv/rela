@@ -74,7 +74,7 @@ func (s *Server) handleReadMetamodel(
 }
 
 func (s *Server) handleReadEntity(
-	_ context.Context, request mcp.ReadResourceRequest,
+	ctx context.Context, request mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
 	uri := request.Params.URI
 
@@ -87,7 +87,7 @@ func (s *Server) handleReadEntity(
 	entityType, id := segments[0], segments[1]
 
 	st := s.deps.Store
-	e, getErr := st.GetEntity(context.Background(), id)
+	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -95,7 +95,7 @@ func (s *Server) handleReadEntity(
 		return nil, fmt.Errorf("entity %s is type %s, not %s", id, e.Type, entityType)
 	}
 
-	text, err := convertStoreEntity(e, st, true)
+	text, err := convertStoreEntity(ctx, e, st, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert entity: %w", err)
 	}
@@ -110,7 +110,7 @@ func (s *Server) handleReadEntity(
 }
 
 func (s *Server) handleReadRelation(
-	_ context.Context, request mcp.ReadResourceRequest,
+	ctx context.Context, request mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
 	uri := request.Params.URI
 
@@ -123,7 +123,7 @@ func (s *Server) handleReadRelation(
 	fromID, relType, toID := segments[0], segments[1], segments[2]
 
 	st := s.deps.Store
-	relation, getErr := st.GetRelation(context.Background(), fromID, relType, toID)
+	relation, getErr := st.GetRelation(ctx, fromID, relType, toID)
 	if getErr != nil {
 		return nil, fmt.Errorf("relation not found: %s --%s--> %s", fromID, relType, toID)
 	}

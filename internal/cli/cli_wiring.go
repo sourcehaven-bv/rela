@@ -72,11 +72,11 @@ type cliWrite interface {
 type cliAnalyze interface {
 	cliRead
 	AnalyzeAll(ctx context.Context, opts analysis.Options) *analysis.Summary
-	CheckCardinality(opts analysis.Options) []analysis.CardinalityViolation
-	CheckRelationOrder(opts analysis.Options) []analysis.RelationOrderIssue
-	FindDuplicates(opts analysis.Options) []analysis.DuplicateGroup
-	FindGaps(opts analysis.Options) []analysis.GapResult
-	FindOrphansWithScope(opts analysis.Options) []*entity.Entity
+	CheckCardinality(ctx context.Context, opts analysis.Options) []analysis.CardinalityViolation
+	CheckRelationOrder(ctx context.Context, opts analysis.Options) []analysis.RelationOrderIssue
+	FindDuplicates(ctx context.Context, opts analysis.Options) []analysis.DuplicateGroup
+	FindGaps(ctx context.Context, opts analysis.Options) []analysis.GapResult
+	FindOrphansWithScope(ctx context.Context, opts analysis.Options) []*entity.Entity
 	FindOrphanedTempFiles() ([]string, error)
 	CleanupOrphanedTempFiles() (int, error)
 	RunValidations(ctx context.Context, opts analysis.Options) analysis.ValidationResult
@@ -137,24 +137,24 @@ func (s *cliServices) AnalyzeAll(ctx context.Context, opts analysis.Options) *an
 	return s.analysis.AnalyzeAll(ctx, opts)
 }
 
-func (s *cliServices) CheckCardinality(opts analysis.Options) []analysis.CardinalityViolation {
-	return s.analysis.CheckCardinality(opts)
+func (s *cliServices) CheckCardinality(ctx context.Context, opts analysis.Options) []analysis.CardinalityViolation {
+	return s.analysis.CheckCardinality(ctx, opts)
 }
 
-func (s *cliServices) CheckRelationOrder(opts analysis.Options) []analysis.RelationOrderIssue {
-	return s.analysis.CheckRelationOrder(opts)
+func (s *cliServices) CheckRelationOrder(ctx context.Context, opts analysis.Options) []analysis.RelationOrderIssue {
+	return s.analysis.CheckRelationOrder(ctx, opts)
 }
 
-func (s *cliServices) FindDuplicates(opts analysis.Options) []analysis.DuplicateGroup {
-	return s.analysis.FindDuplicates(opts)
+func (s *cliServices) FindDuplicates(ctx context.Context, opts analysis.Options) []analysis.DuplicateGroup {
+	return s.analysis.FindDuplicates(ctx, opts)
 }
 
-func (s *cliServices) FindGaps(opts analysis.Options) []analysis.GapResult {
-	return s.analysis.FindGaps(opts)
+func (s *cliServices) FindGaps(ctx context.Context, opts analysis.Options) []analysis.GapResult {
+	return s.analysis.FindGaps(ctx, opts)
 }
 
-func (s *cliServices) FindOrphansWithScope(opts analysis.Options) []*entity.Entity {
-	return s.analysis.FindOrphansWithScope(opts)
+func (s *cliServices) FindOrphansWithScope(ctx context.Context, opts analysis.Options) []*entity.Entity {
+	return s.analysis.FindOrphansWithScope(ctx, opts)
 }
 
 func (s *cliServices) FindOrphanedTempFiles() ([]string, error) {

@@ -393,7 +393,7 @@ func addCheckboxIndices(s string) string {
 // It supports the same query syntax as the search page: type:, prop:, status:,
 // and free text. Free-text words use OR logic with fuzzy matching via Bleve;
 // results are ranked by score.
-func (a *App) executeQuery(query string) []*entity.Entity {
+func (a *App) executeQuery(ctx context.Context, query string) []*entity.Entity {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
 		return nil
@@ -404,9 +404,9 @@ func (a *App) executeQuery(query string) []*entity.Entity {
 	if sq.HasFreeText() {
 		// Searcher returns entities in relevance order. Scores are dropped
 		// because executeQuery never sorted by them.
-		candidates = runFreeTextSearch(svc, sq, maxFreeTextSearchResults)
+		candidates, _ = runFreeTextSearchE(ctx, svc, sq, maxFreeTextSearchResults)
 	} else {
-		candidates = listFromStoreByTypes(svc, sq.EntityTypes)
+		candidates = listFromStoreByTypes(ctx, svc, sq.EntityTypes)
 	}
 
 	results := make([]*entity.Entity, 0, len(candidates))
@@ -471,20 +471,11 @@ func (a *App) freeTextIDsForType(ctx context.Context, query, typeName string) (f
 // path stay in lockstep on the bound.
 const maxFreeTextSearchResults = 1000
 
-// runFreeTextSearch issues a Searcher query from a parsed SearchQuery and
+// runFreeTextSearchE issues a Searcher query from a parsed SearchQuery and
 // loads the full entity bodies from the store. Phrases are re-quoted so the
 // searcher's text layer can rebuild the same fuzzy-words + exact-phrases
-// compound query the dataentry UI used to build upstream.
-//
-// Errors are swallowed (returns nil) — callers that need to surface them
-// should use runFreeTextSearchE instead.
-func runFreeTextSearch(svc Services, sq *searchparser.SearchQuery, limit int) []*entity.Entity {
-	out, _ := runFreeTextSearchE(context.Background(), svc, sq, limit)
-	return out
-}
-
-// runFreeTextSearchE is the error-returning variant of runFreeTextSearch.
-// New callers should use this so backend failures surface to the client.
+// compound query the dataentry UI used to build upstream. Backend failures
+// surface to the caller.
 func runFreeTextSearchE(ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int) ([]*entity.Entity, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
@@ -515,13 +506,13 @@ func runFreeTextSearchE(ctx context.Context, svc Services, sq *searchparser.Sear
 
 // listFromStoreByTypes loads all entities matching the given types (or every
 // entity when types is empty) from the store.
-func listFromStoreByTypes(svc Services, types []string) []*entity.Entity {
+func listFromStoreByTypes(ctx context.Context, svc Services, types []string) []*entity.Entity {
 	if len(types) == 0 {
-		return listAllFromStore(svc)
+		return listAllFromStore(ctx, svc)
 	}
 	var out []*entity.Entity
 	for _, t := range types {
-		for e, err := range svc.Store.ListEntities(context.Background(), store.EntityQuery{Type: t}) {
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: t}) {
 			if err != nil {
 				return out
 			}
@@ -532,9 +523,9 @@ func listFromStoreByTypes(svc Services, types []string) []*entity.Entity {
 }
 
 // listAllFromStore drains every entity from the store.
-func listAllFromStore(svc Services) []*entity.Entity {
+func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store.ListEntities(context.Background(), store.EntityQuery{}) {
+	for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			return out
 		}
@@ -546,7 +537,9 @@ func listAllFromStore(svc Services) []*entity.Entity {
 // resolveRelationColumnValues returns display titles for all targets of the given
 // relation type from an entity. Direction controls whether to follow edges pointing
 // to the entity (incoming) or from the entity (outgoing, the default).
-func (a *App) resolveRelationColumnValues(entityID, relationType string, direction dataentryconfig.Direction) []string {
+func (a *App) resolveRelationColumnValues(
+	ctx context.Context, entityID, relationType string, direction dataentryconfig.Direction,
+) []string {
 	svc := a.Services()
 	q := store.RelationQuery{
 		EntityID:  entityID,
@@ -555,7 +548,7 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 	}
 
 	var titles []string
-	for r, err := range svc.Store.ListRelations(context.Background(), q) {
+	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
 			return titles
 		}
@@ -563,7 +556,7 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 		if direction.IsIncoming() {
 			targetID = r.From
 		}
-		if title, ok := entityTitle(svc, targetID); ok {
+		if title, ok := entityTitle(ctx, svc, targetID); ok {
 			titles = append(titles, title)
 		}
 	}
@@ -572,11 +565,13 @@ func (a *App) resolveRelationColumnValues(entityID, relationType string, directi
 
 // filterByRelation filters entities to those that have an outgoing edge of the given
 // relation type pointing to a target whose display title matches value.
-func (a *App) filterByRelation(entities []*entity.Entity, relationType, value string) []*entity.Entity {
+func (a *App) filterByRelation(
+	ctx context.Context, entities []*entity.Entity, relationType, value string,
+) []*entity.Entity {
 	svc := a.Services()
 	var result []*entity.Entity
 	for _, e := range entities {
-		if hasOutgoingRelationTo(svc, e.ID, relationType, value) {
+		if hasOutgoingRelationTo(ctx, svc, e.ID, relationType, value) {
 			result = append(result, e)
 		}
 	}
@@ -585,7 +580,9 @@ func (a *App) filterByRelation(entities []*entity.Entity, relationType, value st
 
 // resolveRelationFilterValues returns sorted, unique display titles of all entities
 // reachable via the given relation type from any of the provided entities.
-func (a *App) resolveRelationFilterValues(entities []*entity.Entity, relationType string) []string {
+func (a *App) resolveRelationFilterValues(
+	ctx context.Context, entities []*entity.Entity, relationType string,
+) []string {
 	svc := a.Services()
 	seen := make(map[string]bool)
 	var vals []string
@@ -595,11 +592,11 @@ func (a *App) resolveRelationFilterValues(entities []*entity.Entity, relationTyp
 			Type:      relationType,
 			Direction: store.DirectionOutgoing,
 		}
-		for r, err := range svc.Store.ListRelations(context.Background(), q) {
+		for r, err := range svc.Store.ListRelations(ctx, q) {
 			if err != nil {
 				break
 			}
-			title, ok := entityTitle(svc, r.To)
+			title, ok := entityTitle(ctx, svc, r.To)
 			if !ok {
 				continue
 			}
@@ -615,8 +612,8 @@ func (a *App) resolveRelationFilterValues(entities []*entity.Entity, relationTyp
 
 // entityTitle resolves an entity ID to its metamodel-rendered display title.
 // Returns ("", false) when the entity does not exist (e.g. dangling relation).
-func entityTitle(svc Services, id string) (string, bool) {
-	e, err := svc.Store.GetEntity(context.Background(), id)
+func entityTitle(ctx context.Context, svc Services, id string) (string, bool) {
+	e, err := svc.Store.GetEntity(ctx, id)
 	if err != nil {
 		return "", false
 	}
@@ -625,17 +622,17 @@ func entityTitle(svc Services, id string) (string, bool) {
 
 // hasOutgoingRelationTo reports whether fromID has an outgoing relation of
 // the given type pointing to a target whose display title matches value.
-func hasOutgoingRelationTo(svc Services, fromID, relationType, value string) bool {
+func hasOutgoingRelationTo(ctx context.Context, svc Services, fromID, relationType, value string) bool {
 	q := store.RelationQuery{
 		EntityID:  fromID,
 		Type:      relationType,
 		Direction: store.DirectionOutgoing,
 	}
-	for r, err := range svc.Store.ListRelations(context.Background(), q) {
+	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
 			return false
 		}
-		if title, ok := entityTitle(svc, r.To); ok && title == value {
+		if title, ok := entityTitle(ctx, svc, r.To); ok && title == value {
 			return true
 		}
 	}
@@ -681,7 +678,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 		if !ok {
 			return nil
 		}
-		entities := listFromStoreByTypes(a.Services(), []string{list.EntityType})
+		entities := listFromStoreByTypes(r.Context(), a.Services(), []string{list.EntityType})
 		entities = applyFilters(entities, list.Filters)
 
 		// Apply dynamic filter params (same as handleList)
@@ -691,7 +688,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 				continue
 			}
 			if fc.IsRelation() {
-				entities = a.filterByRelation(entities, fc.Relation, val)
+				entities = a.filterByRelation(r.Context(), entities, fc.Relation, val)
 			} else {
 				entities = applyFilters(entities, []FilterConfig{{
 					Property: fc.Property,
@@ -719,7 +716,7 @@ func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
 
 	case strings.HasPrefix(scope, "search:"):
 		query := strings.TrimPrefix(scope, "search:")
-		entities := a.executeQuery(query)
+		entities := a.executeQuery(r.Context(), query)
 		sort.Slice(entities, func(i, j int) bool { return natsort.Less(entities[i].ID, entities[j].ID) })
 		ids = make([]string, len(entities))
 		for i, e := range entities {

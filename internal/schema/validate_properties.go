@@ -19,11 +19,10 @@ type PropertyError struct {
 // PropertyError for each entity whose properties fail the metamodel's
 // entity-property validation. Callers that need scope filtering should
 // filter the returned slice themselves.
-func ValidateEntityProperties(st store.Store, meta *metamodel.Metamodel) []PropertyError {
+func ValidateEntityProperties(ctx context.Context, st store.Store, meta *metamodel.Metamodel) []PropertyError {
 	if st == nil || meta == nil {
 		return nil
 	}
-	ctx := context.Background()
 	var out []PropertyError
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
@@ -52,11 +51,12 @@ type RelationPropertyError struct {
 // ValidateRelationProperties iterates every relation in st and returns
 // a RelationPropertyError for each relation whose properties fail the
 // metamodel's relation-property validation.
-func ValidateRelationProperties(st store.Store, meta *metamodel.Metamodel) []RelationPropertyError {
+func ValidateRelationProperties(
+	ctx context.Context, st store.Store, meta *metamodel.Metamodel,
+) []RelationPropertyError {
 	if st == nil || meta == nil {
 		return nil
 	}
-	ctx := context.Background()
 	var out []RelationPropertyError
 	for rel, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil {

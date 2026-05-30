@@ -188,13 +188,13 @@ func runValidationChecks(
 	hasErrors := false
 
 	if checks.cardinality {
-		if runCardinalityCheck(checkAnalysis, checkOut, opts) {
+		if runCardinalityCheck(ctx, checkAnalysis, checkOut, opts) {
 			hasErrors = true
 		}
 	}
 
 	if checks.properties {
-		if runPropertiesCheck(checkSvc, checkOut, opts) {
+		if runPropertiesCheck(ctx, checkSvc, checkOut, opts) {
 			hasErrors = true
 		}
 	}
@@ -209,11 +209,13 @@ func runValidationChecks(
 }
 
 // runCardinalityCheck runs cardinality validation. Returns true if errors found.
-func runCardinalityCheck(checkAnalysis *analysis.Service, checkOut *output.Writer, opts analysis.Options) bool {
+func runCardinalityCheck(
+	ctx context.Context, checkAnalysis *analysis.Service, checkOut *output.Writer, opts analysis.Options,
+) bool {
 	if !quiet {
 		fmt.Println("\nChecking cardinality constraints...")
 	}
-	violations := checkAnalysis.CheckCardinality(opts)
+	violations := checkAnalysis.CheckCardinality(ctx, opts)
 	if len(violations) == 0 {
 		if !quiet && checkOut.Format != output.FormatJSON {
 			checkOut.WriteSuccess("All cardinality constraints satisfied")
@@ -243,11 +245,13 @@ func runCardinalityCheck(checkAnalysis *analysis.Service, checkOut *output.Write
 }
 
 // runPropertiesCheck runs property validation. Returns true if errors found.
-func runPropertiesCheck(checkSvc *appbuild.Services, checkOut *output.Writer, opts analysis.Options) bool {
+func runPropertiesCheck(
+	ctx context.Context, checkSvc *appbuild.Services, checkOut *output.Writer, opts analysis.Options,
+) bool {
 	if !quiet {
 		fmt.Println("\nValidating entity properties...")
 	}
-	propErrors := schema.ValidateEntityProperties(checkSvc.Store(), checkSvc.Meta())
+	propErrors := schema.ValidateEntityProperties(ctx, checkSvc.Store(), checkSvc.Meta())
 	if opts.Scope != nil {
 		filtered := propErrors[:0]
 		for _, pe := range propErrors {
