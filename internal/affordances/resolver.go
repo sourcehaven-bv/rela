@@ -313,13 +313,13 @@ func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) Fi
 			continue
 		}
 		if g.declaredFields {
-			r.applyFieldGrants(bc, role, "read-only", g.fields, writable)
+			r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
 		}
 		if g.declaredVisible {
-			r.applyFieldGrants(bc, role, "hidden", g.visible, visible)
+			r.applyFieldGrants(ctx, bc, role, "hidden", g.visible, visible)
 		}
 		if g.declaredOptions {
-			r.applyOptionGrants(bc, role, g.options, options)
+			r.applyOptionGrants(ctx, bc, role, g.options, options)
 		}
 	}
 
@@ -387,8 +387,8 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 			continue
 		}
 		for _, rg := range g.relations {
-			grantPassed := r.passes(bc, rg.program, role)
-			metaPassed := r.metaFieldResults(bc, role, rg, grantPassed)
+			grantPassed := r.passes(ctx, bc, rg.program, role)
+			metaPassed := r.metaFieldResults(ctx, bc, role, rg, grantPassed)
 			acc.observe(role, rg, grantPassed, metaPassed)
 		}
 	}
@@ -419,8 +419,13 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 
 // passes reports whether a grant's predicate evaluates true. A nil
 // program is unconditional (true). A predicate runtime error fails
-// closed (false) with a slog.Warn for operator visibility (DR-S5).
-func (r *PolicyResolver) passes(bc *bindingContext, prog *predicate.Program, role string) bool {
+// closed (false) with a slog.Warn for operator visibility (DR-S5). The
+// caller ctx is threaded into Eval (and thus into the host-function
+// calls the predicate makes) so cancellation / deadlines / request
+// values propagate (TKT-9NOX / PR#825 pattern).
+func (r *PolicyResolver) passes(
+	ctx context.Context, bc *bindingContext, prog *predicate.Program, role string,
+) bool {
 	if prog == nil {
 		return true
 	}
@@ -430,7 +435,7 @@ func (r *PolicyResolver) passes(bc *bindingContext, prog *predicate.Program, rol
 			"role", role, "entity", bc.entity.ID, "error", err)
 		return false
 	}
-	v, err := prog.Eval(context.Background(), b)
+	v, err := prog.Eval(ctx, b)
 	if err != nil {
 		slog.Warn("affordances: predicate eval failed; denying grant",
 			"role", role, "entity", bc.entity.ID, "error", err)
@@ -449,11 +454,12 @@ func (r *PolicyResolver) passes(bc *bindingContext, prog *predicate.Program, rol
 // passes. ruleKind is the denial-rule label ("read-only" or "hidden")
 // recorded in attribution for fields that end up denied.
 func (r *PolicyResolver) applyFieldGrants(
-	bc *bindingContext, role, ruleKind string, grants []compiledFieldGrant, dim *dimension,
+	ctx context.Context, bc *bindingContext, role, ruleKind string,
+	grants []compiledFieldGrant, dim *dimension,
 ) {
 	dim.optIn(ruleKind)
 	for _, fg := range grants {
-		if r.passes(bc, fg.program, role) {
+		if r.passes(ctx, bc, fg.program, role) {
 			dim.allow(fg.field)
 		} else {
 			dim.observeDeny(fg.field, role)
@@ -462,11 +468,12 @@ func (r *PolicyResolver) applyFieldGrants(
 }
 
 func (r *PolicyResolver) applyOptionGrants(
-	bc *bindingContext, role string, grants []compiledOptionGrant, dim *optionDimension,
+	ctx context.Context, bc *bindingContext, role string,
+	grants []compiledOptionGrant, dim *optionDimension,
 ) {
 	for _, og := range grants {
 		dim.optIn(og.field)
-		if r.passes(bc, og.program, role) {
+		if r.passes(ctx, bc, og.program, role) {
 			dim.allow(og.field, og.option)
 		} else {
 			dim.observeDeny(og.field, og.option, role)
@@ -480,14 +487,14 @@ func (r *PolicyResolver) applyOptionGrants(
 // restrictive than its relation grant, never less. Returns
 // field → passed.
 func (r *PolicyResolver) metaFieldResults(
-	bc *bindingContext, role string, rg compiledRelationGrant, grantPassed bool,
+	ctx context.Context, bc *bindingContext, role string, rg compiledRelationGrant, grantPassed bool,
 ) map[string]bool {
 	if len(rg.fields) == 0 {
 		return nil
 	}
 	out := make(map[string]bool, len(rg.fields))
 	for _, fg := range rg.fields {
-		out[fg.field] = grantPassed && r.passes(bc, fg.program, role)
+		out[fg.field] = grantPassed && r.passes(ctx, bc, fg.program, role)
 	}
 	return out
 }
