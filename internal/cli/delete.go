@@ -8,89 +8,65 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-var (
-	deleteForce   bool
-	deleteCascade bool
-)
-
-var deleteCmd = &cobra.Command{
-	Use:   "delete <id>",
-	Short: "Delete an entity",
-	Long: `Deletes an entity and optionally its relations.
-
-Examples:
-  rela delete REQ-001
-  rela delete REQ-001 --cascade  # Also delete related links
-  rela delete REQ-001 --force    # Skip confirmation`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		entityID := args[0]
-		ctx := context.Background()
-		svc := cliWriteFromContext(cmd.Context())
-		st := svc.Store()
-
-		entity, err := st.GetEntity(ctx, entityID)
-		if err != nil {
-			return &entityNotFoundError{ID: entityID}
-		}
-
-		// Check for relations
-		totalRelations, _ := st.CountRelations(ctx, store.RelationQuery{
-			EntityID:  entityID,
-			Direction: store.DirectionBoth,
-		})
-
-		if totalRelations > 0 && !deleteCascade {
-			return fmt.Errorf("entity %s has %d relation(s); use --cascade to delete them too", entityID, totalRelations)
-		}
-
-		// Confirm deletion
-		if !deleteForce {
-			fmt.Printf("Delete %s '%s'", entity.Type, entity.Title())
-			if totalRelations > 0 {
-				fmt.Printf(" and %d relation(s)", totalRelations)
-			}
-			fmt.Print("? [y/N] ")
-
-			reader := bufio.NewReader(os.Stdin)
-			response, readErr := reader.ReadString('\n')
-			if readErr != nil {
-				return fmt.Errorf("failed to read input: %w", readErr)
-			}
-			response = strings.TrimSpace(strings.ToLower(response))
-
-			if response != "y" && response != "yes" {
-				out.WriteMessage("Cancelled")
-				return nil
-			}
-		}
-
-		result, err := svc.EntityManager().DeleteEntity(ctx, entityID, deleteCascade)
-		if err != nil {
-			if errors.Is(err, entitymanager.ErrHasRelations) {
-				return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", entityID)
-			}
-			return err
-		}
-
-		out.WriteSuccess("Deleted %s", entityID)
-		if deleteCascade && len(result.DeletedRelations) > 0 {
-			out.WriteMessage("  Also deleted %d relation(s)", len(result.DeletedRelations))
-		}
-
-		return nil
-	},
+// DeleteCmd deletes an entity and (optionally) its relations.
+type DeleteCmd struct {
+	ID      string `arg:"" help:"Entity ID."`
+	Force   bool   `short:"f" help:"Skip confirmation prompt."`
+	Cascade bool   `help:"Also delete related links."`
 }
 
-func init() {
-	deleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Skip confirmation prompt")
-	deleteCmd.Flags().BoolVar(&deleteCascade, "cascade", false, "Also delete related links")
+// Run dispatches `rela delete <id>`.
+func (c *DeleteCmd) Run(ctx context.Context, svc *cliServices) error {
+	st := svc.Store()
 
-	rootCmd.AddCommand(deleteCmd)
+	entity, err := st.GetEntity(ctx, c.ID)
+	if err != nil {
+		return &entityNotFoundError{ID: c.ID}
+	}
+
+	totalRelations, _ := st.CountRelations(ctx, store.RelationQuery{
+		EntityID:  c.ID,
+		Direction: store.DirectionBoth,
+	})
+
+	if totalRelations > 0 && !c.Cascade {
+		return fmt.Errorf("entity %s has %d relation(s); use --cascade to delete them too", c.ID, totalRelations)
+	}
+
+	if !c.Force {
+		fmt.Printf("Delete %s '%s'", entity.Type, entity.Title())
+		if totalRelations > 0 {
+			fmt.Printf(" and %d relation(s)", totalRelations)
+		}
+		fmt.Print("? [y/N] ")
+
+		reader := bufio.NewReader(os.Stdin)
+		response, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return fmt.Errorf("failed to read input: %w", readErr)
+		}
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "y" && response != "yes" {
+			out.WriteMessage("Cancelled")
+			return nil
+		}
+	}
+
+	result, err := svc.EntityManager().DeleteEntity(ctx, c.ID, c.Cascade)
+	if err != nil {
+		if errors.Is(err, entitymanager.ErrHasRelations) {
+			return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", c.ID)
+		}
+		return err
+	}
+
+	out.WriteSuccess("Deleted %s", c.ID)
+	if c.Cascade && len(result.DeletedRelations) > 0 {
+		out.WriteMessage("  Also deleted %d relation(s)", len(result.DeletedRelations))
+	}
+	return nil
 }

@@ -3,42 +3,33 @@ package cli
 import (
 	"os"
 
-	"github.com/spf13/cobra"
-
 	"github.com/Sourcehaven-BV/rela/internal/projectsetup"
 )
 
-var initCmd = &cobra.Command{
-	Use:         "init",
-	Short:       "Initialize a new rela project",
-	Long:        `Creates a new rela project in the current directory with a default metamodel.`,
-	Annotations: map[string]string{skipProjectDiscovery: "true"},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Determine target directory: flag > env var > cwd
-		targetDir := projectPath
-		if targetDir == "" {
-			targetDir = os.Getenv("RELA_PROJECT")
-		}
+// InitCmd initializes a new rela project.
+type InitCmd struct{}
 
-		result, err := projectsetup.Initialize(targetDir)
-		if err != nil {
-			return err
-		}
+// Run executes `rela init`.
+func (c *InitCmd) Run() error {
+	targetDir := projectPath
+	if targetDir == "" {
+		targetDir = os.Getenv("RELA_PROJECT")
+	}
 
-		out.WriteSuccess("Initialized rela project in %s", result.Root)
-		out.WriteMessage("  Created metamodel.yaml")
-		out.WriteMessage("  Created entities/ directory")
-		out.WriteMessage("  Created relations/ directory")
-		out.WriteMessage("  Created .rela/ directory (gitignored)")
-		out.WriteMessage("")
-		out.WriteMessage("Next steps:")
-		out.WriteMessage("  rela create requirement    # Create a new requirement")
-		out.WriteMessage("  rela list requirements     # List all requirements")
+	result, err := projectsetup.Initialize(targetDir)
+	if err != nil {
+		return err
+	}
 
-		return nil
-	},
-}
+	out.WriteSuccess("Initialized rela project in %s", result.Root)
+	out.WriteMessage("  Created metamodel.yaml")
+	out.WriteMessage("  Created entities/ directory")
+	out.WriteMessage("  Created relations/ directory")
+	out.WriteMessage("  Created .rela/ directory (gitignored)")
+	out.WriteMessage("")
+	out.WriteMessage("Next steps:")
+	out.WriteMessage("  rela create requirement    # Create a new requirement")
+	out.WriteMessage("  rela list requirements     # List all requirements")
 
-func init() {
-	rootCmd.AddCommand(initCmd)
+	return nil
 }

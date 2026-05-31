@@ -100,7 +100,7 @@ components:
 # -- Vendors --------------------------------------------------------------
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
-  cobra:       { in: github.com/spf13/cobra }
+  kong:        { in: github.com/alecthomas/kong }
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
@@ -213,7 +213,7 @@ deps:
       - tracer
       - validator
     canUse:
-      - cobra
+      - kong
       - color
       - glamour
       - huh

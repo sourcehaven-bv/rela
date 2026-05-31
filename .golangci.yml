@@ -170,10 +170,6 @@ linters:
       ignored-functions:
         - strings.SplitN
         - make
-        - cobra.ExactArgs
-        - cobra.MinimumNArgs
-        - cobra.MaximumNArgs
-        - cobra.RangeArgs
     nakedret:
       max-func-lines: 30
     nestif:

@@ -1,74 +1,45 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
-
-	"github.com/spf13/cobra"
 )
 
-var attachProperty string
-
-var attachCmd = &cobra.Command{
-	Use:   "attach <entity-id> <file>...",
-	Short: "Attach file(s) to an entity",
-	Long: `Attach one or more files to an entity.
-
-Each file is stored at ` + "`attachments/<entity-id>/<property>/<filename>`" + `.
-Each file-type property holds at most one attachment; re-running
-` + "`attach`" + ` replaces the existing file.
-
-The --property flag specifies which property to attach the file(s) to.
-If not specified, uses the first file-type property defined for the entity type.
-
-Examples:
-  rela attach BUG-042 screenshot.png
-  rela attach BUG-042 screenshot.png --property screenshot
-  rela attach DEC-007 supporting-doc.pdf --property supporting-docs`,
-	Args: cobra.MinimumNArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		entityID := args[0]
-		filePaths := args[1:]
-		svc := cliAnalyzeFromContext(cmd.Context())
-
-		var attached int
-		for _, filePath := range filePaths {
-			// Expand globs
-			matches, err := filepath.Glob(filePath)
-			if err != nil {
-				return fmt.Errorf("invalid glob pattern %q: %w", filePath, err)
-			}
-			if len(matches) == 0 {
-				// No glob match, try as literal path
-				matches = []string{filePath}
-			}
-
-			for _, match := range matches {
-				// Convert to absolute path for reading
-				absPath, err := filepath.Abs(match)
-				if err != nil {
-					return fmt.Errorf("invalid path %q: %w", match, err)
-				}
-
-				result, err := svc.AttachFile(cmd.Context(), entityID, absPath, attachProperty)
-				if err != nil {
-					return fmt.Errorf("failed to attach %q: %w", match, err)
-				}
-				out.WriteSuccess("Attached %s → %s", filepath.Base(match), result.Path)
-				attached++
-			}
-		}
-
-		if attached == 0 {
-			return errors.New("no files matched")
-		}
-
-		return nil
-	},
+// AttachCmd attaches one or more files to an entity property.
+type AttachCmd struct {
+	Property string   `short:"P" help:"Property to attach file(s) to (defaults to first file-type property)."`
+	EntityID string   `arg:"" name:"entity-id" help:"Target entity ID."`
+	Files    []string `arg:"" help:"File path(s) (globs supported)."`
 }
 
-func init() {
-	attachCmd.Flags().StringVarP(&attachProperty, "property", "P", "", "Property to attach file(s) to")
-	rootCmd.AddCommand(attachCmd)
+// Run dispatches `rela attach <entity-id> <file>...`.
+func (c *AttachCmd) Run(ctx context.Context, svc *cliServices) error {
+	var attached int
+	for _, filePath := range c.Files {
+		matches, err := filepath.Glob(filePath)
+		if err != nil {
+			return fmt.Errorf("invalid glob pattern %q: %w", filePath, err)
+		}
+		if len(matches) == 0 {
+			matches = []string{filePath}
+		}
+		for _, match := range matches {
+			absPath, err := filepath.Abs(match)
+			if err != nil {
+				return fmt.Errorf("invalid path %q: %w", match, err)
+			}
+			result, err := svc.AttachFile(ctx, c.EntityID, absPath, c.Property)
+			if err != nil {
+				return fmt.Errorf("failed to attach %q: %w", match, err)
+			}
+			out.WriteSuccess("Attached %s → %s", filepath.Base(match), result.Path)
+			attached++
+		}
+	}
+	if attached == 0 {
+		return errors.New("no files matched")
+	}
+	return nil
 }

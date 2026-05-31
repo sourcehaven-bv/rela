@@ -3,63 +3,20 @@ package cli
 import (
 	stderrors "errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 )
 
-// TestNoShorthandConflicts ensures persistent flags don't conflict with local flags.
-// This prevents bugs like -p being used for both --project (persistent) and --priority (local).
-func TestNoShorthandConflicts(t *testing.T) {
-	// Collect all persistent flag shorthands from root
-	persistentShorthands := make(map[string]string) // shorthand -> flag name
-	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Shorthand != "" {
-			persistentShorthands[f.Shorthand] = f.Name
-		}
-	})
-
-	// Check each subcommand for conflicts
-	for _, cmd := range rootCmd.Commands() {
-		checkCommandForConflicts(t, cmd, persistentShorthands)
-	}
-}
-
-func checkCommandForConflicts(t *testing.T, cmd *cobra.Command, parentShorthands map[string]string) {
-	t.Helper()
-
-	// Check local flags against parent persistent flags
-	// Same name shadowing is OK (e.g., local --output shadows persistent --output)
-	// Different name with same shorthand is a conflict
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Shorthand != "" {
-			if parentFlag, exists := parentShorthands[f.Shorthand]; exists && parentFlag != f.Name {
-				t.Errorf("command %q: flag --%s uses shorthand -%s which conflicts with persistent flag --%s",
-					cmd.Name(), f.Name, f.Shorthand, parentFlag)
-			}
-		}
-	})
-
-	// Build combined shorthands for checking nested subcommands
-	combinedShorthands := make(map[string]string)
-	for k, v := range parentShorthands {
-		combinedShorthands[k] = v
-	}
-	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Shorthand != "" {
-			combinedShorthands[f.Shorthand] = f.Name
-		}
-	})
-
-	// Recurse into subcommands
-	for _, subCmd := range cmd.Commands() {
-		checkCommandForConflicts(t, subCmd, combinedShorthands)
-	}
-}
+// root_test.go covers root-level kong wiring.
+//
+// Tests dropped during the kong migration:
+//   - TestNoShorthandConflicts: cobra-specific flag/shorthand
+//     introspection. Kong reports a parser error at parse time if two
+//     short flags collide, and there is no equivalent runtime walk of
+//     the command tree to assert against.
 
 func TestWrapDiscoverError(t *testing.T) {
 	t.Run("no project returns init hint", func(t *testing.T) {
@@ -93,20 +50,19 @@ func TestWrapDiscoverError(t *testing.T) {
 	})
 }
 
+// TestRootCmdProjectFlag verifies the kong CLI struct exposes a
+// Project field with no short alias (removed to avoid conflict with
+// --priority on create/update).
 func TestRootCmdProjectFlag(t *testing.T) {
-	// Verify the project flag is registered
-	flag := rootCmd.PersistentFlags().Lookup("project")
-	if flag == nil {
-		t.Fatal("expected --project flag to be registered")
+	rt := reflect.TypeOf(CLI{})
+	f, ok := rt.FieldByName("Project")
+	if !ok {
+		t.Fatal("expected Project field on CLI struct")
 	}
-
-	// Verify no shorthand (removed to avoid conflict with --priority on create/update)
-	if flag.Shorthand != "" {
-		t.Errorf("expected no shorthand, got %q", flag.Shorthand)
+	if got := f.Tag.Get("short"); got != "" {
+		t.Errorf("expected no short tag, got %q", got)
 	}
-
-	// Verify default value is empty (auto-detect)
-	if flag.DefValue != "" {
-		t.Errorf("expected empty default value, got %q", flag.DefValue)
+	if got := f.Tag.Get("env"); got != "RELA_PROJECT" {
+		t.Errorf("expected env=RELA_PROJECT, got %q", got)
 	}
 }

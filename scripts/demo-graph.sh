@@ -75,21 +75,21 @@ say "rela graph → stdout (DOT, first 12 lines)"
 "${BIN}" graph | sed -n '1,12p'
 step "(truncated)"
 
-say "rela graph -o graph.dot  (write DOT to file)"
-"${BIN}" graph -o graph.dot
+say "rela graph --file graph.dot  (write DOT to file)"
+"${BIN}" graph --file graph.dot
 step "wrote $(wc -l < graph.dot | tr -d ' ') lines to graph.dot"
 
 if command -v dot >/dev/null 2>&1; then
-    say "rela graph -o graph.svg -f svg  (render via graphviz)"
-    "${BIN}" graph -o graph.svg -f svg
+    say "rela graph --file graph.svg -f svg  (render via graphviz)"
+    "${BIN}" graph --file graph.svg -f svg
     step "SVG size: $(wc -c < graph.svg | tr -d ' ') bytes"
 
-    say "rela graph -o graph-lr.png -f png --direction lr"
-    "${BIN}" graph -o graph-lr.png -f png --direction lr
+    say "rela graph --file graph-lr.png -f png --direction lr"
+    "${BIN}" graph --file graph-lr.png -f png --direction lr
     step "PNG size: $(wc -c < graph-lr.png | tr -d ' ') bytes"
 
-    say "rela graph --types ticket,feature -o tf.svg -f svg  (filtered)"
-    "${BIN}" graph --types ticket,feature -o tf.svg -f svg
+    say "rela graph --types ticket,feature --file tf.svg -f svg  (filtered)"
+    "${BIN}" graph --types ticket,feature --file tf.svg -f svg
     step "filtered SVG size: $(wc -c < tf.svg | tr -d ' ') bytes"
 
     cp graph.svg graph-lr.png tf.svg /tmp/ 2>/dev/null || true

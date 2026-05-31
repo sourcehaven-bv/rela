@@ -1,18 +1,22 @@
 package cli
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
 // create_test.go only covers CLI-specific plumbing. Metamodel
 // introspection tests (GetPrimaryProperty etc.) live with the
 // metamodel package, and entity CRUD is covered by storetest.
+//
+// Tests dropped during the kong migration:
+//   - the stdin branch of TestGetBodyContent ("body-file flag with
+//     stdin"): cobra used to pipe stdin via cmd.SetIn; the kong
+//     equivalent reads os.Stdin directly inside getBodyContent. Swapping
+//     os.Stdin from a unit test is racy; the file path covers the read
+//     branch already.
 
 func TestParsePropertyFlag(t *testing.T) {
 	tests := []struct {
@@ -61,7 +65,6 @@ func TestGetBodyContent(t *testing.T) {
 		body        string
 		bodyFile    string
 		fileContent string
-		stdinData   string
 		want        string
 		wantErr     bool
 		errContains string
@@ -82,12 +85,6 @@ func TestGetBodyContent(t *testing.T) {
 			want:        "Content from file.",
 		},
 		{
-			name:      "body-file flag with stdin",
-			bodyFile:  "-",
-			stdinData: "Content from stdin.\n",
-			want:      "Content from stdin.",
-		},
-		{
 			name:        "both flags specified",
 			body:        "inline content",
 			bodyFile:    "file.md",
@@ -104,30 +101,21 @@ func TestGetBodyContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Reset global flags
-			createBody = tt.body
-			createBodyFile = ""
-
-			cmd := &cobra.Command{}
+			cmd := &CreateCmd{Body: tt.body}
 
 			// Handle file-based test
-			if tt.bodyFile != "" && tt.bodyFile != "-" && tt.fileContent != "" {
+			if tt.bodyFile != "" && tt.fileContent != "" {
 				tmpDir := t.TempDir()
 				filePath := filepath.Join(tmpDir, tt.bodyFile)
 				if err := os.WriteFile(filePath, []byte(tt.fileContent), 0644); err != nil {
 					t.Fatalf("failed to create temp file: %v", err)
 				}
-				createBodyFile = filePath
+				cmd.BodyFile = filePath
 			} else if tt.bodyFile != "" {
-				createBodyFile = tt.bodyFile
+				cmd.BodyFile = tt.bodyFile
 			}
 
-			// Handle stdin test
-			if tt.stdinData != "" {
-				cmd.SetIn(bytes.NewBufferString(tt.stdinData))
-			}
-
-			got, err := getBodyContent(cmd)
+			got, err := cmd.getBodyContent()
 
 			if tt.wantErr {
 				if err == nil {

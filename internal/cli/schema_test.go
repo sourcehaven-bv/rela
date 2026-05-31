@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -12,37 +14,24 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
-// setupSchemaTest sets up the test environment with default metamodel
-func setupSchemaTest(t *testing.T) (buf *bytes.Buffer, cleanup func()) {
+// schemaTestFixture builds a *cliServices around the given metamodel.
+func schemaTestFixture(t *testing.T, meta *metamodel.Metamodel) *cliServices {
 	t.Helper()
-
-	oldOut := out
-
-	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
-
-	buf = new(bytes.Buffer)
-	out = output.NewWithWriter(buf, output.FormatTable)
-
-	cleanup = func() {
-		out = oldOut
-	}
-
-	return buf, cleanup
+	return newStoreSeeder(meta).build(t)
 }
 
 func TestSchemaOverview(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaCmd.RunE(schemaCmd, []string{})
-	if err != nil {
+	cmd := &SchemaOverviewCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Fatalf("schema overview failed: %v", err)
 	}
 
 	result := buf.String()
 
-	// Check for expected content
 	if !strings.Contains(result, "Metamodel Overview") {
 		t.Errorf("expected 'Metamodel Overview' in output, got: %s", result)
 	}
@@ -56,7 +45,6 @@ func TestSchemaOverview(t *testing.T) {
 		t.Errorf("expected 'Custom Types' in output, got: %s", result)
 	}
 
-	// Check for specific entity types from default metamodel
 	if !strings.Contains(result, "requirement") {
 		t.Errorf("expected 'requirement' entity type in output, got: %s", result)
 	}
@@ -66,11 +54,12 @@ func TestSchemaOverview(t *testing.T) {
 }
 
 func TestSchemaOverviewSubcommand(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaOverviewCmd.RunE(schemaOverviewCmd, []string{})
-	if err != nil {
+	cmd := &SchemaOverviewCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Fatalf("schema overview subcommand failed: %v", err)
 	}
 
@@ -82,11 +71,12 @@ func TestSchemaOverviewSubcommand(t *testing.T) {
 }
 
 func TestSchemaEntities(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaEntitiesCmd.RunE(schemaEntitiesCmd, []string{})
-	if err != nil {
+	cmd := &SchemaEntitiesCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema entities failed: %v", err)
 	}
 
@@ -95,8 +85,6 @@ func TestSchemaEntities(t *testing.T) {
 	if !strings.Contains(result, "Entity Types") {
 		t.Errorf("expected 'Entity Types' in output, got: %s", result)
 	}
-
-	// Check for entity details
 	if !strings.Contains(result, "ID Prefixes") {
 		t.Errorf("expected 'ID Prefixes' in output, got: %s", result)
 	}
@@ -109,11 +97,12 @@ func TestSchemaEntities(t *testing.T) {
 }
 
 func TestSchemaRelations(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaRelationsCmd.RunE(schemaRelationsCmd, []string{})
-	if err != nil {
+	cmd := &SchemaRelationsCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema relations failed: %v", err)
 	}
 
@@ -122,8 +111,6 @@ func TestSchemaRelations(t *testing.T) {
 	if !strings.Contains(result, "Relation Types") {
 		t.Errorf("expected 'Relation Types' in output, got: %s", result)
 	}
-
-	// Check for relation details
 	if !strings.Contains(result, "addresses") {
 		t.Errorf("expected 'addresses' relation in output, got: %s", result)
 	}
@@ -136,11 +123,12 @@ func TestSchemaRelations(t *testing.T) {
 }
 
 func TestSchemaTypes(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaTypesCmd.RunE(schemaTypesCmd, []string{})
-	if err != nil {
+	cmd := &SchemaTypesCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema types failed: %v", err)
 	}
 
@@ -149,8 +137,6 @@ func TestSchemaTypes(t *testing.T) {
 	if !strings.Contains(result, "Custom Types") {
 		t.Errorf("expected 'Custom Types' in output, got: %s", result)
 	}
-
-	// Check for custom types from default metamodel
 	if !strings.Contains(result, "status") {
 		t.Errorf("expected 'status' type in output, got: %s", result)
 	}
@@ -163,11 +149,12 @@ func TestSchemaTypes(t *testing.T) {
 }
 
 func TestSchemaEntity(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaEntityCmd.RunE(schemaEntityCmd, []string{"requirement"})
-	if err != nil {
+	cmd := &SchemaEntityCmd{Name: "requirement"}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema entity failed: %v", err)
 	}
 
@@ -191,24 +178,17 @@ func TestSchemaEntity(t *testing.T) {
 }
 
 func TestSchemaEntityWithAlias(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	// Parse the default metamodel from YAML to properly build the alias map
 	meta, err := metamodel.Parse([]byte(metamodel.DefaultMetamodelYAML()))
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
-	applySeeder(newStoreSeeder(meta))
-
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
 	// Test using alias "req" for "requirement"
-	err = schemaEntityCmd.RunE(schemaEntityCmd, []string{"req"})
-	if err != nil {
+	cmd := &SchemaEntityCmd{Name: "req"}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema entity with alias failed: %v", err)
 	}
 
@@ -220,10 +200,12 @@ func TestSchemaEntityWithAlias(t *testing.T) {
 }
 
 func TestSchemaEntityNotFound(t *testing.T) {
-	_, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	_ = withOutput(t, output.FormatTable)
 
-	err := schemaEntityCmd.RunE(schemaEntityCmd, []string{"nonexistent"})
+	cmd := &SchemaEntityCmd{Name: "nonexistent"}
+	err := cmd.Run(svc)
 	if err == nil {
 		t.Fatal("expected error for nonexistent entity type")
 	}
@@ -233,11 +215,12 @@ func TestSchemaEntityNotFound(t *testing.T) {
 }
 
 func TestSchemaRelation(t *testing.T) {
-	buf, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	err := schemaRelationCmd.RunE(schemaRelationCmd, []string{"addresses"})
-	if err != nil {
+	cmd := &SchemaRelationCmd{Name: "addresses"}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema relation failed: %v", err)
 	}
 
@@ -264,10 +247,12 @@ func TestSchemaRelation(t *testing.T) {
 }
 
 func TestSchemaRelationNotFound(t *testing.T) {
-	_, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
+	_ = withOutput(t, output.FormatTable)
 
-	err := schemaRelationCmd.RunE(schemaRelationCmd, []string{"nonexistent"})
+	cmd := &SchemaRelationCmd{Name: "nonexistent"}
+	err := cmd.Run(svc)
 	if err == nil {
 		t.Fatal("expected error for nonexistent relation type")
 	}
@@ -277,29 +262,20 @@ func TestSchemaRelationNotFound(t *testing.T) {
 }
 
 func TestSchemaOverviewJSON(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatJSON)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-
-	err := schemaCmd.RunE(schemaCmd, []string{})
-	if err != nil {
+	cmd := &SchemaOverviewCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Fatalf("schema overview JSON failed: %v", err)
 	}
 
-	// Verify it's valid JSON
 	var result map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
-	// Check for expected fields
 	if _, ok := result["version"]; !ok {
 		t.Error("expected 'version' in JSON output")
 	}
@@ -315,29 +291,20 @@ func TestSchemaOverviewJSON(t *testing.T) {
 }
 
 func TestSchemaEntitiesJSON(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatJSON)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-
-	err := schemaEntitiesCmd.RunE(schemaEntitiesCmd, []string{})
-	if err != nil {
+	cmd := &SchemaEntitiesCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema entities JSON failed: %v", err)
 	}
 
-	// Verify it's valid JSON
 	var result map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
-	// Check for expected entity types
 	if _, ok := result["requirement"]; !ok {
 		t.Error("expected 'requirement' in JSON output")
 	}
@@ -347,29 +314,20 @@ func TestSchemaEntitiesJSON(t *testing.T) {
 }
 
 func TestSchemaEntityJSON(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatJSON)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-
-	err := schemaEntityCmd.RunE(schemaEntityCmd, []string{"requirement"})
-	if err != nil {
+	cmd := &SchemaEntityCmd{Name: "requirement"}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema entity JSON failed: %v", err)
 	}
 
-	// Verify it's valid JSON
 	var result map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
-	// Check for expected fields
 	if result["name"] != "requirement" {
 		t.Errorf("expected name='requirement', got: %v", result["name"])
 	}
@@ -382,29 +340,20 @@ func TestSchemaEntityJSON(t *testing.T) {
 }
 
 func TestSchemaRelationJSON(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatJSON)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-
-	err := schemaRelationCmd.RunE(schemaRelationCmd, []string{"addresses"})
-	if err != nil {
+	cmd := &SchemaRelationCmd{Name: "addresses"}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema relation JSON failed: %v", err)
 	}
 
-	// Verify it's valid JSON
 	var result map[string]interface{}
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
-	// Check for expected fields
 	if result["name"] != "addresses" {
 		t.Errorf("expected name='addresses', got: %v", result["name"])
 	}
@@ -417,24 +366,16 @@ func TestSchemaRelationJSON(t *testing.T) {
 }
 
 func TestSchemaTypesEmpty(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
-	// Create metamodel with no custom types
 	meta := &metamodel.Metamodel{
 		Version:  "1.0",
 		Types:    map[string]metamodel.CustomType{},
 		Entities: map[string]metamodel.EntityDef{},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	err := schemaTypesCmd.RunE(schemaTypesCmd, []string{})
-	if err != nil {
+	cmd := &SchemaTypesCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema types failed: %v", err)
 	}
 
@@ -446,25 +387,17 @@ func TestSchemaTypesEmpty(t *testing.T) {
 }
 
 func TestSchemaEntitiesEmpty(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
-	// Create metamodel with no entities
 	meta := &metamodel.Metamodel{
 		Version:   "1.0",
 		Types:     map[string]metamodel.CustomType{},
 		Entities:  map[string]metamodel.EntityDef{},
 		Relations: map[string]metamodel.RelationDef{},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	err := schemaEntitiesCmd.RunE(schemaEntitiesCmd, []string{})
-	if err != nil {
+	cmd := &SchemaEntitiesCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema entities failed: %v", err)
 	}
 
@@ -476,25 +409,17 @@ func TestSchemaEntitiesEmpty(t *testing.T) {
 }
 
 func TestSchemaRelationsEmpty(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
-	// Create metamodel with no relations
 	meta := &metamodel.Metamodel{
 		Version:   "1.0",
 		Types:     map[string]metamodel.CustomType{},
 		Entities:  map[string]metamodel.EntityDef{},
 		Relations: map[string]metamodel.RelationDef{},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	err := schemaRelationsCmd.RunE(schemaRelationsCmd, []string{})
-	if err != nil {
+	cmd := &SchemaRelationsCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema relations failed: %v", err)
 	}
 
@@ -506,15 +431,9 @@ func TestSchemaRelationsEmpty(t *testing.T) {
 }
 
 func TestSchemaWithCardinality(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	sourceMin := 1
 	sourceMax := 5
 
-	// Create metamodel with cardinality constraints
 	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
@@ -532,13 +451,11 @@ func TestSchemaWithCardinality(t *testing.T) {
 			},
 		},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	err := schemaRelationsCmd.RunE(schemaRelationsCmd, []string{})
-	if err != nil {
+	cmd := &SchemaRelationsCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema relations failed: %v", err)
 	}
 
@@ -556,12 +473,6 @@ func TestSchemaWithCardinality(t *testing.T) {
 }
 
 func TestSchemaWithSymmetricRelation(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
-	// Create metamodel with symmetric relation
 	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
@@ -577,13 +488,11 @@ func TestSchemaWithSymmetricRelation(t *testing.T) {
 			},
 		},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
+	buf := withOutput(t, output.FormatTable)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	err := schemaRelationsCmd.RunE(schemaRelationsCmd, []string{})
-	if err != nil {
+	cmd := &SchemaRelationsCmd{}
+	if err := cmd.Run(svc); err != nil {
 		t.Fatalf("schema relations failed: %v", err)
 	}
 
@@ -595,82 +504,54 @@ func TestSchemaWithSymmetricRelation(t *testing.T) {
 }
 
 func TestSchemaGraphviz(t *testing.T) {
-	_, cleanup := setupSchemaTest(t)
-	defer cleanup()
+	meta := metamodel.DefaultMetamodel()
+	svc := schemaTestFixture(t, meta)
 
-	// Reset graphviz flags
-	oldGraphviz := schemaGraphviz
-	oldConstraints := schemaConstraints
-	defer func() {
-		schemaGraphviz = oldGraphviz
-		schemaConstraints = oldConstraints
-	}()
-
-	schemaGraphviz = true
-	schemaConstraints = false
-
-	err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
+	_, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+	})
 	if err != nil {
 		t.Fatalf("schema graphviz failed: %v", err)
 	}
 }
 
 func TestSchemaGraphvizOutput(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	// Capture stdout for runSchemaGraphviz
-	oldStdout := captureStdout(t, func() {
-		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
-		if err != nil {
-			t.Fatalf("schema graphviz failed: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
-
-	// Check DOT format structure
-	if !strings.Contains(oldStdout, "digraph metamodel {") {
-		t.Errorf("expected 'digraph metamodel {' in output, got: %s", oldStdout)
-	}
-	if !strings.Contains(oldStdout, "rankdir=LR") {
-		t.Errorf("expected 'rankdir=LR' in output, got: %s", oldStdout)
-	}
-	if !strings.Contains(oldStdout, "// Entity types") {
-		t.Errorf("expected '// Entity types' comment in output, got: %s", oldStdout)
-	}
-	if !strings.Contains(oldStdout, "// Relations") {
-		t.Errorf("expected '// Relations' comment in output, got: %s", oldStdout)
+	if err != nil {
+		t.Fatalf("schema graphviz failed: %v", err)
 	}
 
-	// Check for entity nodes (with colors)
-	if !strings.Contains(oldStdout, `requirement [label="Requirement", fillcolor=`) {
-		t.Errorf("expected requirement node in output, got: %s", oldStdout)
+	if !strings.Contains(result, "digraph metamodel {") {
+		t.Errorf("expected 'digraph metamodel {' in output, got: %s", result)
 	}
-	if !strings.Contains(oldStdout, `decision [label="Decision", fillcolor=`) {
-		t.Errorf("expected decision node in output, got: %s", oldStdout)
+	if !strings.Contains(result, "rankdir=LR") {
+		t.Errorf("expected 'rankdir=LR' in output, got: %s", result)
+	}
+	if !strings.Contains(result, "// Entity types") {
+		t.Errorf("expected '// Entity types' comment in output, got: %s", result)
+	}
+	if !strings.Contains(result, "// Relations") {
+		t.Errorf("expected '// Relations' comment in output, got: %s", result)
 	}
 
-	// Check for relation edges (with colors)
-	if !strings.Contains(oldStdout, `decision -> requirement [label="addresses"`) {
-		t.Errorf("expected addresses edge in output, got: %s", oldStdout)
+	if !strings.Contains(result, `requirement [label="Requirement", fillcolor=`) {
+		t.Errorf("expected requirement node in output, got: %s", result)
+	}
+	if !strings.Contains(result, `decision [label="Decision", fillcolor=`) {
+		t.Errorf("expected decision node in output, got: %s", result)
+	}
+
+	if !strings.Contains(result, `decision -> requirement [label="addresses"`) {
+		t.Errorf("expected addresses edge in output, got: %s", result)
 	}
 }
 
 func TestSchemaGraphvizWithConstraints(t *testing.T) {
-	oldOut := out
-	oldConstraints := schemaConstraints
-	defer func() {
-		out = oldOut
-		schemaConstraints = oldConstraints
-	}()
-
 	sourceMin := 1
 	targetMax := 1
 
@@ -691,20 +572,15 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 			},
 		},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-	schemaConstraints = true
-
-	result := captureStdout(t, func() {
-		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
-		if err != nil {
-			t.Fatalf("schema graphviz with constraints failed: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), true, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("schema graphviz with constraints failed: %v", err)
+	}
 
-	// Check for cardinality in label
 	if !strings.Contains(result, "out:1..*") {
 		t.Errorf("expected 'out:1..*' cardinality in output, got: %s", result)
 	}
@@ -714,11 +590,6 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 }
 
 func TestSchemaGraphvizWithColors(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
@@ -732,19 +603,15 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 		},
 		Relations: map[string]metamodel.RelationDef{},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	result := captureStdout(t, func() {
-		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
-		if err != nil {
-			t.Fatalf("schema graphviz with colors failed: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("schema graphviz with colors failed: %v", err)
+	}
 
-	// Check for colors in node definition
 	if !strings.Contains(result, `fillcolor="#ffcccc"`) {
 		t.Errorf("expected fillcolor in output, got: %s", result)
 	}
@@ -754,11 +621,6 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 }
 
 func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
-	oldOut := out
-	defer func() {
-		out = oldOut
-	}()
-
 	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Types:   map[string]metamodel.CustomType{},
@@ -775,19 +637,15 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 			},
 		},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := schemaTestFixture(t, meta)
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-
-	result := captureStdout(t, func() {
-		err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta())
-		if err != nil {
-			t.Fatalf("schema graphviz with multiple from/to failed: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("schema graphviz with multiple from/to failed: %v", err)
+	}
 
-	// Should create edges for all combinations: a->b, a->c, b->b, b->c (with colors)
 	if !strings.Contains(result, `a -> b [label="connects"`) {
 		t.Errorf("expected a->b edge in output, got: %s", result)
 	}
@@ -864,80 +722,46 @@ func intPtr(i int) *int {
 	return &i
 }
 
-// captureStdout captures stdout during function execution
-func captureStdout(t *testing.T, fn func()) string {
+// captureStdoutVoid runs fn while redirecting os.Stdout. Returns captured output and fn's err.
+func captureStdoutVoid(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
-
-	// Use a pipe to capture stdout
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
-
 	oldStdout := os.Stdout
 	os.Stdout = w
-
-	fn()
-
+	fnErr := fn()
 	w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	if err != nil {
-		t.Fatalf("failed to read from pipe: %v", err)
-	}
-
-	return buf.String()
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), fnErr
 }
 
 // --- graphviz rendering-pipeline tests -------------------------------------
-//
-// These cover the --exclude flag and the classification rule that renders
-// many-target relations as a hub bundle or a legend table rather than a
-// fan of edges.
 
 // schemaGraphvizFixture builds a bare metamodel with the given entities and
-// relations, applies it, and restores the previous state on cleanup. All
-// rendering flags start at their defaults — tests can override them after
-// calling this helper.
+// relations and returns the services. The caller supplies the runSchemaGraphviz
+// parameters directly.
 func schemaGraphvizFixture(
 	t *testing.T,
 	ents map[string]metamodel.EntityDef,
 	rels map[string]metamodel.RelationDef,
-) {
+) *cliServices {
 	t.Helper()
-	oldOut := out
-	oldGraphviz := schemaGraphviz
-	oldExclude := schemaExclude
-	oldNoBundle := schemaNoBundle
-	oldNoLegend := schemaNoLegend
-	t.Cleanup(func() {
-		out = oldOut
-		schemaGraphviz = oldGraphviz
-		schemaExclude = oldExclude
-		schemaNoBundle = oldNoBundle
-		schemaNoLegend = oldNoLegend
-	})
-
 	meta := &metamodel.Metamodel{
 		Version:   "1.0",
 		Types:     map[string]metamodel.CustomType{},
 		Entities:  ents,
 		Relations: rels,
 	}
-	applySeeder(newStoreSeeder(meta))
-
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatTable)
-	schemaGraphviz = true
-	schemaExclude = nil
-	schemaNoBundle = false
-	schemaNoLegend = false
+	return newStoreSeeder(meta).build(t)
 }
 
 func TestSchemaGraphvizExclude(t *testing.T) {
-	schemaGraphvizFixture(t,
+	svc := schemaGraphvizFixture(t,
 		map[string]metamodel.EntityDef{
 			"a": {Label: "A", IDPrefix: "A-"},
 			"b": {Label: "B", IDPrefix: "B-"},
@@ -948,13 +772,13 @@ func TestSchemaGraphvizExclude(t *testing.T) {
 			"ac": {Label: "ac", From: []string{"a"}, To: []string{"c"}},
 		},
 	)
-	schemaExclude = []string{"c"}
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, []string{"c"}, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if strings.Contains(result, "  c [label") {
 		t.Errorf("excluded node c should not appear:\n%s", result)
@@ -973,20 +797,21 @@ func TestSchemaGraphvizLegendFiveTargets(t *testing.T) {
 	}
 	// 5 unconnected leaf targets -> relation with 5 targets -> legend bucket.
 	targets := []string{"t1", "t2", "t3", "t4", "t5"}
-	for _, t := range targets {
-		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	for _, tg := range targets {
+		ents[tg] = metamodel.EntityDef{Label: strings.ToUpper(tg), IDPrefix: tg + "-"}
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"src"}, To: targets},
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if !strings.Contains(result, "__legend [") {
 		t.Errorf("expected __legend node:\n%s", result)
@@ -1007,17 +832,18 @@ func TestSchemaGraphvizHubIsolatedTargets(t *testing.T) {
 		"t3":  {Label: "T3", IDPrefix: "T3-"},
 	}
 	// 3 isolated targets -> hub bundle.
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3"}},
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if !strings.Contains(result, "__hub_0 [shape=point") {
 		t.Errorf("expected __hub_0 point node:\n%s", result)
@@ -1046,21 +872,22 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 		"t3":  {Label: "T3", IDPrefix: "T3-"},
 		"t4":  {Label: "T4", IDPrefix: "T4-"},
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3", "t4"}},
-			// Two small (≤2 target) anchor relations keep every target
+			// Two small (<=2 target) anchor relations keep every target
 			// otherwise-connected without themselves collapsing.
 			"a1r": {Label: "a1r", From: []string{"a1"}, To: []string{"t1", "t2"}},
 			"a2r": {Label: "a2r", From: []string{"a2"}, To: []string{"t3", "t4"}},
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if !strings.Contains(result, "__legend [") {
 		t.Errorf("4 connected targets should collapse to legend:\n%s", result)
@@ -1071,8 +898,7 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 	if strings.Contains(result, `src -> t1 [label="fans"`) {
 		t.Errorf("fans edges should be suppressed:\n%s", result)
 	}
-	// The anchors and targets must still be rendered — the snapshot-lie bug
-	// would hide all of them behind an empty-body legend.
+	// The anchors and targets must still be rendered.
 	for _, id := range []string{"a1", "a2", "t1", "t2", "t3", "t4"} {
 		wantLine := id + ` [label="` + strings.ToUpper(id) + `"`
 		if !strings.Contains(result, wantLine) {
@@ -1080,7 +906,7 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 		}
 	}
 	// src's only relation is legend-collapsed and it has no incoming edges,
-	// so it must be hidden (AC 6).
+	// so it must be hidden.
 	if strings.Contains(result, `src [label`) {
 		t.Errorf("src should be hidden when its only pair is legend-collapsed:\n%s", result)
 	}
@@ -1089,11 +915,7 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 	}
 }
 
-// TestSchemaGraphvizFivePairStarvesThreePair covers the "snapshot lies" case:
-// a ≥5-target relation will legend-collapse, and its targets' connectedness
-// from that relation should NOT be counted when classifying an adjacent 3-4
-// target relation. Before the two-pass classifier, both relations ended up in
-// the legend and the body was empty.
+// TestSchemaGraphvizFivePairStarvesThreePair covers the "snapshot lies" case.
 func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
 	ents := map[string]metamodel.EntityDef{
 		"big":   {Label: "Big", IDPrefix: "B-"},
@@ -1104,25 +926,23 @@ func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
 		"t4":    {Label: "T4", IDPrefix: "T4-"},
 		"t5":    {Label: "T5", IDPrefix: "T5-"},
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"many":  {Label: "many", From: []string{"big"}, To: []string{"t1", "t2", "t3", "t4", "t5"}},
 			"three": {Label: "three", From: []string{"small"}, To: []string{"t1", "t2", "t3"}},
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
-	// The 5-target relation unconditionally legend-collapses.
 	if !strings.Contains(result, `<B>Big</B> <I>many</I>`) {
 		t.Errorf("expected Big/many in legend:\n%s", result)
 	}
-	// The 3-target 'three' relation must NOT also legend-collapse — after
-	// 'many' collapses, t1/t2/t3 are isolated and 'three' should hub-bundle.
 	if !strings.Contains(result, "__hub_") {
 		t.Errorf("3-target relation should hub-bundle when its co-targets lose their only other edge:\n%s", result)
 	}
@@ -1132,7 +952,7 @@ func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
 }
 
 func TestSchemaGraphvizFewTargetsPlain(t *testing.T) {
-	schemaGraphvizFixture(t,
+	svc := schemaGraphvizFixture(t,
 		map[string]metamodel.EntityDef{
 			"a": {Label: "A", IDPrefix: "A-"},
 			"b": {Label: "B", IDPrefix: "B-"},
@@ -1143,33 +963,32 @@ func TestSchemaGraphvizFewTargetsPlain(t *testing.T) {
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
-	if !strings.Contains(result, `a -> b [label="r"`) ||
-		!strings.Contains(result, `a -> c [label="r"`) {
-
+	if !strings.Contains(result, `a -> b [label="r"`) || !strings.Contains(result, `a -> c [label="r"`) {
 		t.Errorf("2-target relation should emit plain edges:\n%s", result)
 	}
 	if strings.Contains(result, "__hub_") || strings.Contains(result, "__legend [") {
-		t.Errorf("≤2 targets should never hub/legend:\n%s", result)
+		t.Errorf("<=2 targets should never hub/legend:\n%s", result)
 	}
 }
 
 func TestSchemaGraphvizDropsEmptyNode(t *testing.T) {
-	// 'island' participates only in a legend-collapsed relation (≥5 targets),
+	// 'island' participates only in a legend-collapsed relation (>=5 targets),
 	// and has no other edges, so it must be dropped from the body.
 	ents := map[string]metamodel.EntityDef{
 		"island": {Label: "Island", IDPrefix: "I-"},
 	}
 	targets := []string{"t1", "t2", "t3", "t4", "t5"}
-	for _, t := range targets {
-		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	for _, tg := range targets {
+		ents[tg] = metamodel.EntityDef{Label: strings.ToUpper(tg), IDPrefix: tg + "-"}
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"island"}, To: targets},
 			// each target has another connection so they stay visible.
@@ -1177,11 +996,12 @@ func TestSchemaGraphvizDropsEmptyNode(t *testing.T) {
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if strings.Contains(result, `island [label`) {
 		t.Errorf("legend-only entity 'island' should be hidden:\n%s", result)
@@ -1196,21 +1016,21 @@ func TestSchemaGraphvizNoLegendFlag(t *testing.T) {
 		"src": {Label: "Src", IDPrefix: "S-"},
 	}
 	targets := []string{"t1", "t2", "t3", "t4", "t5"}
-	for _, t := range targets {
-		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	for _, tg := range targets {
+		ents[tg] = metamodel.EntityDef{Label: strings.ToUpper(tg), IDPrefix: tg + "-"}
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"src"}, To: targets},
 		},
 	)
-	schemaNoLegend = true
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, true)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if strings.Contains(result, "__legend [") {
 		t.Errorf("--no-legend should suppress the legend:\n%s", result)
@@ -1224,24 +1044,22 @@ func TestSchemaGraphvizNoBundleFlag(t *testing.T) {
 		"t2":  {Label: "T2", IDPrefix: "T2-"},
 		"t3":  {Label: "T3", IDPrefix: "T3-"},
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"fans": {Label: "fans", From: []string{"src"}, To: []string{"t1", "t2", "t3"}},
 		},
 	)
-	schemaNoBundle = true
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, true, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
 	if strings.Contains(result, "__hub_") {
 		t.Errorf("--no-bundle should suppress hub even when targets are isolated:\n%s", result)
 	}
-	// With no bundle and isolated targets, the classification falls back to
-	// legend — which is the correct remaining collapse path.
 	if !strings.Contains(result, "__legend [") {
 		t.Errorf("with --no-bundle the pair should fall back to legend:\n%s", result)
 	}
@@ -1308,9 +1126,8 @@ func TestDotID(t *testing.T) {
 }
 
 // TestSchemaGraphvizHyphenatedIDs is a regression test for the class of bug
-// where entity identifiers containing hyphens (or any other non-[_A-Za-z0-9]
-// characters) are emitted unquoted and break DOT parsing. Exercises the full
-// pipeline: plain edge, hub, and legend — each with hyphenated names.
+// where entity identifiers containing hyphens are emitted unquoted and break
+// DOT parsing.
 func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 	ents := map[string]metamodel.EntityDef{
 		"review-response":          {Label: "Review Response", IDPrefix: "RR-"},
@@ -1320,14 +1137,13 @@ func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 		"review-checklist":         {Label: "Review Checklist", IDPrefix: "RV-"},
 		"docs-checklist":           {Label: "Docs Checklist", IDPrefix: "DC-"},
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"touches": {
 				Label: "touches",
 				From:  []string{"review-response"},
 				To:    []string{"planning-checklist"},
 			},
-			// 3 isolated targets to force a hub bundle with hyphenated dsts.
 			"hub-rel": {
 				Label: "hub-rel",
 				From:  []string{"review-response"},
@@ -1336,13 +1152,13 @@ func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
-	// All hyphenated identifiers must be emitted quoted.
 	mustNot := []string{
 		"  review-response [",
 		"  planning-checklist [",
@@ -1366,8 +1182,6 @@ func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 		}
 	}
 
-	// If graphviz is available, round-trip through `dot -Tdot` as a parse
-	// check — the ultimate validation that the DOT is well-formed.
 	if _, err := exec.LookPath("dot"); err != nil {
 		t.Skip("graphviz 'dot' not in PATH; skipping parse round-trip")
 	}
@@ -1386,22 +1200,22 @@ func TestSchemaGraphvizEscapesHTML(t *testing.T) {
 		"src": {Label: "Src<&>", IDPrefix: "S-"},
 	}
 	targets := []string{"t1", "t2", "t3", "t4", "t5"}
-	for _, t := range targets {
-		ents[t] = metamodel.EntityDef{Label: strings.ToUpper(t), IDPrefix: t + "-"}
+	for _, tg := range targets {
+		ents[tg] = metamodel.EntityDef{Label: strings.ToUpper(tg), IDPrefix: tg + "-"}
 	}
-	schemaGraphvizFixture(t, ents,
+	svc := schemaGraphvizFixture(t, ents,
 		map[string]metamodel.RelationDef{
 			"rel": {Label: `has "quote"`, From: []string{"src"}, To: targets},
 		},
 	)
 
-	result := captureStdout(t, func() {
-		if err := runSchemaGraphviz(cliReadFromContext(testCtx).Meta()); err != nil {
-			t.Fatalf("runSchemaGraphviz: %v", err)
-		}
+	result, err := captureStdoutVoid(t, func() error {
+		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
 	})
+	if err != nil {
+		t.Fatalf("runSchemaGraphviz: %v", err)
+	}
 
-	// The legend uses HTML-like labels, so the unsafe characters must be escaped.
 	if !strings.Contains(result, "Src&lt;&amp;&gt;") {
 		t.Errorf("legend should HTML-escape source label:\n%s", result)
 	}
