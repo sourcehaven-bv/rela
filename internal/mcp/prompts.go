@@ -66,7 +66,7 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 	}
 
 	ctx := context.Background()
-	st := s.ws.Store()
+	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -78,7 +78,7 @@ func (s *Server) handleAnalyzeTraceabilityPrompt(
 	}
 
 	// Get trace trees
-	tracer := s.ws.Tracer()
+	tracer := s.deps.Tracer
 	traceFrom := tracer.TraceFrom(ctx, id, 0)
 	traceTo := tracer.TraceTo(ctx, id, 0)
 
@@ -129,9 +129,9 @@ func (s *Server) handleReviewOrphansPrompt(
 	entityType := request.Params.Arguments["type"]
 
 	ctx := context.Background()
-	orphanIDs, _ := s.ws.Tracer().FindOrphans(ctx)
+	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	var resolved string
 	if entityType != "" {
 		resolved = s.resolveType(entityType)
@@ -163,7 +163,7 @@ func (s *Server) handleReviewOrphansPrompt(
 	}
 
 	// Get available relation types
-	meta := s.ws.Meta()
+	meta := s.deps.Meta
 	relTypes := meta.RelationTypes()
 	natsort.Strings(relTypes)
 	var relInfo strings.Builder
@@ -209,8 +209,8 @@ func (s *Server) handleSummarizeProjectPrompt(
 ) (*mcp.GetPromptResult, error) {
 	// Entity counts by type
 	ctx := context.Background()
-	meta := s.ws.Meta()
-	st := s.ws.Store()
+	meta := s.deps.Meta
+	st := s.deps.Store
 	entityTypes := meta.EntityTypes()
 	natsort.Strings(entityTypes)
 	var entityCounts strings.Builder
@@ -238,7 +238,7 @@ func (s *Server) handleSummarizeProjectPrompt(
 	}
 
 	// Analysis summary
-	orphanIDs, _ := s.ws.Tracer().FindOrphans(ctx)
+	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
 	orphanCount := len(orphanIDs)
 
 	content := fmt.Sprintf(`Generate a comprehensive project summary based on the following data.
@@ -287,7 +287,7 @@ func (s *Server) handleReviewEntityPrompt(
 		return nil, errors.New("id argument is required")
 	}
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	entity, getErr := st.GetEntity(context.Background(), id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
@@ -299,7 +299,7 @@ func (s *Server) handleReviewEntityPrompt(
 	}
 
 	// Get entity type schema
-	meta := s.ws.Meta()
+	meta := s.deps.Meta
 	def, _ := meta.GetEntityDef(entity.Type)
 	var schemaText string
 	if def != nil {

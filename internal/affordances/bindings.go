@@ -31,6 +31,12 @@ type RelationLookup interface {
 // build per-entity predicate Bindings: the principal, the entity, the
 // principal's effective global roles, and the graph lookup. It is
 // constructed once per resolver call (snapshot-once).
+//
+// The caller's request context is NOT stored here — it is threaded as
+// a method parameter (passes, evalGrants, …) into predicate Eval and
+// the host-function calls it makes, matching the predicate package's
+// own ctx-as-parameter convention (golangci-lint containedctx) and
+// the caller-ctx pattern from TKT-WFB6 / PR#825.
 type bindingContext struct {
 	principal   principal.Principal
 	entity      *entity.Entity

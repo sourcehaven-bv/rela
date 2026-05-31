@@ -533,6 +533,55 @@ assignments:
 	}
 }
 
+// ctxKey is a private context key for the propagation test.
+type ctxKey struct{}
+
+// ctxRecordingLookup records the context handed to OutgoingCounts so a
+// test can assert the caller's ctx (not context.Background()) reaches
+// the host-function path during predicate evaluation.
+type ctxRecordingLookup struct {
+	*stubLookup
+	gotMarker string
+}
+
+func (l *ctxRecordingLookup) OutgoingCounts(ctx context.Context, fromID string) map[string]int {
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		l.gotMarker = v
+	}
+	return l.stubLookup.OutgoingCounts(ctx, fromID)
+}
+
+// IB-finding #2 (tschmits) / PR#825 pattern: the caller's request
+// context must thread into predicate Eval and the host-function calls
+// it makes, rather than being dropped for context.Background(). A
+// predicate that invokes a relation host func is evaluated with a
+// marker on the context; the lookup must observe it.
+func TestResolver_CallerContext_ThreadsToHostFuncs(t *testing.T) {
+	p := policyFromYAML(t, `
+roles:
+  triager:
+    fields:
+      ticket:
+        - field: status
+          when: "has_relation(entity, 'blocks')"
+assignments:
+  alice: triager
+`)
+	lookup := &ctxRecordingLookup{stubLookup: newStubLookup([3]string{"T-1", "blocks", "T-9"})}
+	r, err := affordances.New(p, testMeta(t), lookup)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx := context.WithValue(ctxAs("alice"), ctxKey{}, "caller-marker")
+	_ = r.FieldVerdicts(ctx, ticket("T-1", nil))
+
+	if lookup.gotMarker != "caller-marker" {
+		t.Errorf("host func saw ctx marker %q, want %q — caller context was not threaded into predicate Eval",
+			lookup.gotMarker, "caller-marker")
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

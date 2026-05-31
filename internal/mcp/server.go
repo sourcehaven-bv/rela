@@ -33,29 +33,67 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// Services is the slice of backend services the MCP server actually
-// uses. Tests that need a narrower surface can implement Services
-// directly. The wiring site (internal/cli) constructs a concrete
-// implementation from focused services and supplies it to NewServer.
-type Services interface {
-	Store() store.Store
-	Meta() *metamodel.Metamodel
-	Tracer() tracer.Tracer
-	Searcher() search.Searcher
-	Validator() validator.Validator
-	EntityManager() entitymanager.EntityManager
-	Config() config.Loader
-	Paths() *project.Context
-	LuaWriteDeps() lua.WriteDeps
-	LuaCache() *lua.Cache
-	Watcher() Watcher
+// Deps is the focused bundle of backend services the MCP server needs.
+// Every field is a domain type — the server holds no reference to any
+// composition-root aggregate, so `internal/mcp` does not import
+// `internal/appbuild` (enforced by arch-lint). The wiring site
+// (`internal/cli`) constructs a Deps from focused services and supplies
+// it to [NewServer]; tests build a Deps literal directly.
+//
+// ProjectRoot is the absolute project root, used by the lua tools to
+// resolve relative script paths. It is the only piece of the project
+// context MCP consumes — passing the string instead of a
+// `*project.Context` keeps that type from leaking into MCP test stubs.
+type Deps struct {
+	Store         store.Store
+	Meta          *metamodel.Metamodel
+	Tracer        tracer.Tracer
+	Searcher      search.Searcher
+	Validator     validator.Validator
+	EntityManager entitymanager.EntityManager
+	Config        config.Loader
+	LuaWriteDeps  lua.WriteDeps
+	LuaCache      *lua.Cache
+	Watcher       Watcher
+	ProjectRoot   string
+}
+
+// validate rejects a Deps missing any field whose zero value would
+// defer a failure to request time — a nil collaborator panics inside a
+// tool handler, and an empty ProjectRoot makes lua_list silently walk
+// the process CWD instead of the project's scripts/ dir. Catching these
+// at construction keeps the failure where it can be diagnosed.
+//
+// LuaCache is intentionally absent: a nil cache is a valid "no cache"
+// signal that lua.WithCache tolerates.
+func (d Deps) validate() error {
+	switch {
+	case d.Store == nil:
+		return errors.New("mcp: Deps.Store is required")
+	case d.Meta == nil:
+		return errors.New("mcp: Deps.Meta is required")
+	case d.Tracer == nil:
+		return errors.New("mcp: Deps.Tracer is required")
+	case d.Searcher == nil:
+		return errors.New("mcp: Deps.Searcher is required")
+	case d.Validator == nil:
+		return errors.New("mcp: Deps.Validator is required")
+	case d.EntityManager == nil:
+		return errors.New("mcp: Deps.EntityManager is required")
+	case d.Config == nil:
+		return errors.New("mcp: Deps.Config is required")
+	case d.Watcher == nil:
+		return errors.New("mcp: Deps.Watcher is required")
+	case d.ProjectRoot == "":
+		return errors.New("mcp: Deps.ProjectRoot is required")
+	}
+	return nil
 }
 
 // Watcher is the narrow file-watching capability MCP requires from
@@ -74,7 +112,7 @@ type Watcher interface {
 // Server wraps the MCP server with rela-specific state.
 type Server struct {
 	mcp       *server.MCPServer
-	ws        Services
+	deps      Deps
 	logger    *slog.Logger
 	principal principal.Principal
 }
@@ -112,9 +150,9 @@ func (s *Server) principalMiddleware(next server.ToolHandlerFunc) server.ToolHan
 // production bug (CLAUDE.md "constructors reject nil required
 // fields"). Tests must pass a non-zero Principal too — use any
 // non-empty `principal.Principal{User: ..., Tool: ...}`.
-func NewServer(ws Services, version string, opts ...Option) (*Server, error) {
+func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	s := &Server{
-		ws:     ws,
+		deps:   deps,
 		logger: slog.Default().With("component", "mcp"),
 	}
 	for _, opt := range opts {
@@ -122,6 +160,9 @@ func NewServer(ws Services, version string, opts ...Option) (*Server, error) {
 	}
 	if s.principal == (principal.Principal{}) {
 		return nil, errors.New("mcp.NewServer: Principal is required (use WithPrincipal)")
+	}
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
 
 	mcpServer := server.NewMCPServer(
@@ -158,7 +199,7 @@ func (s *Server) Serve() error {
 	s.logger.Info("starting rela MCP server on stdio")
 
 	// Start the file watcher; MCP only cares "something changed."
-	if err := s.ws.Watcher().Start(func() {
+	if err := s.deps.Watcher.Start(func() {
 		s.logger.Info("graph re-synced from file changes")
 		if s.mcp != nil {
 			s.mcp.SendNotificationToAllClients(
@@ -169,7 +210,7 @@ func (s *Server) Serve() error {
 		s.logger.Warn("file watcher not started", "error", err)
 	}
 
-	defer s.ws.Watcher().Stop()
+	defer s.deps.Watcher.Stop()
 
 	// mcp-go's WithErrorLogger expects a stdlib *log.Logger; bridge to slog
 	// so all output flows through the configured slog handler.
