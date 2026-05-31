@@ -50,7 +50,7 @@
     "fast-check": "^4.8.0",
     "globals": "^17.6.0",
     "happy-dom": "^20.9.0",
-    "jscpd": "^4.2.2",
+    "jscpd": "^4.2.3",
     "prettier": "^3.8.3",
     "source-map": "^0.7.6",
     "tsx": "^4.22.1",
