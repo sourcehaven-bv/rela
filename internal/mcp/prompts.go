@@ -58,21 +58,20 @@ func promptReviewEntity() mcp.Prompt {
 // --- Prompt Handlers ---
 
 func (s *Server) handleAnalyzeTraceabilityPrompt(
-	_ context.Context, request mcp.GetPromptRequest,
+	ctx context.Context, request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
 	if id == "" {
 		return nil, errors.New("id argument is required")
 	}
 
-	ctx := context.Background()
 	st := s.deps.Store
 	e, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	entityText, err := convertStoreEntity(e, st, true)
+	entityText, err := convertStoreEntity(ctx, e, st, true)
 	if err != nil {
 		return nil, err
 	}
@@ -124,11 +123,10 @@ Please analyze:
 }
 
 func (s *Server) handleReviewOrphansPrompt(
-	_ context.Context, request mcp.GetPromptRequest,
+	ctx context.Context, request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	ctx := context.Background()
 	orphanIDs, _ := s.deps.Tracer.FindOrphans(ctx)
 
 	st := s.deps.Store
@@ -205,10 +203,9 @@ For each orphan entity:
 }
 
 func (s *Server) handleSummarizeProjectPrompt(
-	_ context.Context, _ mcp.GetPromptRequest,
+	ctx context.Context, _ mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	// Entity counts by type
-	ctx := context.Background()
 	meta := s.deps.Meta
 	st := s.deps.Store
 	entityTypes := meta.EntityTypes()
@@ -280,7 +277,7 @@ Please provide:
 }
 
 func (s *Server) handleReviewEntityPrompt(
-	_ context.Context, request mcp.GetPromptRequest,
+	ctx context.Context, request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	id := request.Params.Arguments["id"]
 	if id == "" {
@@ -288,12 +285,12 @@ func (s *Server) handleReviewEntityPrompt(
 	}
 
 	st := s.deps.Store
-	entity, getErr := st.GetEntity(context.Background(), id)
+	entity, getErr := st.GetEntity(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 
-	entityText, err := convertStoreEntity(entity, st, true)
+	entityText, err := convertStoreEntity(ctx, entity, st, true)
 	if err != nil {
 		return nil, err
 	}

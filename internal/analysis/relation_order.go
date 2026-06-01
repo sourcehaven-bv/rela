@@ -29,9 +29,8 @@ type RelationOrderIssue struct {
 //
 // Returns warnings only — never errors. Callers map this to whatever
 // surface the operator is on (CLI table, MCP JSON, web UI dashboard).
-func (s *Service) CheckRelationOrder(opts Options) []RelationOrderIssue {
+func (s *Service) CheckRelationOrder(ctx context.Context, opts Options) []RelationOrderIssue {
 	issues := make([]RelationOrderIssue, 0)
-	ctx := context.Background()
 	st := s.deps.Store
 	meta := s.deps.Meta
 

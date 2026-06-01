@@ -76,7 +76,7 @@ var analyzeOrphansCmd = &cobra.Command{
 			return err
 		}
 
-		orphans := svc.FindOrphansWithScope(*opts)
+		orphans := svc.FindOrphansWithScope(cmd.Context(), *opts)
 		filter.SortByID(orphans, storeEntityRecord, false)
 
 		if writeAnalysisJSON(len(orphans), orphans,
@@ -103,7 +103,7 @@ var analyzeDuplicatesCmd = &cobra.Command{
 			return err
 		}
 
-		duplicates := svc.FindDuplicates(*opts)
+		duplicates := svc.FindDuplicates(cmd.Context(), *opts)
 
 		// Handle JSON output format
 		if out.Format == "json" {
@@ -155,7 +155,7 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 			return err
 		}
 
-		allGaps := svc.FindGaps(*opts)
+		allGaps := svc.FindGaps(cmd.Context(), *opts)
 
 		if writeAnalysisJSON(len(allGaps), allGaps,
 			"No ID sequence gaps found", "Found gaps in %d ID sequences") {
@@ -191,7 +191,7 @@ files that need cleanup after hand-edits or imports.`,
 		if err != nil {
 			return err
 		}
-		issues := svc.CheckRelationOrder(*opts)
+		issues := svc.CheckRelationOrder(cmd.Context(), *opts)
 
 		if writeAnalysisJSON(len(issues), issues,
 			"All orderable relations have consistent order values",
@@ -224,7 +224,7 @@ var analyzeCardinalityCmd = &cobra.Command{
 			return err
 		}
 
-		violations := svc.CheckCardinality(*opts)
+		violations := svc.CheckCardinality(cmd.Context(), *opts)
 
 		if writeAnalysisJSON(len(violations), violations,
 			"All cardinality constraints satisfied", "Found %d cardinality violations") {
@@ -271,13 +271,13 @@ This catches issues in manually-edited markdown files that bypass CLI validation
 		if err != nil {
 			return err
 		}
-		return runPropertyValidation(svc, *opts)
+		return runPropertyValidation(cmd.Context(), svc, *opts)
 	},
 }
 
 // runPropertyValidation validates entity and relation properties against the metamodel.
-func runPropertyValidation(svc cliAnalyze, opts analysis.Options) error {
-	allEntityErrors := schema.ValidateEntityProperties(svc.Store(), svc.Meta())
+func runPropertyValidation(ctx context.Context, svc cliAnalyze, opts analysis.Options) error {
+	allEntityErrors := schema.ValidateEntityProperties(ctx, svc.Store(), svc.Meta())
 	if opts.Scope != nil {
 		filtered := allEntityErrors[:0]
 		for _, ee := range allEntityErrors {
@@ -287,7 +287,7 @@ func runPropertyValidation(svc cliAnalyze, opts analysis.Options) error {
 		}
 		allEntityErrors = filtered
 	}
-	allRelationErrors := schema.ValidateRelationProperties(svc.Store(), svc.Meta())
+	allRelationErrors := schema.ValidateRelationProperties(ctx, svc.Store(), svc.Meta())
 
 	errorCount := 0
 	for _, ee := range allEntityErrors {
@@ -686,7 +686,7 @@ var analyzeAllCmd = &cobra.Command{
 
 		out.WriteMessage("")
 		out.WriteSectionHeader("Property Validation")
-		if err := runPropertyValidation(svc, *opts); err != nil {
+		if err := runPropertyValidation(cmd.Context(), svc, *opts); err != nil {
 			errs = append(errs, fmt.Errorf("property validation: %w", err))
 		}
 

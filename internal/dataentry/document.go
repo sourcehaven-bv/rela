@@ -138,14 +138,14 @@ func newDocumentService(st store.Store, kv state.KV, projectRoot string,
 // Script renders do NOT populate this cache and callers should not read
 // it for script: docs (see Render); a stale command:-era file at the
 // same path would otherwise shadow the Lua render.
-func (s *documentService) GetCached(entryID string) *DocumentResult {
-	entities, contentHash, err := s.computeDocumentHash(entryID)
+func (s *documentService) GetCached(ctx context.Context, entryID string) *DocumentResult {
+	entities, contentHash, err := s.computeDocumentHash(ctx, entryID)
 	if err != nil {
 		return nil
 	}
 
 	cacheFile := fmt.Sprintf("%s/%s-%s.html", docCacheSubdir, entryID, contentHash)
-	cachedHTML, _ := s.state.Get(context.Background(), cacheFile)
+	cachedHTML, _ := s.state.Get(ctx, cacheFile)
 	if cachedHTML == nil {
 		return nil
 	}
@@ -162,8 +162,8 @@ func (s *documentService) GetCached(entryID string) *DocumentResult {
 // (entryID, ConfigID) pair — renders of the same entry under *different*
 // document configs proceed in parallel. Command renders cache to disk;
 // script renders do not.
-func (s *documentService) Render(entryID string, cfg documentRenderConfig) (*DocumentResult, error) {
-	entities, contentHash, err := s.computeDocumentHash(entryID)
+func (s *documentService) Render(ctx context.Context, entryID string, cfg documentRenderConfig) (*DocumentResult, error) {
+	entities, contentHash, err := s.computeDocumentHash(ctx, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
 	}
@@ -175,7 +175,7 @@ func (s *documentService) Render(entryID string, cfg documentRenderConfig) (*Doc
 	// not collapse onto one another's HTML (RR-4QSBN).
 	sfKey := entryID + "|" + cfg.ConfigID
 	result, err, _ := s.group.Do(sfKey, func() (interface{}, error) {
-		return s.doRender(entryID, cfg, entities, contentHash, cacheFile)
+		return s.doRender(ctx, entryID, cfg, entities, contentHash, cacheFile)
 	})
 	if err != nil {
 		return nil, err
@@ -189,14 +189,14 @@ func (s *documentService) Render(entryID string, cfg documentRenderConfig) (*Doc
 // Command — these are mutually exclusive at config load (see
 // dataentryconfig.validateDocuments) so exactly one branch fires.
 func (s *documentService) doRender(
-	entryID string, cfg documentRenderConfig, entities []*entity.Entity, contentHash, cacheFile string,
+	ctx context.Context, entryID string, cfg documentRenderConfig, entities []*entity.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
 	var markdown string
 	var err error
 	if cfg.Script != "" {
 		markdown, err = s.renderScript(entryID, cfg)
 	} else {
-		markdown, err = s.renderCommand(entryID, cfg)
+		markdown, err = s.renderCommand(ctx, entryID, cfg)
 	}
 	if err != nil {
 		return nil, err
@@ -213,7 +213,7 @@ func (s *documentService) doRender(
 	// so writing script-render output here would make a subsequent
 	// command: run read stale bytes from the wrong renderer.
 	if cfg.Script == "" {
-		if writeErr := s.state.Put(context.Background(), cacheFile, []byte(htmlContent)); writeErr != nil {
+		if writeErr := s.state.Put(ctx, cacheFile, []byte(htmlContent)); writeErr != nil {
 			slog.Warn("document cache write failed", "error", writeErr)
 		}
 	}
@@ -227,11 +227,11 @@ func (s *documentService) doRender(
 
 // renderCommand invokes the external render command and returns its stdout
 // as markdown. Placeholder substitution happens on the command string.
-func (s *documentService) renderCommand(entryID string, cfg documentRenderConfig) (string, error) {
+func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg documentRenderConfig) (string, error) {
 	command := cfg.Command
 	command = strings.ReplaceAll(command, "{id}", entryID)
 	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
-	return s.executeCommand(command, cfg.Timeout)
+	return s.executeCommand(ctx, command, cfg.Timeout)
 }
 
 // renderScript executes a Lua document script and returns its captured
@@ -257,8 +257,8 @@ func (s *documentService) renderScript(entryID string, cfg documentRenderConfig)
 
 // computeDocumentHash computes a content hash for cache validation.
 // Uses the entry entity for hashing. Returns the entities and their hash.
-func (s *documentService) computeDocumentHash(entryID string) ([]*entity.Entity, string, error) {
-	e, err := s.store.GetEntity(context.Background(), entryID)
+func (s *documentService) computeDocumentHash(ctx context.Context, entryID string) ([]*entity.Entity, string, error) {
+	e, err := s.store.GetEntity(ctx, entryID)
 	if err != nil {
 		return nil, "", fmt.Errorf("entity %q not found", entryID)
 	}
@@ -306,11 +306,11 @@ func hashEntities(entities []*entity.Entity) string {
 const commandDefaultTimeout = 30 * time.Second
 
 // executeCommand runs an external command and returns its stdout.
-func (s *documentService) executeCommand(command string, timeout time.Duration) (string, error) {
+func (s *documentService) executeCommand(ctx context.Context, command string, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = commandDefaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)

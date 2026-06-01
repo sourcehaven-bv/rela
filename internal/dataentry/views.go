@@ -16,8 +16,7 @@ type viewResult struct {
 }
 
 // executeView runs a view's traversal rules and returns the result.
-func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) {
-	ctx := context.Background()
+func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) (*viewResult, error) {
 	entry, err := a.store.GetEntity(ctx, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("entry entity not found: %s", entryID)
@@ -36,7 +35,7 @@ func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) 
 	for range maxPasses {
 		before := countViewEntities(result.Collections)
 		for _, rule := range view.Traverse {
-			a.applyViewTraverse(rule, result)
+			a.applyViewTraverse(ctx, rule, result)
 		}
 		if countViewEntities(result.Collections) == before {
 			break
@@ -49,7 +48,7 @@ func (a *App) executeView(view ViewConfig, entryID string) (*viewResult, error) 
 	return result, nil
 }
 
-func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
+func (a *App) applyViewTraverse(ctx context.Context, rule ViewTraverse, result *viewResult) {
 	// Gather source entities
 	var sources []*entity.Entity
 	if rule.From == "*" {
@@ -75,9 +74,9 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 			if maxD <= 0 {
 				maxD = maxRecursionDepth
 			}
-			found = append(found, a.traverseViewRecursive(src.ID, rule, 0, maxD, map[string]bool{})...)
+			found = append(found, a.traverseViewRecursive(ctx, src.ID, rule, 0, maxD, map[string]bool{})...)
 		} else {
-			found = append(found, a.traverseViewOnce(src.ID, rule)...)
+			found = append(found, a.traverseViewOnce(ctx, src.ID, rule)...)
 		}
 	}
 
@@ -106,8 +105,7 @@ func (a *App) applyViewTraverse(rule ViewTraverse, result *viewResult) {
 	}
 }
 
-func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*entity.Entity {
-	ctx := context.Background()
+func (a *App) traverseViewOnce(ctx context.Context, sourceID string, rule ViewTraverse) []*entity.Entity {
 	st := a.store
 	var out []*entity.Entity
 
@@ -143,16 +141,18 @@ func (a *App) traverseViewOnce(sourceID string, rule ViewTraverse) []*entity.Ent
 	return out
 }
 
-func (a *App) traverseViewRecursive(sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool) []*entity.Entity {
+func (a *App) traverseViewRecursive(
+	ctx context.Context, sourceID string, rule ViewTraverse, depth, maxDepth int, visited map[string]bool,
+) []*entity.Entity {
 	if depth >= maxDepth || visited[sourceID] {
 		return nil
 	}
 	visited[sourceID] = true
-	immediate := a.traverseViewOnce(sourceID, rule)
+	immediate := a.traverseViewOnce(ctx, sourceID, rule)
 	var all []*entity.Entity
 	all = append(all, immediate...)
 	for _, e := range immediate {
-		all = append(all, a.traverseViewRecursive(e.ID, rule, depth+1, maxDepth, visited)...)
+		all = append(all, a.traverseViewRecursive(ctx, e.ID, rule, depth+1, maxDepth, visited)...)
 	}
 	return all
 }

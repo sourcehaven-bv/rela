@@ -89,7 +89,7 @@ func TestConvertStoreEntity_WithoutRelations(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(e, st, false)
+	result, err := convertStoreEntity(context.Background(), e, st, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestConvertStoreEntity_WithRelations(t *testing.T) {
 	seedEntity(t, st, e2)
 	seedRelation(t, st, e2.ID, "addresses", e1.ID)
 
-	result, err := convertStoreEntity(e1, st, true)
+	result, err := convertStoreEntity(context.Background(), e1, st, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestConvertStoreEntity_NoRelationsPresent(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(e, st, true)
+	result, err := convertStoreEntity(context.Background(), e, st, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestBuildStoreRelations_NoEdges(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	rels := buildStoreRelations(e.ID, st)
+	rels := buildStoreRelations(context.Background(), e.ID, st)
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
@@ -380,7 +380,7 @@ func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 	seedEntity(t, st, req)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(sol.ID, st)
+	rels := buildStoreRelations(context.Background(), sol.ID, st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -407,7 +407,7 @@ func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 	seedEntity(t, st, sol)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(req.ID, st)
+	rels := buildStoreRelations(context.Background(), req.ID, st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -431,7 +431,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	seedRelation(t, st, "SOL-001", "addresses", "REQ-001")
 	seedRelation(t, st, "REQ-001", "motivates", "DEC-001")
 
-	rels := buildStoreRelations("REQ-001", st)
+	rels := buildStoreRelations(context.Background(), "REQ-001", st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -611,7 +611,7 @@ func TestConvertStoreEntity_WithProperties(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(e, st, false)
+	result, err := convertStoreEntity(context.Background(), e, st, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

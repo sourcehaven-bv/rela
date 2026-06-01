@@ -427,11 +427,13 @@ const (
 //
 // Returns the path entity when the peer can't be found locally (404
 // upstream — should not happen in practice; safe-fail).
-func (a *App) relationSourceEntity(pathEntity *entityPkg.Entity, peerID, direction string) *entityPkg.Entity {
+func (a *App) relationSourceEntity(
+	ctx context.Context, pathEntity *entityPkg.Entity, peerID, direction string,
+) *entityPkg.Entity {
 	if direction != string(DirectionIncoming) {
 		return pathEntity
 	}
-	peer, ok := a.getEntity(peerID)
+	peer, ok := a.getEntity(ctx, peerID)
 	if !ok {
 		return pathEntity
 	}
@@ -505,7 +507,7 @@ func (a *App) validateRelationsModernAffordances(
 		for _, ref := range upd.Data {
 			desiredByID[ref.ID] = ref
 		}
-		current := a.currentEdgesByPeer(entityID, canonical, incoming)
+		current := a.currentEdgesByPeer(ctx, entityID, canonical, incoming)
 
 		// For incoming-direction body keys the SOURCE of every edge is
 		// the peer entity, not the path entity. Verdicts are evaluated
@@ -518,7 +520,7 @@ func (a *App) validateRelationsModernAffordances(
 
 		// Adds: any desired edge whose peer isn't currently linked.
 		for _, ref := range upd.Data {
-			source := a.relationSourceEntity(e, ref.ID, direction)
+			source := a.relationSourceEntity(ctx, e, ref.ID, direction)
 			if _, exists := current[ref.ID]; exists {
 				// Upsert path: not a create, but the meta may change.
 				if denial := a.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
@@ -539,7 +541,7 @@ func (a *App) validateRelationsModernAffordances(
 			if _, kept := desiredByID[peerID]; kept {
 				continue
 			}
-			source := a.relationSourceEntity(e, peerID, direction)
+			source := a.relationSourceEntity(ctx, e, peerID, direction)
 			if denial := a.validateRelationOp(ctx, source, canonical, RelationOpRemove); denial != nil {
 				return denial
 			}

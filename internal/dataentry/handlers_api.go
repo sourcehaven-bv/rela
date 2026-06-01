@@ -181,7 +181,7 @@ func (a *App) handleAPIEntities(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		result = append(result, a.entityToAPI(e, false))
+		result = append(result, a.entityToAPI(ctx, e, false))
 	}
 
 	writeJSON(w, result)
@@ -201,7 +201,7 @@ func (a *App) handleAPIEntity(w http.ResponseWriter, r *http.Request) { // Extra
 		return
 	}
 
-	result := a.entityToAPI(e, true)
+	result := a.entityToAPI(r.Context(), e, true)
 	writeJSON(w, result)
 }
 
@@ -248,7 +248,7 @@ func (a *App) handleAPIMetamodel(w http.ResponseWriter, _ *http.Request) {
 }
 
 // entityToAPI converts an entity.Entity to APIEntity.
-func (a *App) entityToAPI(e *entity.Entity, includeRelations bool) APIEntity {
+func (a *App) entityToAPI(ctx context.Context, e *entity.Entity, includeRelations bool) APIEntity {
 	s := a.State()
 	api := APIEntity{
 		ID:         e.ID,
@@ -262,7 +262,6 @@ func (a *App) entityToAPI(e *entity.Entity, includeRelations bool) APIEntity {
 	}
 
 	if includeRelations {
-		ctx := context.Background()
 		st := a.store
 		api.Relations = make([]APIRelation, 0)
 
@@ -449,7 +448,7 @@ func (a *App) handleAPICreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiResult := a.entityToAPI(result.Entity, false)
+	apiResult := a.entityToAPI(r.Context(), result.Entity, false)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(apiResult)
@@ -508,7 +507,7 @@ func (a *App) handleAPIUpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiResult := a.entityToAPI(result.Entity, false)
+	apiResult := a.entityToAPI(r.Context(), result.Entity, false)
 	writeJSON(w, apiResult)
 }
 
@@ -626,11 +625,11 @@ func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case from != "":
-		relations = a.listOutgoingRelations(from)
+		relations = a.listOutgoingRelations(r.Context(), from)
 	case to != "":
-		relations = a.listIncomingRelations(to)
+		relations = a.listIncomingRelations(r.Context(), to)
 	default:
-		relations = a.listAllRelations()
+		relations = a.listAllRelations(r.Context())
 	}
 
 	if relations == nil {
@@ -641,8 +640,7 @@ func (a *App) handleAPIListRelations(w http.ResponseWriter, r *http.Request) {
 }
 
 // listOutgoingRelations returns relations where the given entity is the source.
-func (a *App) listOutgoingRelations(from string) []APIRelation {
-	ctx := context.Background()
+func (a *App) listOutgoingRelations(ctx context.Context, from string) []APIRelation {
 	st := a.store
 	relations := make([]APIRelation, 0)
 	q := store.RelationQuery{EntityID: from, Direction: store.DirectionOutgoing}
@@ -660,8 +658,7 @@ func (a *App) listOutgoingRelations(from string) []APIRelation {
 }
 
 // listIncomingRelations returns relations where the given entity is the target.
-func (a *App) listIncomingRelations(to string) []APIRelation {
-	ctx := context.Background()
+func (a *App) listIncomingRelations(ctx context.Context, to string) []APIRelation {
 	st := a.store
 	relations := make([]APIRelation, 0)
 	q := store.RelationQuery{EntityID: to, Direction: store.DirectionIncoming}
@@ -679,8 +676,7 @@ func (a *App) listIncomingRelations(to string) []APIRelation {
 }
 
 // listAllRelations returns all relations in the graph.
-func (a *App) listAllRelations() []APIRelation {
-	ctx := context.Background()
+func (a *App) listAllRelations(ctx context.Context) []APIRelation {
 	st := a.store
 	relations := make([]APIRelation, 0)
 	for edge, err := range st.ListRelations(ctx, store.RelationQuery{}) {
@@ -779,7 +775,7 @@ func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIGetSettings returns the settings data for the settings page.
-func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
+func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 	s := a.State()
 	ud := s.UserDefaults
 	if ud == nil {
@@ -862,7 +858,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, _ *http.Request) {
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				for _, e := range listFromStoreByTypes(a.Services(), []string{targetType}) {
+				for _, e := range listFromStoreByTypes(r.Context(), a.Services(), []string{targetType}) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
 						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
@@ -913,8 +909,9 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	// are wrapped together so a concurrent reader cannot observe a
 	// State whose UserDefaults disagrees with what's on disk.
 	var saveErr error
+	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.saveUserDefaults(&ud); err != nil {
+		if err := a.saveUserDefaults(ctx, &ud); err != nil {
 			saveErr = err
 			return
 		}
@@ -968,8 +965,9 @@ func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 	// readers see the new palette via state.Load() rather than
 	// observing torn writes through a shared snapshot pointer.
 	var saveErr error
+	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.saveUserPalette(&input); err != nil {
+		if err := a.saveUserPalette(ctx, &input); err != nil {
 			saveErr = err
 			return
 		}

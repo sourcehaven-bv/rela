@@ -1,7 +1,6 @@
 package dataentry
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -93,7 +92,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// Resolve entity if provided in the request.
 	var ent *entity.Entity
 	if req.EntityID != "" {
-		if e, err := a.store.GetEntity(context.Background(), req.EntityID); err == nil {
+		if e, err := a.store.GetEntity(r.Context(), req.EntityID); err == nil {
 			ent = e
 		}
 	}
@@ -101,7 +100,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// Reuse the App's long-lived engine so rela.cache state persists
 	// across action invocations. Constructing a fresh engine per
 	// request would reset the cache each time and defeat memoization.
-	resp, err := a.scriptEngine.ExecuteAction(action.Script, a.luaWriteDeps(),
+	resp, err := a.scriptEngine.ExecuteAction(r.Context(), action.Script, a.luaWriteDeps(),
 		ent, action.Params, actionTimeout, correlationID)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)

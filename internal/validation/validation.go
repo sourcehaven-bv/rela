@@ -191,6 +191,11 @@ func (s *Service) CheckRule(
 	}()
 
 	for _, e := range candidates {
+		// The Lua path under checkEntityAgainstRule runs through luaCtx.runtime,
+		// which was built with lua.WithContext(ctx); applyTimeout derives the
+		// per-entity budget from that cached parent ctx. contextcheck can't
+		// follow that flow across the gopher-lua SetContext boundary.
+		//nolint:contextcheck // ctx threaded via WithContext on luaCtx.runtime
 		entityResult := s.checkEntityAgainstRule(e, rule, whenFilters, thenFilters, luaCtx)
 		result.Violations = append(result.Violations, entityResult.Violations...)
 		result.ScriptErrors = append(result.ScriptErrors, entityResult.ScriptErrors...)

@@ -479,7 +479,7 @@ type NavElement struct {
 }
 
 // enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
-func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
+func (a *App) enrichNavEntry(ctx context.Context, nav NavigationEntry) NavItem {
 	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Kanban: nav.Kanban}
 	if nav.Dashboard || nav.Kanban != "" {
 		return item
@@ -487,7 +487,7 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 	s := a.State()
 	if list, ok := s.Cfg.Lists[nav.List]; ok {
 		item.EntityType = list.EntityType
-		entities := listFromStoreByTypes(a.Services(), []string{list.EntityType})
+		entities := listFromStoreByTypes(ctx, a.Services(), []string{list.EntityType})
 		entities = applyFilters(entities, list.Filters)
 		item.Count = len(entities)
 	}
@@ -496,8 +496,8 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 
 // navElements returns the navigation structure with groups and items resolved.
 // The activeList parameter is used to auto-expand the group containing the active item.
-func (a *App) navElements(activeList string) []NavElement {
-	uiState := a.loadUIState()
+func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
+	uiState := a.loadUIState(ctx)
 	cfgNav := a.State().Cfg.Navigation
 	elements := make([]NavElement, 0, len(cfgNav))
 	for _, nav := range cfgNav {
@@ -511,7 +511,7 @@ func (a *App) navElements(activeList string) []NavElement {
 			}
 			grp.Items = make([]NavItem, len(nav.Items))
 			for i, child := range nav.Items {
-				grp.Items[i] = a.enrichNavEntry(child)
+				grp.Items[i] = a.enrichNavEntry(ctx, child)
 				// Auto-expand group if it contains the active list
 				if child.List == activeList && activeList != "" {
 					grp.Collapsed = false
@@ -519,7 +519,7 @@ func (a *App) navElements(activeList string) []NavElement {
 			}
 			elements = append(elements, NavElement{Group: &grp})
 		} else {
-			item := a.enrichNavEntry(nav)
+			item := a.enrichNavEntry(ctx, nav)
 			elements = append(elements, NavElement{Item: &item})
 		}
 	}
@@ -528,12 +528,12 @@ func (a *App) navElements(activeList string) []NavElement {
 
 // loadUIState reads .rela/ui-state.json and returns the persisted state.
 // Returns an empty UIState if the file doesn't exist or can't be parsed.
-func (a *App) loadUIState() UIState {
+func (a *App) loadUIState(ctx context.Context) UIState {
 	st := UIState{CollapsedGroups: make(map[string]bool)}
 	if a.kv == nil {
 		return st
 	}
-	data, err := a.kv.Get(context.Background(), uiStateFile)
+	data, err := a.kv.Get(ctx, uiStateFile)
 	if err != nil {
 		return st
 	}
@@ -576,7 +576,7 @@ func (a *App) loadUserDefaults() *UserDefaults {
 }
 
 // saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
-func (a *App) saveUserDefaults(ud *UserDefaults) error {
+func (a *App) saveUserDefaults(ctx context.Context, ud *UserDefaults) error {
 	if a.kv == nil {
 		return nil
 	}
@@ -584,7 +584,7 @@ func (a *App) saveUserDefaults(ud *UserDefaults) error {
 	if err != nil {
 		return err
 	}
-	return a.kv.Put(context.Background(), userDefaultsFile, data)
+	return a.kv.Put(ctx, userDefaultsFile, data)
 }
 
 // coverage-ignore: requires running workspace, tested via e2e
@@ -619,7 +619,7 @@ func (a *App) loadUserPalette() (*PaletteConfig, error) {
 }
 
 // saveUserPalette writes the user palette to .rela/palette.yaml.
-func (a *App) saveUserPalette(p *PaletteConfig) error {
+func (a *App) saveUserPalette(ctx context.Context, p *PaletteConfig) error {
 	if a.kv == nil {
 		return nil
 	}
@@ -627,7 +627,7 @@ func (a *App) saveUserPalette(p *PaletteConfig) error {
 	if err != nil {
 		return err
 	}
-	return a.kv.Put(context.Background(), userPaletteFile, data)
+	return a.kv.Put(ctx, userPaletteFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,

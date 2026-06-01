@@ -48,7 +48,7 @@ func TestCheckRelationOrder_DuplicateDetected(t *testing.T) {
 		addOrderedRelation(s, "STP-2", 1.0) // duplicate
 	})
 
-	issues := svc.CheckRelationOrder(analysis.Options{})
+	issues := svc.CheckRelationOrder(context.Background(), analysis.Options{})
 	if len(issues) == 0 {
 		t.Fatal("expected at least one duplicate issue")
 	}
@@ -72,7 +72,7 @@ func TestCheckRelationOrder_MissingDetected(t *testing.T) {
 		addOrderedRelation(s, "STP-2", nil) // missing
 	})
 
-	issues := svc.CheckRelationOrder(analysis.Options{})
+	issues := svc.CheckRelationOrder(context.Background(), analysis.Options{})
 	foundMissing := false
 	for _, iss := range issues {
 		if iss.Kind == "missing" {
@@ -94,7 +94,7 @@ func TestCheckRelationOrder_NonOrderableSkipped(t *testing.T) {
 		addOrderedRelation(s, "STP-1", nil)
 	})
 
-	issues := svc.CheckRelationOrder(analysis.Options{})
+	issues := svc.CheckRelationOrder(context.Background(), analysis.Options{})
 	if len(issues) != 0 {
 		t.Errorf("non-orderable type should produce no issues, got %+v", issues)
 	}

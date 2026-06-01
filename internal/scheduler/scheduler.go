@@ -129,7 +129,7 @@ func New(
 // Tasks are executed sequentially in a single goroutine — no concurrent
 // script execution, no mutexes needed.
 func (s *Scheduler) Run(ctx context.Context) error {
-	s.loadState()
+	s.loadState(ctx)
 
 	if len(s.config.Tasks) == 0 {
 		s.logger.Info("no tasks configured, waiting for shutdown")
@@ -213,11 +213,11 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 
 	// Record successful run — no mutex needed, single goroutine.
 	s.state.Tasks[task.Name] = s.now()
-	s.saveState()
+	s.saveState(ctx)
 }
 
-func (s *Scheduler) loadState() {
-	data, err := s.ws.State().Get(context.Background(), stateFile)
+func (s *Scheduler) loadState(ctx context.Context) {
+	data, err := s.ws.State().Get(ctx, stateFile)
 	if err != nil {
 		s.state = newState()
 		return
@@ -225,13 +225,13 @@ func (s *Scheduler) loadState() {
 	s.state = parseState(data)
 }
 
-func (s *Scheduler) saveState() {
+func (s *Scheduler) saveState(ctx context.Context) {
 	data, err := s.state.marshal()
 	if err != nil {
 		s.logger.Error("failed to marshal scheduler state", "error", err)
 		return
 	}
-	if err := s.ws.State().Put(context.Background(), stateFile, data); err != nil {
+	if err := s.ws.State().Put(ctx, stateFile, data); err != nil {
 		s.logger.Error("failed to save scheduler state", "error", err)
 	}
 }

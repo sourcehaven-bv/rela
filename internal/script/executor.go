@@ -204,6 +204,10 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 		}
 	}
 
+	// ctx is threaded into the runtime via lua.WithContext(ctx) above; RunString
+	// applies it to the LState. contextcheck can't follow that flow across the
+	// gopher-lua SetContext boundary.
+	//nolint:contextcheck // ctx threaded via WithContext; see comment above
 	if runErr := runtime.RunString(code); runErr != nil {
 		// Surface tag is "automation" — this seam is invoked from the
 		// automation engine (workspace) for both inline `lua: |` blocks

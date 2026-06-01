@@ -74,6 +74,11 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// scriptPath is intentionally left empty: rela.cache.* in lua_eval
 	// raises "not available in inline/eval contexts" so sessions can't
 	// accidentally share a nameless namespace.
+	//
+	// ctx is threaded via lua.WithContext(ctx) above; the runtime caches it and
+	// RunString applies it to the LState. contextcheck can't see that flow
+	// because it crosses the gopher-lua SetContext boundary.
+	//nolint:contextcheck // ctx threaded via WithContext; see comment above
 	if err := runtime.RunString(code); err != nil {
 		// output stays empty here: print() in non-document/non-action
 		// runtimes writes to os.Stdout (see lua/runtime.go:256), which
@@ -156,6 +161,8 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// os.OpenRoot above) specifically for traversal resistance; passing
 	// them through RunFileContent keeps that while sharing all the
 	// downstream invariants.
+	//
+	//nolint:contextcheck // ctx threaded via WithContext; see handleLuaEval note
 	if err := runtime.RunFileContent(path, scriptContent, args); err != nil {
 		// See note above: print() bypasses `output` for MCP runs.
 		return luaScriptErrorResult(lua.SurfaceLuaRun,

@@ -6,6 +6,7 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -186,7 +187,7 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 		t.Error("status not removed")
 	}
 	// Relation written
-	edges := app.outgoingRelations("TKT-001")
+	edges := app.outgoingRelations(context.Background(), "TKT-001")
 	if len(edges) != 1 || edges[0].Type != "blocks" || edges[0].To != "FEAT-001" {
 		t.Errorf("expected one blocks→FEAT-001 edge, got %+v", edges)
 	}

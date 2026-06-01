@@ -1,6 +1,7 @@
 package script
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -127,7 +128,7 @@ func TestExecuteAction_PathTraversal(t *testing.T) {
 	engine := NewEngine()
 	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("../etc/passwd", deps, nil, nil, time.Second, "")
+	_, err := engine.ExecuteAction(context.Background(), "../etc/passwd", deps, nil, nil, time.Second, "")
 	if err == nil {
 		t.Fatal("expected error for path traversal")
 	}
@@ -137,7 +138,7 @@ func TestExecuteAction_WrongExtension(t *testing.T) {
 	engine := NewEngine()
 	deps := testWriteDeps("/project")
 
-	_, err := engine.ExecuteAction("script.txt", deps, nil, nil, time.Second, "")
+	_, err := engine.ExecuteAction(context.Background(), "script.txt", deps, nil, nil, time.Second, "")
 	if err == nil {
 		t.Fatal("expected error for wrong extension")
 	}
@@ -166,7 +167,7 @@ func TestExecuteAction_RealFile(t *testing.T) {
 	engine := NewEngine()
 	deps := testWriteDeps(tmpDir)
 
-	resp, err := engine.ExecuteAction("test.lua", deps, nil, nil, 5*time.Second, "")
+	resp, err := engine.ExecuteAction(context.Background(), "test.lua", deps, nil, nil, 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestExecuteAction_WithTriggerEntity(t *testing.T) {
 	deps := testWriteDeps(tmpDir)
 	ent := &entity.Entity{ID: "T-42", Type: "ticket"}
 
-	resp, err := engine.ExecuteAction("ent.lua", deps, ent, nil, 5*time.Second, "")
+	resp, err := engine.ExecuteAction(context.Background(), "ent.lua", deps, ent, nil, 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -220,7 +221,7 @@ func TestExecuteAction_WithParams(t *testing.T) {
 	deps := testWriteDeps(tmpDir)
 	params := map[string]string{"greeting": "hello"}
 
-	resp, err := engine.ExecuteAction("params.lua", deps, nil, params, 5*time.Second, "")
+	resp, err := engine.ExecuteAction(context.Background(), "params.lua", deps, nil, params, 5*time.Second, "")
 	if err != nil {
 		t.Fatalf("ExecuteAction failed: %v", err)
 	}
@@ -247,7 +248,7 @@ error("kaboom")`
 	deps := testWriteDeps(tmpDir)
 	ent := &entity.Entity{ID: "T-99", Type: "ticket"}
 
-	_, err := engine.ExecuteAction("boom.lua", deps, ent,
+	_, err := engine.ExecuteAction(context.Background(), "boom.lua", deps, ent,
 		map[string]string{"greeting": "hi", "password": "leak"}, 5*time.Second, "corr-test")
 	if err == nil {
 		t.Fatal("expected error from script")

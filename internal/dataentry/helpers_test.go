@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -707,7 +708,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	app := newAppFromParts(nil, meta, g)
 
 	t.Run("resolves multiple targets", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -715,7 +716,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "otherRel", "")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "otherRel", "")
 		want := []string{"Alice"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -723,21 +724,21 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "nonexistent", "")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "nonexistent", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("returns empty for unknown entity", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("UNKNOWN", "assessmentBy", "")
+		got := app.resolveRelationColumnValues(context.Background(), "UNKNOWN", "assessmentBy", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("direction outgoing explicit", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "outgoing")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "outgoing")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -747,7 +748,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	t.Run("direction incoming returns sources", func(t *testing.T) {
 		// PER-001 has an incoming edge from ASS-001 via assessmentBy
 		// Assessment title is not required, so falls back to ID
-		got := app.resolveRelationColumnValues(person1.ID, "assessmentBy", "incoming")
+		got := app.resolveRelationColumnValues(context.Background(), person1.ID, "assessmentBy", "incoming")
 		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -756,7 +757,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 
 	t.Run("direction incoming returns multiple sources", func(t *testing.T) {
 		// PER-001 is target of both assessmentBy and otherRel from ASS-001
-		got := app.resolveRelationColumnValues(person1.ID, "otherRel", "incoming")
+		got := app.resolveRelationColumnValues(context.Background(), person1.ID, "otherRel", "incoming")
 		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -764,7 +765,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("direction incoming no matches", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "incoming")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "incoming")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
@@ -884,7 +885,7 @@ func TestFilterByRelation(t *testing.T) {
 	allTickets := g.NodesByType("ticket")
 
 	t.Run("filters by relation target title", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Frontend")
 		gotIDs := collectModelIDs(got)
 		if len(got) != 2 {
 			t.Fatalf("expected 2 results, got %d: %v", len(got), gotIDs)
@@ -895,7 +896,7 @@ func TestFilterByRelation(t *testing.T) {
 	})
 
 	t.Run("filters by different relation target", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Backend")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Backend")
 		gotIDs := collectModelIDs(got)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d: %v", len(got), gotIDs)
@@ -906,21 +907,21 @@ func TestFilterByRelation(t *testing.T) {
 	})
 
 	t.Run("returns empty for non-matching value", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Nonexistent")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Nonexistent")
 		if len(got) != 0 {
 			t.Errorf("expected 0 results, got %d", len(got))
 		}
 	})
 
 	t.Run("returns empty for unknown relation type", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "unknown_relation", "Frontend")
+		got := app.filterByRelation(context.Background(), allTickets, "unknown_relation", "Frontend")
 		if len(got) != 0 {
 			t.Errorf("expected 0 results, got %d", len(got))
 		}
 	})
 
 	t.Run("handles entities without relations", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Frontend")
 		for _, e := range got {
 			if e.ID == tkt4.ID {
 				t.Errorf("%s should not be in results (has no belongs_to relation)", tkt4.ID)
@@ -983,7 +984,7 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	allTickets := g.NodesByType("ticket")
 
 	t.Run("returns unique sorted values", func(t *testing.T) {
-		got := app.resolveRelationFilterValues(allTickets, "belongs_to")
+		got := app.resolveRelationFilterValues(context.Background(), allTickets, "belongs_to")
 		// Only Frontend and Backend are referenced, API is not
 		// Should be sorted: Backend, Frontend
 		if len(got) != 2 {
@@ -998,14 +999,14 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	})
 
 	t.Run("returns empty for unknown relation type", func(t *testing.T) {
-		got := app.resolveRelationFilterValues(allTickets, "unknown_relation")
+		got := app.resolveRelationFilterValues(context.Background(), allTickets, "unknown_relation")
 		if len(got) != 0 {
 			t.Errorf("expected 0 values, got %d", len(got))
 		}
 	})
 
 	t.Run("returns empty for empty entities list", func(t *testing.T) {
-		got := app.resolveRelationFilterValues([]*entity.Entity{}, "belongs_to")
+		got := app.resolveRelationFilterValues(context.Background(), []*entity.Entity{}, "belongs_to")
 		if len(got) != 0 {
 			t.Errorf("expected 0 values, got %d", len(got))
 		}

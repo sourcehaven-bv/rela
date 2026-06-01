@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -161,13 +162,15 @@ func pathEntityInBothSets(entityID string, keys []string, desired map[string]V1R
 // end of each edge relative to `entityID`). The direction flag picks
 // whether the path entity is on the source (outgoing) or target
 // (incoming) side. This is the read-side mirror of edgeEndpoints.
-func (a *App) currentEdgesByPeer(entityID, canonical string, incoming bool) map[string]*entity.Relation {
+func (a *App) currentEdgesByPeer(
+	ctx context.Context, entityID, canonical string, incoming bool,
+) map[string]*entity.Relation {
 	current := map[string]*entity.Relation{}
 	var edges []*entity.Relation
 	if incoming {
-		edges = a.incomingRelations(entityID)
+		edges = a.incomingRelations(ctx, entityID)
 	} else {
-		edges = a.outgoingRelations(entityID)
+		edges = a.outgoingRelations(ctx, entityID)
 	}
 	for _, edge := range edges {
 		if edge.Type != canonical {

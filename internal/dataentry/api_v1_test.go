@@ -2961,7 +2961,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 // edges for entityID, used to keep the relation-save tests concise.
 func implementsTargets(app *App, entityID string) map[string]bool {
 	out := map[string]bool{}
-	for _, r := range app.outgoingRelations(entityID) {
+	for _, r := range app.outgoingRelations(context.Background(), entityID) {
 		if r.Type == "implements" {
 			out[r.To] = true
 		}
@@ -3126,7 +3126,7 @@ func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
 
 	impls := map[string]bool{}
 	blocks := map[string]bool{}
-	for _, r := range app.outgoingRelations("TKT-001") {
+	for _, r := range app.outgoingRelations(context.Background(), "TKT-001") {
 		switch r.Type {
 		case "implements":
 			impls[r.To] = true
@@ -3162,7 +3162,7 @@ func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
 	}
 
 	types := map[string]bool{}
-	for _, r := range app.outgoingRelations("TKT-001") {
+	for _, r := range app.outgoingRelations(context.Background(), "TKT-001") {
 		types[r.Type+"->"+r.To] = true
 	}
 	if !types["implements->FEAT-001"] || !types["blocks->TKT-002"] || len(types) != 2 {
@@ -3190,7 +3190,7 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "unknown_relation_type") || !strings.Contains(rec.Body.String(), "bogus") {
 		t.Fatalf("detail missing structured reason/type, got: %s", rec.Body.String())
 	}
-	if len(app.outgoingRelations("TKT-001")) != 0 {
+	if len(app.outgoingRelations(context.Background(), "TKT-001")) != 0 {
 		t.Fatalf("no edges should have been written on a rejected type")
 	}
 }
@@ -3260,8 +3260,8 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
 
-	entityBefore, _ := app.getEntity("TKT-001")
-	etagBefore := app.computeEntityETag(entityBefore)
+	entityBefore, _ := app.getEntity(context.Background(), "TKT-001")
+	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
@@ -3271,7 +3271,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
 
-	entityAfter, _ := app.getEntity("TKT-001")
+	entityAfter, _ := app.getEntity(context.Background(), "TKT-001")
 	// Entity fields (id/type/props/content) should be byte-identical.
 	if entityAfter.Content != entityBefore.Content ||
 		len(entityAfter.Properties) != len(entityBefore.Properties) {
@@ -3279,7 +3279,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("relations-only PATCH mutated entity fields: before=%+v after=%+v", entityBefore, entityAfter)
 	}
 	// ETag must change because it now folds in relations.
-	etagAfter := app.computeEntityETag(entityAfter)
+	etagAfter := app.computeEntityETag(context.Background(), entityAfter)
 	if etagAfter == etagBefore {
 		t.Fatalf("ETag did not change after relations-only PATCH: %s", etagAfter)
 	}
@@ -3453,7 +3453,7 @@ func TestHandleV1Documents_CacheInvariance(t *testing.T) {
 	// no `return_to=` token. Read it via documentService.GetCached,
 	// which reconstructs the cache file path from the entry's content
 	// hash and reads the underlying bytes verbatim.
-	cached := app.documents.GetCached("TKT-001")
+	cached := app.documents.GetCached(context.Background(), "TKT-001")
 	if cached == nil {
 		t.Fatalf("expected cache file for TKT-001 to exist after two renders")
 	}
@@ -4478,7 +4478,7 @@ func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
 			t.Fatalf("got %d, want 403; body=%s", code, body)
 		}
 		// Verify title was NOT updated.
-		e, _ := app.getEntity("TKT-001")
+		e, _ := app.getEntity(context.Background(), "TKT-001")
 		if e.Properties["title"] != "Original" {
 			t.Errorf("title must not be applied when status fails: got %v", e.Properties["title"])
 		}
