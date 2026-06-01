@@ -542,6 +542,14 @@ func (m *Manager) CreateRelation(
 		rel.Content = *opts.Content
 	}
 
+	// Auto-assign managed order properties (_order_out / _order_in) when
+	// the relation type declares the side orderable. Overrides any
+	// non-finite caller-supplied value with AppendOrder over existing
+	// siblings; keeps finite caller values as-is.
+	if err := m.assignManagedOrder(ctx, rel, relType); err != nil {
+		return nil, err
+	}
+
 	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
 		return nil, err
 	}
@@ -574,6 +582,18 @@ func (m *Manager) UpdateRelation(
 	// which keys changed (values never appear).
 	oldProps := cloneProperties(rel.Properties)
 
+	// Reject non-finite numeric values on managed order properties.
+	// HTTP wire validators already cover the dataentry path; this is
+	// the engine-level backstop for MCP/Lua/CLI write paths.
+	relDef, hasDef := m.deps.Meta.Relations[relType]
+	touchedOut := hasDef && relDef.OutgoingOrderProperty() != "" && touchesOrderKey(opts, relDef.OutgoingOrderProperty())
+	touchedIn := hasDef && relDef.IncomingOrderProperty() != "" && touchesOrderKey(opts, relDef.IncomingOrderProperty())
+	if hasDef {
+		if err := validateOrderUpdate(opts, relDef); err != nil {
+			return nil, err
+		}
+	}
+
 	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
 		rel.Properties = make(map[string]interface{})
 	}
@@ -591,6 +611,12 @@ func (m *Manager) UpdateRelation(
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))
+
+	// Engine-initiated renumber when an order PATCH collapsed sibling
+	// spacing. Errors are operator-visible (slog.Error) but do not fail
+	// the user-visible Update — the caller's write already succeeded.
+	m.runRenumberAfterUpdate(ctx, from, to, relType, touchedOut, touchedIn)
+
 	return rel, nil
 }
 

@@ -175,6 +175,45 @@ since they use manually-specified IDs that are not expected to be sequential.`,
 	},
 }
 
+var analyzeRelationOrderCmd = &cobra.Command{
+	Use:   "relation-order",
+	Short: "Find duplicate or missing values on managed relation order properties",
+	Long: `Scans every relation type declared 'orderable: outgoing | incoming | both'
+and reports parents that have duplicate or missing values on the managed
+order property (_order_out / _order_in).
+
+These are soft conditions: the engine tolerates them (duplicates sort
+stably, missing values sort last). Use this report to identify markdown
+files that need cleanup after hand-edits or imports.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		svc := cliAnalyzeFromContext(cmd.Context())
+		opts, err := resolveAnalyzeOpts()
+		if err != nil {
+			return err
+		}
+		issues := svc.CheckRelationOrder(*opts)
+
+		if writeAnalysisJSON(len(issues), issues,
+			"All orderable relations have consistent order values",
+			"Found %d relation-order issue(s)") {
+			return nil
+		}
+
+		for _, iss := range issues {
+			out.WriteWarning("%s (%s) on %s side of %q: %d %s value(s) at %s",
+				iss.EntityID, iss.EntityType, iss.Side, iss.RelationType,
+				iss.Count, iss.Kind, iss.Property)
+		}
+
+		if len(issues) == 0 {
+			out.WriteSuccess("All orderable relations have consistent order values")
+		} else {
+			out.WriteWarning("Found %d relation-order issue(s)", len(issues))
+		}
+		return nil
+	},
+}
+
 var analyzeCardinalityCmd = &cobra.Command{
 	Use:   "cardinality",
 	Short: "Check relation cardinality constraints",
@@ -892,6 +931,7 @@ func init() {
 	analyzeCmd.AddCommand(analyzeDuplicatesCmd)
 	analyzeCmd.AddCommand(analyzeGapsCmd)
 	analyzeCmd.AddCommand(analyzeCardinalityCmd)
+	analyzeCmd.AddCommand(analyzeRelationOrderCmd)
 	analyzeCmd.AddCommand(analyzePropertiesCmd)
 	analyzeCmd.AddCommand(analyzeValidationsCmd)
 	analyzeCmd.AddCommand(analyzeAllCmd)

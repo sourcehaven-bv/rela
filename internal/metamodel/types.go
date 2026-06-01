@@ -218,6 +218,34 @@ var ReservedPropertyNames = map[string]bool{
 	"type": true, // Entity.Type
 }
 
+// OrderableMode controls which side(s) of a relation type are user-orderable.
+type OrderableMode string
+
+const (
+	OrderableNone     OrderableMode = ""
+	OrderableOutgoing OrderableMode = "outgoing"
+	OrderableIncoming OrderableMode = "incoming"
+	OrderableBoth     OrderableMode = "both"
+)
+
+// Reserved relation-property names that hold the user-controlled order value.
+// The names are stable across mode changes so that promoting a relation from
+// outgoing-only to both (or vice versa) keeps existing values on disk valid.
+const (
+	OrderPropertyOut = "_order_out"
+	OrderPropertyIn  = "_order_in"
+)
+
+// IsValid reports whether the value is a recognized OrderableMode (including the
+// empty "not orderable" value).
+func (m OrderableMode) IsValid() bool {
+	switch m {
+	case OrderableNone, OrderableOutgoing, OrderableIncoming, OrderableBoth:
+		return true
+	}
+	return false
+}
+
 // DefaultDateFormat is the default format for date properties (ISO 8601)
 const DefaultDateFormat = "2006-01-02"
 
@@ -259,6 +287,30 @@ type RelationDef struct {
 	// Content indicates whether relations of this type support markdown body content.
 	// When true, the data-entry UI will show a content editor for the relation.
 	Content bool `yaml:"content,omitempty"`
+
+	// Orderable declares which side(s) of this relation type are user-orderable.
+	// When set, the data-entry UI offers drag-to-reorder controls on the enabled
+	// side(s); the API returns relations sorted by the corresponding managed
+	// order property (OrderPropertyOut / OrderPropertyIn).
+	Orderable OrderableMode `yaml:"orderable,omitempty"`
+}
+
+// OutgoingOrderProperty returns the relation-property name that holds the
+// outgoing-side order value, or "" if outgoing ordering is not enabled.
+func (r *RelationDef) OutgoingOrderProperty() string {
+	if r.Orderable == OrderableOutgoing || r.Orderable == OrderableBoth {
+		return OrderPropertyOut
+	}
+	return ""
+}
+
+// IncomingOrderProperty returns the relation-property name that holds the
+// incoming-side order value, or "" if incoming ordering is not enabled.
+func (r *RelationDef) IncomingOrderProperty() string {
+	if r.Orderable == OrderableIncoming || r.Orderable == OrderableBoth {
+		return OrderPropertyIn
+	}
+	return ""
 }
 
 // PropertyDefs implements PropertySchema for RelationDef.
