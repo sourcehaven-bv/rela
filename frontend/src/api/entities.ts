@@ -46,6 +46,25 @@ export async function createEntity(type: string, entity: CreateEntity): Promise<
   return res
 }
 
+// dryRunCreateEntity evaluates field/option/relation affordances and
+// soft validation against a candidate WITHOUT persisting (TKT-3I5U).
+// The create form calls it on mount and (debounced) as the user types
+// to gate inputs and surface warnings before commit. The verdicts are
+// ADVISORY — the real createEntity re-authorizes. `signal` lets the
+// caller drop a stale in-flight request (RR-ZKL2).
+//
+// Relations are intentionally NOT sent: a candidate has no real ID so
+// edges can't be staged; relation affordances reflect the per-type
+// verdict only.
+export async function dryRunCreateEntity(
+  type: string,
+  candidate: Pick<CreateEntity, 'id' | 'prefix' | 'properties' | 'content'>,
+  signal?: AbortSignal
+): Promise<Entity> {
+  const path = `/${getPlural(type)}?dry_run=true`
+  return api.post<Entity>(path, candidate, { signal })
+}
+
 // EntityPatch is the body shape for the unified PATCH endpoint.
 // `relations` uses the JSON:API §9 wrapper exclusively; the legacy
 // IDs-only form was removed in chore/drop-legacy-relations-shape.

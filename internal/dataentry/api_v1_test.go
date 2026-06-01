@@ -4734,6 +4734,219 @@ func TestHandleV1CreateEntity_AffordanceDenial_EmitsAudit(t *testing.T) {
 	}
 }
 
+// dryRunCreateRaw POSTs a raw body to the dry-run create handler
+// (?dry_run=true) and returns status + response body. Mirrors
+// createTicketRaw for the dry-run path (TKT-3I5U).
+func dryRunCreateRaw(t *testing.T, app *App, body string) (code int, resp *httptest.ResponseRecorder) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.handleV1EntityCollection(rec, req, "ticket", "tickets")
+	return rec.Code, rec
+}
+
+// countStoreEntities returns the number of entities currently in the
+// app's store — used to assert the dry-run persists nothing.
+func countStoreEntities(t *testing.T, app *App) int {
+	t.Helper()
+	n := 0
+	for _, err := range app.store.ListEntities(context.Background(), store.EntityQuery{}) {
+		if err != nil {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// TestHandleV1DryRunCreate_Affordances proves the dry-run create
+// endpoint (TKT-3I5U) returns the same `_fields` verdicts the create
+// form needs to gate inputs — read-only, hidden, enum-filtered — WITHOUT
+// persisting, and returns 200 (advisory) rather than 403.
+func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
+	t.Run("read-only field surfaces in _fields", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+
+		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
+		}
+		var v V1Entity
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+		}
+		if v.FieldAffordances == nil {
+			t.Fatalf("response missing _fields; body=%s", rec.Body.String())
+		}
+		fa := *v.FieldAffordances
+		if entry, ok := fa["status"]; !ok || entry.Writable == nil || *entry.Writable {
+			t.Errorf("_fields.status must be writable=false; got %+v", fa["status"])
+		}
+	})
+
+	t.Run("hidden field omitted from _fields and properties", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().Hidden("status").Build()
+
+		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		var v V1Entity
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatalf("decode: %v; body=%s", err, body)
+		}
+		if v.FieldAffordances != nil {
+			if _, present := (*v.FieldAffordances)["status"]; present {
+				t.Errorf("hidden field must be absent from _fields; got %s", body)
+			}
+		}
+		if _, present := v.Properties["status"]; present {
+			t.Errorf("hidden field must be stripped from properties; got %s", body)
+		}
+	})
+
+	t.Run("enum-filtered options surface in _fields", func(t *testing.T) {
+		app := newTestAppV1(t)
+		app.broker = newEventBroker()
+		bindRepo(app, t.TempDir())
+		app.fieldResolver = newVerdicts().EnumDeny("status", "done").Build()
+
+		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
+		}
+		var v V1Entity
+		_ = json.Unmarshal(rec.Body.Bytes(), &v)
+		if v.FieldAffordances == nil || (*v.FieldAffordances)["status"].Options["done"] {
+			t.Errorf("_fields.status.options.done must be false; body=%s", rec.Body.String())
+		}
+	})
+}
+
+// TestHandleV1DryRunCreate_PersistsNothing proves the dry-run is
+// read-shaped: no entity is written and (RR-4O6E) no audit row is
+// emitted, even when a field would be denied.
+func TestHandleV1DryRunCreate_PersistsNothing(t *testing.T) {
+	sink := audit.NewMemory()
+	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
+	app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+
+	before := countStoreEntities(t, app)
+
+	// A body that sets a read-only field: the real create would 403 +
+	// audit; the dry-run returns 200 with the verdict and writes nothing.
+	code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x","status":"open"}}`)
+	if code != http.StatusOK {
+		t.Fatalf("dry-run got %d, want 200; body=%s", code, rec.Body.String())
+	}
+
+	if after := countStoreEntities(t, app); after != before {
+		t.Errorf("dry-run must not persist: entity count %d -> %d", before, after)
+	}
+	if recs := sink.Records(); len(recs) != 0 {
+		t.Errorf("dry-run must emit no audit rows; got %d: %+v", len(recs), recs)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("dry-run Cache-Control = %q, want it to include no-store", cc)
+	}
+	if etag := rec.Header().Get("ETag"); etag != "" {
+		t.Errorf("dry-run must not set an ETag; got %q", etag)
+	}
+}
+
+// TestHandleV1DryRunCreate_SoftWarnings proves the dry-run surfaces the
+// same DEC-HWZHA soft warnings the real create returns (e.g. a
+// required-but-unset field), so the create form can show as-you-type
+// validation feedback (option B parity).
+func TestHandleV1DryRunCreate_SoftWarnings(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	// `title` is required on the ticket type; omit it → required-unset
+	// soft warning, not a hard error.
+	code, rec := dryRunCreateRaw(t, app, `{"properties":{"status":"open"}}`)
+	if code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
+	}
+	var v V1Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	found := false
+	for _, w := range v.Warnings {
+		if w.Code == "required_property_unset" && strings.Contains(w.Path, "title") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("dry-run must surface required_property_unset for title; warnings=%+v", v.Warnings)
+	}
+}
+
+// TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps
+// pins the contract the SPA's create-form filter relies on: every
+// declared, visible property appears in the response's `properties`
+// (with nil for keys the user hasn't set), so the form's
+// `_fields OR properties` filter can identify visible-by-default
+// fields. Without this, a visible-by-default field with no value
+// (e.g. `title` before the user types it) would be filtered out of
+// the create form entirely.
+func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+	// Hide one field; the rest should all appear in `properties`.
+	app.fieldResolver = newVerdicts().Hidden("status").Build()
+
+	code, rec := dryRunCreateRaw(t, app, `{"properties":{}}`)
+	if code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
+	}
+	var v V1Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	// Every declared property on the ticket type EXCEPT the hidden one
+	// must appear in properties (with nil values).
+	def := app.State().Meta.Entities["ticket"]
+	for name := range def.Properties {
+		_, present := v.Properties[name]
+		if name == "status" {
+			if present {
+				t.Errorf("hidden field %q must NOT appear in response properties; got %v", name, v.Properties)
+			}
+			continue
+		}
+		if !present {
+			t.Errorf("visible declared field %q must appear in response properties (with nil); got %v", name, v.Properties)
+		}
+	}
+}
+
+// TestHandleV1DryRunCreate_UnknownType returns 404, matching the real
+// create handler.
+func TestHandleV1DryRunCreate_UnknownType(t *testing.T) {
+	app := newTestAppV1(t)
+	app.broker = newEventBroker()
+	bindRepo(app, t.TempDir())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nonexistents?dry_run=true",
+		strings.NewReader(`{"properties":{}}`))
+	rec := httptest.NewRecorder()
+	app.handleV1EntityCollection(rec, req, "nonexistent", "nonexistents")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // bindEdge inserts an edge directly through the store. Used by tests
 // that need a pre-existing edge to remove or update via the API.
 // relType is parameterized intentionally; today every caller passes

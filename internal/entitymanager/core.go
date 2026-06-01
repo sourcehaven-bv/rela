@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -20,6 +21,61 @@ type createCoreOpts struct {
 	TemplateVariant string                 // Template variant name (empty = default)
 	Properties      map[string]interface{} // Properties to set (overrides template defaults)
 	Content         string                 // Body content (overrides template content when non-empty)
+	// SkipIDGeneration tells [buildCandidateEntity] to skip real ID
+	// allocation when ID is empty and the type uses auto-IDs.
+	// [Manager.ValidateCreate] sets this so a per-keystroke dry-run does
+	// not scan the entire store to pick a never-used ID. The resulting
+	// entity gets a stable placeholder ID; validation that depends on
+	// the actual ID (ID-prefix check) is not relevant in that path.
+	SkipIDGeneration bool
+}
+
+// resolveCandidateID returns the ID to use for the candidate entity
+// being built by [buildCandidateEntity]. Three branches:
+//   - User-supplied ID → validated (manual-ID types only).
+//   - Empty ID + SkipIDGeneration → synthesized placeholder
+//     (dry-run / validation path; no store scan).
+//   - Empty ID + auto-ID → generated via the full-store scan.
+//
+// Extracted from [buildCandidateEntity] to keep that function's
+// top-level flow flat (avoids the nestif lint warning).
+func resolveCandidateID(
+	ctx context.Context, deps Deps, entityType string, entityDef *metamodel.EntityDef, opts createCoreOpts,
+) (string, error) {
+	if opts.ID != "" {
+		if !entityDef.IsManualID() {
+			return "", customIDNotAllowedError(entityType, entityDef, opts.ID)
+		}
+		if err := entity.ValidateID(opts.ID); err != nil {
+			return "", err
+		}
+		return opts.ID, nil
+	}
+	if opts.SkipIDGeneration {
+		// Dry-run / validation path: skip the full-store scan
+		// generateID would do. The placeholder must pass metamodel
+		// ID-prefix validation; [candidatePlaceholderID] synthesizes
+		// one from the type's first prefix. Never persisted — only
+		// [Manager.ValidateCreate] sets SkipIDGeneration.
+		return candidatePlaceholderID(entityDef, opts.IDPrefix), nil
+	}
+	return generateID(ctx, deps, entityType, opts.IDPrefix)
+}
+
+// candidatePlaceholderID returns the synthetic ID to use for a dry-run
+// candidate entity when no real ID is supplied. It pairs the requested
+// prefix (or the type's first declared prefix) with a fixed suffix so
+// metamodel ID-prefix validation passes. The result is never persisted
+// — only [Manager.ValidateCreate] (which never writes) uses this path.
+func candidatePlaceholderID(def *metamodel.EntityDef, requestedPrefix string) string {
+	const candidateSuffix = "DRYRUN"
+	if requestedPrefix != "" {
+		return requestedPrefix + candidateSuffix
+	}
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+		return prefixes[0] + candidateSuffix
+	}
+	return candidateSuffix
 }
 
 // createCore is the shared bare-write entity-creation path: resolve
@@ -33,25 +89,36 @@ type createCoreOpts struct {
 func createCore(
 	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
 ) (*entity.Entity, []entity.Warning, error) {
+	e, warnings, err := buildCandidateEntity(ctx, deps, entityType, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := upsertEntity(ctx, deps.Store, e); err != nil {
+		return nil, nil, fmt.Errorf("write entity: %w", err)
+	}
+
+	return e, warnings, nil
+}
+
+// buildCandidateEntity resolves the ID, applies template + status
+// defaults, merges caller properties, and partitions validation errors
+// per DEC-HWZHA (hard errors abort; soft conditions return as warnings)
+// — everything [createCore] does except the final persist. Shared by
+// createCore (which then writes) and [Manager.ValidateCreate] (which
+// returns the would-be entity + warnings without writing), so dry-run
+// validation cannot drift from the real create path.
+func buildCandidateEntity(
+	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
+) (*entity.Entity, []entity.Warning, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
-	entityID := opts.ID
-	if entityID == "" {
-		id, err := generateID(ctx, deps, entityType, opts.IDPrefix)
-		if err != nil {
-			return nil, nil, err
-		}
-		entityID = id
-	} else {
-		if !entityDef.IsManualID() {
-			return nil, nil, customIDNotAllowedError(entityType, entityDef, entityID)
-		}
-		if err := entity.ValidateID(entityID); err != nil {
-			return nil, nil, err
-		}
+	entityID, err := resolveCandidateID(ctx, deps, entityType, entityDef, opts)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	e := entity.New(entityID, entityType)
@@ -89,10 +156,6 @@ func createCore(
 			return nil, nil, newValidationError(hard)
 		}
 		warnings = soft
-	}
-
-	if err := upsertEntity(ctx, deps.Store, e); err != nil {
-		return nil, nil, fmt.Errorf("write entity: %w", err)
 	}
 
 	return e, warnings, nil

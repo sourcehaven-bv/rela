@@ -288,6 +288,43 @@ func (m *Manager) CreateEntity(
 	return result, nil
 }
 
+// ValidateCreate runs the create path's defaults + validation against a
+// candidate entity WITHOUT persisting, authorizing, auditing, or
+// running automation. It returns the would-be entity (post template /
+// status defaults) and the DEC-HWZHA soft warnings the real create
+// would surface — so a dry-run create can show as-you-type validation
+// feedback that cannot drift from [Manager.CreateEntity] (both share
+// [buildCandidateEntity]).
+//
+// Contract:
+//   - No write, no audit row, no automation — it is advisory only.
+//     The real CreateEntity remains the sole authorization and audit
+//     point; callers MUST re-authorize at commit (e.g. the data-entry
+//     create handler's affordance gate).
+//   - Hard structural errors (unknown type, bad manual ID, ID-prefix
+//     mismatch) return as an error; soft conditions (required-unset,
+//     type / value mismatch) return as warnings on a nil error.
+//   - opts.ID may be empty: an ID is generated only to satisfy
+//     validation that doesn't depend on it; it is not reserved.
+func (m *Manager) ValidateCreate(
+	ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
+) (*entity.Entity, []entity.Warning, error) {
+	if e == nil {
+		return nil, nil, errors.New("entitymanager: ValidateCreate: entity is nil")
+	}
+	return buildCandidateEntity(ctx, m.deps, e.Type, createCoreOpts{
+		ID:              opts.ID,
+		IDPrefix:        opts.Prefix,
+		TemplateVariant: opts.Variant,
+		Properties:      e.Properties,
+		Content:         e.Content,
+		// Skip the full-store scan generateID would do — dry-run runs
+		// per debounced keystroke and a real ID is not needed for
+		// validation. RR-8I07.
+		SkipIDGeneration: true,
+	})
+}
+
 // UpdateEntity validates the new state, runs on-update automation
 // when an old state is available, applies property changes, persists,
 // and dispatches the cascade.

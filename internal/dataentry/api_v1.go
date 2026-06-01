@@ -342,6 +342,14 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 	case http.MethodGet:
 		a.handleV1ListEntities(w, r, typeName, plural)
 	case http.MethodPost:
+		// TKT-3I5U: ?dry_run=true evaluates affordances + soft validation
+		// against the candidate WITHOUT persisting, so the create form can
+		// gate fields / options / hidden as the user types. Read-shaped:
+		// dispatched before handleV1CreateEntity acquires the write lock.
+		if r.URL.Query().Get("dry_run") == "true" {
+			a.handleV1DryRunCreate(w, r, typeName, plural)
+			return
+		}
 		a.handleV1CreateEntity(w, r, typeName, plural)
 	case http.MethodOptions:
 		w.Header().Set("Allow", "GET, POST, OPTIONS")
@@ -561,6 +569,112 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.broker.broadcastEntityEvent("created", typeName, created.ID)
 
 	writeV1JSON(w, http.StatusCreated, result)
+}
+
+// handleV1DryRunCreate evaluates field/option/relation affordances and
+// soft validation against a candidate entity WITHOUT persisting it, so
+// the SPA create form can disable read-only fields, hide hidden fields,
+// filter enum options, and show as-you-type validation feedback before
+// commit (TKT-3I5U).
+//
+// It is READ-shaped (RR-R8OR): it never takes a.writeMu and snapshots
+// state once like a GET. It is verdict-only (RR-4O6E): it computes
+// affordances and warnings but emits NO `denied-write` audit row and
+// performs NO write — so live re-derivation per keystroke can't flood
+// the audit log or contend the writer lock.
+//
+// The verdicts are ADVISORY (RR-Y85M): the real create (POST without
+// ?dry_run) re-runs the BUG-Q60V affordance gate and is the sole
+// authorization point. A client that ignores these hints and POSTs a
+// denied field still 403s.
+//
+// Scope: fields + options + relations + soft warnings. Relation edges
+// are not staged (a candidate has no real ID); relation affordances
+// reflect the per-type verdict only.
+func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeName, plural string) {
+	s := a.State()
+
+	// Mirror of handleV1CreateEntity's request body MINUS `relations`
+	// — staged relations are deferred (a candidate has no real source
+	// ID to hang edges on). When a new field is added to the real
+	// create body, decide explicitly whether dry-run should accept it
+	// and update both structs together (RR-GOR8 drift guard).
+	var req struct {
+		ID         string                 `json:"id,omitempty"`
+		Prefix     string                 `json:"prefix,omitempty"`
+		Properties map[string]interface{} `json:"properties"`
+		Content    string                 `json:"content,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
+		return
+	}
+
+	entityDef, ok := s.Meta.Entities[typeName]
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", typeName)
+		return
+	}
+
+	reqID := strings.TrimSpace(req.ID)
+	reqPrefix := strings.TrimSpace(req.Prefix)
+
+	// RR-9JOH: surface ID/prefix problems as a soft warning rather than
+	// 422 so the create form learns at typing time instead of at submit.
+	// The real commit's validateCreateIDOpts still hard-rejects — this
+	// is advisory parity with the rest of the dry-run.
+	var idWarning *Warning
+	if msg := validateCreateIDOpts(&entityDef, reqID, reqPrefix); msg != "" {
+		idWarning = &Warning{Code: "id_opts_invalid", Path: "/id", Detail: msg}
+	}
+
+	// Resolve the would-be entity (post template / status defaults) and
+	// soft warnings via the shared create-path validation — no persist,
+	// no audit, no automation. Hard structural errors surface as 422.
+	candidate, warnings, err := a.entityManager.ValidateCreate(r.Context(),
+		&entityPkg.Entity{Type: typeName, Properties: req.Properties, Content: req.Content},
+		entityPkg.CreateOptions{ID: reqID, Prefix: reqPrefix},
+	)
+	if err != nil {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
+		return
+	}
+
+	// Seed missing-but-declared property keys with nil values BEFORE
+	// serialization. The SPA's create-mode field filter uses the
+	// response's `properties` keys to know which declared fields are
+	// visible (hidden fields get stripped by serializeEntityForWire's
+	// hidden-property filter). Without this, a visible-by-default field
+	// whose value the user hasn't set yet (e.g. a required `title`)
+	// would be absent from both `_fields` (sparse: no deviation) and
+	// `properties` (no value yet), so the filter would drop it.
+	if def, ok := s.Meta.Entities[typeName]; ok {
+		if candidate.Properties == nil {
+			candidate.Properties = make(map[string]interface{})
+		}
+		for name := range def.Properties {
+			if _, present := candidate.Properties[name]; !present {
+				candidate.Properties[name] = nil
+			}
+		}
+	}
+
+	// Affordances are computed against the candidate's CURRENT values, so
+	// value-dependent predicates (e.g. field B read-only when A == x)
+	// re-derive as the form changes. includeRelations=false: no edges
+	// exist for an unsaved entity.
+	result := a.serializeEntityForWire(r.Context(), candidate, plural, false)
+	if idWarning != nil {
+		result.Warnings = append(result.Warnings, *idWarning)
+	}
+	if len(warnings) > 0 {
+		result.Warnings = append(result.Warnings, warnings...)
+	}
+
+	// writeV1JSON already sets `Cache-Control: no-cache, no-store,
+	// must-revalidate` and no ETag, which is what a per-request,
+	// value-dependent, never-persisted response needs (RR-7PL4).
+	writeV1JSON(w, http.StatusOK, result)
 }
 
 // --- Single Entity Handlers ---
