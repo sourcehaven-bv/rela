@@ -40,15 +40,17 @@ var (
 	quiet        bool
 	outputFormat string
 	projectPath  string
+	databaseURL  string
 )
 
 // CLI is the kong-parsed root.
 type CLI struct {
 	// Global flags.
-	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
-	Output  string `help:"Output format (table, json)." short:"o" default:"table"`
-	Verbose bool   `help:"Verbose output." short:"v"`
-	Quiet   bool   `help:"Quiet output."   short:"q"`
+	Project     string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
+	Output      string `help:"Output format (table, json)." short:"o" default:"table"`
+	Verbose     bool   `help:"Verbose output." short:"v"`
+	Quiet       bool   `help:"Quiet output."   short:"q"`
+	DatabaseURL string `help:"PostgreSQL connection string (postgres build only; overrides $RELA_DATABASE_URL)." env:"RELA_DATABASE_URL" name:"database-url"`
 
 	// Subcommands.
 	Version    VersionCmd    `cmd:"" help:"Print version information."`
@@ -117,6 +119,7 @@ func runKong() int {
 	quiet = cli.Quiet
 	outputFormat = cli.Output
 	projectPath = cli.Project
+	databaseURL = cli.DatabaseURL
 
 	configureKongLogging(verbose, quiet)
 	out = output.New(output.Format(outputFormat))
@@ -132,7 +135,10 @@ func runKong() int {
 	var cliSvc *cliServices
 	if requiresProject(ktx.Command()) {
 		var err error
-		svc, err = appbuild.Discover(projectPath, script.NewEngine())
+		// WithDatabaseURL ignores empty, so the filesystem build is
+		// unaffected; the postgres build needs the DSN (flag/env via kong).
+		svc, err = appbuild.Discover(projectPath, script.NewEngine(),
+			appbuild.WithDatabaseURL(databaseURL))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, wrapDiscoverError(err))
 			return 1

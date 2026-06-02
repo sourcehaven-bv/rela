@@ -64,20 +64,14 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		return nil, fmt.Errorf("load metamodel: %w", metaErr)
 	}
 
-	// Build the search backend BEFORE opening the store so it can be
-	// installed as a synchronous observer at open time (TKT-Q1JT
-	// pattern). The FS build supplies an in-memory bleve index; a
-	// future Postgres build returns nil because Postgres indexes
-	// inside the store itself.
-	searchBackend := newMCPSearchObserver()
-	st, openErr := openMCPStore(fs, paths, mm, asMCPObserver(searchBackend))
-	if openErr != nil {
-		return nil, fmt.Errorf("open store: %w", openErr)
-	}
-
-	searcher, searchCloser, searchErr := buildMCPSearcher(context.Background(), st, searchBackend)
-	if searchErr != nil {
-		return nil, fmt.Errorf("build searcher: %w", searchErr)
+	// openMCPBackend is the per-build seam (see mcp_wiring_{fs,memory,postgres}.go):
+	// it opens the store and its searcher together. The FS build pairs an
+	// fsstore with an in-memory bleve index; the postgres build builds one
+	// pool (from RELA_DATABASE_URL) shared by pgstore and its in-DB search.
+	// Everything after this point is build-agnostic.
+	st, searcher, searchCloser, backendErr := openMCPBackend(context.Background(), fs, paths, mm)
+	if backendErr != nil {
+		return nil, backendErr
 	}
 
 	svc := &mcpServices{
@@ -241,9 +235,3 @@ func (w *mcpWatcher) Stop() {
 
 func (w *mcpWatcher) Pause()  {}
 func (w *mcpWatcher) Resume() {}
-
-// mcpNoopCloser is returned by the build-tagged buildMCPSearcher when
-// no closable resource is held (the error-Searcher case).
-type mcpNoopCloser struct{}
-
-func (mcpNoopCloser) Close() error { return nil }

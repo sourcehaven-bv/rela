@@ -45,6 +45,7 @@ type serverFlags struct {
 	debugPprof      string
 	principalHeader string
 	readOnly        bool
+	databaseURL     string
 }
 
 // coverage-ignore: flag wiring — exercised at startup, not in tests
@@ -71,6 +72,10 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
+	flag.StringVar(&f.databaseURL, "database-url", "",
+		"PostgreSQL connection string for the postgres build (e.g. "+
+			"postgres://user:pass@host:5432/db?sslmode=require). Overrides "+
+			"$RELA_DATABASE_URL. Ignored by the default filesystem build.")
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
@@ -97,6 +102,12 @@ func main() {
 	var discoverOpts []appbuild.Option
 	if f.readOnly {
 		discoverOpts = append(discoverOpts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	// --database-url wins over $RELA_DATABASE_URL (which Discover reads).
+	// WithDatabaseURL ignores an empty value, so this is safe in the
+	// filesystem build too (where the DSN is unused entirely).
+	if f.databaseURL != "" {
+		discoverOpts = append(discoverOpts, appbuild.WithDatabaseURL(f.databaseURL))
 	}
 	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOpts...)
 	if err != nil {

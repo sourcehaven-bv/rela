@@ -149,7 +149,12 @@ func (d *Desktop) LoadProject(dir string) string {
 		d.mu.Unlock()
 		return auditErr.Error()
 	}
-	svc, svcErr := appbuild.New(fs, projCtx, script.NewEngine(), auditSink)
+	svc, svcErr := appbuild.New(appbuild.Config{
+		FS:           fs,
+		Paths:        projCtx,
+		ScriptEngine: script.NewEngine(),
+		Audit:        auditSink,
+	})
 	if svcErr != nil {
 		d.mu.Lock()
 		d.loadErr = svcErr.Error()

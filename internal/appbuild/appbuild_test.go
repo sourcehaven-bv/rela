@@ -165,17 +165,25 @@ func TestNew_RejectsNilDeps(t *testing.T) {
 		want string
 	}{
 		{"nil fs", func() (*appbuild.Services, error) {
-			return appbuild.New(nil, svc.Paths(), script.NewEngine(), audit.Nop{})
-		}, "fs is required"},
+			return appbuild.New(appbuild.Config{
+				Paths: svc.Paths(), ScriptEngine: script.NewEngine(), Audit: audit.Nop{},
+			})
+		}, "Config.FS is required"},
 		{"nil paths", func() (*appbuild.Services, error) {
-			return appbuild.New(svc.FS(), nil, script.NewEngine(), audit.Nop{})
-		}, "paths is required"},
+			return appbuild.New(appbuild.Config{
+				FS: svc.FS(), ScriptEngine: script.NewEngine(), Audit: audit.Nop{},
+			})
+		}, "Config.Paths is required"},
 		{"nil engine", func() (*appbuild.Services, error) {
-			return appbuild.New(svc.FS(), svc.Paths(), nil, audit.Nop{})
-		}, "scriptEngine is required"},
+			return appbuild.New(appbuild.Config{
+				FS: svc.FS(), Paths: svc.Paths(), Audit: audit.Nop{},
+			})
+		}, "Config.ScriptEngine is required"},
 		{"nil audit", func() (*appbuild.Services, error) {
-			return appbuild.New(svc.FS(), svc.Paths(), script.NewEngine(), nil)
-		}, "auditSink is required"},
+			return appbuild.New(appbuild.Config{
+				FS: svc.FS(), Paths: svc.Paths(), ScriptEngine: script.NewEngine(),
+			})
+		}, "Config.Audit is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

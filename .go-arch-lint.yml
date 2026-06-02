@@ -199,6 +199,7 @@ deps:
       - memstore
       - metamodel
       - output
+      - pgstore
       - principal
       - project
       - projectsetup
@@ -220,6 +221,7 @@ deps:
       - glamour
       - huh
       - tablewriter
+      - pgx
 
   # Web / UI layer
   dataentry:
@@ -319,6 +321,7 @@ deps:
       - lua
       - memstore
       - metamodel
+      - pgstore
       - project
       - script
       - search
@@ -328,6 +331,8 @@ deps:
       - templating
       - tracer
       - validator
+    canUse:
+      - pgx
   appbuildtest:
     mayDependOn:
       - acl
