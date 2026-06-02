@@ -327,14 +327,50 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     }
   },
 
-  appPage: async ({ browser, serverUrl }, use) => {
+  appPage: async ({ browser, serverUrl }, use, testInfo) => {
     const context = await browser.newContext({
       extraHTTPHeaders: { Origin: serverUrl },
     });
     const page = await context.newPage();
+
+    // Self-contained-binary guard (TKT-ZDRS): rela-server embeds the SPA via
+    // //go:embed and is meant to run without third-party network access.
+    // Capture every off-origin http(s) request the browser makes during a
+    // test; if any fire, fail the test in afterEach with the offending URLs.
+    // This catches both the original EasyMDE-FontAwesome regression and any
+    // future "let me just grab this CDN script" mistake across the whole SPA.
+    const allowedOrigin = new URL(serverUrl).origin;
+    const offOriginRequests: string[] = [];
+    page.on('request', (req) => {
+      const url = req.url();
+      if (!/^https?:/i.test(url)) return; // data:, blob:, file: are local
+      let origin: string;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        // Malformed enough that URL() throws — surface it instead of silently
+        // classifying as same-origin.
+        offOriginRequests.push(`<unparseable> ${url}`);
+        return;
+      }
+      if (origin !== allowedOrigin) offOriginRequests.push(url);
+    });
+
     await page.goto(`${serverUrl}/`);
     await use(page);
     await context.close();
+
+    if (offOriginRequests.length > 0) {
+      await testInfo.attach('off-origin-requests', {
+        body: offOriginRequests.join('\n'),
+        contentType: 'text/plain',
+      });
+      throw new Error(
+        `rela-server is meant to be self-contained but the SPA fetched ${offOriginRequests.length} ` +
+          `off-origin URL(s): ${offOriginRequests.slice(0, 5).join(', ')}` +
+          (offOriginRequests.length > 5 ? ` (+${offOriginRequests.length - 5} more — see attachment)` : ''),
+      );
+    }
   },
 
   api: async ({ serverUrl, appPage }, use) => {
