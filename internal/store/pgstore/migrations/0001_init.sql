@@ -15,6 +15,9 @@
 -- the active schema. WITH SCHEMA public is idempotent under IF NOT EXISTS.
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
+-- rela_seq is the global monotonic change marker. INSERTs consume it via the
+-- `seq` column DEFAULT below; UPDATE/rename paths bump it explicitly with
+-- nextval('rela_seq') so every mutation advances the watermark.
 CREATE SEQUENCE IF NOT EXISTS rela_seq;
 
 CREATE TABLE entities (

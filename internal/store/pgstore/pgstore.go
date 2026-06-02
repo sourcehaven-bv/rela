@@ -152,8 +152,10 @@ func (s *Store) Subscribe(bufSize int) (events <-chan store.Event, cancel func()
 	return ch, cancel
 }
 
-// emit delivers an event to every subscriber via a non-blocking send. It is
-// called AFTER a write transaction commits — never while holding a DB
+// emit delivers an event to every subscriber via a non-blocking send. Delivery
+// is intentionally LOSSY and UNORDERED across subscribers — a full subscriber
+// buffer drops the event (matching the store.Watcher contract and memstore).
+// It is called AFTER a write transaction commits — never while holding a DB
 // transaction — so subscribers never observe uncommitted state.
 func (s *Store) emit(ev store.Event) {
 	s.mu.Lock()

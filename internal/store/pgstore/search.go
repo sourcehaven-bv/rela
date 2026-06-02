@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -64,7 +65,7 @@ func (b *SearchBackend) Search(text string, limit int) ([]string, error) {
 		args = append(args, needle)
 	}
 	if limit > 0 {
-		sql += ` LIMIT $` + itoa(len(args)+1)
+		sql += ` LIMIT $` + strconv.Itoa(len(args)+1)
 		args = append(args, limit)
 	}
 
@@ -94,19 +95,4 @@ func (b *SearchBackend) Close() error { return nil }
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
-}
-
-// itoa is a tiny strconv.Itoa to keep the imports minimal in hot query paths.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

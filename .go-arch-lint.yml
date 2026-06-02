@@ -221,7 +221,6 @@ deps:
       - glamour
       - huh
       - tablewriter
-      - pgx
 
   # Web / UI layer
   dataentry:
@@ -331,8 +330,6 @@ deps:
       - templating
       - tracer
       - validator
-    canUse:
-      - pgx
   appbuildtest:
     mayDependOn:
       - acl

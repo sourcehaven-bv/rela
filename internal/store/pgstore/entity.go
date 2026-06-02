@@ -347,14 +347,26 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 
-	var newType string
-	renameSQL := `UPDATE entities SET id = $2, search_text = $3 || substr(search_text, length($1) + 1),
-		     updated_at = now(), seq = nextval('rela_seq')
-		 WHERE id = $1 RETURNING type`
-	err = tx.QueryRow(ctx, renameSQL, oldID, newID, newID).Scan(&newType)
+	// Update the ID and recompute search_text from the row itself. search_text
+	// is the lowercased "id\ncontent\n<string props>" the search backend matches
+	// against (see entitySearchText); only the ID part changes on rename.
+	// Recomputing via entitySearchText keeps a SINGLE writer of that column —
+	// splicing the new ID over the old prefix in SQL risks a mixed-case prefix
+	// (renamed entity unfindable by its new ID) and assumes lower() preserves
+	// byte length, which is not true for all Unicode the store permits.
+	renamed, err := scanEntity(tx.QueryRow(ctx,
+		`UPDATE entities SET id = $2, updated_at = now(), seq = nextval('rela_seq')
+		 WHERE id = $1
+		 RETURNING id, type, properties, content, updated_at`, oldID, newID))
 	if err != nil {
 		return nil, err
 	}
+	if _, err = tx.Exec(ctx,
+		`UPDATE entities SET search_text = $2 WHERE id = $1`,
+		newID, entitySearchText(renamed)); err != nil {
+		return nil, err
+	}
+	newType := renamed.Type
 
 	tag, err := tx.Exec(ctx,
 		`UPDATE relations SET from_id = $2, seq = nextval('rela_seq') WHERE from_id = $1`, oldID, newID)

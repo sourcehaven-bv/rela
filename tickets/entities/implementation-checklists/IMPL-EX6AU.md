@@ -2,14 +2,14 @@
 id: IMPL-EX6AU
 type: implementation-checklist
 title: 'Implementation: PostgreSQL store + search backend with build-flag variants'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Staged delivery
 
-This XL ticket lands in stages on branch `feat/postgres-store-TKT-M8400`:
+Delivered in three stages on branch `feat/postgres-store-TKT-M8400`:
 
 - [x] **Stage A — pgstore core + conformance** (commit 296c5f3f). pgstore
 implements `store.Store` + `search.Backend` over an injected pgx pool; embedded
@@ -19,37 +19,41 @@ functions pass with `-race` against live PostgreSQL.
 backend build-tag boundary to ONE `New` recipe per scenario
 (`appbuild_{fs,memory,postgres}.go`) over shared `prepare()`/`assemble()`,
 replacing the deep 3-seam dance — so the postgres build creates one pgx pool
-shared by store+search (the seam the old shape couldn't express). Same for
-`cli/mcp_wiring_{fs,memory,postgres}.go`. `appbuild.Config` carries the DSN;
-`WithDatabaseURL` + `--database-url` (rela-server + kong global) /
-`RELA_DATABASE_URL` resolve it (flag wins). arch-lint: appbuild/cli `mayDependOn
-pgstore` + `canUse pgx`.
-- [ ] **Stage C — CI / release / docs.** goreleaser 2 extra builds (`-postgres`);
-CI postgres service-container job + `go list -deps` no-bleve assertion; docs
-(deployment, CLAUDE.md, README); justfile targets.
+shared by store+search. Same for `cli/mcp_wiring_{fs,memory,postgres}.go`.
+`appbuild.Config` carries the DSN; `WithDatabaseURL` + `--database-url`
+(rela-server + kong global) / `RELA_DATABASE_URL` resolve it (flag wins).
+arch-lint: appbuild/cli `mayDependOn pgstore` + `canUse pgx`.
+- [x] **Stage C — CI / release / docs** (commit a29f8b01). goreleaser builds
+`rela-postgres` + `rela-server-postgres` in their own `-postgres` archives
+(config migrated off deprecated keys; `goreleaser build --snapshot` produces all
+4 binaries). New CI `postgres` job: postgres:16 service container runs the
+pgstore conformance + fuzz seeds with `-race`, asserts dependency isolation
+(postgres build has no bleve / default has no pgx via `go list -deps`), and
+compiles all 3 tag combos; gates the `build` job. justfile targets
+`build-cli-postgres`, `build-server-postgres`, `build-postgres`,
+`test-postgres`, `build-check-tags`. Docs: `GUIDE-postgres-backend` (regenerated
+into `docs/postgres-backend.md` + README) and a CLAUDE.md "Storage backends &
+build tags" section.
 
-**Verification Evidence (Stage B):**
+**Verification Evidence (Stage C):**
 
-- All 3 tag combos build the whole module incl. cmd/: `go build` /
-`-tags memorybackend` / `-tags postgres ./...` — clean.
-- Dependency isolation (AC1/AC4): `go list -deps -tags postgres ./cmd/rela{,-server}`
-→ 0 bleve, 11 pgx pkgs; default `./cmd/rela-server` → 0 pgx, 41 bleve.
-- lint clean under all 3 tags; arch-lint OK; full default `go test -race ./...`
-→ 60 packages OK, no regressions from the composition-root refactor.
-- E2E (AC5 mini): `go build -tags postgres -o rela-pg ./cmd/rela`; `init` +
-`migrate`, then `create requirement` ×2 → rows land in Postgres (REQ-001/002,
-seq 1/2), `entities/` dir stays empty (DB-backed), `list` reads them back,
-schema_version=1 (auto-migrated on first open). Invalid `--database-url` with a
-password → error redacts the password (`user=u database=nope`).
+- `goreleaser check` clean (no deprecations); `goreleaser build --snapshot
+--single-target` produces rela, rela-server, rela-postgres, rela-server-postgres
+(AC6).
+- CI YAML validates; the `! go list -deps | grep -q` isolation assertions
+verified locally under `set -euo pipefail`.
+- `just docs-check` regenerates cleanly (docs committed); `just lint-md`
+0 errors; `just build-check-tags` compiles all 3 combos.
 
 ## Development
 
 - [x] Unit tests written for new code — conformance suite (storetest.RunAll)
 exercises every method; per-schema isolation in testdb_test.go.
 - [x] Integration tests written — full store flow + search via searchFactory;
-fuzz incl. FuzzConcurrentOps under `-race`; postgres CLI e2e (Stage B).
+fuzz incl. FuzzConcurrentOps under `-race`; postgres CLI e2e (Stage B); CI
+service-container conformance run (Stage C).
 - [x] Happy path implemented — all 25 store.Store methods + search.Backend;
-3 build-tag recipes wired through to cmd/.
+3 build-tag recipes wired through to cmd/ + release + CI.
 - [x] Edge cases from planning handled — empty store, ErrConflict/ErrNotFound/
 ErrHasRelations, cascade delete, rename, unicode/special chars (fuzz), nested
 JSONB round-trip (int preservation via UseNumber+normalize), watcher
@@ -68,8 +72,11 @@ ErrNotFound/ErrConflict; no swallowed errors.
 ## Manual Verification
 
 - [x] Feature manually tested end-to-end — full suite + fuzz + postgres CLI e2e
-against a real Postgres.app 15 instance (rela_test DB, pg_trgm 1.6).
-- [x] Each acceptance criterion verified — see evidence (Stage A + B).
+against a real Postgres.app 15 instance (rela_test DB, pg_trgm 1.6); goreleaser
+snapshot build of all 4 binaries.
+- [x] Each acceptance criterion verified — AC1 (build/no-bleve), AC2 (conformance),
+AC3 (search), AC4 (default unchanged), AC5 (server/CLI against DB), AC6 (4
+binaries).
 - [x] Edge cases manually verified — fuzz + conformance subtests + DSN errors.
 
 **Verification Evidence (Stage A):**
@@ -92,6 +99,16 @@ expects int) → unmarshalProps uses json UseNumber + normalize.
 - Harness note: active fuzzing exhausted Postgres connections (SQLSTATE 53300);
 fixed by capping test pools + shared-pool/TRUNCATE fuzz factory. Production uses
 one pool; not a pgstore defect.
+
+**Verification Evidence (Stage B):**
+
+- All 3 tag combos build the whole module incl. cmd/.
+- Dependency isolation: `go list -deps -tags postgres ./cmd/rela{,-server}`
+→ 0 bleve, 11 pgx pkgs; default `./cmd/rela-server` → 0 pgx, 41 bleve.
+- lint clean under all 3 tags; arch-lint OK; full default `go test -race ./...`
+→ 60 packages OK, no regressions from the composition-root refactor.
+- E2E: postgres CLI `create` ×2 → rows in Postgres (seq 1/2), `entities/` empty,
+`list` reads back, schema_version=1; invalid DSN error redacts password.
 
 ## Quality
 
