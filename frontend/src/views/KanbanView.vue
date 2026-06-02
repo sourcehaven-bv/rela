@@ -392,7 +392,7 @@ watch(() => entitiesStore.cacheVersion, () => {
             @click="openCard(entity)"
           >
             <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title">{{ getCardTitle(entity) }}</div>
+            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
             <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
               <div
                 v-for="field in kanbanConfig.card.fields"
@@ -458,7 +458,7 @@ watch(() => entitiesStore.cacheVersion, () => {
             @click="openCard(entity)"
           >
             <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title">{{ getCardTitle(entity) }}</div>
+            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
             <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
               <div
                 v-for="field in kanbanConfig.card.fields"

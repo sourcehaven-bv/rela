@@ -356,11 +356,39 @@ onBeforeUnmount(() => {
     border: none;
     padding: 0 0 12px 0;
     margin-bottom: 4px;
+    /* Stack filters above the clear button so the button doesn't get
+       stretched vertically next to a wrapping filter grid. */
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  /* Filters fill the width and wrap evenly. Each item flexes from a small
+     min-width so up to two enum filters fit on a row before wrapping. */
+  .filters {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .clear-filters {
+    align-self: flex-end;
+  }
+
+  .filter-item {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  /* Free-text filters (assignee etc.) get a full row on mobile because
+     the input target is more useful at full width. */
+  .filter-item:has(input[type="text"]) {
+    flex: 1 1 100%;
   }
 
   .filter-item select,
   .filter-item input {
-    min-width: 100px;
+    width: 100%;
+    min-width: 0;
   }
 
   .filter-item select[multiple] {

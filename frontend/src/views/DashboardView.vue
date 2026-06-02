@@ -118,7 +118,7 @@ onMounted(() => {
 
 <template>
   <div class="dashboard-view">
-    <header class="dashboard-header">
+    <header class="dashboard-header mobile-topbar mobile-topbar--with-menu">
       <h1>{{ title }}</h1>
       <p v-if="description" class="description">{{ description }}</p>
     </header>
@@ -458,6 +458,18 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  /* .dashboard-header uses .mobile-topbar.mobile-topbar--with-menu from
+     mobile-bars.css. Override only typography and hide the description
+     to keep the bar compact. */
+  .dashboard-header h1 {
+    font-size: 18px;
+    margin: 0;
+  }
+
+  .dashboard-header .description {
+    display: none;
+  }
+
   .dashboard-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
@@ -468,11 +480,18 @@ onMounted(() => {
   }
 
   .card-header {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
+  }
+
+  /* Count cards: compact on mobile so the big number doesn't waste a
+     screenful of vertical space. The number sits inline with the header
+     instead of below it. */
+  .card-count {
+    padding: 0;
   }
 
   .count-number {
-    font-size: 36px;
+    font-size: 32px;
   }
 
   .breakdown-label {
@@ -487,7 +506,14 @@ onMounted(() => {
 
 @media (max-width: 480px) {
   .dashboard-grid {
-    grid-template-columns: 1fr;
+    /* Two compact stat cards per row instead of one tall one. */
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Breakdown cards still want full width — too cramped at half width. */
+  .dashboard-card:has(.card-breakdown),
+  .dashboard-card:has(.card-list) {
+    grid-column: 1 / -1;
   }
 }
 </style>

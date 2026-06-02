@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { useKeyboardShortcuts, shortcutsModalOpen, paletteOpen, useEvents } from '@/composables'
+import {
+  useKeyboardShortcuts,
+  shortcutsModalOpen,
+  paletteOpen,
+  useEvents,
+  useVisualViewportOffset,
+} from '@/composables'
 import { useConfirmHost } from '@/composables/useConfirm'
+import { useBackTarget } from '@/composables/useBackTarget'
 import Sidebar from '@/components/common/Sidebar.vue'
 import StatusBar from '@/components/common/StatusBar.vue'
 import Toast from '@/components/common/Toast.vue'
@@ -10,6 +18,25 @@ import ScriptErrorDialog from '@/components/common/ScriptErrorDialog.vue'
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal.vue'
 import CommandPaletteModal from '@/components/ui/CommandPaletteModal.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
+
+// Hamburger only shows on "top-level" screens — those routed directly from
+// the sidebar. Detail/edit/form/document/view screens render their own Back
+// button (or, for forms, a Cancel button) so the hamburger would be
+// redundant and overlap.
+//
+// Gate 1 — back target: any view that has ?return_to= or ?from= is by
+// definition not top-level, so hide the hamburger and let the view's Back
+// button serve as the primary nav affordance.
+//
+// Gate 2 — route name: forms always have a Cancel that navigates back, so
+// even a "top-level" form (linked from the sidebar with no back-target
+// query) should hide the hamburger.
+const route = useRoute()
+const backTarget = useBackTarget()
+const NON_TOP_LEVEL_ROUTES = new Set(['form-create', 'form-edit'])
+const showHamburger = computed(
+  () => backTarget.value === null && !NON_TOP_LEVEL_ROUTES.has(route.name as string),
+)
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
@@ -31,6 +58,10 @@ const { state: confirmState, onConfirmEvent, onCancelEvent } = useConfirmHost()
 function handleConfirm() {
   onConfirmEvent().catch(() => {})
 }
+
+// Mirror visualViewport.offsetTop onto --vv-offset-top so sticky topbars
+// follow the iOS keyboard. See useVisualViewportOffset for the rationale.
+useVisualViewportOffset()
 
 onMounted(async () => {
   try {
@@ -100,6 +131,7 @@ watch(
   <div v-else class="app-layout">
     <Sidebar />
     <button
+      v-if="showHamburger"
       class="mobile-menu-btn"
       :aria-expanded="uiStore.sidebarMobileOpen"
       aria-label="Toggle navigation"
@@ -214,7 +246,17 @@ body {
 
 .main-content {
   flex: 1;
+  /* Without min-width: 0 a flex child defaults to min-width: auto, which
+     equals its content's intrinsic min-width. One unbreakable token
+     (long URL, no-space title) then forces the whole layout wider than
+     the viewport. min-width: 0 lets descendants honour overflow-wrap. */
+  min-width: 0;
   margin-left: 240px;
+  /* --page-padding-x exposes the horizontal padding to PageLayout so
+     its sticky topbar / actionbar can bleed full-width via negative
+     margin without each view re-asserting the value. Stays in sync
+     across breakpoints below. */
+  --page-padding-x: 24px;
   padding: 24px;
   padding-bottom: 48px; /* Account for status bar */
   transition: margin-left 0.2s ease;
@@ -262,26 +304,39 @@ body {
   cursor: pointer;
 }
 
-/* Mobile hamburger button — visible only on small screens */
+/* Mobile hamburger button — visible only on small screens. Sits inside the
+   sticky list/page header, so it renders as a transparent ghost icon
+   (no own border/shadow/background) — the header bar provides the chrome. */
 .mobile-menu-btn {
   display: none;
   position: fixed;
-  top: 8px;
-  left: 8px;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
   z-index: 101;
   width: 44px;
   height: 44px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  font-size: 20px;
+  background: transparent;
+  border: none;
+  font-size: 22px;
   line-height: 1;
   color: var(--text-color);
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 @media (max-width: 768px) {
+  /* Reserve safe-area at top of layout so titles/content don't sit under
+     the iOS status bar / dynamic island. Subtract the safe-area inset
+     from min-height so the page doesn't scroll beyond its content just
+     because of the safe-area padding — that scrollable strip otherwise
+     lets the user push the sticky-topbar background out of the
+     status-bar area. */
+  .app-layout {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    min-height: calc(100vh - env(safe-area-inset-top, 0px));
+  }
+
   .mobile-menu-btn {
     display: flex;
     align-items: center;
@@ -290,9 +345,16 @@ body {
 
   .main-content {
     margin-left: 0;
+    --page-padding-x: 16px;
     padding: 16px;
-    padding-top: 60px; /* Space for hamburger button */
-    padding-bottom: 16px; /* No status bar on mobile */
+    /* Space for the hamburger button (only present on top-level screens).
+       On detail/edit screens the hamburger is hidden, but we still need
+       breathing room below the safe-area inset, so keep the same top
+       padding regardless. */
+    padding-top: 60px;
+    /* Extra bottom padding so the last card's rounded corners aren't
+       flush against the home-indicator / screen edge. */
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   }
 
   .main-content.sidebar-collapsed {
@@ -329,9 +391,10 @@ body {
 
 @media (max-width: 480px) {
   .main-content {
+    --page-padding-x: 12px;
     padding: 12px;
     padding-top: 56px;
-    padding-bottom: 12px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   }
 
   .modal {

@@ -440,8 +440,11 @@ watch(
     </div>
 
     <template v-else-if="entry">
-      <!-- Back affordance + optional scope (prev/next) navigation. -->
-      <div v-if="backTarget || scopeNav" class="scope-nav">
+      <!-- Back affordance + optional scope (prev/next) navigation. The bar
+           renders when either a back target exists (?return_to or ?from)
+           or the user is in a list-scoped context (?from drives scopeNav).
+           Both can be present simultaneously. -->
+      <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
           <button v-if="scopeNav.prevId" class="scope-nav-btn" @click="navigateScope('prev')">
@@ -460,7 +463,7 @@ watch(
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
-          <h1>{{ entryTitle }}</h1>
+          <h1 class="text-wrap-anywhere">{{ entryTitle }}</h1>
         </div>
         <!-- Desktop actions -->
         <div class="header-actions desktop-actions">
@@ -1357,4 +1360,55 @@ watch(
   background: var(--hover-bg);
   color: var(--text-color);
 }
+
+@media (max-width: 768px) {
+  /* .scope-nav uses .mobile-topbar from mobile-bars.css for the sticky
+     chrome + safe-area math. Override only the layout: dense (no gap,
+     no wrap) so prev/progress/next sit flush across the bar. */
+  .scope-nav {
+    gap: 0;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    /* The bar uses 12px horizontal padding here instead of the default
+       16 — the prev/next buttons hug the edges. */
+    padding-left: 12px;
+  }
+
+  .desktop-actions {
+    display: none;
+  }
+
+  /* Inline mobile actions (Edit / delete / overflow) — comfortable touch
+     targets and spacing. Toggled visible via the .mobile-actions rules
+     above. */
+  .mobile-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .mobile-actions .btn {
+    min-height: 44px;
+  }
+
+  .mobile-actions .btn-secondary {
+    flex: 1;
+  }
+
+  .header-info h1 {
+    font-size: 22px;
+  }
+
+  .detail-section {
+    background: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 16px;
+  }
+}
+
 </style>

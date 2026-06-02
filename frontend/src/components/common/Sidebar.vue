@@ -434,7 +434,14 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   .sidebar {
     transform: translateX(-100%);
     height: 100vh;
+    padding-top: env(safe-area-inset-top, 0px);
     transition: transform 0.25s ease;
+  }
+
+  /* When the mobile sidebar is open, the hamburger button overlays the
+     sidebar header. Indent the header so the title isn't covered. */
+  .sidebar.mobile-open .sidebar-header {
+    padding-left: 60px;
   }
 
   .sidebar.mobile-open {

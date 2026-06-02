@@ -1,0 +1,91 @@
+/* Mobile chrome bars: top header + bottom action bar.
+ *
+ * These utilities encapsulate the safe-area math and negative-margin trick
+ * that makes a sticky/fixed bar bleed to the viewport edges and paint
+ * under the iOS status bar / dynamic island. They are mobile-only — on
+ * desktop the bars stay in normal flow.
+ *
+ * Variants:
+ *   .mobile-topbar              — hamburger-less, e.g. detail/edit pages.
+ *   .mobile-topbar--with-menu   — leaves room for the fixed hamburger
+ *                                 button (44px wide + 8+8 inset).
+ *   .mobile-actionbar           — sticky bottom bar (scrolls off the
+ *                                 page only when the page is short).
+ *   .mobile-actionbar--fixed    — pinned to the viewport regardless of
+ *                                 scroll position; use for pages that
+ *                                 are taller than the viewport.
+ *
+ * Page-padding contract:
+ *   The negative horizontal margins assume `.main-content` uses 16px
+ *   horizontal padding at <=768px and 12px at <=480px (see App.vue).
+ *   If those change, update both places.
+ */
+
+@media (max-width: 768px) {
+  .mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 102;
+    background: var(--bg-color);
+    /* Pull up under the .main-content padding-top (60px) plus the safe
+       area, so the bar's background fills the status-bar area. Negative
+       horizontal margin matches .main-content's 16px padding so the bar
+       bleeds to the viewport edges. */
+    margin: calc(-60px - env(safe-area-inset-top, 0px)) -16px 16px -16px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
+    border-bottom: 1px solid var(--border-color);
+    /* iOS WebKit anchors sticky to the layout viewport. When the keyboard
+       opens, the visual viewport shifts up — translate the bar to follow
+       it so it doesn't slide under the status bar. App.vue keeps
+       --vv-offset-top in sync with visualViewport.offsetTop. */
+    transform: translateY(var(--vv-offset-top, 0px));
+  }
+
+  /* For top-level (sidebar-routed) screens the hamburger is visible at
+     top:8px/left:8px (44px wide). Reserve room on the left so titles
+     don't sit underneath it. Lower z-index than the hamburger-less
+     variant — these screens have less stacking pressure. */
+  .mobile-topbar--with-menu {
+    z-index: 10;
+    padding-left: 64px;
+  }
+
+  .mobile-actionbar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    background: var(--bg-color);
+    /* Pull out under the .main-content padding (12px at this breakpoint
+       for the form footer; entity-detail uses --fixed below). */
+    margin: 0 -12px -12px -12px;
+    padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    gap: 8px;
+  }
+
+  /* Pinned to the viewport (not the document). Use when the page can
+     be much taller than the viewport — sticky would scroll off with
+     the container. */
+  .mobile-actionbar--fixed {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    margin: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  /* .main-content drops to 12px horizontal padding at this breakpoint
+     (see App.vue), so the negative margins must shrink to match —
+     otherwise the bars overflow the viewport and create a tiny
+     horizontal scroll on iPhone. */
+  .mobile-topbar {
+    margin-left: -12px;
+    margin-right: -12px;
+  }
+}

@@ -1011,7 +1011,7 @@ onBeforeRouteLeave(async () => {
 <template>
   <div v-if="formConfig" class="form-layout" :class="{ 'with-sidepanel': isEdit }">
     <div class="dynamic-form">
-      <header class="form-header">
+      <header class="form-header mobile-topbar">
         <h1>{{ title }}</h1>
         <button
           type="button"
@@ -1170,7 +1170,7 @@ onBeforeRouteLeave(async () => {
           />
         </div>
 
-        <div class="form-actions">
+        <div class="form-actions mobile-actionbar">
           <!-- Edit mode: ambient autosave indicator replaces the
                explicit Save button. Cancel is repurposed as a Back
                button to navigate away (with the autosave-flushing
@@ -1435,6 +1435,9 @@ onBeforeRouteLeave(async () => {
     margin-bottom: 12px;
   }
 
+  /* Sticky topbar styles live in src/styles/mobile-bars.css
+     (.mobile-topbar). Override only the bottom margin here — the form
+     wants 12px between bar and first field instead of the default 16. */
   .form-header {
     margin-bottom: 12px;
   }
@@ -1443,18 +1446,7 @@ onBeforeRouteLeave(async () => {
     font-size: 20px;
   }
 
-  .form-actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 10;
-    background: var(--bg-color);
-    margin: 0 -12px -12px -12px;
-    padding: 12px;
-    border-top: 1px solid var(--border-color);
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
-    display: flex;
-    gap: 8px;
-  }
+  /* .form-actions uses .mobile-actionbar from mobile-bars.css. */
 
   .form-actions .btn {
     flex: 1;
@@ -1467,4 +1459,5 @@ onBeforeRouteLeave(async () => {
     gap: 6px;
   }
 }
+
 </style>
