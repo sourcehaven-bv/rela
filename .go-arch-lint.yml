@@ -72,6 +72,7 @@ components:
   store:            { in: internal/store }
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
+  pgstore:          { in: internal/store/pgstore }
   storeutil:        { in: internal/store/storeutil }
 
   # Project bootstrap utilities
@@ -122,6 +123,7 @@ vendors:
       - github.com/olekukonko/tablewriter/**
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
+  pgx:         { in: github.com/jackc/pgx/** }
   singleflight: { in: golang.org/x/sync/singleflight }
   http2:
     in:
@@ -538,6 +540,13 @@ deps:
     mayDependOn:
       - store
       - storeutil
+  pgstore:
+    mayDependOn:
+      - search
+      - store
+      - storeutil
+    canUse:
+      - pgx
   storeutil:
     mayDependOn:
       - store

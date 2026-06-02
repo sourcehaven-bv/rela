@@ -45,6 +45,7 @@ exclude:
     - ^cmd/rela                # main entry point
     - ^internal/testutil       # test helpers
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
+    - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
     - ^frontend/node_modules   # Go files in npm dependencies
 
 # Require coverage-ignore annotations to have explanatory comments
