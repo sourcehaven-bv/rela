@@ -69,6 +69,10 @@ func (b *SearchBackend) Search(text string, limit int) ([]string, error) {
 		args = append(args, limit)
 	}
 
+	// context.Background(): the search.Backend.Search interface carries no
+	// context (see internal/search/types.go), so a search query can't inherit a
+	// request deadline/cancellation. Threading ctx through is a search-package
+	// interface change tracked separately.
 	rows, err := b.db.Query(context.Background(), sql, args...)
 	if err != nil {
 		return nil, err

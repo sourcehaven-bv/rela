@@ -20,8 +20,15 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 -- nextval('rela_seq') so every mutation advances the watermark.
 CREATE SEQUENCE IF NOT EXISTS rela_seq;
 
+-- Key columns are COLLATE "C" so ordering is byte-wise — identical to Go's
+-- string comparison used by fsstore/memstore (storeutil sorted slices). Without
+-- this, the database's locale collation (e.g. en_US.UTF-8) would order IDs
+-- differently from the in-memory backends, breaking the store contract's
+-- stable ascending-by-ID order across backends AND making the keyset pagination
+-- cursor inconsistent with ORDER BY under nondeterministic collations. "C" also
+-- keeps the PK/keyset index byte-ordered and avoids locale-aware comparisons.
 CREATE TABLE entities (
-    id         TEXT PRIMARY KEY,
+    id         TEXT        COLLATE "C" PRIMARY KEY,
     type       TEXT        NOT NULL,
     properties JSONB       NOT NULL DEFAULT '{}'::jsonb,
     content    TEXT        NOT NULL DEFAULT '',
@@ -45,9 +52,9 @@ CREATE INDEX entities_search_trgm_idx
     ON entities USING GIN (search_text gin_trgm_ops);
 
 CREATE TABLE relations (
-    from_id    TEXT        NOT NULL,
-    rel_type   TEXT        NOT NULL,
-    to_id      TEXT        NOT NULL,
+    from_id    TEXT        COLLATE "C" NOT NULL,
+    rel_type   TEXT        COLLATE "C" NOT NULL,
+    to_id      TEXT        COLLATE "C" NOT NULL,
     properties JSONB       NOT NULL DEFAULT '{}'::jsonb,
     content    TEXT        NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -61,8 +68,8 @@ CREATE INDEX relations_to_idx   ON relations (to_id);
 CREATE INDEX relations_type_idx ON relations (rel_type);
 
 CREATE TABLE attachments (
-    entity_id    TEXT        NOT NULL,
-    property     TEXT        NOT NULL,
+    entity_id    TEXT        COLLATE "C" NOT NULL,
+    property     TEXT        COLLATE "C" NOT NULL,
     file_name    TEXT        NOT NULL DEFAULT '',
     content_type TEXT        NOT NULL DEFAULT '',
     bytes        BYTEA       NOT NULL,

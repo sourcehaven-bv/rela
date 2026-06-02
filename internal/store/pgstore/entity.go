@@ -390,10 +390,11 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 
+	// Notify with the value captured in-tx (RETURNING) rather than re-reading:
+	// a post-commit GetEntity could miss the put if the row is concurrently
+	// deleted or the query transiently fails, leaving the search index stale.
 	s.notifyDelete(oldID)
-	if renamed, err := s.GetEntity(ctx, newID); err == nil {
-		s.notifyPut(renamed)
-	}
+	s.notifyPut(renamed) // renamed carries updated_at from the RETURNING clause
 	s.emit(store.Event{Op: store.EventEntityUpdated, EntityType: newType, EntityID: newID})
 
 	return &store.RenameResult{RelationsUpdated: int(updated)}, nil

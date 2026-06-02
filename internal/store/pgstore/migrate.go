@@ -3,10 +3,13 @@ package pgstore
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 //go:embed migrations/*.sql
@@ -19,11 +22,20 @@ type migration struct {
 	sql     string
 }
 
+// migrateAdvisoryLockKey is an arbitrary constant identifying the pgstore
+// migration lock. pg_advisory_xact_lock serializes concurrent migrators (rela /
+// rela-server / rela mcp may all call Migrate against the same database); the
+// transaction-scoped lock is released automatically on commit or rollback.
+const migrateAdvisoryLockKey = 0x52_45_4c_41 // "RELA"
+
 // Migrate applies any unapplied migrations to the database in version order,
-// idempotently. It is safe to call on every startup: already-applied
-// migrations are skipped. Each migration runs in its own transaction together
-// with the schema_version bump, so a partial failure leaves the recorded
-// version consistent with the applied DDL.
+// idempotently and concurrency-safely. It is safe to call on every startup and
+// from multiple processes at once: a transaction-scoped advisory lock
+// serializes migrators, and already-applied migrations are skipped.
+//
+// The whole sequence runs in ONE transaction (PostgreSQL DDL is transactional),
+// so a partial failure rolls back every change and the recorded schema_version
+// never gets ahead of the applied DDL.
 //
 // The wiring layer calls this once at startup against the production pool;
 // tests call it once per freshly-created schema.
@@ -33,61 +45,58 @@ func Migrate(ctx context.Context, db DBTX) error {
 		return err
 	}
 
-	if _, err = db.Exec(ctx,
-		`CREATE TABLE IF NOT EXISTS schema_version (version INT NOT NULL)`); err != nil {
-		return fmt.Errorf("pgstore: ensure schema_version: %w", err)
-	}
-
-	current, err := currentVersion(ctx, db)
-	if err != nil {
-		return err
-	}
-
-	for _, m := range migs {
-		if m.version <= current {
-			continue
-		}
-		if err := applyMigration(ctx, db, m); err != nil {
-			return fmt.Errorf("pgstore: migration %d (%s): %w", m.version, m.name, err)
-		}
-	}
-	return nil
-}
-
-func applyMigration(ctx context.Context, db DBTX, m migration) error {
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	if _, err = tx.Exec(ctx, m.sql); err != nil {
-		return err
+	// Serialize concurrent migrators. The lock is held until this tx ends.
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, migrateAdvisoryLockKey); err != nil {
+		return fmt.Errorf("pgstore: acquire migration lock: %w", err)
 	}
-	// schema_version holds a single row once seeded; use UPDATE-or-INSERT so the
-	// table reflects the latest applied version without accumulating rows.
-	tag, err := tx.Exec(ctx, `UPDATE schema_version SET version = $1`, m.version)
-	if err != nil {
-		return err
+
+	// schema_version is a singleton: the CHECK + single-value PK forbid a second
+	// row, so the version can never fork.
+	if _, err = tx.Exec(ctx,
+		`CREATE TABLE IF NOT EXISTS schema_version (
+			id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+			version INT NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("pgstore: ensure schema_version: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1)`, m.version); err != nil {
-			return err
+
+	var current int
+	var v *int
+	if err = tx.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&v); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("pgstore: read schema_version: %w", err)
 		}
 	}
-	return tx.Commit(ctx)
-}
+	if v != nil {
+		current = *v
+	}
 
-// currentVersion returns the highest applied migration version, or 0 if none.
-func currentVersion(ctx context.Context, db DBTX) (int, error) {
-	var v *int
-	if err := db.QueryRow(ctx, `SELECT max(version) FROM schema_version`).Scan(&v); err != nil {
-		return 0, fmt.Errorf("pgstore: read schema_version: %w", err)
+	applied := current
+	for _, m := range migs {
+		if m.version <= current {
+			continue
+		}
+		if _, err = tx.Exec(ctx, m.sql); err != nil {
+			return fmt.Errorf("pgstore: migration %d (%s): %w", m.version, m.name, err)
+		}
+		applied = m.version
 	}
-	if v == nil {
-		return 0, nil
+
+	if applied != current {
+		if _, err = tx.Exec(ctx,
+			`INSERT INTO schema_version (id, version) VALUES (true, $1)
+			 ON CONFLICT (id) DO UPDATE SET version = excluded.version`, applied); err != nil {
+			return fmt.Errorf("pgstore: record schema_version: %w", err)
+		}
 	}
-	return *v, nil
+
+	return tx.Commit(ctx)
 }
 
 // loadMigrations reads and parses the embedded migration files. File names

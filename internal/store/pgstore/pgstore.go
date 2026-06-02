@@ -17,9 +17,16 @@
 // The watcher is in-process only, mirroring memstore/fsstore: events are
 // emitted after each committed write to local subscribers via non-blocking
 // sends (dropped if a subscriber's buffer is full). This build targets a
-// single rela-server process owning the database. Every row carries
-// created_at / updated_at / seq so a future cross-process change feed can be
-// added without a schema migration.
+// single rela-server process owning the database.
+//
+// Event delivery is best-effort in BOTH directions: a subscriber never sees an
+// uncommitted write (emit happens after commit), but it may MISS an event — if
+// the process crashes between commit and emit, or a slow subscriber's buffer is
+// full, the committed write is not redelivered. Consumers that need a complete
+// view re-snapshot on (re)connect (the data-entry SSE feed and MCP watcher do).
+// Every row carries created_at / updated_at / seq so a future cross-process
+// change feed with catch-up from a watermark can be added without a schema
+// migration.
 //
 // # Search
 //
