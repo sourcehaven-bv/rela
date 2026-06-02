@@ -34,8 +34,23 @@ build-desktop-debug: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
+# Build the PostgreSQL-backed CLI binary (rela-postgres)
+build-cli-postgres:
+    @echo "Building rela-postgres CLI..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-postgres ./cmd/rela
+
+# Build the PostgreSQL-backed data entry server (rela-server-postgres)
+build-server-postgres: build-frontend
+    @echo "Building rela-server-postgres..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-postgres ./cmd/rela-server
+
 # Build all binaries
 build: build-cli build-server build-desktop
+
+# Build the postgres-tagged binaries (FS binaries unaffected)
+build-postgres: build-cli-postgres build-server-postgres
 
 # Install CLI to ~/bin
 install: build-cli build-server
@@ -62,6 +77,23 @@ test:
 test-verbose:
     @echo "Running tests (verbose)..."
     go test -race -cover -v {{go_packages}}
+
+# Run the postgres-tagged tests against a real PostgreSQL.
+# Requires RELA_TEST_DATABASE_URL, e.g.:
+#   RELA_TEST_DATABASE_URL=postgres://user@127.0.0.1:5432/rela_test?sslmode=disable just test-postgres
+# Without it, the pgstore conformance suite skips (so this stays a no-op-safe target).
+test-postgres:
+    @echo "Running postgres-tagged tests (needs RELA_TEST_DATABASE_URL)..."
+    go test -race -tags postgres ./internal/store/pgstore/...
+
+# Verify the binaries compile under every backend build tag. Cheap guard
+# that no build-tag seam drifted; mirrors the CI compile matrix.
+build-check-tags:
+    @echo "Compiling all backend build-tag combinations..."
+    go build ./...
+    go build -tags memorybackend ./...
+    go build -tags postgres ./...
+    @echo "All build-tag combinations compile."
 
 # ── E2E Tests ──
 

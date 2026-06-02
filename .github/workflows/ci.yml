@@ -243,10 +243,61 @@ jobs:
           go test -run='^$' -fuzz='^FuzzParseEntityID$' -fuzztime=10s ./internal/entity/
           go test -run='^$' -fuzz='^FuzzValidateID$' -fuzztime=10s ./internal/entity/
 
+  postgres:
+    name: Postgres Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rela
+          POSTGRES_PASSWORD: rela
+          POSTGRES_DB: rela_test
+        ports:
+          - 5432:5432
+        # Wait for the server to accept connections before tests run.
+        options: >-
+          --health-cmd "pg_isready -U rela"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RELA_TEST_DATABASE_URL: postgres://rela:rela@127.0.0.1:5432/rela_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      # The default build must NOT link pgx, and the postgres build must NOT
+      # link bleve. These greps are the load-bearing assertions for the
+      # "no bleve in the postgres build" acceptance criterion (TKT-M8400).
+      - name: Assert dependency isolation
+        run: |
+          set -euo pipefail
+          echo "default build must not link pgx:"
+          ! go list -deps ./cmd/rela-server | grep -q 'jackc/pgx'
+          ! go list -deps ./cmd/rela        | grep -q 'jackc/pgx'
+          echo "postgres build must not link bleve:"
+          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'blevesearch/bleve'
+          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'blevesearch/bleve'
+          echo "OK: backends are isolated by build tag."
+
+      - name: Compile all backend build-tag combinations
+        run: |
+          go build ./...
+          go build -tags memorybackend ./...
+          go build -tags postgres ./...
+
+      - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
+        run: go test -race -tags postgres ./internal/store/pgstore/...
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, frontend, e2e]
+    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, postgres, frontend, e2e]
     steps:
       - uses: actions/checkout@v6
 

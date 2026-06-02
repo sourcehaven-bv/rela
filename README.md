@@ -87,6 +87,7 @@ go build -o rela ./cmd/rela
 | [Encrypting a rela repo with git-crypt](docs/git-crypt.md) | Use git-crypt for confidentiality when pushing to untrusted git hosts |
 | [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
 | [Audit Log](docs/audit-log.md) | Forensic JSONL log of every entity / relation write |
+| [PostgreSQL Backend](docs/postgres-backend.md) | Run rela-server and the CLI against PostgreSQL instead of markdown files |
 
 ### Tutorials
 
