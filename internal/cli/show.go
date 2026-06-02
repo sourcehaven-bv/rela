@@ -4,56 +4,46 @@ import (
 	"context"
 	"errors"
 
-	"github.com/spf13/cobra"
-
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-var showCmd = &cobra.Command{
-	Use:   "show <id>",
-	Short: "Show entity details",
-	Long: `Shows detailed information about an entity, including its relations.
+// ShowCmd prints an entity and its incoming/outgoing relations.
+type ShowCmd struct {
+	ID string `arg:"" help:"Entity ID (e.g. REQ-001)."`
+}
 
-Examples:
-  rela show REQ-001
-  rela show DEC-042 -o json`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		entityID := args[0]
-		ctx := context.Background()
-		svc := cliReadFromContext(cmd.Context())
-		st := svc.Store()
+// Run dispatches `rela show <id>`.
+func (c *ShowCmd) Run(ctx context.Context, svc *cliServices) error {
+	st := svc.Store()
 
-		e, err := st.GetEntity(ctx, entityID)
+	e, err := st.GetEntity(ctx, c.ID)
+	if err != nil {
+		return classifyReadError(c.ID, err)
+	}
+
+	var incoming, outgoing []*entity.Relation
+	inQ := store.RelationQuery{EntityID: c.ID, Direction: store.DirectionIncoming}
+	for r, err := range st.ListRelations(ctx, inQ) {
 		if err != nil {
-			return classifyReadError(entityID, err)
+			break
 		}
+		incoming = append(incoming, r)
+	}
+	outQ := store.RelationQuery{EntityID: c.ID, Direction: store.DirectionOutgoing}
+	for r, err := range st.ListRelations(ctx, outQ) {
+		if err != nil {
+			break
+		}
+		outgoing = append(outgoing, r)
+	}
 
-		var incoming, outgoing []*entity.Relation
-		inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
-		for r, err := range st.ListRelations(ctx, inQ) {
-			if err != nil {
-				break
-			}
-			incoming = append(incoming, r)
-		}
-		outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
-		for r, err := range st.ListRelations(ctx, outQ) {
-			if err != nil {
-				break
-			}
-			outgoing = append(outgoing, r)
-		}
-
-		return out.WriteEntity(e, incoming, outgoing)
-	},
+	return out.WriteEntity(e, incoming, outgoing)
 }
 
-func init() {
-	rootCmd.AddCommand(showCmd)
-}
-
+// entityNotFoundError is the typed "entity not found" error used by
+// show / delete / update and any other read path that wants to
+// distinguish missing-entity from other read failures.
 type entityNotFoundError struct {
 	ID string
 }
@@ -63,9 +53,9 @@ func (e *entityNotFoundError) Error() string {
 }
 
 // classifyReadError maps a store.GetEntity error onto a user-facing
-// message. Today it only distinguishes "not found" from every other
-// error shape, but the indirection stays so future error classes can
-// plug in without touching the showCmd body.
+// type. Today it only distinguishes ErrNotFound from every other
+// error shape, but the indirection stays so future classes plug in
+// without touching every caller.
 func classifyReadError(id string, err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return &entityNotFoundError{ID: id}

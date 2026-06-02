@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -12,87 +13,57 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/huh"
-	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
-var flowOutputDir string
-
-var flowCmd = &cobra.Command{
-	Use:         "flow <script.lua> [args...]",
-	Short:       "Run an interactive Lua flow",
-	Annotations: map[string]string{skipProjectDiscovery: "true"},
-	Long: `Run a Lua script that can present interactive forms to the user.
-
-Flow scripts use rela.flow.emit() to present forms and receive user input.
-The script suspends at each emit() call until the user responds.
-
-Field types: text, select, multi-select, boolean, number, date, markdown
-
-Example:
-  local event = rela.flow.emit({
-    type = "form",
-    title = "Create Ticket",
-    fields = {
-      {name = "title", type = "text", required = true},
-      {name = "priority", type = "select",
-       options = {{"high", "High"}, {"low", "Low"}}},
-    },
-    actions = {{"submit", "Create"}, {"cancel", "Cancel"}},
-  })
-  if event.action == "cancel" then return end
-  rela.create_entity("ticket", event.data)`,
-	Args: cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		scriptPath := args[0]
-		scriptArgs := args[1:]
-
-		// Resolve script path to absolute
-		if !filepath.IsAbs(scriptPath) {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("get working directory: %w", err)
-			}
-			scriptPath = filepath.Join(cwd, scriptPath)
-		}
-
-		// Discover project from script location (walk up from script's directory)
-		// This allows shebang scripts to work from any directory
-		scriptDir := filepath.Dir(scriptPath)
-		flowSvc, err := appbuild.Discover(scriptDir, script.NewEngine())
-		if err != nil {
-			return fmt.Errorf("no project found for script %s", scriptPath)
-		}
-
-		opts := []lua.Option{
-			lua.WithContext(cmd.Context()),
-			lua.WithCache(flowSvc.ScriptEngine().LuaCache()),
-		}
-		if flowOutputDir != "" {
-			opts = append(opts, lua.WithOutputDir(flowOutputDir))
-		}
-
-		runtime, rtErr := script.NewWriterRuntime(flowSvc.LuaWriteDeps(),
-			scriptPath, os.Stdout, opts...)
-		if rtErr != nil {
-			return rtErr
-		}
-		defer runtime.Close()
-
-		transport := &TerminalTransport{}
-		flow := lua.NewFlowRuntime(runtime, transport)
-
-		return flow.RunFile(scriptPath, scriptArgs)
-	},
+// FlowCmd runs an interactive Lua flow. Self-discovers project from
+// the script's directory so shebang scripts work from any cwd.
+type FlowCmd struct {
+	OutputDir string   `name:"output-dir" help:"Directory for write_file output (default: {project}/output)."`
+	Script    string   `arg:"" help:"Path to Lua script."`
+	Args      []string `arg:"" optional:"" help:"Arguments passed to the script."`
 }
 
-func init() {
-	flowCmd.Flags().StringVar(&flowOutputDir, "output-dir", "",
-		"Directory for write_file output (default: {project}/output)")
-	rootCmd.AddCommand(flowCmd)
+// Run dispatches `rela flow <script.lua> [args...]`.
+func (c *FlowCmd) Run(ctx context.Context) error {
+	scriptPath := c.Script
+	if !filepath.IsAbs(scriptPath) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+		scriptPath = filepath.Join(cwd, scriptPath)
+	}
+
+	scriptDir := filepath.Dir(scriptPath)
+	//nolint:contextcheck // appbuild.Discover does not take ctx; matches rela-server bootstrap
+	flowSvc, err := appbuild.Discover(scriptDir, script.NewEngine())
+	if err != nil {
+		return fmt.Errorf("no project found for script %s", scriptPath)
+	}
+
+	opts := []lua.Option{
+		lua.WithContext(ctx),
+		lua.WithCache(flowSvc.ScriptEngine().LuaCache()),
+	}
+	if c.OutputDir != "" {
+		opts = append(opts, lua.WithOutputDir(c.OutputDir))
+	}
+
+	runtime, rtErr := script.NewWriterRuntime(flowSvc.LuaWriteDeps(),
+		scriptPath, os.Stdout, opts...)
+	if rtErr != nil {
+		return rtErr
+	}
+	defer runtime.Close()
+
+	transport := &TerminalTransport{}
+	flow := lua.NewFlowRuntime(runtime, transport)
+
+	return flow.RunFile(scriptPath, c.Args)
 }
 
 // TerminalTransport implements lua.Transport using charmbracelet/huh.
@@ -103,35 +74,30 @@ func (t *TerminalTransport) Present(screen lua.Screen) (lua.Event, error) {
 	if screen.Type != "form" {
 		return lua.Event{}, fmt.Errorf("unsupported screen type: %s", screen.Type)
 	}
-
 	return t.presentForm(screen)
 }
 
-// fieldValue tracks a form field's value pointer and its type for correct extraction.
 type fieldValue struct {
 	ptr       any
 	fieldType string
 }
 
 func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
-	// Build huh form fields
 	groups := make([]*huh.Group, 0, 1)
 	fieldValues := make(map[string]fieldValue)
 
-	fields := make([]huh.Field, 0, len(screen.Fields)+1) // +1 for action select
+	fields := make([]huh.Field, 0, len(screen.Fields)+1)
 	for _, f := range screen.Fields {
 		field, valuePtr, err := t.buildField(f)
 		if err != nil {
 			return lua.Event{}, err
 		}
 		fields = append(fields, field)
-		// Only track data-collecting fields (markdown fields return nil valuePtr)
 		if valuePtr != nil {
 			fieldValues[f.Name] = fieldValue{ptr: valuePtr, fieldType: f.Type}
 		}
 	}
 
-	// Add action buttons as a select
 	var selectedAction string
 	actionOptions := make([]huh.Option[string], 0, len(screen.Actions))
 	for _, a := range screen.Actions {
@@ -146,13 +112,9 @@ func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
 	fields = append(fields, actionSelect)
 	groups = append(groups, huh.NewGroup(fields...))
 
-	// Build and run form
 	form := huh.NewForm(groups...)
-
-	// Run with accessible mode for better compatibility
 	form = form.WithAccessible(false)
 
-	// Print title and description before the form
 	if screen.Title != "" {
 		fmt.Fprintf(os.Stdout, "\n%s\n", screen.Title)
 	}
@@ -168,7 +130,6 @@ func (t *TerminalTransport) presentForm(screen lua.Screen) (lua.Event, error) {
 		return lua.Event{}, err
 	}
 
-	// Build result data
 	data := make(map[string]any)
 	for name, fv := range fieldValues {
 		data[name] = t.extractValue(fv)
@@ -202,20 +163,16 @@ func (t *TerminalTransport) buildField(f lua.Field) (huh.Field, any, error) {
 }
 
 func (t *TerminalTransport) buildMarkdownField(f lua.Field) (huh.Field, any, error) {
-	// Render markdown content using glamour
 	rendered, err := glamour.Render(f.Content, "auto")
 	if err != nil {
-		// Fall back to raw content if rendering fails
 		rendered = f.Content
 	}
-	// Trim trailing newlines that glamour adds
 	rendered = strings.TrimRight(rendered, "\n")
 
 	note := huh.NewNote().Description(rendered)
 	if f.Label != "" {
 		note = note.Title(f.Label)
 	}
-	// Return nil for valuePtr since markdown fields don't collect data
 	return note, nil, nil
 }
 
@@ -226,7 +183,6 @@ func (t *TerminalTransport) buildTextField(f lua.Field) (huh.Field, any, error) 
 	}
 
 	if f.Lines > 1 {
-		// Textarea for multiline
 		field := huh.NewText().
 			Title(f.Label).
 			Value(&value)
@@ -239,7 +195,6 @@ func (t *TerminalTransport) buildTextField(f lua.Field) (huh.Field, any, error) 
 		return field, &value, nil
 	}
 
-	// Single line input
 	field := huh.NewInput().
 		Title(f.Label).
 		Value(&value)
@@ -267,7 +222,6 @@ func (t *TerminalTransport) buildSelectField(f lua.Field) (huh.Field, any, error
 		Title(f.Label).
 		Options(options...).
 		Value(&value)
-
 	return field, &value, nil
 }
 
@@ -291,7 +245,6 @@ func (t *TerminalTransport) buildMultiSelectField(f lua.Field) (huh.Field, any, 
 		Title(f.Label).
 		Options(options...).
 		Value(&values)
-
 	return field, &values, nil
 }
 
@@ -302,11 +255,9 @@ func (t *TerminalTransport) buildBooleanField(f lua.Field) (huh.Field, any, erro
 			value = b
 		}
 	}
-
 	field := huh.NewConfirm().
 		Title(f.Label).
 		Value(&value)
-
 	return field, &value, nil
 }
 
@@ -315,12 +266,10 @@ func (t *TerminalTransport) buildNumberField(f lua.Field) (huh.Field, any, error
 	if f.Default != nil {
 		value = fmt.Sprintf("%v", f.Default)
 	}
-
 	field := huh.NewInput().
 		Title(f.Label).
 		Value(&value).
 		Validate(makeNumberValidator(f))
-
 	return field, &value, nil
 }
 
@@ -329,13 +278,11 @@ func (t *TerminalTransport) buildDateField(f lua.Field) (huh.Field, any, error) 
 	if f.Default != nil {
 		value = fmt.Sprintf("%v", f.Default)
 	}
-
 	field := huh.NewInput().
 		Title(f.Label).
 		Placeholder("YYYY-MM-DD").
 		Value(&value).
 		Validate(makeDateValidator(f))
-
 	return field, &value, nil
 }
 
@@ -356,16 +303,13 @@ func makeNumberValidator(f lua.Field) func(string) error {
 			}
 			return nil
 		}
-
 		n, err := strconv.ParseFloat(s, 64)
 		if err != nil {
 			return errors.New("must be a number")
 		}
-
 		if math.IsNaN(n) || math.IsInf(n, 0) {
 			return errors.New("invalid number")
 		}
-
 		if f.Min != nil && n < *f.Min {
 			return fmt.Errorf("must be at least %v", *f.Min)
 		}
@@ -373,7 +317,6 @@ func makeNumberValidator(f lua.Field) func(string) error {
 			return fmt.Errorf("must be at most %v", *f.Max)
 		}
 		if f.Step != nil {
-			// Check that (n - base) is a multiple of step, where base is min or 0
 			base := 0.0
 			if f.Min != nil {
 				base = *f.Min
@@ -383,7 +326,6 @@ func makeNumberValidator(f lua.Field) func(string) error {
 				return fmt.Errorf("must be a multiple of %v", *f.Step)
 			}
 		}
-
 		return nil
 	}
 }
@@ -396,12 +338,10 @@ func makeDateValidator(f lua.Field) func(string) error {
 			}
 			return nil
 		}
-
 		date, err := time.Parse("2006-01-02", s)
 		if err != nil {
 			return errors.New("must be YYYY-MM-DD format")
 		}
-
 		if f.MinDate != "" {
 			minDate, _ := time.Parse("2006-01-02", f.MinDate)
 			if date.Before(minDate) {
@@ -414,7 +354,6 @@ func makeDateValidator(f lua.Field) func(string) error {
 				return fmt.Errorf("must be on or before %s", f.MaxDate)
 			}
 		}
-
 		return nil
 	}
 }
@@ -422,7 +361,6 @@ func makeDateValidator(f lua.Field) func(string) error {
 func (t *TerminalTransport) extractValue(fv fieldValue) any {
 	switch v := fv.ptr.(type) {
 	case *string:
-		// Only convert to number for number-typed fields
 		if fv.fieldType == "number" {
 			if n, err := strconv.ParseFloat(*v, 64); err == nil {
 				return n
@@ -430,7 +368,6 @@ func (t *TerminalTransport) extractValue(fv fieldValue) any {
 		}
 		return *v
 	case *[]string:
-		// Convert to []any for Lua
 		result := make([]any, len(*v))
 		for i, s := range *v {
 			result[i] = s

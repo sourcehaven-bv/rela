@@ -8,162 +8,120 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-var (
-	createTitle      string
-	createStatus     string
-	createPriority   string
-	createID         string
-	createProperties []string
-	createBody       string
-	createBodyFile   string
-	createStrict     bool
-)
+// CreateCmd creates a new entity.
+type CreateCmd struct {
+	Type     string   `arg:"" help:"Entity type (alias allowed)."`
+	Title    string   `short:"t" help:"Primary property value (title, name, etc. depending on entity type)."`
+	Status   string   `short:"s" help:"Entity status (defaults to entity type's default)."`
+	Priority string   `short:"p" help:"Entity priority."`
+	ID       string   `name:"id" help:"Custom entity ID (auto-generated if not provided)."`
+	Property []string `short:"P" help:"Set a property (format: key=value, can be repeated)."`
+	Body     string   `short:"b" help:"Markdown body content for the entity."`
+	BodyFile string   `name:"body-file" short:"B" help:"Read body content from file (use - for stdin)."`
+	Strict   bool     `help:"Exit with status 1 if soft validation warnings are surfaced."`
+}
 
-var createCmd = &cobra.Command{
-	Use:   "create <type>",
-	Short: "Create a new entity",
-	Long: `Creates a new entity of the specified type.
+// Run dispatches `rela create <type>`.
+func (c *CreateCmd) Run(ctx context.Context, svc *cliServices) error {
+	resolvedType, entityDef, err := resolveEntityType(svc.Meta(), c.Type)
+	if err != nil {
+		return err
+	}
 
-The -t/--title flag sets the primary required property for the entity type.
-For most types this is "title", but for some types (like stakeholder) it may
-be "name" or another property. Use -P/--property for setting arbitrary properties.
-
-The --body flag sets the markdown body content directly, while --body-file reads
-the body from a file. Use "-" as the filename to read from stdin.
-
-Examples:
-  rela create requirement --title "System must handle 1000 users"
-  rela create decision --title "Use PostgreSQL for persistence"
-  rela create req -t "Short alias works too"
-  rela create stakeholder -t "John Smith"
-  rela create control -t "Access Control" -P "iso27001=A.5.15" -P "owner=Security Team"
-  rela create requirement -t "Auth feature" --body "## Description\n\nUser authentication."
-  rela create requirement -t "From file" --body-file description.md
-  echo "Content from stdin" | rela create requirement -t "Piped" --body-file -`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		typeName := args[0]
-		svc := cliWriteFromContext(cmd.Context())
-
-		// Resolve type (handle aliases)
-		resolvedType, entityDef, err := resolveEntityType(svc.Meta(), typeName)
-		if err != nil {
-			return err
+	props := make(map[string]interface{})
+	for _, prop := range c.Property {
+		key, value, parseErr := parsePropertyFlag(prop)
+		if parseErr != nil {
+			return parseErr
 		}
+		props[key] = value
+	}
 
-		// Build properties map
-		props := make(map[string]interface{})
-		for _, prop := range createProperties {
-			key, value, parseErr := parsePropertyFlag(prop)
-			if parseErr != nil {
-				return parseErr
-			}
-			props[key] = value
+	if strings.TrimSpace(c.Title) != "" {
+		primaryProp := entityDef.GetPrimaryProperty()
+		if primaryProp == "" {
+			primaryProp = "title"
 		}
+		props[primaryProp] = c.Title
+	}
 
-		// Set the primary property using -t/--title flag
-		if strings.TrimSpace(createTitle) != "" {
-			primaryProp := entityDef.GetPrimaryProperty()
-			if primaryProp == "" {
-				primaryProp = "title"
-			}
-			props[primaryProp] = createTitle
-		}
+	if c.Status != "" {
+		props["status"] = c.Status
+	}
+	if c.Priority != "" {
+		props["priority"] = c.Priority
+	}
 
-		// Set explicit status/priority flags
-		if createStatus != "" {
-			props["status"] = createStatus
-		}
-		if createPriority != "" {
-			props["priority"] = createPriority
-		}
+	bodyContent, err := c.getBodyContent()
+	if err != nil {
+		return err
+	}
 
-		// Read body content
-		bodyContent, err := getBodyContent(cmd)
-		if err != nil {
-			return err
-		}
+	result, err := svc.EntityManager().CreateEntity(ctx,
+		&entitypkg.Entity{
+			Type:       resolvedType,
+			Properties: props,
+			Content:    bodyContent,
+		},
+		entitypkg.CreateOptions{ID: c.ID},
+	)
+	if err != nil {
+		return err
+	}
+	entity := result.Entity
 
-		result, err := svc.EntityManager().CreateEntity(context.Background(),
-			&entitypkg.Entity{
-				Type:       resolvedType,
-				Properties: props,
-				Content:    bodyContent,
-			},
-			entitypkg.CreateOptions{ID: createID},
-		)
-		if err != nil {
-			return err
-		}
-		entity := result.Entity
+	printValidationWarnings(result.Warnings)
+	for _, warning := range result.AutomationWarnings {
+		out.WriteWarning("Automation: %s", warning)
+	}
+	for _, errMsg := range result.AutomationErrors {
+		out.WriteWarning("Automation error: %s", errMsg)
+	}
+	for _, rel := range result.RelationsCreated {
+		out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
+	}
 
-		// DEC-HWZHA: print soft validation findings to stderr in a stable
-		// format. Default exits 0 (the create succeeded); --strict elevates
-		// any warning to exit 1.
-		printValidationWarnings(result.Warnings)
+	out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
+	if outputFormat == "json" {
+		if e, err := svc.Store().GetEntity(ctx, entity.ID); err == nil {
+			_ = out.WriteEntities([]*entitypkg.Entity{e})
+		}
+	}
 
-		// Show automation feedback
-		for _, warning := range result.AutomationWarnings {
-			out.WriteWarning("Automation: %s", warning)
-		}
-		for _, errMsg := range result.AutomationErrors {
-			out.WriteWarning("Automation error: %s", errMsg)
-		}
-		for _, rel := range result.RelationsCreated {
-			out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
-		}
-
-		out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
-		if outputFormat == "json" {
-			if e, err := svc.Store().GetEntity(context.Background(), entity.ID); err == nil {
-				_ = out.WriteEntities([]*entitypkg.Entity{e})
-			}
-		}
-
-		if createStrict && len(result.Warnings) > 0 {
-			return errStrictWarnings
-		}
-		return nil
-	},
+	if c.Strict && len(result.Warnings) > 0 {
+		return errStrictWarnings
+	}
+	return nil
 }
 
 // getBodyContent returns the body content from --body or --body-file flags.
-// Returns an error if both flags are specified or if file reading fails.
-func getBodyContent(cmd *cobra.Command) (string, error) {
-	if createBody != "" && createBodyFile != "" {
+func (c *CreateCmd) getBodyContent() (string, error) {
+	if c.Body != "" && c.BodyFile != "" {
 		return "", errors.New("cannot specify both --body and --body-file")
 	}
-
-	if createBody != "" {
-		return createBody, nil
+	if c.Body != "" {
+		return c.Body, nil
 	}
-
-	if createBodyFile != "" {
+	if c.BodyFile != "" {
 		var content []byte
 		var err error
-
-		if createBodyFile == "-" {
-			content, err = io.ReadAll(cmd.InOrStdin())
+		if c.BodyFile == "-" {
+			content, err = io.ReadAll(os.Stdin)
 		} else {
-			content, err = os.ReadFile(createBodyFile)
+			content, err = os.ReadFile(c.BodyFile)
 		}
-
 		if err != nil {
 			return "", fmt.Errorf("failed to read body file: %w", err)
 		}
 		return strings.TrimSpace(string(content)), nil
 	}
-
 	return "", nil
 }
 
 // parsePropertyFlag parses a "key=value" property flag.
-// Returns an error if the format is invalid.
 func parsePropertyFlag(prop string) (key, value string, err error) {
 	idx := strings.Index(prop, "=")
 	if idx == -1 {
@@ -175,17 +133,4 @@ func parsePropertyFlag(prop string) (key, value string, err error) {
 		return "", "", fmt.Errorf("invalid property format %q: key cannot be empty", prop)
 	}
 	return key, value, nil
-}
-
-func init() {
-	createCmd.Flags().StringVarP(&createTitle, "title", "t", "", "Primary property value (title, name, etc. depending on entity type)")
-	createCmd.Flags().StringVarP(&createStatus, "status", "s", "", "Entity status (defaults to entity type's default)")
-	createCmd.Flags().StringVarP(&createPriority, "priority", "p", "", "Entity priority")
-	createCmd.Flags().StringVar(&createID, "id", "", "Custom entity ID (auto-generated if not provided)")
-	createCmd.Flags().StringArrayVarP(&createProperties, "property", "P", nil, "Set a property (format: key=value, can be repeated)")
-	createCmd.Flags().StringVarP(&createBody, "body", "b", "", "Markdown body content for the entity")
-	createCmd.Flags().StringVarP(&createBodyFile, "body-file", "B", "", "Read body content from file (use - for stdin)")
-	createCmd.Flags().BoolVar(&createStrict, "strict", false, "Exit with status 1 if soft validation warnings are surfaced")
-
-	rootCmd.AddCommand(createCmd)
 }

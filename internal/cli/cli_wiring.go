@@ -14,7 +14,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/renametype"
-	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -24,78 +23,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// Services bundles are scoped by purpose (read / write / analyze) so
-// each subcommand declares the narrowest dependency it needs.
-// Implementations are constructed once per CLI invocation and
-// attached to the cobra command context.
+// cliServices is the concrete bundle every CLI subcommand binds to.
+// It composes the appbuild service collection with the focused
+// service objects (attachment / renametype / analysis) that the CLI
+// owns directly.
 //
-// Pattern: subcommands retrieve their bundle from cmd.Context() via
-// cliReadFromContext / cliWriteFromContext / cliAnalyzeFromContext.
-// Tests use attachServicesForTest to populate the context directly.
-
-// cliRead exposes read-only project services. Used by show / list /
-// trace / graph / export / template / fmt and embedded by the
-// write/analyze bundles.
-type cliRead interface {
-	Store() store.Store
-	Meta() *metamodel.Metamodel
-	Paths() *project.Context
-	Tracer() tracer.Tracer
-	Searcher() search.Searcher
-	Config() config.Loader
-	Templater() templating.Templater
-	FS() storage.FS
-}
-
-// cliWrite is cliRead + the write-path services that mutating
-// subcommands need (create / delete / update / link / unlink /
-// detach / import / normalize / script / scheduler). State() lives
-// here (not on cliRead) because state.KV.Put/Delete mutate
-// persistent state — same write-bundle invariant as EntityManager.
-type cliWrite interface {
-	cliRead
-	EntityManager() entitymanager.EntityManager
-	Validator() validator.Validator
-	LuaCache() *lua.Cache
-	LuaWriteDeps() lua.WriteDeps
-	State() state.KV
-}
-
-// cliAnalyze bundles the read-side analysis surface plus the CLI's
-// maintenance facades (rename-entity-type, attach-file). Drift
-// warning: after the TKT-2W0X / TKT-04YA / TKT-B01S lifts the bundle
-// spans three subsystems (analysis, attachment, renametype). The
-// attach/attachments/rename subcommands piggyback this bundle today
-// because they ran on workspace originally; a follow-up should split
-// attachment + renametype into their own bundles so cliAnalyze stays
-// narrow per CLAUDE.md "scoped consumer-side Services interface."
-type cliAnalyze interface {
-	cliRead
-	AnalyzeAll(ctx context.Context, opts analysis.Options) *analysis.Summary
-	CheckCardinality(ctx context.Context, opts analysis.Options) []analysis.CardinalityViolation
-	CheckRelationOrder(ctx context.Context, opts analysis.Options) []analysis.RelationOrderIssue
-	FindDuplicates(ctx context.Context, opts analysis.Options) []analysis.DuplicateGroup
-	FindGaps(ctx context.Context, opts analysis.Options) []analysis.GapResult
-	FindOrphansWithScope(ctx context.Context, opts analysis.Options) []*entity.Entity
-	FindOrphanedTempFiles() ([]string, error)
-	CleanupOrphanedTempFiles() (int, error)
-	RunValidations(ctx context.Context, opts analysis.Options) analysis.ValidationResult
-	RunValidationsFiltered(
-		ctx context.Context,
-		opts analysis.Options,
-		filters []analysis.ValidationFilter,
-	) analysis.ValidationResult
-	RenameEntityType(oldType, newType, newPlural string) (int, error)
-	AttachFile(ctx context.Context, entityID, filePath, property string) (*attachment.Result, error)
-	ListAttachments(ctx context.Context, entityID string) ([]attachment.Info, error)
-}
-
-// cliServices is the single concrete implementation that satisfies
-// all three bundle interfaces. It holds an *appbuild.Services for the
-// per-project collaborators plus dedicated services that have been
-// lifted out (attachment, renametype, analysis). The interfaces — not
-// the struct — are the consumer-facing contracts: subcommands see
-// only the bundle they pulled from context.
+// Methods are grouped by their "purpose" (read / write / analyze) so
+// reviewing them documents the same separation the previous bundle
+// interfaces enforced; the consumer of *cliServices is each kong
+// command's Run method.
 type cliServices struct {
 	svc        *appbuild.Services
 	attachment *attachment.Service
@@ -103,16 +39,7 @@ type cliServices struct {
 	analysis   *analysis.Service
 }
 
-// Compile-time assertions: cliServices must satisfy every bundle
-// interface. A method-signature drift surfaces at this type rather
-// than at every subcommand call site.
-var (
-	_ cliRead    = (*cliServices)(nil)
-	_ cliWrite   = (*cliServices)(nil)
-	_ cliAnalyze = (*cliServices)(nil)
-)
-
-// --- cliRead ---
+// --- read-side ---
 
 func (s *cliServices) Store() store.Store              { return s.svc.Store() }
 func (s *cliServices) Meta() *metamodel.Metamodel      { return s.svc.Meta() }
@@ -123,7 +50,7 @@ func (s *cliServices) Config() config.Loader           { return s.svc.Config() }
 func (s *cliServices) Templater() templating.Templater { return s.svc.Templater() }
 func (s *cliServices) FS() storage.FS                  { return s.svc.FS() }
 
-// --- cliWrite ---
+// --- write-side ---
 
 func (s *cliServices) EntityManager() entitymanager.EntityManager { return s.svc.EntityManager() }
 func (s *cliServices) Validator() validator.Validator             { return s.svc.Validator() }
@@ -131,7 +58,11 @@ func (s *cliServices) LuaCache() *lua.Cache                       { return s.svc
 func (s *cliServices) LuaWriteDeps() lua.WriteDeps                { return s.svc.LuaWriteDeps() }
 func (s *cliServices) State() state.KV                            { return s.svc.State() }
 
-// --- cliAnalyze ---
+// LuaReadDeps surfaces the read-only Lua capability bundle —
+// scheduler.WorkspaceProvider requires it.
+func (s *cliServices) LuaReadDeps() lua.ReadDeps { return s.svc.LuaReadDeps() }
+
+// --- analyze-side ---
 
 func (s *cliServices) AnalyzeAll(ctx context.Context, opts analysis.Options) *analysis.Summary {
 	return s.analysis.AnalyzeAll(ctx, opts)
@@ -189,73 +120,9 @@ func (s *cliServices) ListAttachments(ctx context.Context, entityID string) ([]a
 	return s.attachment.List(ctx, entityID)
 }
 
-// --- context plumbing ---
-
-type ctxKey int
-
-const (
-	keyRead ctxKey = iota
-	keyWrite
-	keyAnalyze
-)
-
-// attachServices stores the bundle implementations on ctx so
-// subcommand RunE handlers can retrieve them via the typed
-// accessors.
-func attachServices(ctx context.Context, svc *cliServices) context.Context {
-	ctx = context.WithValue(ctx, keyRead, cliRead(svc))
-	ctx = context.WithValue(ctx, keyWrite, cliWrite(svc))
-	ctx = context.WithValue(ctx, keyAnalyze, cliAnalyze(svc))
-	return ctx
-}
-
-// cliReadFromContext retrieves the read bundle. Panics with a
-// targeted message when services were not attached — that almost
-// always means the subcommand is missing the
-// PersistentPreRunE wiring (annotated with skipProjectDiscovery
-// but reaches for a bundle), and a clear panic surfaces the
-// configuration error at its source instead of as an opaque nil
-// dereference three frames deep.
-func cliReadFromContext(ctx context.Context) cliRead {
-	v, ok := ctx.Value(keyRead).(cliRead)
-	if !ok {
-		panic("cli: read services not attached on context — subcommand may be annotated skipProjectDiscovery or invoked without PersistentPreRunE")
-	}
-	return v
-}
-
-// cliWriteFromContext retrieves the write bundle.
-func cliWriteFromContext(ctx context.Context) cliWrite {
-	v, ok := ctx.Value(keyWrite).(cliWrite)
-	if !ok {
-		panic("cli: write services not attached on context — subcommand may be annotated skipProjectDiscovery or invoked without PersistentPreRunE")
-	}
-	return v
-}
-
-// cliAnalyzeFromContext retrieves the analyze bundle.
-func cliAnalyzeFromContext(ctx context.Context) cliAnalyze {
-	v, ok := ctx.Value(keyAnalyze).(cliAnalyze)
-	if !ok {
-		panic("cli: analyze services not attached on context — subcommand may be annotated skipProjectDiscovery or invoked without PersistentPreRunE")
-	}
-	return v
-}
-
-// newCLIServices discovers the project at startDir and constructs
-// the focused-services bundle. Mirrors appbuild.Discover's behavior;
-// the returned *cliServices satisfies cliRead / cliWrite / cliAnalyze.
-func newCLIServices(startDir string) (*cliServices, error) {
-	svc, err := appbuild.Discover(startDir, script.NewEngine())
-	if err != nil {
-		return nil, err
-	}
-	return newCLIServicesFromAppbuild(svc)
-}
-
 // newCLIServicesFromAppbuild wires the focused services around an
 // already-constructed appbuild.Services. Used by [newCLIServices] in
-// production and by the CLI test fixtures.
+// production and by CLI test fixtures.
 func newCLIServicesFromAppbuild(svc *appbuild.Services) (*cliServices, error) {
 	att, err := attachment.New(attachment.Deps{
 		Store:         svc.Store(),

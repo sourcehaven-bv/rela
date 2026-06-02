@@ -197,10 +197,10 @@ Export a visual graph:
 
 ```bash
 # Generate DOT file
-rela graph -o architecture.dot
+rela graph --file architecture.dot
 
 # Render to PNG (requires Graphviz)
-rela graph -o architecture.png -f png
+rela graph --file architecture.png -f png
 ```
 
 ### Tracing Dependencies

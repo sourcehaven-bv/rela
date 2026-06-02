@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -17,16 +16,6 @@ import (
 // analyze_test.go covers the CLI JSON output shape. The underlying
 // analysis correctness (orphans, duplicates, cardinality, properties,
 // validations) is exercised directly in internal/analysis/analysis_test.go.
-// Keep only:
-//   - one representative JSON-output test (so the CLI wiring is covered)
-//   - the gaps test (not currently covered at the workspace layer)
-
-// setupJSONTestOutput sets up JSON output writer and returns the buffer.
-func setupJSONTestOutput() *bytes.Buffer {
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-	return &buf
-}
 
 // TestAnalyzeOrphansJSONOutput is the canonical CLI JSON-shape test:
 // it runs one analysis command through the CLI and verifies the
@@ -43,11 +32,11 @@ func TestAnalyzeOrphansJSONOutput(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-003"))
-	applySeeder(seeder)
+	svc := seeder.build(t)
+	buf := withOutput(t, output.FormatJSON)
 
-	buf := setupJSONTestOutput()
-
-	if err := analyzeOrphansCmd.RunE(testCmd(), nil); err != nil {
+	cmd := &AnalyzeOrphansCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Fatalf("analyze orphans error = %v", err)
 	}
 
@@ -66,9 +55,7 @@ func TestAnalyzeOrphansJSONOutput(t *testing.T) {
 
 // TestAnalyzeValidations_NonZeroExitOnScriptError covers RR-3H1QC:
 // `rela analyze validations` must return a non-zero exit when a Lua
-// rule fails to compile/run, mirroring `rela validate --check
-// validations`. Otherwise CI piping the command sees clean runs even
-// when rules silently fail.
+// rule fails to compile/run.
 func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -81,10 +68,9 @@ func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "ticket").ID("TKT-001"))
-	applySeeder(seeder)
+	svc := seeder.build(t)
+	_ = withOutput(t, output.FormatTable)
 
-	out = output.NewWithWriter(&bytes.Buffer{}, output.FormatTable)
-	svc := cliAnalyzeFromContext(testCtx)
 	err := runValidations(context.Background(), svc, analysis.Options{})
 
 	if err == nil {
@@ -117,11 +103,11 @@ func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "ticket").ID("TKT-001"))
-	applySeeder(seeder)
+	svc := seeder.build(t)
+	buf := withOutput(t, output.FormatJSON)
 
-	buf := setupJSONTestOutput()
-	analyzeAllCmd.SetContext(testCtx)
-	if err := analyzeAllCmd.RunE(analyzeAllCmd, nil); err != nil {
+	cmd := &AnalyzeAllCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Fatalf("analyze all: %v", err)
 	}
 
@@ -147,9 +133,8 @@ func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
 	}
 }
 
-// TestAnalyzeGaps covers the gaps analysis, which has no workspace-layer
-// test today. Runs via the CLI so we simultaneously exercise the JSON
-// output envelope.
+// TestAnalyzeGaps covers the gaps analysis. Runs via the CLI so we
+// simultaneously exercise the JSON output envelope.
 func TestAnalyzeGaps(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -163,11 +148,11 @@ func TestAnalyzeGaps(t *testing.T) {
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-003"))
-	applySeeder(seeder)
+	svc := seeder.build(t)
+	buf := withOutput(t, output.FormatJSON)
 
-	buf := setupJSONTestOutput()
-
-	if err := analyzeGapsCmd.RunE(testCmd(), nil); err != nil {
+	cmd := &AnalyzeGapsCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Fatalf("analyze gaps error = %v", err)
 	}
 

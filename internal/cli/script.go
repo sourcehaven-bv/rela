@@ -1,86 +1,35 @@
 package cli
 
 import (
+	"context"
 	"os"
-
-	"github.com/spf13/cobra"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
-var scriptOutputDir string
-
-var scriptCmd = &cobra.Command{
-	Use:   "script <file.lua> [args...]",
-	Short: "Execute a Lua script against the graph",
-	Long: `Execute a Lua script with access to the rela graph.
-
-Scripts can query entities and relations, apply filters, trace dependencies,
-create/update/delete entities and relations, and output results.
-
-Query functions:
-  rela.get_entity(id)              Get entity by ID (returns table or nil)
-  rela.list_entities(type, filter) List entities with optional filter
-  rela.search(query, limit?)       Full-text search (default limit: 20)
-  rela.get_relations(opts)         Get relations (opts: {from, type, to})
-  rela.trace_from(id, depth)       Trace outgoing dependencies
-  rela.trace_to(id, depth)         Trace incoming dependencies
-  rela.find_path(from, to)         Find shortest path between entities
-
-Mutation functions:
-  rela.create_entity(type, props, content?, id?)  Create new entity
-  rela.update_entity(id, props, content?)         Update entity properties
-  rela.delete_entity(id, cascade?)                Delete entity
-  rela.create_relation(from, type, to)            Create relation
-  rela.delete_relation(from, type, to)            Delete relation
-  rela.refresh()                                  Reload graph from disk
-
-Schema introspection:
-  rela.get_entity_types()            Get all entity types with properties
-  rela.get_relation_types()          Get all relation types with constraints
-
-Output functions:
-  rela.output(data)                Output data as JSON to stdout
-  rela.write_file(path, content)   Write content to file (relative to --output-dir)
-
-Context:
-  rela.args                        Script arguments (table)
-
-Scripts can include a shebang line (#!/usr/bin/env -S rela script) for direct
-execution. The shebang is automatically stripped before running.
-
-Example:
-  rela script scripts/export.lua
-  rela script scripts/report.lua --format=json
-  rela script scripts/docs.lua --output-dir=/path/to/docs`,
-	Args: cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		scriptPath := args[0]
-		scriptArgs := args[1:]
-		svc := cliWriteFromContext(cmd.Context())
-
-		opts := []lua.Option{
-			lua.WithContext(cmd.Context()),
-			lua.WithCache(svc.LuaCache()),
-		}
-		if scriptOutputDir != "" {
-			opts = append(opts, lua.WithOutputDir(scriptOutputDir))
-		}
-
-		runtime, err := script.NewWriterRuntime(svc.LuaWriteDeps(), scriptPath,
-			os.Stdout, opts...)
-		if err != nil {
-			return err
-		}
-		defer runtime.Close()
-
-		return runtime.RunFile(scriptPath, scriptArgs)
-	},
+// ScriptCmd executes a Lua script against the graph.
+type ScriptCmd struct {
+	OutputDir string   `name:"output-dir" help:"Directory for write_file output (default: {project}/output)."`
+	File      string   `arg:"" help:"Path to Lua script file."`
+	Args      []string `arg:"" optional:"" help:"Arguments passed to the script."`
 }
 
-func init() {
-	scriptCmd.Flags().StringVar(&scriptOutputDir, "output-dir", "",
-		"Directory for write_file output (default: {project}/output)")
-	rootCmd.AddCommand(scriptCmd)
+// Run dispatches `rela script <file.lua> [args...]`.
+func (c *ScriptCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts := []lua.Option{
+		lua.WithContext(ctx),
+		lua.WithCache(svc.LuaCache()),
+	}
+	if c.OutputDir != "" {
+		opts = append(opts, lua.WithOutputDir(c.OutputDir))
+	}
+	runtime, err := script.NewWriterRuntime(svc.LuaWriteDeps(), c.File,
+		os.Stdout, opts...)
+	if err != nil {
+		return err
+	}
+	defer runtime.Close()
+	//nolint:contextcheck // ctx is threaded through lua.WithContext(ctx) above
+	return runtime.RunFile(c.File, c.Args)
 }

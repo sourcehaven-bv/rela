@@ -2,154 +2,69 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
-func TestVersionCommand(t *testing.T) {
-	// Save original Version value
-	oldVersion := Version
-	defer func() {
-		Version = oldVersion
-	}()
+// version_test.go covers VersionCmd output. Cobra-era tests inspecting
+// rootCmd.Commands() and rootCmd.Version are gone — kong handles the
+// command tree via the CLI struct (covered by root_test.go).
 
-	// Set a test version
-	Version = "1.2.3-test"
-
-	// Find the version command
-	var versionCmd *cobra.Command
-	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "version" {
-			versionCmd = cmd
-			break
-		}
-	}
-
-	if versionCmd == nil {
-		t.Fatal("version command not found")
-	}
-
-	// Capture stdout
+// runVersionCmd executes VersionCmd while capturing os.Stdout.
+func runVersionCmd(t *testing.T) string {
+	t.Helper()
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-
-	// Run the command
-	versionCmd.Run(versionCmd, []string{})
-
+	if err := (&VersionCmd{}).Run(); err != nil {
+		t.Fatalf("VersionCmd.Run: %v", err)
+	}
 	w.Close()
 	os.Stdout = old
-
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
+	_, _ = io.Copy(&buf, r)
+	return buf.String()
+}
 
-	// Check output
+func TestVersionCommand(t *testing.T) {
+	oldVersion := Version
+	defer func() { Version = oldVersion }()
+
+	Version = "1.2.3-test"
+	got := runVersionCmd(t)
+
 	expected := "rela version 1.2.3-test\n"
-	if output != expected {
-		t.Errorf("version output = %q, want %q", output, expected)
+	if got != expected {
+		t.Errorf("version output = %q, want %q", got, expected)
 	}
 }
 
 func TestVersionCommandContainsVersion(t *testing.T) {
-	// Save original Version value
 	oldVersion := Version
-	defer func() {
-		Version = oldVersion
-	}()
+	defer func() { Version = oldVersion }()
 
 	Version = "test-version-123"
+	got := runVersionCmd(t)
 
-	// Find the version command
-	var versionCmd *cobra.Command
-	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "version" {
-			versionCmd = cmd
-			break
-		}
-	}
-
-	if versionCmd == nil {
-		t.Fatal("version command not found")
-	}
-
-	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	versionCmd.Run(versionCmd, []string{})
-
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
-
-	// Check that output contains the version
-	if !strings.Contains(output, "test-version-123") {
-		t.Errorf("expected output to contain 'test-version-123', got: %s", output)
+	if !strings.Contains(got, "test-version-123") {
+		t.Errorf("expected output to contain 'test-version-123', got: %s", got)
 	}
 }
 
 func TestVersionCommandFormat(t *testing.T) {
 	oldVersion := Version
-	defer func() {
-		Version = oldVersion
-	}()
+	defer func() { Version = oldVersion }()
 
 	Version = "dev"
+	got := runVersionCmd(t)
 
-	var versionCmd *cobra.Command
-	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "version" {
-			versionCmd = cmd
-			break
-		}
+	if !strings.HasPrefix(got, "rela version ") {
+		t.Errorf("expected output to start with 'rela version ', got: %s", got)
 	}
 
-	if versionCmd == nil {
-		t.Fatal("version command not found")
-	}
-
-	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	versionCmd.Run(versionCmd, []string{})
-
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	output := buf.String()
-
-	// Verify format: "rela version <version>\n"
-	if !strings.HasPrefix(output, "rela version ") {
-		t.Errorf("expected output to start with 'rela version ', got: %s", output)
-	}
-
-	if !strings.HasSuffix(output, "\n") {
-		t.Errorf("expected output to end with newline, got: %s", output)
-	}
-}
-
-func TestRootCommandHasVersionFlag(t *testing.T) {
-	// The rootCmd should have a version set
-	if rootCmd.Version == "" {
-		t.Error("rootCmd.Version is empty, expected a version string")
-	}
-
-	// The version flag should be available
-	versionFlag := rootCmd.Flag("version")
-	if versionFlag != nil {
-		// Version flag exists (this is automatically added by Cobra when Version is set)
-		t.Logf("version flag exists: %v", versionFlag.Name)
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("expected output to end with newline, got: %s", got)
 	}
 }

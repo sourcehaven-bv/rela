@@ -3,120 +3,72 @@ package cli
 import (
 	"context"
 	"fmt"
-
-	"github.com/spf13/cobra"
 )
 
-var (
-	traceMaxDepth int
-)
-
-var traceCmd = &cobra.Command{
-	Use:   "trace",
-	Short: "Trace dependencies between entities",
-	Long: `Trace dependencies between entities in various directions.
-
-Subcommands:
-  from  - Trace downstream dependencies (what depends on this)
-  to    - Trace upstream dependencies (what this depends on)
-  path  - Find a path between two entities`,
+// TraceCmd is the parent of trace from/to/path.
+type TraceCmd struct {
+	From TraceFromCmd `cmd:"" help:"Trace downstream dependencies."`
+	To   TraceToCmd   `cmd:"" help:"Trace upstream dependencies."`
+	Path TracePathCmd `cmd:"" help:"Find a path between two entities."`
 }
 
-var traceFromCmd = &cobra.Command{
-	Use:   "from <id>",
-	Short: "Trace downstream dependencies",
-	Long: `Shows all entities that are reachable from the given entity
-by following outgoing relations.
-
-Examples:
-  rela trace from REQ-001
-  rela trace from REQ-001 --depth 2`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		entityID := args[0]
-		svc := cliReadFromContext(cmd.Context())
-
-		ctx := context.Background()
-		if _, err := svc.Store().GetEntity(ctx, entityID); err != nil {
-			return &entityNotFoundError{ID: entityID}
-		}
-
-		result := svc.Tracer().TraceFrom(ctx, entityID, traceMaxDepth)
-		if result == nil {
-			out.WriteMessage("No downstream dependencies found")
-			return nil
-		}
-
-		return out.WriteTrace(result)
-	},
+// TraceFromCmd traces downstream dependencies from an entity.
+type TraceFromCmd struct {
+	ID    string `arg:"" help:"Source entity ID."`
+	Depth int    `help:"Maximum depth to trace (0 = unlimited)."`
 }
 
-var traceToCmd = &cobra.Command{
-	Use:   "to <id>",
-	Short: "Trace upstream dependencies",
-	Long: `Shows all entities that lead to the given entity
-by following incoming relations.
-
-Examples:
-  rela trace to COMP-001
-  rela trace to COMP-001 --depth 3`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		entityID := args[0]
-		svc := cliReadFromContext(cmd.Context())
-
-		ctx := context.Background()
-		if _, err := svc.Store().GetEntity(ctx, entityID); err != nil {
-			return &entityNotFoundError{ID: entityID}
-		}
-
-		result := svc.Tracer().TraceTo(ctx, entityID, traceMaxDepth)
-		if result == nil {
-			out.WriteMessage("No upstream dependencies found")
-			return nil
-		}
-
-		return out.WriteTrace(result)
-	},
+// Run dispatches `rela trace from <id>`.
+func (c *TraceFromCmd) Run(ctx context.Context, svc *cliServices) error {
+	if _, err := svc.Store().GetEntity(ctx, c.ID); err != nil {
+		return &entityNotFoundError{ID: c.ID}
+	}
+	result := svc.Tracer().TraceFrom(ctx, c.ID, c.Depth)
+	if result == nil {
+		out.WriteMessage("No downstream dependencies found")
+		return nil
+	}
+	return out.WriteTrace(result)
 }
 
-var tracePathCmd = &cobra.Command{
-	Use:   "path <from> <to>",
-	Short: "Find a path between two entities",
-	Long: `Finds the shortest path between two entities.
-
-Examples:
-  rela trace path REQ-001 COMP-001`,
-	Args: cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fromID := args[0]
-		toID := args[1]
-		svc := cliReadFromContext(cmd.Context())
-
-		ctx := context.Background()
-		if _, err := svc.Store().GetEntity(ctx, fromID); err != nil {
-			return fmt.Errorf("source entity not found: %s", fromID)
-		}
-		if _, err := svc.Store().GetEntity(ctx, toID); err != nil {
-			return fmt.Errorf("target entity not found: %s", toID)
-		}
-
-		path := svc.Tracer().FindPath(ctx, fromID, toID)
-		if path == nil {
-			out.WriteMessage("No path found between %s and %s", fromID, toID)
-			return nil
-		}
-
-		return out.WritePath(path)
-	},
+// TraceToCmd traces upstream dependencies of an entity.
+type TraceToCmd struct {
+	ID    string `arg:"" help:"Target entity ID."`
+	Depth int    `help:"Maximum depth to trace (0 = unlimited)."`
 }
 
-func init() {
-	traceCmd.PersistentFlags().IntVar(&traceMaxDepth, "depth", 0, "Maximum depth to trace (0 = unlimited)")
+// Run dispatches `rela trace to <id>`.
+func (c *TraceToCmd) Run(ctx context.Context, svc *cliServices) error {
+	if _, err := svc.Store().GetEntity(ctx, c.ID); err != nil {
+		return &entityNotFoundError{ID: c.ID}
+	}
+	result := svc.Tracer().TraceTo(ctx, c.ID, c.Depth)
+	if result == nil {
+		out.WriteMessage("No upstream dependencies found")
+		return nil
+	}
+	return out.WriteTrace(result)
+}
 
-	traceCmd.AddCommand(traceFromCmd)
-	traceCmd.AddCommand(traceToCmd)
-	traceCmd.AddCommand(tracePathCmd)
+// TracePathCmd finds a path between two entities.
+type TracePathCmd struct {
+	From  string `arg:"" help:"Source entity ID."`
+	To    string `arg:"" help:"Target entity ID."`
+	Depth int    `help:"Maximum depth to trace (0 = unlimited)."`
+}
 
-	rootCmd.AddCommand(traceCmd)
+// Run dispatches `rela trace path <from> <to>`.
+func (c *TracePathCmd) Run(ctx context.Context, svc *cliServices) error {
+	if _, err := svc.Store().GetEntity(ctx, c.From); err != nil {
+		return fmt.Errorf("source entity not found: %s", c.From)
+	}
+	if _, err := svc.Store().GetEntity(ctx, c.To); err != nil {
+		return fmt.Errorf("target entity not found: %s", c.To)
+	}
+	path := svc.Tracer().FindPath(ctx, c.From, c.To)
+	if path == nil {
+		out.WriteMessage("No path found between %s and %s", c.From, c.To)
+		return nil
+	}
+	return out.WritePath(path)
 }

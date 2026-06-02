@@ -563,10 +563,10 @@ Rendering to PNG/SVG/PDF requires Graphviz (`dot` command).
 rela graph
 
 # Save DOT file
-rela graph -o architecture.dot
+rela graph --file architecture.dot
 
 # Render to PNG
-rela graph -o architecture.png -f png
+rela graph --file architecture.png -f png
 
 # Filter by types
 rela graph --types requirement,decision

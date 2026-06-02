@@ -7,167 +7,111 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/spf13/cobra"
 )
 
-var (
-	updateTitle       string
-	updateStatus      string
-	updatePriority    string
-	updateDescription string
-	updateProperties  []string
-	updateBody        string
-	updateBodyFile    string
-	updateStrict      bool
-)
-
-var updateCmd = &cobra.Command{
-	Use:   "update <id>",
-	Short: "Update an entity",
-	Long: `Updates properties of an existing entity.
-
-Use -P/--property for setting arbitrary properties, including custom properties
-defined in your metamodel.
-
-The --body flag sets the markdown body content directly, while --body-file reads
-the body from a file. Use "-" as the filename to read from stdin.
-
-Examples:
-  rela update REQ-001 --status accepted
-  rela update DEC-042 --title "New title" --status proposed
-  rela update RB-001 -P "review_status=current"
-  rela update CTRL-001 -P "iso27001=A.5.15" -P "owner=Security Team"
-  rela update REQ-001 --body "## Updated Description\n\nNew content here."
-  rela update REQ-001 --body-file description.md
-  echo "New content" | rela update REQ-001 --body-file -`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		entityID := args[0]
-		ctx := context.Background()
-		svc := cliWriteFromContext(cmd.Context())
-
-		entity, err := svc.Store().GetEntity(ctx, entityID)
-		if err != nil {
-			return &entityNotFoundError{ID: entityID}
-		}
-
-		// Track if anything changed
-		changed := false
-
-		// Parse and apply --property flags first (so explicit flags can override if needed)
-		for _, prop := range updateProperties {
-			key, value, parseErr := parsePropertyFlag(prop)
-			if parseErr != nil {
-				return parseErr
-			}
-			entity.SetString(key, value)
-			changed = true
-		}
-
-		if updateTitle != "" {
-			entity.SetString("title", updateTitle)
-			changed = true
-		}
-
-		if updateStatus != "" {
-			entity.SetString("status", updateStatus)
-			changed = true
-		}
-
-		if updatePriority != "" {
-			entity.SetString("priority", updatePriority)
-			changed = true
-		}
-
-		if updateDescription != "" {
-			entity.SetString("description", updateDescription)
-			changed = true
-		}
-
-		// Set body content
-		bodyContent, err := getUpdateBodyContent(cmd)
-		if err != nil {
-			return err
-		}
-		if bodyContent != "" {
-			entity.Content = bodyContent
-			changed = true
-		}
-
-		if !changed {
-			return errors.New("no updates specified")
-		}
-
-		result, err := svc.EntityManager().UpdateEntity(ctx, entity)
-		if err != nil {
-			return err
-		}
-
-		// DEC-HWZHA: print soft validation findings to stderr in a stable
-		// format. Default exits 0 (the write succeeded); --strict elevates
-		// any warning to exit 1, mirroring `gcc -Werror` / `make -W`.
-		printValidationWarnings(result.Warnings)
-
-		// Show automation feedback
-		for _, warning := range result.AutomationWarnings {
-			out.WriteWarning("Automation: %s", warning)
-		}
-		for _, errMsg := range result.AutomationErrors {
-			out.WriteWarning("Automation error: %s", errMsg)
-		}
-		for _, rel := range result.RelationsCreated {
-			out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
-		}
-
-		out.WriteSuccess("Updated %s", entityID)
-
-		if updateStrict && len(result.Warnings) > 0 {
-			return errStrictWarnings
-		}
-		return nil
-	},
+// UpdateCmd updates an existing entity.
+type UpdateCmd struct {
+	ID          string   `arg:"" help:"Entity ID."`
+	Title       string   `short:"t" help:"New title."`
+	Status      string   `short:"s" help:"New status."`
+	Priority    string   `short:"p" help:"New priority."`
+	Description string   `short:"d" help:"New description."`
+	Property    []string `short:"P" help:"Set a property (format: key=value, can be repeated)."`
+	Body        string   `short:"b" help:"Markdown body content for the entity."`
+	BodyFile    string   `name:"body-file" short:"B" help:"Read body content from file (use - for stdin)."`
+	Strict      bool     `help:"Exit with status 1 if soft validation warnings are surfaced."`
 }
 
-// getUpdateBodyContent returns the body content from --body or --body-file flags.
-// Returns an error if both flags are specified or if file reading fails.
-func getUpdateBodyContent(cmd *cobra.Command) (string, error) {
-	if updateBody != "" && updateBodyFile != "" {
+// Run dispatches `rela update <id>`.
+func (c *UpdateCmd) Run(ctx context.Context, svc *cliServices) error {
+	entity, err := svc.Store().GetEntity(ctx, c.ID)
+	if err != nil {
+		return &entityNotFoundError{ID: c.ID}
+	}
+
+	changed := false
+	for _, prop := range c.Property {
+		key, value, parseErr := parsePropertyFlag(prop)
+		if parseErr != nil {
+			return parseErr
+		}
+		entity.SetString(key, value)
+		changed = true
+	}
+
+	if c.Title != "" {
+		entity.SetString("title", c.Title)
+		changed = true
+	}
+	if c.Status != "" {
+		entity.SetString("status", c.Status)
+		changed = true
+	}
+	if c.Priority != "" {
+		entity.SetString("priority", c.Priority)
+		changed = true
+	}
+	if c.Description != "" {
+		entity.SetString("description", c.Description)
+		changed = true
+	}
+
+	bodyContent, err := c.getBodyContent()
+	if err != nil {
+		return err
+	}
+	if bodyContent != "" {
+		entity.Content = bodyContent
+		changed = true
+	}
+
+	if !changed {
+		return errors.New("no updates specified")
+	}
+
+	result, err := svc.EntityManager().UpdateEntity(ctx, entity)
+	if err != nil {
+		return err
+	}
+
+	printValidationWarnings(result.Warnings)
+	for _, warning := range result.AutomationWarnings {
+		out.WriteWarning("Automation: %s", warning)
+	}
+	for _, errMsg := range result.AutomationErrors {
+		out.WriteWarning("Automation error: %s", errMsg)
+	}
+	for _, rel := range result.RelationsCreated {
+		out.WriteInfo("Automation created relation: %s --%s--> %s", rel.From, rel.Type, rel.To)
+	}
+
+	out.WriteSuccess("Updated %s", c.ID)
+
+	if c.Strict && len(result.Warnings) > 0 {
+		return errStrictWarnings
+	}
+	return nil
+}
+
+func (c *UpdateCmd) getBodyContent() (string, error) {
+	if c.Body != "" && c.BodyFile != "" {
 		return "", errors.New("cannot specify both --body and --body-file")
 	}
-
-	if updateBody != "" {
-		return updateBody, nil
+	if c.Body != "" {
+		return c.Body, nil
 	}
-
-	if updateBodyFile != "" {
+	if c.BodyFile != "" {
 		var content []byte
 		var err error
-
-		if updateBodyFile == "-" {
-			content, err = io.ReadAll(cmd.InOrStdin())
+		if c.BodyFile == "-" {
+			content, err = io.ReadAll(os.Stdin)
 		} else {
-			content, err = os.ReadFile(updateBodyFile)
+			content, err = os.ReadFile(c.BodyFile)
 		}
-
 		if err != nil {
 			return "", fmt.Errorf("failed to read body file: %w", err)
 		}
 		return strings.TrimSpace(string(content)), nil
 	}
-
 	return "", nil
-}
-
-func init() {
-	updateCmd.Flags().StringVarP(&updateTitle, "title", "t", "", "New title")
-	updateCmd.Flags().StringVarP(&updateStatus, "status", "s", "", "New status")
-	updateCmd.Flags().StringVarP(&updatePriority, "priority", "p", "", "New priority")
-	updateCmd.Flags().StringVarP(&updateDescription, "description", "d", "", "New description")
-	updateCmd.Flags().StringArrayVarP(&updateProperties, "property", "P", nil, "Set a property (format: key=value, can be repeated)")
-	updateCmd.Flags().StringVarP(&updateBody, "body", "b", "", "Markdown body content for the entity")
-	updateCmd.Flags().StringVarP(&updateBodyFile, "body-file", "B", "", "Read body content from file (use - for stdin)")
-	updateCmd.Flags().BoolVar(&updateStrict, "strict", false, "Exit with status 1 if soft validation warnings are surfaced")
-
-	rootCmd.AddCommand(updateCmd)
 }

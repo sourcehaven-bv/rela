@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -14,7 +13,8 @@ import (
 // store layer; here we only verify that `generateDOT` renders a
 // well-formed, correctly-populated DOT document.
 
-func setupGraphTestGraph() {
+func setupGraphTestGraph(t *testing.T) *cliServices {
+	t.Helper()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"requirement": {
@@ -44,16 +44,15 @@ func setupGraphTestGraph() {
 	seeder.addEntity(testutil.EntityFor(meta, "decision").
 		ID("DEC-001").With("title", "Important Decision"))
 	seeder.addRelation("DEC-001", "implements", "REQ-001")
-	applySeeder(seeder)
-	out = output.New(output.FormatTable)
+	return seeder.build(t)
 }
 
 // TestGenerateDOT is the canonical test for DOT rendering. One fixture,
 // one render, all invariants asserted in a single place.
 func TestGenerateDOT(t *testing.T) {
-	setupGraphTestGraph()
+	svc := setupGraphTestGraph(t)
 
-	dot := generateDOT(cliReadFromContext(testCtx).Meta(), fixtureAllEntities(), fixtureAllRelations())
+	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
 
 	// Structural invariants.
 	if !strings.HasPrefix(dot, "digraph architecture {") {
@@ -99,12 +98,9 @@ func TestGenerateDOT(t *testing.T) {
 }
 
 func TestGenerateDOT_DirectionLR(t *testing.T) {
-	setupGraphTestGraph()
+	svc := setupGraphTestGraph(t)
 
-	graphDirection = "lr"
-	defer func() { graphDirection = "" }()
-
-	dot := generateDOT(cliReadFromContext(testCtx).Meta(), fixtureAllEntities(), fixtureAllRelations())
+	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "lr")
 
 	if !strings.Contains(dot, "rankdir=LR") {
 		t.Error("DOT should contain 'rankdir=LR' when direction is lr")
@@ -115,9 +111,9 @@ func TestGenerateDOT_EmptyGraph(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{},
 	}
-	applySeeder(newStoreSeeder(meta))
+	svc := newStoreSeeder(meta).build(t)
 
-	dot := generateDOT(cliReadFromContext(testCtx).Meta(), fixtureAllEntities(), fixtureAllRelations())
+	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
 
 	if !strings.HasPrefix(dot, "digraph architecture {") {
 		t.Errorf("DOT should start with 'digraph architecture {', got:\n%s", dot)
@@ -135,9 +131,9 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.Entity("component").ID("CMP-001"))
-	applySeeder(seeder)
+	svc := seeder.build(t)
 
-	dot := generateDOT(cliReadFromContext(testCtx).Meta(), fixtureAllEntities(), fixtureAllRelations())
+	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
 
 	if !strings.Contains(dot, `label="CMP-001"`) {
 		t.Error("DOT should use entity ID as label when no title is set")
@@ -161,9 +157,9 @@ func TestGenerateDOT_HyphenatedEntityType(t *testing.T) {
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "review-response").
 		ID("RR-001").With("title", "Finding"))
-	applySeeder(seeder)
+	svc := seeder.build(t)
 
-	dot := generateDOT(cliReadFromContext(testCtx).Meta(), fixtureAllEntities(), fixtureAllRelations())
+	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
 
 	if !strings.Contains(dot, "subgraph cluster_review_response") {
 		t.Errorf("expected sanitized cluster ID 'cluster_review_response', got:\n%s", dot)

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
@@ -21,32 +20,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/schema"
 )
 
-var (
-	// Schema analysis flags
-	schemaThreshold int
-	schemaCleanup   bool
-	schemaDryRun    bool
-)
-
-var analyzeCmd = &cobra.Command{
-	Use:   "analyze",
-	Short: "Analyze the entity graph",
-	Long: `Runs various analysis checks on the entity graph.
-
-Subcommands:
-  orphans     - Find entities with no connections
-  duplicates  - Find entities with similar titles
-  gaps        - Find gaps in ID sequences
-  cardinality - Check relation cardinality constraints
-  properties  - Validate entity property values against metamodel
-  validations - Run custom validation rules from metamodel
-  schema      - Analyze metamodel schema usage (find unused types)
-  all         - Run all analyses`,
+// AnalyzeCmd is the parent of analyze subcommands.
+type AnalyzeCmd struct {
+	Orphans       AnalyzeOrphansCmd       `cmd:"" help:"Find entities with no connections."`
+	Duplicates    AnalyzeDuplicatesCmd    `cmd:"" help:"Find entities with similar titles."`
+	Gaps          AnalyzeGapsCmd          `cmd:"" help:"Find gaps in ID sequences."`
+	Cardinality   AnalyzeCardinalityCmd   `cmd:"" help:"Check relation cardinality constraints."`
+	RelationOrder AnalyzeRelationOrderCmd `cmd:"" name:"relation-order" help:"Find duplicate or missing values on managed relation order properties."`
+	Properties    AnalyzePropertiesCmd    `cmd:"" help:"Validate entity property values against metamodel."`
+	Validations   AnalyzeValidationsCmd   `cmd:"" help:"Run custom validation rules from metamodel."`
+	All           AnalyzeAllCmd           `cmd:"" help:"Run all analyses."`
+	Schema        AnalyzeSchemaCmd        `cmd:"" help:"Analyze metamodel schema usage."`
 }
 
-// writeAnalysisJSON writes an analysis result in JSON format if JSON output is enabled.
-// Returns true if JSON was written (caller should return), false if text output should be used.
-// When count > 0, the status is set to "warning" and issuesFmt is used as the message format.
+// resolveAnalyzeOpts returns the analysis options. Kept for symmetry
+// with the original implementation; today there are no flag-driven
+// scope or filter overrides at the top level.
+func resolveAnalyzeOpts() (*analysis.Options, error) {
+	return &analysis.Options{}, nil
+}
+
+// writeAnalysisJSON writes an analysis result if JSON output is enabled.
 func writeAnalysisJSON(count int, details interface{}, successMsg, issuesFmt string) bool {
 	if out.Format != "json" {
 		return false
@@ -58,225 +52,182 @@ func writeAnalysisJSON(count int, details interface{}, successMsg, issuesFmt str
 		message = fmt.Sprintf(issuesFmt, count)
 	}
 	_ = out.WriteAnalysisResult(output.AnalysisResult{
-		Status:  status,
-		Message: message,
-		Count:   count,
-		Details: details,
+		Status: status, Message: message, Count: count, Details: details,
 	})
 	return true
 }
 
-var analyzeOrphansCmd = &cobra.Command{
-	Use:   "orphans",
-	Short: "Find entities with no connections",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
-		}
+// AnalyzeOrphansCmd finds entities with no connections.
+type AnalyzeOrphansCmd struct{}
 
-		orphans := svc.FindOrphansWithScope(cmd.Context(), *opts)
-		filter.SortByID(orphans, storeEntityRecord, false)
+// Run dispatches `rela analyze orphans`.
+func (c *AnalyzeOrphansCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	orphans := svc.FindOrphansWithScope(ctx, *opts)
+	filter.SortByID(orphans, storeEntityRecord, false)
 
-		if writeAnalysisJSON(len(orphans), orphans,
-			"No orphan entities found", "Found %d orphan entities") {
-			return nil
-		}
+	orphansMsg := "No orphan entities found"
+	if writeAnalysisJSON(len(orphans), orphans, orphansMsg, "Found %d orphan entities") {
+		return nil
+	}
 
-		if len(orphans) == 0 {
-			out.WriteSuccess("No orphan entities found")
-			return nil
-		}
-		out.WriteWarning("Found %d orphan entities:", len(orphans))
-		return out.WriteEntities(orphans)
-	},
+	if len(orphans) == 0 {
+		out.WriteSuccess("No orphan entities found")
+		return nil
+	}
+	out.WriteWarning("Found %d orphan entities:", len(orphans))
+	return out.WriteEntities(orphans)
 }
 
-var analyzeDuplicatesCmd = &cobra.Command{
-	Use:   "duplicates",
-	Short: "Find entities with similar titles",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
+// AnalyzeDuplicatesCmd finds entities with similar titles.
+type AnalyzeDuplicatesCmd struct{}
+
+// Run dispatches `rela analyze duplicates`.
+func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	duplicates := svc.FindDuplicates(ctx, *opts)
+
+	if out.Format == "json" {
+		type duplicateGroup struct {
+			Title    string           `json:"title"`
+			Entities []*entity.Entity `json:"entities"`
 		}
-
-		duplicates := svc.FindDuplicates(cmd.Context(), *opts)
-
-		// Handle JSON output format
-		if out.Format == "json" {
-			type duplicateGroup struct {
-				Title    string           `json:"title"`
-				Entities []*entity.Entity `json:"entities"`
-			}
-			var details []duplicateGroup
-			for _, group := range duplicates {
-				details = append(details, duplicateGroup{
-					Title:    group.Title,
-					Entities: group.Entities,
-				})
-			}
-			writeAnalysisJSON(len(duplicates), details,
-				"No duplicate titles found", "Found %d groups of potential duplicates")
-			return nil
-		}
-
-		if len(duplicates) == 0 {
-			out.WriteSuccess("No duplicate titles found")
-			return nil
-		}
-
-		out.WriteWarning("Found %d groups of potential duplicates:", len(duplicates))
+		var details []duplicateGroup
 		for _, group := range duplicates {
-			out.WriteMessage("")
-			out.WriteMessage("  Title: %s", group.Title)
-			for _, e := range group.Entities {
-				out.WriteMessage("    - %s (%s)", e.ID, e.Type)
-			}
+			details = append(details, duplicateGroup{Title: group.Title, Entities: group.Entities})
 		}
-
+		writeAnalysisJSON(len(duplicates), details,
+			"No duplicate titles found", "Found %d groups of potential duplicates")
 		return nil
-	},
+	}
+
+	if len(duplicates) == 0 {
+		out.WriteSuccess("No duplicate titles found")
+		return nil
+	}
+	out.WriteWarning("Found %d groups of potential duplicates:", len(duplicates))
+	for _, group := range duplicates {
+		out.WriteMessage("")
+		out.WriteMessage("  Title: %s", group.Title)
+		for _, e := range group.Entities {
+			out.WriteMessage("    - %s (%s)", e.ID, e.Type)
+		}
+	}
+	return nil
 }
 
-var analyzeGapsCmd = &cobra.Command{
-	Use:   "gaps",
-	Short: "Find gaps in ID sequences",
-	Long: `Find gaps in ID sequences for entity types with sequential IDs.
+// AnalyzeGapsCmd finds gaps in ID sequences.
+type AnalyzeGapsCmd struct{}
 
-Entity types configured with id_type: string are excluded from gap analysis
-since they use manually-specified IDs that are not expected to be sequential.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
+// Run dispatches `rela analyze gaps`.
+func (c *AnalyzeGapsCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	allGaps := svc.FindGaps(ctx, *opts)
+	gapsMsg := "No ID sequence gaps found"
+	if writeAnalysisJSON(len(allGaps), allGaps, gapsMsg, "Found gaps in %d ID sequences") {
+		return nil
+	}
+
+	if len(allGaps) == 0 {
+		out.WriteSuccess("No ID sequence gaps found")
+	} else {
+		for _, gap := range allGaps {
+			out.WriteWarning("Gaps in %s sequence:", gap.Prefix)
+			out.WriteMessage("  Missing: %s", strings.Join(gap.Missing, ", "))
 		}
+	}
+	return nil
+}
 
-		allGaps := svc.FindGaps(cmd.Context(), *opts)
+// AnalyzeCardinalityCmd checks relation cardinality constraints.
+type AnalyzeCardinalityCmd struct{}
 
-		if writeAnalysisJSON(len(allGaps), allGaps,
-			"No ID sequence gaps found", "Found gaps in %d ID sequences") {
-			return nil
-		}
+// Run dispatches `rela analyze cardinality`.
+func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	violations := svc.CheckCardinality(ctx, *opts)
+	cardMsg := "All cardinality constraints satisfied"
+	if writeAnalysisJSON(len(violations), violations, cardMsg, "Found %d cardinality violations") {
+		return nil
+	}
 
-		if len(allGaps) == 0 {
-			out.WriteSuccess("No ID sequence gaps found")
+	for _, v := range violations {
+		if strings.HasPrefix(v.Constraint, "min_") {
+			out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
+				v.EntityID, v.Required, v.RelationType, v.Actual)
 		} else {
-			for _, gap := range allGaps {
-				out.WriteWarning("Gaps in %s sequence:", gap.Prefix)
-				out.WriteMessage("  Missing: %s", strings.Join(gap.Missing, ", "))
-			}
+			out.WriteWarning("%s has more than %d '%s' relation(s): %d",
+				v.EntityID, v.Required, v.RelationType, v.Actual)
 		}
+	}
+	if len(violations) == 0 {
+		out.WriteSuccess("All cardinality constraints satisfied")
+	} else {
+		out.WriteWarning("Found %d cardinality violations", len(violations))
+	}
+	return nil
+}
+
+// AnalyzeRelationOrderCmd finds duplicate or missing values on managed
+// relation order properties. Soft condition: engine tolerates them
+// (duplicates sort stably, missing values sort last) — use this to
+// surface markdown files needing cleanup after hand-edits or imports.
+type AnalyzeRelationOrderCmd struct{}
+
+// Run dispatches `rela analyze relation-order`.
+func (c *AnalyzeRelationOrderCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	issues := svc.CheckRelationOrder(ctx, *opts)
+
+	if writeAnalysisJSON(len(issues), issues,
+		"All orderable relations have consistent order values",
+		"Found %d relation-order issue(s)") {
 
 		return nil
-	},
+	}
+
+	for _, iss := range issues {
+		out.WriteWarning("%s (%s) on %s side of %q: %d %s value(s) at %s",
+			iss.EntityID, iss.EntityType, iss.Side, iss.RelationType,
+			iss.Count, iss.Kind, iss.Property)
+	}
+
+	if len(issues) == 0 {
+		out.WriteSuccess("All orderable relations have consistent order values")
+	} else {
+		out.WriteWarning("Found %d relation-order issue(s)", len(issues))
+	}
+	return nil
 }
 
-var analyzeRelationOrderCmd = &cobra.Command{
-	Use:   "relation-order",
-	Short: "Find duplicate or missing values on managed relation order properties",
-	Long: `Scans every relation type declared 'orderable: outgoing | incoming | both'
-and reports parents that have duplicate or missing values on the managed
-order property (_order_out / _order_in).
+// AnalyzePropertiesCmd validates entity property values against metamodel.
+type AnalyzePropertiesCmd struct{}
 
-These are soft conditions: the engine tolerates them (duplicates sort
-stably, missing values sort last). Use this report to identify markdown
-files that need cleanup after hand-edits or imports.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
-		}
-		issues := svc.CheckRelationOrder(cmd.Context(), *opts)
-
-		if writeAnalysisJSON(len(issues), issues,
-			"All orderable relations have consistent order values",
-			"Found %d relation-order issue(s)") {
-			return nil
-		}
-
-		for _, iss := range issues {
-			out.WriteWarning("%s (%s) on %s side of %q: %d %s value(s) at %s",
-				iss.EntityID, iss.EntityType, iss.Side, iss.RelationType,
-				iss.Count, iss.Kind, iss.Property)
-		}
-
-		if len(issues) == 0 {
-			out.WriteSuccess("All orderable relations have consistent order values")
-		} else {
-			out.WriteWarning("Found %d relation-order issue(s)", len(issues))
-		}
-		return nil
-	},
+// Run dispatches `rela analyze properties`.
+func (c *AnalyzePropertiesCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	return runPropertyValidation(ctx, svc, *opts)
 }
 
-var analyzeCardinalityCmd = &cobra.Command{
-	Use:   "cardinality",
-	Short: "Check relation cardinality constraints",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
-		}
-
-		violations := svc.CheckCardinality(cmd.Context(), *opts)
-
-		if writeAnalysisJSON(len(violations), violations,
-			"All cardinality constraints satisfied", "Found %d cardinality violations") {
-			return nil
-		}
-
-		for _, v := range violations {
-			if strings.HasPrefix(v.Constraint, "min_") {
-				out.WriteWarning("%s must have at least %d '%s' relation(s), has %d",
-					v.EntityID, v.Required, v.RelationType, v.Actual)
-			} else {
-				out.WriteWarning("%s has more than %d '%s' relation(s): %d",
-					v.EntityID, v.Required, v.RelationType, v.Actual)
-			}
-		}
-
-		if len(violations) == 0 {
-			out.WriteSuccess("All cardinality constraints satisfied")
-		} else {
-			out.WriteWarning("Found %d cardinality violations", len(violations))
-		}
-
-		return nil
-	},
-}
-
-var analyzePropertiesCmd = &cobra.Command{
-	Use:   "properties",
-	Short: "Validate entity property values against metamodel",
-	Long: `Validates all entity property values against the metamodel schema.
-
-Checks for:
-  - Invalid enum values (not in allowed list)
-  - Invalid custom type values
-  - Invalid date formats
-  - Invalid integer/boolean values
-  - Missing required properties
-  - Entity IDs not matching configured patterns
-
-This catches issues in manually-edited markdown files that bypass CLI validation.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
-		}
-		return runPropertyValidation(cmd.Context(), svc, *opts)
-	},
-}
-
-// runPropertyValidation validates entity and relation properties against the metamodel.
-func runPropertyValidation(ctx context.Context, svc cliAnalyze, opts analysis.Options) error {
+func runPropertyValidation(ctx context.Context, svc *cliServices, opts analysis.Options) error {
 	allEntityErrors := schema.ValidateEntityProperties(ctx, svc.Store(), svc.Meta())
 	if opts.Scope != nil {
 		filtered := allEntityErrors[:0]
@@ -300,7 +251,6 @@ func runPropertyValidation(ctx context.Context, svc cliAnalyze, opts analysis.Op
 	if out.Format == "json" {
 		return writePropertyValidationJSON(allEntityErrors, allRelationErrors, errorCount)
 	}
-
 	return writePropertyValidationText(allEntityErrors, allRelationErrors, errorCount)
 }
 
@@ -321,7 +271,6 @@ func writePropertyValidationJSON(
 			Errors:     errStrings,
 		})
 	}
-
 	relationResults := make([]output.RelationPropertyValidationResult, 0, len(allRelationErrors))
 	for _, re := range allRelationErrors {
 		errStrings := make([]string, len(re.Errors))
@@ -334,7 +283,6 @@ func writePropertyValidationJSON(
 			Errors:       errStrings,
 		})
 	}
-
 	status := "success"
 	message := "All entity and relation properties are valid"
 	if errorCount > 0 {
@@ -342,7 +290,6 @@ func writePropertyValidationJSON(
 		message = fmt.Sprintf("Found %d property errors across %d entities and %d relations",
 			errorCount, len(allEntityErrors), len(allRelationErrors))
 	}
-
 	details := make(map[string]interface{})
 	if len(entityResults) > 0 {
 		details["entities"] = entityResults
@@ -350,12 +297,8 @@ func writePropertyValidationJSON(
 	if len(relationResults) > 0 {
 		details["relations"] = relationResults
 	}
-
 	return out.WriteAnalysisResult(output.AnalysisResult{
-		Status:  status,
-		Message: message,
-		Count:   errorCount,
-		Details: details,
+		Status: status, Message: message, Count: errorCount, Details: details,
 	})
 }
 
@@ -368,9 +311,7 @@ func writePropertyValidationText(
 		out.WriteSuccess("All entity and relation properties are valid")
 		return nil
 	}
-
 	out.WriteError("Found %d property errors:", errorCount)
-
 	if len(allEntityErrors) > 0 {
 		out.WriteMessage("")
 		out.WriteMessage("Entities (%d):", len(allEntityErrors))
@@ -381,7 +322,6 @@ func writePropertyValidationText(
 			}
 		}
 	}
-
 	if len(allRelationErrors) > 0 {
 		out.WriteMessage("")
 		out.WriteMessage("Relations (%d):", len(allRelationErrors))
@@ -392,58 +332,34 @@ func writePropertyValidationText(
 			}
 		}
 	}
-
 	return nil
 }
 
-var analyzeValidationsCmd = &cobra.Command{
-	Use:   "validations",
-	Short: "Run custom validation rules from metamodel",
-	Long: `Runs custom validation rules defined in the metamodel's 'validations' section.
+// AnalyzeValidationsCmd runs custom validation rules from metamodel.
+type AnalyzeValidationsCmd struct{}
 
-Each validation rule can:
-  - Target a specific entity type (or all types if not specified)
-  - Use 'when' conditions to select which entities the rule applies to
-  - Use 'then' conditions that matched entities must satisfy
-  - Have a severity of 'error' or 'warning'
-
-Example metamodel configuration:
-  validations:
-    - name: accepted-needs-priority
-      description: "Accepted requirements must have priority"
-      entity_type: requirement
-      when:
-        - "status=accepted"
-      then:
-        - "priority!="
-      severity: error`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
-		}
-		return runValidations(cmd.Context(), svc, *opts)
-	},
+// Run dispatches `rela analyze validations`.
+func (c *AnalyzeValidationsCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	return runValidations(ctx, svc, *opts)
 }
 
-// runValidations executes custom validation rules.
-func runValidations(ctx context.Context, svc cliAnalyze, opts analysis.Options) error {
+func runValidations(ctx context.Context, svc *cliServices, opts analysis.Options) error {
 	rules := svc.Meta().Validations
 	if len(rules) == 0 {
 		return writeNoValidationRules()
 	}
-
 	result := svc.RunValidations(ctx, opts)
 	errorCount, warningCount := countValidationViolationsBySeverity(result.Violations)
-
 	if out.Format == "json" {
 		return writeValidationsJSON(rules, result, errorCount, warningCount)
 	}
 	return writeValidationsText(rules, result, errorCount, warningCount)
 }
 
-// writeNoValidationRules emits the no-rules notice in the active output format.
 func writeNoValidationRules() error {
 	if out.Format == "json" {
 		return out.WriteAnalysisResult(output.AnalysisResult{
@@ -457,20 +373,17 @@ func writeNoValidationRules() error {
 	return nil
 }
 
-// countValidationViolationsBySeverity tallies error vs. warning violations.
-func countValidationViolationsBySeverity(violations []analysis.ValidationViolation) (errors, warnings int) {
+func countValidationViolationsBySeverity(violations []analysis.ValidationViolation) (errs, warns int) {
 	for _, v := range violations {
 		if v.Severity == "error" {
-			errors++
+			errs++
 		} else {
-			warnings++
+			warns++
 		}
 	}
-	return errors, warnings
+	return errs, warns
 }
 
-// writeValidationsJSON emits the JSON envelope and bubbles a non-zero exit when
-// any rule failed to run or any error-severity violation was found.
 func writeValidationsJSON(
 	rules []metamodel.ValidationRule,
 	result analysis.ValidationResult,
@@ -487,10 +400,7 @@ func writeValidationsJSON(
 		message = fmt.Sprintf("Found %d warnings across %d rules", warningCount, len(rules))
 	}
 	if jsonErr := out.WriteAnalysisResult(output.AnalysisResult{
-		Status:  status,
-		Message: message,
-		Count:   errorCount + warningCount,
-		Details: result.Violations,
+		Status: status, Message: message, Count: errorCount + warningCount, Details: result.Violations,
 	}); jsonErr != nil {
 		return jsonErr
 	}
@@ -500,9 +410,6 @@ func writeValidationsJSON(
 	return nil
 }
 
-// writeValidationsText emits the per-rule violation listing followed by
-// script/load error blocks and a final summary line. Returns a non-zero exit
-// when any error-severity violation was found or any rule failed to run.
 func writeValidationsText(
 	rules []metamodel.ValidationRule,
 	result analysis.ValidationResult,
@@ -515,21 +422,14 @@ func writeValidationsText(
 	for _, rule := range rules {
 		writeRuleViolations(rule, ruleViolations[rule.Name])
 	}
-
-	// Render script and load errors as separate sections after the
-	// per-rule violation list so operators see "rule didn't run"
-	// problems distinctly from "rule found a violation."
 	renderValidationErrors(result.ScriptErrors, result.LoadErrors)
-
 	writeValidationsSummary(len(rules), errorCount, warningCount, result.HasErrors())
-
 	if errorCount > 0 || result.HasErrors() {
 		return errors.NewExitError(1)
 	}
 	return nil
 }
 
-// writeRuleViolations renders the per-rule heading and entity list.
 func writeRuleViolations(rule metamodel.ValidationRule, vs []analysis.ValidationViolation) {
 	if len(vs) == 0 {
 		return
@@ -544,7 +444,6 @@ func writeRuleViolations(rule metamodel.ValidationRule, vs []analysis.Validation
 	}
 }
 
-// writeValidationsSummary emits the trailing success/error/warning line.
 func writeValidationsSummary(ruleCount, errorCount, warningCount int, hasErrors bool) {
 	if errorCount == 0 && warningCount == 0 && !hasErrors {
 		out.WriteSuccess("All %d validation rules passed", ruleCount)
@@ -558,9 +457,6 @@ func writeValidationsSummary(ruleCount, errorCount, warningCount int, hasErrors 
 	}
 }
 
-// renderValidationErrors writes script-error and load-error blocks to
-// the global `out` writer. Empty slices render nothing — the caller
-// still owns the success / summary line.
 func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []analysis.ValidationLoadError) {
 	if len(scriptErrors) > 0 {
 		out.WriteError("Validation script errors (%d):", len(scriptErrors))
@@ -576,229 +472,194 @@ func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []analys
 	}
 }
 
-var analyzeAllCmd = &cobra.Command{
-	Use:   "all",
-	Short: "Run all analyses",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		opts, err := resolveAnalyzeOpts()
-		if err != nil {
-			return err
-		}
+// AnalyzeAllCmd runs all analyses.
+type AnalyzeAllCmd struct{}
 
-		// Get summary from workspace
-		summary := svc.AnalyzeAll(cmd.Context(), *opts)
-
-		// Handle JSON output format
-		if out.Format == "json" {
-			type allAnalysisSummary struct {
-				Orphans                int `json:"orphans"`
-				Cardinality            int `json:"cardinality"`
-				Duplicates             int `json:"duplicates"`
-				Gaps                   int `json:"gaps"`
-				Properties             int `json:"properties"`
-				ValidationErrors       int `json:"validation_errors"`
-				ValidationWarnings     int `json:"validation_warnings"`
-				ValidationScriptErrors int `json:"validation_script_errors"`
-				ValidationLoadErrors   int `json:"validation_load_errors"`
-			}
-
-			jsonSummary := allAnalysisSummary{
-				Orphans:                summary.Orphans,
-				Cardinality:            summary.Cardinality,
-				Duplicates:             summary.Duplicates,
-				Gaps:                   summary.Gaps,
-				Properties:             summary.PropertyErrors,
-				ValidationErrors:       summary.ValidationErrors,
-				ValidationWarnings:     summary.ValidationWarnings,
-				ValidationScriptErrors: summary.ValidationScriptErrors,
-				ValidationLoadErrors:   summary.ValidationLoadErrors,
-			}
-
-			validationFailures := summary.ValidationScriptErrors + summary.ValidationLoadErrors
-			totalIssues := summary.Orphans + summary.Cardinality + summary.Duplicates +
-				summary.Gaps + summary.PropertyErrors + summary.ValidationErrors + validationFailures
-			status := "success"
-			message := "All analyses passed"
-			if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 || validationFailures > 0 {
-				status = "error"
-				message = fmt.Sprintf("Found %d issues requiring attention", totalIssues)
-			} else if totalIssues > 0 || summary.ValidationWarnings > 0 {
-				status = "warning"
-				message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, summary.ValidationWarnings)
-			}
-
-			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  status,
-				Message: message,
-				Count:   totalIssues + summary.ValidationWarnings,
-				Details: jsonSummary,
-			})
-		}
-
-		// Text output format
-		summaryItems := []string{
-			fmt.Sprintf("Orphans: %d", summary.Orphans),
-			fmt.Sprintf("Cardinality: %d", summary.Cardinality),
-			fmt.Sprintf("Duplicates: %d", summary.Duplicates),
-			fmt.Sprintf("Gaps: %d", summary.Gaps),
-			fmt.Sprintf("Properties: %d", summary.PropertyErrors),
-		}
-		if len(svc.Meta().Validations) > 0 {
-			summaryItems = append(summaryItems, fmt.Sprintf("Validation Errors: %d", summary.ValidationErrors))
-			summaryItems = append(summaryItems, fmt.Sprintf("Validation Warnings: %d", summary.ValidationWarnings))
-			if summary.ValidationScriptErrors > 0 {
-				summaryItems = append(summaryItems,
-					fmt.Sprintf("Validation Script Errors: %d", summary.ValidationScriptErrors))
-			}
-			if summary.ValidationLoadErrors > 0 {
-				summaryItems = append(summaryItems,
-					fmt.Sprintf("Validation Load Errors: %d", summary.ValidationLoadErrors))
-			}
-		}
-		out.WriteSummaryBox(summaryItems)
-		out.WriteMessage("")
-
-		var errs []error
-
-		out.WriteSectionHeader("Orphan Analysis")
-		if err := analyzeOrphansCmd.RunE(cmd, args); err != nil {
-			errs = append(errs, fmt.Errorf("orphan analysis: %w", err))
-		}
-
-		out.WriteMessage("")
-		out.WriteSectionHeader("Duplicate Analysis")
-		if err := analyzeDuplicatesCmd.RunE(cmd, args); err != nil {
-			errs = append(errs, fmt.Errorf("duplicate analysis: %w", err))
-		}
-
-		out.WriteMessage("")
-		out.WriteSectionHeader("ID Gap Analysis")
-		if err := analyzeGapsCmd.RunE(cmd, args); err != nil {
-			errs = append(errs, fmt.Errorf("gap analysis: %w", err))
-		}
-
-		out.WriteMessage("")
-		out.WriteSectionHeader("Cardinality Analysis")
-		if err := analyzeCardinalityCmd.RunE(cmd, args); err != nil {
-			errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
-		}
-
-		out.WriteMessage("")
-		out.WriteSectionHeader("Property Validation")
-		if err := runPropertyValidation(cmd.Context(), svc, *opts); err != nil {
-			errs = append(errs, fmt.Errorf("property validation: %w", err))
-		}
-
-		if len(svc.Meta().Validations) > 0 {
-			out.WriteMessage("")
-			out.WriteSectionHeader("Custom Validations")
-			if err := runValidations(cmd.Context(), svc, *opts); err != nil {
-				errs = append(errs, fmt.Errorf("custom validations: %w", err))
-			}
-		}
-
-		if len(errs) > 0 {
-			return errs[0]
-		}
-
-		return nil
-	},
+// Run dispatches `rela analyze all`.
+func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	summary := svc.AnalyzeAll(ctx, *opts)
+	if out.Format == "json" {
+		return writeAnalyzeAllJSON(summary)
+	}
+	writeAnalyzeAllSummary(svc, summary)
+	return runAnalyzeAllSections(ctx, svc, *opts)
 }
 
-var analyzeSchemaCmd = &cobra.Command{
-	Use:   "schema",
-	Short: "Analyze metamodel schema usage",
-	Long: `Analyze metamodel schema usage to find unused or underused types.
-
-Shows:
-  - Entity types with no instances
-  - Relation types with no instances
-  - Custom types (enums) not referenced by any property
-  - Types with few instances (when --threshold is set)
-
-Use --cleanup to remove unused types from metamodel.yaml and update
-data-entry.yaml accordingly.
-
-Examples:
-  rela analyze schema              # Show unused types
-  rela analyze schema --threshold 2   # Include types with ≤2 instances
-  rela analyze schema --cleanup       # Remove unused types
-  rela analyze schema --cleanup --dry-run  # Preview cleanup changes`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		if schemaThreshold < 0 {
-			return stderrors.New("--threshold must be non-negative")
-		}
-
-		// Load optional config files
-		dataEntry := loadDataEntryConfig(svc)
-
-		// Run analysis
-		analysis := schema.Analyze(svc.Meta(), &schema.StoreCounter{Store: svc.Store()}, dataEntry, schemaThreshold)
-
-		// Handle cleanup mode
-		if schemaCleanup {
-			return runSchemaCleanup(svc, analysis)
-		}
-
-		// Output results
-		return outputSchemaAnalysis(analysis)
-	},
+type allAnalysisSummary struct {
+	Orphans                int `json:"orphans"`
+	Cardinality            int `json:"cardinality"`
+	Duplicates             int `json:"duplicates"`
+	Gaps                   int `json:"gaps"`
+	Properties             int `json:"properties"`
+	ValidationErrors       int `json:"validation_errors"`
+	ValidationWarnings     int `json:"validation_warnings"`
+	ValidationScriptErrors int `json:"validation_script_errors"`
+	ValidationLoadErrors   int `json:"validation_load_errors"`
 }
 
-// loadDataEntryConfig loads data-entry.yaml if it exists.
-func loadDataEntryConfig(svc cliAnalyze) *dataentryconfig.Config {
+func writeAnalyzeAllJSON(summary *analysis.Summary) error {
+	jsonSummary := allAnalysisSummary{
+		Orphans:                summary.Orphans,
+		Cardinality:            summary.Cardinality,
+		Duplicates:             summary.Duplicates,
+		Gaps:                   summary.Gaps,
+		Properties:             summary.PropertyErrors,
+		ValidationErrors:       summary.ValidationErrors,
+		ValidationWarnings:     summary.ValidationWarnings,
+		ValidationScriptErrors: summary.ValidationScriptErrors,
+		ValidationLoadErrors:   summary.ValidationLoadErrors,
+	}
+	validationFailures := summary.ValidationScriptErrors + summary.ValidationLoadErrors
+	totalIssues := summary.Orphans + summary.Cardinality + summary.Duplicates +
+		summary.Gaps + summary.PropertyErrors + summary.ValidationErrors + validationFailures
+	status := "success"
+	message := "All analyses passed"
+	if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 || validationFailures > 0 {
+		status = "error"
+		message = fmt.Sprintf("Found %d issues requiring attention", totalIssues)
+	} else if totalIssues > 0 || summary.ValidationWarnings > 0 {
+		status = "warning"
+		message = fmt.Sprintf("Found %d issues and %d warnings", totalIssues, summary.ValidationWarnings)
+	}
+	return out.WriteAnalysisResult(output.AnalysisResult{
+		Status:  status,
+		Message: message,
+		Count:   totalIssues + summary.ValidationWarnings,
+		Details: jsonSummary,
+	})
+}
+
+func writeAnalyzeAllSummary(svc *cliServices, summary *analysis.Summary) {
+	summaryItems := []string{
+		fmt.Sprintf("Orphans: %d", summary.Orphans),
+		fmt.Sprintf("Cardinality: %d", summary.Cardinality),
+		fmt.Sprintf("Duplicates: %d", summary.Duplicates),
+		fmt.Sprintf("Gaps: %d", summary.Gaps),
+		fmt.Sprintf("Properties: %d", summary.PropertyErrors),
+	}
+	if len(svc.Meta().Validations) > 0 {
+		summaryItems = append(summaryItems,
+			fmt.Sprintf("Validation Errors: %d", summary.ValidationErrors),
+			fmt.Sprintf("Validation Warnings: %d", summary.ValidationWarnings))
+		if summary.ValidationScriptErrors > 0 {
+			summaryItems = append(summaryItems,
+				fmt.Sprintf("Validation Script Errors: %d", summary.ValidationScriptErrors))
+		}
+		if summary.ValidationLoadErrors > 0 {
+			summaryItems = append(summaryItems,
+				fmt.Sprintf("Validation Load Errors: %d", summary.ValidationLoadErrors))
+		}
+	}
+	out.WriteSummaryBox(summaryItems)
+	out.WriteMessage("")
+}
+
+func runAnalyzeAllSections(ctx context.Context, svc *cliServices, opts analysis.Options) error {
+	var errs []error
+	out.WriteSectionHeader("Orphan Analysis")
+	if err := (&AnalyzeOrphansCmd{}).Run(ctx, svc); err != nil {
+		errs = append(errs, fmt.Errorf("orphan analysis: %w", err))
+	}
+	out.WriteMessage("")
+	out.WriteSectionHeader("Duplicate Analysis")
+	if err := (&AnalyzeDuplicatesCmd{}).Run(ctx, svc); err != nil {
+		errs = append(errs, fmt.Errorf("duplicate analysis: %w", err))
+	}
+	out.WriteMessage("")
+	out.WriteSectionHeader("ID Gap Analysis")
+	if err := (&AnalyzeGapsCmd{}).Run(ctx, svc); err != nil {
+		errs = append(errs, fmt.Errorf("gap analysis: %w", err))
+	}
+	out.WriteMessage("")
+	out.WriteSectionHeader("Cardinality Analysis")
+	if err := (&AnalyzeCardinalityCmd{}).Run(ctx, svc); err != nil {
+		errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
+	}
+	out.WriteMessage("")
+	out.WriteSectionHeader("Property Validation")
+	if err := runPropertyValidation(ctx, svc, opts); err != nil {
+		errs = append(errs, fmt.Errorf("property validation: %w", err))
+	}
+	if len(svc.Meta().Validations) > 0 {
+		out.WriteMessage("")
+		out.WriteSectionHeader("Custom Validations")
+		if err := runValidations(ctx, svc, opts); err != nil {
+			errs = append(errs, fmt.Errorf("custom validations: %w", err))
+		}
+	}
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+
+// AnalyzeSchemaCmd analyzes metamodel schema usage.
+type AnalyzeSchemaCmd struct {
+	Threshold int  `default:"0" help:"Show types with instance count <= threshold (0 = only unused)."`
+	Cleanup   bool `help:"Remove unused types from metamodel and config files."`
+	DryRun    bool `name:"dry-run" help:"Preview cleanup changes without modifying files."`
+}
+
+// Run dispatches `rela analyze schema`.
+func (c *AnalyzeSchemaCmd) Run(svc *cliServices) error {
+	if c.Threshold < 0 {
+		return stderrors.New("--threshold must be non-negative")
+	}
+	dataEntry := loadDataEntryConfig(svc)
+	analysisResult := schema.Analyze(svc.Meta(), &schema.StoreCounter{Store: svc.Store()}, dataEntry, c.Threshold)
+
+	if c.Cleanup {
+		return runSchemaCleanup(svc, analysisResult, c.DryRun)
+	}
+	return outputSchemaAnalysis(analysisResult)
+}
+
+func loadDataEntryConfig(svc *cliServices) *dataentryconfig.Config {
 	data, err := svc.Config().Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
-		return nil // File doesn't exist or can't be read
+		return nil
 	}
 	var cfg dataentryconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil // Invalid YAML
+		return nil
 	}
 	return &cfg
 }
 
-// runSchemaCleanup executes the cleanup plan.
-func runSchemaCleanup(svc cliAnalyze, analysis *schema.Analysis) error {
-	plan := schema.PlanCleanup(analysis)
-
+func runSchemaCleanup(svc *cliServices, analysisResult *schema.Analysis, dryRun bool) error {
+	plan := schema.PlanCleanup(analysisResult)
 	if plan.IsEmpty() {
 		if out.Format == "json" {
 			return out.WriteAnalysisResult(output.AnalysisResult{
-				Status:  "success",
-				Message: "No unused types to clean up",
-				Count:   0,
-				Details: plan,
+				Status: "success", Message: "No unused types to clean up",
+				Count: 0, Details: plan,
 			})
 		}
 		out.WriteSuccess("No unused types to clean up")
 		return nil
 	}
 
-	// Output the plan
 	if out.Format == "json" {
 		status := "success"
 		message := fmt.Sprintf("Planned %d changes", plan.TotalChanges())
-		if schemaDryRun {
+		if dryRun {
 			message = fmt.Sprintf("Would make %d changes (dry-run)", plan.TotalChanges())
 		}
 		return out.WriteAnalysisResult(output.AnalysisResult{
-			Status:  status,
-			Message: message,
-			Count:   plan.TotalChanges(),
-			Details: plan,
+			Status: status, Message: message,
+			Count: plan.TotalChanges(), Details: plan,
 		})
 	}
 
-	// Text output
-	if schemaDryRun {
+	if dryRun {
 		out.WriteMessage("Dry-run: would make the following changes:")
 	} else {
 		out.WriteMessage("Making the following changes:")
 	}
-
 	for _, change := range plan.MetamodelChanges {
 		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
 	}
@@ -806,35 +667,30 @@ func runSchemaCleanup(svc cliAnalyze, analysis *schema.Analysis) error {
 		out.WriteMessage("  %s: %s %s", change.File, change.Action, change.Target)
 	}
 
-	if schemaDryRun {
+	if dryRun {
 		out.WriteSuccess("Would make %d changes (dry-run, no files modified)", plan.TotalChanges())
 		return nil
 	}
 
-	// Execute cleanup
 	projectRoot := filepath.Dir(svc.Paths().MetamodelPath)
 	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
 		return err
 	}
-
 	out.WriteSuccess("Made %d changes", plan.TotalChanges())
 	return nil
 }
 
-// outputSchemaAnalysis outputs the schema analysis results.
-func outputSchemaAnalysis(analysis *schema.Analysis) error {
-	totalUnused := analysis.TotalUnused()
-	totalLowUsage := analysis.TotalLowUsage()
+func outputSchemaAnalysis(an *schema.Analysis) error {
+	totalUnused := an.TotalUnused()
+	totalLowUsage := an.TotalLowUsage()
 	totalIssues := totalUnused + totalLowUsage
-
 	if out.Format == "json" {
-		return outputSchemaAnalysisJSON(analysis, totalUnused, totalLowUsage, totalIssues)
+		return outputSchemaAnalysisJSON(an, totalUnused, totalLowUsage, totalIssues)
 	}
-	return outputSchemaAnalysisText(analysis, totalUnused, totalLowUsage, totalIssues)
+	return outputSchemaAnalysisText(an, totalUnused, totalLowUsage, totalIssues)
 }
 
-// outputSchemaAnalysisJSON outputs schema analysis in JSON format.
-func outputSchemaAnalysisJSON(analysis *schema.Analysis, totalUnused, totalLowUsage, totalIssues int) error {
+func outputSchemaAnalysisJSON(an *schema.Analysis, totalUnused, totalLowUsage, totalIssues int) error {
 	status := "success"
 	message := "All schema types are in use"
 	if totalUnused > 0 {
@@ -848,25 +704,20 @@ func outputSchemaAnalysisJSON(analysis *schema.Analysis, totalUnused, totalLowUs
 		message = fmt.Sprintf("Found %d low-usage types", totalLowUsage)
 	}
 	return out.WriteAnalysisResult(output.AnalysisResult{
-		Status:  status,
-		Message: message,
-		Count:   totalIssues,
-		Details: analysis,
+		Status: status, Message: message, Count: totalIssues, Details: an,
 	})
 }
 
-// outputSchemaAnalysisText outputs schema analysis in text format.
-func outputSchemaAnalysisText(analysis *schema.Analysis, totalUnused, totalLowUsage, totalIssues int) error {
+func outputSchemaAnalysisText(an *schema.Analysis, totalUnused, totalLowUsage, totalIssues int) error {
 	if totalIssues == 0 {
 		out.WriteSuccess("All schema types are in use")
 		return nil
 	}
-
-	outputUnusedTypes("Unused Entity Types", analysis.UnusedEntityTypes)
-	outputUnusedTypes("Unused Relation Types", analysis.UnusedRelationTypes)
-	outputUnusedCustomTypes(analysis.UnusedCustomTypes)
-	outputLowUsageTypes("Low-Usage Entity Types", analysis.LowUsageEntityTypes)
-	outputLowUsageTypes("Low-Usage Relation Types", analysis.LowUsageRelationTypes)
+	outputUnusedTypes("Unused Entity Types", an.UnusedEntityTypes)
+	outputUnusedTypes("Unused Relation Types", an.UnusedRelationTypes)
+	outputUnusedCustomTypes(an.UnusedCustomTypes)
+	outputLowUsageTypes("Low-Usage Entity Types", an.LowUsageEntityTypes)
+	outputLowUsageTypes("Low-Usage Relation Types", an.LowUsageRelationTypes)
 
 	out.WriteWarning("Found %d unused types and %d low-usage types", totalUnused, totalLowUsage)
 	if totalUnused > 0 {
@@ -875,7 +726,6 @@ func outputSchemaAnalysisText(analysis *schema.Analysis, totalUnused, totalLowUs
 	return nil
 }
 
-// outputUnusedTypes outputs a section of unused types with their references.
 func outputUnusedTypes(header string, usages []schema.TypeUsage) {
 	if len(usages) == 0 {
 		return
@@ -894,7 +744,6 @@ func outputUnusedTypes(header string, usages []schema.TypeUsage) {
 	out.WriteMessage("")
 }
 
-// outputUnusedCustomTypes outputs unused custom types (no references to show).
 func outputUnusedCustomTypes(usages []schema.TypeUsage) {
 	if len(usages) == 0 {
 		return
@@ -906,7 +755,6 @@ func outputUnusedCustomTypes(usages []schema.TypeUsage) {
 	out.WriteMessage("")
 }
 
-// outputLowUsageTypes outputs a section of low-usage types.
 func outputLowUsageTypes(header string, usages []schema.TypeUsage) {
 	if len(usages) == 0 {
 		return
@@ -916,31 +764,4 @@ func outputLowUsageTypes(header string, usages []schema.TypeUsage) {
 		out.WriteMessage("  %s (%d instances)", usage.Name, usage.Count)
 	}
 	out.WriteMessage("")
-}
-
-func init() {
-	// Schema subcommand flags
-	analyzeSchemaCmd.Flags().IntVar(&schemaThreshold, "threshold", 0,
-		"Show types with instance count <= threshold (0 = only unused)")
-	analyzeSchemaCmd.Flags().BoolVar(&schemaCleanup, "cleanup", false,
-		"Remove unused types from metamodel and config files")
-	analyzeSchemaCmd.Flags().BoolVar(&schemaDryRun, "dry-run", false,
-		"Preview cleanup changes without modifying files")
-
-	analyzeCmd.AddCommand(analyzeOrphansCmd)
-	analyzeCmd.AddCommand(analyzeDuplicatesCmd)
-	analyzeCmd.AddCommand(analyzeGapsCmd)
-	analyzeCmd.AddCommand(analyzeCardinalityCmd)
-	analyzeCmd.AddCommand(analyzeRelationOrderCmd)
-	analyzeCmd.AddCommand(analyzePropertiesCmd)
-	analyzeCmd.AddCommand(analyzeValidationsCmd)
-	analyzeCmd.AddCommand(analyzeAllCmd)
-	analyzeCmd.AddCommand(analyzeSchemaCmd)
-
-	rootCmd.AddCommand(analyzeCmd)
-}
-
-// resolveAnalyzeOpts returns the analysis options.
-func resolveAnalyzeOpts() (*analysis.Options, error) {
-	return &analysis.Options{}, nil
 }

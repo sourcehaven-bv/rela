@@ -5,96 +5,76 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/spf13/cobra"
-
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-var renumberDryRun bool
+// RenumberCmd is `rela renumber`. Walks every orderable relation and
+// rewrites the managed order property to dense integer ordinals
+// 1.0..N. Missing-ness is preserved.
+type RenumberCmd struct {
+	DryRun bool `name:"dry-run" help:"Preview the renumber without writing."`
+}
+
+// Run dispatches `rela renumber`.
+func (c *RenumberCmd) Run(ctx context.Context, svc *cliServices) error {
+	st := svc.Store()
+	schema := svc.Meta()
+
+	var plan []renumberEntry
+
+	relNames := make([]string, 0, len(schema.Relations))
+	for name := range schema.Relations {
+		relNames = append(relNames, name)
+	}
+	sort.Strings(relNames)
+
+	for _, relName := range relNames {
+		relDef := schema.Relations[relName]
+		if p := relDef.OutgoingOrderProperty(); p != "" {
+			plan = append(plan, buildRenumberPlan(ctx, st, relName, p, "outgoing")...)
+		}
+		if p := relDef.IncomingOrderProperty(); p != "" {
+			plan = append(plan, buildRenumberPlan(ctx, st, relName, p, "incoming")...)
+		}
+	}
+
+	if len(plan) == 0 {
+		out.WriteSuccess("All orderable relations already have dense ordinals")
+		return nil
+	}
+
+	if c.DryRun {
+		out.WriteInfo("DRY RUN — %d relation(s) would be rewritten", len(plan))
+		for _, p := range plan {
+			cur, _ := metamodel.FiniteOrder(p.rel.Properties[p.prop])
+			out.WriteInfo("  %s --%s--> %s: %s %v -> %v",
+				p.rel.From, p.rel.Type, p.rel.To, p.prop, cur, p.newVal)
+		}
+		return nil
+	}
+
+	for _, p := range plan {
+		props := make(map[string]interface{}, len(p.rel.Properties)+1)
+		for k, v := range p.rel.Properties {
+			props[k] = v
+		}
+		props[p.prop] = p.newVal
+		data := store.RelationData{Properties: props, Content: p.rel.Content}
+		if _, err := st.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, data); err != nil {
+			return fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
+		}
+	}
+	out.WriteSuccess("Renumbered %d relation(s)", len(plan))
+	return nil
+}
 
 type renumberEntry struct {
 	rel    *entity.Relation
 	prop   string
 	newVal float64
-}
-
-var renumberCmd = &cobra.Command{
-	Use:   "renumber",
-	Short: "Renumber managed order properties on orderable relations",
-	Long: `Walks every relation type declared 'orderable: outgoing | incoming | both'
-and rewrites the managed order property (_order_out / _order_in) on each
-parent's siblings to dense integer ordinals 1.0..N in the current sort
-order.
-
-Preserves missing-ness: siblings whose value is currently missing or
-non-finite stay missing — only siblings with existing finite values are
-redistributed.
-
-Use this command to clean up after hand-edits, imports, or long-running
-projects whose order values have drifted into sparse floats. The
-automatic renumber-on-collapse handles routine drift; this command is
-for explicit normalization.
-
-Examples:
-  rela renumber                 # Normalize every orderable relation
-  rela renumber --dry-run       # Preview without writing`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliWriteFromContext(cmd.Context())
-		ctx := context.Background()
-		st := svc.Store()
-		schema := svc.Meta()
-
-		var plan []renumberEntry
-
-		relNames := make([]string, 0, len(schema.Relations))
-		for name := range schema.Relations {
-			relNames = append(relNames, name)
-		}
-		sort.Strings(relNames)
-
-		for _, relName := range relNames {
-			relDef := schema.Relations[relName]
-			if p := relDef.OutgoingOrderProperty(); p != "" {
-				plan = append(plan, buildRenumberPlan(ctx, st, relName, p, "outgoing")...)
-			}
-			if p := relDef.IncomingOrderProperty(); p != "" {
-				plan = append(plan, buildRenumberPlan(ctx, st, relName, p, "incoming")...)
-			}
-		}
-
-		if len(plan) == 0 {
-			out.WriteSuccess("All orderable relations already have dense ordinals")
-			return nil
-		}
-
-		if renumberDryRun {
-			out.WriteInfo("DRY RUN — %d relation(s) would be rewritten", len(plan))
-			for _, p := range plan {
-				cur, _ := metamodel.FiniteOrder(p.rel.Properties[p.prop])
-				out.WriteInfo("  %s --%s--> %s: %s %v -> %v",
-					p.rel.From, p.rel.Type, p.rel.To, p.prop, cur, p.newVal)
-			}
-			return nil
-		}
-
-		for _, p := range plan {
-			props := make(map[string]interface{}, len(p.rel.Properties)+1)
-			for k, v := range p.rel.Properties {
-				props[k] = v
-			}
-			props[p.prop] = p.newVal
-			data := store.RelationData{Properties: props, Content: p.rel.Content}
-			if _, err := st.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, data); err != nil {
-				return fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
-			}
-		}
-		out.WriteSuccess("Renumbered %d relation(s)", len(plan))
-		return nil
-	},
 }
 
 // buildRenumberPlan walks relations of relType and returns the (relation,
@@ -164,10 +144,4 @@ func buildRenumberPlan(
 		}
 	}
 	return plan
-}
-
-func init() {
-	renumberCmd.Flags().BoolVar(&renumberDryRun, "dry-run", false,
-		"Preview the renumber without writing")
-	rootCmd.AddCommand(renumberCmd)
 }

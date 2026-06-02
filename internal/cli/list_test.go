@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
@@ -15,27 +14,11 @@ import (
 // internal/store/storetest/query.go and does not need to be duplicated
 // here.
 
-func setupListTestEnv() {
-	testCtx = nil //nolint:fatcontext // reset between tests; individual tests populate via applySeeder
-	out = output.New(output.FormatTable)
-}
-
-// setupWorkspaceFromMeta wires ws/g to an empty store-backed workspace
-// using the given metamodel. Kept as a helper so tests that only need
-// resolveEntityType-style checks stay concise.
-func setupWorkspaceFromMeta(t *testing.T, m *metamodel.Metamodel) {
-	t.Helper()
-	applySeeder(newStoreSeeder(m))
-}
-
 func TestResolveEntityTypeWithAlias(t *testing.T) {
-	setupListTestEnv()
-
 	meta, err := metamodel.Parse([]byte(testutil.AliasMetamodelYAML()))
 	if err != nil {
 		t.Fatalf("failed to parse metamodel: %v", err)
 	}
-	setupWorkspaceFromMeta(t, meta)
 
 	tests := []struct {
 		name      string
@@ -74,8 +57,6 @@ func TestResolveEntityTypeWithAlias(t *testing.T) {
 // TestListTypeParsingEdgeCases tests edge cases for entity type resolution
 // including entity types and aliases that end in 's' (like "bus", "autobus").
 func TestListTypeParsingEdgeCases(t *testing.T) {
-	setupListTestEnv()
-
 	meta := testutil.NewMetamodel().
 		DefineEntity("requirement").
 		Label("Requirement").
@@ -92,7 +73,6 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 		End().
 		WithCustomTypeDefault("status", []string{"draft", "accepted"}, "draft").
 		Build()
-	setupWorkspaceFromMeta(t, meta)
 
 	tests := []struct {
 		name      string
@@ -129,9 +109,7 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 }
 
 func TestListCommandWithUnknownType(t *testing.T) {
-	setupListTestEnv()
 	meta := metamodel.DefaultMetamodel()
-	applySeeder(newStoreSeeder(meta))
 
 	_, _, err := resolveEntityType(meta, "nonexistent")
 	if err == nil {
