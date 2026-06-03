@@ -48,3 +48,27 @@ func (c *poolCloser) Close() error {
 	c.pool.Close()
 	return nil
 }
+
+// MigrateDSN opens a short-lived pool for the given DSN, applies pending
+// migrations, and closes the pool. It is the entry point for the `rela db
+// migrate` admin command, keeping pool construction (and the pgx dependency)
+// inside this package rather than in the CLI.
+func MigrateDSN(ctx context.Context, dsn string) error {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
+	}
+	defer pool.Close()
+	return Migrate(ctx, pool)
+}
+
+// StatusDSN opens a short-lived pool and reports the current vs target schema
+// version without changing anything. Entry point for `rela db status`.
+func StatusDSN(ctx context.Context, dsn string) (current, target int, err error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return 0, 0, fmt.Errorf("connect to database: %w", err)
+	}
+	defer pool.Close()
+	return Status(ctx, pool)
+}

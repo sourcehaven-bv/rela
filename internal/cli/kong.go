@@ -58,6 +58,7 @@ type CLI struct {
 	Migrate    MigrateCmd    `cmd:"" help:"Migrate project files to current schema."`
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
+	Db         DBCmd         `cmd:"" name:"db" help:"Manage the PostgreSQL schema (postgres build)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 

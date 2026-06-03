@@ -57,12 +57,35 @@ CA) so the connection is never silently unencrypted.
 On first start the PostgreSQL build creates its schema automatically
 (an `entities`, `relations`, `attachments`, and `schema_version` table,
 plus the `pg_trgm` extension for substring/fuzzy search). Migrations are
-embedded in the binary and applied idempotently on every start, so
-upgrading is just deploying a newer binary and restarting.
+embedded in the binary and applied idempotently on every start — they run
+in a single transaction under an advisory lock, so concurrent starts are
+safe — and upgrading is just deploying a newer binary and restarting.
 
 The connecting role needs privileges to create the `pg_trgm` extension on
 first run (typically a superuser, or have an administrator run
 `CREATE EXTENSION pg_trgm;` once in the target database beforehand).
+
+### Applying migrations explicitly
+
+If you would rather apply the schema as a separate, controlled step
+(for example with a more-privileged role at deploy time, or to gate a
+release in CI) the `rela db` command group does this without starting a
+server:
+
+```bash
+rela db status    # report current vs expected schema version; non-zero exit if behind
+rela db migrate   # apply pending migrations; a no-op when already current
+```
+
+`rela db status` is read-only and makes no changes — handy as a CI gate.
+Both commands read the connection string from `--database-url` /
+`RELA_DATABASE_URL` and exist only in the PostgreSQL build. Auto-migrate
+on startup remains the default, so no explicit step is required for the
+common single-server case.
+
+rela's tables are created in the connection's default schema (typically
+`public`). Point rela at a database it owns; if you share a schema with
+another application, rela's tables sit alongside it.
 
 ## Search
 

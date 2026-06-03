@@ -181,6 +181,12 @@ Rules when touching this:
   writer against one database yet.
 - DSN resolution: `--database-url` flag (`rela`, `rela-server`) > `RELA_DATABASE_URL`
   env. Threaded via `appbuild.Config.DatabaseURL` / `appbuild.WithDatabaseURL`.
+- **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
+  `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
+  (concurrent-start safe; forward-only). Auto-applied on first store open;
+  also runnable explicitly via the postgres-build `rela db migrate` / `rela db
+  status` commands (`pgstore.Status` is the read-only version check). `rela db`
+  errors clearly in non-postgres builds.
 - A new `store.Store` implementation must pass `internal/store/storetest`
   (`RunAll` + the fuzz functions). pgstore's suite is DB-gated on
   `RELA_TEST_DATABASE_URL` (skips when unset). Run it with `just test-postgres`.

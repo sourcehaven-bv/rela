@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 //go:embed migrations/*.sql
@@ -97,6 +98,49 @@ func Migrate(ctx context.Context, db DBTX) error {
 	}
 
 	return tx.Commit(ctx)
+}
+
+// Status reports the schema version the database is at versus the highest
+// version this binary embeds, WITHOUT applying anything or taking the migration
+// lock — it is a read-only check for `rela db status` and CI gates. current is 0
+// when the database has no schema yet (or no schema_version row); target is the
+// highest embedded migration version (0 if none are embedded). pending == target
+// > current.
+func Status(ctx context.Context, db DBTX) (current, target int, err error) {
+	migs, err := loadMigrations()
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, m := range migs {
+		if m.version > target {
+			target = m.version
+		}
+	}
+
+	// schema_version may not exist yet on a fresh database; treat a missing
+	// table or missing row as version 0 rather than an error.
+	var v *int
+	err = db.QueryRow(ctx, `SELECT version FROM schema_version`).Scan(&v)
+	switch {
+	case err == nil:
+		if v != nil {
+			current = *v
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// table exists, no row yet → current stays 0
+	case isUndefinedTable(err):
+		// schema_version not created yet → fresh DB, current stays 0
+	default:
+		return 0, 0, fmt.Errorf("pgstore: read schema_version: %w", err)
+	}
+	return current, target, nil
+}
+
+// isUndefinedTable reports whether err is PostgreSQL's undefined_table
+// (SQLSTATE 42P01), which Status treats as "fresh database, version 0".
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
 }
 
 // loadMigrations reads and parses the embedded migration files. File names

@@ -119,6 +119,30 @@ func pgQuoteIdent(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
 }
 
+// testDSN returns the connection string for the suite, skipping if unset.
+func testDSN(tb skipper) string {
+	dsn := os.Getenv(testDBEnv)
+	if dsn == "" {
+		tb.Skipf("%s not set; skipping pgstore integration tests", testDBEnv)
+	}
+	return dsn
+}
+
+// freshEmptySchema creates an isolated schema WITHOUT migrating it (unlike
+// newScopedPool), for tests that need to observe the un-migrated state. Returns
+// the schema name; dropped on cleanup.
+func freshEmptySchema(tb skipper, admin *pgxpool.Pool) string {
+	tb.Helper()
+	schema := fmt.Sprintf("relatest_%d_%d", os.Getpid(), schemaCounter.Add(1))
+	if _, err := admin.Exec(context.Background(), "CREATE SCHEMA "+pgQuoteIdent(schema)); err != nil {
+		tb.Fatalf("create schema %s: %v", schema, err)
+	}
+	tb.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgQuoteIdent(schema)+" CASCADE")
+	})
+	return schema
+}
+
 // factory returns a fresh, empty store backed by an isolated schema.
 func factory(t *testing.T) store.Store {
 	t.Helper()
