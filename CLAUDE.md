@@ -117,7 +117,7 @@ Domain and storage:
 | ------------------------ | --------------------------------------------------------- |
 | `internal/entity`        | Domain types: `Entity`, `Relation` (no storage metadata)  |
 | `internal/metamodel`     | Schema: entity types, relations, properties, validation   |
-| `internal/store`         | Storage abstraction — CRUD + events, `fsstore`/`memstore` |
+| `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore` |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
@@ -144,6 +144,54 @@ Subsystems (see each package's doc comment for details):
 | `internal/migration`  | Schema migrations for project YAML files                       |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
+
+### Storage backends & build tags
+
+The storage + search backend is chosen at compile time by Go build tags.
+The composition root has one `New` recipe per scenario over shared
+`prepare()`/`assemble()` helpers — see `internal/appbuild/appbuild_{fs,memory,postgres}.go`
+and the matching `internal/cli/mcp_wiring_{fs,memory,postgres}.go`:
+
+| Build tag        | Store      | Search                | Binaries                          |
+| ---------------- | ---------- | --------------------- | --------------------------------- |
+| _(none, default)_| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
+| `memorybackend`  | `memstore` | `LinearSearch`        | (tests / experiments; no bleve)   |
+| `postgres`       | `pgstore`  | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
+
+Rules when touching this:
+
+- **The `postgres` build must not link bleve; the default build must not
+  link pgx.** CI asserts both via `go list -deps` (the `postgres` job in
+  `ci.yml`). Keep backend-specific imports inside the tagged recipe files.
+- **`pgstore.New(db DBTX)` takes an injected pgx pool**, not a DSN. The
+  postgres recipe builds one pool, runs `pgstore.Migrate`, and shares it
+  between the store and the in-DB search backend. appbuild owns/closes the
+  pool; `store.Close()` only tears down the watcher.
+- **Build-agnostic wiring lives in `prepare`/`assemble`, never in a recipe.**
+  A recipe may choose and order backend steps; if logic would be copy-pasted
+  between recipes, it belongs in a shared helper. This is what keeps the three
+  recipes from drifting (and where future per-backend audit/ACL variation goes).
+- **The metamodel is always read from disk**, even in the postgres build —
+  `metamodel.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
+  backs entities/relations/attachments/search only. A postgres deployment
+  still needs a `--project` dir.
+- **Single-writer scope.** The postgres watcher is in-process only (mirrors
+  fsstore/memstore). Rows carry `created_at`/`updated_at`/`seq` so a future
+  cross-process change feed is additive (no migration). Don't wire a second
+  writer against one database yet.
+- DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
+  `--database-url` flag, so the credential never lands in `ps`/shell history.
+  `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
+  `db` commands read the env directly. Don't add a DSN flag.
+- **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
+  `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
+  (concurrent-start safe; forward-only). Auto-applied on first store open;
+  also runnable explicitly via the postgres-build `rela db migrate` / `rela db
+  status` commands (`pgstore.Status` is the read-only version check). `rela db`
+  errors clearly in non-postgres builds.
+- A new `store.Store` implementation must pass `internal/store/storetest`
+  (`RunAll` + the fuzz functions). pgstore's suite is DB-gated on
+  `RELA_TEST_DATABASE_URL` (skips when unset). Run it with `just test-postgres`.
 
 ## Tests
 

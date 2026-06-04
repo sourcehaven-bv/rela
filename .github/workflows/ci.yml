@@ -243,10 +243,75 @@ jobs:
           go test -run='^$' -fuzz='^FuzzParseEntityID$' -fuzztime=10s ./internal/entity/
           go test -run='^$' -fuzz='^FuzzValidateID$' -fuzztime=10s ./internal/entity/
 
+  postgres:
+    name: Postgres Backend
+    runs-on: ubuntu-latest
+    # The CI database is ephemeral and reachable only from this job's runner.
+    # Per the security audit the password is never hardcoded in the workflow —
+    # it comes solely from the CI_POSTGRES_PASSWORD repository secret (no
+    # fallback, so the job fails loudly if the secret is ever removed).
+    env:
+      POSTGRES_USER: rela
+      POSTGRES_DB: rela_test
+      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rela
+          POSTGRES_DB: rela_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+        ports:
+          - 5432:5432
+        # Wait for the server to accept connections before tests run.
+        options: >-
+          --health-cmd "pg_isready -U rela"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      # Build the test DSN from the (secret-sourced) password at runtime rather
+      # than hardcoding a connection string with embedded credentials, and write
+      # it to the job env without echoing it to the log.
+      - name: Configure test database URL
+        run: |
+          printf 'RELA_TEST_DATABASE_URL=postgres://%s:%s@127.0.0.1:5432/%s?sslmode=disable\n' \
+            "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" >> "$GITHUB_ENV"
+
+      # The default build must NOT link pgx, and the postgres build must NOT
+      # link bleve. These greps are the load-bearing assertions for the
+      # "no bleve in the postgres build" acceptance criterion (TKT-M8400).
+      - name: Assert dependency isolation
+        run: |
+          set -euo pipefail
+          echo "default build must not link pgx:"
+          ! go list -deps ./cmd/rela-server | grep -q 'jackc/pgx'
+          ! go list -deps ./cmd/rela        | grep -q 'jackc/pgx'
+          echo "postgres build must not link bleve:"
+          ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'blevesearch/bleve'
+          ! go list -deps -tags postgres ./cmd/rela        | grep -q 'blevesearch/bleve'
+          echo "OK: backends are isolated by build tag."
+
+      - name: Compile all backend build-tag combinations
+        run: |
+          go build ./...
+          go build -tags memorybackend ./...
+          go build -tags postgres ./...
+
+      - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
+        run: go test -race -tags postgres ./internal/store/pgstore/...
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, frontend, e2e]
+    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, postgres, frontend, e2e]
     steps:
       - uses: actions/checkout@v6
 

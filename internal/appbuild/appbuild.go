@@ -333,22 +333,46 @@ func loadACL(projectRoot string) (acl.ACL, *acl.Policy) {
 	return acl.NewDeclarative(policy), policy
 }
 
-// validateNewArgs nil-checks the four required collaborators of [New].
-// Extracted so [New] stays under the linter's function-length budget
-// — the validation block is mechanical and obscures the construction
-// flow when inlined.
-func validateNewArgs(fs storage.FS, paths *project.Context, scriptEngine *script.Engine, auditSink audit.Audit) error {
-	if fs == nil {
-		return errors.New("appbuild.New: fs is required")
+// Config carries the inputs every build of [New] needs, plus
+// backend-specific configuration that only some builds consume.
+//
+// The build-agnostic fields (FS, Paths, ScriptEngine, Audit) are
+// required by every scenario — even the postgres build still reads the
+// metamodel and templates from the filesystem (see Paths). DatabaseURL
+// is consumed only by the postgres build and ignored by the FS and
+// memory builds; this is the seam where backend-specific configuration
+// enters the composition root without forcing other builds to
+// acknowledge it through shared parameters.
+type Config struct {
+	FS           storage.FS
+	Paths        *project.Context
+	ScriptEngine *script.Engine
+	Audit        audit.Audit
+
+	// DatabaseURL is the PostgreSQL connection string, sourced from the
+	// RELA_DATABASE_URL environment variable (see [Discover]). It is
+	// deliberately env-only — never a command-line flag — so the
+	// credential-bearing DSN does not leak into process listings or shell
+	// history. Consumed only by the postgres build; empty (and ignored) in
+	// the FS/memory builds.
+	DatabaseURL string
+}
+
+// validate nil-checks the four build-agnostic collaborators. Each build's
+// New calls it first; backend-specific validation (e.g. a required DSN)
+// lives in that build's recipe.
+func (c Config) validate() error {
+	if c.FS == nil {
+		return errors.New("appbuild.New: Config.FS is required")
 	}
-	if paths == nil {
-		return errors.New("appbuild.New: paths is required")
+	if c.Paths == nil {
+		return errors.New("appbuild.New: Config.Paths is required")
 	}
-	if scriptEngine == nil {
-		return errors.New("appbuild.New: scriptEngine is required")
+	if c.ScriptEngine == nil {
+		return errors.New("appbuild.New: Config.ScriptEngine is required")
 	}
-	if auditSink == nil {
-		return errors.New("appbuild.New: auditSink is required (use audit.Nop{} to opt out)")
+	if c.Audit == nil {
+		return errors.New("appbuild.New: Config.Audit is required (use audit.Nop{} to opt out)")
 	}
 	return nil
 }
@@ -358,9 +382,11 @@ func validateNewArgs(fs storage.FS, paths *project.Context, scriptEngine *script
 // engine; production callers pass [script.NewEngine].
 //
 // Discover constructs a production [audit.Filesystem] under
-// .rela/audit/. The entry point caller is responsible for stamping
-// [principal.Principal] onto the request context (this varies per
-// binary — cli, mcp, scheduler, data-entry server).
+// .rela/audit/ and resolves the database URL (postgres build) from the
+// RELA_DATABASE_URL environment variable — env-only, so the credential
+// never appears on a command line. The entry point caller is responsible
+// for stamping [principal.Principal] onto the request context (this varies
+// per binary — cli, mcp, scheduler, data-entry server).
 func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(startDir, fs)
@@ -371,70 +397,80 @@ func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Se
 	if auditErr != nil {
 		return nil, fmt.Errorf("build audit sink: %w", auditErr)
 	}
-	return New(fs, paths, scriptEngine, auditSink, opts...)
+	return New(Config{
+		FS:           fs,
+		Paths:        paths,
+		ScriptEngine: scriptEngine,
+		Audit:        auditSink,
+		DatabaseURL:  os.Getenv("RELA_DATABASE_URL"),
+	}, opts...)
 }
 
-// New builds the focused services bundle over a caller-supplied
-// filesystem, project context, script engine, and audit sink. Used
-// directly by rela-desktop (which constructs its own per-project FS)
-// and indirectly by [Discover].
+// buildBase holds the build-agnostic inputs resolved by [prepare] and
+// consumed by [assemble]: the validated config, applied options, the
+// resolved ACL (+ parsed policy), and the loaded metamodel. The
+// per-scenario New recipes thread this between prepare → openBackend →
+// assemble so the shared steps are written exactly once.
+type buildBase struct {
+	cfg       Config
+	opts      options
+	acl       acl.ACL
+	aclPolicy *acl.Policy
+	meta      *metamodel.Metamodel
+}
+
+// prepare runs the build-agnostic front half of construction: validate
+// config, apply options (so a caller-supplied [WithACL] wins over the
+// auto-loaded policy), resolve the ACL, and load the metamodel from
+// disk. Every build's New calls this before opening its backend.
 //
-// auditSink is a required collaborator — pass [audit.Nop] explicitly
-// to opt out. Silently substituting a Nop would mask wiring bugs that
-// drop forensic data on the floor.
-func New(
-	fs storage.FS,
-	paths *project.Context,
-	scriptEngine *script.Engine,
-	auditSink audit.Audit,
-	opts ...Option,
-) (*Services, error) {
-	if err := validateNewArgs(fs, paths, scriptEngine, auditSink); err != nil {
+// Resolving the ACL here (rather than in each recipe) lets us tell
+// "operator chose NopACL explicitly" from "operator passed nothing and
+// the project has no acl.yaml" — both end up NopACL, but only the
+// latter triggers the "consider adding an acl.yaml" warning an entry
+// point may render.
+func prepare(cfg Config, opts []Option) (*buildBase, error) {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
-	// Apply options first so a caller-supplied [WithACL] wins over
-	// the auto-loaded policy. Defaulting after this lets us tell
-	// "operator chose NopACL explicitly" from "operator passed
-	// nothing and the project has no acl.yaml" — both end up as
-	// NopACL, but only the latter triggers the "consider adding an
-	// acl.yaml" warning the entry point may render.
 	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
+	resolvedACL := o.acl
 	var aclPolicy *acl.Policy
-	if o.acl == nil {
-		o.acl, aclPolicy = loadACL(paths.Root)
+	if resolvedACL == nil {
+		resolvedACL, aclPolicy = loadACL(cfg.Paths.Root)
 	}
 
-	meta, _, err := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
+	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.MetamodelPath).Load(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
-	// Build the search backend BEFORE opening the store so it can be
-	// installed as an observer at open time. The FS build returns a
-	// bleve index; a future Postgres build returns nil here because
-	// Postgres indexes inside the store itself.
-	searchBackend := newSearchObserver()
-	st, err := openStore(fs, paths, meta, asObserver(searchBackend))
-	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
-	}
+	return &buildBase{cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy, meta: meta}, nil
+}
 
-	autoEngine, cascadeRunner, err := buildAutomation(meta)
+// assemble runs the build-agnostic back half: it takes the opened store
+// + searcher (built by the per-scenario openBackend) and wires every
+// remaining collaborator — automation, tracer, templater, config loader,
+// lua read deps, entitymanager, validator, state KV — into a [Services].
+//
+// Keeping this shared is the invariant that prevents the three New
+// recipes from drifting: a recipe may CHOOSE and ORDER backend steps,
+// but build-agnostic wiring lives here and nowhere else.
+func assemble(base *buildBase, st store.Store, searcher search.Searcher, searchCloser io.Closer) (*Services, error) {
+	cfg := base.cfg
+
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
 	if err != nil {
 		return nil, err
 	}
 
 	tr := tracer.New(st)
-	searcher, searchCloser, err := buildSearcher(context.Background(), st, searchBackend)
-	if err != nil {
-		return nil, fmt.Errorf("build searcher: %w", err)
-	}
-	templater := templating.NewFSTemplater(fs, paths)
-	cfgLoader := config.NewFSLoader(fs, paths.Root)
+	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
+	cfgLoader := config.NewFSLoader(cfg.FS, cfg.Paths.Root)
 
 	// Build the static lua read deps once — the ScriptRunner is
 	// constructed with these, and LuaReadDeps re-derives the same
@@ -443,34 +479,34 @@ func New(
 		Store:       st,
 		Tracer:      tr,
 		Searcher:    searcher,
-		Meta:        meta,
-		ProjectRoot: paths.Root,
+		Meta:        base.meta,
+		ProjectRoot: cfg.Paths.Root,
 	}
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:        st,
-		Meta:         meta,
+		Meta:         base.meta,
 		Templater:    templater,
-		Audit:        auditSink,
-		ACL:          o.acl,
+		Audit:        cfg.Audit,
+		ACL:          base.acl,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
-		ScriptRunner: script.NewLuaScriptRunner(scriptEngine, readDeps),
+		ScriptRunner: script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
 	}
 
-	val := validator.New(st, meta, readDeps)
-	stateKV, err := buildStateKV(fs, paths)
+	val := validator.New(st, base.meta, readDeps)
+	stateKV, err := buildStateKV(cfg.FS, cfg.Paths)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Services{
-		fs:            fs,
-		paths:         paths,
-		meta:          meta,
+		fs:            cfg.FS,
+		paths:         cfg.Paths,
+		meta:          base.meta,
 		store:         st,
 		searcher:      searcher,
 		entityManager: mgr,
@@ -479,11 +515,11 @@ func New(
 		templater:     templater,
 		cfgLoader:     cfgLoader,
 		stateKV:       stateKV,
-		scriptEngine:  scriptEngine,
+		scriptEngine:  cfg.ScriptEngine,
 		searchCloser:  searchCloser,
-		acl:           o.acl,
-		aclPolicy:     aclPolicy,
-		audit:         auditSink,
+		acl:           base.acl,
+		aclPolicy:     base.aclPolicy,
+		audit:         cfg.Audit,
 	}, nil
 }
 

@@ -158,5 +158,10 @@ func appbuildOnDiskWithOpts(t *testing.T, root string, opts ...appbuild.Option) 
 	// Use audit.Nop so tests don't write JSONL files into the temp
 	// directory and pollute the next run.
 	_ = app.FSFactory{} // silence the import; required for the package boundary check
-	return appbuild.New(fs, paths, script.NewEngine(), audit.Nop{}, opts...)
+	return appbuild.New(appbuild.Config{
+		FS:           fs,
+		Paths:        paths,
+		ScriptEngine: script.NewEngine(),
+		Audit:        audit.Nop{},
+	}, opts...)
 }

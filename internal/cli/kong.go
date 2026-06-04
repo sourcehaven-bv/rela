@@ -56,6 +56,7 @@ type CLI struct {
 	Migrate    MigrateCmd    `cmd:"" help:"Migrate project files to current schema."`
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
+	Db         DBCmd         `cmd:"" name:"db" help:"Manage the PostgreSQL schema (postgres build)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 
@@ -132,6 +133,9 @@ func runKong() int {
 	var cliSvc *cliServices
 	if requiresProject(ktx.Command()) {
 		var err error
+		// The postgres build reads its DSN from $RELA_DATABASE_URL inside
+		// Discover (env-only — no flag — so the credential never lands on a
+		// command line). The filesystem build ignores it.
 		svc, err = appbuild.Discover(projectPath, script.NewEngine())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, wrapDiscoverError(err))
