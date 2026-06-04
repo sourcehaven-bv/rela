@@ -137,14 +137,23 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	return q
 }
 
-// V1Position is the scope-navigator payload: the four scalars the SPA needs to
-// render prev/next and the "[current/total]" counter, with no entity bodies
-// shipped. current is 1-based; prev/next are nil at the ends of the set.
+// V1PositionRef identifies a neighboring entity in a scope. Type is included
+// because a scope (notably a search scope) can span entity types, so the SPA
+// must build the target's detail route from *its* type, not the current
+// entity's. ID alone would break cross-type prev/next.
+type V1PositionRef struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+// V1Position is the scope-navigator payload: the neighbors plus the counter
+// the SPA needs, with no entity bodies shipped. current is 1-based; prev/next
+// are nil at the ends of the set.
 type V1Position struct {
-	Prev    *string `json:"prev"`
-	Next    *string `json:"next"`
-	Current int     `json:"current"`
-	Total   int     `json:"total"`
+	Prev    *V1PositionRef `json:"prev"`
+	Next    *V1PositionRef `json:"next"`
+	Current int            `json:"current"`
+	Total   int            `json:"total"`
 }
 
 // handleV1EntityPosition resolves an entity's position within a scope. It
@@ -198,10 +207,10 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 
 	pos := V1Position{Current: idx + 1, Total: len(entities)}
 	if idx > 0 {
-		pos.Prev = &entities[idx-1].ID
+		pos.Prev = &V1PositionRef{ID: entities[idx-1].ID, Type: entities[idx-1].Type}
 	}
 	if idx < len(entities)-1 {
-		pos.Next = &entities[idx+1].ID
+		pos.Next = &V1PositionRef{ID: entities[idx+1].ID, Type: entities[idx+1].Type}
 	}
 
 	writeV1JSON(w, http.StatusOK, pos)

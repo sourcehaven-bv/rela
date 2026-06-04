@@ -2,11 +2,13 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchemaStore } from '@/stores'
 import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@/utils/filters'
-import { getEntityPosition, type ScopeDescriptor } from '@/api/entities'
+import { getEntityPosition, type ScopeDescriptor, type PositionRef } from '@/api/entities'
 
 export interface ScopeNav {
-  prevId: string | null
-  nextId: string | null
+  // Neighbours carry their type, not just id, so navigation builds the correct
+  // /entity/<type>/<id> route even when a (search) scope spans entity types.
+  prev: PositionRef | null
+  next: PositionRef | null
   current: number
   total: number
   label: string
@@ -16,7 +18,7 @@ export interface ScopeNav {
  * Composable for navigating between entities in a list context.
  * Preserves list filters and sorting while moving through items.
  */
-export function useScopeNavigation(entityType: () => string, entityId: () => string) {
+export function useScopeNavigation(entityId: () => string) {
   const route = useRoute()
   const router = useRouter()
   const schemaStore = useSchemaStore()
@@ -44,8 +46,8 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
     try {
       const pos = await getEntityPosition(entityId(), built.scope)
       scopeNav.value = {
-        prevId: pos.prev,
-        nextId: pos.next,
+        prev: pos.prev,
+        next: pos.next,
         current: pos.current,
         total: pos.total,
         label: built.label,
@@ -123,12 +125,14 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
   function navigateScope(direction: 'prev' | 'next') {
     if (!scopeNav.value) return
 
-    const targetId = direction === 'prev' ? scopeNav.value.prevId : scopeNav.value.nextId
-    if (!targetId) return
+    const target = direction === 'prev' ? scopeNav.value.prev : scopeNav.value.next
+    if (!target) return
 
-    // Preserve all query params for consistent navigation
+    // Use the target's OWN type, not the current entity's — a search scope can
+    // span types, so the next/prev entity may be a different type. Preserve all
+    // query params so the scope (from=, q=, …) survives the hop.
     router.push({
-      path: `/entity/${entityType()}/${targetId}`,
+      path: `/entity/${target.type}/${target.id}`,
       query: route.query,
     })
   }

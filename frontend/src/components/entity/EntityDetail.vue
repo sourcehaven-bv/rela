@@ -43,10 +43,7 @@ const { confirm } = useConfirm()
 // (return_to / from precedence). Two parallel concerns: scope-nav walks
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
-const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(
-  () => props.entityType,
-  () => props.entityId,
-)
+const { scopeNav, loadScopeNav, navigateScope } = useScopeNavigation(() => props.entityId)
 const backTarget = useBackTarget()
 
 // State
@@ -255,11 +252,11 @@ function handleKeydown(e: KeyboardEvent) {
     }
     void requestDelete()
   }
-  if (e.key === 'p' && scopeNav.value?.prevId) {
+  if (e.key === 'p' && scopeNav.value?.prev) {
     e.preventDefault()
     navigateScope('prev')
   }
-  if (e.key === 'n' && scopeNav.value?.nextId) {
+  if (e.key === 'n' && scopeNav.value?.next) {
     e.preventDefault()
     navigateScope('next')
   }
@@ -444,13 +441,13 @@ watch(
       <div v-if="backTarget || scopeNav" class="scope-nav">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <button v-if="scopeNav.prevId" class="scope-nav-btn" @click="navigateScope('prev')">
+          <button v-if="scopeNav.prev" class="scope-nav-btn" @click="navigateScope('prev')">
             ← Prev <kbd>P</kbd>
           </button>
           <span v-else class="scope-nav-btn disabled">← Prev</span>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <button v-if="scopeNav.nextId" class="scope-nav-btn" @click="navigateScope('next')">
+          <button v-if="scopeNav.next" class="scope-nav-btn" @click="navigateScope('next')">
             Next → <kbd>N</kbd>
           </button>
           <span v-else class="scope-nav-btn disabled">Next →</span>

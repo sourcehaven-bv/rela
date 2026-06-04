@@ -131,10 +131,17 @@ export interface ScopeDescriptor {
   q?: string
 }
 
+/** A neighbouring entity in a scope. `type` is needed to build the target's
+ * detail route, since a search scope can span entity types. */
+export interface PositionRef {
+  id: string
+  type: string
+}
+
 /** EntityPosition mirrors the backend V1Position payload. */
 export interface EntityPosition {
-  prev: string | null
-  next: string | null
+  prev: PositionRef | null
+  next: PositionRef | null
   current: number
   total: number
 }

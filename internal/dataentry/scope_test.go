@@ -62,10 +62,10 @@ func TestV1Position(t *testing.T) {
 		if pos.Current != 2 || pos.Total != 3 {
 			t.Errorf("current/total: got %d/%d, want 2/3", pos.Current, pos.Total)
 		}
-		if pos.Prev == nil || *pos.Prev != "TKT-001" {
+		if pos.Prev == nil || pos.Prev.ID != "TKT-001" {
 			t.Errorf("prev: got %v, want TKT-001", pos.Prev)
 		}
-		if pos.Next == nil || *pos.Next != "TKT-003" {
+		if pos.Next == nil || pos.Next.ID != "TKT-003" {
 			t.Errorf("next: got %v, want TKT-003", pos.Next)
 		}
 	})
@@ -79,9 +79,9 @@ func TestV1Position(t *testing.T) {
 			t.Errorf("current: got %d, want 1", pos.Current)
 		}
 		if pos.Prev != nil {
-			t.Errorf("prev: got %v, want nil", *pos.Prev)
+			t.Errorf("prev: got %v, want nil", pos.Prev)
 		}
-		if pos.Next == nil || *pos.Next != "TKT-002" {
+		if pos.Next == nil || pos.Next.ID != "TKT-002" {
 			t.Errorf("next: got %v, want TKT-002", pos.Next)
 		}
 	})
@@ -95,9 +95,9 @@ func TestV1Position(t *testing.T) {
 			t.Errorf("current: got %d, want 3", pos.Current)
 		}
 		if pos.Next != nil {
-			t.Errorf("next: got %v, want nil", *pos.Next)
+			t.Errorf("next: got %v, want nil", pos.Next)
 		}
-		if pos.Prev == nil || *pos.Prev != "TKT-002" {
+		if pos.Prev == nil || pos.Prev.ID != "TKT-002" {
 			t.Errorf("prev: got %v, want TKT-002", pos.Prev)
 		}
 	})
@@ -121,7 +121,7 @@ func TestV1Position(t *testing.T) {
 			t.Errorf("current: got %d, want 2", pos.Current)
 		}
 		if pos.Next != nil {
-			t.Errorf("next: got %v, want nil (TKT-003 filtered out)", *pos.Next)
+			t.Errorf("next: got %v, want nil (TKT-003 filtered out)", pos.Next)
 		}
 	})
 
@@ -144,7 +144,7 @@ func TestV1Position(t *testing.T) {
 		if pos.Current != 1 {
 			t.Errorf("current: got %d, want 1", pos.Current)
 		}
-		if pos.Next == nil || *pos.Next != "TKT-003" {
+		if pos.Next == nil || pos.Next.ID != "TKT-003" {
 			t.Errorf("next: got %v, want TKT-003", pos.Next)
 		}
 	})
@@ -170,11 +170,16 @@ func TestV1Position(t *testing.T) {
 		if pos.Current != 2 {
 			t.Errorf("current: got %d, want 2", pos.Current)
 		}
-		if pos.Prev == nil || *pos.Prev != "TKT-001" {
+		if pos.Prev == nil || pos.Prev.ID != "TKT-001" {
 			t.Errorf("prev: got %v, want TKT-001 (cross-type)", pos.Prev)
 		}
-		if pos.Next == nil || *pos.Next != "TKT-003" {
+		if pos.Next == nil || pos.Next.ID != "TKT-003" {
 			t.Errorf("next: got %v, want TKT-003 (cross-type)", pos.Next)
+		}
+		// The neighbors carry their own type so the SPA can build the correct
+		// detail route across types — the bug that broke search prev/next.
+		if pos.Prev.Type != "ticket" || pos.Next.Type != "ticket" {
+			t.Errorf("neighbor types: prev=%s next=%s, want ticket/ticket", pos.Prev.Type, pos.Next.Type)
 		}
 	})
 
@@ -194,7 +199,7 @@ func TestV1Position(t *testing.T) {
 		if pos.Total != 2 {
 			t.Errorf("total: got %d, want 2 (type-narrowed)", pos.Total)
 		}
-		if pos.Next == nil || *pos.Next != "TKT-003" {
+		if pos.Next == nil || pos.Next.ID != "TKT-003" {
 			t.Errorf("next: got %v, want TKT-003 (feature skipped)", pos.Next)
 		}
 	})
