@@ -83,6 +83,21 @@ func parseFlags() *serverFlags {
 	return f
 }
 
+// discoverOptions maps server flags to appbuild options. --read-only injects a
+// read-only ACL; --database-url (postgres build) overrides $RELA_DATABASE_URL.
+// WithDatabaseURL ignores an empty value, so passing it is safe in the
+// filesystem build too (where the DSN is unused entirely).
+func discoverOptions(f *serverFlags) []appbuild.Option {
+	var opts []appbuild.Option
+	if f.readOnly {
+		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	if f.databaseURL != "" {
+		opts = append(opts, appbuild.WithDatabaseURL(f.databaseURL))
+	}
+	return opts
+}
+
 // coverage-ignore: main function - entry point
 func main() {
 	f := parseFlags()
@@ -99,17 +114,7 @@ func main() {
 		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	var discoverOpts []appbuild.Option
-	if f.readOnly {
-		discoverOpts = append(discoverOpts, appbuild.WithACL(acl.ReadOnlyACL{}))
-	}
-	// --database-url wins over $RELA_DATABASE_URL (which Discover reads).
-	// WithDatabaseURL ignores an empty value, so this is safe in the
-	// filesystem build too (where the DSN is unused entirely).
-	if f.databaseURL != "" {
-		discoverOpts = append(discoverOpts, appbuild.WithDatabaseURL(f.databaseURL))
-	}
-	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOpts...)
+	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOptions(f)...)
 	if err != nil {
 		slog.Error("failed to initialize project services", "error", err)
 		os.Exit(1)
