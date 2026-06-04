@@ -1,8 +1,8 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useSchemaStore, useEntitiesStore } from '@/stores'
+import { useSchemaStore } from '@/stores'
 import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@/utils/filters'
-import type { ListParams } from '@/types'
+import { getEntityPosition, type ScopeDescriptor } from '@/api/entities'
 
 export interface ScopeNav {
   prevId: string | null
@@ -20,7 +20,6 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
   const route = useRoute()
   const router = useRouter()
   const schemaStore = useSchemaStore()
-  const entitiesStore = useEntitiesStore()
 
   const scopeNav = ref<ScopeNav | null>(null)
 
@@ -38,56 +37,61 @@ export function useScopeNavigation(entityType: () => string, entityId: () => str
     }
 
     try {
-      // Build query params matching what EntityList uses
-      const params: ListParams = {
-        per_page: 1000, // Fetch all to get accurate position
+      // Build the scope descriptor matching what EntityList renders. The
+      // server runs the same filter/sort pipeline and returns the position
+      // directly — no fetch-all, so it is correct past the pagination cap
+      // that previously truncated this set to 25 (#844).
+      const filters: Record<string, string> = {}
+
+      // Pre-configured filters from list config.
+      for (const filter of listConfig.filters || []) {
+        if (filter.operator && filter.value) {
+          const apiOp = toApiOperator(filter.operator)
+          filters[`filter[${filter.property}][${apiOp}]`] = filter.value
+        }
       }
 
-      // Add sort from query params or list default
-      const sort = route.query.sort as string | undefined
-      if (sort) {
-        params.sort = sort
-      } else if (listConfig.default_sort?.length) {
-        params.sort = listConfig.default_sort
+      // User-selected filters from query (bracket format `filter[prop][op]`).
+      // We re-serialize via the shared filterStateToApiParams helper so the
+      // backend gets identical params to what EntityList sends.
+      const userFilters = parseFilterQueryParams(route.query)
+      for (const [key, value] of Object.entries(filterStateToApiParams(userFilters))) {
+        filters[key] = value
+      }
+
+      // Sort from query params or list default.
+      const sortParam = route.query.sort as string | undefined
+      let sort = sortParam
+      if (!sort && listConfig.default_sort?.length) {
+        sort = listConfig.default_sort
           .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
           .join(',')
       }
 
-      // Add pre-configured filters from list config
-      for (const filter of listConfig.filters || []) {
-        if (filter.operator && filter.value) {
-          const apiOp = toApiOperator(filter.operator)
-          params[`filter[${filter.property}][${apiOp}]`] = filter.value
-        }
-      }
+      // Free-text search from the originating list, if any. Including it here
+      // is what lets scope navigation honor an active ?q= search — the prior
+      // implementation ignored q (known limitation, now resolved).
+      const q = route.query.q as string | undefined
 
-      // Add user-selected filters from query (bracket format `filter[prop][op]`).
-      // We re-serialize via the shared filterStateToApiParams helper so the
-      // backend gets identical params to what EntityList sends.
-      const userFilters = parseFilterQueryParams(route.query)
-      const userParams = filterStateToApiParams(userFilters)
-      const paramsRecord = params as Record<string, string | number | undefined>
-      for (const [key, value] of Object.entries(userParams)) {
-        paramsRecord[key] = value
+      const scope: ScopeDescriptor = {
+        source: q ? 'search' : 'list',
+        type: listConfig.entity,
       }
+      if (Object.keys(filters).length) scope.filters = filters
+      if (sort) scope.sort = sort
+      if (q) scope.q = q
 
-      const result = await entitiesStore.fetchList(listConfig.entity, params)
-      const ids = result.data.map((e) => e.id)
-      const currentIndex = ids.indexOf(entityId())
-
-      if (currentIndex === -1) {
-        scopeNav.value = null
-        return
-      }
+      const pos = await getEntityPosition(entityId(), scope)
 
       scopeNav.value = {
-        prevId: currentIndex > 0 ? ids[currentIndex - 1] : null,
-        nextId: currentIndex < ids.length - 1 ? ids[currentIndex + 1] : null,
-        current: currentIndex + 1,
-        total: ids.length,
+        prevId: pos.prev,
+        nextId: pos.next,
+        current: pos.current,
+        total: pos.total,
         label: listConfig.title || fromListId,
       }
     } catch {
+      // 404 (entity not in scope) or any error → no scope nav, same as before.
       scopeNav.value = null
     }
   }

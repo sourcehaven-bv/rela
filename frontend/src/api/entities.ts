@@ -111,6 +111,45 @@ export async function searchEntities(
   return api.get<ListResponse<Entity>>('/_search', params, signal)
 }
 
+/**
+ * ScopeDescriptor encodes the query that defines an ordered result set the
+ * user is navigating — a typed list or a search result today. It is sent to
+ * `/_position` as a single URL-encoded JSON `scope` param. `filters` uses the
+ * same flat bracket-format keys as filterStateToApiParams ("filter[status]")
+ * so the wire format has one source of truth. See backend internal/dataentry/
+ * scope.go and issue #844.
+ */
+export interface ScopeDescriptor {
+  source: 'list' | 'search'
+  type: string
+  filters?: Record<string, string>
+  sort?: string
+  q?: string
+}
+
+/** EntityPosition mirrors the backend V1Position payload. */
+export interface EntityPosition {
+  prev: string | null
+  next: string | null
+  current: number
+  total: number
+}
+
+/**
+ * Resolve an entity's position within a scope. The server runs the same
+ * filter/sort pipeline as the list endpoint and returns only {prev, next,
+ * current, total} — no entity bodies — so navigation is correct at any set
+ * size. Replaces the old per_page=1000 fetch-and-scan that silently truncated
+ * past the pagination cap (#844).
+ */
+export async function getEntityPosition(
+  id: string,
+  scope: ScopeDescriptor,
+  signal?: AbortSignal,
+): Promise<EntityPosition> {
+  return api.get<EntityPosition>('/_position', { id, scope: JSON.stringify(scope) }, signal)
+}
+
 export async function analyze(): Promise<AnalyzeResult> {
   return api.get<AnalyzeResult>('/_analyze')
 }

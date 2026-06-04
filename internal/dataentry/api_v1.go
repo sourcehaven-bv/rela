@@ -241,6 +241,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
+	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
@@ -359,20 +360,25 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 	}
 }
 
-func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
-	entities := listFromStoreByTypes(r.Context(), a.Services(), []string{typeName})
-
-	query := r.URL.Query()
+// scopedSortedEntities runs the shared list pipeline — load-by-type,
+// free-text intersection (?q=), structured filters (filter[...]), then the
+// configured sort — and returns the fully ordered result set *before*
+// pagination. Both handleV1ListEntities and handleV1EntityPosition call this,
+// so a list and its scope navigator are guaranteed to observe identical
+// ordering. The only error returned is a free-text search failure (HTTP 500
+// at the call site); everything else degrades to an empty/whole set as the
+// list endpoint always did.
+func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error) {
+	entities := listFromStoreByTypes(ctx, a.Services(), []string{typeName})
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
 	// present. Bleve scores are discarded — the list's configured sort wins
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
-	searchResult, err := a.freeTextIDsForType(r.Context(), query.Get("q"), typeName)
+	searchResult, err := a.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
-		return
+		return nil, err
 	}
 	if searchResult.HasFilter {
 		filtered := entities[:0]
@@ -384,11 +390,28 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		entities = filtered
 	}
 
-	// Apply filters
 	entities = a.applyV1Filters(entities, query, typeName)
-
-	// Apply sorting
 	entities = a.applyV1Sorting(entities, query)
+	return entities, nil
+}
+
+// queryGet returns the first value for key from a raw query map, or "".
+// url.Values.Get over a plain map[string][]string without allocating.
+func queryGet(query map[string][]string, key string) string {
+	if vals, ok := query[key]; ok && len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
+}
+
+func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
+	query := r.URL.Query()
+
+	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
+	if err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		return
+	}
 
 	// Pagination
 	total := len(entities)
