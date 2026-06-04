@@ -38,7 +38,7 @@ prevention: |-
     rather than a parallel client-side reimplementation gated on a page-size
     cap. New scope sources extend the descriptor's `source` field instead of
     adding new fetch-all call sites.
-status: review
+status: done
 ---
 
 See GitHub issue #844 and PR #894.
