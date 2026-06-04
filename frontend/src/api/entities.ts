@@ -111,6 +111,56 @@ export async function searchEntities(
   return api.get<ListResponse<Entity>>('/_search', params, signal)
 }
 
+/**
+ * ScopeDescriptor encodes the query that defines an ordered result set the
+ * user is navigating — a typed list or a search result today. It is sent to
+ * `/_position` as a single URL-encoded JSON `scope` param. `filters` uses the
+ * same flat bracket-format keys as filterStateToApiParams ("filter[status]")
+ * so the wire format has one source of truth. See backend internal/dataentry/
+ * scope.go and issue #844.
+ */
+export interface ScopeDescriptor {
+  source: 'list' | 'search'
+  // Required for a list scope (single-type). Optional for a search scope,
+  // where it narrows a possibly-mixed-type result to one type; omit it to
+  // navigate across all matched types. The backend enforces this per-source.
+  type?: string
+  filters?: Record<string, string>
+  sort?: string
+  // Required for a search scope; optional free-text filter within a list scope.
+  q?: string
+}
+
+/** A neighbouring entity in a scope. `type` is needed to build the target's
+ * detail route, since a search scope can span entity types. */
+export interface PositionRef {
+  id: string
+  type: string
+}
+
+/** EntityPosition mirrors the backend V1Position payload. */
+export interface EntityPosition {
+  prev: PositionRef | null
+  next: PositionRef | null
+  current: number
+  total: number
+}
+
+/**
+ * Resolve an entity's position within a scope. The server runs the same
+ * filter/sort pipeline as the list endpoint and returns only {prev, next,
+ * current, total} — no entity bodies — so navigation is correct at any set
+ * size. Replaces the old per_page=1000 fetch-and-scan that silently truncated
+ * past the pagination cap (#844).
+ */
+export async function getEntityPosition(
+  id: string,
+  scope: ScopeDescriptor,
+  signal?: AbortSignal,
+): Promise<EntityPosition> {
+  return api.get<EntityPosition>('/_position', { id, scope: JSON.stringify(scope) }, signal)
+}
+
 export async function analyze(): Promise<AnalyzeResult> {
   return api.get<AnalyzeResult>('/_analyze')
 }

@@ -239,9 +239,16 @@ function focusInput() {
 
 function navigateToResult(index: number) {
   const entity = results.value[index]
-  if (entity) {
-    router.push(`/entity/${entity.type}/${entity.id}`)
-  }
+  if (!entity) return
+  // Pass the search scope so the detail page can show prev/next across the
+  // exact result set the user saw (#844 / scope.go). `from=search` selects the
+  // search origin in useScopeNavigation; `q` is the *full* query string
+  // (including any type:/prop: chips), so the backend's executeQuery
+  // reproduces the identical ordered, possibly-mixed-type result.
+  const scopeQuery: Record<string, string> = { from: 'search' }
+  const full = fullSearchQuery.value
+  if (full) scopeQuery.q = full
+  router.push({ path: `/entity/${entity.type}/${entity.id}`, query: scopeQuery })
 }
 
 // Clear selection when results change

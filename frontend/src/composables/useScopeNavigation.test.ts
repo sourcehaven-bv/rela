@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useScopeNavigation } from './useScopeNavigation'
+import type { EntityPosition, ScopeDescriptor } from '@/api/entities'
 
 // Mock vue-router
 const mockRouteQuery = ref<Record<string, string>>({})
@@ -16,19 +17,48 @@ vi.mock('vue-router', () => ({
   }),
 }))
 
-// Mock stores
+// Mock schema store
 const mockSchemaStore = {
   getList: vi.fn(),
 }
 
-const mockEntitiesStore = {
-  fetchList: vi.fn(),
-}
-
 vi.mock('@/stores', () => ({
   useSchemaStore: () => mockSchemaStore,
-  useEntitiesStore: () => mockEntitiesStore,
 }))
+
+// Mock the position API — the composable now asks the server for position
+// rather than fetching the whole list and scanning client-side (#844).
+const mockGetEntityPosition = vi.fn()
+vi.mock('@/api/entities', () => ({
+  getEntityPosition: (id: string, scope: ScopeDescriptor) => mockGetEntityPosition(id, scope),
+}))
+
+/**
+ * positionFromIds derives the {prev, next, current, total} the server would
+ * return for `currentId` within an ordered `ids` array — letting the existing
+ * list-based test cases drive the new position-based composable. A currentId
+ * not in `ids` rejects with a 404-shaped error, matching the backend.
+ */
+function positionFromIds(ids: string[], currentId: string): Promise<EntityPosition> {
+  const idx = ids.indexOf(currentId)
+  if (idx === -1) {
+    return Promise.reject(new Error('not_in_scope'))
+  }
+  // Derive a type from the id prefix so neighbours carry a plausible type
+  // (TASK-001 -> task). Mixed-type behaviour is covered by the backend tests.
+  const ref = (id: string) => ({ id, type: id.split('-')[0].toLowerCase() })
+  return Promise.resolve({
+    prev: idx > 0 ? ref(ids[idx - 1]) : null,
+    next: idx < ids.length - 1 ? ref(ids[idx + 1]) : null,
+    current: idx + 1,
+    total: ids.length,
+  })
+}
+
+/** mockPositionForList wires getEntityPosition to derive from a fixed id set. */
+function mockPositionForList(ids: string[]) {
+  mockGetEntityPosition.mockImplementation((id: string) => positionFromIds(ids, id))
+}
 
 describe('useScopeNavigation', () => {
   beforeEach(() => {
@@ -37,46 +67,36 @@ describe('useScopeNavigation', () => {
     mockRouteQuery.value = {}
     mockPush.mockClear()
     mockSchemaStore.getList.mockReturnValue(null)
-    mockEntitiesStore.fetchList.mockResolvedValue({ data: [] })
+    mockGetEntityPosition.mockResolvedValue({ prev: null, next: null, current: 1, total: 1 })
   })
 
   describe('loadScopeNav', () => {
     it('sets scopeNav to null when no from query param', async () => {
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
       expect(scopeNav.value).toBeNull()
+      expect(mockGetEntityPosition).not.toHaveBeenCalled()
     })
 
     it('sets scopeNav to null when list config not found', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue(null)
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
       expect(scopeNav.value).toBeNull()
     })
 
-    it('sets scopeNav to null when entity not in list', async () => {
+    it('sets scopeNav to null when entity not in scope (server 404)', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task', title: 'Tasks' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-002' }, { id: 'TASK-003' }],
-      })
+      mockPositionForList(['TASK-002', 'TASK-003'])
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
@@ -86,73 +106,53 @@ describe('useScopeNavigation', () => {
     it('calculates scope navigation for entity in list', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task', title: 'Tasks' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }, { id: 'TASK-003' }],
-      })
+      mockPositionForList(['TASK-001', 'TASK-002', 'TASK-003'])
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-002'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-002')
 
       await loadScopeNav()
 
       expect(scopeNav.value).toEqual({
-        prevId: 'TASK-001',
-        nextId: 'TASK-003',
+        prev: { id: 'TASK-001', type: 'task' },
+        next: { id: 'TASK-003', type: 'task' },
         current: 2,
         total: 3,
         label: 'Tasks',
       })
     })
 
-    it('sets prevId to null for first item', async () => {
+    it('sets prev to null for first item', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task', title: 'Tasks' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }],
-      })
+      mockPositionForList(['TASK-001', 'TASK-002'])
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
-      expect(scopeNav.value?.prevId).toBeNull()
-      expect(scopeNav.value?.nextId).toBe('TASK-002')
+      expect(scopeNav.value?.prev).toBeNull()
+      expect(scopeNav.value?.next).toEqual({ id: 'TASK-002', type: 'task' })
     })
 
-    it('sets nextId to null for last item', async () => {
+    it('sets next to null for last item', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task', title: 'Tasks' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }],
-      })
+      mockPositionForList(['TASK-001', 'TASK-002'])
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-002'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-002')
 
       await loadScopeNav()
 
-      expect(scopeNav.value?.prevId).toBe('TASK-001')
-      expect(scopeNav.value?.nextId).toBeNull()
+      expect(scopeNav.value?.prev).toEqual({ id: 'TASK-001', type: 'task' })
+      expect(scopeNav.value?.next).toBeNull()
     })
 
     it('uses list ID as label when title not provided', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' }) // No title
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }],
-      })
+      mockPositionForList(['TASK-001'])
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
@@ -168,18 +168,15 @@ describe('useScopeNavigation', () => {
           { property: 'title', direction: 'asc' },
         ],
       })
-      mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
+      mockPositionForList(['TASK-001'])
 
-      const { loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
-      expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
-        'task',
-        expect.objectContaining({ sort: '-created_at,title' })
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({ source: 'list', type: 'task', sort: '-created_at,title' })
       )
     })
 
@@ -189,17 +186,14 @@ describe('useScopeNavigation', () => {
         entity: 'task',
         default_sort: [{ property: 'created_at', direction: 'desc' }],
       })
-      mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
+      mockPositionForList(['TASK-001'])
 
-      const { loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
-      expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
-        'task',
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
         expect.objectContaining({ sort: 'priority' })
       )
     })
@@ -210,66 +204,105 @@ describe('useScopeNavigation', () => {
         entity: 'task',
         filters: [{ property: 'status', operator: '=', value: 'open' }],
       })
-      mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
+      mockPositionForList(['TASK-001'])
 
-      const { loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
-      expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
-        'task',
-        expect.objectContaining({ 'filter[status][eq]': 'open' })
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({
+          filters: expect.objectContaining({ 'filter[status][eq]': 'open' }),
+        })
       )
     })
 
     it('applies user filters from query (bracket format)', async () => {
       mockRouteQuery.value = { from: 'tasks', 'filter[priority]': 'high' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
+      mockPositionForList(['TASK-001'])
 
-      const { loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
-      expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
-        'task',
-        expect.objectContaining({ 'filter[priority]': 'high' })
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({
+          filters: expect.objectContaining({ 'filter[priority]': 'high' }),
+        })
       )
     })
 
     it('applies user filters with non-default operator', async () => {
       mockRouteQuery.value = { from: 'tasks', 'filter[due_date][lte]': '$today' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockResolvedValue({ data: [{ id: 'TASK-001' }] })
+      mockPositionForList(['TASK-001'])
 
-      const { loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
-      expect(mockEntitiesStore.fetchList).toHaveBeenCalledWith(
-        'task',
-        expect.objectContaining({ 'filter[due_date][lte]': '$today' })
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({
+          filters: expect.objectContaining({ 'filter[due_date][lte]': '$today' }),
+        })
       )
+    })
+
+    it('honors free-text q within a list scope (source=search)', async () => {
+      mockRouteQuery.value = { from: 'tasks', q: 'urgent' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
+      mockPositionForList(['TASK-001'])
+
+      const { loadScopeNav } = useScopeNavigation(() => 'TASK-001')
+
+      await loadScopeNav()
+
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({ source: 'search', q: 'urgent' })
+      )
+    })
+
+    it('builds a search-origin scope from from=search (no list config)', async () => {
+      // from=search is the dedicated search origin: no getList lookup, q is the
+      // full search query, navigation can span types. getList must NOT be
+      // consulted.
+      mockRouteQuery.value = { from: 'search', q: 'type:ticket auth' }
+      mockPositionForList(['TASK-001'])
+
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
+
+      await loadScopeNav()
+
+      expect(mockSchemaStore.getList).not.toHaveBeenCalled()
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({ source: 'search', q: 'type:ticket auth' })
+      )
+      expect(scopeNav.value?.label).toBe('Search: type:ticket auth')
+    })
+
+    it('search origin with no q yields no scope nav', async () => {
+      mockRouteQuery.value = { from: 'search' }
+
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
+
+      await loadScopeNav()
+
+      expect(scopeNav.value).toBeNull()
+      expect(mockGetEntityPosition).not.toHaveBeenCalled()
     })
 
     it('handles fetch errors gracefully', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockRejectedValue(new Error('Network error'))
+      mockGetEntityPosition.mockRejectedValue(new Error('Network error'))
 
-      const { scopeNav, loadScopeNav } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
 
@@ -281,14 +314,9 @@ describe('useScopeNavigation', () => {
     it('navigates to previous entity', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }],
-      })
+      mockPositionForList(['TASK-001', 'TASK-002'])
 
-      const { loadScopeNav, navigateScope } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-002'
-      )
+      const { loadScopeNav, navigateScope } = useScopeNavigation(() => 'TASK-002')
 
       await loadScopeNav()
       navigateScope('prev')
@@ -302,14 +330,9 @@ describe('useScopeNavigation', () => {
     it('navigates to next entity', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }],
-      })
+      mockPositionForList(['TASK-001', 'TASK-002'])
 
-      const { loadScopeNav, navigateScope } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav, navigateScope } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
       navigateScope('next')
@@ -320,11 +343,31 @@ describe('useScopeNavigation', () => {
       })
     })
 
+    it('navigates to a different-typed neighbour using the target type', async () => {
+      // Search scopes span types: the next entity after a task may be a bug.
+      // navigateScope must build the route from the TARGET's type, not the
+      // current entity's — the bug that broke search prev/next.
+      mockRouteQuery.value = { from: 'search', q: 'x' }
+      mockGetEntityPosition.mockResolvedValue({
+        prev: null,
+        next: { id: 'BUG-001', type: 'bug' },
+        current: 1,
+        total: 2,
+      })
+
+      const { loadScopeNav, navigateScope } = useScopeNavigation(() => 'TASK-001')
+
+      await loadScopeNav()
+      navigateScope('next')
+
+      expect(mockPush).toHaveBeenCalledWith({
+        path: '/entity/bug/BUG-001',
+        query: { from: 'search', q: 'x' },
+      })
+    })
+
     it('does nothing when no scopeNav', () => {
-      const { navigateScope } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { navigateScope } = useScopeNavigation(() => 'TASK-001')
 
       navigateScope('prev')
 
@@ -334,14 +377,9 @@ describe('useScopeNavigation', () => {
     it('does nothing when no prev/next available', async () => {
       mockRouteQuery.value = { from: 'tasks' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }],
-      })
+      mockPositionForList(['TASK-001'])
 
-      const { loadScopeNav, navigateScope } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav, navigateScope } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
       navigateScope('prev')
@@ -365,14 +403,9 @@ describe('useScopeNavigation', () => {
         sort: '-priority',
       }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
-      mockEntitiesStore.fetchList.mockResolvedValue({
-        data: [{ id: 'TASK-001' }, { id: 'TASK-002' }],
-      })
+      mockPositionForList(['TASK-001', 'TASK-002'])
 
-      const { loadScopeNav, navigateScope } = useScopeNavigation(
-        () => 'task',
-        () => 'TASK-001'
-      )
+      const { loadScopeNav, navigateScope } = useScopeNavigation(() => 'TASK-001')
 
       await loadScopeNav()
       navigateScope('next')
