@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/jackc/pgx/v5"
@@ -11,17 +12,32 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// maxAttachmentBytes caps a single attachment stored in the database. The bytes
+// are buffered in memory and written as one BYTEA value, so an unbounded upload
+// would risk OOMing the process and bloating a single row (PostgreSQL caps BYTEA
+// at ~1GB). 64 MiB comfortably covers the expected use (office documents, PDFs,
+// images) with headroom. This is a defensive guard specific to the in-database
+// backend, not a product-wide policy — the API layer caps uploads at its own
+// ingress, and a consistent cross-backend limit is a separate concern.
+const maxAttachmentBytes = 64 << 20 // 64 MiB
+
 // AttachFile stores (or replaces) a file attachment on an entity. The entity
 // must exist (store.ErrNotFound otherwise). The reader is fully consumed into
-// memory and persisted as BYTEA, matching memstore's behavior. A single
-// (entity_id, property) holds one attachment; re-attaching overwrites it.
+// memory and persisted as BYTEA, matching memstore's behavior, up to
+// maxAttachmentBytes. A single (entity_id, property) holds one attachment;
+// re-attaching overwrites it.
 func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := validateProperty(property); err != nil {
 		return err
 	}
-	data, err := io.ReadAll(r)
+	// Read at most maxAttachmentBytes+1 so we can detect an over-limit upload
+	// without buffering the entire (potentially huge) reader.
+	data, err := io.ReadAll(io.LimitReader(r, maxAttachmentBytes+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > maxAttachmentBytes {
+		return fmt.Errorf("store: attachment exceeds the %d-byte limit", maxAttachmentBytes)
 	}
 
 	tx, err := s.db.Begin(ctx)

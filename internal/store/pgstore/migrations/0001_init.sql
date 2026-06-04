@@ -32,18 +32,18 @@ CREATE TABLE entities (
     type       TEXT        NOT NULL,
     properties JSONB       NOT NULL DEFAULT '{}'::jsonb,
     content    TEXT        NOT NULL DEFAULT '',
+    -- search_text is the lowercased concatenation the search Backend matches
+    -- against: id + content + string-valued properties (see entitySearchText).
+    -- Maintained by the application on write and kept in a column so both the
+    -- tsvector and trgm indexes are expression-free and the matched text is
+    -- explicit.
+    search_text TEXT       NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     seq        BIGINT      NOT NULL DEFAULT nextval('rela_seq')
 );
 
 CREATE INDEX entities_type_idx ON entities (type);
-
--- search_text is the concatenation the search Backend matches against:
--- id + title + stringified properties + content. Maintained by the
--- application on write (kept in a column so both tsvector and trgm
--- indexes can be expression-free and the matched text is explicit).
-ALTER TABLE entities ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX entities_search_tsv_idx
     ON entities USING GIN (to_tsvector('simple', search_text));
@@ -67,6 +67,13 @@ CREATE INDEX relations_from_idx ON relations (from_id);
 CREATE INDEX relations_to_idx   ON relations (to_id);
 CREATE INDEX relations_type_idx ON relations (rel_type);
 
+-- Attachment bytes live in the database (BYTEA), so a pgstore deployment needs
+-- no shared filesystem — the database is the single source of truth, matching
+-- how fsstore keeps attachments on disk and memstore keeps them in memory. One
+-- (entity_id, property) holds one attachment. Bytes are read/written whole (the
+-- store.AttachmentManager API takes an io.Reader but all backends buffer); for
+-- very large blobs a future revision could move to large objects (lo) / object
+-- storage, but that is out of scope here.
 CREATE TABLE attachments (
     entity_id    TEXT        COLLATE "C" NOT NULL,
     property     TEXT        COLLATE "C" NOT NULL,
