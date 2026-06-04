@@ -1,10 +1,13 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
+
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // ScopeDescriptor encodes the query that defines an ordered result set the
@@ -56,10 +59,22 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 		return ScopeDescriptor{}, false, "unknown scope source: " + d.Source
 	}
 
-	if d.Type == "" {
-		return ScopeDescriptor{}, false, "scope type is required"
+	// Per-source required fields differ. A list scope is reproduced from
+	// {type, filters, sort}, so type is mandatory. A search scope is
+	// reproduced from {q, type?}: q is mandatory and type is an *optional*
+	// narrowing of a possibly-mixed-type result, so it is validated only
+	// when present.
+	switch d.Source {
+	case "list":
+		if d.Type == "" {
+			return ScopeDescriptor{}, false, "scope type is required"
+		}
+	case "search":
+		if strings.TrimSpace(d.Q) == "" {
+			return ScopeDescriptor{}, false, "scope q is required for search"
+		}
 	}
-	if !meta.HasEntityType(d.Type) {
+	if d.Type != "" && !meta.HasEntityType(d.Type) {
 		return ScopeDescriptor{}, false, "unknown entity type: " + d.Type
 	}
 
@@ -70,6 +85,32 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 	}
 
 	return d, true, ""
+}
+
+// resolveScope produces the fully ordered entity set a scope refers to,
+// dispatching on Source. A list scope runs the shared list pipeline
+// (single-type, property-sorted). A search scope runs executeQuery — the same
+// relevance-ordered, possibly-mixed-type pipeline the search view uses — then
+// narrows to Type when one was supplied. Routing search through executeQuery
+// (not scopedSortedEntities) is what makes prev/next correct across mixed-type
+// search results: position is found within the exact set the user saw.
+func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entityPkg.Entity, error) {
+	switch scope.Source {
+	case "search":
+		entities := a.executeQuery(ctx, scope.Q)
+		if scope.Type != "" {
+			filtered := entities[:0]
+			for _, e := range entities {
+				if e.Type == scope.Type {
+					filtered = append(filtered, e)
+				}
+			}
+			entities = filtered
+		}
+		return entities, nil
+	default:
+		return a.scopedSortedEntities(ctx, scope.Type, scope.toQuery())
+	}
 }
 
 // entityTypeChecker is the narrow capability scopeFromParam needs: confirm a
@@ -106,12 +147,13 @@ type V1Position struct {
 	Total   int     `json:"total"`
 }
 
-// handleV1EntityPosition resolves an entity's position within a scope. It runs
-// the same filter/sort pipeline as the list endpoint (via scopedSortedEntities)
-// then locates the id, returning {prev, next, current, total}. This supersedes
-// the old client-side approach where useScopeNavigation fetched per_page=1000
-// and scanned the array — which silently truncated once the set exceeded the
-// pagination cap (issue #844).
+// handleV1EntityPosition resolves an entity's position within a scope. It
+// reproduces the scope's ordered set via resolveScope (the list pipeline for
+// source=list, the search pipeline for source=search) then locates the id,
+// returning {prev, next, current, total}. This supersedes the old client-side
+// approach where useScopeNavigation fetched per_page=1000 and scanned the
+// array — which silently truncated once the set exceeded the pagination cap
+// (issue #844).
 //
 //	GET /api/v1/_position?id=<entityID>&scope=<urlencoded-json>
 //	→ 200 {prev,next,current,total} | 400 bad scope | 404 id not in scope
@@ -136,7 +178,7 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entities, err := a.scopedSortedEntities(r.Context(), scope.Type, scope.toQuery())
+	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
 		return

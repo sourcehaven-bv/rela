@@ -285,7 +285,7 @@ describe('useScopeNavigation', () => {
       )
     })
 
-    it('honors free-text q with source=search', async () => {
+    it('honors free-text q within a list scope (source=search)', async () => {
       mockRouteQuery.value = { from: 'tasks', q: 'urgent' }
       mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
       mockPositionForList(['TASK-001'])
@@ -301,6 +301,42 @@ describe('useScopeNavigation', () => {
         'TASK-001',
         expect.objectContaining({ source: 'search', q: 'urgent' })
       )
+    })
+
+    it('builds a search-origin scope from from=search (no list config)', async () => {
+      // from=search is the dedicated search origin: no getList lookup, q is the
+      // full search query, navigation can span types. getList must NOT be
+      // consulted.
+      mockRouteQuery.value = { from: 'search', q: 'type:ticket auth' }
+      mockPositionForList(['TASK-001'])
+
+      const { scopeNav, loadScopeNav } = useScopeNavigation(
+        () => 'task',
+        () => 'TASK-001'
+      )
+
+      await loadScopeNav()
+
+      expect(mockSchemaStore.getList).not.toHaveBeenCalled()
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({ source: 'search', q: 'type:ticket auth' })
+      )
+      expect(scopeNav.value?.label).toBe('Search: type:ticket auth')
+    })
+
+    it('search origin with no q yields no scope nav', async () => {
+      mockRouteQuery.value = { from: 'search' }
+
+      const { scopeNav, loadScopeNav } = useScopeNavigation(
+        () => 'task',
+        () => 'TASK-001'
+      )
+
+      await loadScopeNav()
+
+      expect(scopeNav.value).toBeNull()
+      expect(mockGetEntityPosition).not.toHaveBeenCalled()
     })
 
     it('handles fetch errors gracefully', async () => {

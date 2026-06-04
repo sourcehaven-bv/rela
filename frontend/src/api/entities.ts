@@ -121,9 +121,13 @@ export async function searchEntities(
  */
 export interface ScopeDescriptor {
   source: 'list' | 'search'
-  type: string
+  // Required for a list scope (single-type). Optional for a search scope,
+  // where it narrows a possibly-mixed-type result to one type; omit it to
+  // navigate across all matched types. The backend enforces this per-source.
+  type?: string
   filters?: Record<string, string>
   sort?: string
+  // Required for a search scope; optional free-text filter within a list scope.
   q?: string
 }
 

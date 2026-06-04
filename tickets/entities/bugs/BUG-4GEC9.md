@@ -13,7 +13,11 @@ description: |-
     2. Open the list view and navigate into any entity.
     3. Observe the navigation counter shows "1/25" instead of "1/93", and Prev/Next only walk the first 25.
 
-    **Fix:** Stop shipping the whole ordered set to the client to derive four scalars. Added a server-side `GET /api/v1/_position?id=&scope=` endpoint that runs the same filter/sort pipeline as the list endpoint (shared `scopedSortedEntities` helper) and returns `{prev, next, current, total}` directly. Scope is encoded as an unsigned, URL-encoded JSON descriptor (`{source, type, filters, sort, q}`) validated by a strict decoder. `useScopeNavigation` now calls `_position` instead of fetch-all-and-scan, so navigation is correct at any set size and the `per_page` cap is no longer load-bearing. As a bonus, the descriptor carries `q`, so scope navigation now honors an active free-text search (resolving the known limitation at `EntityList.vue:475`).
+    **Fix:** Stop shipping the whole ordered set to the client to derive four scalars. Added a server-side `GET /api/v1/_position?id=&scope=` endpoint that resolves position from a scope descriptor and returns `{prev, next, current, total}` directly. Scope is encoded as an unsigned, URL-encoded JSON descriptor (`{source, type, filters, sort, q}`) validated by a strict decoder, and resolved by `resolveScope`, which dispatches on `source`: a `list` scope runs the shared list pipeline (`scopedSortedEntities`); a `search` scope runs `executeQuery` — the same relevance-ordered, possibly-mixed-type pipeline the search view uses. `useScopeNavigation` now calls `_position` instead of fetch-all-and-scan, so navigation is correct at any set size and the `per_page` cap is no longer load-bearing.
+
+    The descriptor abstraction is exercised end-to-end by two origins: list views (`from=<listId>`) and the search view (`from=search`), the latter wired in `SearchView` so clicking a result now offers prev/next across the full search result set — crossing entity types — which never worked before. List scope also honors an active `q` (resolving the known limitation at `EntityList.vue:475`).
+
+    This change also deletes the dead pre-v1 server-rendered scope-nav code (`resolveScope`/`ScopeNav` in `helpers.go`) which had no production caller, leaving `_position` as the single scope-navigation path.
 priority: medium
 effort: m
 why1: The scope navigator showed a total of 25 regardless of the real entity count.

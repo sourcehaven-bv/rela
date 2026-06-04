@@ -128,13 +128,15 @@ func TestV1Position(t *testing.T) {
 	t.Run("search scope honors q", func(t *testing.T) {
 		app := newTestAppV1(t)
 		seedTickets(app)
-		// Searcher matches only TKT-001 and TKT-003; sort=title orders them.
+		// Search scope routes through executeQuery (relevance order), NOT the
+		// list pipeline. The searcher matches TKT-001 then TKT-003; position is
+		// found within that exact ordered set.
 		app.searcher = &fakeSearcher{hits: []search.Hit{
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-003", Type: "ticket"},
 		}}
 
-		scope := ScopeDescriptor{Source: "search", Type: "ticket", Sort: "title", Q: "ticket"}
+		scope := ScopeDescriptor{Source: "search", Q: "ticket"}
 		_, pos := getPosition(t, app, "TKT-001", scope)
 		if pos.Total != 2 {
 			t.Errorf("total: got %d, want 2 (search-narrowed)", pos.Total)
@@ -144,6 +146,56 @@ func TestV1Position(t *testing.T) {
 		}
 		if pos.Next == nil || *pos.Next != "TKT-003" {
 			t.Errorf("next: got %v, want TKT-003", pos.Next)
+		}
+	})
+
+	t.Run("search scope spans mixed entity types in relevance order", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedTickets(app)
+		seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "Feat"}})
+		// Relevance order interleaves a feature between tickets. _position must
+		// resolve across types — the prev/next of the feature are the tickets
+		// on either side of it in the search result, NOT same-type neighbors.
+		app.searcher = &fakeSearcher{hits: []search.Hit{
+			{ID: "TKT-001", Type: "ticket"},
+			{ID: "FEAT-001", Type: "feature"},
+			{ID: "TKT-003", Type: "ticket"},
+		}}
+
+		scope := ScopeDescriptor{Source: "search", Q: "anything"}
+		_, pos := getPosition(t, app, "FEAT-001", scope)
+		if pos.Total != 3 {
+			t.Errorf("total: got %d, want 3 (mixed-type set)", pos.Total)
+		}
+		if pos.Current != 2 {
+			t.Errorf("current: got %d, want 2", pos.Current)
+		}
+		if pos.Prev == nil || *pos.Prev != "TKT-001" {
+			t.Errorf("prev: got %v, want TKT-001 (cross-type)", pos.Prev)
+		}
+		if pos.Next == nil || *pos.Next != "TKT-003" {
+			t.Errorf("next: got %v, want TKT-003 (cross-type)", pos.Next)
+		}
+	})
+
+	t.Run("search scope with type narrows mixed results to that type", func(t *testing.T) {
+		app := newTestAppV1(t)
+		seedTickets(app)
+		seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "Feat"}})
+		app.searcher = &fakeSearcher{hits: []search.Hit{
+			{ID: "TKT-001", Type: "ticket"},
+			{ID: "FEAT-001", Type: "feature"},
+			{ID: "TKT-003", Type: "ticket"},
+		}}
+
+		// type=ticket drops FEAT-001, leaving [TKT-001, TKT-003].
+		scope := ScopeDescriptor{Source: "search", Type: "ticket", Q: "anything"}
+		_, pos := getPosition(t, app, "TKT-001", scope)
+		if pos.Total != 2 {
+			t.Errorf("total: got %d, want 2 (type-narrowed)", pos.Total)
+		}
+		if pos.Next == nil || *pos.Next != "TKT-003" {
+			t.Errorf("next: got %v, want TKT-003 (feature skipped)", pos.Next)
 		}
 	})
 
@@ -191,7 +243,10 @@ func TestV1PositionBadRequest(t *testing.T) {
 		{name: "missing scope", id: "TKT-001", rawScope: "", want: http.StatusBadRequest},
 		{name: "malformed json", id: "TKT-001", rawScope: "{not json", want: http.StatusBadRequest},
 		{name: "unknown source", id: "TKT-001", scope: &ScopeDescriptor{Source: "bogus", Type: "ticket"}, want: http.StatusBadRequest},
-		{name: "unknown type", id: "TKT-001", scope: &ScopeDescriptor{Source: "list", Type: "nope"}, want: http.StatusBadRequest},
+		{name: "list missing type", id: "TKT-001", scope: &ScopeDescriptor{Source: "list"}, want: http.StatusBadRequest},
+		{name: "list unknown type", id: "TKT-001", scope: &ScopeDescriptor{Source: "list", Type: "nope"}, want: http.StatusBadRequest},
+		{name: "search missing q", id: "TKT-001", scope: &ScopeDescriptor{Source: "search"}, want: http.StatusBadRequest},
+		{name: "search unknown type", id: "TKT-001", scope: &ScopeDescriptor{Source: "search", Q: "x", Type: "nope"}, want: http.StatusBadRequest},
 		{name: "bad filter key", id: "TKT-001", scope: &ScopeDescriptor{Source: "list", Type: "ticket", Filters: map[string]string{"status": "open"}}, want: http.StatusBadRequest},
 	}
 

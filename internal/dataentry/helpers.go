@@ -6,8 +6,6 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -24,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -646,134 +643,6 @@ func relationDirection(d dataentryconfig.Direction) store.Direction {
 		return store.DirectionIncoming
 	}
 	return store.DirectionOutgoing
-}
-
-// ScopeNav holds prev/next navigation context for browsing through a list of entities.
-type ScopeNav struct {
-	PrevURL  string // URL for previous entity (empty if at first)
-	NextURL  string // URL for next entity (empty if at last)
-	Progress string // e.g. "[3/12]"
-	Label    string // e.g. "12 tickets" or "5 results for 'auth'"
-	BackURL  string // URL to return to the list/search
-}
-
-// resolveScope parses the "scope" query parameter and reconstructs the ordered
-// entity list to determine prev/next navigation links. Returns nil when no
-// scope is present or the current entity isn't found in the scope.
-func (a *App) resolveScope(currentEntityID string, r *http.Request) *ScopeNav {
-	scope := r.URL.Query().Get("scope")
-	if scope == "" {
-		return nil
-	}
-
-	s := a.State()
-	var ids []string
-	var label string
-	var backURL string
-
-	switch {
-	case strings.HasPrefix(scope, "list:"):
-		listID := strings.TrimPrefix(scope, "list:")
-		list, ok := s.Cfg.Lists[listID]
-		if !ok {
-			return nil
-		}
-		entities := listFromStoreByTypes(r.Context(), a.Services(), []string{list.EntityType})
-		entities = applyFilters(entities, list.Filters)
-
-		// Apply dynamic filter params (same as handleList)
-		for _, fc := range list.FilterControls {
-			val := r.URL.Query().Get("filter_" + fc.Key())
-			if val == "" {
-				continue
-			}
-			if fc.IsRelation() {
-				entities = a.filterByRelation(r.Context(), entities, fc.Relation, val)
-			} else {
-				entities = applyFilters(entities, []FilterConfig{{
-					Property: fc.Property,
-					Operator: "=",
-					Value:    val,
-				}})
-			}
-		}
-
-		// Apply sort (same as handleList)
-		sortProp := r.URL.Query().Get("sort")
-		sortDir := r.URL.Query().Get("sort_dir")
-		if sortProp != "" {
-			a.sortEntitiesMulti(entities, []filter.SortSpec{{Property: sortProp, Direction: sortDir}})
-		} else {
-			a.sortEntitiesMulti(entities, list.Sort)
-		}
-
-		ids = make([]string, len(entities))
-		for i, e := range entities {
-			ids[i] = e.ID
-		}
-		label = fmt.Sprintf("%d %s", len(ids), list.Title)
-		backURL = "/list/" + listID
-
-	case strings.HasPrefix(scope, "search:"):
-		query := strings.TrimPrefix(scope, "search:")
-		entities := a.executeQuery(r.Context(), query)
-		sort.Slice(entities, func(i, j int) bool { return natsort.Less(entities[i].ID, entities[j].ID) })
-		ids = make([]string, len(entities))
-		for i, e := range entities {
-			ids[i] = e.ID
-		}
-		displayQuery := query
-		if len(displayQuery) > 30 {
-			displayQuery = displayQuery[:30] + "..."
-		}
-		label = fmt.Sprintf("%d results for \"%s\"", len(ids), displayQuery)
-		backURL = "/search?q=" + url.QueryEscape(query)
-
-	default:
-		return nil
-	}
-
-	// Find current entity in the scope
-	idx := -1
-	for i, id := range ids {
-		if id == currentEntityID {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return nil
-	}
-
-	nav := &ScopeNav{
-		Progress: fmt.Sprintf("[%d/%d]", idx+1, len(ids)),
-		Label:    label,
-		BackURL:  backURL,
-	}
-
-	// Build prev/next URLs by swapping the entity ID in the path
-	buildURL := func(targetID string) string {
-		// Replace the last path segment (entity ID) with the target ID
-		path := r.URL.Path
-		lastSlash := strings.LastIndex(path, "/")
-		if lastSlash < 0 {
-			return ""
-		}
-		newPath := path[:lastSlash+1] + targetID
-
-		// Preserve all query params
-		q := r.URL.Query()
-		return newPath + "?" + q.Encode()
-	}
-
-	if idx > 0 {
-		nav.PrevURL = buildURL(ids[idx-1])
-	}
-	if idx < len(ids)-1 {
-		nav.NextURL = buildURL(ids[idx+1])
-	}
-
-	return nav
 }
 
 // matchesPropertyFilters checks whether an entity matches the given property filters.
