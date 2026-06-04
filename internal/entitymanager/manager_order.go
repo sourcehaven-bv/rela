@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -185,6 +186,14 @@ func (m *Manager) maybeRenumberSide(ctx context.Context, q store.RelationQuery, 
 		plan = append(plan, planEntry{rel: r, newVal: newVal})
 	}
 
+	// Renumber writes go directly to the store rather than through
+	// Manager.UpdateRelation: that method calls runRenumberAfterUpdate, so
+	// routing renumber through it would recurse (renumber → update → renumber).
+	// To keep these cascaded writes traceable anyway, emit one audit record per
+	// write here — the same approach cascadeHost uses for cascade deletes
+	// (cascadehost.go). The triggered-by marker distinguishes renumber writes
+	// from the user-initiated UpdateRelation that spawned them. See issue #886.
+	renumberCtx := audit.WithTriggeredBy(ctx, "renumber:"+prop)
 	for _, p := range plan {
 		props := make(map[string]interface{}, len(p.rel.Properties)+1)
 		for k, v := range p.rel.Properties {
@@ -192,9 +201,11 @@ func (m *Manager) maybeRenumberSide(ctx context.Context, q store.RelationQuery, 
 		}
 		props[prop] = p.newVal
 		data := store.RelationData{Properties: props, Content: p.rel.Content}
-		if _, err := m.deps.Store.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, data); err != nil {
+		updated, err := m.deps.Store.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, data)
+		if err != nil {
 			return fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
 		}
+		m.recordRelationAudit(renumberCtx, audit.OpUpdateRelation, updated, "renumbered "+prop)
 	}
 	return nil
 }
