@@ -4,7 +4,8 @@ type: review-response
 title: Metamodel still loads from disk — postgres build still needs a project dir
 finding: The plan implied a postgres deployment is DB-only, but appbuild.New (line 411) and mcp_wiring.go (line 62) ALWAYS load the metamodel via metamodel.NewFSLoader(fs, paths.MetamodelPath), and project.Discover walks the filesystem for metamodel.yaml + .rela cache dir + templates. The metamodel is NOT in the database. So even -tags postgres requires a filesystem project directory containing metamodel.yaml (and templates/ for defaults). This wasn't stated as a requirement/constraint and changes the deployment story and the integration-test setup (the test must provision both a Postgres DSN AND a project dir with metamodel.yaml).
 severity: significant
-status: open
+resolution: 'Confirmed and documented: the postgres build still calls project.Discover + metamodel.NewFSLoader, so --project (metamodel.yaml on disk) is still required; PostgreSQL backs entities/relations/attachments/search only. Verified end-to-end (the postgres CLI e2e used an on-disk project dir). Documented in docs/postgres-backend.md (''What still lives on disk'') + CLAUDE.md.'
+status: addressed
 ---
 
 ## Resolution (plan update)

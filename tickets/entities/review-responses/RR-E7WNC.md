@@ -4,7 +4,8 @@ type: review-response
 title: DSN must be threaded via appbuild Option + openStore seam, not just cmd/ flags
 finding: 'The plan said ''build-tag-guarded DSN wiring in cmd/''. But the openStore seam signature is `openStore(fs, paths, meta, obs)` with NO DSN param, and it''s called from FOUR places: appbuild.New (line 421), cli/mcp_wiring.go newMCPServices, and indirectly via appbuild.Discover (used by rela-server main.go:101 and cli/kong.go runKong). cmd/rela is a thin wrapper over kong; cmd/rela CANNOT add a flag without going through internal/cli. So a per-cmd flag alone is insufficient — the DSN must reach openStore. The appbuild.Option type already exists (currently only WithACL) and is the clean threading path.'
 severity: significant
-status: open
+resolution: 'Implemented (commit 4117b2ec): DSN threaded via appbuild.Config.DatabaseURL + appbuild.WithDatabaseURL option (flag wins over env); --database-url on rela-server and the kong global (so cmd/rela inherits it); MCP/desktop read RELA_DATABASE_URL env. The postgres recipe (appbuild_postgres.go) consumes it. Verified end-to-end against live Postgres.'
+status: addressed
 ---
 
 ## Resolution (plan update)

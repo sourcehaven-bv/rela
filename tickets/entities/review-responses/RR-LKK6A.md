@@ -4,7 +4,8 @@ type: review-response
 title: Six seam files need postgres twins, not four; MCP wiring + memorybackend audit
 finding: 'The plan listed 4 seam files. There are actually 6 functions across files that need postgres handling. appbuild: store_postgres.go (openStore) + search_postgres.go (newSearchObserver/asObserver/buildSearcher). cli: mcp_wiring_store_postgres.go (openMCPStore) + mcp_wiring_search_postgres.go (newMCPSearchObserver/asMCPObserver/buildMCPSearcher). The MCP search seam was under-specified in the plan. Exact signatures must match the !postgres&&!memorybackend variants. Crucially: the FS search files are tagged `!postgres && !memorybackend`, so they''re already excluded under -tags postgres; but there is NO memorybackend search seam (memorybackend reuses... need to confirm) — verify the build graph compiles under each of the 3 tag combinations (default, memorybackend, postgres) with no missing/duplicate symbols.'
 severity: significant
-status: open
+resolution: 'Implemented (commit 4117b2ec): the build-tag boundary was lifted to one New recipe per scenario (appbuild_{fs,memory,postgres}.go) over shared prepare()/assemble(), and the same for cli/mcp_wiring_{fs,memory,postgres}.go — superseding the ''six seam functions'' approach with a cleaner top-level split. CI compiles all 3 tag combos (default/memorybackend/postgres); the postgres CI job asserts it.'
+status: addressed
 ---
 
 ## Resolution (plan update)

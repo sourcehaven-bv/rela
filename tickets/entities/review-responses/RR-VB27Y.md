@@ -4,7 +4,8 @@ type: review-response
 title: 'Exact store types to map: errors, query/result structs, entity timestamps'
 finding: 'Plan was vague on exact contract types. Concrete facts to implement against: sentinel errors are ErrNotFound, ErrConflict, ErrHasRelations (store.go:21-26) — note ErrHasRelations exists (non-cascade delete of an entity that still has relations). EntityQuery{Type, IDs[], Cursor, Limit}; RelationQuery{From, To, Type, EntityID, Direction(Both/Outgoing/Incoming), Cursor, Limit}. Page[T]{Items, NextCursor}. DeleteResult{DeletedEntities[], DeletedRelations[]}. RenameResult{RelationsUpdated int}. RelationData{Properties, Content}. AttachmentInfo{EntityID, Property, FileName, ContentType, Size}. entity.Entity has an UpdatedAt time.Time field already — the store sets/returns it (so map DB updated_at -> Entity.UpdatedAt). HighestID parses numeric suffix after ''PREFIX-'' via Sscanf %d, skips non-matching/non-numeric, returns max (gaps ignored), 0 if none.'
 severity: minor
-status: open
+resolution: 'Implemented (commit 296c5f3f): pgstore maps the exact contract types — ErrNotFound/ErrConflict/ErrHasRelations, EntityQuery/RelationQuery filters, Page[T] keyset cursors, DeleteResult/RenameResult, RelationData, AttachmentInfo, and DB updated_at -> entity.UpdatedAt. The full storetest.RunAll conformance suite (which asserts all of these) passes with -race.'
+status: addressed
 ---
 
 ## Resolution (plan update)

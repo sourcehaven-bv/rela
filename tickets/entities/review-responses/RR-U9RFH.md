@@ -4,7 +4,8 @@ type: review-response
 title: Conformance factory is called ~100x — each needs an isolated empty store
 finding: 'storetest.RunAll invokes factory(t) / searchFactory(t) ~100 times (one per subtest: 23 entity + 26 relation + 11 query + 13 pagination + 11 watcher + 14 attachment + 3 validation + ~21 search). Every call MUST return a fresh, EMPTY store (storetest.go:3,18); tests assert empty-state behavior directly (GetNotFound, HighestID(''NOPE'')==0). Against a single shared PostgreSQL, leaked rows between subtests cause non-deterministic failures — the biggest correctness risk in the plan. The plan only said ''isolated schema / truncate'' as an aside without committing to a mechanism or accounting for ~100 cycles.'
 severity: critical
-status: open
+resolution: 'Implemented (commit 296c5f3f): pgstore.New(db DBTX) takes an injected pool; the conformance factory (testdb_test.go) creates a unique schema per call with search_path scoping + DROP SCHEMA CASCADE cleanup, giving each of the ~100 subtests a fresh empty store. Full storetest.RunAll + fuzz pass with -race against live PostgreSQL, including on CI (Postgres Backend job).'
+status: addressed
 ---
 
 ## Finding
