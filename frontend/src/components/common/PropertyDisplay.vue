@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import Badge from './Badge.vue'
-import { asArray, formatValue, isEnumProperty } from '@/utils/format'
-import type { EntityType } from '@/types'
+import InaccessibleField from './InaccessibleField.vue'
+import { defaultRegistry } from '@/widgets/registry'
+import type { EntityType, PropertyDef } from '@/types'
 
 export interface PropertyItem {
   name: string
@@ -10,6 +10,10 @@ export interface PropertyItem {
   type?: string
   values?: string[] // For enum type detection
   propType?: string // For badge styling lookup (used by CustomView)
+  // Pre-resolved schema def for the property -- supplied by callers
+  // (EntityDetail's mapFieldsToProperties) so PropertyDisplay does not
+  // do a schema lookup per row (RR-UD1H).
+  propertyDef?: PropertyDef
   isLongText?: boolean
   inaccessible?: boolean // Property exists but value is unreadable (e.g. encrypted)
   inaccessibleReason?: string // Reason marker (e.g. "git-crypt") shown in tooltip
@@ -17,44 +21,34 @@ export interface PropertyItem {
 
 defineProps<{
   properties: PropertyItem[]
-  entityType?: EntityType // For badge styling lookup (used by EntityDetail)
+  // entityType is kept on the props signature for backward compatibility
+  // with CustomView, which used it for badge style lookup. The widget
+  // path now uses `propType` (forwarded into the widget as
+  // `propertyName`); badge styling remains correct via Badge's
+  // cross-property fallback when both are absent.
+  entityType?: EntityType
 }>()
 
-function shouldUseBadge(prop: PropertyItem): boolean {
-  if (!hasBadgeValue(prop)) return false
-  if (isEnumProperty(prop)) return true
-  // Also show badge if propType is explicitly set (CustomView API response)
-  return !!prop.propType
+// Build a synthetic PropertyDef when none was pre-resolved. Lets
+// PropertyDisplay still render (via the registry's text fallback) for
+// callers that haven't been updated to supply propertyDef.
+function defForProp(prop: PropertyItem): PropertyDef {
+  if (prop.propertyDef) return prop.propertyDef
+  return {
+    type: ((prop.type as PropertyDef['type']) ?? 'string'),
+    values: prop.values,
+    list: Array.isArray(prop.value) && (prop.value as unknown[]).length > 1,
+  }
 }
 
-function hasBadgeValue(prop: PropertyItem): boolean {
-  if (Array.isArray(prop.value)) return asArray(prop.value).length > 0
-  return prop.value != null && prop.value !== ''
-}
-
-function getBadgeProperty(prop: PropertyItem): string {
-  // Use propType if available (from CustomView API), otherwise use property name
-  return prop.propType || prop.name
-}
-
-function getBadgeValues(prop: PropertyItem): string[] {
-  return asArray(prop.value)
+function widgetFor(prop: PropertyItem) {
+  return defaultRegistry.resolve(undefined, defForProp(prop))
 }
 
 function isLong(prop: PropertyItem): boolean {
   if (prop.isLongText) return true
   const val = String(prop.value || '')
   return val.length > 60
-}
-
-function inaccessibleTooltip(prop: PropertyItem): string {
-  if (prop.inaccessibleReason === 'git-crypt') {
-    return 'git-crypt encrypted (run `git-crypt unlock` to read)'
-  }
-  if (prop.inaccessibleReason) {
-    return `inaccessible (${prop.inaccessibleReason})`
-  }
-  return 'inaccessible'
 }
 </script>
 
@@ -68,21 +62,18 @@ function inaccessibleTooltip(prop: PropertyItem): string {
     >
       <dt>{{ prop.label }}</dt>
       <dd>
-        <span
+        <InaccessibleField
           v-if="prop.inaccessible"
-          class="property-inaccessible"
-          :title="inaccessibleTooltip(prop)"
-        >🔒 inaccessible</span>
-        <div v-else-if="shouldUseBadge(prop)" class="badge-row">
-          <Badge
-            v-for="badgeValue in getBadgeValues(prop)"
-            :key="badgeValue"
-            :value="badgeValue"
-            :property="getBadgeProperty(prop)"
-            :entity-type="entityType"
-          />
-        </div>
-        <span v-else>{{ formatValue(prop.value, prop.type) }}</span>
+          :reason="prop.inaccessibleReason"
+        />
+        <component
+          :is="widgetFor(prop)"
+          v-else
+          :model-value="prop.value"
+          :mode="'display'"
+          :property-def="defForProp(prop)"
+          :property-name="prop.propType ?? prop.name"
+        />
       </dd>
     </div>
   </div>

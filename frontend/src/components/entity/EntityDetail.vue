@@ -23,8 +23,11 @@ import {
 } from '@/utils/markdown'
 import BackButton from '@/components/common/BackButton.vue'
 import Badge from '@/components/common/Badge.vue'
+import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
+import { defaultRegistry } from '@/widgets/registry'
+import type { PropertyDef } from '@/types'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
@@ -371,22 +374,71 @@ function navigateToEdit(formId: string, entityId: string) {
   router.push({ name: 'form-edit', params: { id: formId, entityId } })
 }
 
+// Look up a schema PropertyDef for an entity type's property. Returns
+// undefined when the entity type or property isn't in the schema. Used
+// to pre-resolve defs at section level (RR-UD1H) instead of in every
+// cell render.
+function getPropertyDef(entityType: string, propertyName: string): PropertyDef | undefined {
+  const et = schemaStore.getEntityType(entityType)
+  return et?.properties?.[propertyName]
+}
+
+// Synthesize a minimal PropertyDef from a wire-level ViewSectionField
+// when no schema def is available (orphan field, schema mismatch).
+//
+// Preserves the pre-refactor heuristic that any field with a non-empty
+// `propType` (the metamodel's property name as it appears on the wire)
+// renders as a Badge -- routing through SelectWidget in display mode.
+// Badge's own schemaStore styles lookup picks colours when defined and
+// falls back to a plain-chip rendering when the (property, value) pair
+// isn't styled.
+function synthDef(field: ViewSectionField): PropertyDef {
+  // propType is the property's metamodel name on the wire (e.g. 'status'
+  // or a custom enum type like 'concept_status'). Treating any non-empty
+  // propType as 'enum' (and always list:true, because cards/list always
+  // pass field.values as an array) routes through MultiSelectWidget,
+  // which loops to render one Badge per value -- matching the
+  // pre-refactor "propType truthy → Badge per value" rendering.
+  if (field.propType) {
+    return { type: 'enum', values: field.values ?? [], list: true }
+  }
+  // No propType: plain text. list:true still applies to MultiSelectWidget
+  // for any multi-value text field, which still calls Badge with no
+  // propertyName -- Badge falls back to its cross-property style scan.
+  return { type: 'string', list: (field.values?.length ?? 0) > 1 }
+}
+
 function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
   if (!fields) return []
+  // Pre-resolve PropertyDef for the entry entity once (RR-UD1H). For
+  // entry-level properties the entity type is fixed for the section.
+  const entryType = entry.value?.type
   return fields.map((field) => {
     // PropertyDisplay's `name` is used as a vue list key; favor the raw
     // property name when available and fall back to a slugged label so
     // older shapes still render.
     const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
+    const def =
+      (entryType && field.property
+        ? getPropertyDef(entryType, field.property)
+        : undefined) ?? synthDef(field)
     return {
       name,
       label: field.label,
       value: field.values ?? [],
       propType: field.propType,
+      propertyDef: def,
       inaccessible: field.inaccessible ?? false,
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
     }
   })
+}
+
+// Widget resolver for cards / list display modes. Synthesizes a def
+// from the wire-level field (no per-entity-type schema lookup -- cards
+// can mix entity types).
+function widgetForField(field: ViewSectionField) {
+  return defaultRegistry.resolve(undefined, synthDef(field))
 }
 
 function shouldUseBadge(value: string, propType?: string): boolean {
@@ -639,15 +691,21 @@ watch(
               <div v-if="ent.fields?.length" class="card-fields">
                 <div v-for="field in ent.fields" :key="field.label" class="card-field">
                   <span class="field-label">{{ field.label }}:</span>
-                  <div v-if="field.propType && field.values?.length" class="badge-row">
-                    <Badge
-                      v-for="v in field.values"
-                      :key="v"
-                      :value="v"
-                      :property="field.propType"
-                    />
-                  </div>
-                  <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
+                  <!-- The wire-level inaccessibleReason map is keyed on
+                       the entry's properties, not the per-entity card
+                       row's. We don't have a per-card reason map today,
+                       so InaccessibleField falls back to the generic
+                       tooltip. -->
+                  <InaccessibleField v-if="field.inaccessible" />
+                  <component
+                    :is="widgetForField(field)"
+                    v-else
+                    :model-value="field.values ?? []"
+                    :mode="'display'"
+                    :property-def="synthDef(field)"
+                    :property-name="field.propType"
+                    class="field-value"
+                  />
                 </div>
               </div>
             </article>
@@ -667,11 +725,19 @@ watch(
               </a>
               <span v-if="ent.fields?.length" class="list-fields">
                 <template v-for="field in ent.fields" :key="field.label">
-                  <Badge
-                    v-for="v in field.values ?? []"
-                    :key="`${field.label}-${v}`"
-                    :value="v"
-                    :property="field.propType"
+                  <!-- The wire-level inaccessibleReason map is keyed on
+                       the entry's properties, not the per-entity card
+                       row's. We don't have a per-card reason map today,
+                       so InaccessibleField falls back to the generic
+                       tooltip. -->
+                  <InaccessibleField v-if="field.inaccessible" />
+                  <component
+                    :is="widgetForField(field)"
+                    v-else
+                    :model-value="field.values ?? []"
+                    :mode="'display'"
+                    :property-def="synthDef(field)"
+                    :property-name="field.propType"
                   />
                 </template>
               </span>

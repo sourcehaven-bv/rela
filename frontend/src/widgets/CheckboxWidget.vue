@@ -16,5 +16,13 @@ function onChange(event: Event) {
 </script>
 
 <template>
-  <input :id="id" type="checkbox" :checked="boolValue" :disabled="disabled" @change="onChange" />
+  <span v-if="mode === 'display'" class="display-value">{{ boolValue ? '✓' : '☐' }}</span>
+  <input
+    v-else
+    :id="id"
+    type="checkbox"
+    :checked="boolValue"
+    :disabled="disabled"
+    @change="onChange"
+  />
 </template>

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
+import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<WidgetProps>()
 
@@ -46,7 +47,16 @@ function onChange(event: Event) {
 </script>
 
 <template>
-  <div class="select-widget">
+  <!-- Pass the field's wire-level binding (propertyName) to Badge for
+       style lookup (RR-UD1E). When absent, Badge falls back to a
+       cross-property scan of schemaStore.styles. -->
+  <Badge
+    v-if="mode === 'display' && stringValue"
+    :value="stringValue"
+    :property="propertyName"
+  />
+  <span v-else-if="mode === 'display'" class="display-value" />
+  <div v-else class="select-widget">
     <select
       :id="id"
       :class="{ 'is-error': !!error }"

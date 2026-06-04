@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<WidgetProps>()
 
@@ -10,13 +12,23 @@ const emit = defineEmits<{
 
 const stringValue = useStringValue(() => props.modelValue)
 
+// Display-mode rendering reuses the existing utils/format.ts helper so
+// dates render consistently with how PropertyDisplay formats them today
+// (RR-UD1A). Falls back to the raw string for un-parseable values.
+const displayValue = computed(() => {
+  if (!stringValue.value) return ''
+  return formatDate(stringValue.value) ?? stringValue.value
+})
+
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement).value)
 }
 </script>
 
 <template>
+  <span v-if="mode === 'display'" class="display-value">{{ displayValue }}</span>
   <input
+    v-else
     :id="id"
     type="date"
     :class="{ 'is-error': !!error }"
