@@ -179,8 +179,10 @@ Rules when touching this:
   fsstore/memstore). Rows carry `created_at`/`updated_at`/`seq` so a future
   cross-process change feed is additive (no migration). Don't wire a second
   writer against one database yet.
-- DSN resolution: `--database-url` flag (`rela`, `rela-server`) > `RELA_DATABASE_URL`
-  env. Threaded via `appbuild.Config.DatabaseURL` / `appbuild.WithDatabaseURL`.
+- DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
+  `--database-url` flag, so the credential never lands in `ps`/shell history.
+  `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
+  `db` commands read the env directly. Don't add a DSN flag.
 - **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
   `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
   (concurrent-start safe; forward-only). Auto-applied on first store open;

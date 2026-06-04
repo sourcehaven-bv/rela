@@ -45,7 +45,6 @@ type serverFlags struct {
 	debugPprof      string
 	principalHeader string
 	readOnly        bool
-	databaseURL     string
 }
 
 // coverage-ignore: flag wiring — exercised at startup, not in tests
@@ -72,10 +71,9 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
-	flag.StringVar(&f.databaseURL, "database-url", "",
-		"PostgreSQL connection string for the postgres build (e.g. "+
-			"postgres://user:pass@host:5432/db?sslmode=require). Overrides "+
-			"$RELA_DATABASE_URL. Ignored by the default filesystem build.")
+	// Note: there is no --database-url flag. The postgres build reads the DSN
+	// from $RELA_DATABASE_URL only, so the credential never lands in process
+	// listings or shell history. See appbuild.Config.DatabaseURL.
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
@@ -84,16 +82,12 @@ func parseFlags() *serverFlags {
 }
 
 // discoverOptions maps server flags to appbuild options. --read-only injects a
-// read-only ACL; --database-url (postgres build) overrides $RELA_DATABASE_URL.
-// WithDatabaseURL ignores an empty value, so passing it is safe in the
-// filesystem build too (where the DSN is unused entirely).
+// read-only ACL. The postgres DSN is not an option here — it is read from
+// $RELA_DATABASE_URL by appbuild.Discover (env-only, never a flag).
 func discoverOptions(f *serverFlags) []appbuild.Option {
 	var opts []appbuild.Option
 	if f.readOnly {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
-	}
-	if f.databaseURL != "" {
-		opts = append(opts, appbuild.WithDatabaseURL(f.databaseURL))
 	}
 	return opts
 }

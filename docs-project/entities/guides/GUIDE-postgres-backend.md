@@ -34,20 +34,18 @@ configuration, not a replacement for the project directory.
 
 ## Configuring the connection
 
-The connection string is read from, in order of precedence:
-
-1. The `--database-url` flag (`rela`, `rela-server`).
-2. The `RELA_DATABASE_URL` environment variable.
+The connection string is read from the `RELA_DATABASE_URL` environment
+variable. It is **env-only** — there is deliberately no `--database-url`
+flag, because a credential-bearing connection string passed on the command
+line is visible in `ps` output, shell history, and process listings.
 
 ```bash
 export RELA_DATABASE_URL='postgres://user:password@db.internal:5432/rela?sslmode=require'
 rela-server-postgres --project /srv/rela/project --bind 0.0.0.0 --port 8080
 ```
 
-Prefer the environment variable for secrets: a connection string passed
-as a flag is visible in `ps` output and shell history. On a connection
-or parse failure, rela surfaces a sanitized error — the password is
-**not** echoed.
+On a connection or parse failure, rela surfaces a sanitized error — the
+password is **not** echoed.
 
 For production, set `sslmode=require` (or stricter — `verify-full` with a
 CA) so the connection is never silently unencrypted.
@@ -78,8 +76,8 @@ rela db migrate   # apply pending migrations; a no-op when already current
 ```
 
 `rela db status` is read-only and makes no changes — handy as a CI gate.
-Both commands read the connection string from `--database-url` /
-`RELA_DATABASE_URL` and exist only in the PostgreSQL build. Auto-migrate
+Both commands read the connection string from `RELA_DATABASE_URL` and
+exist only in the PostgreSQL build. Auto-migrate
 on startup remains the default, so no explicit step is required for the
 common single-server case.
 

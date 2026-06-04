@@ -19,8 +19,8 @@ import (
 //
 // The metamodel and templates still come from the filesystem (see
 // Config.Paths) — PostgreSQL backs entities/relations/attachments/search only.
-// A DSN is required (Config.DatabaseURL or RELA_DATABASE_URL, with a
-// --database-url flag overriding via WithDatabaseURL).
+// A DSN is required: Config.DatabaseURL, which Discover populates from the
+// RELA_DATABASE_URL environment variable (env-only, never a flag).
 func New(cfg Config, opts ...Option) (*Services, error) {
 	base, err := prepare(cfg, opts)
 	if err != nil {
@@ -39,7 +39,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 func openBackend(ctx context.Context, base *buildBase) (store.Store, search.Searcher, io.Closer, error) {
 	if base.cfg.DatabaseURL == "" {
 		return nil, nil, nil, errors.New(
-			"appbuild: postgres build requires a database URL (set RELA_DATABASE_URL or pass --database-url)")
+			"appbuild: postgres build requires a database URL (set RELA_DATABASE_URL)")
 	}
 	st, searcher, closer, err := pgstore.Open(ctx, base.cfg.DatabaseURL)
 	if err != nil {

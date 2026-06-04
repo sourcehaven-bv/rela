@@ -10,6 +10,6 @@ import "errors"
 var errDBNotAvailable = errors.New(
 	"the 'db' command requires the PostgreSQL build (rela-postgres); this binary uses the filesystem backend")
 
-func runDBMigrate(string) error { return errDBNotAvailable }
+func runDBMigrate() error { return errDBNotAvailable }
 
-func runDBStatus(string) error { return errDBNotAvailable }
+func runDBStatus() error { return errDBNotAvailable }

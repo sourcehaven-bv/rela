@@ -296,11 +296,6 @@ type Option func(*options)
 
 type options struct {
 	acl acl.ACL
-
-	// databaseURL, when set, overrides Config.DatabaseURL. This is how an
-	// entry-point --database-url flag wins over the RELA_DATABASE_URL env
-	// var that Discover reads into Config. Postgres build only.
-	databaseURL string
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -315,19 +310,6 @@ type options struct {
 // path directly.
 func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }
-}
-
-// WithDatabaseURL overrides Config.DatabaseURL (and the RELA_DATABASE_URL
-// env var that [Discover] reads). Entry points pass their --database-url
-// flag through this so an explicit flag wins over the environment. A
-// non-empty value takes effect; empty is ignored so the option is safe to
-// pass unconditionally. Consumed by the postgres build only.
-func WithDatabaseURL(dsn string) Option {
-	return func(o *options) {
-		if dsn != "" {
-			o.databaseURL = dsn
-		}
-	}
 }
 
 // loadACL reads `acl.yaml` from projectRoot and returns the
@@ -367,8 +349,12 @@ type Config struct {
 	ScriptEngine *script.Engine
 	Audit        audit.Audit
 
-	// DatabaseURL is the PostgreSQL connection string. Postgres build
-	// only; empty (and ignored) in the FS/memory builds.
+	// DatabaseURL is the PostgreSQL connection string, sourced from the
+	// RELA_DATABASE_URL environment variable (see [Discover]). It is
+	// deliberately env-only — never a command-line flag — so the
+	// credential-bearing DSN does not leak into process listings or shell
+	// history. Consumed only by the postgres build; empty (and ignored) in
+	// the FS/memory builds.
 	DatabaseURL string
 }
 
@@ -397,11 +383,10 @@ func (c Config) validate() error {
 //
 // Discover constructs a production [audit.Filesystem] under
 // .rela/audit/ and resolves the database URL (postgres build) from the
-// RELA_DATABASE_URL environment variable. Entry points that accept a
-// --database-url flag pass it via [WithDatabaseURL], which wins over the
-// environment. The entry point caller is responsible for stamping
-// [principal.Principal] onto the request context (this varies per
-// binary — cli, mcp, scheduler, data-entry server).
+// RELA_DATABASE_URL environment variable — env-only, so the credential
+// never appears on a command line. The entry point caller is responsible
+// for stamping [principal.Principal] onto the request context (this varies
+// per binary — cli, mcp, scheduler, data-entry server).
 func Discover(startDir string, scriptEngine *script.Engine, opts ...Option) (*Services, error) {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(startDir, fs)
@@ -452,11 +437,6 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
-	}
-	// A --database-url flag (via WithDatabaseURL) wins over the
-	// RELA_DATABASE_URL env that Discover read into Config.
-	if o.databaseURL != "" {
-		cfg.DatabaseURL = o.databaseURL
 	}
 	resolvedACL := o.acl
 	var aclPolicy *acl.Policy

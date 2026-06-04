@@ -246,13 +246,22 @@ jobs:
   postgres:
     name: Postgres Backend
     runs-on: ubuntu-latest
+    # The CI database is ephemeral and reachable only from this job's runner,
+    # but per the security audit we don't hardcode the password in the
+    # workflow. It comes from the CI_POSTGRES_PASSWORD repository secret;
+    # the `||` fallback keeps the job working before the secret is configured
+    # (a throwaway default for the ephemeral container, never a real credential).
+    env:
+      POSTGRES_USER: rela
+      POSTGRES_DB: rela_test
+      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci-ephemeral' }}
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: rela
-          POSTGRES_PASSWORD: rela
           POSTGRES_DB: rela_test
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci-ephemeral' }}
         ports:
           - 5432:5432
         # Wait for the server to accept connections before tests run.
@@ -261,8 +270,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      RELA_TEST_DATABASE_URL: postgres://rela:rela@127.0.0.1:5432/rela_test?sslmode=disable
     steps:
       - uses: actions/checkout@v6
 
@@ -270,6 +277,14 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26'
+
+      # Build the test DSN from the (secret-sourced) password at runtime rather
+      # than hardcoding a connection string with embedded credentials, and write
+      # it to the job env without echoing it to the log.
+      - name: Configure test database URL
+        run: |
+          printf 'RELA_TEST_DATABASE_URL=postgres://%s:%s@127.0.0.1:5432/%s?sslmode=disable\n' \
+            "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" >> "$GITHUB_ENV"
 
       # The default build must NOT link pgx, and the postgres build must NOT
       # link bleve. These greps are the load-bearing assertions for the

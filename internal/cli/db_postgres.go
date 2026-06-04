@@ -11,19 +11,21 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
 
-// resolveDSN returns the database URL from the --database-url flag / env (kong
-// populates databaseURL from both), erroring if none is set.
-func resolveDSN(dsn string) (string, error) {
+// resolveDSN returns the database URL from RELA_DATABASE_URL, erroring if it is
+// not set. The DSN is env-only (no flag) so the credential never appears in
+// process listings or shell history.
+func resolveDSN() (string, error) {
+	dsn := os.Getenv("RELA_DATABASE_URL")
 	if dsn == "" {
-		return "", errors.New("no database URL: set --database-url or RELA_DATABASE_URL")
+		return "", errors.New("no database URL: set RELA_DATABASE_URL")
 	}
 	return dsn, nil
 }
 
 // runDBMigrate applies pending migrations (postgres build). Pool construction
 // lives in pgstore (MigrateDSN/StatusDSN) so the CLI doesn't depend on pgx.
-func runDBMigrate(dsn string) error {
-	resolved, err := resolveDSN(dsn)
+func runDBMigrate() error {
+	resolved, err := resolveDSN()
 	if err != nil {
 		return err
 	}
@@ -45,8 +47,8 @@ func runDBMigrate(dsn string) error {
 
 // runDBStatus reports current vs target schema version. Exits non-zero when the
 // database is behind, so CI can gate on it.
-func runDBStatus(dsn string) error {
-	resolved, err := resolveDSN(dsn)
+func runDBStatus() error {
+	resolved, err := resolveDSN()
 	if err != nil {
 		return err
 	}

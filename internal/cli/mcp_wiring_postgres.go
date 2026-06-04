@@ -18,9 +18,9 @@ import (
 
 // openMCPBackend — `postgres` build. Delegates pool construction, migration,
 // and store+search wiring to pgstore.Open (the single owner of that logic,
-// shared with appbuild's postgres recipe). MCP has no flag surface, so the DSN
-// comes from RELA_DATABASE_URL only (a --database-url flag exists on
-// rela / rela-server, not on `rela mcp`).
+// shared with appbuild's postgres recipe). The DSN comes from the
+// RELA_DATABASE_URL environment variable (env-only across all entry points, so
+// the credential never lands on a command line).
 //
 // The metamodel and templates still come from the filesystem — PostgreSQL backs
 // entities/relations/attachments/search only.
