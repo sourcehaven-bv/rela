@@ -246,22 +246,21 @@ jobs:
   postgres:
     name: Postgres Backend
     runs-on: ubuntu-latest
-    # The CI database is ephemeral and reachable only from this job's runner,
-    # but per the security audit we don't hardcode the password in the
-    # workflow. It comes from the CI_POSTGRES_PASSWORD repository secret;
-    # the `||` fallback keeps the job working before the secret is configured
-    # (a throwaway default for the ephemeral container, never a real credential).
+    # The CI database is ephemeral and reachable only from this job's runner.
+    # Per the security audit the password is never hardcoded in the workflow —
+    # it comes solely from the CI_POSTGRES_PASSWORD repository secret (no
+    # fallback, so the job fails loudly if the secret is ever removed).
     env:
       POSTGRES_USER: rela
       POSTGRES_DB: rela_test
-      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci-ephemeral' }}
+      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: rela
           POSTGRES_DB: rela_test
-          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD || 'ci-ephemeral' }}
+          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
         ports:
           - 5432:5432
         # Wait for the server to accept connections before tests run.
