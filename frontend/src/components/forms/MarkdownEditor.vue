@@ -148,15 +148,20 @@ onMounted(() => {
   // composable owns its own CodeMirror subscriptions and runs them
   // alongside the existing change handler.
   //
-  // Tests can shrink the open-delay grace period to a few milliseconds
-  // by setting `window.__BACKTICK_AUTOCOMPLETE_DELAY_MS__` before the
-  // editor mounts. Production builds never set this, so the 600 ms
-  // default stands (RR-1629).
-  const w = window as Window & { __BACKTICK_AUTOCOMPLETE_DELAY_MS__?: number }
-  const testDelay =
-    typeof w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__ === 'number'
-      ? w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__
-      : undefined
+  // Tests can shrink the open-delay grace period to a few milliseconds by
+  // setting `window.__BACKTICK_AUTOCOMPLETE_DELAY_MS__` before the editor
+  // mounts. The read is guarded by the compile-time `__E2E_TEST_HOOKS__` flag
+  // (vite define) so the whole block — and the magic property name — is
+  // tree-shaken out of production bundles; the test knob must not ship
+  // (issue #890). The flag is true only for the E2E dev-mode build
+  // (npm run build:e2e), so the knob still works there (RR-1629).
+  let testDelay: number | undefined
+  if (__E2E_TEST_HOOKS__) {
+    const w = window as Window & { __BACKTICK_AUTOCOMPLETE_DELAY_MS__?: number }
+    if (typeof w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__ === 'number') {
+      testDelay = w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__
+    }
+  }
   autocomplete.value = useBacktickAutocomplete(
     editor,
     () => schemaStore.entityTypes,

@@ -22,6 +22,13 @@ build-server: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
 
+# Build rela-server embedding the E2E (development-mode) frontend, so
+# DEV-guarded test hooks are available to the E2E suite (issue #890).
+build-server-e2e: build-frontend-e2e
+    @echo "Building rela-server (E2E frontend)..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
+
 # Build the desktop app
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
@@ -104,17 +111,17 @@ e2e-install:
     cd e2e && npx playwright install chromium
 
 # Run E2E tests (tests data entry UI via rela-server)
-e2e: build-server
+e2e: build-server-e2e
     @echo "Running E2E tests..."
     cd e2e && npm test
 
 # Run E2E tests in headed mode (visible browser)
-e2e-headed: build-server
+e2e-headed: build-server-e2e
     @echo "Running E2E tests (headed)..."
     cd e2e && npm run test:headed
 
 # Run E2E tests with Playwright UI
-e2e-ui: build-server
+e2e-ui: build-server-e2e
     @echo "Running E2E tests with Playwright UI..."
     cd e2e && npm run test:ui
 
@@ -331,6 +338,13 @@ install-frontend:
 # Build Vue frontend for production
 build-frontend: install-frontend
     cd frontend && npm run build
+
+# Build Vue frontend in development mode for E2E. This bundle has
+# import.meta.env.DEV === true, so DEV-guarded test hooks (e.g. the
+# backtick-autocomplete delay knob, issue #890) compile in. Production
+# builds use `build-frontend`, which strips them.
+build-frontend-e2e: install-frontend
+    cd frontend && npm run build:e2e
 
 # Type-check Vue frontend
 typecheck-frontend:
