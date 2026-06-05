@@ -210,13 +210,19 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		return err
 	}
 
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
 	const q = `
 		INSERT INTO entities (id, type, properties, content, search_text, updated_at)
 		VALUES ($1, $2, $3, $4, $5, now())
 		ON CONFLICT (id) DO NOTHING
 		RETURNING updated_at`
 	var updatedAt time.Time
-	err = s.db.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e)).Scan(&updatedAt)
+	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e)).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
@@ -224,10 +230,16 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		return err
 	}
 
+	ev := store.Event{Op: store.EventEntityCreated, EntityType: e.Type, EntityID: e.ID}
+	s.notify(ctx, tx, ev) // cross-process NOTIFY, atomic with the write
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
 	stored := e.Clone()
 	stored.UpdatedAt = updatedAt
 	s.notifyPut(stored)
-	s.emit(store.Event{Op: store.EventEntityCreated, EntityType: e.Type, EntityID: e.ID})
+	s.emit(ev)
 	return nil
 }
 
@@ -239,6 +251,12 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return err
 	}
 
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
 	const q = `
 		UPDATE entities
 		SET type = $2, properties = $3, content = $4, search_text = $5,
@@ -246,7 +264,7 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		WHERE id = $1
 		RETURNING updated_at`
 	var updatedAt time.Time
-	err = s.db.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e)).Scan(&updatedAt)
+	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e)).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrNotFound
 	}
@@ -254,10 +272,16 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 		return err
 	}
 
+	ev := store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID}
+	s.notify(ctx, tx, ev)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
 	stored := e.Clone()
 	stored.UpdatedAt = updatedAt
 	s.notifyPut(stored)
-	s.emit(store.Event{Op: store.EventEntityUpdated, EntityType: e.Type, EntityID: e.ID})
+	s.emit(ev)
 	return nil
 }
 
@@ -300,18 +324,23 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	if _, err := tx.Exec(ctx, `DELETE FROM entities WHERE id = $1`, id); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 
-	// After commit: observers + events.
-	s.notifyDelete(id)
+	// Build the events and NOTIFY for each inside the tx (atomic with the
+	// deletes), then commit, then fan out to in-process subscribers.
 	evs := []store.Event{{Op: store.EventEntityDeleted, EntityType: e.Type, EntityID: id}}
 	for _, r := range related {
 		evs = append(evs, store.Event{
 			Op: store.EventRelationDeleted, RelationType: r.Type, From: r.From, To: r.To,
 		})
 	}
+	for _, ev := range evs {
+		s.notify(ctx, tx, ev)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	s.notifyDelete(id)
 	s.emitAll(evs)
 
 	return &store.DeleteResult{DeletedEntities: []*entity.Entity{e}, DeletedRelations: related}, nil
@@ -386,6 +415,11 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		oldID, newID); err != nil {
 		return nil, err
 	}
+
+	// A rename presents to other processes as "the new entity changed" (they
+	// re-snapshot). NOTIFY inside the tx; commit; then fan out in-process.
+	ev := store.Event{Op: store.EventEntityUpdated, EntityType: newType, EntityID: newID}
+	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -395,7 +429,7 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	// deleted or the query transiently fails, leaving the search index stale.
 	s.notifyDelete(oldID)
 	s.notifyPut(renamed) // renamed carries updated_at from the RETURNING clause
-	s.emit(store.Event{Op: store.EventEntityUpdated, EntityType: newType, EntityID: newID})
+	s.emit(ev)
 
 	return &store.RenameResult{RelationsUpdated: int(updated)}, nil
 }

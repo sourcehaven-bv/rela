@@ -1,0 +1,211 @@
+package pgstore_test
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
+)
+
+// dsnForSchema returns the test DSN with search_path pinned to schema, so both
+// the store's pool and its listener's standalone connection resolve the same
+// schema-scoped NOTIFY channel.
+func dsnForSchema(t *testing.T, schema string) string {
+	t.Helper()
+	base := os.Getenv(testDBEnv)
+	if base == "" {
+		t.Skipf("%s not set; skipping multi-writer tests", testDBEnv)
+	}
+	u, err := url.Parse(base)
+	require.NoError(t, err)
+	q := u.Query()
+	// libpq options: set search_path for every connection from this DSN.
+	q.Set("options", fmt.Sprintf("-c search_path=%s,public", schema))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// openWriter opens a full pgstore (store + search + listener) against schema,
+// the way pgstore.Open does in production but pinned to an isolated test schema.
+func openWriter(t *testing.T, schema string) store.Store {
+	t.Helper()
+	dsn := dsnForSchema(t, schema)
+	st, _, closer, err := pgstore.Open(context.Background(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = st.Close()     // stops the listener
+		_ = closer.Close() // closes the pool
+	})
+	return st
+}
+
+// freshFeedSchema creates an isolated, migrated schema for a multi-writer test
+// (dropped on cleanup). Unlike newScopedPool it returns the schema name so two
+// writers can share it.
+func freshFeedSchema(t *testing.T) string {
+	t.Helper()
+	admin := adminConn(t)
+	ctx := context.Background()
+	schema := fmt.Sprintf("relafeed_%d_%d", os.Getpid(), schemaCounter.Add(1))
+	_, err := admin.Exec(ctx, "CREATE SCHEMA "+pgQuoteIdent(schema))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+pgQuoteIdent(schema)+" CASCADE")
+	})
+
+	// Migrate the schema via a short-lived pool pinned to it.
+	cfg, err := pgxpool.ParseConfig(dsnForSchema(t, schema))
+	require.NoError(t, err)
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	require.NoError(t, err)
+	defer pool.Close()
+	require.NoError(t, pgstore.Migrate(ctx, pool))
+	return schema
+}
+
+// waitForEvent reads from ch until it finds an event with the given entity ID,
+// or fails after timeout.
+func waitForEntityEvent(t *testing.T, ch <-chan store.Event, id string, timeout time.Duration) store.Event {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.EntityID == id {
+				return ev
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for event for entity %q", id)
+			return store.Event{}
+		}
+	}
+}
+
+// TestCrossProcessPropagation (AC1): a write committed by writer A is delivered
+// to writer B's Subscribe channel, via the LISTEN/NOTIFY feed.
+func TestCrossProcessPropagation(t *testing.T) {
+	schema := freshFeedSchema(t)
+	a := openWriter(t, schema)
+	b := openWriter(t, schema)
+
+	ch, cancel := b.Subscribe(16)
+	defer cancel()
+
+	ctx := context.Background()
+	require.NoError(t, a.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
+
+	ev := waitForEntityEvent(t, ch, "FEAT-1", 5*time.Second)
+	require.Equal(t, store.EventEntityCreated, ev.Op)
+	require.Equal(t, "FEAT-1", ev.EntityID)
+}
+
+// TestCatchUpRecoversMissedEvents (AC2): a committed write whose live
+// notification was MISSED (simulated by inserting a row directly, bypassing the
+// Go producer's pg_notify) is still recovered by the seq-watermark catch-up that
+// runs on the safety ticker. Uses a short ticker via the test hook.
+func TestCatchUpRecoversMissedEvents(t *testing.T) {
+	schema := freshFeedSchema(t)
+	pgstore.SetCatchUpIntervalForTest(t, 200*time.Millisecond)
+
+	b := openWriter(t, schema)
+	ch, cancel := b.Subscribe(16)
+	defer cancel()
+
+	// Insert a row DIRECTLY (no pg_notify) so the only way B learns of it is the
+	// catch-up query — this isolates the recovery path from the live feed.
+	admin := adminConn(t)
+	_, err := admin.Exec(context.Background(),
+		"INSERT INTO "+pgQuoteIdent(schema)+".entities (id, type) VALUES ('REQ-9', 'requirement')")
+	require.NoError(t, err)
+
+	// The ticker catch-up (200ms) should find and emit REQ-9 within a second or two.
+	ev := waitForEntityEvent(t, ch, "REQ-9", 5*time.Second)
+	require.Equal(t, "REQ-9", ev.EntityID)
+}
+
+// TestSelfNotificationFiltered (AC5): the LISTEN/NOTIFY path must not re-deliver
+// a writer's OWN writes (those were already emitted in-process), but MUST
+// deliver another origin's writes. The origin filter lives in
+// handleNotification; this exercises it directly so the assertion is
+// deterministic regardless of feed timing. (The seq catch-up is a separate,
+// deliberately origin-agnostic re-snapshot path — see TestCatchUp* — and is
+// allowed to re-emit recent rows; that's why the guarantee is on the
+// notification path, not "exactly once ever".)
+func TestSelfNotificationFiltered(t *testing.T) {
+	selfPayload := pgstore.FeedPayloadForTest("origin-self", store.EventEntityCreated, "DEC-1")
+	require.False(t, pgstore.NotificationEmitsForTest(t, "origin-self", selfPayload),
+		"self-origin notification must be filtered (already emitted in-process)")
+
+	remotePayload := pgstore.FeedPayloadForTest("origin-other", store.EventEntityCreated, "FEAT-2")
+	require.True(t, pgstore.NotificationEmitsForTest(t, "origin-self", remotePayload),
+		"remote-origin notification must be emitted")
+}
+
+// TestChannelIsolationAcrossSchemas (AC7): two writers on DIFFERENT schemas in
+// the same database do NOT see each other's notifications (schema-scoped
+// channel). This is what keeps parallel tests from cross-talking.
+func TestChannelIsolationAcrossSchemas(t *testing.T) {
+	schemaX := freshFeedSchema(t)
+	schemaY := freshFeedSchema(t)
+	x := openWriter(t, schemaX)
+	y := openWriter(t, schemaY)
+
+	chX, cancelX := x.Subscribe(16)
+	defer cancelX()
+
+	ctx := context.Background()
+	// Write on Y; X must NOT receive it (different schema => different channel).
+	require.NoError(t, y.CreateEntity(ctx, entity.New("FEAT-Y", "feature")))
+
+	select {
+	case ev := <-chX:
+		if ev.EntityID == "FEAT-Y" {
+			t.Fatalf("schema X received schema Y's notification — channel not isolated: %+v", ev)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		// good — isolated
+	}
+}
+
+// TestInterleavedWritesAllDelivered (AC3): many concurrent writes from A are all
+// observed by B (overlap-window catch-up tolerates commit-order skew; duplicates
+// are allowed, misses are not).
+func TestInterleavedWritesAllDelivered(t *testing.T) {
+	schema := freshFeedSchema(t)
+	a := openWriter(t, schema)
+	b := openWriter(t, schema)
+
+	ch, cancel := b.Subscribe(256)
+	defer cancel()
+
+	ctx := context.Background()
+	const n = 30
+	for i := range n {
+		go func(i int) {
+			_ = a.CreateEntity(ctx, entity.New(fmt.Sprintf("E-%02d", i), "ticket"))
+		}(i)
+	}
+
+	seen := make(map[string]bool)
+	deadline := time.After(10 * time.Second)
+	for len(seen) < n {
+		select {
+		case ev := <-ch:
+			if ev.EntityID != "" {
+				seen[ev.EntityID] = true
+			}
+		case <-deadline:
+			t.Fatalf("only saw %d/%d entities before timeout; missing some", len(seen), n)
+		}
+	}
+	require.Len(t, seen, n)
+}

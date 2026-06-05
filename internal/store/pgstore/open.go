@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -37,6 +38,20 @@ func Open(ctx context.Context, dsn string) (store.Store, search.Searcher, io.Clo
 		pool.Close()
 		return nil, nil, nil, fmt.Errorf("open store: %w", err)
 	}
+
+	// Start the cross-process change-feed listener (TKT-WZYWM9). It holds its
+	// own dedicated connection (from the DSN, not the pool) so a slow LISTEN
+	// never starves query traffic. A failure to start is non-fatal: the store
+	// and its in-process (local) events still work; only cross-process events
+	// are unavailable. This mirrors the "search index unavailable" degradation.
+	l, err := startListener(ctx, st, dsn)
+	if err != nil {
+		slog.Warn("pgstore: cross-process change feed unavailable; "+
+			"writes from other processes won't be observed live", "error", err)
+	} else {
+		st.listener = l
+	}
+
 	return st, search.New(st, backend), &poolCloser{pool}, nil
 }
 

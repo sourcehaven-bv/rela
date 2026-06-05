@@ -63,6 +63,14 @@ type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
 
+	// Cross-process change feed (see feed.go / listener.go). originID identifies
+	// this store's own NOTIFY echoes so the listener can skip them; channel is
+	// the schema-scoped NOTIFY channel (empty => the producer is a no-op, e.g.
+	// for a New() store with no listener wiring). Both are set at construction.
+	originID string
+	channel  string
+	listener *listener // nil unless a listener was started (see startListener)
+
 	mu          sync.Mutex // guards subscribers + nextSubID only
 	subscribers map[int]chan store.Event
 	nextSubID   int
@@ -105,8 +113,14 @@ func New(db DBTX, opts ...Option) (*Store, error) {
 	}
 	s := &Store{
 		db:          db,
+		originID:    newOriginID(),
 		subscribers: make(map[int]chan store.Event),
 	}
+	// The producer NOTIFY channel is left empty here (producer no-ops) until a
+	// listener is started via Open, which resolves the schema-scoped channel and
+	// sets s.channel for both producer and listener. A store built with New and
+	// no listener (e.g. the conformance harness) simply emits no cross-process
+	// notifications — its in-process watcher is unaffected.
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -193,15 +207,31 @@ func (s *Store) emitAll(evs []store.Event) {
 
 // --- Lifecycle ---
 
-// Close tears down the watcher: it closes all subscriber channels. It does
-// NOT close the injected pool — the wiring layer owns the pool's lifecycle.
+// Close tears down the change-feed listener (if any) and the watcher: it stops
+// the listener goroutine and closes its dedicated connection, then closes all
+// subscriber channels. It does NOT close the injected pool — the wiring layer
+// owns the pool's lifecycle.
+//
+// The listener is stopped FIRST (before subscriber channels close) so it can't
+// emit onto a closing channel; it uses its own connection, not the pool, so
+// closing it is independent of the pool's lifecycle.
 func (s *Store) Close() error {
+	// Stop the listener outside the lock — stop() blocks on the goroutine, which
+	// may call emit() (which takes s.mu); holding the lock here would deadlock.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
+	l := s.listener
+	s.listener = nil
+	s.mu.Unlock()
+
+	l.stop() // nil-safe; blocks until the listener goroutine exits
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for id, ch := range s.subscribers {
 		close(ch)
 		delete(s.subscribers, id)
