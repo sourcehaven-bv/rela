@@ -72,6 +72,7 @@ components:
   store:            { in: internal/store }
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
+  graphquerynaive:  { in: internal/store/graphquerynaive }
   pgstore:          { in: internal/store/pgstore }
   storeutil:        { in: internal/store/storeutil }
 
@@ -533,6 +534,7 @@ deps:
   fsstore:
     mayDependOn:
       - cache
+      - graphquerynaive
       - storage
       - store
       - storeutil
@@ -540,10 +542,16 @@ deps:
       - goldmark
   memstore:
     mayDependOn:
+      - graphquerynaive
       - store
       - storeutil
+  graphquerynaive:
+    mayDependOn:
+      - entity
+      - store
   pgstore:
     mayDependOn:
+      - graphquerynaive
       - search
       - store
       - storeutil
