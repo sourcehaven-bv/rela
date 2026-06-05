@@ -443,51 +443,38 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, ErrHasRelations
 	}
 
-	// Cascade-deleted relations get triggered_by set so the audit log
-	// records the parent op that caused them. Wrap ctx once before the
-	// delete loop — recordRelationAudit reads triggered_by from this
-	// derived ctx, the original ctx still flows to anything else that
-	// needs the un-decorated principal context.
-	cascadeCtx := ctx
-	if cascade && totalRelations > 0 {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
-	}
-
-	deletedRelations := make([]*entity.Relation, 0, totalRelations)
-	for _, rel := range incoming {
-		if delErr := m.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
-			!errors.Is(delErr, store.ErrNotFound) {
-
-			continue
-		}
-		deletedRelations = append(deletedRelations, rel)
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
-	}
-	for _, rel := range outgoing {
-		if delErr := m.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
-			!errors.Is(delErr, store.ErrNotFound) {
-
-			continue
-		}
-		deletedRelations = append(deletedRelations, rel)
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
-	}
-
-	if _, delErr := m.deps.Store.DeleteEntity(ctx, id, false); delErr != nil &&
-		!errors.Is(delErr, store.ErrNotFound) {
-
+	// Delegate the actual deletion to the store's cascade, which removes
+	// the relation files and the entity file under a single lock and aborts
+	// fail-secure if any relation file cannot be removed — so the entity is
+	// never deleted while a relation is left behind (issue #888). A real
+	// error surfaces to the caller rather than being swallowed; previously
+	// the Manager looped per-relation and `continue`d past I/O failures,
+	// deleting the entity anyway and leaving orphans untraced.
+	res, delErr := m.deps.Store.DeleteEntity(ctx, id, cascade)
+	if delErr != nil {
 		return nil, fmt.Errorf("delete entity: %w", delErr)
 	}
 
+	// Audit exactly what the store reports deleting. Cascade-deleted
+	// relations carry triggered_by so the log attributes them to this
+	// delete; recordRelationAudit reads it from cascadeCtx.
+	cascadeCtx := ctx
+	if cascade && len(res.DeletedRelations) > 0 {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
+	}
+	for _, rel := range res.DeletedRelations {
+		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+	}
+
 	deleteSummary := "deleted"
-	if cascade && totalRelations > 0 {
-		deleteSummary = fmt.Sprintf("deleted (cascade: %d relations)", totalRelations)
+	if cascade && len(res.DeletedRelations) > 0 {
+		deleteSummary = fmt.Sprintf("deleted (cascade: %d relations)", len(res.DeletedRelations))
 	}
 	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, deleteSummary)
 
 	return &entity.DeleteResult{
 		DeletedEntities:  []*entity.Entity{current},
-		DeletedRelations: deletedRelations,
+		DeletedRelations: res.DeletedRelations,
 	}, nil
 }
 
