@@ -13,17 +13,19 @@ describe('MultiSelectWidget', () => {
 
   it('maps an array model value to string options for TagSelect', () => {
     const w = mount(MultiSelectWidget, {
-      props: { modelValue: ['a', 1], mode: 'edit' as const, propertyDef: { type: 'enum', values: ['a', '1', 'b'] } },
+      props: { modelValue: ['a', 1], mode: 'edit' as const, propertyName: '', propertyDef: { type: 'enum', values: ['a', '1', 'b'] } },
       global: { stubs },
     })
     const tag = w.findComponent({ name: 'TagSelect' })
     expect(tag.props('modelValue')).toEqual(['a', '1'])
     expect(tag.props('options')).toEqual(['a', '1', 'b'])
+    // Edit-mode MultiSelectWidget renders TagSelect, not the display badge-row (RR-UD2H).
+    expect(w.find('.badge-row').exists()).toBe(false)
   })
 
   it('coerces a scalar model value to a single-item array', () => {
     const w = mount(MultiSelectWidget, {
-      props: { modelValue: 'solo', mode: 'edit' as const, propertyDef: { type: 'enum' } },
+      props: { modelValue: 'solo', mode: 'edit' as const, propertyName: '', propertyDef: { type: 'enum' } },
       global: { stubs },
     })
     expect(w.findComponent({ name: 'TagSelect' }).props('modelValue')).toEqual(['solo'])
@@ -31,7 +33,7 @@ describe('MultiSelectWidget', () => {
 
   it('treats empty model value as an empty array', () => {
     const w = mount(MultiSelectWidget, {
-      props: { modelValue: null, mode: 'edit' as const, propertyDef: { type: 'enum' } },
+      props: { modelValue: null, mode: 'edit' as const, propertyName: '', propertyDef: { type: 'enum' } },
       global: { stubs },
     })
     expect(w.findComponent({ name: 'TagSelect' }).props('modelValue')).toEqual([])
@@ -39,7 +41,7 @@ describe('MultiSelectWidget', () => {
 
   it('re-emits TagSelect updates as update:modelValue', async () => {
     const w = mount(MultiSelectWidget, {
-      props: { modelValue: [], mode: 'edit' as const, propertyDef: { type: 'enum' } },
+      props: { modelValue: [], mode: 'edit' as const, propertyName: '', propertyDef: { type: 'enum' } },
       global: { stubs },
     })
     w.findComponent({ name: 'TagSelect' }).vm.$emit('update:modelValue', ['x', 'y'])
@@ -51,7 +53,7 @@ describe('MultiSelectWidget', () => {
     const w = mount(MultiSelectWidget, {
       props: {
         modelValue: [],
-        mode: 'edit' as const,
+        mode: 'edit' as const, propertyName: '',
         propertyDef: { type: 'enum', values: ['a'] },
         disabled: true,
         optionVerdicts: { a: false },
@@ -69,17 +71,19 @@ describe('RruleWidget', () => {
 
   it('passes the stringified model value and help to RruleBuilder', () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: 'FREQ=DAILY', mode: 'edit' as const, help: 'every day', propertyDef: { type: 'rrule' } },
+      props: { modelValue: 'FREQ=DAILY', mode: 'edit' as const, propertyName: '', help: 'every day', propertyDef: { type: 'rrule' } },
       global: { stubs },
     })
     const builder = w.findComponent({ name: 'RruleBuilder' })
     expect(builder.props('modelValue')).toBe('FREQ=DAILY')
     expect(builder.props('help')).toBe('every day')
+    // Edit-mode RruleWidget renders the builder, not the display summary span (RR-UD2H).
+    expect(w.find('span.display-value').exists()).toBe(false)
   })
 
   it('renders empty for a null model value', () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: null, mode: 'edit' as const, propertyDef: { type: 'rrule' } },
+      props: { modelValue: null, mode: 'edit' as const, propertyName: '', propertyDef: { type: 'rrule' } },
       global: { stubs },
     })
     expect(w.findComponent({ name: 'RruleBuilder' }).props('modelValue')).toBe('')
@@ -87,7 +91,7 @@ describe('RruleWidget', () => {
 
   it('maps disabled to the builder readonly prop', () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: '', mode: 'edit' as const, disabled: true, propertyDef: { type: 'rrule' } },
+      props: { modelValue: '', mode: 'edit' as const, propertyName: '', disabled: true, propertyDef: { type: 'rrule' } },
       global: { stubs },
     })
     expect(w.findComponent({ name: 'RruleBuilder' }).props('readonly')).toBe(true)
@@ -95,7 +99,7 @@ describe('RruleWidget', () => {
 
   it('re-emits builder updates as update:modelValue', async () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: '', mode: 'edit' as const, propertyDef: { type: 'rrule' } },
+      props: { modelValue: '', mode: 'edit' as const, propertyName: '', propertyDef: { type: 'rrule' } },
       global: { stubs },
     })
     w.findComponent({ name: 'RruleBuilder' }).vm.$emit('update:modelValue', 'FREQ=WEEKLY')
@@ -125,27 +129,57 @@ describe('MultiSelectWidget (display)', () => {
     expect(badges[1].props('value')).toBe('b')
   })
 
-  it('renders nothing for an empty array', () => {
+  it('renders an em-dash placeholder for an empty array (RR-UD2C)', () => {
     const w = mount(MultiSelectWidget, {
-      props: { modelValue: [], mode: 'display' as const, propertyDef: { type: 'enum' } },
+      props: { modelValue: [], mode: 'display' as const, propertyName: '', propertyDef: { type: 'enum' } },
     })
     expect(w.findAllComponents({ name: 'Badge' })).toHaveLength(0)
+    expect(w.find('.empty-placeholder').exists()).toBe(true)
+    expect(w.find('.empty-placeholder').text()).toBe('—')
   })
 
   it('coerces a scalar into a single Badge', () => {
     const w = mount(MultiSelectWidget, {
-      props: { modelValue: 'solo', mode: 'display' as const, propertyDef: { type: 'enum' } },
+      props: { modelValue: 'solo', mode: 'display' as const, propertyName: '', propertyDef: { type: 'enum' } },
     })
     const badges = w.findAllComponents({ name: 'Badge' })
     expect(badges).toHaveLength(1)
     expect(badges[0].props('value')).toBe('solo')
+  })
+
+  it('falls back to a comma-joined string for long arrays (>5) (RR-UD2C)', () => {
+    const long = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+    const w = mount(MultiSelectWidget, {
+      props: {
+        modelValue: long,
+        mode: 'display' as const,
+        propertyName: 'tags',
+        propertyDef: { type: 'enum' },
+      },
+    })
+    expect(w.findAllComponents({ name: 'Badge' })).toHaveLength(0)
+    expect(w.find('.long-fallback').exists()).toBe(true)
+    expect(w.find('.long-fallback').text()).toBe(long.join(', '))
+  })
+
+  it('still renders Badges at exactly the threshold (5 values)', () => {
+    const w = mount(MultiSelectWidget, {
+      props: {
+        modelValue: ['a', 'b', 'c', 'd', 'e'],
+        mode: 'display' as const,
+        propertyName: 'tags',
+        propertyDef: { type: 'enum' },
+      },
+    })
+    expect(w.findAllComponents({ name: 'Badge' })).toHaveLength(5)
+    expect(w.find('.long-fallback').exists()).toBe(false)
   })
 })
 
 describe('RruleWidget (display)', () => {
   it('renders a human-readable summary via formatValue', () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: 'FREQ=DAILY', mode: 'display' as const, propertyDef: { type: 'rrule' } },
+      props: { modelValue: 'FREQ=DAILY', mode: 'display' as const, propertyName: '', propertyDef: { type: 'rrule' } },
       global: { stubs: { RruleBuilder: true } },
     })
     expect(w.findComponent({ name: 'RruleBuilder' }).exists()).toBe(false)
@@ -159,7 +193,7 @@ describe('RruleWidget (display)', () => {
 
   it('renders empty for null', () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: null, mode: 'display' as const, propertyDef: { type: 'rrule' } },
+      props: { modelValue: null, mode: 'display' as const, propertyName: '', propertyDef: { type: 'rrule' } },
       global: { stubs: { RruleBuilder: true } },
     })
     expect(w.find('span.display-value').text()).toBe('')
@@ -167,7 +201,7 @@ describe('RruleWidget (display)', () => {
 
   it('falls back to the raw string for un-parseable rrule', () => {
     const w = mount(RruleWidget, {
-      props: { modelValue: 'not-an-rrule', mode: 'display' as const, propertyDef: { type: 'rrule' } },
+      props: { modelValue: 'not-an-rrule', mode: 'display' as const, propertyName: '', propertyDef: { type: 'rrule' } },
       global: { stubs: { RruleBuilder: true } },
     })
     // formatValue catches RRule.fromString errors and returns the raw

@@ -20,16 +20,21 @@ export type WidgetMode = 'display' | 'edit'
 // `mode` is REQUIRED and has no default. Every consumer must pass it
 // explicitly; that includes test mounts. A default would be silently
 // load-bearing on every form (RR-UD1I).
+//
+// `propertyDef` is typically present in edit mode (forms have the schema
+// entry) and may be absent in display mode (cards/list resolve widgets
+// via WidgetRoutingHint, not a real PropertyDef). Widgets that need
+// schema info in display mode must tolerate its absence.
 export interface WidgetProps<T = unknown> {
   modelValue: T
   // The widget's render mode. Required.
   mode: WidgetMode
   propertyDef?: PropertyDef
-  // The field's wire-level property binding (separate from
-  // `propertyDef`, which is the schema entry). Forwarded to Badge in
-  // display mode so badge styling survives view-config property
-  // aliases (RR-UD1E). Falls back to `propertyDef.name` when absent.
-  propertyName?: string
+  // The field's wire-level property binding (the metamodel property
+  // name). Required so Badge style lookup is deterministic across all
+  // call sites; passing '' is acceptable for fields with no semantic
+  // binding (RR-UD2D).
+  propertyName: string
   disabled?: boolean
   required?: boolean
   error?: string
@@ -43,6 +48,30 @@ export interface WidgetProps<T = unknown> {
   transitions?: Record<string, string[]>
 }
 
+// WidgetRoutingHint is a lightweight description used by the view-side
+// rendering path to pick a widget without inventing a fake PropertyDef
+// (RR-UD2B). Forms still resolve via the real PropertyDef they own.
+//
+// `kind` maps to the same widget bucket defaultWidgetFor would have
+// picked, but is explicit instead of being inferred from a synthetic
+// shape that lies about being a schema entry.
+export type WidgetHintKind =
+  | 'text'
+  | 'text-list'
+  | 'enum'
+  | 'enum-list'
+  | 'boolean'
+  | 'date'
+  | 'integer'
+  | 'rrule'
+
+export interface WidgetRoutingHint {
+  kind: WidgetHintKind
+  // The field's wire-level property binding -- forwarded to widgets as
+  // their `propertyName` prop.
+  propertyName: string
+}
+
 export interface WidgetEntry {
   component: Component
   // Advisory only: a mismatch logs a console.warn but the widget still
@@ -52,5 +81,12 @@ export interface WidgetEntry {
 
 export interface WidgetRegistry {
   register(name: string, entry: WidgetEntry): void
+  // Form-side resolution: caller has a real schema entry. The historical
+  // multi-axis fallback (list -> multi-select, values -> select, etc.)
+  // applies via defaultWidgetFor.
   resolve(name: string | undefined, propertyDef?: PropertyDef): Component
+  // View-side resolution: caller has wire-level field metadata, not a
+  // schema entry. Hint is explicit; no schema lookup is involved
+  // (RR-UD2B / RR-UD2A).
+  resolveFromHint(hint: WidgetRoutingHint): Component
 }

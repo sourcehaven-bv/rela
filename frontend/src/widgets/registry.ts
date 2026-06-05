@@ -1,5 +1,5 @@
 import type { PropertyDef } from '@/types'
-import type { WidgetEntry, WidgetRegistry } from './types'
+import type { WidgetEntry, WidgetRegistry, WidgetRoutingHint, WidgetHintKind } from './types'
 import TextWidget from './TextWidget.vue'
 import TextareaWidget from './TextareaWidget.vue'
 import NumberWidget from './NumberWidget.vue'
@@ -21,6 +21,20 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'integer') return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
   return 'text'
+}
+
+// hintKindToWidgetName maps a WidgetRoutingHint kind to the registered
+// widget name. View-side callers use this via resolveFromHint instead of
+// inventing a synthetic PropertyDef (RR-UD2B).
+const hintKindToWidgetName: Record<WidgetHintKind, string> = {
+  text: 'text',
+  'text-list': 'multi-select',
+  enum: 'select',
+  'enum-list': 'multi-select',
+  boolean: 'checkbox',
+  date: 'date',
+  integer: 'number',
+  rrule: 'rrule',
 }
 
 export function defineWidgetRegistry(): WidgetRegistry {
@@ -67,6 +81,15 @@ export function defineWidgetRegistry(): WidgetRegistry {
         )
       }
 
+      return entry.component
+    },
+
+    resolveFromHint(hint: WidgetRoutingHint) {
+      const name = hintKindToWidgetName[hint.kind]
+      const entry = entries.get(name) ?? entries.get('text')
+      if (!entry) {
+        throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
+      }
       return entry.component
     },
   }

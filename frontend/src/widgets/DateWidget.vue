@@ -15,6 +15,11 @@ const stringValue = useStringValue(() => props.modelValue)
 // Display-mode rendering reuses the existing utils/format.ts helper so
 // dates render consistently with how PropertyDisplay formats them today
 // (RR-UD1A). Falls back to the raw string for un-parseable values.
+//
+// The fallback is deliberately SILENT (no console.warn): this computed
+// runs on every reactive tick, so warning here would spam the console
+// for any stale/in-progress date value. The raw-string passthrough is
+// the right visible signal that something is off (RR-UD2J).
 const displayValue = computed(() => {
   if (!stringValue.value) return ''
   return formatDate(stringValue.value) ?? stringValue.value

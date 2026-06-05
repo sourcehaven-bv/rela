@@ -12,6 +12,25 @@ const emit = defineEmits<{
 
 const stringValue = useStringValue(() => props.modelValue)
 
+// Defensive coercion for display mode (RR-UD2F): if a caller hands an
+// array to SelectWidget instead of MultiSelectWidget (e.g. TKT-HOIX1's
+// explicit widget override on a list-typed field), useStringValue would
+// stringify to "a,b" -- one Badge with a literal comma-joined value.
+// Take the first element and warn so the misconfiguration is visible
+// rather than rendering garbage.
+const safeStringValue = computed(() => {
+  const v = props.modelValue
+  if (Array.isArray(v)) {
+    if (v.length > 1) {
+      console.warn(
+        '[SelectWidget] received multi-element array in display mode; rendering first only -- consider widget: multi-select'
+      )
+    }
+    return v.length > 0 ? String(v[0]) : ''
+  }
+  return stringValue.value
+})
+
 const options = computed(() => props.propertyDef?.values || [])
 
 const hasTransitions = computed(
@@ -48,11 +67,11 @@ function onChange(event: Event) {
 
 <template>
   <!-- Pass the field's wire-level binding (propertyName) to Badge for
-       style lookup (RR-UD1E). When absent, Badge falls back to a
-       cross-property scan of schemaStore.styles. -->
+       deterministic style lookup (RR-UD1E + RR-UD2D). Display mode uses
+       safeStringValue, which guards against array input (RR-UD2F). -->
   <Badge
-    v-if="mode === 'display' && stringValue"
-    :value="stringValue"
+    v-if="mode === 'display' && safeStringValue"
+    :value="safeStringValue"
     :property="propertyName"
   />
   <span v-else-if="mode === 'display'" class="display-value" />

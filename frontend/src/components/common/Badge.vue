@@ -23,27 +23,20 @@ const badgeClassNames: Record<string, string> = {
   'badge-yellow': 'badge--yellow',
 }
 
-// Look up style: first try by property name, then search all properties
+// Look up style by (property, value). The cross-property fallback that
+// scanned every styled property for a value match was removed (RR-UD2D):
+// it produced non-deterministic colours when a value (e.g. 'open') was
+// styled under multiple properties. Audited consumers all pass an
+// explicit :property=. A missing property -> the default gray; that's
+// the correct "no styling configured" answer.
 const badgeClass = computed(() => {
+  if (!props.property) return 'badge--gray'
   // Normalize: lowercase, spaces to underscores (keep underscores as-is)
   const valueKey = props.value.toLowerCase().replace(/\s/g, '_')
-  const styles = schemaStore.styles
-
-  // Try looking up by property name first if provided
-  if (props.property) {
-    const propStyles = styles[props.property]
-    if (propStyles && propStyles[valueKey]) {
-      return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
-    }
+  const propStyles = schemaStore.styles[props.property]
+  if (propStyles && propStyles[valueKey]) {
+    return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
   }
-
-  // Search all properties for this value
-  for (const propStyles of Object.values(styles)) {
-    if (propStyles && propStyles[valueKey]) {
-      return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
-    }
-  }
-
   return 'badge--gray'
 })
 </script>
