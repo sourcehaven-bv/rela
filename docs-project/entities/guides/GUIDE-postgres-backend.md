@@ -15,9 +15,10 @@ search index — in a PostgreSQL database instead. It is selected at compile
 time with the `postgres` Go build tag and shipped as separate binaries:
 `rela-postgres` and `rela-server-postgres`.
 
-Use it when you want a single server process backed by a real database
-(durable, concurrent reads, SQL-queryable) rather than a directory of
-markdown files.
+Use it when you want a real database behind rela (durable, concurrent,
+SQL-queryable) rather than a directory of markdown files — including
+deployments with **multiple server processes** sharing one database (see
+[Multiple writers](#multiple-writers)).
 
 ## What still lives on disk
 
@@ -92,18 +93,27 @@ GIN index for ranked full-text plus `pg_trgm` for substring and fuzzy
 matching) — there is no bleve index. Text search matches the same fields
 as the default backend: entity ID, content, and string-valued properties.
 
-## Scope and limitations
+## Multiple writers
 
-This build targets a **single server process owning the database**:
+You can run **multiple processes against one database** — for example several
+`rela-server` instances behind a load balancer, or a `rela-server` plus an
+occasional `rela` CLI write. Each process sees the others' changes, so the UI
+stays live across servers: an entity created, updated, or deleted on one server
+appears in browsers connected to another, without a manual refresh.
 
-- Live-reload / change events are in-process only. Running more than one
-  writer against the same database is not supported yet — a second writer's
-  changes would not be observed by the first process's search index.
-- The desktop app (`rela-desktop`) is filesystem-only; there is no
-  PostgreSQL desktop build.
+What you need to know to run it:
+
+- All processes that should share live updates must point at the **same database
+  and schema** — which they do when they serve the same project.
+- Each process opens **one extra connection** to receive change notifications.
+  If it can't, the process still works normally; only the live cross-server
+  updates are unavailable (a warning is logged).
+- Live updates cover **entity** create/update/delete. Relation and attachment
+  edits are reflected on the next page load rather than pushed live.
+
+## Other scope notes
+
+- The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL
+  desktop build.
 - There is no automatic migration of an existing filesystem project into
   PostgreSQL; the database starts empty.
-
-Every row carries created/updated timestamps and a monotonic sequence
-number, so cross-process change propagation can be added later without a
-schema migration.

@@ -588,8 +588,9 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
 
-	// Broadcast entity creation event
-	a.broker.broadcastEntityEvent("created", typeName, created.ID)
+	// SSE broadcast is driven by the store-event bridge (see
+	// App.startStoreEventBridge), not inline here — so a create by ANY process
+	// reaches all connected browsers and a local create isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusCreated, result)
 }
@@ -899,11 +900,11 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	newETag := a.computeEntityETag(r.Context(), entity)
 	w.Header().Set("ETag", newETag)
 
-	// Broadcast entity update event when the entity itself changed.
-	// Relation-only changes don't fire an entity:updated event today.
-	if entityChanged {
-		a.broker.broadcastEntityEvent("updated", typeName, entityID)
-	}
+	// SSE broadcast is driven by the store-event bridge: an entity update only
+	// fires EventEntityUpdated when the store's entity row actually changed,
+	// which matches the prior "if entityChanged" gate (relation-only edits emit
+	// no entity event). So a remote update reaches all browsers and a local one
+	// isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusOK, result)
 }
@@ -959,8 +960,9 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	// Broadcast entity deletion event
-	a.broker.broadcastEntityEvent("deleted", typeName, entityID)
+	// SSE broadcast is driven by the store-event bridge (see
+	// App.startStoreEventBridge); a delete by any process reaches all browsers,
+	// and a local delete isn't double-broadcast.
 
 	w.WriteHeader(http.StatusNoContent)
 }

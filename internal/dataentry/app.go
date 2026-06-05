@@ -146,6 +146,10 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
+	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
+	// StartWatching; nil when watching is not active.
+	stopStoreWatch func()
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
@@ -180,10 +184,17 @@ type App struct {
 // own lifecycle managed by the store and is stopped during store
 // close, not here — asymmetric on purpose: dataentry doesn't own the
 // store, only its config subscription.
+// StopWatching is lifecycle-only and must be called from a single goroutine
+// (it is the StartWatching counterpart). The stop fields are not synchronized;
+// concurrent Start/Stop is not supported.
 func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
+	}
+	if a.stopStoreWatch != nil {
+		a.stopStoreWatch()
+		a.stopStoreWatch = nil
 	}
 }
 

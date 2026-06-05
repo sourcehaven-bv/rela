@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // storeWatcher is the optional capability dataentry needs from a
@@ -134,7 +135,51 @@ func (a *App) StartWatching() error {
 			"store", fmt.Sprintf("%T", a.store))
 	}
 
+	// (3) Store-event -> SSE bridge. Subscribes to the store's change watcher
+	// and broadcasts entity changes to connected browsers. This is the path
+	// that makes a write by ANOTHER process visible live (the pgstore
+	// cross-process feed, TKT-WZYWM9) — and also surfaces fsstore's
+	// external-file-edit events, which previously had no consumer. Local API
+	// writes flow through here too, so the inline broadcasts in the write
+	// handlers were removed to avoid double-broadcasting.
+	a.startStoreEventBridge()
+
 	return nil
+}
+
+// storeEventBufSize is the buffer for the store-event subscription. The watcher
+// drops events on a full buffer (it's lossy by contract), but since each event
+// only triggers a re-fetch hint to the browser, a modest buffer plus the
+// browser's own re-snapshot keeps the UI consistent.
+const storeEventBufSize = 64
+
+// startStoreEventBridge subscribes to the store's change feed and pumps entity
+// events to the SSE broker. Only entity create/update/delete are broadcast
+// (relations/attachments are not part of the live feed today — matching the
+// prior inline-broadcast behavior). Idempotent re-snapshot semantics: a
+// duplicate event just nudges the browser to re-fetch again, which is harmless.
+func (a *App) startStoreEventBridge() {
+	events, cancel := a.store.Subscribe(storeEventBufSize)
+	a.stopStoreWatch = cancel
+	go a.pumpStoreEvents(events)
+}
+
+// pumpStoreEvents maps store.Events to SSE entity broadcasts until the
+// subscription channel closes (on cancel / store Close).
+func (a *App) pumpStoreEvents(events <-chan store.Event) {
+	for ev := range events {
+		switch ev.Op {
+		case store.EventEntityCreated:
+			a.broker.broadcastEntityEvent("created", ev.EntityType, ev.EntityID)
+		case store.EventEntityUpdated:
+			a.broker.broadcastEntityEvent("updated", ev.EntityType, ev.EntityID)
+		case store.EventEntityDeleted:
+			a.broker.broadcastEntityEvent("deleted", ev.EntityType, ev.EntityID)
+		default:
+			// Relation/attachment events are not part of the live feed (no
+			// browser broadcast existed for them before either). Ignored.
+		}
+	}
 }
 
 // StartGitFetch begins periodic git fetch in the background.

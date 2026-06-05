@@ -143,12 +143,18 @@ func (s *Store) CreateRelation(
 		return nil, err
 	}
 
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
 	const q = `
 		INSERT INTO relations (from_id, rel_type, to_id, properties, content, updated_at)
 		VALUES ($1, $2, $3, $4, $5, now())
 		ON CONFLICT (from_id, rel_type, to_id) DO NOTHING
 		RETURNING from_id, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(s.db.QueryRow(ctx, q, from, relType, to, rawProps, content))
+	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, content))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrConflict
 	}
@@ -156,7 +162,12 @@ func (s *Store) CreateRelation(
 		return nil, err
 	}
 
-	s.emit(store.Event{Op: store.EventRelationCreated, RelationType: relType, From: from, To: to})
+	ev := store.Event{Op: store.EventRelationCreated, RelationType: relType, From: from, To: to}
+	s.notify(ctx, tx, ev)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	s.emit(ev)
 	return r, nil
 }
 
@@ -170,12 +181,18 @@ func (s *Store) UpdateRelation(
 		return nil, err
 	}
 
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
 	const q = `
 		UPDATE relations
 		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq')
 		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3
 		RETURNING from_id, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(s.db.QueryRow(ctx, q, from, relType, to, rawProps, data.Content))
+	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, data.Content))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -183,21 +200,38 @@ func (s *Store) UpdateRelation(
 		return nil, err
 	}
 
-	s.emit(store.Event{Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to})
+	ev := store.Event{Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to}
+	s.notify(ctx, tx, ev)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	s.emit(ev)
 	return r, nil
 }
 
 // DeleteRelation removes a relation. Returns store.ErrNotFound if absent.
 func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+
 	const q = `DELETE FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
-	tag, err := s.db.Exec(ctx, q, from, relType, to)
+	tag, err := tx.Exec(ctx, q, from, relType, to)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return store.ErrNotFound
 	}
-	s.emit(store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to})
+
+	ev := store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to}
+	s.notify(ctx, tx, ev)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.emit(ev)
 	return nil
 }
 
