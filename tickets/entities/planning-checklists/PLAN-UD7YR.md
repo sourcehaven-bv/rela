@@ -166,7 +166,7 @@ status: done
 ## Documentation Planning
 
 - [x] User-facing docs identified — N/A
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: internal refactor, no user-facing surface)
 
 **Documentation Impact:**
 
