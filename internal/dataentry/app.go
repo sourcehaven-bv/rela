@@ -146,6 +146,10 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
+	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
+	// StartWatching; nil when watching is not active.
+	stopStoreWatch func()
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
@@ -184,6 +188,10 @@ func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
+	}
+	if a.stopStoreWatch != nil {
+		a.stopStoreWatch()
+		a.stopStoreWatch = nil
 	}
 }
 
