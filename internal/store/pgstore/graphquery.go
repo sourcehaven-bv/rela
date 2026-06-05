@@ -72,6 +72,23 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 // appears only when it can contribute. This keeps query plans honest:
 // PostgreSQL's planner won't optimize away a CTE that's "always
 // trivial", so collapsing them in Go saves real work.
+//
+// **SQL injection safety.** Every caller-supplied value
+// (q.EntityType, RelationPredicate.Endpoints / OfTypes /
+// InheritThrough / EntityInheritThrough, Depth, EntityDepth) flows
+// through [sqlBuilder.arg], which returns a positional placeholder
+// (`$N`) and appends the value to args. The Sprintf calls in this
+// file substitute only:
+//
+//   - those placeholder strings (already `$N`-formatted by arg)
+//   - compile-time string literals (CTE names like
+//     `in_endpoint_closure`, column names like `r.from_id`)
+//   - the `prefix` argument to buildPredicateSQL, which is one of
+//     the in-package constants `"in"` / `"out"`
+//
+// User data never reaches the SQL text. The same property holds
+// when [BuildGraphQuerySQLForTest] is invoked from tests — the
+// builder treats all input the same way.
 func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	// $1 is always q.EntityType.
@@ -91,25 +108,30 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		existsParts = append(existsParts, ex)
 	}
 
+	// Branch the SELECT list + ORDER BY: count queries skip column
+	// fetching and ordering; row queries return the standard entity
+	// columns and stable id-ascending order. The rest of the query
+	// (WITH, FROM, WHERE, EXISTS chain) is identical.
+	selectList := "e.id, e.type, e.properties, e.content, e.updated_at"
+	orderBy := " ORDER BY e.id"
+	if countOnly {
+		selectList = "count(*)"
+		orderBy = ""
+	}
+
 	var sb strings.Builder
 	if len(withParts) > 0 {
 		sb.WriteString("WITH RECURSIVE ")
 		sb.WriteString(strings.Join(withParts, ",\n"))
 		sb.WriteByte('\n')
 	}
-	if countOnly {
-		sb.WriteString("SELECT count(*) FROM entities e WHERE e.type = " + typeArg)
-	} else {
-		sb.WriteString("SELECT e.id, e.type, e.properties, e.content, e.updated_at FROM entities e WHERE e.type = " + typeArg)
-	}
+	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.type = " + typeArg)
 	for _, ex := range existsParts {
 		sb.WriteString(" AND EXISTS (")
 		sb.WriteString(ex)
 		sb.WriteByte(')')
 	}
-	if !countOnly {
-		sb.WriteString(" ORDER BY e.id")
-	}
+	sb.WriteString(orderBy)
 
 	return sb.String(), b.args
 }

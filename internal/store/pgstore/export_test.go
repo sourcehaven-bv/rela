@@ -46,3 +46,11 @@ func NotificationEmitsForTest(t *testing.T, selfOrigin, payload string) bool {
 		return false
 	}
 }
+
+// BuildGraphQuerySQLForTest exposes the internal SQL builder so
+// explain-plan tests can render the SQL without going through a pgx
+// round-trip. Keeps the production surface narrow while letting
+// tests pin query shape and verify index usage. Test-only.
+func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
+	return buildGraphQuerySQL(q, countOnly)
+}
