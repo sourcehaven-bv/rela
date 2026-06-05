@@ -133,16 +133,23 @@ covered by the broader storetest harness.
 
 **Risks:**
 
-- **R1 (low):** pgstore performance under naive delegation.
-**Accepted** for this PR (no consumer yet); the package docstring
-flags the SQL-pushdown follow-up as the natural next step.
-- **R2 (low):** Backend drift if a future impl swaps to push-down
-without keeping behavior identical. **Mitigated** by
-`RunGraphQueryTests` being part of `RunAll`.
+- **R1 (mitigated):** pgstore would have been quadratic if it kept the
+naive delegation. **Mitigated** by shipping a SQL-native recursive-CTE
+impl in this same PR (one round-trip per call). The conformance suite
+in `RunAll` is what makes this safe — the SQL impl is verified
+behavior-equivalent to the naive impl that fsstore/memstore use.
+- **R2 (mitigated):** Recursive CTE plan stability. **Mitigated** by
+migration 0002 (composite (rel_type, from_id|to_id) indexes so the
+CTE planner has a fast path for the per-iteration rel_type filter).
+- **R3 (low):** Tracer overhead in production. **Mitigated** by the
+`debugEnabled` check at Open time — production deployments running
+slog at Info or Warn skip tracer attachment entirely, paying zero
+per-query overhead.
 
-**Effort:** S — code ports straight from the reference branch
-`feat/acl-v1-tkt-svxl` with naming/comment polish for the
-consumer-free framing.
+**Effort:** M (was S before adding SQL-native pgstore + tracer in
+this PR's scope). Two days net — the SQL builder, migration,
+benchmarks, and tracer added ~1 day of focused work on top of the
+straight port.
 
 ## Documentation Planning
 

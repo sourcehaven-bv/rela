@@ -22,9 +22,18 @@ import (
 // watcher). Keeping pool construction in one place means each composition root
 // calls Open once instead of duplicating build-pool/migrate/wire/close logic.
 func Open(ctx context.Context, dsn string) (store.Store, search.Searcher, io.Closer, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		// pgxpool.New parses (not connects); pgx redacts the password in errors.
+		// ParseConfig parses (not connects); pgx redacts the password in errors.
+		return nil, nil, nil, fmt.Errorf("parse database DSN: %w", err)
+	}
+	// Attach the query tracer only when slog Debug is enabled. Avoids
+	// the per-query context-value alloc in production where Debug is off.
+	if debugEnabled(ctx) {
+		cfg.ConnConfig.Tracer = debugQueryTracer{}
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
 		return nil, nil, nil, fmt.Errorf("connect to database: %w", err)
 	}
 	if err = Migrate(ctx, pool); err != nil {

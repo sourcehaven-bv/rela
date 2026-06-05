@@ -1,7 +1,7 @@
 ---
 id: TKT-ZYH3
 type: ticket
-title: 'store: generic GraphQuery DSL + naive impl + storetest conformance'
+title: 'store: GraphQuery DSL + naive impl (fsstore/memstore) + SQL-native pgstore + query tracer'
 kind: enhancement
 priority: medium
 effort: s
