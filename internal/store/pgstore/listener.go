@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,16 +16,27 @@ import (
 // catchUpOverlap is how far BELOW the highest seen seq the watermark is held,
 // so a transaction that grabbed a lower seq but committed late is still picked
 // up on a later catch-up. It trades a little redundant re-emission (harmless —
-// consumers re-snapshot by id) for not missing a late-committing write. Sized
-// generously relative to rela's short write transactions. The exact (xid8 +
-// pg_snapshot_xmin) fix is the documented upgrade if strict ordering is ever
-// needed.
+// consumers re-snapshot by id) for not missing a late-committing write.
+//
+// The assumption this overlap encodes: NO single write transaction holds a seq
+// for longer than `catchUpOverlap` later writes take to commit. rela's writes
+// are short single-row operations, so 100 is generous. The assumption breaks
+// only if someone batches many writes in ONE long transaction (e.g. a bulk
+// import) — then a low seq could commit after >100 higher seqs and be skipped.
+// That is the precise trigger for the exact (xid8 + pg_snapshot_xmin) upgrade
+// documented in the package; it is not built because rela has no such path today.
 const catchUpOverlap = 100
+
+// defaultCatchUpInterval is the production safety-net poll period.
+const defaultCatchUpInterval = 30 * time.Second
 
 // catchUpInterval is the safety-net poll: even if a NOTIFY is ever missed, the
 // listener self-heals within this interval by re-running the catch-up query.
-// A var (not const) so tests can shorten it via SetCatchUpIntervalForTest.
-var catchUpInterval = 30 * time.Second
+// An atomic so tests can shorten it (SetCatchUpIntervalForTest) without racing
+// the listener goroutines that read it. Holds a time.Duration as an int64.
+var catchUpInterval atomic.Int64
+
+func init() { catchUpInterval.Store(int64(defaultCatchUpInterval)) }
 
 // listener runs the cross-process change feed for one Store: it holds a
 // dedicated PostgreSQL connection, LISTENs on the store's schema-scoped channel,
@@ -124,7 +136,8 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 		// triggers the safety-net catch-up. Stays here until the connection
 		// breaks (then the outer loop reconnects) or ctx is cancelled.
 		for {
-			waitCtx, cancel := context.WithTimeout(ctx, catchUpInterval)
+			interval := time.Duration(catchUpInterval.Load())
+			waitCtx, cancel := context.WithTimeout(ctx, interval)
 			n, err := conn.WaitForNotification(waitCtx)
 			cancel()
 
@@ -142,7 +155,12 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 				conn = nil
 				break
 			}
-			l.handleNotification(n) // live event; does NOT trigger a catch-up
+			// A live notification we couldn't use (unparseable / possibly
+			// truncated past pg_notify's 8000-byte cap) triggers an IMMEDIATE
+			// catch-up rather than waiting up to catchUpInterval for the ticker.
+			if needCatchUp := l.handleNotification(n); needCatchUp {
+				watermark = l.catchUp(ctx, watermark)
+			}
 		}
 	}
 }
@@ -155,20 +173,21 @@ func (l *listener) listen(ctx context.Context, conn *pgx.Conn) error {
 }
 
 // handleNotification turns one NOTIFY into a store.Event, skipping our own
-// writes (already emitted in-process) and falling back to a catch-up for any
-// unparseable payload (never trust the wire form).
-func (l *listener) handleNotification(n *pgconn.Notification) {
+// writes (already emitted in-process). It returns true when the caller should
+// run an immediate catch-up: an unparseable payload (e.g. one truncated past
+// pg_notify's 8000-byte limit) is never trusted, so we reconcile from real rows
+// right away rather than waiting for the safety ticker.
+func (l *listener) handleNotification(n *pgconn.Notification) (needCatchUp bool) {
 	fe, ok := parseFeedPayload(n.Payload)
 	if !ok {
-		// Malformed/garbage payload — don't trust it; the next catch-up
-		// (or the safety ticker) reconciles from real rows.
-		slog.Debug("pgstore listener: unparseable notification payload", "channel", n.Channel)
-		return
+		slog.Debug("pgstore listener: unparseable notification payload; catching up", "channel", n.Channel)
+		return true
 	}
 	if fe.origin == l.originID {
-		return // our own write — already emitted in-process
+		return false // our own write — already emitted in-process
 	}
 	l.store.emit(fe.ev)
+	return false
 }
 
 // primeWatermark returns the current high-water seq (held an overlap below the
@@ -179,9 +198,13 @@ func (l *listener) handleNotification(n *pgconn.Notification) {
 // is safe if rare).
 func (l *listener) primeWatermark(ctx context.Context) int64 {
 	var maxSeq *int64
+	// MUST cover exactly the same tables as catchUp (entities + relations). If
+	// it included attachments — which consume rela_seq but emit no events — the
+	// watermark could prime ABOVE the highest entity/relation seq and silently
+	// eat the catchUpOverlap budget, skipping a late-committing entity/relation
+	// row. Keep these two queries' table sets identical.
 	const q = `SELECT max(seq) FROM (
-		SELECT seq FROM entities UNION ALL SELECT seq FROM relations
-		UNION ALL SELECT seq FROM attachments) t`
+		SELECT seq FROM entities UNION ALL SELECT seq FROM relations) t`
 	if err := l.store.db.QueryRow(ctx, q).Scan(&maxSeq); err != nil || maxSeq == nil {
 		return 0
 	}
@@ -194,11 +217,14 @@ func (l *listener) primeWatermark(ctx context.Context) int64 {
 // because consumers re-snapshot by id. Errors are logged and the watermark is
 // left unchanged (the next catch-up retries).
 func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
+	// Table set MUST match primeWatermark (entities + relations). `typ` carries
+	// the entity type so catch-up events are structurally identical to the ones
+	// the NOTIFY path emits (relations have no separate type).
 	const q = `
-		SELECT kind, a, b, c, seq FROM (
-			SELECT 'e' AS kind, id      AS a, ''       AS b, ''    AS c, seq FROM entities
+		SELECT kind, a, b, c, typ, seq FROM (
+			SELECT 'e' AS kind, id      AS a, ''       AS b, ''    AS c, type AS typ, seq FROM entities
 			UNION ALL
-			SELECT 'r',         from_id,      rel_type,       to_id,      seq FROM relations
+			SELECT 'r',         from_id,      rel_type,       to_id,      '',          seq FROM relations
 		) t
 		WHERE seq > $1
 		ORDER BY seq`
@@ -213,16 +239,16 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 
 	highest := watermark
 	for rows.Next() {
-		var kind, a, b, c string
+		var kind, a, b, c, typ string
 		var seq int64
-		if err := rows.Scan(&kind, &a, &b, &c, &seq); err != nil {
+		if err := rows.Scan(&kind, &a, &b, &c, &typ, &seq); err != nil {
 			slog.Debug("pgstore listener: catch-up scan failed", "error", err)
 			return watermark
 		}
 		if seq > highest {
 			highest = seq
 		}
-		l.store.emit(catchUpEvent(kind, a, b, c))
+		l.store.emit(catchUpEvent(kind, a, b, c, typ))
 	}
 	if err := rows.Err(); err != nil {
 		slog.Debug("pgstore listener: catch-up rows error", "error", err)
@@ -238,11 +264,11 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 // distinguish create vs update (the row just exists), so it reports an
 // Updated/Created-equivalent "this exists, re-snapshot it" event; consumers
 // treat any event as a re-snapshot trigger, so Updated is the faithful choice.
-func catchUpEvent(kind, a, b, c string) store.Event {
+func catchUpEvent(kind, a, b, c, typ string) store.Event {
 	if kind == "r" {
 		return store.Event{Op: store.EventRelationUpdated, From: a, RelationType: b, To: c}
 	}
-	return store.Event{Op: store.EventEntityUpdated, EntityID: a}
+	return store.Event{Op: store.EventEntityUpdated, EntityType: typ, EntityID: a}
 }
 
 // dropConn closes a broken connection. Callers set their conn to nil afterward
@@ -254,18 +280,34 @@ func dropConn(ctx context.Context, conn *pgx.Conn) {
 }
 
 // reconnect dials a fresh connection, backing off between attempts until it
-// succeeds or ctx is cancelled.
+// succeeds or ctx is cancelled. A fixed 2s backoff (no jitter/cap) is fine for a
+// single dedicated connection. Early failures log at Debug to avoid noise on a
+// transient blip, but after warnAfterFailures consecutive failures it escalates
+// to Warn so a *persistently* dead feed (wrong DSN after restart, DB down for
+// minutes) is visible in default log configs rather than silent.
 func (l *listener) reconnect(ctx context.Context) (*pgx.Conn, error) {
 	const backoff = 2 * time.Second
+	const warnAfterFailures = 5 // ~10s of failures before escalating to Warn
+	failures := 0
 	for {
 		conn, err := pgx.Connect(ctx, l.dsn)
 		if err == nil {
+			if failures >= warnAfterFailures {
+				slog.Warn("pgstore listener: reconnected; cross-process change feed restored",
+					"after_failures", failures)
+			}
 			return conn, nil
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		slog.Debug("pgstore listener: reconnect failed, retrying", "error", err)
+		failures++
+		if failures == warnAfterFailures {
+			slog.Warn("pgstore listener: change feed connection down; retrying",
+				"consecutive_failures", failures, "error", err)
+		} else {
+			slog.Debug("pgstore listener: reconnect failed, retrying", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

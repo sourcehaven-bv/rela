@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -208,4 +209,97 @@ func TestInterleavedWritesAllDelivered(t *testing.T) {
 		}
 	}
 	require.Len(t, seen, n)
+}
+
+// TestListenerReconnects (RR-4GMZD4): kill the listener's backend connection and
+// assert a subsequent write still propagates — proving the reconnect +
+// re-LISTEN + catch-up path works, not just the happy path.
+func TestListenerReconnects(t *testing.T) {
+	schema := freshFeedSchema(t)
+	pgstore.SetCatchUpIntervalForTest(t, 300*time.Millisecond)
+	a := openWriter(t, schema)
+	b := openWriter(t, schema)
+
+	ch, cancel := b.Subscribe(16)
+	defer cancel()
+
+	// Confirm the feed works once.
+	ctx := context.Background()
+	require.NoError(t, a.CreateEntity(ctx, entity.New("PRE-1", "ticket")))
+	waitForEntityEvent(t, ch, "PRE-1", 5*time.Second)
+
+	// Terminate ALL of B's listening backends (the connections doing LISTEN on
+	// B's channel). pg_terminate_backend forces B's listener to error out of
+	// WaitForNotification and reconnect.
+	admin := adminConn(t)
+	_, err := admin.Exec(ctx,
+		`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		 WHERE query LIKE 'LISTEN %' AND pid <> pg_backend_pid()`)
+	require.NoError(t, err)
+
+	// After the kill, B must reconnect and still deliver A's next write (via the
+	// re-LISTEN live path or the catch-up after reconnect).
+	require.NoError(t, a.CreateEntity(ctx, entity.New("POST-1", "ticket")))
+	ev := waitForEntityEvent(t, ch, "POST-1", 10*time.Second)
+	require.Equal(t, "POST-1", ev.EntityID)
+}
+
+// TestMalformedNotificationTriggersCatchUp (RR-11KW9M): a garbage NOTIFY on the
+// channel must not be trusted, and the change it (fails to) describe must still
+// be recovered promptly via the immediate catch-up handleNotification triggers —
+// not only after the 30s ticker.
+func TestMalformedNotificationTriggersCatchUp(t *testing.T) {
+	schema := freshFeedSchema(t)
+	// Long ticker: if recovery happens it MUST be via the parse-failure
+	// immediate catch-up, not the safety poll.
+	pgstore.SetCatchUpIntervalForTest(t, time.Hour)
+	b := openWriter(t, schema)
+
+	ch, cancel := b.Subscribe(16)
+	defer cancel()
+
+	ctx := context.Background()
+	admin := adminConn(t)
+
+	// Insert a row directly (no valid NOTIFY for it), then fire a GARBAGE
+	// notification on B's channel. Parsing fails -> immediate catch-up -> the
+	// directly-inserted row is discovered and emitted.
+	_, err := admin.Exec(ctx,
+		"INSERT INTO "+pgQuoteIdent(schema)+".entities (id, type) VALUES ('GAR-1', 'ticket')")
+	require.NoError(t, err)
+	_, err = admin.Exec(ctx,
+		"SELECT pg_notify('rela_changed_'||$1, 'not-a-valid-payload')", schema)
+	require.NoError(t, err)
+
+	ev := waitForEntityEvent(t, ch, "GAR-1", 5*time.Second)
+	require.Equal(t, "GAR-1", ev.EntityID)
+}
+
+// TestListenerGoroutineExitsOnClose (RR-4GMZD4): opening and closing a store
+// must not leak its listener goroutine. goleak.VerifyNone asserts no goroutine
+// started by Open is still running after Close + pool close. pgx/pgxpool spin up
+// their own background goroutines that outlive a single pool briefly; those are
+// ignored by name so the check targets the listener.
+func TestListenerGoroutineExitsOnClose(t *testing.T) {
+	schema := freshFeedSchema(t)
+
+	dsn := dsnForSchema(t, schema)
+	st, _, closer, err := pgstore.Open(context.Background(), dsn)
+	require.NoError(t, err)
+
+	// Subscribe + a write so the listener goroutine is fully active before we
+	// assert it exits.
+	ch, cancel := st.Subscribe(4)
+	require.NoError(t, st.CreateEntity(context.Background(), entity.New("TKT-1", "ticket")))
+	waitForEntityEvent(t, ch, "TKT-1", 5*time.Second)
+	cancel()
+
+	require.NoError(t, st.Close())     // must stop + join the listener goroutine
+	require.NoError(t, closer.Close()) // close the pool
+
+	goleak.VerifyNone(t,
+		// pgx/pgxpool background goroutines unrelated to our listener.
+		goleak.IgnoreTopFunction("github.com/jackc/pgx/v5/pgxpool.(*Pool).backgroundHealthCheck"),
+		goleak.IgnoreAnyFunction("github.com/jackc/puddle/v2.(*Pool[...]).backgroundHealthCheck"),
+	)
 }

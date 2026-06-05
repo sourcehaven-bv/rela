@@ -2,31 +2,33 @@
 //
 // # Connection ownership
 //
-// pgstore does NOT own a connection or a DSN. New takes an injected [DBTX]
-// handle — in production and in tests this is a *pgxpool.Pool. The wiring
-// layer (internal/appbuild, behind //go:build postgres) builds the pool from
-// the resolved DSN, runs [Migrate], and passes the pool here; it also owns
-// closing the pool. Store.Close only tears down the in-process watcher.
+// For the query path, pgstore does NOT own a connection or a DSN. New takes an
+// injected [DBTX] handle — in production and in tests this is a *pgxpool.Pool.
+// The wiring layer (internal/appbuild, behind //go:build postgres) builds the
+// pool from the resolved DSN, runs [Migrate], and passes the pool here; it also
+// owns closing the pool.
 //
 // A pool (not a single pgx.Tx) is required: the store opens its own
 // transactions for multi-statement atomic operations (RenameEntity,
 // cascade DeleteEntity) and must serve concurrent operations safely.
 //
-// # Single-writer scope
+// # Change feed (cross-process)
 //
-// The watcher is in-process only, mirroring memstore/fsstore: events are
-// emitted after each committed write to local subscribers via non-blocking
-// sends (dropped if a subscriber's buffer is full). This build targets a
-// single rela-server process owning the database.
+// In addition to the injected query pool, a store opened via [Open] owns a
+// change-feed listener (see feed.go / listener.go) holding its OWN dedicated
+// connection, started in Open and stopped in Close. Each committed write emits
+// a NOTIFY on a schema-scoped channel; the listener turns OTHER processes'
+// notifications into store.Events on the same in-process Subscribe() fan-out as
+// local writes, so multiple processes against one database see each other's
+// changes. Store.Close stops the listener (closing its connection) before
+// closing subscriber channels; it does not close the query pool.
 //
-// Event delivery is best-effort in BOTH directions: a subscriber never sees an
-// uncommitted write (emit happens after commit), but it may MISS an event — if
-// the process crashes between commit and emit, or a slow subscriber's buffer is
-// full, the committed write is not redelivered. Consumers that need a complete
-// view re-snapshot on (re)connect (the data-entry SSE feed and MCP watcher do).
-// Every row carries created_at / updated_at / seq so a future cross-process
-// change feed with catch-up from a watermark can be added without a schema
-// migration.
+// Event delivery is best-effort: a subscriber never sees an uncommitted write
+// (emit and NOTIFY happen on/after commit), but it may MISS an event (full
+// buffer, or a notification lost while disconnected). A seq-watermark catch-up
+// recovers missed cross-process writes; consumers also re-snapshot. A store
+// built with [New] (no listener wiring, e.g. the conformance harness) has only
+// the in-process watcher.
 //
 // # Search
 //

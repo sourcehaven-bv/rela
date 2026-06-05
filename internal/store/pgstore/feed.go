@@ -66,9 +66,18 @@ func resolveChannel(ctx context.Context, db DBTX) (string, error) {
 }
 
 // feedEvent is the wire form of a change: the writing store's origin plus the
-// fields needed to reconstruct a store.Event. Encoded as
-// origin SEP kind SEP op SEP a SEP b SEP c, where (a,b,c) are (id,"","") for an
-// entity or (from,relType,to) for a relation.
+// fields needed to reconstruct a store.Event. Encoded as 7 SEP-joined fields:
+//
+//	origin SEP kind SEP op SEP entityType SEP a SEP b SEP c
+//
+// where (a,b,c) are (id,"","") for an entity or (from,relType,to) for a
+// relation, and entityType is the entity's type ("" for relations).
+//
+// The separator (\x1f, a control char) cannot appear in an id or relation type
+// because storeutil.ValidateID rejects control characters. entityType is NOT
+// validated for control chars on write; a type containing \x1f would inject an
+// extra field, fail the 7-field parse, and degrade that one notification to a
+// catch-up (handleNotification returns needCatchUp) — never a corruption.
 type feedEvent struct {
 	origin string
 	ev     store.Event

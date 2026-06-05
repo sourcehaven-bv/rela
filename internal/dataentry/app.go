@@ -184,6 +184,9 @@ type App struct {
 // own lifecycle managed by the store and is stopped during store
 // close, not here — asymmetric on purpose: dataentry doesn't own the
 // store, only its config subscription.
+// StopWatching is lifecycle-only and must be called from a single goroutine
+// (it is the StartWatching counterpart). The stop fields are not synchronized;
+// concurrent Start/Stop is not supported.
 func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()

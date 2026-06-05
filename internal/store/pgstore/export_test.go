@@ -11,11 +11,13 @@ import (
 
 // SetCatchUpIntervalForTest shortens the listener's safety-net catch-up poll so
 // tests don't wait the production 30s, restoring it on cleanup. Test-only.
+// catchUpInterval is an atomic, so this is safe vs the listener goroutines that
+// read it concurrently.
 func SetCatchUpIntervalForTest(t *testing.T, d time.Duration) {
 	t.Helper()
-	prev := catchUpInterval
-	catchUpInterval = d
-	t.Cleanup(func() { catchUpInterval = prev })
+	prev := catchUpInterval.Load()
+	catchUpInterval.Store(int64(d))
+	t.Cleanup(func() { catchUpInterval.Store(prev) })
 }
 
 // FeedPayloadForTest builds a NOTIFY payload for an entity event with the given
