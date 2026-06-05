@@ -66,4 +66,4 @@ follow-up (SQL-pushdown ticket), not a TODO in code
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** to be filled in after `/pr` runs
+**PR:** https://github.com/sourcehaven-bv/rela/pull/903
