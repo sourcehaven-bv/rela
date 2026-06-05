@@ -17,6 +17,35 @@
 // on deny it returns [*ForbiddenError] and records a `denied-write`
 // audit row. The data-entry HTTP handler maps that error to a
 // structured 403 response.
+//
+// # Request pipeline
+//
+// One write call moves through these steps:
+//
+//	     ┌────────────┐  WriteRequest{Op, Subject}
+//	     │  caller    │ ─────────────────────────────────┐
+//	     └────────────┘                                  │
+//	                                                     ▼
+//	┌───────────────────┐    ForPrincipal(p)      ┌─────────────┐
+//	│  *Declarative     │ ───────────────────────▶│  *Request   │
+//	│  (policy + graph) │                         │  (per-call) │
+//	└───────────────────┘                         └──────┬──────┘
+//	                                                     │
+//	                                                     │ AuthorizeWrite
+//	                                                     ▼
+//	                                          ┌────────────────────┐
+//	                                          │     Decision       │
+//	                                          │ Allow/RuleKind/    │
+//	                                          │ RuleID/Reason/     │
+//	                                          │ Attributions       │
+//	                                          └────────────────────┘
+//
+// A [*Request] is per-call, not goroutine-safe, and amortizes one
+// member-of walk across every per-entity probe in the same logical
+// operation. [WithRequest]/[FromContext] thread it through call chains
+// so the same Request is reused by downstream resolvers (e.g. the
+// affordance resolver in a list response) instead of each call
+// re-walking the graph.
 package acl
 
 import (
