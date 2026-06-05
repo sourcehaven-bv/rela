@@ -128,6 +128,32 @@ schema, and `jq` recipes for common queries.
 `.rela/audit/` is gitignored by convention — audit content is
 per-machine and should not be committed.
 
+### Retention
+
+`rela` **never deletes audit logs**. The backend rotates to a new
+`YYYY-MM-DD.jsonl` file each UTC day and appends; it has no pruning,
+expiry, or cleanup path. The default behaviour is therefore
+retention-safe — the application cannot, on its own, drop a record
+below any required retention window.
+
+Retention is an **operational control**, owned by the deployment, not
+the application. For environments subject to a security-log retention
+requirement (e.g. **POLICY-017 §4 / PROCEDURE-f4cu: security logs
+retained ≥ 12 months**):
+
+- Retain everything under `.rela/audit/` for **at least 12 months**.
+  Back it up or ship it off-box if the working tree is ephemeral
+  (containers, CI runners, re-provisioned hosts), since the directory
+  is gitignored and lives only on the local disk.
+- If you prune at all, prune **only beyond** the retention window. The
+  daily file naming makes this exact: delete files whose date is older
+  than your window, never on a shorter `-mtime`. See
+  [audit-log.md](./audit-log.md#retention) for a compliant example.
+
+There is no built-in enforcement of the minimum — `rela` cannot police
+an operator's `rm`. The guarantee it provides is the converse: it will
+not delete logs for you.
+
 ### `data-entry` user attribution
 
 By default the data-entry server records `principal.user: "unknown"`
