@@ -5,7 +5,7 @@ title: Multi-writer support for pgstore (cross-process change feed)
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Summary

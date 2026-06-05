@@ -5,47 +5,51 @@ title: 'Review: Multi-writer support for pgstore (cross-process change feed)'
 status: in-progress
 ---
 
-<!-- @managed: claude-workflow v1 -->
+&lt;!-- @managed: claude-workflow v1 --&gt;
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just ci` exit 0; postgres suite `go test -race -tags postgres` green against live DB)
+- [x] Lint clean (part of `just ci`)
+- [x] Coverage maintained (`just coverage-check` in `just ci`: Summary 0 errors)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (cranky-code-reviewer + go-architect) — round 1
+- [x] All critical review-responses addressed (RR-CPZGAK, RR-ITQN87)
+- [x] All significant review-responses addressed (RR-97VOON, RR-GNS360, RR-11KW9M, RR-4GMZD4, RR-9UGZ67, RR-NYGRRG)
+- [x] Self-reviewed the diff for unrelated changes — also reviewed via `/crit` (round 2, approved, 0 outstanding comments)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-CPZGAK, RR-ITQN87 (critical); RR-97VOON, RR-GNS360,
+RR-11KW9M, RR-4GMZD4, RR-9UGZ67, RR-NYGRRG (significant); RR-1QTG37, RR-MZOKST
+(minor). All `addressed`.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+- AC1 (write committed by process A delivered to process B's Subscribe within bounded delay): **PASS** — `TestCrossProcessPropagation`, `TestInterleavedWritesAllDelivered`.
+- AC2 (disconnected process recovers missed writes via seq watermark catch-up): **PASS** — `TestCatchUpRecoversMissedEvents`, `TestListenerReconnects` (kills listener backend via `pg_terminate_backend`, asserts a later write still propagates), `TestMalformedNotificationTriggersCatchUp`.
+- AC3 (single-process behavior + conformance suite unchanged): **PASS** — full `storetest` conformance + fuzz green; `just ci` exit 0; no `//go:build !race` tags.
+- AC4 (no schema migration beyond TKT-M8400): **PASS** — feed reconciles from existing `seq`/`updated_at` columns; no new migration files. Cross-process SSE parity for entity create/update/delete verified by `TestStoreEventBridgeCrossProcessSSE`; relations/attachments explicitly out of the live feed (RR-GNS360 choice a).
+- Resilience: `TestSelfNotificationFiltered` (no self-echo double-emit), `TestChannelIsolationAcrossSchemas` (per-schema channel), `TestListenerGoroutineExitsOnClose` (goleak, no goroutine/connection leak).
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] User-facing documentation updated — `docs-project/entities/guides/GUIDE-postgres-backend.md` "Multiple writers" section (operator-focused after crit); CLAUDE.md multi-writer change-feed bullet; pgstore package doc.
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: guide + project-doc update covered inline; no separate docs-checklist warranted for this scope)
+- [x] ~~Docs-checklist marked as done~~ (N/A: see above)
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** N/A
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
@@ -53,4 +57,4 @@ Skip this section for bugs and internal refactors.
 - [ ] All CI checks pass
 - [ ] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** &lt;!-- filled by /pr --&gt;
