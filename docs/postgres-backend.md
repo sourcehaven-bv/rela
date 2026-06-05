@@ -9,9 +9,10 @@ search index — in a PostgreSQL database instead. It is selected at compile
 time with the `postgres` Go build tag and shipped as separate binaries:
 `rela-postgres` and `rela-server-postgres`.
 
-Use it when you want a single server process backed by a real database
-(durable, concurrent reads, SQL-queryable) rather than a directory of
-markdown files.
+Use it when you want a real database behind rela (durable, concurrent,
+SQL-queryable) rather than a directory of markdown files — including
+deployments with **multiple server processes** sharing one database (see
+[Multiple writers](#multiple-writers)).
 
 ## What still lives on disk
 
@@ -86,18 +87,41 @@ GIN index for ranked full-text plus `pg_trgm` for substring and fuzzy
 matching) — there is no bleve index. Text search matches the same fields
 as the default backend: entity ID, content, and string-valued properties.
 
-## Scope and limitations
+## Multiple writers
 
-This build targets a **single server process owning the database**:
+The PostgreSQL build supports **multiple processes writing to one database**
+— for example several `rela-server` instances behind a load balancer, or a
+`rela-server` plus an occasional `rela` CLI write. Each process learns about
+the others' committed writes through a PostgreSQL `LISTEN/NOTIFY` change feed:
 
-- Live-reload / change events are in-process only. Running more than one
-  writer against the same database is not supported yet — a second writer's
-  changes would not be observed by the first process's search index.
-- The desktop app (`rela-desktop`) is filesystem-only; there is no
-  PostgreSQL desktop build.
+- On each committed write, the writing process emits a notification carrying
+  the changed entity's identity. Other processes receive it on a dedicated
+  listening connection and turn it back into a change event — the same event
+  an in-process write produces. This drives cross-server **live-reload**: a
+  browser connected to one server reflects an entity created, updated, or
+  deleted on another server.
+- Because notifications are not durable (a process that is restarting or
+  briefly disconnected misses them), each process also runs a periodic
+  catch-up that reconciles from the monotonic sequence number every row
+  carries. The feed is therefore self-healing: a missed notification is
+  recovered on the next catch-up.
+
+Practical notes:
+
+- All processes that should see each other's writes must point at the **same
+  database and schema** (they do — it's the same project's data). The feed is
+  scoped to the schema, so unrelated projects in other schemas don't interfere.
+- Each process holds **one extra long-lived connection** for listening. If
+  that connection can't be established, the process still runs (and its own
+  writes still drive its own live-reload) — only cross-process events are
+  unavailable, and a warning is logged.
+- The live feed covers **entity** changes (create/update/delete). Relation and
+  attachment edits are not pushed to browsers live (they weren't in the
+  single-server case either); a page reload reflects them.
+
+## Other scope notes
+
+- The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL
+  desktop build.
 - There is no automatic migration of an existing filesystem project into
   PostgreSQL; the database starts empty.
-
-Every row carries created/updated timestamps and a monotonic sequence
-number, so cross-process change propagation can be added later without a
-schema migration.

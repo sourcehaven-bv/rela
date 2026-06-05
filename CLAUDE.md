@@ -175,10 +175,23 @@ Rules when touching this:
   `metamodel.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
   backs entities/relations/attachments/search only. A postgres deployment
   still needs a `--project` dir.
-- **Single-writer scope.** The postgres watcher is in-process only (mirrors
-  fsstore/memstore). Rows carry `created_at`/`updated_at`/`seq` so a future
-  cross-process change feed is additive (no migration). Don't wire a second
-  writer against one database yet.
+- **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
+  cross-process writes via PostgreSQL `LISTEN/NOTIFY`: each committed write does
+  `pg_notify(<schema-scoped channel>, '<origin>:<kind>:<op>:<id>')` inside its
+  transaction (so the 5 single-statement writes are wrapped in a tx); a listener
+  goroutine (own connection, started in `Open`, stopped in `Close`) turns remote
+  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. A
+  per-store random `originID` in the payload filters self-echoes (the listener
+  skips its own writes — local writes are already emitted in-process). NOTIFY is
+  best-effort, so a `seq > watermark` catch-up (overlap window + idempotent
+  re-snapshot; runs on connect/reconnect/safety-ticker, NOT per notification)
+  recovers anything missed. The channel is schema-scoped (`rela_changed_<schema>`)
+  because LISTEN is database-global — all processes of one deployment share a
+  schema/channel. If the listener can't connect, the store degrades with a
+  warning (local events still work). Exact ordering (xid8 + `pg_snapshot_xmin`)
+  is the documented upgrade, not built. The data-entry SSE feed consumes this
+  via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
+  in-process single-writer by nature.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
