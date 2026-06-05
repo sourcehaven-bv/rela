@@ -85,6 +85,33 @@ func (r *Request) walkMembers(ctx context.Context) []string {
 // globals plus local-role probes (direct edges from any group-set
 // member to the entity, and when inherit_roles_through is configured,
 // per-ancestor probes).
+//
+// The resolver runs two independent graph walks and crosses them
+// against the policy's role-relations:
+//
+//	principal.User                            target entity
+//	     │                                          │
+//	     │ member-of                                │ inherit_roles_through
+//	     ▼ (walkMembers, depth-capped)              ▼ (ancestors, depth-capped)
+//	┌─────────┐                                ┌─────────┐
+//	│ Members │                                │ Chain   │  (entity + ancestors)
+//	│  set M  │                                │  C      │
+//	└────┬────┘                                └────┬────┘
+//	     │                                          │
+//	     └──────────────┬───────────────────────────┘
+//	                    ▼
+//	       for each role-relation rel ∈ policy.RoleRelations (sorted):
+//	       for each (m ∈ M, target ∈ C):
+//	           if graph.HasEdge(m, rel, target):
+//	               attribute Confers(rel) with Source picked from
+//	               {Local, LocalViaGroup, LocalViaAncestor,
+//	                LocalViaGroupAndAncestor} by (m==user?, target==entity?)
+//
+// The cross-product is bounded by depthCap on both walks, the
+// member-of and inherit_roles_through closures usually being tiny
+// (under 10 nodes each in practice). Graph errors on either walk
+// abort the surrounding loop — under-attribution is safer than
+// over-granting.
 func (r *Request) computeForEntity(ctx context.Context, entityID string) []RoleAttribution {
 	globals := r.Globals(ctx)
 	out := append([]RoleAttribution(nil), globals.Attributions...)

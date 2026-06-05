@@ -69,6 +69,21 @@ func (k SourceKind) String() string {
 //	LocalViaAncestor                → Ancestor, Relation
 //	LocalViaGroupAndAncestor        → Group, Ancestor, Relation
 //
+// Visually, the four Local* variants correspond to the four corners of
+// a (member==user?, target==entity?) decision square — the resolver
+// picks the variant in buildLocalSource based on which corner the
+// matched HasEdge probe landed in:
+//
+//	                     target == entity              target != entity
+//	                 ┌──────────────────────────┬────────────────────────────┐
+//	member == user   │  Local                   │  LocalViaAncestor          │
+//	                 │  (Relation)              │  (Ancestor, Relation)      │
+//	                 ├──────────────────────────┼────────────────────────────┤
+//	member != user   │  LocalViaGroup           │  LocalViaGroupAndAncestor  │
+//	(group hop)      │  (Group, Relation)       │  (Group, Ancestor,         │
+//	                 │                          │   Relation)                │
+//	                 └──────────────────────────┴────────────────────────────┘
+//
 // Source is comparable; safe to use as a map key when paired with the
 // role name (see RoleAttribution).
 type Source struct {

@@ -5,6 +5,18 @@ package acl
 // The sum exists so RelationSubject can carry both endpoints
 // (FromID/ToID) without the source/target ambiguity that overloading
 // EntityType produced in v0.
+//
+// The sealed sum, visually:
+//
+//	Subject (sealed)
+//	├── EntitySubject   { Type, ID }
+//	│       used for: Create / Update / Delete / Rename of an entity
+//	└── RelationSubject { Type, FromType, FromID }
+//	        used for: Create / Delete of a relation
+//
+// A nil Subject is a programmer error. AuthorizeWrite panics so the
+// bug surfaces at the call site rather than silently denying or
+// silently allowing.
 type Subject interface{ isSubject() }
 
 // EntitySubject identifies an entity write target.
