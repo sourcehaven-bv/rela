@@ -5,7 +5,7 @@ title: Route view-side per-field rendering through widget registry
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Goal
