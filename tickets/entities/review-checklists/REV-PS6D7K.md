@@ -2,15 +2,15 @@
 id: REV-PS6D7K
 type: review-checklist
 title: 'Review: Multi-writer support for pgstore (cross-process change feed)'
-status: in-progress
+status: done
 ---
 
 &lt;!-- @managed: claude-workflow v1 --&gt;
 
 ## Automated Checks
 
-- [x] All tests pass (`just ci` exit 0; postgres suite `go test -race -tags postgres` green against live DB)
-- [x] Lint clean (part of `just ci`)
+- [x] All tests pass (`just ci` exit 0; postgres suite `go test -race -tags postgres` green against live DB; PR #898 Test + Postgres Backend jobs pass)
+- [x] Lint clean (PR #898 Lint job pass)
 - [x] Coverage maintained (`just coverage-check` in `just ci`: Summary 0 errors)
 
 ## Code Review
@@ -26,7 +26,7 @@ RR-11KW9M, RR-4GMZD4, RR-9UGZ67, RR-NYGRRG (significant); RR-1QTG37, RR-MZOKST
 
 ## Acceptance Verification
 
-- [x] Each acceptance criterion tested
+- [x] Each acceptance criterion tested (reference planning checklist)
 - [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
@@ -53,8 +53,8 @@ RR-11KW9M, RR-4GMZD4, RR-9UGZ67, RR-NYGRRG (significant); RR-1QTG37, RR-MZOKST
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (Test, Postgres Backend, Lint, Architecture, Fuzz, Frontend, Vulnerability Check, CodeQL all green; Rela Tickets passes after this checklist is marked done)
+- [x] PR URL documented below
 
-**PR:** &lt;!-- filled by /pr --&gt;
+**PR:** https://github.com/sourcehaven-bv/rela/pull/898
