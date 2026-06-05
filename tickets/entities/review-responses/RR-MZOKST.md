@@ -4,7 +4,8 @@ type: review-response
 title: Only the 3 entity broadcasts are safe to remove; git/refresh broadcasts must stay
 finding: 'Design-review verification: the full set of dataentry broadcast call sites is: api_v1.go:592 (entity created), :905 (entity updated, gated on entityChanged), :963 (entity deleted) — these 3 go through entityManager->store, so the store-event bridge covers them and they''re SAFE TO REMOVE. BUT three others must NOT be touched: handlers_git.go:104 broadcastGitStatus (after git merge/rebase, no store write), watcher.go:115 broadcast(''refresh'') (config data-entry.yaml change), watcher.go:164 broadcast(''git'') (after git fetch). The plan said ''remove the 3 inline broadcasts'' which is correct, but the implementer must NOT over-remove — only the 3 entity ones.'
 severity: minor
-status: open
+resolution: 'Implemented exactly as pinned: removed ONLY the 3 entity broadcasts at api_v1.go (~592 created, ~905 updated, ~963 deleted), replaced with comments noting the store-event bridge now covers them. Left untouched: handlers_git.go broadcastGitStatus, watcher.go broadcast(''refresh'') and broadcast(''git'') — none involve a store write, so they remain their own broadcast source.'
+status: addressed
 ---
 
 ## Resolution (plan update)

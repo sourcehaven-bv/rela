@@ -89,35 +89,21 @@ as the default backend: entity ID, content, and string-valued properties.
 
 ## Multiple writers
 
-The PostgreSQL build supports **multiple processes writing to one database**
-— for example several `rela-server` instances behind a load balancer, or a
-`rela-server` plus an occasional `rela` CLI write. Each process learns about
-the others' committed writes through a PostgreSQL `LISTEN/NOTIFY` change feed:
+You can run **multiple processes against one database** — for example several
+`rela-server` instances behind a load balancer, or a `rela-server` plus an
+occasional `rela` CLI write. Each process sees the others' changes, so the UI
+stays live across servers: an entity created, updated, or deleted on one server
+appears in browsers connected to another, without a manual refresh.
 
-- On each committed write, the writing process emits a notification carrying
-  the changed entity's identity. Other processes receive it on a dedicated
-  listening connection and turn it back into a change event — the same event
-  an in-process write produces. This drives cross-server **live-reload**: a
-  browser connected to one server reflects an entity created, updated, or
-  deleted on another server.
-- Because notifications are not durable (a process that is restarting or
-  briefly disconnected misses them), each process also runs a periodic
-  catch-up that reconciles from the monotonic sequence number every row
-  carries. The feed is therefore self-healing: a missed notification is
-  recovered on the next catch-up.
+What you need to know to run it:
 
-Practical notes:
-
-- All processes that should see each other's writes must point at the **same
-  database and schema** (they do — it's the same project's data). The feed is
-  scoped to the schema, so unrelated projects in other schemas don't interfere.
-- Each process holds **one extra long-lived connection** for listening. If
-  that connection can't be established, the process still runs (and its own
-  writes still drive its own live-reload) — only cross-process events are
-  unavailable, and a warning is logged.
-- The live feed covers **entity** changes (create/update/delete). Relation and
-  attachment edits are not pushed to browsers live (they weren't in the
-  single-server case either); a page reload reflects them.
+- All processes that should share live updates must point at the **same database
+  and schema** — which they do when they serve the same project.
+- Each process opens **one extra connection** to receive change notifications.
+  If it can't, the process still works normally; only the live cross-server
+  updates are unavailable (a warning is logged).
+- Live updates cover **entity** create/update/delete. Relation and attachment
+  edits are reflected on the next page load rather than pushed live.
 
 ## Other scope notes
 

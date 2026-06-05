@@ -4,7 +4,8 @@ type: review-response
 title: SSE bridge maps only entity events; relations emit events nobody broadcasts, attachments emit none
 finding: 'Design-review verification: (1) Relation writes emit EventRelationCreated/Updated/Deleted from the store, but NO dataentry code broadcasts relation changes to SSE today (api_v1 relation handlers don''t call broadcast*). The PATCH handler explicitly does NOT broadcast on relation-only changes (api_v1.go:903 comment ''Relation-only changes don''t fire an entity:updated event today''). (2) AttachFile/DeleteAttachment emit NO store events at all (attachment.go) — so attachments can''t be bridged even if we wanted to. So the plan''s ''bridge store entity events to SSE'' leaves relation changes from a REMOTE process invisible to the browser, and there''s no parity question for attachments (no events exist). This is a scope/correctness gap: cross-process live-reload would work for entities but not relations.'
 severity: significant
-status: open
+resolution: 'Implemented choice (a) — match local behavior cross-process: the store-event bridge maps only EventEntity{Created,Updated,Deleted} -> broadcastEntityEvent; relation/attachment events are ignored (pumpStoreEvents in watcher.go). This is exact parity with the 3 inline entity broadcasts that were removed. Relation live-reload remains a non-feature locally and remotely (documented in GUIDE as ''reflected on next page load''); attachments emit no store events. Conscious scope decision recorded in AC, not an oversight.'
+status: addressed
 ---
 
 ## Resolution (plan update)

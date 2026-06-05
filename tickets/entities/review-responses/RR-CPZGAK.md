@@ -4,7 +4,8 @@ type: review-response
 title: LISTEN/NOTIFY is database-global — per-test schemas cross-talk on 'rela_changed'
 finding: 'Design-review verification: PostgreSQL NOTIFY channels are DATABASE-global, not schema-scoped. The conformance harness (testdb_test.go) gives each test its own schema on ONE shared database. Two tests running in parallel would both LISTEN on the constant channel ''rela_changed'' and each would receive the OTHER''s notifications — cross-test contamination, and flaky multi-writer assertions. A fixed channel name ''rela_changed'' will fail under parallel test execution (and is also wrong in production if two unrelated rela databases ever share a server — they don''t, since the channel is per-database, but the per-SCHEMA test isolation is the real break).'
 severity: critical
-status: open
+resolution: 'Implemented the schema-qualified channel: resolveChannel() derives the channel as feedChannelPrefix + current_schema(), resolved identically by the producer (pg_notify) and the listener (LISTEN), via pgQuoteIdentifier. Each test owns a schema, so the channel is per-test isolated; production processes of one deployment share a schema => same channel. Documented the deployment constraint (all processes must share DB+schema) in GUIDE-postgres-backend.md. Verified by TestChannelIsolationAcrossSchemas (writes in schema A not seen by a listener in schema B).'
+status: addressed
 ---
 
 ## Resolution (plan update)
