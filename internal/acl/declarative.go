@@ -2,8 +2,8 @@ package acl
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -12,133 +12,75 @@ import (
 // a [Policy] (loaded from `acl.yaml`) with the [principal.Principal]
 // carried on each request's context to answer [ACL.AuthorizeWrite].
 //
-// v0 scope:
+// Every [WriteRequest] carries a [Subject] (sum of [EntitySubject] /
+// [RelationSubject]) — the resolver dispatches on the variant and
+// runs the full path: group expansion via member-of, containment
+// inheritance through `inherit_roles_through`, and typed-Source
+// attribution for the audit log.
 //
-//   - **Global roles only.** A principal's effective role set is
-//     `Assignments[user]` plus the `default` role (if defined). Groups
-//     and transitive `member-of` expansion are deferred to v1.
+// Semantics:
+//
 //   - **Union semantics.** Any role granting write on the target
 //     entity type → allow. The returned RuleID names the first role
 //     that matched, for debuggability.
 //   - **Delegate-X tamper resistance.** Writes to a relation type
 //     listed in [Policy.RoleRelations] require the writer to hold the
 //     declared permission. See [RoleRelationDef.RequiresPermission].
-//
-// PR 2 wires this in unit tests only; PR 3 makes [appbuild.Discover]
-// load it.
+//   - **Unstamped principals are hard-denied.** A principal with
+//     User="" / User="unknown" or Tool="" / Tool="unknown" fails the
+//     [ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
+//     with a Reason that names ErrUnstampedPrincipal.
 type Declarative struct {
 	policy *Policy
+	graph  Graph // required: NewDeclarative rejects nil
 }
 
-// NewDeclarative wraps a [Policy] as an [ACL]. The Policy must be
-// non-nil; the caller (typically appbuild) loads it via
-// [LoadPolicy] and falls back to [NopACL] when no `acl.yaml` exists.
-func NewDeclarative(p *Policy) *Declarative {
-	return &Declarative{policy: p}
+// NewDeclarative wraps a [Policy] + [Graph] as an [ACL]. The Policy
+// must be non-nil; the Graph supplies the read-side access the
+// resolver needs for member-of walks and ancestor probes. Tests that
+// don't exercise group expansion can pass [NullGraph]; production
+// wiring (appbuild) passes a store-backed [StoreGraph].
+func NewDeclarative(p *Policy, g Graph) (*Declarative, error) {
+	if p == nil {
+		return nil, errors.New("acl: NewDeclarative: policy must be non-nil")
+	}
+	if g == nil {
+		return nil, errors.New("acl: NewDeclarative: graph must be non-nil")
+	}
+	return &Declarative{policy: p, graph: g}, nil
 }
 
-// AuthorizeWrite implements [ACL.AuthorizeWrite].
+// Policy returns the policy this Declarative was constructed with.
+// Exposed so downstream consumers (chiefly the affordance resolver)
+// can read role/grant definitions from the same source the resolver
+// uses for role attribution — eliminating the mismatched-pair foot-
+// cannon where a caller might pass policyA to the affordance resolver
+// while wiring a Declarative built from policyB (RR-WTLD).
 //
-// Order of checks:
-//
-//  1. If `req.RelationType` names a role-relation that declares a
-//     `requires_permission`, the writer must hold that permission.
-//     Deny with `RuleKind="delegate-permission"` on miss.
-//  2. Otherwise (and for entity writes), any role in the principal's
-//     effective set whose `write` list contains the target type — or
-//     the wildcard `"*"` — allows. The matching role's name surfaces
-//     as `RuleID`.
-//  3. No role granted → deny with `RuleKind="role-grant"`,
-//     `RuleID="-"`.
-//
-// For relation writes, `req.EntityType` carries the source entity's
-// type (the caller in entitymanager looks it up). Empty EntityType
-// is treated as the literal target `"relation"` — denied by default
-// since no role would grant write on a synthetic type, surfacing the
-// misuse in the deny reason.
+// **The returned *Policy must be treated as immutable** (RR-9GN3).
+// The resolver caches no policy state; every AuthorizeWrite reads
+// fields back through this pointer. Mutating Roles, Assignments,
+// or any nested map invalidates the resolver's safety guarantees
+// from the next call onward, including the unstamped-principal
+// check and the delegate-X gates. Callers that need a mutated
+// policy build a fresh Declarative with [NewDeclarative].
+func (d *Declarative) Policy() *Policy { return d.policy }
+
+// AuthorizeWrite implements [ACL.AuthorizeWrite]. Opens a Request for
+// the principal carried on ctx, then delegates to
+// [Request.AuthorizeWrite] which dispatches on Subject variant. An
+// unstamped principal short-circuits to a structured deny.
 func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision {
-	p := principal.From(ctx)
-	roles := d.effectiveRoles(p)
-
-	// 1. Delegate-X gate for role-relation writes.
-	if req.RelationType != "" {
-		if rr, ok := d.policy.RoleRelations[req.RelationType]; ok && rr.RequiresPermission != "" {
-			if !d.holdsPermission(roles, rr.RequiresPermission) {
-				return Decision{
-					Allow:    false,
-					RuleKind: "delegate-permission",
-					RuleID:   rr.RequiresPermission,
-					Reason: fmt.Sprintf("writing '%s' relations requires permission '%s'",
-						req.RelationType, rr.RequiresPermission),
-				}
-			}
+	r, err := d.ForPrincipal(principal.From(ctx))
+	if err != nil {
+		return Decision{
+			Allow:    false,
+			RuleKind: "role-grant",
+			RuleID:   "-",
+			Reason:   fmt.Sprintf("acl.ForPrincipal: %v", err),
 		}
 	}
-
-	// 2. Type-level write grant. Union across roles; first hit wins
-	//    for RuleID (deterministic via effectiveRoles ordering).
-	target := req.EntityType
-	if target == "" {
-		target = "relation"
-	}
-	for _, name := range roles {
-		role, ok := d.policy.Roles[name]
-		if !ok {
-			continue
-		}
-		if roleGrantsWrite(role, target) {
-			return Decision{Allow: true, RuleKind: "role-grant", RuleID: name}
-		}
-	}
-
-	return Decision{
-		Allow:    false,
-		RuleKind: "role-grant",
-		RuleID:   "-",
-		Reason:   fmt.Sprintf("no role grants write on type '%s'", target),
-	}
-}
-
-// effectiveRoles returns the role names applicable to p, in priority
-// order: explicit assignment first, then the `default` role (when
-// defined). The order is stable so [AuthorizeWrite] deterministically
-// reports the same RuleID for a given Allow.
-//
-// v0 is global-roles-only: no group expansion. If
-// `Assignments[user]` names an undefined role, it is dropped (a
-// load-time warning will have been emitted in v1; v0 silently
-// ignores — operators discover the typo via `analyze_*` style
-// follow-up tickets). [EveryoneRole] is always appended last if defined.
-func (d *Declarative) effectiveRoles(p principal.Principal) []string {
-	var out []string
-	if name, ok := d.policy.Assignments[p.User]; ok {
-		if _, defined := d.policy.Roles[name]; defined {
-			out = append(out, name)
-		}
-	}
-	if _, ok := d.policy.Roles[EveryoneRole]; ok {
-		// Only append it if it isn't already the principal's explicit
-		// role (defensive against `assignments: {alice: everyone}`).
-		if !slices.Contains(out, EveryoneRole) {
-			out = append(out, EveryoneRole)
-		}
-	}
-	return out
-}
-
-// holdsPermission reports whether any of `roles` lists `perm` in its
-// Permissions. Union semantics — one match is enough.
-func (d *Declarative) holdsPermission(roles []string, perm string) bool {
-	for _, name := range roles {
-		role, ok := d.policy.Roles[name]
-		if !ok {
-			continue
-		}
-		if slices.Contains(role.Permissions, perm) {
-			return true
-		}
-	}
-	return false
+	return r.AuthorizeWrite(ctx, req)
 }
 
 // roleGrantsWrite reports whether `role.Write` covers `target` —

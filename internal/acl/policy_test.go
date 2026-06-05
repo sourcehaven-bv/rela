@@ -335,6 +335,54 @@ func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
 	}
 }
 
+// RR-NIGK: a blank entry in inherit_roles_through is rejected at load.
+// A blank entry would otherwise reach StoreGraph with an empty
+// RelationQuery.Type meaning "all relations" — silently widening
+// containment to every relation type in the workspace.
+func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"empty string", "inherit_roles_through:\n  - \"\"\n"},
+		{"whitespace", "inherit_roles_through:\n  - \"  \"\n"},
+		{"empty among valid", "inherit_roles_through:\n  - belongs-to\n  - \"\"\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on blank inherit_roles_through entry; got nil")
+			}
+		})
+	}
+}
+
+// RR-NIGK / RR-ZB1V: a blank key in role_relations is rejected —
+// would otherwise gate every relation write on the delegate
+// permission, breaking writes the operator didn't mean to gate.
+// Covers both the empty-string and whitespace-only cases, mirroring
+// the inherit_roles_through test's coverage.
+func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"empty string", "role_relations:\n  \"\":\n    confers: contributor\n"},
+		{"whitespace", "role_relations:\n  \"  \":\n    confers: contributor\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on blank role_relations key; got nil")
+			}
+		})
+	}
+}
+
 // writeTempPolicy writes the given YAML to a temp file and returns its
 // path. Lifetime is scoped to the test.
 func writeTempPolicy(t *testing.T, yaml string) string {
