@@ -158,13 +158,11 @@ straight port.
 
 **Documentation Impact:**
 
-- [ ] User guide / reference docs — N/A: internal store API
-- [ ] CLI help text — N/A
-- [ ] CLAUDE.md — could mention the DSL in the store backends rule,
-but adding it now would be premature (no consumer); revisit when
-the first consumer lands.
-- [ ] README.md — N/A
-- [ ] API docs — godoc on the new types is the API doc
+- [x] ~~User guide / reference docs~~ (N/A: internal store API)
+- [x] ~~CLI help text~~ (N/A: no CLI changes)
+- [x] ~~CLAUDE.md~~ (N/A: no consumer yet; revisit when the first consumer lands so the rule lands with a concrete example)
+- [x] ~~README.md~~ (N/A: no project-level changes)
+- [x] ~~API docs~~ (N/A: godoc on the new types is the API doc)
 - [x] N/A - Internal change, no user-facing docs needed
 
 ## Design Review
