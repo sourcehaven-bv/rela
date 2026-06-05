@@ -93,8 +93,10 @@ land with PR 4 wiring)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** *to be filled after `gh pr create`*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/905 (base:
+`feat/store-graphquery-dsl`; stacks on PR 1 /
+[#903](https://github.com/sourcehaven-bv/rela/pull/903))
