@@ -79,6 +79,19 @@ func policyFromYAML(t *testing.T, src string) *acl.Policy {
 	return &p
 }
 
+// declFor builds a Declarative wrapping `p` with [acl.NullGraph] —
+// suitable for the affordance unit tests below, which don't exercise
+// group expansion or local-role edges (those are pinned by the
+// feature tests in features_test.go).
+func declFor(t *testing.T, p *acl.Policy) *acl.Declarative {
+	t.Helper()
+	d, err := acl.NewDeclarative(p, acl.NullGraph{})
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	return d
+}
+
 // ctxAs builds a request context for the named principal. user varies
 // across the table even where current tests happen to use one value;
 // keeping it explicit documents which principal each case exercises.
@@ -106,7 +119,7 @@ roles:
 assignments:
   alice: admin
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -129,7 +142,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -157,7 +170,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -189,7 +202,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -218,7 +231,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -258,7 +271,7 @@ assignments:
 `)
 	// alice has role a + everyone. everyone grants both; a grants status.
 	// Union → both writable.
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -287,7 +300,7 @@ role_relations:
 `)
 	// alice --owner-of--> T-1 confers owner on T-1.
 	lookup := newStubLookup([3]string{"alice", "owner-of", "T-1"})
-	r, err := affordances.New(p, testMeta(t), lookup)
+	r, err := affordances.New(testMeta(t), lookup, declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -320,7 +333,7 @@ assignments:
   alice: triager
   bob: admin
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -346,7 +359,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -377,7 +390,7 @@ roles:
         - field: status
           when: "entity.nonexistent_field == 1"
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected compile error for unknown field reference")
 	}
@@ -410,7 +423,7 @@ assignments:
 	// alice holds zeta (assigned) + everyone (implicit). Both deny
 	// status. Effective roles sorted: everyone, zeta → "everyone" is
 	// the first denier and thus the attributed role.
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -444,7 +457,7 @@ roles:
       ticket:
         - field: stauts
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected error for unknown field target")
 	}
@@ -465,7 +478,7 @@ roles:
         - field: status
           option: nonexistent
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected error for unknown option")
 	}
@@ -483,7 +496,7 @@ roles:
       ticket:
         - relation: nonexistent-rel
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected error for unknown relation type")
 	}
@@ -508,7 +521,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -568,7 +581,7 @@ assignments:
   alice: triager
 `)
 	lookup := &ctxRecordingLookup{stubLookup: newStubLookup([3]string{"T-1", "blocks", "T-9"})}
-	r, err := affordances.New(p, testMeta(t), lookup)
+	r, err := affordances.New(testMeta(t), lookup, declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -589,4 +602,91 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// countingGraph is a minimal acl.Graph wrapper that records every
+// OutgoingRelations call. Used to prove that a per-request acl.Request
+// attached via acl.WithRequest is reused across multiple resolver
+// invocations on the same ctx — avoiding the per-entity member-of
+// re-walk that motivated RR-JJYW.
+type countingGraph struct {
+	outgoingCalls int
+	hasEdgeCalls  int
+}
+
+func (g *countingGraph) HasEdge(_ context.Context, _, _, _ string) bool {
+	g.hasEdgeCalls++
+	return false
+}
+
+func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string) ([]string, error) {
+	g.outgoingCalls++
+	return nil, nil
+}
+
+// RR-JJYW: when ctx carries an acl.Request via acl.WithRequest, the
+// affordance resolver reuses it across per-entity calls instead of
+// opening a fresh Request each time. The fresh-per-call shape (the
+// pre-fix code) re-walked member-of N times for an N-entity list
+// response, defeating the very memoisation Request was designed to
+// provide.
+//
+// We pin the contract via the OutgoingRelations call counter on a
+// minimal Graph. With one Request attached, Globals computes once;
+// repeated FieldVerdicts calls add zero member-of calls. Without
+// the attached Request, each FieldVerdicts opens its own Request
+// and increments the counter.
+func TestResolver_ReusesRequestFromContext(t *testing.T) {
+	p := policyFromYAML(t, `
+roles:
+  viewer:
+    visible:
+      ticket:
+        - field: status
+assignments:
+  alice: viewer
+`)
+	g := &countingGraph{}
+	d, err := acl.NewDeclarative(p, g)
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	r, err := affordances.New(testMeta(t), newStubLookup(), d)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	e := ticket("T-1", nil)
+
+	// Baseline: fresh-Request-per-call (no acl.WithRequest on ctx)
+	// MUST re-walk member-of, otherwise the test below trivially
+	// passes (RR-K7CT: was a silent t.Skipf — gone now). If a
+	// future refactor makes Globals lazy enough to skip the walk
+	// even on the fresh path, this test loses its
+	// regression-detection capability, so fail loud.
+	baselineCtx := ctxAs("alice")
+	_ = r.FieldVerdicts(baselineCtx, e)
+	freshFirstCallOutgoing := g.outgoingCalls
+	_ = r.FieldVerdicts(baselineCtx, e)
+	freshSecondCallOutgoing := g.outgoingCalls - freshFirstCallOutgoing
+	if freshSecondCallOutgoing == 0 {
+		t.Fatalf("test premise broken: second fresh-per-call FieldVerdicts did not re-walk member-of (got %d additional outgoing calls); the without-Request baseline cannot discriminate the with-Request fix, so the rest of this test would be vacuous",
+			freshSecondCallOutgoing)
+	}
+
+	// With Request attached: subsequent calls must not re-walk.
+	g.outgoingCalls = 0
+	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+	scopedCtx := acl.WithRequest(ctxAs("alice"), req)
+	_ = r.FieldVerdicts(scopedCtx, e)
+	firstCallOutgoing := g.outgoingCalls
+	_ = r.FieldVerdicts(scopedCtx, e)
+	secondCallOutgoing := g.outgoingCalls - firstCallOutgoing
+
+	if secondCallOutgoing != 0 {
+		t.Errorf("with acl.WithRequest: second call added %d OutgoingRelations calls; want 0 (Request should memoise Globals)",
+			secondCallOutgoing)
+	}
 }

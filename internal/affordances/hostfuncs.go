@@ -14,21 +14,26 @@ import (
 var errArgType = errors.New("affordances: host function argument type mismatch")
 
 // hasRole reports whether the principal holds role_name scoped to the
-// given entity: global roles ∪ local roles conferred on the entity.
-// Signature: has_role(user_record, entity_record, role_name) bool.
+// given entity: globals (incl. group-expanded) ∪ ancestor-conferred ∪
+// direct-local. Signature: has_role(user_record, entity_record, role_name) bool.
 //
 // The user and entity records are ignored beyond confirming arity —
 // the binding closes over the principal and entity, so the predicate
 // can't ask about a different user or entity than the one in scope.
-func (bc *bindingContext) hasRole(ctx context.Context, args []predicate.Value) (predicate.Value, error) {
+//
+// Source of truth is bc.entityRoles, computed by the resolver via
+// acl.Declarative.ForPrincipal(...).ForEntity(...) before the
+// bindingContext is built (RR-JRPZ). This is the same set the outer
+// resolver uses to select which roles' grants apply to this entity;
+// keeping the predicate aligned eliminates the verdict/authz split
+// where the outer loop says "editor applies" but has_role("editor")
+// returned false because editor flowed via ancestor inheritance.
+func (bc *bindingContext) hasRole(_ context.Context, args []predicate.Value) (predicate.Value, error) {
 	role, ok := stringArg(args, 2)
 	if !ok {
 		return nil, errArgType
 	}
-	if bc.globalRoles[role] {
-		return predicate.NewBool(true), nil
-	}
-	return predicate.NewBool(bc.holdsLocalRole(ctx, role)), nil
+	return predicate.NewBool(bc.entityRoles[role]), nil
 }
 
 // hasGlobalRole reports whether the principal holds role_name as a
@@ -82,19 +87,6 @@ func stringInList(_ context.Context, args []predicate.Value) (predicate.Value, e
 		}
 	}
 	return predicate.NewBool(false), nil
-}
-
-// holdsLocalRole reports whether the principal holds role via a
-// role-relation edge to the in-scope entity. For each role-relation
-// type R conferring role, it checks principal --R--> entity. v1 =
-// direct local roles only.
-func (bc *bindingContext) holdsLocalRole(ctx context.Context, role string) bool {
-	for _, relType := range bc.localRoleRelations(role) {
-		if bc.lookup.HasEdge(ctx, bc.userID, relType, bc.entity.ID) {
-			return true
-		}
-	}
-	return false
 }
 
 // stringArg returns the string value at args[i] when args has exactly

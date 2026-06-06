@@ -29,7 +29,11 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	resolver, err := affordances.New(&policy, app.Meta(), storeRelationLookup{st: app.store})
+	declarative, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store))
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	resolver, err := affordances.New(app.Meta(), storeRelationLookup{st: app.store}, declarative)
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}

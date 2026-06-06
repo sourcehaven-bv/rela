@@ -62,7 +62,15 @@ func ResolverFromProfile(
 	if policy == nil || !policy.HasAffordanceGrants() {
 		return NopFieldVerdictResolver{}, nil
 	}
-	resolver, err := affordances.New(policy, meta, storeRelationLookup{st: st})
+	// PR 3 wires affordances.New through a Declarative built here with
+	// NullGraph. Proper StoreGraph wiring + a dedicated `Services.
+	// ACLDeclarative()` accessor lands in PR 4 so the affordance
+	// resolver and the write path provably share one *acl.Declarative.
+	declarative, derr := acl.NewDeclarative(policy, acl.NullGraph{})
+	if derr != nil {
+		return nil, fmt.Errorf("dataentry: building acl.Declarative for affordances: %w", derr)
+	}
+	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, declarative)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling acl.yaml affordance predicates: %w", err)
 	}

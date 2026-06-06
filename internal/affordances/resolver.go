@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -51,16 +52,17 @@ type PolicyResolver struct {
 	meta   *metamodel.Metamodel
 	lookup RelationLookup
 
+	// declarative sources role attribution via acl.Declarative —
+	// groups, containment, and typed-Source attribution. Required
+	// (never nil after [New] returns); [New] rejects a nil argument.
+	declarative *acl.Declarative
+
 	// envs holds the compiled predicate env per entity type, reused
 	// across grants of that type.
 	envs map[string]*predicate.Env
 
 	// grants is indexed by (role, entityType) → compiled grant blocks.
 	grants map[grantKey]*compiledGrants
-
-	// localRoleRelations maps a conferred role name → the relation
-	// types that confer it (from policy.RoleRelations).
-	localRoleRelations map[string][]string
 }
 
 type grantKey struct {
@@ -87,9 +89,13 @@ type compiledGrants struct {
 // New compiles the policy's affordance grants against the metamodel
 // and returns a PolicyResolver. Every grant's `when:` predicate is
 // compiled up front; all compile errors are collected and joined so an
-// operator sees every failure in one pass (DR-S2). meta and lookup
-// must be non-nil; policy may be nil (yields an all-permissive
-// resolver).
+// operator sees every failure in one pass (DR-S2). All arguments must
+// be non-nil.
+//
+// The policy is read from `declarative.Policy()` — the same object
+// the resolver uses for role attribution — so the two cannot drift
+// (RR-WTLD). Callers that want an all-permissive resolver wire
+// [NopFieldVerdictResolver] at the dispatch boundary instead.
 //
 // The full *metamodel.Metamodel is required (not a narrower slice):
 // the resolver can be asked about any entity type at runtime, and for
@@ -97,29 +103,35 @@ type compiledGrants struct {
 // and coerce values) and the relation defs (to validate relation
 // grant targets). Narrowing to a per-type view would just move the
 // whole-metamodel dependency to the caller.
-func New(policy *acl.Policy, meta *metamodel.Metamodel, lookup RelationLookup) (*PolicyResolver, error) {
+//
+// The lookup argument is consumed by predicate host functions
+// (has_relation, count_relations). acl.Graph and
+// affordances.RelationLookup overlap on HasEdge but the latter
+// carries OutgoingCounts; consolidating them is a follow-up cleanup.
+func New(
+	meta *metamodel.Metamodel,
+	lookup RelationLookup, declarative *acl.Declarative,
+) (*PolicyResolver, error) {
 	if meta == nil {
 		return nil, errors.New("affordances: New: meta must be non-nil")
 	}
 	if lookup == nil {
 		return nil, errors.New("affordances: New: lookup must be non-nil")
 	}
+	if declarative == nil {
+		return nil, errors.New("affordances: New: declarative must be non-nil")
+	}
+	policy := declarative.Policy()
 	r := &PolicyResolver{
-		policy:             policy,
-		meta:               meta,
-		lookup:             lookup,
-		envs:               map[string]*predicate.Env{},
-		grants:             map[grantKey]*compiledGrants{},
-		localRoleRelations: map[string][]string{},
+		policy:      policy,
+		meta:        meta,
+		lookup:      lookup,
+		declarative: declarative,
+		envs:        map[string]*predicate.Env{},
+		grants:      map[grantKey]*compiledGrants{},
 	}
 	if policy == nil {
 		return r, nil
-	}
-
-	for confRel, def := range policy.RoleRelations {
-		if def.Confers != "" {
-			r.localRoleRelations[def.Confers] = append(r.localRoleRelations[def.Confers], confRel)
-		}
 	}
 
 	var errs []error
@@ -399,22 +411,88 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 // bindingFor resolves the effective role set for (principal, entity)
 // and builds the binding context shared across grant evaluations for
 // this call. Returns nil bc when no policy roles apply.
+//
+// Role resolution flows through [acl.Declarative.ForPrincipal] /
+// [Request.ForEntity], which includes group expansion and containment
+// inheritance.
 func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *bindingContext, roles []string) {
 	p := principal.From(ctx)
-	global := r.globalRoles(p)
-	roles = r.effectiveRoles(ctx, p, e, global)
+	global, roles := r.resolveViaDeclarative(ctx, p, e)
 	if len(roles) == 0 {
 		return nil, nil
+	}
+	entityRoles := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		entityRoles[r] = true
 	}
 	bc = &bindingContext{
 		principal:   p,
 		entity:      e,
+		entityRoles: entityRoles,
 		globalRoles: global,
 		lookup:      r.lookup,
 		userID:      p.User,
 		resolver:    r,
 	}
 	return bc, roles
+}
+
+// resolveViaDeclarative resolves the effective role set for
+// (principal, entity) via acl.Declarative. When ForPrincipal succeeds,
+// attribution flows from the resolver (group expansion, containment
+// inheritance, local roles). When it errors (the unstamped-principal
+// case), the policy's `everyone` role still applies — by design
+// `everyone` is held implicitly by every principal, authenticated or
+// not (see [acl.EveryoneRole] doc). Without this fallback, anonymous
+// read/visible grants would silently degrade to "no role at all" on
+// the unstamped path.
+func (r *PolicyResolver) resolveViaDeclarative(
+	ctx context.Context, p principal.Principal, e *entity.Entity,
+) (global map[string]bool, roles []string) {
+	global = map[string]bool{}
+	if r.policy == nil {
+		// Defensive: FieldVerdicts / RelationVerdicts already short-circuit
+		// when policy is nil, but bindingFor is now the sole entry point
+		// and a future caller without that guard would otherwise panic on
+		// r.policy.Roles below.
+		return global, nil
+	}
+	// RR-JJYW: reuse the per-request Request scope when one is attached
+	// to ctx (list handlers do this). Falls back to opening a fresh
+	// Request per call when none is attached — back-compat for single-
+	// entity handlers and tests.
+	req := acl.FromContext(ctx)
+	if req == nil {
+		var err error
+		req, err = r.declarative.ForPrincipal(p)
+		if err != nil {
+			// Unstamped principal: only `everyone` (if declared) applies.
+			if _, ok := r.policy.Roles[acl.EveryoneRole]; ok {
+				global[acl.EveryoneRole] = true
+				roles = []string{acl.EveryoneRole}
+			}
+			return global, roles
+		}
+	}
+	gr := req.Globals(ctx)
+	for _, a := range gr.Attributions {
+		global[a.Role] = true
+	}
+	attrs := req.ForEntity(ctx, e.Type, e.ID)
+	seen := make(map[string]bool, len(attrs))
+	roles = make([]string, 0, len(attrs))
+	for _, a := range attrs {
+		if seen[a.Role] {
+			continue
+		}
+		seen[a.Role] = true
+		roles = append(roles, a.Role)
+	}
+	// Stable order so multi-role deny attribution is deterministic
+	// (RR-QV18 / DR-S3). Matches the legacy effectiveRoles ordering
+	// the affordance verdicts have always assumed.
+	sort.Strings(roles)
+	return global, roles
 }
 
 // passes reports whether a grant's predicate evaluates true. A nil
