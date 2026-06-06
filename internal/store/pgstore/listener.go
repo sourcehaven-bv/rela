@@ -34,6 +34,8 @@ const defaultCatchUpInterval = 30 * time.Second
 // listener self-heals within this interval by re-running the catch-up query.
 // An atomic so tests can shorten it (SetCatchUpIntervalForTest) without racing
 // the listener goroutines that read it. Holds a time.Duration as an int64.
+// A non-positive value disables the poll entirely (the listener blocks on the
+// live notification alone) — used only by tests that isolate the live feed.
 var catchUpInterval atomic.Int64
 
 func init() { catchUpInterval.Store(int64(defaultCatchUpInterval)) }
@@ -136,8 +138,15 @@ func (l *listener) run(ctx context.Context, conn *pgx.Conn) {
 		// triggers the safety-net catch-up. Stays here until the connection
 		// breaks (then the outer loop reconnects) or ctx is cancelled.
 		for {
+			// A non-positive interval disables the safety-net poll: wait on ctx
+			// alone so only a live notification (or shutdown) wakes the loop. Used
+			// by tests that must prove the live feed in isolation; production always
+			// holds a positive interval.
 			interval := time.Duration(catchUpInterval.Load())
-			waitCtx, cancel := context.WithTimeout(ctx, interval)
+			waitCtx, cancel := ctx, func() {}
+			if interval > 0 {
+				waitCtx, cancel = context.WithTimeout(ctx, interval)
+			}
 			n, err := conn.WaitForNotification(waitCtx)
 			cancel()
 
