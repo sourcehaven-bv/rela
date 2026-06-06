@@ -6,9 +6,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
+
+// notifyDisabled suppresses the producer's pg_notify when set, so a test can
+// commit an ordinary write whose live notification never fires and assert that
+// the seq-watermark catch-up still recovers it. Production never sets it. An
+// atomic so it's safe vs. the writer goroutines that read it; the listener
+// tests that flip it run sequentially (no t.Parallel), like catchUpInterval.
+var notifyDisabled atomic.Bool
 
 // The cross-process change feed (TKT-WZYWM9). Writes emit a PostgreSQL
 // NOTIFY carrying the changed identity; a listener in another process turns
@@ -178,6 +186,9 @@ func feedOp(kind, op string) (store.EventOp, bool) {
 func (s *Store) notify(ctx context.Context, q DBTX, ev store.Event) {
 	if s.channel == "" {
 		return
+	}
+	if notifyDisabled.Load() {
+		return // test hook: force the catch-up path to be the only delivery channel
 	}
 	// pg_notify takes (text, text), both bound parameters — no injection surface.
 	_, _ = q.Exec(ctx, `SELECT pg_notify($1, $2)`, s.channel, notifyPayload(s.originID, ev))
