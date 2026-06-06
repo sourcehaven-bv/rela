@@ -79,4 +79,4 @@ IMPL-XC7S "AC mapping" for tests + results.
 - [ ] All CI checks pass
 - [ ] PR URL documented below
 
-**PR:** *to be filled after `gh pr create`*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/911 (base: feat/affordances-acl-declarative)
