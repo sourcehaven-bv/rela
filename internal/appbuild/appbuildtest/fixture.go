@@ -44,11 +44,12 @@ import (
 type Option func(*testConfig)
 
 type testConfig struct {
-	fs    storage.FS
-	paths *project.Context
-	store store.Store
-	audit audit.Audit
-	acl   acl.ACL
+	fs          storage.FS
+	paths       *project.Context
+	store       store.Store
+	audit       audit.Audit
+	acl         acl.ACL
+	declarative *acl.Declarative
 }
 
 // WithStore replaces the default empty memstore with a caller-supplied
@@ -95,8 +96,26 @@ func WithAudit(a audit.Audit) Option {
 // ACL backend. Tests that assert on the deny path pass
 // [acl.ReadOnlyACL]; tests that don't care can omit this option and
 // rely on the allow-all default.
+//
+// For tests exercising the affordance resolver path, use
+// [WithDeclarative] instead — it wires both ACL and the concrete
+// resolver so [appbuild.Services.ACLDeclarative] returns non-nil.
 func WithACL(a acl.ACL) Option {
 	return func(c *testConfig) { c.acl = a }
+}
+
+// WithDeclarative wires the concrete *acl.Declarative as both the ACL
+// (write authz path) and the resolver (affordance path). The fixture
+// fails fast if d is nil — that's a setup bug, not "I want NopACL"
+// (use [WithACL] for that). RR-FGJR: without this option, an
+// appbuildtest fixture that injected a Declarative as ACL would
+// silently get NopFieldVerdictResolver because
+// Services.ACLDeclarative() returned nil.
+func WithDeclarative(d *acl.Declarative) Option {
+	return func(c *testConfig) {
+		c.declarative = d
+		c.acl = d
+	}
 }
 
 // New constructs a *appbuild.Services bundle suitable for tests. By
@@ -189,6 +208,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		ScriptEngine:  scriptEngine,
 		SearchCloser:  searchCloser(searchBackend),
 		ACL:           aclImpl,
+		Declarative:   cfg.declarative,
 		Audit:         auditSink,
 	})
 	if err != nil {

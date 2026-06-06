@@ -33,7 +33,8 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
-	resolver, err := affordances.New(app.Meta(), storeRelationLookup{st: app.store}, declarative)
+	resolver, err := affordances.New(app.Meta(),
+		storeRelationLookup{st: app.store}, declarative)
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}

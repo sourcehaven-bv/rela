@@ -3,6 +3,7 @@ package appbuildtest_test
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -70,4 +71,23 @@ func TestNew_NilMetaPanics(t *testing.T) {
 		}
 	}()
 	_ = appbuildtest.New(nil)
+}
+
+// RR-FGJR: WithDeclarative must wire both the ACL (entitymanager
+// gets it as acl.ACL) and the concrete *acl.Declarative
+// (svc.ACLDeclarative() returns non-nil for the affordance resolver).
+func TestNew_WithDeclarative_WiresBothACLAndDeclarative(t *testing.T) {
+	meta := parseTestMetamodel(t)
+	d, err := acl.NewDeclarative(&acl.Policy{}, acl.NullGraph{})
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+
+	svc := appbuildtest.New(meta, appbuildtest.WithDeclarative(d))
+	if svc.ACL() != acl.ACL(d) {
+		t.Errorf("svc.ACL() = %T, want the supplied *acl.Declarative", svc.ACL())
+	}
+	if svc.ACLDeclarative() != d {
+		t.Errorf("svc.ACLDeclarative() = %p, want %p (the supplied Declarative)", svc.ACLDeclarative(), d)
+	}
 }
