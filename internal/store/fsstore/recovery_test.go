@@ -2,6 +2,7 @@ package fsstore_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -14,6 +15,47 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
 )
+
+// TestDeleteEntity_RelationRemoveError_FailsSecure pins issue #888: when a
+// relation file cannot be removed during a cascade delete, the store must
+// abort with an error and NOT delete the entity — never leaving an entity
+// removed while one of its relations is orphaned.
+func TestDeleteEntity_RelationRemoveError_FailsSecure(t *testing.T) {
+	mem := storage.NewMemFS()
+	ctx := context.Background()
+
+	// Seed an entity with a relation through a normal store.
+	s1 := openStore(t, mem)
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
+	require.NoError(t, s1.CreateEntity(ctx, entity.New("SOL-1", "solution")))
+	_, err := s1.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+	require.NoError(t, err)
+	require.NoError(t, s1.Close())
+
+	// Reopen with an FS that fails to remove relation files.
+	errFS := storage.NewErrorFS(mem)
+	errFS.RemoveError = errors.New("simulated I/O failure")
+	errFS.RemoveErrorOn = func(path string) bool { return strings.Contains(path, "/relations/") }
+	rooted, err := storage.NewRootedFS(errFS, "/")
+	require.NoError(t, err)
+	cfg := newConfig(mem)
+	cfg.FS = errFS
+	cfg.Rooted = rooted
+	s2, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	defer s2.Close()
+
+	// Cascade delete must fail (the relation file can't be removed)...
+	_, err = s2.DeleteEntity(ctx, "REQ-1", true)
+	require.Error(t, err)
+
+	// ...and the entity must still exist — not orphaned behind a deleted
+	// entity. The relation is still present too.
+	_, err = s2.GetEntity(ctx, "REQ-1")
+	require.NoError(t, err, "entity must survive a failed cascade delete")
+	_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	require.NoError(t, err, "relation must survive a failed cascade delete")
+}
 
 // --- Orphaned temp file cleanup ---
 
