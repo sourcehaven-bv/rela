@@ -28,7 +28,7 @@ describe('Badge', () => {
   })
 
   describe('schema-based colors', () => {
-    it('uses schema store styles when available', () => {
+    it('uses schema store styles when available (explicit property)', () => {
       const schemaStore = useSchemaStore()
       schemaStore.styles = {
         status: {
@@ -39,7 +39,7 @@ describe('Badge', () => {
       }
 
       const wrapper = mount(Badge, {
-        props: { value: 'open' },
+        props: { value: 'open', property: 'status' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain('badge--blue')
@@ -63,7 +63,7 @@ describe('Badge', () => {
       expect(wrapper.find('.badge').classes()).toContain('badge--red')
     })
 
-    it('falls back to searching all properties when property not specified', () => {
+    it('returns the gray fallback when property is absent (RR-UD2D removed the cross-property scan)', () => {
       const schemaStore = useSchemaStore()
       schemaStore.styles = {
         status: {
@@ -75,7 +75,10 @@ describe('Badge', () => {
         props: { value: 'done' },
       })
 
-      expect(wrapper.find('.badge').classes()).toContain('badge--green')
+      // Pre-refactor this scanned every property looking for a match.
+      // Removed (RR-UD2D) because the scan was non-deterministic when
+      // the same value was styled under multiple properties.
+      expect(wrapper.find('.badge').classes()).toContain('badge--gray')
     })
   })
 
@@ -123,7 +126,7 @@ describe('Badge', () => {
       }
 
       const wrapper = mount(Badge, {
-        props: { value: 'OPEN' },
+        props: { value: 'OPEN', property: 'status' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain('badge--blue')
@@ -131,7 +134,7 @@ describe('Badge', () => {
 
     it('handles underscores in value lookup', () => {
       const wrapper = mount(Badge, {
-        props: { value: 'in_progress' },
+        props: { value: 'in_progress', property: 'status' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain('badge--orange')
@@ -139,7 +142,7 @@ describe('Badge', () => {
 
     it('converts spaces to underscores for lookup', () => {
       const wrapper = mount(Badge, {
-        props: { value: 'in progress' },
+        props: { value: 'in progress', property: 'status' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain('badge--orange')
@@ -147,7 +150,7 @@ describe('Badge', () => {
 
     it('handles mixed case with underscores', () => {
       const wrapper = mount(Badge, {
-        props: { value: 'In_Progress' },
+        props: { value: 'In_Progress', property: 'status' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain('badge--orange')
@@ -171,7 +174,7 @@ describe('Badge', () => {
       }
 
       const wrapper = mount(Badge, {
-        props: { value: 'value' },
+        props: { value: 'value', property: 'test' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain(cssClass)
@@ -186,7 +189,7 @@ describe('Badge', () => {
       }
 
       const wrapper = mount(Badge, {
-        props: { value: 'value' },
+        props: { value: 'value', property: 'test' },
       })
 
       expect(wrapper.find('.badge').classes()).toContain('badge--gray')

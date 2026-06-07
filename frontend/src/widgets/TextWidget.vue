@@ -16,7 +16,9 @@ function onInput(event: Event) {
 </script>
 
 <template>
+  <span v-if="mode === 'display'" class="display-value">{{ stringValue }}</span>
   <input
+    v-else
     :id="id"
     type="text"
     :class="{ 'is-error': !!error }"
