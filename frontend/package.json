@@ -28,7 +28,7 @@
     "font-awesome": "^4.7.0",
     "marked": "^18.0.3",
     "mermaid": "^11.15.0",
-    "pinia": "^2.1.7",
+    "pinia": "^3.0.4",
     "rrule": "^2.8.1",
     "slim-select": "^3.4.3",
     "vue": "^3.5.35",
