@@ -10,14 +10,26 @@ import (
 )
 
 // SetCatchUpIntervalForTest shortens the listener's safety-net catch-up poll so
-// tests don't wait the production 30s, restoring it on cleanup. Test-only.
-// catchUpInterval is an atomic, so this is safe vs the listener goroutines that
-// read it concurrently.
+// tests don't wait the production 30s, restoring it on cleanup. A non-positive
+// d disables the poll entirely (the listener blocks on the live notification
+// alone) — used to isolate the live feed. Test-only. catchUpInterval is an
+// atomic, so this is safe vs the listener goroutines that read it concurrently.
 func SetCatchUpIntervalForTest(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := catchUpInterval.Load()
 	catchUpInterval.Store(int64(d))
 	t.Cleanup(func() { catchUpInterval.Store(prev) })
+}
+
+// SetNotifyDisabledForTest suppresses the producer's pg_notify for the test's
+// duration (restored on cleanup), so an ordinary write commits without a live
+// notification and the seq-watermark catch-up is the only delivery channel.
+// Test-only. notifyDisabled is an atomic; the listener tests that use it run
+// sequentially (no t.Parallel).
+func SetNotifyDisabledForTest(t *testing.T, disabled bool) {
+	t.Helper()
+	prev := notifyDisabled.Swap(disabled)
+	t.Cleanup(func() { notifyDisabled.Store(prev) })
 }
 
 // FeedPayloadForTest builds a NOTIFY payload for an entity event with the given
