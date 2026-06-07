@@ -110,15 +110,24 @@ func (a *App) NewRouter() http.Handler {
 }
 
 // attachACLRequest opens an acl.Request for the principal stamped on
-// ctx (by stampAuditPrincipal above) and attaches it via
-// [acl.WithRequest], so downstream affordance + read-gate consumers
-// reuse the one member-of walk per HTTP request (RR-JJYW). Wired only
-// when the ACL is a *acl.Declarative — NopACL / ReadOnlyACL paths
-// don't open Requests.
+// ctx (by stampAuditPrincipal above) and attaches it via both
+// [acl.WithRequest] and [withReadGate], so downstream affordance +
+// read-gate consumers reuse the one member-of walk per HTTP request
+// (RR-JJYW). Wired only when the ACL is a *acl.Declarative — NopACL /
+// ReadOnlyACL paths don't open Requests.
 //
-// An unstamped principal (the ForPrincipal error case) skips
-// attachment; downstream consumers fall back to the legacy
-// per-call Request and the "only everyone applies" rule.
+// **Scope (RR-T15E).** Only `/api/` requests pay the cost — and only
+// `/api/` requests fail loud on misconfiguration. The SPA shell at
+// `/` and static assets at `/static/` MUST stay reachable even when
+// ACL is configured and the principal stamper has a bug; otherwise a
+// misconfigured stamper renders the UI as a raw JSON 500 and locks
+// operators out of the very surface they need to recover from it.
+//
+// **Fail-loud (RR-875A).** Inside `/api/` an
+// [acl.ErrUnstampedPrincipal] returns 500 with a structured error
+// rather than silently proceeding with no Request attached. The
+// earlier silent fall-through turned ACL into fail-open under a
+// stamper misconfig.
 //
 // RR-8ZGO: respect a Request already attached by an upstream handler
 // (chiefly tests that wrap the handler with their own
@@ -127,15 +136,25 @@ func (a *App) NewRouter() http.Handler {
 // makes the test composition story safer.
 func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ctx := r.Context()
 		if acl.FromContext(ctx) != nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 		req, err := d.ForPrincipal(principal.From(ctx))
-		if err == nil {
-			ctx = acl.WithRequest(ctx, req)
+		if err != nil {
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_unstamped_principal",
+				"Principal could not be resolved under ACL",
+				err.Error())
+			return
 		}
+		ctx = acl.WithRequest(ctx, req)
+		ctx = withReadGate(ctx, aclReadGate{req: req})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

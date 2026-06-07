@@ -92,7 +92,7 @@ func (g *fakeGraph) OutgoingRelations(_ context.Context, from, relType string) (
 
 func newTestDeclarative(t *testing.T, p *Policy, g Graph) *Declarative {
 	t.Helper()
-	d, err := NewDeclarative(p, g)
+	d, err := NewDeclarative(p, g, NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -139,15 +139,18 @@ func TestForPrincipal_UnstampedRejected(t *testing.T) {
 
 func TestNewDeclarative_RejectsNil(t *testing.T) {
 	t.Parallel()
-	// The constructor must reject nil policy and nil graph at
-	// construction time — silently producing a half-built Declarative
-	// would defer the failure to a downstream symptom that's harder
-	// to diagnose.
-	if _, err := NewDeclarative(nil, NullGraph{}); err == nil {
+	// The constructor must reject nil policy, graph, and graphQueryer
+	// at construction time — silently producing a half-built
+	// Declarative would defer the failure to a downstream symptom
+	// that's harder to diagnose.
+	if _, err := NewDeclarative(nil, NullGraph{}, NullGraphQueryer{}); err == nil {
 		t.Error("NewDeclarative(nil policy, ...) returned nil error; want error")
 	}
-	if _, err := NewDeclarative(&Policy{}, nil); err == nil {
-		t.Error("NewDeclarative(..., nil graph) returned nil error; want error")
+	if _, err := NewDeclarative(&Policy{}, nil, NullGraphQueryer{}); err == nil {
+		t.Error("NewDeclarative(..., nil graph, ...) returned nil error; want error")
+	}
+	if _, err := NewDeclarative(&Policy{}, NullGraph{}, nil); err == nil {
+		t.Error("NewDeclarative(..., nil graphQueryer) returned nil error; want error")
 	}
 }
 

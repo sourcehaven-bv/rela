@@ -21,6 +21,20 @@ type GraphQuery struct {
 	EntityType  string
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
+
+	// WhereIDs is a result-set predicate: when non-empty, only entities
+	// whose ID is in the slice may match. It composes with the inbound /
+	// outbound predicates via AND.
+	//
+	// **Semantics for GraphCount.** WhereIDs constrains `matched` but
+	// does NOT affect `total`. `total` always reflects the full
+	// cardinality of EntityType. This lets a caller ask
+	// "of these N specific ids, how many match the predicate?" while
+	// keeping the unfiltered population accessible. A future
+	// implementer who folds WhereIDs into `total` (so total == matched
+	// for every single-id check) would silently break the ACL Visible
+	// path — storetest pins the contract.
+	WhereIDs []string
 }
 
 // RelationPredicate restricts which relations the surrounding

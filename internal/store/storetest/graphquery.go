@@ -248,6 +248,64 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		require.Equal(t, 2, matched, "2 of 3 tickets are alice-owned")
 		require.Equal(t, 3, total, "3 tickets exist regardless of predicate")
 	})
+
+	t.Run("WhereIDs_constrains_matched", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2", "TKT-3")
+		seedGraphQueryEntities(t, s, "person", "alice")
+		mustRel(t, s, "alice", "owns", "TKT-1")
+		mustRel(t, s, "alice", "owns", "TKT-2")
+		mustRel(t, s, "alice", "owns", "TKT-3")
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			WhereIDs:   []string{"TKT-2"},
+			HasInbound: &store.RelationPredicate{
+				Endpoints: []string{"alice"},
+				OfTypes:   []string{"owns"},
+			},
+		})
+		require.Equal(t, []string{"TKT-2"}, got, "only the listed id may match")
+	})
+
+	t.Run("WhereIDs_does_not_affect_total", func(t *testing.T) {
+		// Pins the documented predicate-vs-candidate semantics: a
+		// single-id Visible check returns matched∈{0,1} while total
+		// still reflects the full type cardinality. A backend that
+		// folds WhereIDs into total breaks Visible silently.
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2")
+
+		matched, total, err := s.GraphCount(ctx(), store.GraphQuery{
+			EntityType: "ticket",
+			WhereIDs:   []string{"nonexistent"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 0, matched, "no entity has id nonexistent")
+		require.Equal(t, 2, total, "total ignores WhereIDs")
+	})
+
+	t.Run("WhereIDs_with_no_predicate_filters_by_id_alone", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2", "TKT-3")
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			WhereIDs:   []string{"TKT-1", "TKT-3"},
+		})
+		require.Equal(t, []string{"TKT-1", "TKT-3"}, got)
+	})
+
+	t.Run("WhereIDs_no_match_returns_empty", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
+
+		got := runGraphQuery(t, s, store.GraphQuery{
+			EntityType: "ticket",
+			WhereIDs:   []string{"TKT-999"},
+		})
+		require.Empty(t, got)
+	})
 }
 
 // seedGraphQueryEntities creates entities of the given type with the

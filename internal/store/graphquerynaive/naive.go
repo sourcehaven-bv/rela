@@ -100,6 +100,18 @@ func collectByType(ctx context.Context, r Reader, typ string) ([]*entity.Entity,
 }
 
 func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery) (bool, error) {
+	if len(q.WhereIDs) > 0 {
+		found := false
+		for _, id := range q.WhereIDs {
+			if id == e.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+	}
 	if q.HasInbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming)
 		if err != nil || !ok {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Declarative is the policy-driven [ACL] implementation. It composes
@@ -31,23 +32,36 @@ import (
 //     [ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
 //     with a Reason that names ErrUnstampedPrincipal.
 type Declarative struct {
-	policy *Policy
-	graph  Graph // required: NewDeclarative rejects nil
+	policy       *Policy
+	graph        Graph              // required: NewDeclarative rejects nil
+	graphQueryer store.GraphQueryer // required: needed by Request.Visible
 }
 
-// NewDeclarative wraps a [Policy] + [Graph] as an [ACL]. The Policy
-// must be non-nil; the Graph supplies the read-side access the
-// resolver needs for member-of walks and ancestor probes. Tests that
-// don't exercise group expansion can pass [NullGraph]; production
-// wiring (appbuild) passes a store-backed [StoreGraph].
-func NewDeclarative(p *Policy, g Graph) (*Declarative, error) {
+// NewDeclarative wraps a [Policy] + [Graph] + [store.GraphQueryer] as
+// an [ACL]. All three must be non-nil:
+//
+//   - Policy is the static role / assignment definitions.
+//   - Graph supplies the read-side access the resolver needs for
+//     member-of walks and ancestor probes used by AuthorizeWrite.
+//   - GraphQueryer supplies [store.GraphQuery] / [store.GraphCount]
+//     execution used by [Request.Visible] for per-entity read gating.
+//
+// Tests that don't exercise group expansion can pass [NullGraph];
+// tests that don't exercise Visible can pass [NullGraphQueryer]
+// (returns DenyAll-shaped zero matches). Production wiring (appbuild)
+// passes the store as both Graph (via [NewStoreGraph]) and as the
+// GraphQueryer.
+func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer) (*Declarative, error) {
 	if p == nil {
 		return nil, errors.New("acl: NewDeclarative: policy must be non-nil")
 	}
 	if g == nil {
 		return nil, errors.New("acl: NewDeclarative: graph must be non-nil")
 	}
-	return &Declarative{policy: p, graph: g}, nil
+	if gq == nil {
+		return nil, errors.New("acl: NewDeclarative: graphQueryer must be non-nil")
+	}
+	return &Declarative{policy: p, graph: g, graphQueryer: gq}, nil
 }
 
 // Policy returns the policy this Declarative was constructed with.

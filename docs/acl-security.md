@@ -101,18 +101,84 @@ attribution chain. This is by design:
 If you're debugging "why was alice denied X?" — read the audit log
 on the server, not the response body in the browser.
 
-## Read-path gating is not yet ACL-enforced
+## Read-path gating: per-entity responses
 
-ACL v1 gates writes and per-entity reads (via affordances). List
-queries are not yet ACL-filtered: if a principal can see entity X
-in a per-entity GET, they can also see it in a list query. This is
-a deliberate v1 scoping choice; a follow-up will add list-side
-filtering composed against `store.GraphQuery`.
+ACL v1 (TKT-VQGN) gates every per-entity-response code path:
 
-For threat-modelling purposes today: assume any principal with read
-access to a type can enumerate every entity of that type via a list
-query. If you need fine-grained read isolation per entity, that
-feature is not yet shipped.
+| Surface | Hidden-target behaviour |
+|---|---|
+| `GET /api/v1/<type>/<id>` | 404 with the same `not_found` body as a nonexistent id; no `ETag` header, no `If-None-Match` honoured |
+| `PATCH/DELETE/POST` on `/api/v1/<type>/<id>` | 404 with the same `not_found` body, BEFORE body parse / `If-Match` / `IsLocked`; a malformed PATCH body on a hidden id returns 404, not 400 |
+| `?include=*` and `?include=<type>` neighbours on any GET | hidden neighbours silently omitted from the `included` map; one batched `store.GraphQuery` per neighbour-type (not per neighbour) |
+
+The deny shape is "indistinguishable from not-found." An attacker who
+can probe URLs sees only 404 for every hidden entity, regardless of
+verb. The 403 path is reserved for **visible-but-write-denied** — a
+principal who can read the type but not write to that specific
+record. That 403 still carries `rule_kind` / `rule_id` for
+operator debugging.
+
+### Invariants downstream maintainers MUST preserve
+
+- **No `ETag` on deny.** Suppressing it is what closes the
+  cross-principal cache poisoning surface. A future change that
+  emits an `ETag` on the 404 path turns a denied principal's
+  `If-None-Match: <alice-etag>` into a 304 — confirming existence.
+- **All conditional-request headers short-circuit on deny.**
+  `If-None-Match`, `If-Modified-Since`, `If-Match`,
+  `If-Unmodified-Since`, `If-Range` MUST be consulted only AFTER
+  the visibility probe passes. Today's handler emits only `ETag`,
+  but the next maintainer to add `Last-Modified` needs to land the
+  deny-side suppression in the same change.
+- **The method dispatcher consults URL shape only.** Routing
+  `GET/PATCH/DELETE/OPTIONS` for a path MUST NOT consult entity
+  existence — the per-method handler is the gate. Otherwise an
+  OPTIONS response shape becomes an existence oracle.
+- **`?include=` uses the consumer-side `readGate`, batched per
+  neighbour type.** A hub entity with 50 neighbours triggers ≤
+  `O(distinct-types)` `GraphCount` calls, not 50. Future include
+  surfaces (e.g. nested includes in a list response) MUST go through
+  the same gate.
+
+## ACL fail-loud and middleware scope
+
+The `attachACLRequest` middleware:
+
+- **Wraps `/api/` paths only.** The SPA shell at `/` and static
+  assets at `/static/` `/assets/` bypass it. A misconfigured
+  principal stamper that throws `ErrUnstampedPrincipal` returns
+  500 on `/api/v1/...` but lets the UI keep rendering. Otherwise
+  operators would be locked out of the very surface they need to
+  diagnose the misconfig from.
+- **Fails loud inside `/api/`.** When ACL is configured and the
+  principal stamper produces an unstamped principal, the middleware
+  returns 500 with `acl_unstamped_principal` rather than silently
+  proceeding with no `acl.Request` attached. Silent fall-through
+  was a fail-open path — every read became AllowAll because the
+  read handlers couldn't tell "no ACL" from "ACL but no
+  principal."
+
+## What still leaks (deferred)
+
+- **List endpoints** (`GET /api/v1/<plural>`) — every principal
+  with reach to the URL sees every entity of the type, regardless
+  of role grant. TKT-VMD8 (PR 2/2) closes this with the same
+  composable `Request.ReadQuery` infrastructure the per-entity
+  path uses.
+- **Sidebar counts** (`listCount`, `kanbanCount`) — same; TKT-VMD8.
+- **`/api/v1/_position`** — takes an `id` but resolves a scope walk,
+  so it's list-derived. A hidden id appears in the scope today and
+  the response leaks its ordinal. Scoped to a follow-up after
+  TKT-VMD8 lands.
+- **`/_search`** — the bleve / pgstore search backends need their
+  own query-rewrite. Separate ticket.
+- **SSE `/api/v1/_events`** — the broker today fans `{type, id}` to
+  every subscriber. Per-subscriber filtering is its own ticket.
+- **MCP transport** — tracked as TKT-G3PPD.
+
+For threat-modelling purposes today: assume any principal with API
+reach can enumerate every entity via the LIST endpoint (PR 2 closes
+this). Per-entity GET, write, and include channels are tight.
 
 ## Where to read next
 

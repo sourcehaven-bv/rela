@@ -396,7 +396,7 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	if policy == nil {
 		return acl.NopACL{}, nil, nil
 	}
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st))
+	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
 	if err != nil {
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}

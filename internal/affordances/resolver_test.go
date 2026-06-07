@@ -85,7 +85,7 @@ func policyFromYAML(t *testing.T, src string) *acl.Policy {
 // feature tests in features_test.go).
 func declFor(t *testing.T, p *acl.Policy) *acl.Declarative {
 	t.Helper()
-	d, err := acl.NewDeclarative(p, acl.NullGraph{})
+	d, err := acl.NewDeclarative(p, acl.NullGraph{}, acl.NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -664,7 +664,7 @@ assignments:
   alice: viewer
 `)
 	g := &countingGraph{}
-	d, err := acl.NewDeclarative(p, g)
+	d, err := acl.NewDeclarative(p, g, acl.NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

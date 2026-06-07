@@ -93,6 +93,41 @@ func (r *Request) ReadQuery(ctx context.Context, entityType string) ReadQueryRes
 	return r.readQuery(ctx, entityType)
 }
 
+// Visible reports whether `entityID` of type `entityType` is readable
+// by this Request's principal. Used by the dataentry per-entity GET
+// gate (and writes-to-hidden 404 parity) to answer one-shot visibility
+// questions without invoking a full list query.
+//
+// Implemented in terms of [Request.ReadQuery] so the two paths share
+// predicate composition — a future change to readQuery automatically
+// flows to Visible. Semantics:
+//
+//   - AllowAll → (true, nil) immediately.
+//   - DenyAll  → (false, nil) immediately.
+//   - Query    → GraphCount with WhereIDs=[entityID]; matched>0 → true.
+//
+// Returns any GraphCount error verbatim so the caller can map it to
+// the right HTTP status (typically 500; context.Canceled → no
+// response; context.DeadlineExceeded → 504).
+func (r *Request) Visible(ctx context.Context, entityType, entityID string) (bool, error) {
+	rqr := r.readQuery(ctx, entityType)
+	switch {
+	case rqr.AllowAll:
+		return true, nil
+	case rqr.DenyAll:
+		return false, nil
+	case rqr.Query == nil:
+		return false, errors.New("acl: Visible: readQuery returned zero ReadQueryResult")
+	}
+	q := *rqr.Query
+	q.WhereIDs = []string{entityID}
+	matched, _, err := r.d.graphQueryer.GraphCount(ctx, q)
+	if err != nil {
+		return false, err
+	}
+	return matched > 0, nil
+}
+
 // Principal returns the principal bound at construction. Helper for
 // audit attribution; callers that already have the principal in their
 // own ctx don't need this.

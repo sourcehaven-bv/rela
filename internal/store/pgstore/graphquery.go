@@ -126,6 +126,10 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		sb.WriteByte('\n')
 	}
 	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.type = " + typeArg)
+	if len(q.WhereIDs) > 0 {
+		whereIDsArg := b.arg(q.WhereIDs)
+		sb.WriteString(" AND e.id = ANY(" + whereIDsArg + ")")
+	}
 	for _, ex := range existsParts {
 		sb.WriteString(" AND EXISTS (")
 		sb.WriteString(ex)

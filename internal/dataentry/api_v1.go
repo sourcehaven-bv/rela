@@ -727,8 +727,26 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 }
 
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
-	entity, found := a.getEntity(r.Context(), entityID)
+	ctx := r.Context()
+	entity, found := a.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	// ACL gate (TKT-VQGN): a denied principal sees the same 404 body a
+	// nonexistent id would emit. Placed BEFORE ETag computation /
+	// If-None-Match — emitting an ETag for an entity the principal
+	// cannot see would either leak existence in the cache header, or
+	// turn a known-ETag replay (from a principal who CAN see it) into
+	// a 304 (RR-MZU4). Both fail the parity invariant.
+	gate := readGateFromContext(ctx)
+	ok, err := gate.Visible(ctx, typeName, entityID)
+	if err != nil {
+		writeVisibleError(w, r, err)
+		return
+	}
+	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -738,15 +756,15 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializeEntityForWire(r.Context(), entity, plural, includeRelations)
+	result := a.serializeEntityForWire(ctx, entity, plural, includeRelations)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
-		result.Included = a.resolveV1Includes(r.Context(), entity, includes)
+		result.Included = a.resolveV1Includes(ctx, entity, includes)
 	}
 
-	// ETag for caching
-	etag := a.computeEntityETag(r.Context(), entity)
+	// ETag for caching (visible-only path; deny-path above emits no ETag).
+	etag := a.computeEntityETag(ctx, entity)
 	w.Header().Set("ETag", etag)
 
 	// Check If-None-Match
@@ -758,6 +776,24 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+// writeVisibleError maps a Request.Visible / GraphCount error to the
+// right HTTP shape: client-disconnect emits nothing, deadline-exceeded
+// is 504, everything else is 500 with the acl_query_failed code
+// (RR-89XK). Centralized so every gate call site handles the error
+// shape the same way.
+func writeVisibleError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeV1Error(w, r, http.StatusGatewayTimeout, "acl_query_timeout",
+			"ACL visibility check timed out", err.Error())
+		return
+	}
+	writeV1Error(w, r, http.StatusInternalServerError, "acl_query_failed",
+		"ACL visibility check failed", err.Error())
+}
+
 func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	// Need write lock
 	a.writeMu.Lock()
@@ -767,6 +803,19 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	// ACL gate (TKT-VQGN): a denied principal sees the same 404 body a
+	// nonexistent id would emit. Runs BEFORE body parse / If-Match /
+	// IsLocked so the only observable for "this id exists but you
+	// can't see it" is the same 404 as "this id doesn't exist." A
+	// 400 / 412 / 422 here would be an existence oracle (RR-FGUZ).
+	if ok, err := readGateFromContext(r.Context()).Visible(r.Context(), typeName, entityID); err != nil {
+		writeVisibleError(w, r, err)
+		return
+	} else if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -955,6 +1004,17 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	// ACL gate (TKT-VQGN): hidden target → 404 with same body as
+	// not-found, before AuthorizeWrite runs (so we don't leak existence
+	// via the 403 rule_id). RR-3532.
+	if ok, err := readGateFromContext(r.Context()).Visible(r.Context(), typeName, entityID); err != nil {
+		writeVisibleError(w, r, err)
+		return
+	} else if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -1351,6 +1411,17 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		return
 	}
 
+	// ACL gate (TKT-VQGN): clone is a write derived from a hidden
+	// source must 404 (same body as not-found) before any write-side
+	// affordance logic runs.
+	if ok, err := readGateFromContext(r.Context()).Visible(r.Context(), typeName, entityID); err != nil {
+		writeVisibleError(w, r, err)
+		return
+	} else if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
 	// Clone properties
 	props := make(map[string]interface{})
 	for k, v := range entity.Properties {
@@ -1685,65 +1756,121 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	s := a.State()
 	included := make(map[string]V1Entity)
 
-	// Support include=* to include all related entities
+	// Collect candidate target entities first; filter via the ACL
+	// gate per-type (batched), then serialize the survivors. The
+	// two-phase shape exists to satisfy RR-M84L (the include channel
+	// must respect the per-entity visibility rule) AND RR-FRK1 (a
+	// hub entity with 50 neighbors must not cost 50 GraphCount
+	// round-trips).
+	var candidates []*entityPkg.Entity
+	// nestedFor maps target.ID → the remaining nested-include
+	// expression (e.g. "implements.requires" → "requires" stored
+	// against the implements target). Recurses after the visibility
+	// filter so hidden neighbors don't trigger hidden nested probes.
+	nestedFor := make(map[string]string)
+
 	if includes == "*" {
-		// Include all outgoing relations
 		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			target, found := a.getEntity(ctx, edge.To)
-			if !found {
-				continue
+			if target, found := a.getEntity(ctx, edge.To); found {
+				candidates = append(candidates, target)
 			}
-			entityDef := s.Meta.Entities[target.Type]
-			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
 		}
-		// Include all incoming relations
 		for _, edge := range a.incomingRelations(ctx, entity.ID) {
-			source, found := a.getEntity(ctx, edge.From)
-			if !found {
-				continue
+			if source, found := a.getEntity(ctx, edge.From); found {
+				candidates = append(candidates, source)
 			}
-			entityDef := s.Meta.Entities[source.Type]
-			plural := entityDef.GetPlural(source.Type)
-			included[source.ID] = a.serializeRelatedEntityForWire(ctx, source, plural, false)
 		}
-		return included
-	}
-
-	parts := strings.Split(includes, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		// Handle nested includes like "implements.requires"
-		relParts := strings.SplitN(part, ".", 2)
-		relType := relParts[0]
-
-		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			if edge.Type != relType {
+	} else {
+		for _, part := range strings.Split(includes, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
 				continue
 			}
-			target, found := a.getEntity(ctx, edge.To)
-			if !found {
-				continue
-			}
-			entityDef := s.Meta.Entities[target.Type]
-			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
-
-			// Handle nested includes
-			if len(relParts) > 1 {
-				nested := a.resolveV1Includes(ctx, target, relParts[1])
-				for k, v := range nested {
-					included[k] = v
+			relParts := strings.SplitN(part, ".", 2)
+			relType := relParts[0]
+			for _, edge := range a.outgoingRelations(ctx, entity.ID) {
+				if edge.Type != relType {
+					continue
+				}
+				target, found := a.getEntity(ctx, edge.To)
+				if !found {
+					continue
+				}
+				candidates = append(candidates, target)
+				if len(relParts) > 1 {
+					nestedFor[target.ID] = relParts[1]
 				}
 			}
 		}
 	}
 
+	visible := a.filterVisibleIncludes(ctx, candidates)
+	for _, target := range visible {
+		entityDef := s.Meta.Entities[target.Type]
+		plural := entityDef.GetPlural(target.Type)
+		included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
+
+		if nested, ok := nestedFor[target.ID]; ok {
+			for k, v := range a.resolveV1Includes(ctx, target, nested) {
+				included[k] = v
+			}
+		}
+	}
 	return included
+}
+
+// filterVisibleIncludes drops any candidate the principal cannot see,
+// batched by entity type. For each distinct type at most ONE gate call
+// (AllowAll / DenyAll → instant decision; Query → one GraphCount with
+// WhereIDs containing every candidate of that type) — turning a worst
+// case of O(N) per-id probes into O(distinct-types). RR-FRK1.
+//
+// On gate error: drop the candidate (fail-closed). The include channel
+// is a "best effort" affordance; the explicit GET / list endpoints are
+// the authoritative read surface.
+func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg.Entity) []*entityPkg.Entity {
+	if len(candidates) == 0 {
+		return nil
+	}
+	gate := readGateFromContext(ctx)
+	byType := make(map[string][]*entityPkg.Entity)
+	for _, c := range candidates {
+		byType[c.Type] = append(byType[c.Type], c)
+	}
+	allowed := make(map[string]bool, len(candidates))
+	for typeName, group := range byType {
+		rqr := gate.Query(ctx, typeName)
+		switch {
+		case rqr.AllowAll:
+			for _, c := range group {
+				allowed[c.ID] = true
+			}
+		case rqr.DenyAll:
+			// none allowed for this type
+		case rqr.Query != nil:
+			ids := make([]string, 0, len(group))
+			for _, c := range group {
+				ids = append(ids, c.ID)
+			}
+			q := *rqr.Query
+			q.WhereIDs = ids
+			for e, err := range a.store.GraphQuery(ctx, q) {
+				if err != nil {
+					// Fail-closed on store error: include nothing of this type.
+					break
+				}
+				allowed[e.ID] = true
+			}
+		}
+	}
+	// Preserve original candidate order so the response is stable.
+	out := candidates[:0]
+	for _, c := range candidates {
+		if allowed[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {

@@ -385,3 +385,102 @@ func TestFeature_UC12_MCPScopeIntersection(t *testing.T) {
 	t.Parallel()
 	t.Skip("UC12 lives in internal/mcp (transport-layer intersection); follow-up ticket once the MCP filtering shape is designed.")
 }
+
+// TestFeature_Visible_AllowAll pins the AllowAll fast-path.
+//
+// Scenario. A role grants read on every entity type via wildcard.
+// Per-entity Visible probes for that role must short-circuit to true
+// without invoking a GraphQuery — the dataentry per-entity GET gate
+// (TKT-VQGN) relies on this.
+func TestFeature_Visible_AllowAll(t *testing.T) {
+	w := NewWorld().
+		Policy(`
+roles:
+  viewer: { read: ["*"] }
+assignments:
+  alice: viewer
+`).
+		Person("alice").
+		Ticket("TKT-001").
+		Build(t)
+
+	if !w.CanSee("alice", "ticket", "TKT-001") {
+		t.Error(`CanSee("alice", "ticket", "TKT-001") = false; want true (wildcard read)`)
+	}
+}
+
+// TestFeature_Visible_DenyAll pins the DenyAll fast-path.
+//
+// Scenario. A principal with no role grants. Every per-entity Visible
+// probe must return false without invoking a GraphQuery — the
+// dataentry write-path 404 gate (TKT-VQGN) relies on this.
+func TestFeature_Visible_DenyAll(t *testing.T) {
+	w := NewWorld().
+		Policy(`
+roles: {}
+assignments: {}
+`).
+		Person("alice").
+		Ticket("TKT-001").
+		Build(t)
+
+	if w.CanSee("alice", "ticket", "TKT-001") {
+		t.Error(`CanSee("alice", "ticket", "TKT-001") = true; want false (no grants)`)
+	}
+}
+
+// TestFeature_Visible_QueryPath_RoleRelationWithAncestor exercises the
+// Query path: the principal sees only entities reachable from the
+// role-conferring relation, optionally via ancestor inheritance.
+//
+// Scenario. Alice is `editor-of` PRJ-flagship. TKT-001 belongs-to
+// PRJ-flagship; TKT-002 belongs-to PRJ-other. Visible must return
+// true for TKT-001 and false for TKT-002.
+func TestFeature_Visible_QueryPath_RoleRelationWithAncestor(t *testing.T) {
+	w := NewWorld().
+		Policy(`
+roles:
+  editor: { read: [ticket] }
+role_relations:
+  editor-of: { confers: editor }
+inherit_roles_through: [belongs-to]
+`).
+		Person("alice").
+		Project("PRJ-flagship").
+		Project("PRJ-other").
+		Ticket("TKT-001").
+		Ticket("TKT-002").
+		Relation("alice", "editor-of", "PRJ-flagship").
+		Relation("TKT-001", "belongs-to", "PRJ-flagship").
+		Relation("TKT-002", "belongs-to", "PRJ-other").
+		Build(t)
+
+	if !w.CanSee("alice", "ticket", "TKT-001") {
+		t.Error(`CanSee("alice", "ticket", "TKT-001") = false; want true (belongs-to granted project)`)
+	}
+	if w.CanSee("alice", "ticket", "TKT-002") {
+		t.Error(`CanSee("alice", "ticket", "TKT-002") = true; want false (belongs-to other project)`)
+	}
+}
+
+// TestFeature_Visible_TypeNotInPolicy pins the DenyAll path when the
+// requested type appears in no role's read grant.
+//
+// Scenario. The policy grants read on `ticket` but nothing on
+// `document`. Visible for any document id must return false.
+func TestFeature_Visible_TypeNotInPolicy(t *testing.T) {
+	w := NewWorld().
+		Policy(`
+roles:
+  viewer: { read: [ticket] }
+assignments:
+  alice: viewer
+`).
+		Person("alice").
+		Document("D-1").
+		Build(t)
+
+	if w.CanSee("alice", "document", "D-1") {
+		t.Error(`CanSee("alice", "document", "D-1") = true; want false (no role grants read on document)`)
+	}
+}

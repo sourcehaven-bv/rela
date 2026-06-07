@@ -58,7 +58,7 @@ func testPolicy() *acl.Policy {
 // store-backed graph.
 func newACL(t *testing.T, p *acl.Policy) *acl.Declarative {
 	t.Helper()
-	d, err := acl.NewDeclarative(p, acl.NullGraph{})
+	d, err := acl.NewDeclarative(p, acl.NullGraph{}, acl.NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
