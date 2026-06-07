@@ -93,6 +93,14 @@ func waitForEntityEvent(t *testing.T, ch <-chan store.Event, id string, timeout 
 
 // TestCrossProcessPropagation (AC1): a write committed by writer A is delivered
 // to writer B's Subscribe channel, via the LISTEN/NOTIFY feed.
+//
+// The op assertion accepts either EventEntityCreated (live NOTIFY path) or
+// EventEntityUpdated (initial-catch-up path). When b's listener is mid-startup
+// (LISTEN issued, first catchUp running) at the moment a.CreateEntity commits,
+// the catchUp scan sees FEAT-1 and emits Updated before the live NOTIFY can
+// deliver Created. Both paths satisfy the contract — consumers re-snapshot on
+// any event — and this test cares about propagation, not which path delivered
+// it. See catchUpEvent for the "Updated for re-snapshot" semantics rationale.
 func TestCrossProcessPropagation(t *testing.T) {
 	schema := freshFeedSchema(t)
 	a := openWriter(t, schema)
@@ -105,7 +113,10 @@ func TestCrossProcessPropagation(t *testing.T) {
 	require.NoError(t, a.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
 
 	ev := waitForEntityEvent(t, ch, "FEAT-1", 5*time.Second)
-	require.Equal(t, store.EventEntityCreated, ev.Op)
+	require.Contains(t,
+		[]store.EventOp{store.EventEntityCreated, store.EventEntityUpdated},
+		ev.Op,
+		"expected Created (live NOTIFY) or Updated (initial catch-up); both satisfy the propagation contract")
 	require.Equal(t, "FEAT-1", ev.EntityID)
 }
 

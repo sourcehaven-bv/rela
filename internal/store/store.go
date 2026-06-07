@@ -38,6 +38,7 @@ type Store interface {
 	EntityWriter
 	RelationReader
 	RelationWriter
+	GraphQueryer
 	AttachmentManager
 	Watcher
 	Lifecycle
