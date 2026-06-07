@@ -5,7 +5,7 @@ title: 'ACL read-side (PR 1/2): per-entity GET + writes + ?include= gated; middl
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 First of a two-PR read-side ACL series. Closes the per-entity-response

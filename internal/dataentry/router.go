@@ -3,6 +3,7 @@ package dataentry
 import (
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -136,21 +137,40 @@ func (a *App) NewRouter() http.Handler {
 // makes the test composition story safer.
 func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/") {
+		// RR-P2M7: include the bare `/api` path explicitly so a future
+		// endpoint mounted there doesn't silently bypass ACL.
+		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		ctx := r.Context()
-		if acl.FromContext(ctx) != nil {
-			next.ServeHTTP(w, r)
+		// RR-E703: if an upstream layer already stamped a Request, also
+		// attach the matching readGate before forwarding. Without this,
+		// every read becomes AllowAll for the upstream-only caller —
+		// silent fail-open.
+		if existing := acl.FromContext(ctx); existing != nil {
+			ctx = withReadGate(ctx, aclReadGate{req: existing})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		req, err := d.ForPrincipal(principal.From(ctx))
 		if err != nil {
+			// RR-372L: log the raw error server-side; never emit it
+			// in the response body. ForPrincipal's contract leaves
+			// room for future enhancements (LDAP errors, internal
+			// identifiers) that would otherwise become attacker-
+			// readable here.
+			p := principal.From(ctx)
+			slog.Warn("acl: attachACLRequest: ForPrincipal failed",
+				"err", err,
+				"path", r.URL.Path,
+				"method", r.Method,
+				"user", p.User,
+				"tool", p.Tool)
 			writeV1Error(w, r, http.StatusInternalServerError,
 				"acl_unstamped_principal",
 				"Principal could not be resolved under ACL",
-				err.Error())
+				"principal stamper produced an unstamped identity; check server logs")
 			return
 		}
 		ctx = acl.WithRequest(ctx, req)

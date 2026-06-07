@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -16,7 +17,7 @@ import (
 // code. Silent fall-through would be fail-open — every read becomes
 // AllowAll because no Request is attached.
 func TestACLMiddleware_FailLoudOnApi(t *testing.T) {
-	d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t))
+	d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t).store)
 
 	// Wrap a sentinel "next" handler that records whether it was
 	// reached — the middleware MUST short-circuit before calling next
@@ -49,7 +50,7 @@ func TestACLMiddleware_FailLoudOnApi(t *testing.T) {
 // misconfig — locking them out of the recovery surface is the
 // failure mode this guard prevents.
 func TestACLMiddleware_NonAPIPathsBypass(t *testing.T) {
-	d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t))
+	d := mustNewACL(t, &acl.Policy{}, newTestAppV1(t).store)
 
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -74,19 +75,29 @@ func TestACLMiddleware_NonAPIPathsBypass(t *testing.T) {
 	}
 }
 
-// TestACLMiddleware_StampedPrincipalAttachesGate pins the happy path:
-// a stamped principal yields a Request and a readGate on ctx.
+// TestACLMiddleware_StampedPrincipalAttachesGate pins the happy path
+// *behaviourally* (RR-CAFF): under a policy that allows ticket reads
+// but denies document reads, the attached gate MUST return true for
+// a ticket and false for a document. Type-equality assertions (the
+// previous shape) pinned implementation, not behavior — a future
+// broken aclReadGate would still pass.
 func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "t"}})
+	seedEntity(app, &entity.Entity{ID: "DOC-001", Type: "document", Properties: map[string]any{"title": "d"}})
+
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, newTestAppV1(t))
+	}, app.store)
 
-	var sawRequest, sawGate bool
+	var sawRequest bool
+	var visibleTicket, visibleDoc bool
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sawRequest = acl.FromContext(r.Context()) != nil
-		_, ok := readGateFromContext(r.Context()).(aclReadGate)
-		sawGate = ok
+		gate := readGateFromContext(r.Context())
+		visibleTicket, _ = gate.Visible(r.Context(), "ticket", "TKT-001")
+		visibleDoc, _ = gate.Visible(r.Context(), "document", "DOC-001")
 	})
 	handler := attachACLRequest(next, d)
 
@@ -99,7 +110,10 @@ func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
 	if !sawRequest {
 		t.Error("acl.FromContext returned nil; Request not attached")
 	}
-	if !sawGate {
-		t.Error("readGateFromContext returned nopReadGate; production readGate not attached")
+	if !visibleTicket {
+		t.Error("gate.Visible(ticket): false; want true (viewer has read:[ticket])")
+	}
+	if visibleDoc {
+		t.Error("gate.Visible(document): true; want false (no read grant on document)")
 	}
 }

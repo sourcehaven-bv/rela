@@ -24,7 +24,7 @@ func TestACLWrite_PatchOnHiddenIs404(t *testing.T) {
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"none": {}},
 		Assignments: map[string]string{"bob": "none"},
-	}, app)
+	}, app.store)
 	app.acl = d
 	bobCtx := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
@@ -51,6 +51,33 @@ func TestACLWrite_PatchOnHiddenIs404(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("PATCH hidden, stale If-Match: got %d, want 404 (RR-FGUZ); body=%s", rec.Code, rec.Body)
 	}
+
+	// Valid If-Match (current ETag) on hidden target — must STILL 404
+	// (RR-H9QB). An attacker who somehow obtained the current ETag
+	// (cached from a prior probe, replayed from a log, leaked via a
+	// side channel) MUST NOT get a 412 confirming the entity exists
+	// nor a 200 letting them write through. The gate runs BEFORE
+	// If-Match.
+	currentETag := computeETagForTest(t, app, "TKT-001")
+	rec = patchEntityAs(bobCtx, t, app, d, "ticket", "tickets", "TKT-001",
+		`{"properties":{"title":"hack"}}`,
+		http.Header{"If-Match": []string{currentETag}})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("PATCH hidden, current If-Match: got %d, want 404 (RR-H9QB); body=%s", rec.Code, rec.Body)
+	}
+}
+
+// computeETagForTest re-derives the ETag the handler would emit for
+// the given entity. Used by RR-H9QB to construct a "valid" If-Match
+// without first having to GET the entity (the attacker scenario the
+// test models would obtain the ETag through a side channel).
+func computeETagForTest(t *testing.T, app *App, entityID string) string {
+	t.Helper()
+	e, found := app.getEntity(t.Context(), entityID)
+	if !found {
+		t.Fatalf("computeETagForTest: %s not in store", entityID)
+	}
+	return app.computeEntityETag(t.Context(), e)
 }
 
 // TestACLWrite_DeleteOnHiddenIs404 pins AC3 for DELETE.
@@ -61,7 +88,7 @@ func TestACLWrite_DeleteOnHiddenIs404(t *testing.T) {
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"none": {}},
 		Assignments: map[string]string{"bob": "none"},
-	}, app)
+	}, app.store)
 	app.acl = d
 	bobCtx := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
@@ -84,6 +111,12 @@ func TestACLWrite_DeleteOnHiddenIs404(t *testing.T) {
 
 // ---- helpers ----
 
+// patchEntityAs runs handleV1UpdateEntity with the gate ctx attached.
+// typeName/plural are accepted for symmetry with deleteEntityAs and
+// getEntityAs; today's tests only exercise tickets, but the helper
+// surface keeps the door open to fixtures with other types.
+//
+//nolint:unparam // typeName always "ticket" today — see godoc.
 func patchEntityAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	typeName, plural, entityID, body string, hdr http.Header,
 ) *httptest.ResponseRecorder {

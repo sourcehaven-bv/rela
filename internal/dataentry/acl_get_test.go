@@ -2,6 +2,8 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TestACLGet_TypeLevelReadGrant pins AC1: a role with `read: [ticket]`
@@ -24,7 +27,7 @@ func TestACLGet_TypeLevelReadGrant(t *testing.T) {
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app)
+	}, app.store)
 	app.acl = d
 	ctx := aliceCtx()
 
@@ -52,27 +55,34 @@ func TestACLGet_TypeLevelReadGrant(t *testing.T) {
 	if !strings.Contains(recNX.Body.String(), "/errors/not_found") {
 		t.Errorf("nonexistent body missing not_found error code: %s", recNX.Body)
 	}
-	deniedShape := stripInstance(rec.Body.String())
-	nonexistentShape := stripInstance(recNX.Body.String())
+	deniedShape := stripInstance(t, rec.Body.String())
+	nonexistentShape := stripInstance(t, recNX.Body.String())
 	if deniedShape != nonexistentShape {
 		t.Errorf("denied vs nonexistent body shape differs:\n  denied:      %s\n  nonexistent: %s",
 			deniedShape, nonexistentShape)
 	}
 }
 
-// stripInstance removes the "instance" JSON field (which legitimately
-// differs between a denied id and a nonexistent id since both reach
-// different URLs) so the rest of the body can be compared for parity.
-func stripInstance(s string) string {
-	i := strings.Index(s, `,"instance":`)
-	if i < 0 {
-		return s
+// stripInstance returns a canonical-JSON form of an error response
+// with the "instance" field cleared. The URL legitimately differs
+// between "denied" and "nonexistent" parity cases (each reaches its
+// own URL); other fields must match.
+//
+// Parsing + re-encoding (instead of string slicing — RR-QLQW) makes
+// the comparator robust against future V1Error field additions and
+// against JSON-encoder reordering quirks.
+func stripInstance(t *testing.T, s string) string {
+	t.Helper()
+	var v V1Error
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		t.Fatalf("stripInstance: invalid JSON %q: %v", s, err)
 	}
-	j := strings.IndexByte(s[i+1:], '}')
-	if j < 0 {
-		return s
+	v.Instance = ""
+	out, err := json.Marshal(&v)
+	if err != nil {
+		t.Fatalf("stripInstance: re-encode: %v", err)
 	}
-	return s[:i] + s[i+1+j:]
+	return string(out)
 }
 
 // TestACLGet_ETagSuppressedOnDeny pins AC5: a denied GET MUST NOT
@@ -89,7 +99,7 @@ func TestACLGet_ETagSuppressedOnDeny(t *testing.T) {
 			"viewer-empty":   {},
 		},
 		Assignments: map[string]string{"alice": "viewer-tickets", "bob": "viewer-empty"},
-	}, app)
+	}, app.store)
 	app.acl = d
 
 	// Alice gets a valid response with an ETag.
@@ -127,7 +137,7 @@ func TestACLGet_IncludeFilter(t *testing.T) {
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app)
+	}, app.store)
 	app.acl = d
 
 	rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "include=*")
@@ -144,18 +154,102 @@ func TestACLGet_IncludeFilter(t *testing.T) {
 	}
 }
 
-// ---- helpers ----
+// TestACLGet_WriteVisibleErrorMapping pins the error mapping in
+// writeVisibleError (RR-J25J): context.Canceled emits nothing (client
+// has disconnected); context.DeadlineExceeded surfaces 504;
+// everything else 500 with the acl_query_failed code. Drives each
+// branch via a fakeGate whose Visible returns a configured error.
+func TestACLGet_WriteVisibleErrorMapping(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 
-func aliceCtx() context.Context {
-	return principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	cases := []struct {
+		name      string
+		err       error
+		wantCode  int
+		wantBody  string // substring; empty means no body
+		emptyResp bool   // true: handler MUST NOT write a response
+	}{
+		{
+			name:      "canceled emits nothing",
+			err:       context.Canceled,
+			wantCode:  http.StatusOK, // ResponseRecorder default when WriteHeader is never called
+			emptyResp: true,
+		},
+		{
+			name:     "deadline exceeded surfaces 504",
+			err:      context.DeadlineExceeded,
+			wantCode: http.StatusGatewayTimeout,
+			wantBody: "acl_query_timeout",
+		},
+		{
+			name:     "generic err surfaces 500",
+			err:      errors.New("synthetic store failure"),
+			wantCode: http.StatusInternalServerError,
+			wantBody: "acl_query_failed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := withReadGate(context.Background(), fakeGate{visibleErr: tc.err})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+			req = req.WithContext(ctx)
+			rec := httptest.NewRecorder()
+			app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+			if rec.Code != tc.wantCode {
+				t.Errorf("status: got %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.emptyResp {
+				if rec.Body.Len() != 0 {
+					t.Errorf("client-canceled path wrote body %q; want empty", rec.Body.String())
+				}
+			} else if !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("body %q missing substring %q", rec.Body, tc.wantBody)
+			}
+		})
+	}
 }
 
+// ---- helpers ----
+
+// fakeGate is a readGate impl that returns configured errors from
+// Visible. Used by error-mapping tests; production sites use
+// aclReadGate.
+type fakeGate struct {
+	visibleErr error
+}
+
+func (g fakeGate) Visible(context.Context, string, string) (bool, error) {
+	return false, g.visibleErr
+}
+
+func (fakeGate) Query(context.Context, string) acl.ReadQueryResult {
+	return acl.ReadQueryResult{DenyAll: true}
+}
+
+// principalCtx returns a context carrying a stamped data-entry
+// principal for `user`. RR-MILH: replaces the previous parameterless
+// `aliceCtx()` helper so tests that want a different principal
+// (bob, charlie, …) don't fork between "use the helper" and "build
+// inline" styles.
+func principalCtx(user string) context.Context {
+	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolDataEntry})
+}
+
+// aliceCtx is a back-compat alias for principalCtx("alice"). Callers
+// that don't care about the user can keep using it; new tests should
+// prefer principalCtx for clarity.
+func aliceCtx() context.Context { return principalCtx("alice") }
+
 // mustNewACL constructs a *acl.Declarative for the given policy using
-// the app's store as both Graph and GraphQueryer. Mirrors production
-// wiring (appbuild) so tests exercise the same paths.
-func mustNewACL(t *testing.T, p *acl.Policy, app *App) *acl.Declarative {
+// the supplied store as both Graph and GraphQueryer. Mirrors production
+// wiring (appbuild) so tests exercise the same paths. RR-AGSR: takes
+// `store.Store` directly instead of `*App` so the dependency surface
+// is explicit.
+func mustNewACL(t *testing.T, p *acl.Policy, st store.Store) *acl.Declarative {
 	t.Helper()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(app.store), app.store)
+	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

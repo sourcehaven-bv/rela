@@ -728,25 +728,23 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
-	entity, found := a.getEntity(ctx, entityID)
-	if !found || entity.Type != typeName {
+
+	// ACL gate (TKT-VQGN). Runs BEFORE getEntity so a hidden id and a
+	// nonexistent id spend the same GraphCount roundtrip — otherwise
+	// the timing difference (in-memory lookup ~1µs vs. DB roundtrip
+	// ~1ms) is an id-enumeration side channel that defeats the
+	// indistinguishable-404-body invariant (RR-NGMI).
+	gate := readGateFromContext(ctx)
+	if ok, err := gate.Visible(ctx, typeName, entityID); err != nil {
+		writeVisibleError(w, r, err)
+		return
+	} else if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	// ACL gate (TKT-VQGN): a denied principal sees the same 404 body a
-	// nonexistent id would emit. Placed BEFORE ETag computation /
-	// If-None-Match — emitting an ETag for an entity the principal
-	// cannot see would either leak existence in the cache header, or
-	// turn a known-ETag replay (from a principal who CAN see it) into
-	// a 304 (RR-MZU4). Both fail the parity invariant.
-	gate := readGateFromContext(ctx)
-	ok, err := gate.Visible(ctx, typeName, entityID)
-	if err != nil {
-		writeVisibleError(w, r, err)
-		return
-	}
-	if !ok {
+	entity, found := a.getEntity(ctx, entityID)
+	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -801,21 +799,22 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 
 	s := a.State()
 
-	entity, found := a.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	// ACL gate (TKT-VQGN): a denied principal sees the same 404 body a
-	// nonexistent id would emit. Runs BEFORE body parse / If-Match /
-	// IsLocked so the only observable for "this id exists but you
-	// can't see it" is the same 404 as "this id doesn't exist." A
-	// 400 / 412 / 422 here would be an existence oracle (RR-FGUZ).
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity so a hidden id and a
+	// nonexistent id spend the same GraphCount roundtrip (RR-NGMI),
+	// AND before body parse / If-Match / IsLocked so the only
+	// observable for "this id exists but you can't see it" is the
+	// same 404 as "this id doesn't exist" (RR-FGUZ). A 400 / 412 /
+	// 422 here would be an existence oracle.
 	if ok, err := readGateFromContext(r.Context()).Visible(r.Context(), typeName, entityID); err != nil {
 		writeVisibleError(w, r, err)
 		return
 	} else if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	entity, found := a.getEntity(r.Context(), entityID)
+	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -1002,19 +1001,19 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
-	entity, found := a.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	// ACL gate (TKT-VQGN): hidden target → 404 with same body as
-	// not-found, before AuthorizeWrite runs (so we don't leak existence
-	// via the 403 rule_id). RR-3532.
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
+	// before AuthorizeWrite (RR-3532 — so a hidden target 404s, not
+	// 403-with-rule_id).
 	if ok, err := readGateFromContext(r.Context()).Visible(r.Context(), typeName, entityID); err != nil {
 		writeVisibleError(w, r, err)
 		return
 	} else if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	entity, found := a.getEntity(r.Context(), entityID)
+	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -1405,19 +1404,20 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 	defer a.writeMu.Unlock()
 
 	s := a.State()
-	entity, found := a.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
 
-	// ACL gate (TKT-VQGN): clone is a write derived from a hidden
-	// source must 404 (same body as not-found) before any write-side
-	// affordance logic runs.
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) so
+	// a clone from a hidden source 404s with the same shape and
+	// timing as a clone from a nonexistent source.
 	if ok, err := readGateFromContext(r.Context()).Visible(r.Context(), typeName, entityID); err != nil {
 		writeVisibleError(w, r, err)
 		return
 	} else if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		return
+	}
+
+	entity, found := a.getEntity(r.Context(), entityID)
+	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
@@ -1854,17 +1854,35 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 			}
 			q := *rqr.Query
 			q.WhereIDs = ids
+			// Fail-closed on store error (RR-7TIU): collect into a
+			// per-type local map and only merge into `allowed` after
+			// the iterator drains cleanly. A partial yield (network
+			// blip mid-stream, ctx cancel after first row, pgx scan
+			// error on row N) MUST drop the whole type, not surface
+			// the prefix that arrived before the error — otherwise
+			// the response looks `200 OK` with an attacker-readable
+			// subset the policy actually denies.
+			local := make(map[string]bool, len(ids))
+			failed := false
 			for e, err := range a.store.GraphQuery(ctx, q) {
 				if err != nil {
-					// Fail-closed on store error: include nothing of this type.
+					failed = true
 					break
 				}
-				allowed[e.ID] = true
+				local[e.ID] = true
+			}
+			if !failed {
+				for id := range local {
+					allowed[id] = true
+				}
 			}
 		}
 	}
 	// Preserve original candidate order so the response is stable.
-	out := candidates[:0]
+	// Allocate a fresh slice (RR-I2SI) — aliasing candidates' storage
+	// works today but is a non-obvious invariant that a future
+	// refactor retaining `candidates` would silently corrupt.
+	out := make([]*entityPkg.Entity, 0, len(candidates))
 	for _, c := range candidates {
 		if allowed[c.ID] {
 			out = append(out, c)

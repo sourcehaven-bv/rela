@@ -2,7 +2,7 @@
 id: IMPL-MHGE
 type: implementation-checklist
 title: 'Implementation: ACL read-side (PR 1/2): per-entity GET + writes + ?include= gated; middleware fail-loud; ETag'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
