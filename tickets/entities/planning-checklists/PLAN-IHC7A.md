@@ -158,7 +158,7 @@ status: done
 ## Documentation Planning
 
 - [x] User-facing docs identified — N/A
-- [ ] Docs-checklist will be created when entering implementation
+- [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: code-internal refactor + composable extension, no user-facing docs or guides affected)
 
 **Documentation Impact:**
 

@@ -5,7 +5,7 @@ title: Per-channel debounce + checkbox-toggle to useAutoSave
 kind: enhancement
 priority: high
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Goal
