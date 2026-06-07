@@ -185,9 +185,12 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Build rela-server (embeds built frontend)
+      - name: Build rela-server (embeds E2E dev-mode frontend)
+        # build:e2e produces a development-mode bundle (import.meta.env.DEV
+        # === true) so DEV-guarded test hooks compile in for the E2E suite.
+        # Release builds use the production `build`, which strips them (#890).
         run: |
-          cd frontend && npm run build && cd ..
+          cd frontend && npm run build:e2e && cd ..
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/rela-server ./cmd/rela-server
 
       - name: Install e2e dependencies
