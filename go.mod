@@ -11,7 +11,7 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.19.1
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/mitchellh/go-wordwrap v1.0.1
