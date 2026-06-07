@@ -17,6 +17,35 @@
 // on deny it returns [*ForbiddenError] and records a `denied-write`
 // audit row. The data-entry HTTP handler maps that error to a
 // structured 403 response.
+//
+// # Request pipeline
+//
+// One write call moves through these steps:
+//
+//	     ┌────────────┐  WriteRequest{Op, Subject}
+//	     │  caller    │ ─────────────────────────────────┐
+//	     └────────────┘                                  │
+//	                                                     ▼
+//	┌───────────────────┐    ForPrincipal(p)      ┌─────────────┐
+//	│  *Declarative     │ ───────────────────────▶│  *Request   │
+//	│  (policy + graph) │                         │  (per-call) │
+//	└───────────────────┘                         └──────┬──────┘
+//	                                                     │
+//	                                                     │ AuthorizeWrite
+//	                                                     ▼
+//	                                          ┌────────────────────┐
+//	                                          │     Decision       │
+//	                                          │ Allow/RuleKind/    │
+//	                                          │ RuleID/Reason/     │
+//	                                          │ Attributions       │
+//	                                          └────────────────────┘
+//
+// A [*Request] is per-call, not goroutine-safe, and amortizes one
+// member-of walk across every per-entity probe in the same logical
+// operation. [WithRequest]/[FromContext] thread it through call chains
+// so the same Request is reused by downstream resolvers (e.g. the
+// affordance resolver in a list response) instead of each call
+// re-walking the graph.
 package acl
 
 import (
@@ -34,18 +63,17 @@ type ACL interface {
 }
 
 // WriteRequest describes the operation an ACL is being asked to
-// authorize. The caller (typically [entitymanager.Manager]) populates
-// either EntityType (entity ops) or both EntityType and RelationType
-// (relation ops, where EntityType is the *source* entity's type).
+// authorize. The caller (typically [entitymanager.Manager]) names the
+// verb in Op and the target in Subject — either an [EntitySubject] or
+// a [RelationSubject].
 //
-// The split lets policy authors gate writes by the entity types a
-// principal can mutate while a separate `role_relations` map (PR 2)
-// gates role-conferring relation writes via the delegate-X
-// permission check.
+// Subject is required: a nil Subject is a programmer error and panics.
+// The legacy EntityType/RelationType string fields were removed
+// (RR-X1TE) so callers cannot accidentally request authz with a half-
+// populated request that bypasses the unstamped-principal check.
 type WriteRequest struct {
-	Op           Op
-	EntityType   string
-	RelationType string
+	Op      Op
+	Subject Subject
 }
 
 // Op identifies the verb being requested.
@@ -82,6 +110,16 @@ type Decision struct {
 	// ACL; never contains raw policy data so 403 bodies don't leak
 	// the full effective-role set.
 	Reason string
+
+	// Attributions carries the full (role, source) set the resolver
+	// considered. Audit consumers read this to record the attribution
+	// chain server-side; the wire 403 path ([ForbiddenError.Error])
+	// deliberately ignores it so deny bodies don't leak the principal's
+	// role/group topology to unauthorized callers. May be empty when
+	// the deny short-circuited before role resolution (e.g.
+	// delegate-permission gate) or when the implementation is one of
+	// the constant deciders ([NopACL], [ReadOnlyACL]).
+	Attributions []RoleAttribution
 }
 
 // ErrForbidden is the sentinel that [ForbiddenError] reports via

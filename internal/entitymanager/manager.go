@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -174,11 +175,25 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 // Summary carries the deny rule_kind / rule_id / reason and the
 // attempted op so jq filters can ask "what did Alice try to do?".
 func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl.WriteRequest) {
+	// RR-79HD: surface the target ID (entity ID, or relation
+	// from-ID) so forensic queries against the audit log can answer
+	// "which specific entity did Alice try to mutate?" without
+	// re-parsing the deny summary string. ToID is omitted because
+	// RR-F9M9 removed it from RelationSubject.
 	var subject *audit.Subject
-	if req.RelationType != "" {
-		subject = &audit.Subject{Kind: "relation", RelationType: req.RelationType}
-	} else {
-		subject = &audit.Subject{Kind: "entity", Type: req.EntityType}
+	switch s := req.Subject.(type) {
+	case acl.RelationSubject:
+		subject = &audit.Subject{
+			Kind:         "relation",
+			RelationType: s.Type,
+			FromID:       s.FromID,
+		}
+	case acl.EntitySubject:
+		subject = &audit.Subject{
+			Kind: "entity",
+			Type: s.Type,
+			ID:   s.ID,
+		}
 	}
 	m.deps.Audit.Record(audit.Record{
 		Time:        time.Now().UTC(),
@@ -186,9 +201,27 @@ func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s) attempted op=%s",
-			d.Reason, d.RuleKind, d.RuleID, req.Op),
+		Summary:     formatDeniedSummary(d, req.Op),
 	})
+}
+
+// formatDeniedSummary builds the audit Summary for a denied-write row.
+// Appends `attribution=[role=X via source, ...]` when the Decision
+// carries Attributions so operators can answer "which roles did the
+// resolver consider and via which paths" without re-running the
+// resolver (AC7). The wire 403 path stays opaque — only audit reads
+// Attributions.
+func formatDeniedSummary(d acl.Decision, op acl.Op) string {
+	base := fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s) attempted op=%s",
+		d.Reason, d.RuleKind, d.RuleID, op)
+	if len(d.Attributions) == 0 {
+		return base
+	}
+	parts := make([]string, 0, len(d.Attributions))
+	for _, a := range d.Attributions {
+		parts = append(parts, fmt.Sprintf("role=%s via %s", a.Role, a.Source.String()))
+	}
+	return base + " attribution=[" + strings.Join(parts, ", ") + "]"
 }
 
 // CreateEntity creates a new entity, runs on-create automations, and
@@ -216,7 +249,8 @@ func (m *Manager) CreateEntity(
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate, EntityType: e.Type,
+		Op:      acl.OpCreate,
+		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID},
 	}); err != nil {
 		return nil, err
 	}
@@ -342,7 +376,8 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, EntityType: e.Type,
+		Op:      acl.OpUpdate,
+		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID},
 	}); err != nil {
 		return nil, err
 	}
@@ -430,7 +465,8 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// real entity type; a deny on a non-existent entity would be more
 	// confusing than the ErrEntityNotFound returned above.
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpDelete, EntityType: current.Type,
+		Op:      acl.OpDelete,
+		Subject: acl.EntitySubject{Type: current.Type, ID: id},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -494,7 +530,8 @@ func (m *Manager) RenameEntity(
 	// entity to authorize against.
 	if current, err := m.deps.Store.GetEntity(ctx, oldID); err == nil {
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-			Op: acl.OpRename, EntityType: current.Type,
+			Op:      acl.OpRename,
+			Subject: acl.EntitySubject{Type: current.Type, ID: oldID},
 		}); aclErr != nil {
 			return nil, aclErr
 		}
@@ -535,7 +572,11 @@ func (m *Manager) CreateRelation(
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate, EntityType: fromEntity.Type, RelationType: relType,
+		Op: acl.OpCreate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: fromEntity.Type, FromID: from,
+		},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -597,7 +638,11 @@ func (m *Manager) UpdateRelation(
 		sourceType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, EntityType: sourceType, RelationType: relType,
+		Op: acl.OpUpdate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: sourceType, FromID: from,
+		},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -656,7 +701,11 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 		sourceType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpDelete, EntityType: sourceType, RelationType: relType,
+		Op: acl.OpDelete,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: sourceType, FromID: from,
+		},
 	}); aclErr != nil {
 		return aclErr
 	}

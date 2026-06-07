@@ -25,16 +25,23 @@ import (
 // that pass verbs in are [perItemVerbs] and [perCollectionVerbs] in
 // this file. Adding a new verb requires an entry here plus an
 // [acl.Op] constant.
-func translateVerb(verb, entityType string) acl.WriteRequest {
+//
+// entityID is the entity being acted on; empty for per-collection
+// verbs (e.g. "create" against a type, no instance yet). It populates
+// [acl.EntitySubject.ID] so the v1 ACL can evaluate entity-aware
+// local-role grants (e.g. "alice can edit TKT-042 because she's
+// assigned to it").
+func translateVerb(verb, entityType, entityID string) acl.WriteRequest {
+	subject := acl.EntitySubject{Type: entityType, ID: entityID}
 	switch verb {
 	case "create":
-		return acl.WriteRequest{Op: acl.OpCreate, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpCreate, Subject: subject}
 	case "update":
-		return acl.WriteRequest{Op: acl.OpUpdate, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpUpdate, Subject: subject}
 	case "delete":
-		return acl.WriteRequest{Op: acl.OpDelete, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpDelete, Subject: subject}
 	case "rename":
-		return acl.WriteRequest{Op: acl.OpRename, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpRename, Subject: subject}
 	}
 	// Unreachable for the closed verb set above. A panic here would
 	// signal a bug in a future commit — better than silently returning
@@ -58,7 +65,7 @@ var perCollectionVerbs = []string{"create"}
 func (a *App) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	for _, v := range perItemVerbs {
-		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, e.Type)).Allow
+		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID)).Allow
 	}
 	return out
 }
@@ -68,7 +75,7 @@ func (a *App) computeActions(ctx context.Context, e *entityPkg.Entity) map[strin
 func (a *App) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
 	for _, v := range perCollectionVerbs {
-		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, entityType)).Allow
+		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, entityType, "")).Allow
 	}
 	return out
 }

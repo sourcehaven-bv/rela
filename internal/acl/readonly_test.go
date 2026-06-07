@@ -13,13 +13,13 @@ func TestReadOnlyACL_DeniesAllWrites(t *testing.T) {
 		name string
 		req  acl.WriteRequest
 	}{
-		{"create entity", acl.WriteRequest{Op: acl.OpCreate, EntityType: "ticket"}},
-		{"update entity", acl.WriteRequest{Op: acl.OpUpdate, EntityType: "concept"}},
-		{"delete entity", acl.WriteRequest{Op: acl.OpDelete, EntityType: "person"}},
-		{"rename entity", acl.WriteRequest{Op: acl.OpRename, EntityType: "feature"}},
-		{"create relation", acl.WriteRequest{Op: acl.OpCreate, EntityType: "ticket", RelationType: "affects"}},
-		{"update relation", acl.WriteRequest{Op: acl.OpUpdate, RelationType: "depends-on"}},
-		{"delete relation", acl.WriteRequest{Op: acl.OpDelete, RelationType: "requires"}},
+		{"create entity", acl.WriteRequest{Op: acl.OpCreate, Subject: acl.EntitySubject{Type: "ticket"}}},
+		{"update entity", acl.WriteRequest{Op: acl.OpUpdate, Subject: acl.EntitySubject{Type: "concept", ID: "C-1"}}},
+		{"delete entity", acl.WriteRequest{Op: acl.OpDelete, Subject: acl.EntitySubject{Type: "person", ID: "P-1"}}},
+		{"rename entity", acl.WriteRequest{Op: acl.OpRename, Subject: acl.EntitySubject{Type: "feature", ID: "FEAT-1"}}},
+		{"create relation", acl.WriteRequest{Op: acl.OpCreate, Subject: acl.RelationSubject{Type: "affects", FromType: "ticket"}}},
+		{"update relation", acl.WriteRequest{Op: acl.OpUpdate, Subject: acl.RelationSubject{Type: "depends-on", FromType: "ticket"}}},
+		{"delete relation", acl.WriteRequest{Op: acl.OpDelete, Subject: acl.RelationSubject{Type: "requires", FromType: "feature"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

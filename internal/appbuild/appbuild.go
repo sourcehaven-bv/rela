@@ -330,7 +330,17 @@ func loadACL(projectRoot string) (acl.ACL, *acl.Policy) {
 		slog.Warn("appbuild: failed to load acl.yaml; falling back to NopACL", "error", err)
 		return acl.NopACL{}, nil
 	}
-	return acl.NewDeclarative(policy), policy
+	// PR 2 wires Declarative with a NullGraph — group/inherited-role
+	// resolution against the store lands in PR 4, where the buildACL
+	// split (loadACLPolicy + buildACL(policy, store)) defers Declarative
+	// construction until the store is open. Until then, direct grants
+	// still resolve correctly.
+	d, derr := acl.NewDeclarative(policy, acl.NullGraph{})
+	if derr != nil {
+		slog.Warn("appbuild: failed to build acl.Declarative; falling back to NopACL", "error", derr)
+		return acl.NopACL{}, policy
+	}
+	return d, policy
 }
 
 // Config carries the inputs every build of [New] needs, plus

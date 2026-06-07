@@ -380,7 +380,9 @@ deps:
       - store
   acl:
     mayDependOn:
+      - entity
       - principal
+      - store
   affordances:
     mayDependOn:
       - acl
