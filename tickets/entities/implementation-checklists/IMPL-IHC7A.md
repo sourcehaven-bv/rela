@@ -1,10 +1,11 @@
-<!-- @managed: claude-workflow v1 -->
 ---
 id: IMPL-IHC7A
 type: implementation-checklist
 title: 'Implementation: Per-channel debounce + checkbox-toggle to useAutoSave'
 status: done
 ---
+
+<!-- @managed: claude-workflow v1 -->
 
 ## Development
 
