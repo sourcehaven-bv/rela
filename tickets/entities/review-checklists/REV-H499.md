@@ -123,4 +123,4 @@ Skip this section for bugs and internal refactors.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** <!-- filled in by post-/pr fix commit, mirroring REV-SHX0 pattern -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/939 (base: feat/acl-v1-wiring; will auto-retarget to develop when PR 911 merges)
