@@ -34,7 +34,7 @@ assignments:
 `)
 	// T-1 has a blocks edge; T-2 does not.
 	lookup := newStubLookup([3]string{"T-1", "blocks", "T-9"})
-	r, err := affordances.New(p, metaWithExtras(t), lookup)
+	r, err := affordances.New(metaWithExtras(t), lookup, declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -63,7 +63,7 @@ assignments:
 		[3]string{"T-1", "blocks", "B"},
 		[3]string{"T-2", "blocks", "A"},
 	)
-	r, err := affordances.New(p, metaWithExtras(t), lookup)
+	r, err := affordances.New(metaWithExtras(t), lookup, declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -90,7 +90,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, metaWithExtras(t), newStubLookup())
+	r, err := affordances.New(metaWithExtras(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -123,7 +123,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, metaWithExtras(t), newStubLookup())
+	r, err := affordances.New(metaWithExtras(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -152,7 +152,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, metaWithExtras(t), newStubLookup())
+	r, err := affordances.New(metaWithExtras(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -177,7 +177,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, metaWithExtras(t), newStubLookup())
+	r, err := affordances.New(metaWithExtras(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

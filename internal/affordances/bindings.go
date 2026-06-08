@@ -29,8 +29,9 @@ type RelationLookup interface {
 
 // bindingContext carries everything a single Resolver call needs to
 // build per-entity predicate Bindings: the principal, the entity, the
-// principal's effective global roles, and the graph lookup. It is
-// constructed once per resolver call (snapshot-once).
+// principal's effective role set (globals plus ancestor-conferred plus
+// direct local), the principal's globals-only role set, and the graph
+// lookup. It is constructed once per resolver call (snapshot-once).
 //
 // The caller's request context is NOT stored here — it is threaded as
 // a method parameter (passes, evalGrants, …) into predicate Eval and
@@ -38,8 +39,16 @@ type RelationLookup interface {
 // own ctx-as-parameter convention (golangci-lint containedctx) and
 // the caller-ctx pattern from TKT-WFB6 / PR#825.
 type bindingContext struct {
-	principal   principal.Principal
-	entity      *entity.Entity
+	principal principal.Principal
+	entity    *entity.Entity
+	// entityRoles is the per-entity effective role set: globals (incl.
+	// group expansion) ∪ ancestor-conferred ∪ direct-local. This is
+	// the answer to "does the principal hold role X on this entity"
+	// and the source the has_role host function consults (RR-JRPZ).
+	entityRoles map[string]bool
+	// globalRoles is the globals-only set (no per-entity grants). Used
+	// by has_global_role for predicates that want to discriminate
+	// "globally a admin" from "admin on this one entity."
 	globalRoles map[string]bool
 	lookup      RelationLookup
 	resolver    *PolicyResolver
