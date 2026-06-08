@@ -23,8 +23,14 @@ import {
 } from '@/utils/markdown'
 import BackButton from '@/components/common/BackButton.vue'
 import Badge from '@/components/common/Badge.vue'
+import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
+import { defaultRegistry } from '@/widgets/registry'
+import { viewFieldRoutingHint } from '@/widgets/viewRouting'
+import type { WidgetRoutingHint } from '@/widgets/types'
+import type { PropertyDef } from '@/types'
+import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
@@ -385,20 +391,61 @@ function navigateToEdit(formId: string, entityId: string) {
   router.push({ name: 'form-edit', params: { id: formId, entityId } })
 }
 
+// Look up a schema PropertyDef for an entity type's property. Returns
+// undefined when the entity type or property isn't in the schema. Used
+// to pre-resolve defs at section level (RR-UD1H) instead of in every
+// cell render.
+function getPropertyDef(entityType: string, propertyName: string): PropertyDef | undefined {
+  const et = schemaStore.getEntityType(entityType)
+  return et?.properties?.[propertyName]
+}
+
 function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
   if (!fields) return []
+  // Pre-resolve PropertyDef for the entry entity once (RR-UD1H). For
+  // entry-level properties the entity type is fixed for the section.
+  // When the property isn't in the schema we leave propertyDef undefined
+  // and let PropertyDisplay fall back to a WidgetRoutingHint
+  // (RR-UD2B) -- no more synthesised PropertyDef lies.
+  const entryType = entry.value?.type
   return fields.map((field) => {
     // PropertyDisplay's `name` is used as a vue list key; favor the raw
     // property name when available and fall back to a slugged label so
     // older shapes still render.
     const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
+    const def =
+      entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
     return {
       name,
       label: field.label,
       value: field.values ?? [],
       propType: field.propType,
+      propertyDef: def,
       inaccessible: field.inaccessible ?? false,
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
+    }
+  })
+}
+
+// FieldRow bundles per-field data for cards/list rendering. Computed
+// once per (entity, field) instead of recomputed inline on every
+// reactive tick (RR-UD2A).
+interface FieldRow {
+  field: ViewSectionField
+  widget: Component
+  hint: WidgetRoutingHint
+}
+
+// fieldRowsFor returns the precomputed FieldRow array for one entity's
+// fields. Cards/list templates iterate this instead of calling helper
+// functions inline per cell.
+function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
+  return (ent.fields ?? []).map((field) => {
+    const hint = viewFieldRoutingHint(field)
+    return {
+      field,
+      hint,
+      widget: defaultRegistry.resolveFromHint(hint),
     }
   })
 }
@@ -662,17 +709,26 @@ watch(
                 </button>
               </header>
               <div v-if="ent.fields?.length" class="card-fields">
-                <div v-for="field in ent.fields" :key="field.label" class="card-field">
-                  <span class="field-label">{{ field.label }}:</span>
-                  <div v-if="field.propType && field.values?.length" class="badge-row">
-                    <Badge
-                      v-for="v in field.values"
-                      :key="v"
-                      :value="v"
-                      :property="field.propType"
-                    />
-                  </div>
-                  <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
+                <div
+                  v-for="row in fieldRowsFor(ent)"
+                  :key="row.field.label"
+                  class="card-field"
+                >
+                  <span class="field-label">{{ row.field.label }}:</span>
+                  <!-- The wire-level inaccessibleReason map is keyed on
+                       the entry's properties, not the per-entity card
+                       row's. We don't have a per-card reason map today
+                       (see RR-UD2E follow-up), so InaccessibleField
+                       falls back to the generic tooltip. -->
+                  <InaccessibleField v-if="row.field.inaccessible" />
+                  <component
+                    :is="row.widget"
+                    v-else
+                    :model-value="row.field.values ?? []"
+                    :mode="'display'"
+                    :property-name="row.hint.propertyName"
+                    class="field-value"
+                  />
                 </div>
               </div>
             </article>
@@ -691,12 +747,17 @@ watch(
                 <span class="entity-id">{{ ent.id }}</span>
               </a>
               <span v-if="ent.fields?.length" class="list-fields">
-                <template v-for="field in ent.fields" :key="field.label">
-                  <Badge
-                    v-for="v in field.values ?? []"
-                    :key="`${field.label}-${v}`"
-                    :value="v"
-                    :property="field.propType"
+                <template v-for="row in fieldRowsFor(ent)" :key="row.field.label">
+                  <!-- Per-card inaccessibility reason isn't on the wire
+                       today (see RR-UD2E follow-up); InaccessibleField
+                       falls back to the generic tooltip. -->
+                  <InaccessibleField v-if="row.field.inaccessible" />
+                  <component
+                    :is="row.widget"
+                    v-else
+                    :model-value="row.field.values ?? []"
+                    :mode="'display'"
+                    :property-name="row.hint.propertyName"
                   />
                 </template>
               </span>
