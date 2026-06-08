@@ -6,7 +6,8 @@ import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
-import type { ViewResponse, ViewSectionField } from '@/api'
+import type { ViewResponse, ViewSection, ViewSectionField } from '@/api'
+import type { Entity } from '@/types'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
@@ -33,6 +34,13 @@ import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
+import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
+import {
+  buildSectionEditFields as buildSectionEditFieldsPure,
+  sectionHasAnyWritable as sectionHasAnyWritablePure,
+  applyPropertyToEntry,
+} from './sectionEditFields'
+import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 
 const props = defineProps<{
@@ -450,6 +458,51 @@ function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
   })
 }
 
+// Memoize per (section reference, entry reference) so the SectionEditForm's
+// `watch(() => props.fields)` only fires when the underlying section or
+// entry identity changes — not on every reactive tick (RR-FB2D NEW-4).
+const sectionEditFieldsCache = new WeakMap<ViewSection, { entry: Entity; fields: SectionEditField[] }>()
+function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionEditField[] {
+  const cached = sectionEditFieldsCache.get(section)
+  if (cached && cached.entry === ent) return cached.fields
+  const fields = buildSectionEditFieldsPure(section.fields, ent, getPropertyDef)
+  sectionEditFieldsCache.set(section, { entry: ent, fields })
+  return fields
+}
+
+function sectionHasAnyWritable(section: ViewSection, ent: Entity): boolean {
+  return sectionHasAnyWritablePure(section, ent, getPropertyDef)
+}
+
+// One-shot dedupe for the 401/403 → loadView path. Cleared on each
+// loadView call to allow the next 4xx to refetch again.
+let pendingRefetch = false
+
+function handlePropertyApplied(
+  prop: string,
+  value: unknown,
+  applyOwner: { type: string; id: string },
+) {
+  const view = viewData.value
+  const nextEntry = applyPropertyToEntry(view?.entry ?? null, prop, value, applyOwner)
+  if (!nextEntry || !view) return
+  viewData.value = { ...view, entry: nextEntry }
+}
+
+function handleSectionEditError(msg: string, info?: AutoSaveErrorInfo) {
+  uiStore.error(msg)
+  if ((info?.status === 401 || info?.status === 403) && !pendingRefetch) {
+    pendingRefetch = true
+    void loadView().finally(() => {
+      pendingRefetch = false
+    })
+  }
+}
+
+function handleVerdictFlip(_prop: string, label: string) {
+  uiStore.warning(`Permission changed — your unsaved edit to '${label}' was discarded`)
+}
+
 function shouldUseBadge(value: string, propType?: string): boolean {
   return !!propType && !!value
 }
@@ -649,6 +702,25 @@ watch(
             {{ section.emptyMessage || 'No items' }}
           </div>
 
+          <!--
+            Properties section routing (TKT-IHC7B):
+            - At least one writable field → SectionEditForm (inline edit).
+            - All non-writable                → PropertyDisplay (read-only).
+            The `:key` on `${entry.type}/${entry.id}` forces SectionEditForm
+            remount on entity-id change so its lifecycle handles route
+            navigation cleanly (RR-FB1D + RR-FB2A).
+          -->
+          <SectionEditForm
+            v-else-if="section.display === 'properties' && entry && sectionHasAnyWritable(section, entry)"
+            :key="`${entry.type}/${entry.id}`"
+            :entity-type="entry.type"
+            :entity-id="entry.id"
+            :initial-values="entry.properties"
+            :fields="memoBuildSectionEditFields(section, entry)"
+            :on-property-applied="handlePropertyApplied"
+            :on-error="handleSectionEditError"
+            :on-verdict-flip="handleVerdictFlip"
+          />
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"

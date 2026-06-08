@@ -1,4 +1,3 @@
-<!-- @managed: claude-workflow v1 -->
 ---
 id: PLAN-IHC7B
 type: planning-checklist
@@ -6,15 +5,24 @@ title: 'Planning: Properties-section inline edit via SectionEditForm'
 status: done
 ---
 
+<!-- @managed: claude-workflow v1 -->
+
 ## Understanding
 
 - [x] Problem/requirements clearly understood
 - [x] Scope defined (what's in/out documented below)
 - [x] Acceptance criteria documented with specific test scenarios
 
-**Scope:** see TKT-IHC7B ticket body. Builds on TKT-IHC7A (per-channel debounce, `initialServerSnapshot`, channel disable on `useAutoSave`) and TKT-UD7YR (view-side widget delegation, `WidgetRoutingHint`, `mode` required on widgets). **Reframed per design-review round 1**: the `WidgetMode` widening is dropped (RR-FB1F); SelectWidget's transitions panel is suppressed by not passing `transitions`, not by introducing a third render mode.
+**Scope:** see TKT-IHC7B ticket body. Builds on TKT-IHC7A (per-channel debounce,
+`initialServerSnapshot`, channel disable on `useAutoSave`) and TKT-UD7YR
+(view-side widget delegation, `WidgetRoutingHint`, `mode` required on widgets).
+**Reframed per design-review round 1**: the `WidgetMode` widening is dropped
+(RR-FB1F); SelectWidget's transitions panel is suppressed by not passing
+`transitions`, not by introducing a third render mode.
 
-**Implementation gate:** Confirm PR #912 (TKT-IHC7A) has merged into develop before starting implementation (RR-FB1O / N4). Re-merge develop into this branch and re-run the typecheck + tests.
+**Implementation gate:** Confirm PR #912 (TKT-IHC7A) has merged into develop
+before starting implementation (RR-FB1O / N4). Re-merge develop into this branch
+and re-run the typecheck + tests.
 
 **Acceptance Criteria:**
 
@@ -25,14 +33,20 @@ status: done
    export function isFieldWritable(verdict: FieldAffordance | undefined, fieldReadonly?: boolean): boolean
    export function optionVerdictsFor(verdict: FieldAffordance | undefined): Record<string, boolean> | undefined
    ```
-   `isFieldWritable` returns `!fieldReadonly && verdict?.writable !== false` — preserves DynamicForm's static-readonly channel (RR-FB2B). DynamicForm's existing inline helpers (DynamicForm.vue L185-199) are refactored to call these, passing `field.readonly`. SectionEditForm passes `undefined` for `fieldReadonly` (no static-readonly concept on this surface). Tests cover both channels independently AND combined.
+`isFieldWritable` returns `!fieldReadonly && verdict?.writable !== false` —
+preserves DynamicForm's static-readonly channel (RR-FB2B). DynamicForm's
+existing inline helpers (DynamicForm.vue L185-199) are refactored to call these,
+passing `field.readonly`. SectionEditForm passes `undefined` for `fieldReadonly`
+(no static-readonly concept on this surface). Tests cover both channels
+independently AND combined.
 
 3. **Shared cleared-value helper extracted (RR-FB1E).** Move DynamicForm's `isClearedForType(value, def)` into `frontend/src/utils/formValue.ts`. SectionEditForm imports it and routes `update:modelValue` through:
    ```ts
    if (isClearedForType(value, propertyDef)) autoSave.scheduleUnset(property)
    else autoSave.scheduleFieldSave(property, value)
    ```
-   Tests: text cleared → scheduleUnset; multi-select cleared to `[]` → scheduleUnset; non-empty → scheduleFieldSave.
+Tests: text cleared → scheduleUnset; multi-select cleared to `[]` →
+scheduleUnset; non-empty → scheduleFieldSave.
 
 4. **`SectionEditForm.vue` component (RR-FB1H discriminated union, RR-FB2A owner identity)** under `frontend/src/components/forms/`. Props:
    ```ts
@@ -59,7 +73,7 @@ status: done
    )
    ```
 
-   Implementation:
+Implementation:
    - Owner identity captured at construction: `const owner = { type: props.entityType, id: props.entityId }` (frozen for the instance's lifetime — when route changes, the `:key` remount creates a new instance with new identity).
    - `useAutoSave` with `disableContentChannel: true`, `disableRelationsChannel: true`, `initialServerSnapshot: { properties: { ...initialValues } } as Entity` (NEW-10: spread independent of formData), and the following callbacks:
      ```ts
@@ -115,7 +129,7 @@ status: done
      viewData.value = { ...view, entry: { ...view.entry, properties: nextProps } }
      ```
    - `handleSectionEditError(msg, info)`: if `info?.status === 401 || info?.status === 403` (RR-FB2D NEW-6), call `loadView()` ONCE (de-dupe via a `pendingRefetch` flag cleared on response). Always call `uiStore.error(msg)`.
-   - `handleVerdictFlip(prop, label)`: `uiStore.warning(\`Permission changed — your unsaved edit to '${label}' was discarded\`)` (RR-FB2C: NOT routed through `handleSectionEditError`; no loadView refetch — the loadView that surfaced the verdict is what triggered this notification).
+   - `handleVerdictFlip(prop, label)`: `uiStore.warning(\`Permission changed — your unsaved edit to '${label}' was discarded\`)`(RR-FB2C: NOT routed through`handleSectionEditError`; no loadView refetch — the loadView that surfaced the verdict is what triggered this notification).
    - The `:key="entry.type/entry.id"` forces SectionEditForm remount on route navigation between entities. On remount: previous instance's `onBeforeUnmount → commitImmediately` flushes the pending PATCH while `getEntityType/getEntityId` still close over the previous props. The owner-identity guard in `handlePropertyApplied` then ensures the asynchronously-arriving response does NOT splice into the new entity's view (RR-FB2A).
 
 6. **Verdict-flip semantics (RR-FB1M + RR-FB2C / RR-UE3G).** When `entry._fields[prop].writable` flips `true → false` between two `loadView()` cycles: SectionEditForm's `watch` on `fields` prop detects the transition, calls `revertField(prop)` to drop any pending debounced edit, and surfaces the toast via the dedicated `onVerdictFlip` callback (NOT `onError`). EntityDetail wires `onVerdictFlip` to a warning toast only; no loadView refetch (the loadView that surfaced the new verdict is what triggered this). The inverse `false → true` (permission restored) is intentionally silent — the cell simply becomes editable again on next render; no destructive UX consequence to warn about (round-3 N-R3-1). Tests cover both directions.
@@ -289,7 +303,9 @@ status: done
 - [x] User-facing docs identified — N/A
 - [x] ~~Docs-checklist will be created when entering implementation~~ (N/A: internal Vue SFC + composable wiring; the new affordance/cleared-value utility modules get jsdoc at the source)
 
-**Documentation Impact:** N/A — internal change. The user-visible behaviour change (inline-edit of writable properties; verdict-flip toast on permission change) is self-evident in the UI.
+**Documentation Impact:** N/A — internal change. The user-visible behaviour
+change (inline-edit of writable properties; verdict-flip toast on permission
+change) is self-evident in the UI.
 
 ## Design Review
 
