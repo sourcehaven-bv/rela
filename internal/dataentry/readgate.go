@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
@@ -13,23 +14,24 @@ import (
 // boolean rather than threading `acl.FromContext(ctx)` plus a
 // nil-check plus a per-call switch through each handler.
 //
-// Two flavors of decision:
+// Two flavors of decision, both phrased as ACL permission questions:
 //
-//   - Visible(ctx, type, id) — single-entity probe. Used by GET, write
-//     paths, and the include resolver after batching neighbor IDs by
-//     type. Implemented in terms of [acl.Request.Visible].
-//   - Query(ctx, type) — list-shape decision returning AllowAll /
-//     DenyAll / a composed *store.GraphQuery. Used by future list
-//     consumers (TKT-VMD8). Implemented in terms of
-//     [acl.Request.ReadQuery].
+//   - PermitsRead(ctx, type, id) — single-entity probe. Used by GET,
+//     write paths, and per-id include checks.
+//   - PermitsReadMany(ctx, type, ids) — batched probe returning a
+//     permission map. Used by the ?include= filter and any future
+//     list consumer.
 //
-// The production impl wraps *acl.Request; the no-op impl (nopReadGate)
-// is what handlers get when no ACL is configured. Tests that need
-// principal-specific behavior use the production impl over a tiny
-// acl.yaml fixture.
+// Neither method verifies existence — they answer "the policy permits
+// reading this id IF it exists". Callers that need existence follow
+// up with getEntity.
+//
+// The production impl (aclReadGate) wraps a per-request *acl.Request;
+// the no-op impl (nopReadGate) is what handlers get when no ACL is
+// configured.
 type readGate interface {
-	Visible(ctx context.Context, entityType, entityID string) (bool, error)
-	Query(ctx context.Context, entityType string) acl.ReadQueryResult
+	PermitsRead(ctx context.Context, entityType, entityID string) (bool, error)
+	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
 }
 
 // aclReadGate is the production implementation of readGate. Wraps a
@@ -40,26 +42,41 @@ type aclReadGate struct {
 	req *acl.Request
 }
 
-func (g aclReadGate) Visible(ctx context.Context, entityType, entityID string) (bool, error) {
-	return g.req.Visible(ctx, entityType, entityID)
+// newACLReadGate constructs an aclReadGate, rejecting a nil Request.
+// The two production wiring sites (attachACLRequest, both branches)
+// and any future caller MUST go through this constructor so a nil
+// Request can never silently produce a gate that panics on use.
+func newACLReadGate(r *acl.Request) (readGate, error) {
+	if r == nil {
+		return nil, errors.New("dataentry: newACLReadGate: acl.Request is nil")
+	}
+	return aclReadGate{req: r}, nil
 }
 
-func (g aclReadGate) Query(ctx context.Context, entityType string) acl.ReadQueryResult {
-	return g.req.ReadQuery(ctx, entityType)
+func (g aclReadGate) PermitsRead(ctx context.Context, entityType, entityID string) (bool, error) {
+	return g.req.PermitsRead(ctx, entityType, entityID)
 }
 
-// nopReadGate answers "visible / AllowAll" for every probe. It's the
-// gate the handlers see under NopACL / ReadOnlyACL — the wire response
-// shape is then byte-identical to today's pre-ACL behavior, which is
-// what the NopACL regression test pins (TKT-VQGN AC6).
+func (g aclReadGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
+	return g.req.PermitsReadMany(ctx, entityType, ids)
+}
+
+// nopReadGate answers "permitted" for every probe. It's the gate the
+// handlers see under NopACL / ReadOnlyACL — the wire response shape
+// is then byte-identical to today's pre-ACL behavior, which is what
+// the NopACL regression test pins (TKT-VQGN AC6).
 type nopReadGate struct{}
 
-func (nopReadGate) Visible(context.Context, string, string) (bool, error) {
+func (nopReadGate) PermitsRead(context.Context, string, string) (bool, error) {
 	return true, nil
 }
 
-func (nopReadGate) Query(context.Context, string) acl.ReadQueryResult {
-	return acl.ReadQueryResult{AllowAll: true}
+func (nopReadGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m, nil
 }
 
 // readGateCtxKey is the unexported type for context.WithValue. The
@@ -78,7 +95,7 @@ func withReadGate(ctx context.Context, g readGate) context.Context {
 // nopReadGate when none is present. Handlers MUST go through this
 // helper (not direct ctx.Value lookups) so the nil-handling stays in
 // one place — a handler that forgets to nil-check would silently
-// become an AllowAll on a misconfigured chain (the fail-open shape
+// become permits-all on a misconfigured chain (the fail-open shape
 // RR-875A flagged on attachACLRequest).
 func readGateFromContext(ctx context.Context) readGate {
 	if ctx == nil {

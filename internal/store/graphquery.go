@@ -21,20 +21,6 @@ type GraphQuery struct {
 	EntityType  string
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
-
-	// WhereIDs is a result-set predicate: when non-empty, only entities
-	// whose ID is in the slice may match. It composes with the inbound /
-	// outbound predicates via AND.
-	//
-	// **Semantics for GraphCount.** WhereIDs constrains `matched` but
-	// does NOT affect `total`. `total` always reflects the full
-	// cardinality of EntityType. This lets a caller ask
-	// "of these N specific ids, how many match the predicate?" while
-	// keeping the unfiltered population accessible. A future
-	// implementer who folds WhereIDs into `total` (so total == matched
-	// for every single-id check) would silently break the ACL Visible
-	// path — storetest pins the contract.
-	WhereIDs []string
 }
 
 // RelationPredicate restricts which relations the surrounding
@@ -75,4 +61,20 @@ type GraphQueryer interface {
 	// entities of q.EntityType ignoring those predicates. Callers use
 	// (total - matched) for "filtered by" counts.
 	GraphCount(ctx context.Context, q GraphQuery) (matched, total int, err error)
+
+	// MatchingIDs answers: "of these candidate ids, which ones satisfy
+	// q's predicates?" Returns a map keyed by every candidate id with
+	// the boolean value indicating match (true) or no-match (false).
+	// All input ids appear in the result regardless of outcome, so
+	// callers can distinguish "absent because no-match" from "absent
+	// because no answer."
+	//
+	// q is passed by value: implementations MUST NOT mutate it, and
+	// the caller is free to reuse the input on the next call. ids is
+	// the candidate set; an empty slice yields an empty map.
+	//
+	// Use this rather than threading id filters through GraphQuery —
+	// it's the single-entity-visibility and batched-include shape used
+	// by the ACL read gate.
+	MatchingIDs(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error)
 }

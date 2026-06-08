@@ -34,7 +34,7 @@ import (
 type Declarative struct {
 	policy       *Policy
 	graph        Graph              // required: NewDeclarative rejects nil
-	graphQueryer store.GraphQueryer // required: needed by Request.Visible
+	graphQueryer store.GraphQueryer // required: needed by Request.PermitsRead / PermitsReadMany
 }
 
 // NewDeclarative wraps a [Policy] + [Graph] + [store.GraphQueryer] as
@@ -43,12 +43,13 @@ type Declarative struct {
 //   - Policy is the static role / assignment definitions.
 //   - Graph supplies the read-side access the resolver needs for
 //     member-of walks and ancestor probes used by AuthorizeWrite.
-//   - GraphQueryer supplies [store.GraphQuery] / [store.GraphCount]
-//     execution used by [Request.Visible] for per-entity read gating.
+//   - GraphQueryer supplies [store.MatchingIDs] execution used by
+//     [Request.PermitsRead] / [Request.PermitsReadMany] for per-entity
+//     read gating.
 //
 // Tests that don't exercise group expansion can pass [NullGraph];
-// tests that don't exercise Visible can pass [NullGraphQueryer]
-// (returns DenyAll-shaped zero matches). Production wiring (appbuild)
+// tests that don't exercise read gating can pass [NullGraphQueryer]
+// (returns false for every id probe). Production wiring (appbuild)
 // passes the store as both Graph (via [NewStoreGraph]) and as the
 // GraphQueryer.
 func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer) (*Declarative, error) {

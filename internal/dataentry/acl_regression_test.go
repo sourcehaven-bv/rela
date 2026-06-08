@@ -15,9 +15,9 @@ import (
 //
 // "Byte-identical" is verified structurally — Content-Type is the
 // same, status is 200, body parses, the entity is present. The
-// gate's nopReadGate.Visible returns (true, nil) which is what the
-// "no ACL" pre-gate code path also implicitly assumed; the test is
-// the canary that nopReadGate stays the no-op it advertises.
+// gate's nopReadGate.PermitsRead returns (true, nil) which is what
+// the "no ACL" pre-gate code path also implicitly assumed; the test
+// is the canary that nopReadGate stays the no-op it advertises.
 func TestACLRegression_NopACL_GetUnchanged(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})

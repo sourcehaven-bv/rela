@@ -154,12 +154,12 @@ func TestACLGet_IncludeFilter(t *testing.T) {
 	}
 }
 
-// TestACLGet_WriteVisibleErrorMapping pins the error mapping in
-// writeVisibleError (RR-J25J): context.Canceled emits nothing (client
+// TestACLGet_WriteGateErrorMapping pins the error mapping in
+// writeGateError (RR-J25J): context.Canceled emits nothing (client
 // has disconnected); context.DeadlineExceeded surfaces 504;
 // everything else 500 with the acl_query_failed code. Drives each
-// branch via a fakeGate whose Visible returns a configured error.
-func TestACLGet_WriteVisibleErrorMapping(t *testing.T) {
+// branch via a fakeGate whose PermitsRead returns a configured error.
+func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 
@@ -191,7 +191,7 @@ func TestACLGet_WriteVisibleErrorMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := withReadGate(context.Background(), fakeGate{visibleErr: tc.err})
+			ctx := withReadGate(context.Background(), fakeGate{permitsErr: tc.err})
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 			req = req.WithContext(ctx)
 			rec := httptest.NewRecorder()
@@ -214,18 +214,25 @@ func TestACLGet_WriteVisibleErrorMapping(t *testing.T) {
 // ---- helpers ----
 
 // fakeGate is a readGate impl that returns configured errors from
-// Visible. Used by error-mapping tests; production sites use
-// aclReadGate.
+// PermitsRead / PermitsReadMany. Used by error-mapping tests;
+// production sites use aclReadGate.
 type fakeGate struct {
-	visibleErr error
+	permitsErr error
 }
 
-func (g fakeGate) Visible(context.Context, string, string) (bool, error) {
-	return false, g.visibleErr
+func (g fakeGate) PermitsRead(context.Context, string, string) (bool, error) {
+	return false, g.permitsErr
 }
 
-func (fakeGate) Query(context.Context, string) acl.ReadQueryResult {
-	return acl.ReadQueryResult{DenyAll: true}
+func (g fakeGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+	if g.permitsErr != nil {
+		return nil, g.permitsErr
+	}
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = false
+	}
+	return m, nil
 }
 
 // principalCtx returns a context carrying a stamped data-entry

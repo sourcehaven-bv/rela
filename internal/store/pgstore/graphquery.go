@@ -62,6 +62,75 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	return matched, total, nil
 }
 
+// MatchingIDs runs the predicate query restricted to the candidate id
+// set via `e.id = ANY($ids)`, returning a map keyed by every input id
+// (true = matched, false = no-match). Push-down: a single SQL round
+// trip regardless of |ids|.
+func (s *Store) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = false
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	sqlText, args := buildMatchingIDsSQL(q, ids)
+	rows, err := s.db.Query(ctx, sqlText, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: matching ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("pgstore: matching ids scan: %w", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pgstore: matching ids: %w", err)
+	}
+	return out, nil
+}
+
+// buildMatchingIDsSQL builds the same query shape as
+// [buildGraphQuerySQL] but selects only `e.id` and restricts the
+// candidate set via `e.id = ANY(:ids)`. Parameterised — ids never
+// reaches the SQL text.
+func buildMatchingIDsSQL(q store.GraphQuery, ids []string) (sqlText string, args []any) {
+	b := &sqlBuilder{}
+	typeArg := b.arg(q.EntityType)
+
+	var withParts []string
+	var existsParts []string
+	if q.HasInbound != nil {
+		w, ex := buildPredicateSQL(b, "in", *q.HasInbound, typeArg, store.DirectionIncoming)
+		withParts = append(withParts, w...)
+		existsParts = append(existsParts, ex)
+	}
+	if q.HasOutbound != nil {
+		w, ex := buildPredicateSQL(b, "out", *q.HasOutbound, typeArg, store.DirectionOutgoing)
+		withParts = append(withParts, w...)
+		existsParts = append(existsParts, ex)
+	}
+	idsArg := b.arg(ids)
+
+	var sb strings.Builder
+	if len(withParts) > 0 {
+		sb.WriteString("WITH RECURSIVE ")
+		sb.WriteString(strings.Join(withParts, ",\n"))
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("SELECT e.id FROM entities e WHERE e.type = " + typeArg)
+	sb.WriteString(" AND e.id = ANY(" + idsArg + ")")
+	for _, ex := range existsParts {
+		sb.WriteString(" AND EXISTS (")
+		sb.WriteString(ex)
+		sb.WriteByte(')')
+	}
+	return sb.String(), b.args
+}
+
 // buildGraphQuerySQL emits the SQL + args list for a GraphQuery. When
 // countOnly is true the outer SELECT becomes `SELECT count(*)`
 // instead of streaming entity columns. The function is exported via
@@ -75,10 +144,10 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 //
 // **SQL injection safety.** Every caller-supplied value
 // (q.EntityType, RelationPredicate.Endpoints / OfTypes /
-// InheritThrough / EntityInheritThrough, Depth, EntityDepth) flows
-// through [sqlBuilder.arg], which returns a positional placeholder
-// (`$N`) and appends the value to args. The Sprintf calls in this
-// file substitute only:
+// InheritThrough / EntityInheritThrough, Depth, EntityDepth, and the
+// MatchingIDs candidate id slice) flows through [sqlBuilder.arg],
+// which returns a positional placeholder (`$N`) and appends the
+// value to args. The Sprintf calls in this file substitute only:
 //
 //   - those placeholder strings (already `$N`-formatted by arg)
 //   - compile-time string literals (CTE names like
@@ -126,10 +195,6 @@ func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, arg
 		sb.WriteByte('\n')
 	}
 	sb.WriteString("SELECT " + selectList + " FROM entities e WHERE e.type = " + typeArg)
-	if len(q.WhereIDs) > 0 {
-		whereIDsArg := b.arg(q.WhereIDs)
-		sb.WriteString(" AND e.id = ANY(" + whereIDsArg + ")")
-	}
 	for _, ex := range existsParts {
 		sb.WriteString(" AND EXISTS (")
 		sb.WriteString(ex)

@@ -231,15 +231,16 @@ func (w *World) Visible(actor, entityType string) []string {
 	return ids
 }
 
-// CanSee reports whether `actor` can read entity (entityType, entityID)
-// per Request.Visible. Used by Visible-helper feature tests; mirrors
-// the per-entity GET gate in dataentry.
+// CanSee reports whether `actor` is permitted to read entity
+// (entityType, entityID) per Request.PermitsRead. Used by the
+// PermitsRead-helper feature tests; mirrors the per-entity GET gate
+// in dataentry.
 func (w *World) CanSee(actor, entityType, entityID string) bool {
 	w.t.Helper()
 	req := w.requestFor(actor)
-	ok, err := req.Visible(w.ctx, entityType, entityID)
+	ok, err := req.PermitsRead(w.ctx, entityType, entityID)
 	if err != nil {
-		w.t.Fatalf("CanSee(%q, %q, %q): Visible: %v", actor, entityType, entityID, err)
+		w.t.Fatalf("CanSee(%q, %q, %q): PermitsRead: %v", actor, entityType, entityID, err)
 	}
 	return ok
 }

@@ -71,8 +71,9 @@ func (NullGraph) OutgoingRelations(context.Context, string, string) ([]string, e
 
 // NullGraphQueryer implements [store.GraphQueryer] with empty results.
 // Intended for tests that construct a [*Declarative] but don't
-// exercise [Request.Visible] or the list-side ReadQuery path. Returns
-// (matched=0, total=0) and an empty iterator.
+// exercise [Request.PermitsRead] / [Request.PermitsReadMany] or the
+// list-side ReadQuery path. Returns (matched=0, total=0), an empty
+// iterator, and a "no match" verdict for every id probe.
 //
 // Production wiring never uses NullGraphQueryer; it always passes the
 // store itself (which implements GraphQueryer).
@@ -86,4 +87,13 @@ func (NullGraphQueryer) GraphQuery(context.Context, store.GraphQuery) iter.Seq2[
 // GraphCount returns (0, 0, nil).
 func (NullGraphQueryer) GraphCount(context.Context, store.GraphQuery) (matched, total int, err error) {
 	return 0, 0, nil
+}
+
+// MatchingIDs returns a map with every input id mapped to false.
+func (NullGraphQueryer) MatchingIDs(_ context.Context, _ store.GraphQuery, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = false
+	}
+	return out, nil
 }

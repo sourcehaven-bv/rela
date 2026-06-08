@@ -20,3 +20,8 @@ func (s *FSStore) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[
 func (s *FSStore) GraphCount(ctx context.Context, q store.GraphQuery) (matched, total int, err error) {
 	return graphquerynaive.Count(ctx, s, q)
 }
+
+// MatchingIDs delegates to the shared naive implementation.
+func (s *FSStore) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+	return graphquerynaive.MatchingIDs(ctx, s, q, ids)
+}

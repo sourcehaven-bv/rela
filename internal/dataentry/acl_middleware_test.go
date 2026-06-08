@@ -75,6 +75,54 @@ func TestACLMiddleware_NonAPIPathsBypass(t *testing.T) {
 	}
 }
 
+// TestACLMiddleware_RouterChainOrder pins the CRIT-1 regression: when
+// the router wraps `attachACLRequest` OUTSIDE `stampAuditPrincipal`
+// (the previous broken order), every `/api/` request to an ACL-
+// configured app returns 500 acl_unstamped_principal because the
+// principal isn't stamped yet at the time the ACL middleware reads
+// it. This test asserts the WHOLE chain via NewRouter(), not just the
+// individual middleware — the bug only existed at the composition
+// site.
+func TestACLMiddleware_RouterChainOrder(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+
+	// Configure ACL with alice as a viewer of tickets — so a real
+	// stamped principal would resolve to a non-empty Request.
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	// Install a resolver that returns a stamped principal for every
+	// request. With the CORRECT wrap order (stamp outermost → ACL
+	// inner), ForPrincipal sees alice and succeeds. With the BROKEN
+	// order (ACL outermost → stamp inner), ForPrincipal sees the
+	// default unstamped principal and 500s.
+	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
+		return principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	})
+
+	handler := app.NewRouter()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// With the bug present, code would be 500 + body containing
+	// "acl_unstamped_principal". With the fix, code should be 200
+	// (alice is a viewer of tickets).
+	if strings.Contains(rec.Body.String(), "acl_unstamped_principal") {
+		t.Fatalf("CRIT-1 regression: router wrap order put ACL outside stamp; "+
+			"got %d %s — fix attachACLRequest to wrap before stampAuditPrincipal",
+			rec.Code, rec.Body)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /api/v1/tickets/TKT-001 under stamped alice: got %d, want 200; body=%s",
+			rec.Code, rec.Body)
+	}
+}
+
 // TestACLMiddleware_StampedPrincipalAttachesGate pins the happy path
 // *behaviourally* (RR-CAFF): under a policy that allows ticket reads
 // but denies document reads, the attached gate MUST return true for
@@ -92,12 +140,12 @@ func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
 	}, app.store)
 
 	var sawRequest bool
-	var visibleTicket, visibleDoc bool
+	var permitsTicket, permitsDoc bool
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		sawRequest = acl.FromContext(r.Context()) != nil
 		gate := readGateFromContext(r.Context())
-		visibleTicket, _ = gate.Visible(r.Context(), "ticket", "TKT-001")
-		visibleDoc, _ = gate.Visible(r.Context(), "document", "DOC-001")
+		permitsTicket, _ = gate.PermitsRead(r.Context(), "ticket", "TKT-001")
+		permitsDoc, _ = gate.PermitsRead(r.Context(), "document", "DOC-001")
 	})
 	handler := attachACLRequest(next, d)
 
@@ -110,10 +158,10 @@ func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
 	if !sawRequest {
 		t.Error("acl.FromContext returned nil; Request not attached")
 	}
-	if !visibleTicket {
-		t.Error("gate.Visible(ticket): false; want true (viewer has read:[ticket])")
+	if !permitsTicket {
+		t.Error("gate.PermitsRead(ticket): false; want true (viewer has read:[ticket])")
 	}
-	if visibleDoc {
-		t.Error("gate.Visible(document): true; want false (no read grant on document)")
+	if permitsDoc {
+		t.Error("gate.PermitsRead(document): true; want false (no read grant on document)")
 	}
 }

@@ -249,62 +249,63 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		require.Equal(t, 3, total, "3 tickets exist regardless of predicate")
 	})
 
-	t.Run("WhereIDs_constrains_matched", func(t *testing.T) {
+	t.Run("MatchingIDs_filters_to_candidate_set", func(t *testing.T) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2", "TKT-3")
 		seedGraphQueryEntities(t, s, "person", "alice")
 		mustRel(t, s, "alice", "owns", "TKT-1")
 		mustRel(t, s, "alice", "owns", "TKT-2")
-		mustRel(t, s, "alice", "owns", "TKT-3")
 
-		got := runGraphQuery(t, s, store.GraphQuery{
+		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
 			EntityType: "ticket",
-			WhereIDs:   []string{"TKT-2"},
 			HasInbound: &store.RelationPredicate{
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
-		})
-		require.Equal(t, []string{"TKT-2"}, got, "only the listed id may match")
-	})
-
-	t.Run("WhereIDs_does_not_affect_total", func(t *testing.T) {
-		// Pins the documented predicate-vs-candidate semantics: a
-		// single-id Visible check returns matched∈{0,1} while total
-		// still reflects the full type cardinality. A backend that
-		// folds WhereIDs into total breaks Visible silently.
-		s := f(t)
-		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2")
-
-		matched, total, err := s.GraphCount(ctx(), store.GraphQuery{
-			EntityType: "ticket",
-			WhereIDs:   []string{"nonexistent"},
-		})
+		}, []string{"TKT-1", "TKT-2", "TKT-3"})
 		require.NoError(t, err)
-		require.Equal(t, 0, matched, "no entity has id nonexistent")
-		require.Equal(t, 2, total, "total ignores WhereIDs")
+		require.Equal(t, map[string]bool{"TKT-1": true, "TKT-2": true, "TKT-3": false}, got)
 	})
 
-	t.Run("WhereIDs_with_no_predicate_filters_by_id_alone", func(t *testing.T) {
-		s := f(t)
-		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2", "TKT-3")
-
-		got := runGraphQuery(t, s, store.GraphQuery{
-			EntityType: "ticket",
-			WhereIDs:   []string{"TKT-1", "TKT-3"},
-		})
-		require.Equal(t, []string{"TKT-1", "TKT-3"}, got)
-	})
-
-	t.Run("WhereIDs_no_match_returns_empty", func(t *testing.T) {
+	t.Run("MatchingIDs_returns_all_input_ids", func(t *testing.T) {
+		// Contract: every input id is present in the result map.
+		// Callers distinguish "absent because no-match" (false in map)
+		// from "not in store at all" (also false). An implementation
+		// that silently drops ids would break the single-entity
+		// visibility check.
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
 
-		got := runGraphQuery(t, s, store.GraphQuery{
+		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
 			EntityType: "ticket",
-			WhereIDs:   []string{"TKT-999"},
-		})
+		}, []string{"TKT-1", "nonexistent"})
+		require.NoError(t, err)
+		require.Equal(t, map[string]bool{"TKT-1": true, "nonexistent": false}, got)
+	})
+
+	t.Run("MatchingIDs_empty_input_returns_empty_map", func(t *testing.T) {
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2")
+
+		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+			EntityType: "ticket",
+		}, nil)
+		require.NoError(t, err)
 		require.Empty(t, got)
+	})
+
+	t.Run("MatchingIDs_wrong_type_does_not_match", func(t *testing.T) {
+		// A candidate id that exists in the store but as a different
+		// type must map to false — the predicate is type-scoped.
+		s := f(t)
+		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
+		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
+
+		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+			EntityType: "ticket",
+		}, []string{"TKT-1", "FEAT-1"})
+		require.NoError(t, err)
+		require.Equal(t, map[string]bool{"TKT-1": true, "FEAT-1": false}, got)
 	})
 }
 

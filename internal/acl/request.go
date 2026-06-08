@@ -93,39 +93,56 @@ func (r *Request) ReadQuery(ctx context.Context, entityType string) ReadQueryRes
 	return r.readQuery(ctx, entityType)
 }
 
-// Visible reports whether `entityID` of type `entityType` is readable
-// by this Request's principal. Used by the dataentry per-entity GET
-// gate (and writes-to-hidden 404 parity) to answer one-shot visibility
-// questions without invoking a full list query.
+// PermitsRead reports whether this Request's principal is permitted
+// to read entityID of type entityType under the active policy. Used
+// by the dataentry per-entity GET gate (and writes-to-hidden 404
+// parity) to answer one-shot ACL questions without invoking a full
+// list query.
 //
-// Implemented in terms of [Request.ReadQuery] so the two paths share
-// predicate composition — a future change to readQuery automatically
-// flows to Visible. Semantics:
+// Semantics:
 //
-//   - AllowAll → (true, nil) immediately.
+//   - AllowAll → (true, nil) immediately; existence/type are NOT
+//     verified. Callers that need existence MUST follow up with
+//     getEntity — this method answers "permits read", not "exists".
 //   - DenyAll  → (false, nil) immediately.
-//   - Query    → GraphCount with WhereIDs=[entityID]; matched>0 → true.
+//   - Query    → MatchingIDs with {entityID}; map[entityID] → result.
 //
-// Returns any GraphCount error verbatim so the caller can map it to
-// the right HTTP status (typically 500; context.Canceled → no
-// response; context.DeadlineExceeded → 504).
-func (r *Request) Visible(ctx context.Context, entityType, entityID string) (bool, error) {
-	rqr := r.readQuery(ctx, entityType)
-	switch {
-	case rqr.AllowAll:
-		return true, nil
-	case rqr.DenyAll:
-		return false, nil
-	case rqr.Query == nil:
-		return false, errors.New("acl: Visible: readQuery returned zero ReadQueryResult")
-	}
-	q := *rqr.Query
-	q.WhereIDs = []string{entityID}
-	matched, _, err := r.d.graphQueryer.GraphCount(ctx, q)
+// Returns any backing error verbatim so the caller can map it to the
+// right HTTP status (typically 500; context.Canceled → no response;
+// context.DeadlineExceeded → 504).
+func (r *Request) PermitsRead(ctx context.Context, entityType, entityID string) (bool, error) {
+	m, err := r.PermitsReadMany(ctx, entityType, []string{entityID})
 	if err != nil {
 		return false, err
 	}
-	return matched > 0, nil
+	return m[entityID], nil
+}
+
+// PermitsReadMany returns a permissions map keyed by every input id
+// (true = principal may read, false = denied) for the given type. Used
+// by the dataentry include filter and any future batched gate. All
+// input ids appear in the result map regardless of outcome.
+//
+// Semantics mirror [Request.PermitsRead]:
+//
+//   - AllowAll → every id maps to true.
+//   - DenyAll  → empty map (every lookup returns false zero-value).
+//   - Query    → store.MatchingIDs result, verbatim.
+func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
+	rqr := r.readQuery(ctx, entityType)
+	switch {
+	case rqr.AllowAll:
+		m := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			m[id] = true
+		}
+		return m, nil
+	case rqr.DenyAll:
+		return map[string]bool{}, nil
+	case rqr.Query == nil:
+		return nil, errors.New("acl: PermitsReadMany: readQuery returned zero ReadQueryResult")
+	}
+	return r.d.graphQueryer.MatchingIDs(ctx, *rqr.Query, ids)
 }
 
 // Principal returns the principal bound at construction. Helper for
