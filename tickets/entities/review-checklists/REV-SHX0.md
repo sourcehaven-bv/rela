@@ -75,8 +75,8 @@ IMPL-XC7S "AC mapping" for tests + results.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
-**PR:** https://github.com/sourcehaven-bv/rela/pull/911 (base: feat/affordances-acl-declarative)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/911 (base: develop, rebased after PR 910 merged)
