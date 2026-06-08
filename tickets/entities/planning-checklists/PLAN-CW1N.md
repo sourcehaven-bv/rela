@@ -244,8 +244,8 @@ type-not-in-policy.
 - [x] `GUIDE-acl-security` "Read-path gating is not yet ACL-enforced" → "Per-entity gated; list/sidebar lands in TKT-VMD8."
 - [x] `GUIDE-acl-overview` — minor: pointer note that per-entity reads are now gated; sequence diagram still write-focused.
 - [x] `docs/acl-security.md`, `docs/acl-overview.md` — regenerated via `just docs`.
-- [ ] `docs/data-entry.md` — N/A (SPA already handles 404).
-- [ ] `docs/metamodel.md`, `docs/cli-reference.md`, `CLAUDE.md` — N/A.
+- [x] ~~`docs/data-entry.md`~~ (N/A: SPA already handles 404; no new API shape).
+- [x] ~~`docs/metamodel.md`, `docs/cli-reference.md`, `CLAUDE.md`~~ (N/A: internal security refactor; no metamodel/CLI/contract changes).
 
 ## Design Review
 
