@@ -5,7 +5,7 @@ title: Properties-section inline edit via SectionEditForm
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: planning
 ---
 
 ## Goal
