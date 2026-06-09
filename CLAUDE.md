@@ -219,8 +219,8 @@ Rules when touching this:
 Go: `go-test-coverage` enforces **package floor thresholds** (no ratchet);
 minimums live in `.testcoverage.yml`. Coverage within the floor is free to
 move up or down — floors exist to catch "new untested package added" and
-"core package silently lost its tests." Frontend uses a separate per-file
-ratchet at 100%.
+"core package silently lost its tests." The frontend has no coverage
+enforcement — unit tests run plain (`npm run test:run`).
 
 - Run locally: `just coverage-check`, `just coverage-html`.
 - When a floor fails, add tests — don't lower the threshold without a reason.
