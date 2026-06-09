@@ -88,6 +88,8 @@ go build -o rela ./cmd/rela
 | [Scheduled Tasks](docs/scheduled-tasks.md) | Run Lua scripts on recurring schedules |
 | [Audit Log](docs/audit-log.md) | Forensic JSONL log of every entity / relation write |
 | [PostgreSQL Backend](docs/postgres-backend.md) | Run rela-server and the CLI against PostgreSQL instead of markdown files |
+| [ACL: Authorization Overview](docs/acl-overview.md) | How rela's role-based authorization works end-to-end: from acl.yaml + the graph to a write decision and its audit attribution |
+| [ACL: Security Hardening](docs/acl-security.md) | Operator's hardening guide for rela's ACL system: group membership trust, fail-loud boot, audit-isolation invariants |
 
 ### Tutorials
 

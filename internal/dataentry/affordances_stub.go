@@ -44,7 +44,8 @@ const (
 // error — the caller fails startup loudly (DR-M4), matching the
 // acl.yaml hard-fail posture for genuinely broken config.
 func ResolverFromProfile(
-	profile string, policy *acl.Policy, meta *metamodel.Metamodel, st store.Store,
+	profile string, meta *metamodel.Metamodel, st store.Store,
+	declarative *acl.Declarative,
 ) (FieldVerdictResolver, error) {
 	switch AffordanceProfile(profile) {
 	case AffordanceProfileDemo:
@@ -59,16 +60,16 @@ func ResolverFromProfile(
 			"allowed", []string{string(AffordanceProfileNone), string(AffordanceProfileDemo)})
 	}
 
-	if policy == nil || !policy.HasAffordanceGrants() {
+	// No declarative wired → NopACL or constant-decider ACL → no
+	// affordance grants to compute. Declarative is the single source
+	// for the policy (RR-WTLD); reading it through any other channel
+	// invites mismatched-pair bugs.
+	if declarative == nil {
 		return NopFieldVerdictResolver{}, nil
 	}
-	// PR 3 wires affordances.New through a Declarative built here with
-	// NullGraph. Proper StoreGraph wiring + a dedicated `Services.
-	// ACLDeclarative()` accessor lands in PR 4 so the affordance
-	// resolver and the write path provably share one *acl.Declarative.
-	declarative, derr := acl.NewDeclarative(policy, acl.NullGraph{})
-	if derr != nil {
-		return nil, fmt.Errorf("dataentry: building acl.Declarative for affordances: %w", derr)
+	policy := declarative.Policy()
+	if policy == nil || !policy.HasAffordanceGrants() {
+		return NopFieldVerdictResolver{}, nil
 	}
 	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, declarative)
 	if err != nil {
@@ -80,22 +81,26 @@ func ResolverFromProfile(
 // ResolverServices is the slice of [appbuild.Services] that
 // [ResolverFromServices] needs. Declared here at the call site so the
 // entry points pass `svc` directly without each re-spelling the
-// env-read + three accessors.
+// env-read + accessors.
+//
+// ACLDeclarative may return nil when no policy is wired (NopACL); the
+// resolver constructor handles that case by selecting NopFieldVerdictResolver.
 type ResolverServices interface {
-	ACLPolicy() *acl.Policy
+	ACLDeclarative() *acl.Declarative
 	Meta() *metamodel.Metamodel
 	Store() store.Store
 }
 
 // ResolverFromServices builds the affordance resolver for an entry
 // point, reading RELA_AFFORDANCE_PROFILE from the environment and the
-// policy / metamodel / store from svc. Both cmd entry points call this;
-// they differ only in how they handle the returned error (rela-server
-// exits, rela-desktop surfaces it to the UI), so error handling stays
-// at the call site.
+// metamodel / store / declarative from svc. Both cmd entry points call
+// this; they differ only in how they handle the returned error
+// (rela-server exits, rela-desktop surfaces it to the UI), so error
+// handling stays at the call site.
 func ResolverFromServices(svc ResolverServices) (FieldVerdictResolver, error) {
 	return ResolverFromProfile(
-		os.Getenv("RELA_AFFORDANCE_PROFILE"), svc.ACLPolicy(), svc.Meta(), svc.Store())
+		os.Getenv("RELA_AFFORDANCE_PROFILE"),
+		svc.Meta(), svc.Store(), svc.ACLDeclarative())
 }
 
 // NopFieldVerdictResolver returns empty verdicts for every entity.

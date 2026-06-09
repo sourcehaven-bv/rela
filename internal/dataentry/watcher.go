@@ -158,6 +158,20 @@ const storeEventBufSize = 64
 // (relations/attachments are not part of the live feed today — matching the
 // prior inline-broadcast behavior). Idempotent re-snapshot semantics: a
 // duplicate event just nudges the browser to re-fetch again, which is harmless.
+//
+// # Audit-isolation invariant
+//
+// The SSE broker NEVER carries audit records. The wire payload is
+// `{type, id}` — an entity marker only. Subject.ID / Subject.FromID
+// from `denied-write` audit rows must NOT be forwarded here: the
+// audit log is the only intended audience for principal-attribution
+// detail, and broadcasting it via SSE would leak the principal-to-
+// entity topology to every event subscriber.
+//
+// If a future feature needs an audit-aware SSE channel, it must
+// expose a SEPARATE broker, gated by per-subscriber ACL, with its
+// own redaction policy. The regression test
+// `TestSSE_DoesNotFlowAuditEvents` pins this invariant.
 func (a *App) startStoreEventBridge() {
 	events, cancel := a.store.Subscribe(storeEventBufSize)
 	a.stopStoreWatch = cancel
