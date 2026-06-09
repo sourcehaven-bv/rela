@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildSectionEditFields,
-  sectionHasAnyWritable,
+  sectionShouldRouteToInlineEdit,
   applyPropertyToEntry,
 } from './sectionEditFields'
 import type { ViewSection, ViewSectionField } from '@/api'
@@ -75,7 +75,7 @@ describe('buildSectionEditFields', () => {
   })
 })
 
-describe('sectionHasAnyWritable', () => {
+describe('sectionShouldRouteToInlineEdit', () => {
   function makeSection(fields: ViewSectionField[]): ViewSection {
     return {
       heading: 'Test',
@@ -90,26 +90,37 @@ describe('sectionHasAnyWritable', () => {
 
   it('returns true when entry._fields is undefined (default writable)', () => {
     const section = makeSection(makeFields())
-    expect(sectionHasAnyWritable(section, makeEntity(), schemaResolver)).toBe(true)
+    expect(sectionShouldRouteToInlineEdit(section, makeEntity(), schemaResolver)).toBe(true)
   })
 
   it('returns true when entry._fields is {} (evaluated, no deviations)', () => {
     const section = makeSection(makeFields())
     const entry = makeEntity({ _fields: {} })
-    expect(sectionHasAnyWritable(section, entry, schemaResolver)).toBe(true)
+    expect(sectionShouldRouteToInlineEdit(section, entry, schemaResolver)).toBe(true)
   })
 
   it('returns false when all listed fields are explicitly non-writable', () => {
     const section = makeSection([{ property: 'status', label: 'Status' }])
     const entry = makeEntity({ _fields: { status: { writable: false } } })
-    expect(sectionHasAnyWritable(section, entry, schemaResolver)).toBe(false)
+    expect(sectionShouldRouteToInlineEdit(section, entry, schemaResolver)).toBe(false)
   })
 
   it('returns true when at least one field is writable', () => {
     const section = makeSection(makeFields())
     const entry = makeEntity({ _fields: { status: { writable: false } } })
     // title has no verdict → defaults writable
-    expect(sectionHasAnyWritable(section, entry, schemaResolver)).toBe(true)
+    expect(sectionShouldRouteToInlineEdit(section, entry, schemaResolver)).toBe(true)
+  })
+
+  it('returns false when any field is inaccessible (git-crypt etc.)', () => {
+    // Even though the field is otherwise writable per `_fields`, the
+    // inaccessible affordance (lock placeholder) is only rendered by
+    // PropertyDisplay; route there so the lock UI is preserved.
+    const section = makeSection([
+      { property: 'title', label: 'Title', inaccessible: true },
+      { property: 'status', label: 'Status' },
+    ])
+    expect(sectionShouldRouteToInlineEdit(section, makeEntity(), schemaResolver)).toBe(false)
   })
 })
 

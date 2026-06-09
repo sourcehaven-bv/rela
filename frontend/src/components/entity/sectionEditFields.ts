@@ -54,15 +54,21 @@ export function buildSectionEditFields(
   return out
 }
 
-// sectionHasAnyWritable: properties section gets routed to
-// SectionEditForm only when at least one field is writable per
-// `_fields`. Otherwise PropertyDisplay handles it unchanged.
-export function sectionHasAnyWritable(
+// sectionShouldRouteToInlineEdit: properties section gets routed to
+// SectionEditForm only when (a) at least one field is writable per
+// `_fields` AND (b) no field on the section is inaccessible (e.g.
+// git-crypt encrypted). The inaccessible affordance — a per-cell lock
+// placeholder — is rendered by PropertyDisplay's `<InaccessibleField>`
+// path; SectionEditForm doesn't model it (TKT-IHC7B explicitly scopes
+// to writability gating, not inaccessibility).
+export function sectionShouldRouteToInlineEdit(
   section: ViewSection,
   ent: Entity,
   getPropertyDef: (entityType: string, propertyName: string) => PropertyDef | undefined,
 ): boolean {
-  return buildSectionEditFields(section.fields, ent, getPropertyDef).some((f) =>
+  const fields = section.fields ?? []
+  if (fields.some((f) => f.inaccessible)) return false
+  return buildSectionEditFields(fields, ent, getPropertyDef).some((f) =>
     isFieldWritable(f.verdict),
   )
 }

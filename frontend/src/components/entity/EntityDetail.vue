@@ -37,7 +37,7 @@ import CommandModal from '@/components/entity/CommandModal.vue'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import {
   buildSectionEditFields as buildSectionEditFieldsPure,
-  sectionHasAnyWritable as sectionHasAnyWritablePure,
+  sectionShouldRouteToInlineEdit as sectionShouldRouteToInlineEditPure,
   applyPropertyToEntry,
 } from './sectionEditFields'
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
@@ -470,8 +470,8 @@ function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionE
   return fields
 }
 
-function sectionHasAnyWritable(section: ViewSection, ent: Entity): boolean {
-  return sectionHasAnyWritablePure(section, ent, getPropertyDef)
+function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
+  return sectionShouldRouteToInlineEditPure(section, ent, getPropertyDef)
 }
 
 // One-shot dedupe for the 401/403 → loadView path. Cleared on each
@@ -711,7 +711,7 @@ watch(
             navigation cleanly (RR-FB1D + RR-FB2A).
           -->
           <SectionEditForm
-            v-else-if="section.display === 'properties' && entry && sectionHasAnyWritable(section, entry)"
+            v-else-if="section.display === 'properties' && entry && sectionShouldRouteToInlineEdit(section, entry)"
             :key="`${entry.type}/${entry.id}`"
             :entity-type="entry.type"
             :entity-id="entry.id"
