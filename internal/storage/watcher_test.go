@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -211,6 +212,21 @@ func TestChangeOp_String(t *testing.T) {
 	}
 }
 
+// waitWatched polls until path shows up in the watch list, failing the
+// test after a generous deadline. Used where the event loop registers
+// watches asynchronously (auto-watching newly created directories).
+func waitWatched(t *testing.T, w *Watcher, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if slices.Contains(w.WatchList(), path) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s to be watched", path)
+}
+
 func TestWatcher_FileChangeEvents(t *testing.T) {
 	dir := t.TempDir()
 
@@ -231,8 +247,8 @@ func TestWatcher_FileChangeEvents(t *testing.T) {
 	go w.Start()
 	defer w.Stop()
 
-	// Give the watcher time to start
-	time.Sleep(100 * time.Millisecond)
+	// No startup wait needed: NewWatcher registers the fsnotify watches
+	// synchronously, and events queue until Start drains them.
 
 	// Create a file
 	testFile := filepath.Join(dir, "test.md")
@@ -281,26 +297,35 @@ func TestWatcher_IgnoresNonMatchingExtensions(t *testing.T) {
 	go w.Start()
 	defer w.Stop()
 
-	// Give the watcher time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Create a non-matching file
-	testFile := filepath.Join(dir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("hello"), 0o644); err != nil {
+	// Create a non-matching file, then a matching sentinel. The sentinel's
+	// arrival proves the watcher already processed (and filtered) the .txt
+	// event — no quiet-window sleep needed.
+	txtFile := filepath.Join(dir, "test.txt")
+	if err := os.WriteFile(txtFile, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mdFile := filepath.Join(dir, "sentinel.md")
+	if err := os.WriteFile(mdFile, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Should not receive event for .txt file
-	select {
-	case events := <-eventsChan:
-		// Check if any event is for our .txt file (shouldn't be)
-		for _, e := range events {
-			if e.Path == testFile {
-				t.Errorf("should not receive event for non-matching extension: %v", e)
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case events := <-eventsChan:
+			for _, e := range events {
+				if e.Path == txtFile {
+					t.Errorf("should not receive event for non-matching extension: %v", e)
+				}
 			}
+			for _, e := range events {
+				if e.Path == mdFile {
+					return // sentinel arrived; .txt was filtered
+				}
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for sentinel .md event")
 		}
-	case <-time.After(200 * time.Millisecond):
-		// Expected: no event for non-matching extension
 	}
 }
 
@@ -324,17 +349,15 @@ func TestWatcher_AutoWatchesNewDirectories(t *testing.T) {
 	go w.Start()
 	defer w.Stop()
 
-	// Give the watcher time to start
-	time.Sleep(100 * time.Millisecond)
-
 	// Create a new subdirectory
 	subDir := filepath.Join(dir, "subdir")
 	if err := os.Mkdir(subDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Give time for the directory to be watched
-	time.Sleep(150 * time.Millisecond)
+	// The event loop auto-watches new directories asynchronously; wait
+	// until the watch is actually registered before writing into it.
+	waitWatched(t, w, subDir)
 
 	// Create a file in the new subdirectory
 	testFile := filepath.Join(subDir, "test.md")
@@ -385,9 +408,6 @@ func TestWatcher_FileModifyAndDelete(t *testing.T) {
 
 	go w.Start()
 	defer w.Stop()
-
-	// Give the watcher time to start
-	time.Sleep(100 * time.Millisecond)
 
 	// Modify the file
 	if err := os.WriteFile(testFile, []byte("modified"), 0o644); err != nil {

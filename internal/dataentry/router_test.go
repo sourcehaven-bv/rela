@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,12 +88,9 @@ func TestNewRouterSSEEndpoint(t *testing.T) {
 	handler := app.NewRouter()
 
 	// SSE endpoint should respond with event-stream content type
-	r := httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody)
-	w := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
-	// We need to cancel the context to prevent the handler from blocking forever
-	ctx, cancel := r.Context(), func() {}
-	_ = ctx
-	r = r.WithContext(r.Context())
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody).WithContext(ctx)
+	w := newFlusherRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -100,16 +98,12 @@ func TestNewRouterSSEEndpoint(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait briefly for initial response
-	select {
-	case <-done:
-		// Handler returned, check response
-	default:
-		// Handler is still running (expected for SSE), cancel it
-		cancel()
-	}
+	// Wait for the initial keepalive flush, then end the long-lived handler.
+	w.awaitFlush(t)
+	cancel()
+	<-done
 
-	// The SSE handler may not finish immediately in this test setup
-	// since httptest.NewRecorder's Flush implementation differs,
-	// but we verify the endpoint is registered and reachable.
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", ct)
+	}
 }
