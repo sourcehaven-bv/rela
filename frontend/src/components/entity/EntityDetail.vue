@@ -5,9 +5,9 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { fetchView, getCommands, updateEntity } from '@/api'
+import { fetchView, getCommands } from '@/api'
 import type { ViewResponse, ViewSectionField } from '@/api'
-import type { Entity } from '@/types'
+import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
@@ -159,12 +159,52 @@ watch(
   { flush: 'post' },
 )
 
-// Tracks toggle requests still in flight, keyed by data-cb-idx. Without
-// this, a rapid double-click queues two toggles that net to zero — the
-// user sees the click "do nothing". The server's writeMu serializes
-// writes but does not collapse them; deduping at the client is the only
-// place we can suppress the second click before it leaves the browser.
-const togglingIndices = new Set<number>()
+// Content-only useAutoSave instance. EntityDetail does not own a form
+// surface, so the property and relations channels are disabled —
+// scheduleFieldSave/scheduleRelationsChange would throw if called. The
+// content channel debounces at 100ms so rapid checkbox clicks coalesce
+// into one PATCH while still feeling instant; the e2e suite tolerates
+// up to 2s for the UI poll and 5s for the server poll.
+//
+// contentRef is a computed mirror of viewData.entry.content; the
+// composable only reads its shape (never writes), so a read-only
+// computed is sufficient. Property/relations callbacks are no-ops to
+// satisfy AutoSaveOptions's required surface; they are unreachable
+// because their channels are disabled and mergeServerResponse skips
+// them.
+const entryContent = computed(() => entry.value?.content ?? '')
+const entryProperties = computed<Record<string, unknown>>(() => entry.value?.properties ?? {})
+// When the route changes mid-debounce, the watch pins the previous
+// entity identity here so the in-flight flush PATCHes the entity the
+// user actually clicked, not the one they just navigated to.
+const pinEntityForFlush = ref<{ type: string; id: string } | null>(null)
+const contentAutoSave = useAutoSave({
+  getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
+  getEntityId: () => pinEntityForFlush.value?.id ?? props.entityId,
+  contentDebounceMs: 100,
+  formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
+  contentRef: entryContent as unknown as import('vue').Ref<string>,
+  inverseToCanonical: new Map(),
+  buildRelationsBody: () => null,
+  applyServerProperty: () => {},
+  applyServerContent: (next) => {
+    const view = viewData.value
+    if (!view || !view.entry) return
+    // If the route changed mid-flush, the previous entity's PATCH may
+    // resolve after the new entity's loadView; reject the apply by
+    // entity-identity rather than splice stale content into the new
+    // view.
+    const pinned = pinEntityForFlush.value
+    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
+    const nextSections = view.sections.map((s) =>
+      isEntryContentSection(s) ? { ...s, content: next } : s,
+    )
+    viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
+  },
+  onError: (msg) => uiStore.error(msg),
+  disablePropertyChannel: true,
+  disableRelationsChannel: true,
+})
 
 function contentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
@@ -174,66 +214,37 @@ function contentClick(event: MouseEvent) {
   const raw = checkbox.dataset.cbIdx
   if (raw === undefined) return
   const idx = parseInt(raw, 10)
-  if (Number.isNaN(idx) || togglingIndices.has(idx)) return
-  void handleCheckboxToggle(idx)
+  if (Number.isNaN(idx)) return
+  handleCheckboxToggle(idx)
 }
 
-async function handleCheckboxToggle(index: number) {
+function handleCheckboxToggle(index: number) {
   const current = entry.value
   const view = viewData.value
   if (!current || !view) return
-  // Reserve the index BEFORE the synchronous toggler runs so a rapid
-  // double-click on a checkbox the toggler rejects (e.g. an unsupported
-  // bullet shape) doesn't fire two error toasts.
-  togglingIndices.add(index)
+  let newContent: string
   try {
-    let newContent: string
-    try {
-      newContent = toggleCheckboxInSource(current.content || '', index)
-    } catch (err) {
-      // The toggler is intentionally narrower than the renderer (see
-      // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
-      // task items in marked but are rejected here). Surface the thrown
-      // detail so users know which line of the source the click missed.
-      const detail = err instanceof Error ? err.message : 'unknown error'
-      uiStore.error(`Failed to toggle checkbox: ${detail}`)
-      console.error(err)
-      return
-    }
-    // No If-Match — toggles are commutative-ish (last-write-wins is
-    // acceptable for two users racing the same checkbox) and the
-    // ViewResponse doesn't currently surface an ETag for us to thread
-    // through. Matches the prior /api/toggle-checkbox behavior.
-    const updated: Entity = await updateEntity(current.type, current.id, { content: newContent })
-    // Route may have changed while the PATCH was in flight (entity nav,
-    // back-button, etc.); the watch on entityType/entityId would have
-    // refetched a different viewData. Detect via reference identity
-    // and bail rather than splice updates into a stale snapshot that
-    // would clobber the destination entity's view.
-    if (viewData.value !== view) return
-    // Mutate view state in place so Vue's reactivity re-renders only the
-    // dependents (content body via renderedEntryContent, stats counter via
-    // checkboxStats). Replacing viewData entirely keeps everything else —
-    // header, scope nav, properties, relations, documents panel —
-    // referentially stable. The entry-content section's content field is
-    // what renderedEntryContent reads, so it must mirror the updated
-    // entity content alongside viewData.entry.
-    //
-    // ASSUMPTION: PATCH side-effects are limited to entry.content. True for
-    // checkbox toggles today. If a future caller routes property edits or
-    // automation-triggering changes through this path, properties/relations
-    // sections will display stale fetchView data — fall back to loadView()
-    // or re-derive sections from `updated` for those cases.
-    const nextSections = view.sections.map((s) =>
-      isEntryContentSection(s) ? { ...s, content: updated.content || '' } : s,
-    )
-    viewData.value = { ...view, entry: updated, sections: nextSections }
+    newContent = toggleCheckboxInSource(current.content || '', index)
   } catch (err) {
-    uiStore.error('Failed to toggle checkbox')
+    // The toggler is intentionally narrower than the renderer (see
+    // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
+    // task items in marked but are rejected here). Surface the thrown
+    // detail so users know which line of the source the click missed.
+    const detail = err instanceof Error ? err.message : 'unknown error'
+    uiStore.error(`Failed to toggle checkbox: ${detail}`)
     console.error(err)
-  } finally {
-    togglingIndices.delete(index)
+    return
   }
+  // Apply optimistically so a second click within the debounce window
+  // toggles the post-first state (the source for the next toggle is
+  // viewData.entry.content). Without this, two rapid clicks on the
+  // same index would each toggle the unchanged server content and
+  // net to zero on the next PATCH.
+  const nextSections = view.sections.map((s) =>
+    isEntryContentSection(s) ? { ...s, content: newContent } : s,
+  )
+  viewData.value = { ...view, entry: { ...current, content: newContent }, sections: nextSections }
+  contentAutoSave.scheduleContentSave(newContent)
 }
 
 // Keyboard shortcuts
@@ -310,6 +321,12 @@ async function loadView() {
   error.value = null
   try {
     viewData.value = await fetchView(props.entityType, props.entityId)
+    if (viewData.value?.entry) {
+      // Seed the autosave baseline so the first toggle's no-op
+      // suppression can compare against server state without waiting
+      // for the response of a sentinel PATCH.
+      contentAutoSave.recordServerSnapshot(viewData.value.entry)
+    }
     await Promise.all([loadCommands(), loadScopeNav()])
   } catch (err) {
     if (isCancelledFetch(err)) return
@@ -451,6 +468,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
   commandsAbort?.abort()
+  // Flush any pending toggle PATCH so navigating away mid-debounce
+  // doesn't silently drop the user's click. commitImmediately returns
+  // a promise; we don't await it because Vue's onBeforeUnmount is
+  // synchronous — the FIFO chain will run to completion regardless.
+  void contentAutoSave.commitImmediately()
 })
 
 onUnmounted(() => document.removeEventListener('click', closeOverflow))
@@ -458,13 +480,19 @@ onUnmounted(() => document.removeEventListener('click', closeOverflow))
 // Watch for route changes
 watch(
   () => [props.entityType, props.entityId],
-  () => {
-    // Drop any toggles that were in-flight against the previous entity —
-    // their PATCH responses (if they ever come back) will be discarded by
-    // the viewData identity check in handleCheckboxToggle, but clearing
-    // here also lets the new entity's checkboxes at the same index respond
-    // to clicks immediately instead of being silently swallowed.
-    togglingIndices.clear()
+  (_next, prev) => {
+    // Flush pending toggles for the previous entity before loading the
+    // next one. The composable reads entity identity from
+    // getEntityType/getEntityId at fire time, which would resolve to
+    // the new entity by the time the FIFO chain runs — so we capture
+    // the previous identity for the duration of the flush via a
+    // one-shot override before triggering commit.
+    const [prevType, prevId] = prev
+    const fireWith = { type: prevType, id: prevId }
+    pinEntityForFlush.value = fireWith
+    void contentAutoSave.commitImmediately().finally(() => {
+      if (pinEntityForFlush.value === fireWith) pinEntityForFlush.value = null
+    })
     loadView()
   },
 )
