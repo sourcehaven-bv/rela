@@ -16,12 +16,9 @@ This is the third slice of the split TKT-IHCY7.
 
 ## Blocker / dependency
 
-**RR-UE3B** identified a wire-shape gap: cards/list `ViewEntity.fields` carries `values: string[]` (display-stringified) and does not carry typed property values. `useAutoSave`'s no-op suppression needs typed initial values to work correctly. Either:
+**RR-UE3B** identified a wire-shape gap: cards/list `ViewEntity.fields` carries `values: string[]` (display-stringified) and does not carry typed property values. `useAutoSave`'s no-op suppression needs typed initial values to work correctly.
 
-- The cards/list wire shape must be extended to include `_props: Record<string, unknown>` per entity (backend change in `internal/dataentry/sections.go` and `api_v1.go`)
-- OR `SectionEditForm` needs to be modified to handle a "no baseline yet" mode where no-op suppression is disabled until the first server response lands. This weakens the no-op story and bleeds back into `useAutoSave`.
-
-Likely outcome: a separate prerequisite ticket for the wire-shape change, with this ticket depending on it. May split further depending on the scope of the wire change.
+**Resolution:** TKT-IHC7D files the prerequisite wire-shape change — `V1ViewEntity` gains `_props` (typed values) and `_fields` (per-cell writability verdict). This ticket depends on TKT-IHC7D and becomes a frontend-only PR.
 
 ## Scope (sketch — refine in planning)
 
@@ -43,9 +40,9 @@ Resolves:
 
 Depends on:
 - **TKT-IHC7B** (SectionEditForm)
-- A yet-to-be-filed wire-shape change ticket (or TBD: do that work in this ticket).
+- **TKT-IHC7D** (typed `_props` + `_fields` per cards/list row entity on the wire)
 
-## Out of scope (and TBD)
+## Out of scope
 
-- The wire-shape change itself: may be in-ticket or filed as a prerequisite. Decide during this ticket's planning phase.
+- The wire-shape change itself — shipped by TKT-IHC7D.
 - View-config `editable: true` overrides (TKT-HOIX1).
