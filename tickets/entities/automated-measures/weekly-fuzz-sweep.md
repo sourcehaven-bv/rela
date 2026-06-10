@@ -2,6 +2,7 @@
 id: weekly-fuzz-sweep
 type: automated-measure
 title: Weekly fuzz sweep over all fuzz targets
+description: Scheduled weekly CI workflow that discovers and fuzzes every Fuzz* target for 25s each; failures upload crashing inputs as artifacts and auto-file a deduped GitHub issue (label fuzz-failure). Guards against fuzz-reachable bugs that the per-PR 3-target smoke job never exercises.
 kind: ci
 location: .github/workflows/fuzz-sweep.yml
 status: active
