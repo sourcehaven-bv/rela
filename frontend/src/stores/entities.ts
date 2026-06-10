@@ -9,6 +9,7 @@ import {
   type EntityPatch,
 } from '@/api/entities'
 import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
+import { getErrorMessage } from '@/api/errors'
 import { useGitStore } from './git'
 
 interface EntityCache {
@@ -130,7 +131,7 @@ export const useEntitiesStore = defineStore('entities', () => {
       })
       return entity
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch entity'
+      const message = getErrorMessage(err, 'Failed to fetch entity')
       errors.value.set(key, message)
       throw err
     } finally {

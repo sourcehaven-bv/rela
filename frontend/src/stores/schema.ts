@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getSchema, getConfig } from '@/api/schema'
+import { getErrorMessage } from '@/api/errors'
 import type {
   EntityType,
   RelationType,
@@ -128,7 +129,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
       loaded.value = true
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load schema'
+      error.value = getErrorMessage(err, 'Failed to load schema')
       throw err
     } finally {
       loading.value = false

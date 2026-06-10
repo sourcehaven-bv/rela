@@ -25,6 +25,7 @@
 import { ref, computed, type Ref } from 'vue'
 import type { Entity } from '@/types'
 import type { EntityPatch } from '@/api/entities'
+import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 
 // Sentinel for "unset this property" pending entries. Distinct from
@@ -636,19 +637,8 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return true
 }
 
-interface ApiErr {
-  status?: number
-  title?: string
-  detail?: string
-  response?: { status?: number; data?: { status?: number; detail?: string; title?: string } }
-  message?: string
-}
-
 function parseError(err: unknown): { status: number; message: string } {
-  const e = err as ApiErr
-  const status = e?.status ?? e?.response?.status ?? e?.response?.data?.status ?? 0
-  const detail = e?.detail ?? e?.response?.data?.detail
-  const title = e?.title ?? e?.response?.data?.title
-  const message = detail || title || e?.message || 'Save failed'
-  return { status, message }
+  // The shared client rejects with a normalized ApiError (api/errors.ts).
+  const status = err instanceof ApiError ? (err.status ?? 0) : 0
+  return { status, message: getErrorMessage(err, 'Save failed') }
 }

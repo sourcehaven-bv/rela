@@ -1,21 +1,9 @@
-import axios, { AxiosError, type AxiosInstance, type AxiosResponse } from 'axios'
+import axios, { type AxiosInstance, type AxiosResponse } from 'axios'
+import { toApiError } from './errors'
 
-export interface ProblemDetail {
-  type: string
-  title: string
-  status: number
-  detail?: string
-  instance?: string
-  errors?: ValidationError[]
-}
-
-export interface ValidationError {
-  source?: { pointer: string }
-  code?: string
-  field?: string
-  message?: string
-  detail?: string
-}
+// The error types and helpers live in errors.ts; re-export so existing
+// `from '@/api'` / `from '@/api/client'` importers keep working.
+export type { ProblemDetail, ValidationError } from './errors'
 
 class ApiClient {
   private client: AxiosInstance
@@ -28,21 +16,12 @@ class ApiClient {
       },
     })
 
+    // Every failure is normalized to a single ApiError (BUG-X9VNE1):
+    // catch sites read .message / .validationErrors / getScriptError()
+    // instead of branching on the rejection shape.
     this.client.interceptors.response.use(
       (response) => response,
-      (error: AxiosError<ProblemDetail | { error?: string }>) => {
-        const data = error.response?.data
-        // Script-failure envelope (HTTP 422 from Lua surfaces) is shaped
-        // like { error: "script_error", ... }. Pass it through as-is so
-        // catch handlers can recognise and route it to <ScriptErrorPanel>.
-        if (data && typeof data === 'object' && 'error' in data && data.error === 'script_error') {
-          return Promise.reject(data)
-        }
-        if (data && typeof data === 'object' && 'type' in data && data.type) {
-          return Promise.reject(data)
-        }
-        return Promise.reject(error)
-      },
+      (error: unknown) => Promise.reject(toApiError(error)),
     )
   }
 

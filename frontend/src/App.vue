@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { getErrorMessage } from '@/api'
 import { useKeyboardShortcuts, shortcutsModalOpen, paletteOpen, useEvents } from '@/composables'
 import { useConfirmHost } from '@/composables/useConfirm'
 import Sidebar from '@/components/common/Sidebar.vue'
@@ -36,7 +37,7 @@ onMounted(async () => {
   try {
     await schemaStore.load()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load application'
+    error.value = getErrorMessage(err, 'Failed to load application')
     uiStore.error(error.value)
   } finally {
     loading.value = false
