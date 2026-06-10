@@ -34,7 +34,12 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		Config:        svc.Config(),
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		Watcher:       nopWatcher{},
-		ProjectRoot:   t.TempDir(),
+		// Note: this real empty dir (what lua_list/lua_run walk) is
+		// intentionally distinct from LuaWriteDeps' ProjectRoot, which
+		// points at the fixture's in-memory /project. No current test
+		// resolves a Lua write relative to that root; align the two if
+		// one ever does.
+		ProjectRoot: t.TempDir(),
 	}
 }
 

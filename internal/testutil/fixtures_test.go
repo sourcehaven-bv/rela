@@ -270,20 +270,31 @@ func TestRelation_Build_PanicsOnMissingTo(t *testing.T) {
 }
 
 func TestMetamodelBuilder_WithValidation(t *testing.T) {
-	rule := metamodel.ValidationRule{
+	first := metamodel.ValidationRule{
 		Name:       "status-not-empty",
 		EntityType: "ticket",
 		Severity:   "error",
 	}
+	second := metamodel.ValidationRule{
+		Name:       "owner-required",
+		EntityType: "ticket",
+		Severity:   "warning",
+	}
 	meta := NewMetamodel().
 		WithEntity("ticket", "Ticket", nil).
-		WithValidation(rule).
+		WithValidation(first).
+		WithValidation(second).
 		Build()
 
-	if len(meta.Validations) != 1 {
-		t.Fatalf("got %d validations, want 1", len(meta.Validations))
+	// Appends preserve call order — callers loop over rule slices and
+	// rule evaluation order is observable.
+	if len(meta.Validations) != 2 {
+		t.Fatalf("got %d validations, want 2", len(meta.Validations))
 	}
-	if meta.Validations[0].Name != rule.Name {
-		t.Errorf("rule name = %q, want %q", meta.Validations[0].Name, rule.Name)
+	if meta.Validations[0].Name != first.Name {
+		t.Errorf("rule[0] = %q, want %q", meta.Validations[0].Name, first.Name)
+	}
+	if meta.Validations[1].Name != second.Name {
+		t.Errorf("rule[1] = %q, want %q", meta.Validations[1].Name, second.Name)
 	}
 }

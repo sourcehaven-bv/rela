@@ -24,4 +24,4 @@ status: done
 
 - [x] First `just ci` run failed on exactly the race the reviewer predicted — fix verified by 4 consecutive shuffled race runs and a clean second `just ci`
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/958 (stacked on #956)
