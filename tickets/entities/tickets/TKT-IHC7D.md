@@ -5,7 +5,7 @@ title: View wire-shape — typed _props + _fields per cards/list row entity
 kind: enhancement
 priority: medium
 effort: s
-status: planning
+status: done
 ---
 
 ## Goal

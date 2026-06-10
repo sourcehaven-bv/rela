@@ -2982,14 +2982,61 @@ type V1ViewSection struct {
 }
 
 // V1ViewEntity represents an entity in a view section.
+//
+// Props and FieldAffordances (TKT-IHC7D) carry the typed property
+// values and per-cell writability verdict that inline-edit hosts on
+// cards/list view sections consume. Both are hidden-property-stripped
+// — the consumer can assume:
+//
+//   - `keys(Props) ∩ hidden(e) == ∅` (hidden properties never leak via
+//     this surface)
+//   - `keys(FieldAffordances) ∩ hidden(e) == ∅` (same for the verdict)
+//   - `FieldAffordances` may have keys absent from `Props` when the
+//     property has no stored value but a non-default verdict (e.g.
+//     `writable: false` on an unset field)
+//
+// The pointer-to-map idiom on `FieldAffordances` mirrors
+// `V1Entity.FieldAffordances`: `nil` means "absent on the wire"
+// (table rows / non-cards paths), `&{}` means "evaluated, no
+// deviations" (closed-world signal matching `_actions`).
+//
+// `Props` is a plain map with `omitempty`: presence/absence is
+// sufficient, no closed-world semantic is needed.
 type V1ViewEntity struct {
-	ID         string           `json:"id"`
-	Title      string           `json:"title"`
-	Type       string           `json:"type"`
-	EditFormID string           `json:"editFormId,omitempty"`
-	Fields     []V1SectionField `json:"fields,omitempty"`
-	Content    string           `json:"content,omitempty"`
-	HasContent bool             `json:"hasContent"`
+	ID               string                        `json:"id"`
+	Title            string                        `json:"title"`
+	Type             string                        `json:"type"`
+	EditFormID       string                        `json:"editFormId,omitempty"`
+	Fields           []V1SectionField              `json:"fields,omitempty"`
+	Content          string                        `json:"content,omitempty"`
+	HasContent       bool                          `json:"hasContent"`
+	Props            map[string]any                `json:"_props,omitempty"`
+	FieldAffordances *map[string]V1FieldAffordance `json:"_fields,omitempty"`
+}
+
+// sectionEntityToV1 lifts a section's row entity (template-side data)
+// onto the wire shape. Centralises the `V1ViewEntity` construction so
+// the typed `_props` and per-row `_fields` (TKT-IHC7D) stay consistent
+// across both the top-level entities path and the (currently dormant)
+// grouped-card entities path.
+func sectionEntityToV1(e SectionEntityData) V1ViewEntity {
+	v1Ent := V1ViewEntity{
+		ID:         e.ID,
+		Title:      e.Title,
+		Type:       e.Type,
+		EditFormID: e.EditFormID,
+		Content:    e.Content,
+		HasContent: e.HasContent,
+		Props:      e.Props,
+	}
+	for _, f := range e.Fields {
+		v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
+	}
+	if e.FieldVerdicts != nil {
+		fa := e.FieldVerdicts
+		v1Ent.FieldAffordances = &fa
+	}
+	return v1Ent
 }
 
 // V1ViewColumn represents a column definition.
@@ -3133,18 +3180,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert entities
 		for _, e := range sec.Entities {
-			v1Ent := V1ViewEntity{
-				ID:         e.ID,
-				Title:      e.Title,
-				Type:       e.Type,
-				EditFormID: e.EditFormID,
-				Content:    e.Content,
-				HasContent: e.HasContent,
-			}
-			for _, f := range e.Fields {
-				v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
-			}
-			v1Sec.Entities = append(v1Sec.Entities, v1Ent)
+			v1Sec.Entities = append(v1Sec.Entities, sectionEntityToV1(e))
 		}
 
 		// Convert columns
@@ -3189,18 +3225,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				v1Grp.Rows = append(v1Grp.Rows, v1Row)
 			}
 			for _, e := range grp.Entities {
-				v1Ent := V1ViewEntity{
-					ID:         e.ID,
-					Title:      e.Title,
-					Type:       e.Type,
-					EditFormID: e.EditFormID,
-					Content:    e.Content,
-					HasContent: e.HasContent,
-				}
-				for _, f := range e.Fields {
-					v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
-				}
-				v1Grp.Entities = append(v1Grp.Entities, v1Ent)
+				v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
 			}
 			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
 		}

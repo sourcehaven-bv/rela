@@ -763,6 +763,29 @@ func (a *App) computeRelationAffordances(ctx context.Context, e *entityPkg.Entit
 	return out
 }
 
+// copyVisibleProperties returns a fresh map of the entity's properties
+// with hidden names filtered out, ready to ship on a per-row wire
+// surface (cards/list rows in V1ViewEntity._props). Shallow copy: each
+// value points at the same underlying object as e.Properties[k], which
+// is fine because the response is JSON-marshalled before the caller can
+// alias anything (TKT-IHC7D).
+//
+// Mirrors stripHiddenProperties's hidden-property contract but returns
+// a new map instead of mutating an existing V1Entity — the per-row
+// case never goes through V1Entity, so the in-place strip pattern
+// doesn't fit.
+func (a *App) copyVisibleProperties(ctx context.Context, e *entityPkg.Entity) map[string]any {
+	hidden := a.hiddenProperties(ctx, e)
+	out := make(map[string]any, len(e.Properties))
+	for k, v := range e.Properties {
+		if _, h := hidden[k]; h {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // stripHiddenProperties removes hidden field names from result.Properties
 // in-place. Centralizes the "hidden = omitted from wire" invariant so
 // every entity-returning response (GET, PATCH, POST, clone, action,
