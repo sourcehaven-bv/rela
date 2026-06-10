@@ -75,15 +75,17 @@ clean:
 
 # ── Test ──
 
-# Run tests with race detection
+# Run tests with race detection. -shuffle=on randomizes test order to
+# surface inter-test ordering dependencies; on failure the seed is
+# printed (reproduce with -shuffle=<seed>).
 test:
     @echo "Running tests..."
-    go test -race -cover {{go_packages}}
+    go test -race -cover -shuffle=on {{go_packages}}
 
 # Run tests with verbose output
 test-verbose:
     @echo "Running tests (verbose)..."
-    go test -race -cover -v {{go_packages}}
+    go test -race -cover -shuffle=on -v {{go_packages}}
 
 # Run the postgres-tagged tests against a real PostgreSQL.
 # Requires RELA_TEST_DATABASE_URL, e.g.:
@@ -128,7 +130,7 @@ e2e-ui: build-server-e2e
 # Run tests with coverage profile
 test-coverage:
     @echo "Running tests with coverage..."
-    go test -race -coverprofile=coverage.out -covermode=atomic {{go_packages}}
+    go test -race -shuffle=on -coverprofile=coverage.out -covermode=atomic {{go_packages}}
 
 # Generate and display coverage report
 coverage: test-coverage
