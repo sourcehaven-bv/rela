@@ -23,4 +23,4 @@ status: done
 
 - [x] mcp dispatch tests (the NewServer canary) green on the consolidated wiring
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/963 (stacked on #958)
