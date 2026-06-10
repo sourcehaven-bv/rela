@@ -85,8 +85,10 @@ role_relations:
 // AC2.1: unknown top-level keys emit one slog.Warn per key and are
 // otherwise ignored — the loader returns the typed Policy with known
 // fields populated.
+// NOT parallel: swaps the process-global default slog logger
+// (TKT-VRZVXW — same class as t.Setenv; cannot run alongside
+// parallel siblings).
 func TestLoadPolicy_UnknownKey_LogsWarning(t *testing.T) {
-	t.Parallel()
 	const yaml = `
 roles:
   admin:

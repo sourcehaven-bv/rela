@@ -578,8 +578,11 @@ func TestCacheMemoizeConcurrentBothRun(t *testing.T) {
 	}
 }
 
+// NOT parallel: this test swaps the process-global default slog
+// logger; running it alongside parallel siblings races their
+// slog.Debug writes into this test's buffer (caught by -race when
+// the package was parallelized, TKT-VRZVXW).
 func TestCacheLoggingNeverLeaksRawKey(t *testing.T) {
-	t.Parallel()
 	// Capture slog output and assert neither the raw key nor the raw
 	// script path ever appear. This is a defense-in-depth check in
 	// addition to the "never log raw" code path.

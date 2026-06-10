@@ -11,7 +11,7 @@ status: done
 
 - [x] `go test -race` green on internal/mcp and internal/dataentry
 - [x] `golangci-lint run` — 0 issues on both packages
-- [x] Full `just ci` run before PR (see PR section)
+- [x] Full `just ci` green before PR
 
 ## Code Review
 
@@ -24,4 +24,4 @@ status: done
 - [x] Negative property manually verified: removing a route registration fails the walk test with a precise message; tool inventory diff fails by name on unlisted tools
 - [x] Three latent fixture bugs surfaced and fixed (nil templater panic in mcp, nil fieldResolver and nil OpenAPIGen panics in dataentry) — documented in IMPL-28A6B0 evidence
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/956
