@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
+import { useSchemaStore, useUIStore } from '@/stores'
 import { listEntities, updateEntity } from '@/api'
-import type { Entity, KanbanConfig } from '@/types'
+import { entityKeys } from '@/queries/entities'
+import type { Entity, KanbanConfig, ListResponse } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -15,18 +17,15 @@ const props = defineProps<{
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
-const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
+const queryCache = useQueryCache()
 
 // Back affordance — renders when ?return_to= or ?from= is present.
 const backTarget = useBackTarget()
 
 // State
-const loading = ref(true)
-const entities = ref<Entity[]>([])
 const filterValues = ref<Record<string, string>>({})
 const draggedCard = ref<Entity | null>(null)
-const collectionActions = ref<Record<string, boolean> | undefined>(undefined)
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. Helper keeps the contract DRY across
@@ -40,6 +39,35 @@ function canUpdate(entity: Entity): boolean {
 
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
+
+// The board's list query (FEAT-XY2D1L). The key derives from the
+// configured entity type, so switching boards (props.id) switches cache
+// entries automatically, and useEvents' targeted SSE invalidation on
+// ['entities', <type>] marks it stale and triggers a *background*
+// refetch while this view is mounted. The template gates its spinner on
+// `isPending` (no data yet), so refetches — including echoes of this
+// client's own writes — never blank the board.
+const boardQuery = useQuery({
+  key: () => entityKeys.list(kanbanConfig.value?.entity ?? ''),
+  query: () => {
+    const config = kanbanConfig.value
+    if (!config) throw new Error(`unknown kanban view: ${props.id}`)
+    return listEntities(config.entity)
+  },
+  enabled: () => !!kanbanConfig.value,
+})
+
+const entities = computed(() => boardQuery.data.value?.data ?? [])
+const collectionActions = computed(() => boardQuery.data.value?._actions)
+const loading = computed(() => boardQuery.isPending.value)
+const loadError = computed(() => {
+  const err = boardQuery.error.value
+  if (!err) return null
+  // The API interceptor rejects with a raw ProblemDetail object, not an
+  // Error — read its fields directly so the server message survives.
+  const problem = err as { detail?: string; title?: string } | null
+  return problem?.detail || problem?.title || 'Failed to load board'
+})
 
 const entityType = computed(() => {
   if (!kanbanConfig.value) return undefined
@@ -189,21 +217,52 @@ const filterOptions = computed(() => {
   return options
 })
 
-// Methods
-async function loadEntities() {
-  if (!kanbanConfig.value) return
-
-  loading.value = true
-  try {
-    const response = await listEntities(kanbanConfig.value.entity)
-    entities.value = response.data
-    collectionActions.value = response._actions
-  } catch (err) {
-    console.error('Kanban load error:', err)
-  } finally {
-    loading.value = false
-  }
+// Drag-drop write path: optimistic copy-on-write against the query
+// cache, rollback + toast on failure, reconcile with server truth via
+// invalidation on settle. Cached entities are never mutated in place —
+// other subscribers may hold references to the same objects.
+interface MoveCardVars {
+  entity: Entity
+  updates: Record<string, string>
 }
+
+const { mutate: moveCard } = useMutation({
+  mutation: ({ entity, updates }: MoveCardVars) => {
+    const config = kanbanConfig.value
+    if (!config) throw new Error(`unknown kanban view: ${props.id}`)
+    return updateEntity(config.entity, entity.id, { properties: updates })
+  },
+  onMutate({ entity, updates }: MoveCardVars) {
+    const key = entityKeys.list(kanbanConfig.value?.entity ?? '')
+    // Stop an in-flight refetch from overwriting the optimistic state.
+    queryCache.cancelQueries({ key })
+    const previous = queryCache.getQueryData<ListResponse<Entity>>(key)
+    const optimistic = previous && {
+      ...previous,
+      data: previous.data.map((e) =>
+        e.id === entity.id ? { ...e, properties: { ...e.properties, ...updates } } : e
+      ),
+    }
+    if (optimistic) queryCache.setQueryData(key, optimistic)
+    return { key, previous, optimistic }
+  },
+  onError(err, _vars, context) {
+    const { key, previous, optimistic } = context
+    // Roll back only if the cache still holds our optimistic value — a
+    // refetch that landed in between is newer than what we saved.
+    if (key && optimistic && queryCache.getQueryData(key) === optimistic) {
+      queryCache.setQueryData(key, previous)
+    }
+    console.error('Failed to update entity:', err)
+    // The API interceptor rejects with a raw ProblemDetail object, not
+    // an Error — read its fields directly so the server message survives.
+    const problem = err as { detail?: string; title?: string } | null
+    uiStore.error(problem?.detail || problem?.title || 'Failed to move card')
+  },
+  async onSettled(_data, _err, _vars, context) {
+    if (context.key) await queryCache.invalidateQueries({ key: context.key })
+  },
+})
 
 function getCardTitle(entity: Entity): string {
   if (!kanbanConfig.value) return entity.id
@@ -240,67 +299,37 @@ function onDragOver(event: DragEvent) {
   }
 }
 
-async function onDrop(event: DragEvent, columnValue: string, swimlaneValue?: string) {
+function onDrop(event: DragEvent, columnValue: string, swimlaneValue?: string) {
   event.preventDefault()
 
   if (!draggedCard.value || !kanbanConfig.value) return
 
   const entity = draggedCard.value
+  draggedCard.value = null
+
   // Defence in depth: `:draggable="false"` prevents drag-from-Kanban
   // starting, but external drag sources (text drag from another tab,
   // file drag) can still trigger this handler. Early-return on a
   // denied entity so we don't fire an update the server will 403.
-  if (!canUpdate(entity)) {
-    draggedCard.value = null
-    return
-  }
+  if (!canUpdate(entity)) return
+
   const colProp = kanbanConfig.value.column_property
   const swimProp = kanbanConfig.value.swimlane_property
 
   const currentCol = String(entity.properties[colProp] || '')
   const currentSwim = swimProp ? String(entity.properties[swimProp] || '') : undefined
 
-  // Don't update if same position
-  const sameColumn = currentCol === columnValue
-  const sameSwimmlane = !swimProp || currentSwim === swimlaneValue
-  if (sameColumn && sameSwimmlane) {
-    draggedCard.value = null
-    return
-  }
-
-  // Build update payload
+  // Build update payload; skip the write when nothing moved.
   const updates: Record<string, string> = {}
-  const oldValues: Record<string, unknown> = {}
-
-  if (!sameColumn) {
-    oldValues[colProp] = entity.properties[colProp]
-    entity.properties[colProp] = columnValue
+  if (currentCol !== columnValue) {
     updates[colProp] = columnValue
   }
-
-  if (swimProp && swimlaneValue !== undefined && !sameSwimmlane) {
-    oldValues[swimProp] = entity.properties[swimProp]
-    entity.properties[swimProp] = swimlaneValue
+  if (swimProp && swimlaneValue !== undefined && currentSwim !== swimlaneValue) {
     updates[swimProp] = swimlaneValue
   }
+  if (Object.keys(updates).length === 0) return
 
-  try {
-    await updateEntity(kanbanConfig.value.entity, entity.id, {
-      properties: updates,
-    })
-  } catch (err) {
-    // Revert on error
-    for (const [prop, val] of Object.entries(oldValues)) {
-      entity.properties[prop] = val
-    }
-    console.error('Failed to update entity:', err)
-    // The API interceptor rejects with a raw ProblemDetail object, not
-    // an Error — read its fields directly so the server message survives.
-    const problem = err as { detail?: string; title?: string } | null
-    uiStore.error(problem?.detail || problem?.title || 'Failed to move card')
-  }
-
-  draggedCard.value = null
+  moveCard({ entity, updates })
 }
 
 function onDragEnd() {
@@ -321,19 +350,9 @@ function createNew() {
   }
 }
 
-// Lifecycle
-onMounted(() => {
-  loadEntities()
-})
-
-watch(() => props.id, () => {
-  loadEntities()
-})
-
-// Watch for SSE cache invalidation to reload entities
-watch(() => entitiesStore.cacheVersion, () => {
-  loadEntities()
-})
+// No lifecycle plumbing: the query fetches on mount, re-keys when
+// props.id switches boards, and refetches in the background when
+// useEvents invalidates ['entities', <type>] on SSE entity events.
 </script>
 
 <template>
@@ -370,6 +389,10 @@ watch(() => entitiesStore.cacheVersion, () => {
     <div v-if="loading" class="loading-state">
       <div class="spinner"/>
       <span>Loading board...</span>
+    </div>
+
+    <div v-else-if="loadError" class="error-state">
+      {{ loadError }}
     </div>
 
     <!-- Simple board (columns only) -->
