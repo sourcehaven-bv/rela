@@ -64,7 +64,7 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 	var autoEngine *automation.Engine
 	var cascadeRunner *autocascade.Runner
 	if len(meta.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(meta.Automations)
+		autoEngine = automation.NewEngineFromMetamodel(meta, meta.Automations)
 		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
 		if rerr != nil {
 			t.Fatalf("autocascade.New: %v", rerr)

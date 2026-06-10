@@ -93,7 +93,7 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 	var autoEngine *automation.Engine
 	var cascadeRunner *autocascade.Runner
 	if len(mm.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(mm.Automations)
+		autoEngine = automation.NewEngineFromMetamodel(mm, mm.Automations)
 		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
 		if rerr != nil {
 			return nil, fmt.Errorf("build autocascade runner: %w", rerr)
