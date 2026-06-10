@@ -38,6 +38,7 @@ func newTestRuntime(t *testing.T) *Runtime {
 }
 
 func TestFlowRuntime_SimpleForm(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -102,6 +103,7 @@ func TestFlowRuntime_SimpleForm(t *testing.T) {
 }
 
 func TestFlowRuntime_MultiStepFlow(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -165,6 +167,7 @@ func TestFlowRuntime_MultiStepFlow(t *testing.T) {
 }
 
 func TestFlowRuntime_CancelFlow(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -201,6 +204,7 @@ func TestFlowRuntime_CancelFlow(t *testing.T) {
 }
 
 func TestFlowRuntime_AllFieldTypes(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -269,6 +273,7 @@ func TestFlowRuntime_AllFieldTypes(t *testing.T) {
 }
 
 func TestFlowRuntime_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		code    string
@@ -399,6 +404,7 @@ func TestFlowRuntime_ValidationErrors(t *testing.T) {
 }
 
 func TestFlowRuntime_TransportError(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -426,6 +432,7 @@ func TestFlowRuntime_TransportError(t *testing.T) {
 }
 
 func TestFlowRuntime_ScriptWithoutEmit(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -454,6 +461,7 @@ func TestFlowRuntime_ScriptWithoutEmit(t *testing.T) {
 }
 
 func TestFlowRuntime_MarkdownField(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -530,6 +538,7 @@ func TestFlowRuntime_MarkdownField(t *testing.T) {
 }
 
 func TestFlowRuntime_MarkdownFieldValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		code    string
@@ -565,6 +574,7 @@ func TestFlowRuntime_MarkdownFieldValidation(t *testing.T) {
 }
 
 func TestFlowRuntime_MultipleMarkdownFieldsNoDuplicateError(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -600,6 +610,7 @@ func TestFlowRuntime_MultipleMarkdownFieldsNoDuplicateError(t *testing.T) {
 }
 
 func TestFlowRuntime_LabelDefaultsToTitleCase(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -635,6 +646,7 @@ func TestFlowRuntime_LabelDefaultsToTitleCase(t *testing.T) {
 }
 
 func TestFlowRuntime_RunFile(t *testing.T) {
+	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
 
@@ -691,6 +703,7 @@ func TestFlowRuntime_RunFile(t *testing.T) {
 }
 
 func TestValidateEventData_UnexpectedField(t *testing.T) {
+	t.Parallel()
 	screen := Screen{
 		Type: "form",
 		Fields: []Field{

@@ -32,6 +32,7 @@ func evalString(t *testing.T, r *Runtime, expr string) string {
 }
 
 func TestURLFormEdit(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket"})`)
 	want := "/form/full_ticket/TKT-001"
@@ -41,6 +42,7 @@ func TestURLFormEdit(t *testing.T) {
 }
 
 func TestURLFormCreate(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []struct {
 		name string
@@ -93,6 +95,7 @@ func TestURLFormCreate(t *testing.T) {
 // the usual source of form-link query, and extra ad-hoc params on
 // edit URLs have no use case.
 func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r,
 		`rela.url.form_edit("full_ticket", {id="TKT-001", type="ticket", source="doc"})`)
@@ -103,6 +106,7 @@ func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
 }
 
 func TestURLForm_errors(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []struct {
 		name    string
@@ -144,6 +148,7 @@ func TestURLForm_errors(t *testing.T) {
 }
 
 func TestURLDetail(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.detail({id="TKT-001", type="ticket"})`)
 	want := "/entity/ticket/TKT-001"
@@ -153,6 +158,7 @@ func TestURLDetail(t *testing.T) {
 }
 
 func TestURLDetail_requiresFields(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []string{
 		`rela.url.detail({type="ticket"})`,          // no id
@@ -171,6 +177,7 @@ func TestURLDetail_requiresFields(t *testing.T) {
 }
 
 func TestURLList(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks")`, "/list/all_tasks"},
@@ -187,6 +194,7 @@ func TestURLList(t *testing.T) {
 }
 
 func TestURLView(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.view("timeline", {id="TKT-001", type="ticket"})`)
 	want := "/view/timeline/TKT-001"
@@ -196,6 +204,7 @@ func TestURLView(t *testing.T) {
 }
 
 func TestURLKanban(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.kanban("sprint")`)
 	if got != "/kanban/sprint" {
@@ -204,6 +213,7 @@ func TestURLKanban(t *testing.T) {
 }
 
 func TestURLDocument(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r, `rela.url.document("release_notes", {id="REL-001", type="release"})`)
 	want := "/document/release_notes/REL-001"
@@ -215,6 +225,7 @@ func TestURLDocument(t *testing.T) {
 // Singleton-route helpers — one per route in the frontend catalog that
 // has no params. Each takes an optional bare query table.
 func TestURLSingletons(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.home()`, "/dashboard"},
@@ -238,6 +249,7 @@ func TestURLSingletons(t *testing.T) {
 // same merge path as every non-form helper's bare query. Covers the
 // edge cases the old call-style tests exercised.
 func TestURLParams_validation(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []struct {
 		name    string
@@ -293,6 +305,7 @@ func TestURLParams_validation(t *testing.T) {
 // only; form_create keeps the three-sub-key opts shape because it has
 // genuinely three semantics (rel./prop./passthrough).
 func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	got := evalString(t, r,
 		`rela.url.form_create("full_ticket", {
@@ -310,6 +323,7 @@ func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
 // edge cases (empty table, numeric/bool values, unicode, existing
 // query on path — not applicable here since helper builds its own).
 func TestURLNonFormHelpers_querySemantics(t *testing.T) {
+	t.Parallel()
 	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks", {})`, "/list/all_tasks"},

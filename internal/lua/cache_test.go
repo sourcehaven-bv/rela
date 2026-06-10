@@ -47,6 +47,7 @@ func mustRunErr(t *testing.T, r *Runtime, code string) error {
 }
 
 func TestCacheUnregisteredWithoutOption(t *testing.T) {
+	t.Parallel()
 	// Without WithCache, rela.cache.* must not exist so callers don't
 	// accidentally use an uninitialised cache. The Lua VM itself raises
 	// "attempt to call a nil value" on undefined bindings.
@@ -67,6 +68,7 @@ func TestCacheUnregisteredWithoutOption(t *testing.T) {
 }
 
 func TestCacheInInlineRaisesError(t *testing.T) {
+	t.Parallel()
 	// No script path => inline/eval context. rela.cache.* must raise
 	// a fixed Lua error rather than share a nameless namespace.
 	ws := newMockWorkspace(t)
@@ -82,6 +84,7 @@ func TestCacheInInlineRaisesError(t *testing.T) {
 }
 
 func TestCacheSetAndGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	r, _ := newCachedWriter(t, "script-a.lua")
 	mustRun(t, r, `
 		rela.cache.set("k", 42)
@@ -91,6 +94,7 @@ func TestCacheSetAndGetRoundTrip(t *testing.T) {
 }
 
 func TestCacheSetNilDeletes(t *testing.T) {
+	t.Parallel()
 	// Passing nil as the value is the only delete surface exposed to
 	// Lua; it matches Lua table semantics (nil = absent).
 	r, _ := newCachedWriter(t, "s.lua")
@@ -103,6 +107,7 @@ func TestCacheSetNilDeletes(t *testing.T) {
 }
 
 func TestCacheGetRejectsOptions(t *testing.T) {
+	t.Parallel()
 	// get takes no options; passing any table should fail loudly so a
 	// user who expected opts to do something sees the mistake.
 	r, _ := newCachedWriter(t, "s.lua")
@@ -113,6 +118,7 @@ func TestCacheGetRejectsOptions(t *testing.T) {
 }
 
 func TestCacheSetRejectsFunction(t *testing.T) {
+	t.Parallel()
 	// Functions/userdata/coroutines hold live state; caching them is
 	// always a mistake. Reject at set-time with a message naming the
 	// offending type.
@@ -124,6 +130,7 @@ func TestCacheSetRejectsFunction(t *testing.T) {
 }
 
 func TestCacheSetRejectsNestedFunction(t *testing.T) {
+	t.Parallel()
 	// The representability walk recurses into tables; a function
 	// buried inside a map still surfaces.
 	r, _ := newCachedWriter(t, "s.lua")
@@ -134,6 +141,7 @@ func TestCacheSetRejectsNestedFunction(t *testing.T) {
 }
 
 func TestCacheSetRejectsCyclicTable(t *testing.T) {
+	t.Parallel()
 	// Without cycle detection, the walk eats the Go stack until the
 	// runtime crashes the whole process with "stack exceeds 1000000000
 	// byte limit" — not catchable from PCall. A Lua error at the cache
@@ -150,6 +158,7 @@ func TestCacheSetRejectsCyclicTable(t *testing.T) {
 }
 
 func TestCacheSetRejectsIndirectCycle(t *testing.T) {
+	t.Parallel()
 	// Cycle through two tables (a.child = b, b.parent = a) is the
 	// realistic case — direct self-reference is rarer than a pair
 	// of entities that link to each other.
@@ -166,6 +175,7 @@ func TestCacheSetRejectsIndirectCycle(t *testing.T) {
 }
 
 func TestLogFieldsShortKeyEmitsUnnamespacedMarker(t *testing.T) {
+	t.Parallel()
 	// Keys constructed via requireCacheContext always have a 16-char
 	// hex prefix (the namespace hash). A key shorter than 16 chars
 	// could only arrive if a Go caller bypassed requireCacheContext
@@ -188,6 +198,7 @@ func TestLogFieldsShortKeyEmitsUnnamespacedMarker(t *testing.T) {
 }
 
 func TestLuaValueToGoHandlesCycleWithoutCrash(t *testing.T) {
+	t.Parallel()
 	// Regression: before cycle detection in luaValueToGo, rela.output on
 	// a self-referential table crashed the whole process with a Go
 	// stack overflow (not a Lua error, not a panic — a fatal runtime
@@ -214,6 +225,7 @@ func TestLuaValueToGoHandlesCycleWithoutCrash(t *testing.T) {
 }
 
 func TestCacheSetAcceptsSharedNoncyclicTable(t *testing.T) {
+	t.Parallel()
 	// Two branches reaching the same (non-cyclic) inner table should
 	// not be false-positive-rejected. The cycle detector must unwind
 	// its ancestry set between siblings.
@@ -228,6 +240,7 @@ func TestCacheSetAcceptsSharedNoncyclicTable(t *testing.T) {
 }
 
 func TestCacheRejectsOversizedTTL(t *testing.T) {
+	t.Parallel()
 	// A TTL that overflows float64→int64 would be interpreted as a
 	// large negative Duration and the entry would be born already
 	// expired, masquerading as a silently broken cache.
@@ -239,6 +252,7 @@ func TestCacheRejectsOversizedTTL(t *testing.T) {
 }
 
 func TestCacheSetRejectsLongKey(t *testing.T) {
+	t.Parallel()
 	r, _ := newCachedWriter(t, "s.lua")
 	// 513-byte key.
 	err := mustRunErr(t, r, `rela.cache.set(string.rep("x", 513), "v")`)
@@ -248,6 +262,7 @@ func TestCacheSetRejectsLongKey(t *testing.T) {
 }
 
 func TestCacheSetAcceptsMaxKey(t *testing.T) {
+	t.Parallel()
 	// Exactly 512 is the boundary — must succeed.
 	r, _ := newCachedWriter(t, "s.lua")
 	mustRun(t, r, `
@@ -258,6 +273,7 @@ func TestCacheSetAcceptsMaxKey(t *testing.T) {
 }
 
 func TestCacheSetRejectsUnknownOption(t *testing.T) {
+	t.Parallel()
 	// Typos like `refersh` are caught because we allowlist option names.
 	r, _ := newCachedWriter(t, "s.lua")
 	err := mustRunErr(t, r, `rela.cache.set("k", "v", {refersh = true})`)
@@ -267,6 +283,7 @@ func TestCacheSetRejectsUnknownOption(t *testing.T) {
 }
 
 func TestCacheMemoizeHitSkipsFn(t *testing.T) {
+	t.Parallel()
 	// Second call to memoize must not invoke fn — that's the whole
 	// point of caching. Use a shared upvalue counter to detect extra
 	// calls.
@@ -285,6 +302,7 @@ func TestCacheMemoizeHitSkipsFn(t *testing.T) {
 }
 
 func TestCacheMemoizeMultipleReturns(t *testing.T) {
+	t.Parallel()
 	// Lua fns routinely return (value, err); dropping anything past
 	// the first is a silent footgun. Memoize captures and re-emits
 	// ALL returns — this is the core AC-11 guarantee.
@@ -303,6 +321,7 @@ func TestCacheMemoizeMultipleReturns(t *testing.T) {
 }
 
 func TestCacheMemoizeFnRaisesNotCached(t *testing.T) {
+	t.Parallel()
 	// If fn errors, cache stays empty so the next call re-runs it
 	// (maybe successfully this time). Store-on-error would pin a
 	// useless failure permanently.
@@ -327,6 +346,7 @@ func TestCacheMemoizeFnRaisesNotCached(t *testing.T) {
 }
 
 func TestCacheMemoizeBypass(t *testing.T) {
+	t.Parallel()
 	// bypass=true skips the read but still writes. Useful when the
 	// caller knows the cached value is stale.
 	r, _ := newCachedWriter(t, "s.lua")
@@ -347,6 +367,7 @@ func TestCacheMemoizeBypass(t *testing.T) {
 }
 
 func TestCacheMemoizeRejectsUnknownOption(t *testing.T) {
+	t.Parallel()
 	r, _ := newCachedWriter(t, "s.lua")
 	err := mustRunErr(t, r, `
 		rela.cache.memoize("k", function() return 1 end, {refersh = true})
@@ -357,6 +378,7 @@ func TestCacheMemoizeRejectsUnknownOption(t *testing.T) {
 }
 
 func TestCacheNamespacedIsolation(t *testing.T) {
+	t.Parallel()
 	// Two runtimes with different scriptPath must NOT see each other's
 	// entries even when using the exact same user key. That's the
 	// namespacing contract.
@@ -379,6 +401,7 @@ func TestCacheNamespacedIsolation(t *testing.T) {
 }
 
 func TestCacheTTLExpiry(t *testing.T) {
+	t.Parallel()
 	// TTL is lazy — the expired entry hangs around until next touch.
 	// Use an injected time source so the test doesn't sleep.
 	r, c := newCachedWriter(t, "s.lua")
@@ -395,6 +418,7 @@ func TestCacheTTLExpiry(t *testing.T) {
 }
 
 func TestCacheTTLZeroNeverExpires(t *testing.T) {
+	t.Parallel()
 	// An explicit ttl=0 (or negative) means "store forever". It's a
 	// valid opt-in for expensive results the script knows won't go
 	// stale.
@@ -410,6 +434,7 @@ func TestCacheTTLZeroNeverExpires(t *testing.T) {
 }
 
 func TestCacheLRUEvictionAtCap(t *testing.T) {
+	t.Parallel()
 	// Fill the cache past its cap and assert the least-recently-accessed
 	// entry is evicted. Use a monotonic fake clock so every entry has
 	// a distinct lastAccess — real time.Now can tie.
@@ -469,6 +494,7 @@ func itoa(n int) string {
 }
 
 func TestCacheSetDeletePersistsAcrossGet(t *testing.T) {
+	t.Parallel()
 	// Tests that set(nil) also wipes the in-memory entry, not just
 	// some flagged-as-deleted state. Uses the Cache directly.
 	c := NewCache()
@@ -483,6 +509,7 @@ func TestCacheSetDeletePersistsAcrossGet(t *testing.T) {
 }
 
 func TestCacheMemoizeConcurrentBothRun(t *testing.T) {
+	t.Parallel()
 	// Two goroutines hit memoize on the same key at the same time.
 	// The mutex is released across fn, so both fn instances run; the
 	// later write wins. This is strictly correct and avoids holding
@@ -552,6 +579,7 @@ func TestCacheMemoizeConcurrentBothRun(t *testing.T) {
 }
 
 func TestCacheLoggingNeverLeaksRawKey(t *testing.T) {
+	t.Parallel()
 	// Capture slog output and assert neither the raw key nor the raw
 	// script path ever appear. This is a defense-in-depth check in
 	// addition to the "never log raw" code path.
@@ -585,6 +613,7 @@ func TestCacheLoggingNeverLeaksRawKey(t *testing.T) {
 }
 
 func TestCacheErrorMessagesDoNotLeakKey(t *testing.T) {
+	t.Parallel()
 	// Error paths that include user-controlled values must never format
 	// the raw key into the message. Check each rejection path by
 	// injecting a marker and asserting the marker is absent from the
@@ -620,6 +649,7 @@ func TestCacheErrorMessagesDoNotLeakKey(t *testing.T) {
 }
 
 func TestCacheBehaviourWithNilCacheOption(t *testing.T) {
+	t.Parallel()
 	// WithCache(nil) is equivalent to omitting it — rela.cache.* stays
 	// unregistered. This lets callers that deliberately want no caching
 	// pass a nil explicitly.
@@ -635,6 +665,7 @@ func TestCacheBehaviourWithNilCacheOption(t *testing.T) {
 }
 
 func TestCacheRunFileSetsScriptPath(t *testing.T) {
+	t.Parallel()
 	// Sanity check: RunFile wires scriptPath automatically. Without
 	// this, file-loaded scripts would hit the inline/eval guard.
 	ws := newMockWorkspace(t)

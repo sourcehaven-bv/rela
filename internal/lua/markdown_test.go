@@ -23,6 +23,7 @@ func newMdTestRuntime(t *testing.T) *Runtime {
 }
 
 func TestMdParse(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -87,6 +88,7 @@ func TestMdParse(t *testing.T) {
 }
 
 func TestMdRender(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -178,6 +180,7 @@ func TestMdRender(t *testing.T) {
 }
 
 func TestMdTaskListParse(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -216,6 +219,7 @@ func flattenItemInlines(t *testing.T, item *lua.LTable) string {
 }
 
 func TestMdTaskListRender(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -301,6 +305,7 @@ func TestMdTaskListRender(t *testing.T) {
 }
 
 func TestMdTaskListRoundTrip(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -358,6 +363,7 @@ func TestMdTaskListRoundTrip(t *testing.T) {
 // always emits checkbox syntax for task=true items, so the rendered output
 // is well-defined even if not symmetrically re-parseable.
 func TestMdMixedListBehavior(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -391,6 +397,7 @@ func TestMdMixedListBehavior(t *testing.T) {
 // spans are preserved across all extracted-text contexts; emphasis and
 // links are dropped. This test exists to make policy changes visible.
 func TestMdInlineTextPolicy(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -488,6 +495,7 @@ func TestMdInlineTextPolicy(t *testing.T) {
 // TestMdTaskListEmptyText covers parser-side handling of checkboxes with
 // no text after them.
 func TestMdTaskListEmptyText(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -515,6 +523,7 @@ func TestMdTaskListEmptyText(t *testing.T) {
 // TestMdTaskListNonStringText verifies the renderer coerces non-string
 // text values rather than silently producing empty output.
 func TestMdTaskListNonStringText(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -533,6 +542,7 @@ func TestMdTaskListNonStringText(t *testing.T) {
 // true qualifies as a task item — strings, numbers, tables, nil all fall
 // through to the plain rendering path.
 func TestMdTaskListNonBoolTaskValues(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -568,6 +578,7 @@ func TestMdTaskListNonBoolTaskValues(t *testing.T) {
 // generic deep-copy walker. A future optimization that special-cased
 // non-heading nodes could silently break task lists; this test catches it.
 func TestMdTaskListSurvivesShiftHeaders(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -588,6 +599,7 @@ func TestMdTaskListSurvivesShiftHeaders(t *testing.T) {
 // of a multi-paragraph list item is captured (matches the goldmark task
 // list spec which requires the checkbox in the first text block).
 func TestMdTaskListMultiBlockItem(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -608,6 +620,7 @@ func TestMdTaskListMultiBlockItem(t *testing.T) {
 // at gaps depends on the table's internal structure; for an unordered
 // list this works because we iterate over the border range and skip nils.
 func TestMdRenderListSparseTable(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -627,6 +640,7 @@ func TestMdRenderListSparseTable(t *testing.T) {
 }
 
 func TestMdRoundTrip(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -683,6 +697,7 @@ func TestMdRoundTrip(t *testing.T) {
 }
 
 func TestMdShiftHeaders(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -741,6 +756,7 @@ func TestMdShiftHeaders(t *testing.T) {
 }
 
 func TestMdSetMinHeaderLevel(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -787,6 +803,7 @@ func TestMdSetMinHeaderLevel(t *testing.T) {
 }
 
 func TestMdHeaders(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -833,6 +850,7 @@ func TestMdHeaders(t *testing.T) {
 }
 
 func TestMdExtractSection(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -884,6 +902,7 @@ func TestMdExtractSection(t *testing.T) {
 }
 
 func TestMdFirstParagraph(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -912,6 +931,7 @@ func TestMdFirstParagraph(t *testing.T) {
 }
 
 func TestMdConcat(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -930,6 +950,7 @@ func TestMdConcat(t *testing.T) {
 }
 
 func TestMdNodeConstructors(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -981,6 +1002,7 @@ func TestMdNodeConstructors(t *testing.T) {
 }
 
 func TestMdCodeBlockInContent(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1003,6 +1025,7 @@ func TestMdCodeBlockInContent(t *testing.T) {
 }
 
 func TestMdUnicodeContent(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1019,6 +1042,7 @@ func TestMdUnicodeContent(t *testing.T) {
 }
 
 func TestMdTableParse(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1106,6 +1130,7 @@ func TestMdTableParse(t *testing.T) {
 }
 
 func TestMdTableRender(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1169,6 +1194,7 @@ func TestMdTableRender(t *testing.T) {
 }
 
 func TestMdTableRoundTrip(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1217,6 +1243,7 @@ func TestMdTableRoundTrip(t *testing.T) {
 }
 
 func TestMdTableRenderFormatting(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1284,6 +1311,7 @@ func TestMdTableRenderFormatting(t *testing.T) {
 }
 
 func TestMdParseErrors(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1319,6 +1347,7 @@ func TestMdParseErrors(t *testing.T) {
 }
 
 func TestMdIntegrationWithEntity(t *testing.T) {
+	t.Parallel()
 	// Use the full test workspace to test integration with entities
 	ws := testWorkspace(t)
 	var sb strings.Builder
@@ -1347,6 +1376,7 @@ func TestMdIntegrationWithEntity(t *testing.T) {
 // TestMdParseShape verifies that block nodes have `inlines` (not `text`)
 // after parse — AC1.
 func TestMdParseShape(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1365,6 +1395,7 @@ func TestMdParseShape(t *testing.T) {
 // TestMdInlineKindsRoundTrip covers AC4-AC8: link, image, raw HTML,
 // autolink, emphasis, strong, breaks all survive parse → render.
 func TestMdInlineKindsRoundTrip(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1429,6 +1460,7 @@ func TestMdInlineKindsRoundTrip(t *testing.T) {
 // TestMdBlockquoteChildren — AC2: blockquote has a `children` array of
 // block nodes; nested list survives.
 func TestMdBlockquoteChildren(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1450,6 +1482,7 @@ func TestMdBlockquoteChildren(t *testing.T) {
 // TestMdListMultiBlockChildren — AC3: a list item with multiple
 // paragraphs gets a `children` array.
 func TestMdListMultiBlockChildren(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	src := "- first paragraph\n\n  second paragraph\n"
@@ -1468,6 +1501,7 @@ func TestMdListMultiBlockChildren(t *testing.T) {
 // TestMdTaskItemNoCheckboxInline — AC4: task items don't carry a
 // phantom checkbox inline.
 func TestMdTaskItemNoCheckboxInline(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1484,6 +1518,7 @@ func TestMdTaskItemNoCheckboxInline(t *testing.T) {
 // TestMdHeadersAndFirstParagraphFlatten — AC12: helper APIs that
 // returned `text` strings continue to do so via flatten() semantics.
 func TestMdHeadersAndFirstParagraphFlatten(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1501,6 +1536,7 @@ func TestMdHeadersAndFirstParagraphFlatten(t *testing.T) {
 
 // TestMdInlineConstructors — AC10.
 func TestMdInlineConstructors(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1521,6 +1557,7 @@ func TestMdInlineConstructors(t *testing.T) {
 
 // TestMdParagraphAutoWrap — AC9.
 func TestMdParagraphAutoWrap(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1537,6 +1574,7 @@ func TestMdParagraphAutoWrap(t *testing.T) {
 // corpus from tickets/entities/*.md (the markdown bodies of every
 // in-tree ticket entity).
 func TestMdCorpusRoundTrip(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1734,6 +1772,7 @@ func resolveAndRender(t *testing.T, input string, refs map[string]string) string
 }
 
 func TestMdResolveRefs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -1822,6 +1861,7 @@ func TestMdResolveRefs(t *testing.T) {
 }
 
 func TestMdResolveRefs_PreExistingLinkUntouched(t *testing.T) {
+	t.Parallel()
 	// A pre-existing markdown link whose text is NOT a code span should
 	// not be re-linked even when its content matches a key in the map —
 	// the rule is "only code spans".
@@ -1832,6 +1872,7 @@ func TestMdResolveRefs_PreExistingLinkUntouched(t *testing.T) {
 }
 
 func TestMdResolveRefs_LinkContainingCodeSpan(t *testing.T) {
+	t.Parallel()
 	// A link whose inline text contains a code span — the code span
 	// inside the link gets rewritten; the surrounding link stays.
 	got := resolveAndRender(t,
@@ -1843,6 +1884,7 @@ func TestMdResolveRefs_LinkContainingCodeSpan(t *testing.T) {
 }
 
 func TestMdResolveRefs_DeepCopy(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1857,6 +1899,7 @@ func TestMdResolveRefs_DeepCopy(t *testing.T) {
 }
 
 func TestMdResolveRefs_EmptyMap(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1869,6 +1912,7 @@ func TestMdResolveRefs_EmptyMap(t *testing.T) {
 }
 
 func TestMdResolveRefs_NegativeInput(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		code string
@@ -1906,6 +1950,7 @@ func TestMdResolveRefs_NegativeInput(t *testing.T) {
 }
 
 func TestMdEntityRefs(t *testing.T) {
+	t.Parallel()
 	t.Run("default style is title-slug", func(t *testing.T) {
 		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
 		defer rt.Close()
@@ -1973,6 +2018,7 @@ func TestMdEntityRefs(t *testing.T) {
 }
 
 func TestMdEntityRefs_TitleInjection(t *testing.T) {
+	t.Parallel()
 	mw := newMockWorkspace(t)
 	mw.seedEntity(&entity.Entity{
 		ID:         "TKT-EVIL",
@@ -1993,6 +2039,7 @@ func TestMdEntityRefs_TitleInjection(t *testing.T) {
 }
 
 func TestMdEntityRefs_UnicodeTitle(t *testing.T) {
+	t.Parallel()
 	mw := newMockWorkspace(t)
 	mw.seedEntity(&entity.Entity{
 		ID:         "TKT-EU",
@@ -2010,6 +2057,7 @@ func TestMdEntityRefs_UnicodeTitle(t *testing.T) {
 }
 
 func TestMdEntityRefs_IntegrationWithResolveRefs(t *testing.T) {
+	t.Parallel()
 	mw := testWorkspace(t)
 	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
 	defer rt.Close()
@@ -2023,6 +2071,7 @@ func TestMdEntityRefs_IntegrationWithResolveRefs(t *testing.T) {
 }
 
 func TestTitleSlug(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in, want string
 	}{

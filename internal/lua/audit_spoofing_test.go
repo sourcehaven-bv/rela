@@ -12,6 +12,7 @@ import (
 // attribution. If a future change accidentally registers an audit
 // binding, this test fails — a deliberate stop the gate.
 func TestAuditNotExposedInLuaAPI(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 	r := NewWriter(ws.services("/tmp"), &buf)
@@ -46,6 +47,7 @@ func TestAuditNotExposedInLuaAPI(t *testing.T) {
 // registered at the global table level either (some bindings live at
 // `audit.foo()` rather than `rela.audit.foo()`).
 func TestAuditNotExposedAsTopLevelGlobal(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 	r := NewWriter(ws.services("/tmp"), &buf)
