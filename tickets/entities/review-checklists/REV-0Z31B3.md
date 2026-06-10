@@ -11,7 +11,7 @@ status: done
 
 - [x] Store packages + consumers green under `-race` after the ValidateRelationType extraction
 - [x] `golangci-lint` 0 issues; gofmt clean
-- [x] Full `just ci` green (pre-review-fix run; re-run after fixes before PR)
+- [x] Full `just ci` green after review fixes
 
 ## Code Review
 
@@ -23,4 +23,4 @@ status: done
 
 - [x] The sweep found 5 real failures in its first 2-second run (4 harness-oracle bugs fixed here; 1 production bug filed as BUG-RHFHTH with the weekly-fuzz-sweep measure entity linked)
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/964
