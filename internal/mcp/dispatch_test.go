@@ -207,7 +207,11 @@ func TestDispatch_UnknownToolRejected(t *testing.T) {
 
 // TestDispatch_MalformedArgumentsSurface pins that a required argument
 // missing from the wire payload surfaces as an error to the client
-// rather than silently running with a zero value.
+// rather than silently running with a zero value. The enforcement
+// lives in the handler's RequireString guard (mcp-go does not reject
+// missing required arguments at the schema/dispatch layer); this test
+// pins the client-visible contract regardless of which layer enforces
+// it.
 func TestDispatch_MalformedArgumentsSurface(t *testing.T) {
 	s := newDispatchServer(t)
 

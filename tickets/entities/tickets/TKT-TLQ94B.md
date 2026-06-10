@@ -5,7 +5,7 @@ title: 'Top-of-stack smoke tests: MCP dispatch, router walk, ServeHTTP test conv
 kind: test
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Problem

@@ -26,6 +26,13 @@ import (
 //
 // When registering a new route, add a probe here — the registration
 // sites in router.go and api_v1.go carry pointer comments.
+//
+// CONSTRAINT: every probe must hit a path its handler actually serves
+// for the fixture (or answers with a JSON error). Do NOT add probes
+// that legitimately resolve to a handler-emitted http.NotFound — e.g.
+// /api/help/<unknown-type> or an unregistered _-prefixed path — the
+// oracle cannot distinguish those from an unregistered route and the
+// test would fail with a misleading message.
 func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 	routes := []struct {
 		method     string
@@ -37,7 +44,9 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodPost, "/api/command/nonexistent", 0},
 		{http.MethodPost, "/api/command-cancel/nonexistent", 0},
 		{http.MethodPost, "/api/open-file", 0},
-		{http.MethodGet, "/api/git/status", http.StatusOK},
+		// git probes are any-status: their codes depend on whether the
+		// fixture wires gitOps, which is not this test's concern.
+		{http.MethodGet, "/api/git/status", 0},
 		{http.MethodPost, "/api/git/sync", 0},
 
 		// registerAPIV1Routes (api_v1.go) — system endpoints
@@ -47,7 +56,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_search?q=ticket", 0},
 		{http.MethodGet, "/api/v1/_position?type=ticket&id=TKT-001", 0},
 		{http.MethodGet, "/api/v1/_analyze", 0},
-		{http.MethodGet, "/api/v1/_git/status", http.StatusOK},
+		{http.MethodGet, "/api/v1/_git/status", 0},
 		{http.MethodPost, "/api/v1/_git/sync", 0},
 		{http.MethodGet, "/api/v1/_settings", 0},
 		{http.MethodGet, "/api/v1/_palette", 0},
@@ -87,9 +96,14 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 }
 
 // isStdlibNotFound reports whether a response is the stdlib ServeMux /
-// http.NotFound page rather than a handler-produced error. Registered
-// API handlers answer with JSON bodies, so this shape identifies "no
-// route matched".
+// http.NotFound page rather than a handler-produced error.
+//
+// Caveat: some registered handlers ALSO emit http.NotFound for unknown
+// sub-resources (handleEntityHelp for an unknown type, the /api/v1/
+// catch-all for unregistered _-paths). The probe table above therefore
+// only contains paths the fixture serves — see the CONSTRAINT comment
+// on the test. Within that constraint, this shape identifies "no route
+// matched".
 func isStdlibNotFound(code int, body string) bool {
 	return code == http.StatusNotFound && strings.TrimSpace(body) == "404 page not found"
 }
