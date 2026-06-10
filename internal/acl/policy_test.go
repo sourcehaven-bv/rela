@@ -453,6 +453,16 @@ func TestLoadPolicy_WriteWithoutRead_Rejected(t *testing.T) {
 			yaml:    "roles:\n  nobody: {}\n",
 			wantErr: false,
 		},
+		{
+			// Affordance grants restrict surfaces within a write the
+			// Write list authorized; they never authorize by
+			// themselves, so they are intentionally outside the
+			// write⊆read invariant (see Validate godoc).
+			name: "affordance-only role without read ok",
+			yaml: "roles:\n  shaper:\n    fields:\n      ticket:\n        - field: status\n" +
+				"    relations:\n      ticket:\n        - relation: implements\n          create: true\n",
+			wantErr: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

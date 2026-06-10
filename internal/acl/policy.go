@@ -265,16 +265,27 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 //     A blank entry would expand ancestor sets through every relation
 //     type (StoreGraph treats RelationQuery.Type=="" as "all relations"),
 //     silently turning a typo into a containment widening.
+//
 //   - RoleRelations keys must be non-empty and non-whitespace, for the
 //     same reason — an empty key would gate "all relation writes" on
 //     a delegate permission, breaking writes the operator didn't mean
 //     to gate.
+//
 //   - Every role's write grants must be covered by its read grants
 //     (write ⊆ read, wildcard-aware). A role that can create or update
 //     a type it cannot read produces incoherent UX (empty list with a
 //     working Create button) and would force every affordance consumer
 //     to handle the combination. Rejecting it at load lets downstream
 //     read-side logic assume "writable implies readable" (RR-W2J6).
+//
+//     Scope: the invariant covers [RoleDef.Write] — the only field
+//     that authorizes writes (both entity and relation authz resolve
+//     through decideFromAttrs against Write). The affordance grant
+//     maps (Fields / Options / Relations) are deliberately NOT
+//     checked: they restrict field/option/relation surfaces *within*
+//     a write the Write list already authorized and never confer
+//     writability by themselves, so a fields-only role without read
+//     grants is inert, not incoherent.
 //
 // Validation is intentionally narrow: misspelled role names, unknown
 // entity types in grants, etc. remain warnings (or analyze-tool

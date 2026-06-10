@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -312,6 +313,74 @@ func TestACLList_QueryErrorMapping(t *testing.T) {
 	}
 }
 
+// TestACLPosition_SearchScopeGated pins the CRIT finding from the
+// TKT-VMD8 code review: `_position` with `source=search` runs
+// executeQuery, which is itself ungated — without the readableSubset
+// filter a denied principal reads hidden cardinality from `total`
+// and harvests hidden {id, type} pairs from prev/next.
+func TestACLPosition_SearchScopeGated(t *testing.T) {
+	app := newTestAppV1(t)
+	// Both entities match the free-text query "alpha"; only the
+	// ticket is readable by alice.
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "alpha ticket"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "alpha feature"}})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	scope := url.QueryEscape(`{"source":"search","q":"alpha"}`)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?id=TKT-001&scope="+scope, http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1EntityPosition(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("position: %d %s", rec.Code, rec.Body)
+	}
+	var pos V1Position
+	if err := json.Unmarshal(rec.Body.Bytes(), &pos); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if pos.Total != 1 {
+		t.Errorf("total = %d, want 1 (hidden FEAT-001 must not count)", pos.Total)
+	}
+	if pos.Prev != nil || pos.Next != nil {
+		t.Errorf("prev/next leak hidden neighbors: prev=%+v next=%+v", pos.Prev, pos.Next)
+	}
+
+	// The hidden id itself must 404 out of the scope entirely.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/_position?id=FEAT-001&scope="+scope, http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec = httptest.NewRecorder()
+	app.handleV1EntityPosition(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("hidden id in search scope: got %d, want 404 not_in_scope", rec.Code)
+	}
+}
+
+// TestACLList_AllowAllLoadErrorSurfaces pins the errListLoad mapping:
+// a mid-stream store failure on the AllowAll path surfaces as 500
+// list_load_failed rather than a silently truncated 200.
+func TestACLList_AllowAllLoadErrorSurfaces(t *testing.T) {
+	app := newTestAppV1(t)
+	app.store = failingListStore{Store: app.store}
+
+	// No gate on ctx → nopReadGate → AllowAll path.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "list_load_failed") {
+		t.Errorf("body missing list_load_failed: %s", rec.Body)
+	}
+}
+
 // TestACLList_VaryHeader pins TKT-VMD8 AC10 (RR-VDTW): when a
 // principal header is configured, /api/ responses carry both the
 // no-store Cache-Control and `Vary: <header>` so no cache layer can
@@ -415,5 +484,18 @@ type failingGraphQueryStore struct {
 func (s failingGraphQueryStore) GraphQuery(context.Context, store.GraphQuery) iter.Seq2[*entity.Entity, error] {
 	return func(yield func(*entity.Entity, error) bool) {
 		yield(nil, errors.New("synthetic graph query failure"))
+	}
+}
+
+// failingListStore wraps a store.Store with a ListEntities that
+// yields an immediate error — drives the errListLoad mapping on the
+// AllowAll path.
+type failingListStore struct {
+	store.Store
+}
+
+func (s failingListStore) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) {
+		yield(nil, errors.New("synthetic list failure"))
 	}
 }

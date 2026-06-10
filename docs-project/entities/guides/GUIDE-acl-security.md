@@ -203,7 +203,12 @@ with the list it links to.
   role with `write: [x]` but no covering `read` entry at boot
   (structured error naming the role and type). Downstream affordance
   logic may therefore assume "writable ⇒ readable" — a DenyAll list
-  response always carries `_actions.create == false`.
+  response always carries `_actions.create == false`. The invariant
+  covers the `write:` list, which is the only field that authorizes
+  writes; the affordance grant maps (`fields:` / `options:` /
+  `relations:`) restrict surfaces within an authorized write and
+  never confer writability by themselves, so they are intentionally
+  outside the check.
 
 ### Caching: per-principal responses
 
@@ -254,8 +259,10 @@ The `attachACLRequest` middleware:
 
 ## What still leaks (deferred)
 
-- **`/api/v1/_position` per-id semantics** — `_position` shares the
-  gated list pipeline, so ordinals are already computed within the
+- **`/api/v1/_position` per-id semantics** — `_position` is gated on
+  both scope sources: list scopes share the gated list pipeline, and
+  search scopes filter the search result through the read gate before
+  computing ordinals, so totals and prev/next always come from the
   principal's visible subset. What remains scoped to the follow-up
   ticket: the per-id gate on the *requested* id and the
   neighbor-disclosure analysis (a visible neighbor's id confirms a

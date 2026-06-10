@@ -3,7 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -95,6 +95,14 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 // narrows to Type when one was supplied. Routing search through executeQuery
 // (not scopedSortedEntities) is what makes prev/next correct across mixed-type
 // search results: position is found within the exact set the user saw.
+//
+// Both branches end gated: the list pipeline resolves the read scope
+// internally; the search branch filters through readableSubset because
+// executeQuery itself is ungated (its other consumer, the search view,
+// is the deferred /_search ticket). Without the filter a denied
+// principal reads hidden cardinality from Total and harvests hidden
+// {ID, Type} pairs from prev/next — the exact leak shape TKT-VMD8
+// closes on the list path (CRIT finding, TKT-VMD8 review).
 func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entityPkg.Entity, error) {
 	switch scope.Source {
 	case "search":
@@ -108,10 +116,45 @@ func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entit
 			}
 			entities = filtered
 		}
-		return entities, nil
+		return a.readableSubset(ctx, entities)
 	default:
 		return a.scopedSortedEntities(ctx, scope.Type, scope.toQuery())
 	}
+}
+
+// readableSubset drops entities the ctx principal may not read,
+// preserving order. Gate probes are batched per entity type
+// (PermitsReadMany), mirroring the include-filter batching rule from
+// TKT-VQGN. Errors wrap errACLListQuery so the position handler maps
+// them via writeGateError.
+func (a *App) readableSubset(ctx context.Context, entities []*entityPkg.Entity) ([]*entityPkg.Entity, error) {
+	if len(entities) == 0 {
+		return entities, nil
+	}
+	gate := readGateFromContext(ctx)
+	byType := make(map[string][]string)
+	for _, e := range entities {
+		byType[e.Type] = append(byType[e.Type], e.ID)
+	}
+	allowed := make(map[string]bool, len(entities))
+	for typ, ids := range byType {
+		m, err := gate.PermitsReadMany(ctx, typ, ids)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+		}
+		for id, ok := range m {
+			if ok {
+				allowed[id] = true
+			}
+		}
+	}
+	out := entities[:0]
+	for _, e := range entities {
+		if allowed[e.ID] {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // entityTypeChecker is the narrow capability scopeFromParam needs: confirm a
@@ -190,11 +233,7 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 
 	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
-		if errors.Is(err, errACLListQuery) {
-			writeGateError(w, r, err)
-			return
-		}
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		writeListPipelineError(w, r, err)
 		return
 	}
 

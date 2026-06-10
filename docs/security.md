@@ -234,7 +234,10 @@ role_relations:
   rejected at boot with an error naming the role and type. A
   principal who can write a type it cannot read would see an empty
   list with a working Create button; the loader rules the
-  combination out so the UI affordances stay coherent.
+  combination out so the UI affordances stay coherent. The check
+  covers the `write:` list only — affordance grants (`fields:`,
+  `options:`, `relations:`) restrict surfaces within an authorized
+  write and never authorize writes by themselves.
 
 ### Delegate-X tamper resistance
 

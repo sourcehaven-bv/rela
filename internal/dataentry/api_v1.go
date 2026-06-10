@@ -373,6 +373,15 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 // it as a free-text search failure.
 var errACLListQuery = errors.New("acl list query failed")
 
+// errListLoad wraps a store iterator failure while loading the
+// unfiltered (AllowAll) list. Surfaced as 500 list_load_failed at the
+// call sites: before TKT-VMD8 a mid-stream error silently truncated
+// the result, which under ACL would make the AllowAll and Query paths
+// observably asymmetric (truncated-200 vs 500) for the same backend
+// fault — and a truncated list with authoritative-looking pagination
+// is worse than an error either way.
+var errListLoad = errors.New("list load failed")
+
 // scopedSortedEntities runs the shared list pipeline — ACL read scope,
 // load, free-text intersection (?q=), structured filters (filter[...]),
 // then the configured sort — and returns the fully ordered result set
@@ -401,7 +410,15 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 	case rqr.DenyAll:
 		return []*entityPkg.Entity{}, nil
 	case rqr.AllowAll:
-		entities = listFromStoreByTypes(ctx, a.Services(), []string{typeName})
+		// Inline iteration rather than listFromStoreByTypes: that
+		// helper swallows iterator errors into a partial slice, and
+		// the list pipeline must fail loud on both verdict paths.
+		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
+			}
+			entities = append(entities, e)
+		}
 	case rqr.Query == nil:
 		// Defensive: a zero ReadQueryResult would otherwise alias
 		// AllowAll. Fail loud instead of silently widening the list.
@@ -453,11 +470,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 
 	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
 	if err != nil {
-		if errors.Is(err, errACLListQuery) {
-			writeGateError(w, r, err)
-			return
-		}
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		writeListPipelineError(w, r, err)
 		return
 	}
 
@@ -832,6 +845,23 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// writeListPipelineError maps a scopedSortedEntities / resolveScope
+// error to the right HTTP shape: ACL query failures route through
+// writeGateError, store-load failures surface as list_load_failed,
+// and anything else is the free-text search failure the pipeline
+// always surfaced. Shared by the list and _position handlers so the
+// two consumers of the pipeline can't drift.
+func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, errACLListQuery):
+		writeGateError(w, r, err)
+	case errors.Is(err, errListLoad):
+		writeV1Error(w, r, http.StatusInternalServerError, "list_load_failed", "Loading entities failed", err.Error())
+	default:
+		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+	}
 }
 
 // writeGateError maps a readGate.PermitsRead / PermitsReadMany error
@@ -2573,6 +2603,13 @@ func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban
 // Backend errors degrade to 0 with a warning — parity with the old
 // CountEntities error path: a broken sidebar count must not take the
 // whole sidebar down, and the list endpoint surfaces the real error.
+//
+// ReadQuery (one member-of walk reuse via the request-scoped
+// acl.Request) and the GraphQuery/GraphCount run once per nav item —
+// two lists over the same type recompute rather than share. Accepted:
+// filterCache keys on list/kanban id, not (type, filters); a
+// (type, filters)-keyed memo is the obvious upgrade if sidebar
+// latency ever warrants it.
 func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig) int {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
 	if rqr.DenyAll {
