@@ -51,4 +51,5 @@ mutates the repo.
 - [x] All CI checks pass (verified after push)
 - [x] PR URL documented below
 
-**PR:** (stacked on #960 — URL added in the follow-up commit after creation)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/962 (stacked on
+https://github.com/sourcehaven-bv/rela/pull/960)
