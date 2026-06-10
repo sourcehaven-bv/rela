@@ -235,6 +235,9 @@ type V1ErrorSource struct {
 // registerAPIV1Routes registers all /api/v1/ routes.
 // Note: /api/v1/_events is registered separately in NewRouter as it needs to be
 // outside the reload-lock middleware (SSE long-lived connection).
+//
+// When adding a route, add a probe to the route table in
+// router_walk_test.go so registration stays covered.
 func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	// System endpoints (underscore prefix)
 	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)

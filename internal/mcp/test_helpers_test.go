@@ -74,7 +74,7 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:       st,
 		Meta:        meta,
-		Templater:   templating.NewFSTemplater(nil, nil),
+		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
 		Automations: autoEngine,
@@ -107,6 +107,21 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 }
 
 // --- stub helpers ---
+
+// nopTemplater satisfies the narrow [entitymanager.TemplateLoader]
+// interface with template misses. The previous fixture used
+// templating.NewFSTemplater(nil, nil), which panics on a nil
+// *project.Context the moment a create actually runs — caught by the
+// dispatch tests (TKT-TLQ94B), which exercise the full create path.
+type nopTemplater struct{}
+
+func (nopTemplater) EntityTemplate(_ context.Context, _, _ string) (*templating.Template, error) {
+	return nil, nil //nolint:nilnil // miss is not an error at this layer
+}
+
+func (nopTemplater) RelationTemplate(_ context.Context, _ string) (*templating.Template, error) {
+	return nil, nil //nolint:nilnil // miss is not an error at this layer
+}
 
 type nopWatcher struct{}
 
