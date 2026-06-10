@@ -168,7 +168,7 @@ The policy lives at `acl.yaml` at the project root (alongside
 |---|---|---|
 | **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
 | **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
-| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are unaffected in v0; read filtering arrives with v1. |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered: per-entity GETs 404 like not-found for hidden entities, and lists / sidebar counts / pagination return only the visible subset (see `docs/acl-security.md`). |
 
 A startup warning fires when the server binds **beyond loopback**
 (`--bind` non-loopback) **without** `acl.yaml` AND **without**
@@ -229,6 +229,12 @@ role_relations:
   simply delete `acl.yaml` (which falls back to `NopACL`).
 - **Unknown top-level keys produce warnings, not errors.** Typos
   surface in the server log; the rest of the policy still loads.
+- **Write grants require covering read grants.** A role with
+  `write: [ticket]` but no `read: [ticket]` (or `read: ["*"]`) is
+  rejected at boot with an error naming the role and type. A
+  principal who can write a type it cannot read would see an empty
+  list with a working Create button; the loader rules the
+  combination out so the UI affordances stay coherent.
 
 ### Delegate-X tamper resistance
 

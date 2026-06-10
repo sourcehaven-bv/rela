@@ -350,9 +350,18 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 //
 // Static files (/static/*) are served separately and bypass this
 // middleware, so they retain normal caching behavior.
+//
+// Under ACL, API responses are additionally per-principal: when a
+// principal header is configured (SetPrincipalHeader), `Vary` names it
+// so any cache that ignores the no-store directive still keys on the
+// identity header instead of serving principal A's filtered response
+// to principal B (TKT-VMD8 AC10, RR-VDTW).
 func (a *App) noCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		if a.principalHeader != "" {
+			w.Header().Add("Vary", a.principalHeader)
+		}
 		next.ServeHTTP(w, r)
 	})
 }

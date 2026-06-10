@@ -254,6 +254,10 @@ func (g fakeGate) PermitsReadMany(_ context.Context, _ string, ids []string) (ma
 	return m, nil
 }
 
+func (g fakeGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
+	return acl.ReadQueryResult{DenyAll: true}
+}
+
 // principalCtx returns a context carrying a stamped data-entry
 // principal for `user`. RR-MILH: replaces the previous parameterless
 // `aliceCtx()` helper so tests that want a different principal

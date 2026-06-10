@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -189,6 +190,10 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 
 	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
+		if errors.Is(err, errACLListQuery) {
+			writeGateError(w, r, err)
+			return
+		}
 		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
 		return
 	}
