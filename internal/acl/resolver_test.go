@@ -125,6 +125,7 @@ func TestForPrincipal_UnstampedRejected(t *testing.T) {
 	d := newTestDeclarative(t, &Policy{}, newFakeGraph())
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			req, err := d.ForPrincipal(c.p)
 			if req != nil {
 				t.Errorf("ForPrincipal(%+v) returned non-nil Request", c.p)

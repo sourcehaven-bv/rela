@@ -43,7 +43,6 @@ func TestURLFormEdit(t *testing.T) {
 
 func TestURLFormCreate(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []struct {
 		name string
 		code string
@@ -81,6 +80,8 @@ func TestURLFormCreate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			got := evalString(t, r, tc.code)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
@@ -107,7 +108,6 @@ func TestURLFormEdit_ignoresExtraTableKeys(t *testing.T) {
 
 func TestURLForm_errors(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []struct {
 		name    string
 		code    string
@@ -136,6 +136,8 @@ func TestURLForm_errors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			err := r.RunString(tc.code)
 			if err == nil {
 				t.Fatalf("expected error containing %q", tc.wantSub)
@@ -159,7 +161,6 @@ func TestURLDetail(t *testing.T) {
 
 func TestURLDetail_requiresFields(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []string{
 		`rela.url.detail({type="ticket"})`,          // no id
 		`rela.url.detail({id="TKT-001"})`,           // no type
@@ -168,6 +169,8 @@ func TestURLDetail_requiresFields(t *testing.T) {
 	}
 	for _, code := range cases {
 		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			err := r.RunString(code)
 			if err == nil {
 				t.Fatalf("expected error for %q", code)
@@ -178,13 +181,14 @@ func TestURLDetail_requiresFields(t *testing.T) {
 
 func TestURLList(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks")`, "/list/all_tasks"},
 		{`rela.url.list("all_tasks", {status = "open"})`, "/list/all_tasks?status=open"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			got := evalString(t, r, tc.code)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
@@ -226,7 +230,6 @@ func TestURLDocument(t *testing.T) {
 // has no params. Each takes an optional bare query table.
 func TestURLSingletons(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.home()`, "/dashboard"},
 		{`rela.url.search()`, "/search"},
@@ -237,6 +240,8 @@ func TestURLSingletons(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			got := evalString(t, r, tc.code)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
@@ -250,7 +255,6 @@ func TestURLSingletons(t *testing.T) {
 // edge cases the old call-style tests exercised.
 func TestURLParams_validation(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []struct {
 		name    string
 		code    string
@@ -289,6 +293,8 @@ func TestURLParams_validation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			err := r.RunString(tc.code)
 			if err == nil {
 				t.Fatalf("expected error containing %q", tc.wantSub)
@@ -324,7 +330,6 @@ func TestURLFormCreate_queryIsStillSubKey(t *testing.T) {
 // query on path — not applicable here since helper builds its own).
 func TestURLNonFormHelpers_querySemantics(t *testing.T) {
 	t.Parallel()
-	r := newURLWriter(t)
 	cases := []struct{ code, want string }{
 		{`rela.url.list("all_tasks", {})`, "/list/all_tasks"},
 		{`rela.url.list("all_tasks", {b="2", a="1", c="3"})`, "/list/all_tasks?a=1&b=2&c=3"},
@@ -332,6 +337,8 @@ func TestURLNonFormHelpers_querySemantics(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
+			t.Parallel()
+			r := newURLWriter(t)
 			got := evalString(t, r, tc.code)
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)

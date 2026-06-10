@@ -83,6 +83,7 @@ func TestCheckContentRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CheckContentRule(tt.content, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
@@ -167,6 +168,7 @@ func TestCheckChecklistRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CheckChecklistRule(tt.items, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckChecklistRule() = %v, want %v", got, tt.want)
@@ -238,6 +240,7 @@ func TestCheckContentRuleWithChecklist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CheckContentRule(tt.content, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)

@@ -67,6 +67,7 @@ func TestCheck(t *testing.T) {
 	svc := New(meta, lua.ReadDeps{})
 
 	t.Run("finds violations", func(t *testing.T) {
+		t.Parallel()
 		violations := svc.Check(context.Background(), entities, nil).Violations
 		if len(violations) != 1 {
 			t.Errorf("got %d violations, want 1", len(violations))
@@ -77,6 +78,7 @@ func TestCheck(t *testing.T) {
 	})
 
 	t.Run("scope filters violations", func(t *testing.T) {
+		t.Parallel()
 		// Only check TKT-001 (valid) and TKT-003 (not matching when)
 		scope := map[string]bool{"TKT-001": true, "TKT-003": true}
 		violations := svc.Check(context.Background(), entities, scope).Violations
@@ -86,6 +88,7 @@ func TestCheck(t *testing.T) {
 	})
 
 	t.Run("scope includes violation", func(t *testing.T) {
+		t.Parallel()
 		scope := map[string]bool{"TKT-002": true}
 		violations := svc.Check(context.Background(), entities, scope).Violations
 		if len(violations) != 1 {

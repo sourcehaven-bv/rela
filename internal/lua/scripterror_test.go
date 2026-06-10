@@ -432,6 +432,7 @@ func TestScriptError_Error(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tc.se.Error(); got != tc.want {
 				t.Errorf("Error()=%q, want %q", got, tc.want)
 			}

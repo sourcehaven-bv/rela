@@ -292,6 +292,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			yaml := "roles:\n  triager:\n    write: [ticket]\n" + tc.fieldsBlock
 			p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
 			if err != nil {
@@ -323,6 +324,7 @@ func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			yaml := "roles:\n  triager:\n    relations:\n      ticket:\n" +
 				"        - relation: implements\n" + tc.createLine
 			p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
@@ -360,6 +362,7 @@ func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			path := writeTempPolicy(t, tc.yaml)
 			_, err := acl.LoadPolicy(path)
 			if err == nil {
@@ -385,6 +388,7 @@ func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			path := writeTempPolicy(t, tc.yaml)
 			_, err := acl.LoadPolicy(path)
 			if err == nil {

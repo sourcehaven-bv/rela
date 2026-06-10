@@ -37,6 +37,7 @@ func TestDateAdd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -65,6 +66,7 @@ func TestDateAddError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, _ := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -91,6 +93,7 @@ func TestDateWeekday(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -122,6 +125,7 @@ func TestDateNextWeekday(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -193,6 +197,7 @@ func TestRruleNext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -251,6 +256,7 @@ func TestRruleNextError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, _ := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -279,6 +285,7 @@ func TestParseOffset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			y, m, d, err := parseOffset(tt.input)
 			require.NoError(t, err)
 			assert.Equal(t, tt.years, y)
@@ -293,6 +300,7 @@ func TestParseOffsetError(t *testing.T) {
 	tests := []string{"", "x", "abc", "3z", "d"}
 	for _, input := range tests {
 		t.Run(input, func(t *testing.T) {
+			t.Parallel()
 			_, _, _, err := parseOffset(input)
 			require.Error(t, err)
 		})

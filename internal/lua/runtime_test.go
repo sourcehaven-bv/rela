@@ -1287,6 +1287,7 @@ func TestSandbox_DangerousLibrariesUnavailable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			r := NewWriter(ws.services("/tmp"), &buf)
 			defer r.Close()
@@ -1321,6 +1322,7 @@ func TestSandbox_DangerousFunctionsRemoved(t *testing.T) {
 
 	for _, fn := range dangerousFuncs {
 		t.Run(fn, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			r := NewWriter(ws.services("/tmp"), &buf)
 			defer r.Close()
@@ -1359,6 +1361,7 @@ func TestSandbox_SafeLibrariesAvailable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			r := NewWriter(ws.services("/tmp"), &buf)
 			defer r.Close()
@@ -2033,6 +2036,7 @@ func TestStripShebang(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := stripShebang(tt.input)
 			if got != tt.expected {
 				t.Errorf("stripShebang(%q) = %q, want %q", tt.input, got, tt.expected)
@@ -2046,6 +2050,7 @@ func TestShebangExecution(t *testing.T) {
 	script := "#!/usr/bin/env rela script\nrela.output({status = 'ok'})"
 
 	t.Run("RunString", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2065,6 +2070,7 @@ func TestShebangExecution(t *testing.T) {
 	})
 
 	t.Run("RunFile", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2092,6 +2098,7 @@ func TestShebangExecution(t *testing.T) {
 func TestRunFile_Errors(t *testing.T) {
 	t.Parallel()
 	t.Run("line numbers preserved with shebang", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2114,6 +2121,7 @@ func TestRunFile_Errors(t *testing.T) {
 	})
 
 	t.Run("includes filename", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2476,6 +2484,7 @@ func TestReadBindings_UseCallerContext(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ws := newMockWorkspace(t)
 			// Sanity: confirm the seeds the scripts depend on really exist.
 			// Stops silent test no-ops if a future refactor renames seeds.

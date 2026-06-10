@@ -120,6 +120,7 @@ func TestCreateRelation_AssignsOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr, _ := newOrderableManager(t, tt.mode)
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "Soup")
@@ -202,6 +203,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr, _ := newOrderableManager(t, "outgoing")
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "X")
@@ -269,6 +271,7 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr, st := newOrderableManager(t, "outgoing")
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "X")

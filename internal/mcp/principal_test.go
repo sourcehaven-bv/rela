@@ -50,6 +50,7 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 	}
 	for field, zero := range mutators {
 		t.Run(field, func(t *testing.T) {
+			t.Parallel()
 			deps := makeTestServer(t).deps
 			zero(&deps)
 			if _, err := NewServer(deps, "0.0.0", withPrincipal); err == nil {

@@ -186,6 +186,7 @@ func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Seed via NopACL on a shared store so the data exists when
 			// the ReadOnlyACL Manager runs the entry point.
 			sink := audit.NewMemory()

@@ -25,6 +25,7 @@ func TestNopACL_AllowsAllWrites(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			d := acl.NopACL{}.AuthorizeWrite(context.Background(), tt.req)
 			if !d.Allow {
 				t.Errorf("Allow = false, want true (NopACL must never deny). Decision = %+v", d)

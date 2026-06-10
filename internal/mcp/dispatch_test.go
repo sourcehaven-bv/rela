@@ -184,6 +184,7 @@ func TestDispatch_EveryToolDecodesAndRuns(t *testing.T) {
 	for _, name := range names {
 		tc := toolCalls[name]
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			s := newDispatchServer(t)
 			text, isError := callTool(t, s, name, tc.args)
 			if isError != tc.wantErr {

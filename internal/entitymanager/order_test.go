@@ -29,6 +29,7 @@ func TestMidpointOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			v, ok := MidpointOrder(tt.a, tt.b)
 			if ok != tt.wantOK {
 				t.Fatalf("ok = %v, want %v (value=%v)", ok, tt.wantOK, v)
@@ -60,6 +61,7 @@ func TestAppendOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := AppendOrder(tt.existing); got != tt.want {
 				t.Errorf("AppendOrder(%v) = %v, want %v", tt.existing, got, tt.want)
 			}
@@ -82,6 +84,7 @@ func TestPrependOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := PrependOrder(tt.existing); got != tt.want {
 				t.Errorf("PrependOrder(%v) = %v, want %v", tt.existing, got, tt.want)
 			}
@@ -106,6 +109,7 @@ func TestNeedsRenumber(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := NeedsRenumber(tt.sorted); got != tt.want {
 				t.Errorf("NeedsRenumber(%v) = %v, want %v", tt.sorted, got, tt.want)
 			}
@@ -195,6 +199,7 @@ func TestSortRelations_StableMissingLast(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := SortRelations(tt.in, "_order_out")
 			gotIDs := make([]string, len(got))
 			for i, r := range got {

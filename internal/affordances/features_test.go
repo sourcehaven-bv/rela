@@ -426,6 +426,7 @@ func TestFeature_HasRole_AncestorConferred(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
   editor:

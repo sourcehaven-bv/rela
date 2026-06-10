@@ -292,6 +292,7 @@ func TestClassifyHTTPError_Canceled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := classifyHTTPError(tc.err)
 			if got == nil {
 				t.Fatal("classifyHTTPError returned nil")

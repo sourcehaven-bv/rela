@@ -314,6 +314,7 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			meta := &metamodel.Metamodel{
 				Entities: map[string]metamodel.EntityDef{
 					"ticket": {Properties: map[string]metamodel.PropertyDef{}},
@@ -826,6 +827,7 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			meta := &metamodel.Metamodel{
 				Entities: map[string]metamodel.EntityDef{
 					"ticket": {Properties: map[string]metamodel.PropertyDef{}},
