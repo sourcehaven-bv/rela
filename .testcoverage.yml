@@ -8,14 +8,29 @@
 profile: coverage.out
 
 # Minimum coverage thresholds (floor — packages must not drop below these)
+#
+# The default package floor (50) is what catches "new untested package
+# added" — the stated purpose of floors. Packages legitimately below it
+# get an explicit override (~5pp below current, the file's convention)
+# so the gap stays visible instead of silently unenforced.
 threshold:
   file: 0
-  package: 0
+  package: 50
   total: 65
 
 # Per-package minimum thresholds.
 # Set ~5pp below current measured coverage to give refactor headroom.
 override:
+  # Below the default floor — explicit lower floors so the gap is
+  # visible. Raise these as tests are added; don't lower without reason.
+  - path: ^internal/git$
+    threshold: 30
+  - path: ^internal/cli$
+    threshold: 30
+  - path: ^internal/search$
+    threshold: 20 # the Searcher facade; most logic lives in search/bleveindex and the backends
+  - path: ^internal/config$
+    threshold: 0 # TODO: genuinely untested production loader (27 stmts) — needs tests
   - path: ^internal/entity$
     threshold: 80
   - path: ^internal/errors$
@@ -46,6 +61,8 @@ exclude:
     - ^internal/testutil       # test helpers
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
+    - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers
+    - ^internal/store/graphquerynaive # exercised through every backend's graphquery tests; cross-package coverage isn't attributed without -coverpkg, so its own number reads 0
     - ^frontend/node_modules   # Go files in npm dependencies
 
 # Require coverage-ignore annotations to have explanatory comments
