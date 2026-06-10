@@ -5,7 +5,7 @@ title: 't.Parallel wave: lua, mcp, write-path packages + -shuffle=on in CI'
 kind: test
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 ## Problem
