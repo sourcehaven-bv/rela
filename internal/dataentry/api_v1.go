@@ -3015,7 +3015,7 @@ type V1ViewEntity struct {
 }
 
 // sectionEntityToV1 lifts a section's row entity (template-side data)
-// onto the wire shape. Centralises the `V1ViewEntity` construction so
+// onto the wire shape. Centralizes the `V1ViewEntity` construction so
 // the typed `_props` and per-row `_fields` (TKT-IHC7D) stay consistent
 // across both the top-level entities path and the (currently dormant)
 // grouped-card entities path.

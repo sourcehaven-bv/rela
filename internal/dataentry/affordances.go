@@ -767,7 +767,7 @@ func (a *App) computeRelationAffordances(ctx context.Context, e *entityPkg.Entit
 // with hidden names filtered out, ready to ship on a per-row wire
 // surface (cards/list rows in V1ViewEntity._props). Shallow copy: each
 // value points at the same underlying object as e.Properties[k], which
-// is fine because the response is JSON-marshalled before the caller can
+// is fine because the response is JSON-marshaled before the caller can
 // alias anything (TKT-IHC7D).
 //
 // Mirrors stripHiddenProperties's hidden-property contract but returns
