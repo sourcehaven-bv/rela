@@ -5,7 +5,7 @@ title: Default package coverage floor so new untested packages fail CI
 kind: chore
 priority: medium
 effort: xs
-status: in-progress
+status: done
 ---
 
 ## Problem
