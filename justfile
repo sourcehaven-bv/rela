@@ -2,7 +2,9 @@
 
 # Variables
 build_dir := "bin"
-golangci_lint_version := "v1.62.2"
+# Keep these in sync with .github/workflows/ci.yml (lint and arch-lint jobs).
+golangci_lint_version := "v2.11.4"
+go_arch_lint_version := "v1.15.0"
 go_packages := "$(go list ./... | grep -v /frontend/node_modules/)"
 
 # Default recipe
@@ -234,14 +236,14 @@ ci: check coverage-check build docs-check
 # Install development tools
 install-tools:
     @echo "Installing development tools..."
-    @echo "Installing golangci-lint {{golangci_lint_version}}..."
-    @curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin {{golangci_lint_version}}
+    @echo "Installing golangci-lint {{golangci_lint_version}} (same install path as CI)..."
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{golangci_lint_version}}
     @echo "Installing goimports..."
     go install golang.org/x/tools/cmd/goimports@latest
     @echo "Installing go-test-coverage..."
     go install github.com/vladopajic/go-test-coverage/v2@latest
-    @echo "Installing go-arch-lint..."
-    go install github.com/fe3dback/go-arch-lint@latest
+    @echo "Installing go-arch-lint {{go_arch_lint_version}}..."
+    go install github.com/fe3dback/go-arch-lint@{{go_arch_lint_version}}
     @echo "Done!"
 
 # Install git hooks
