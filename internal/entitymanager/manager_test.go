@@ -201,6 +201,7 @@ func createDec(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 // --- Constructor validation ---
 
 func TestNew_RejectsNilStore(t *testing.T) {
+	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
 		Meta:      parseMeta(t),
 		Templater: nopTemplater{},
@@ -211,6 +212,7 @@ func TestNew_RejectsNilStore(t *testing.T) {
 }
 
 func TestNew_RejectsNilMeta(t *testing.T) {
+	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store:     memstore.New(),
 		Templater: nopTemplater{},
@@ -221,6 +223,7 @@ func TestNew_RejectsNilMeta(t *testing.T) {
 }
 
 func TestNew_RejectsNilTemplater(t *testing.T) {
+	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(),
 		Meta:  parseMeta(t),
@@ -231,6 +234,7 @@ func TestNew_RejectsNilTemplater(t *testing.T) {
 }
 
 func TestNew_RejectsNilAudit(t *testing.T) {
+	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
@@ -242,6 +246,7 @@ func TestNew_RejectsNilAudit(t *testing.T) {
 }
 
 func TestNew_RejectsNilACL(t *testing.T) {
+	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
@@ -254,6 +259,7 @@ func TestNew_RejectsNilACL(t *testing.T) {
 }
 
 func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
+	t.Parallel()
 	engine := automation.NewEngine(nil)
 	_, err := entitymanager.New(entitymanager.Deps{
 		Store:       memstore.New(),
@@ -269,6 +275,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 }
 
 func TestNew_AllowsNoAutomation(t *testing.T) {
+	t.Parallel()
 	if _, err := entitymanager.New(entitymanager.Deps{
 		Store:     memstore.New(),
 		Meta:      parseMeta(t),
@@ -283,6 +290,7 @@ func TestNew_AllowsNoAutomation(t *testing.T) {
 // --- AC4: write-count invariants ---
 
 func TestCreate_WritesOnceWithoutAutomation(t *testing.T) {
+	t.Parallel()
 	mgr, cs := newManager(t, nil)
 	createReq(t, mgr, "First")
 	if got := cs.creates.Load(); got != 1 {
@@ -297,6 +305,7 @@ func TestCreate_WritesOnceWithoutAutomation(t *testing.T) {
 // ValidateCreate runs the create-path validation but performs no store
 // write (TKT-3I5U).
 func TestValidateCreate_PersistsNothing(t *testing.T) {
+	t.Parallel()
 	mgr, cs := newManager(t, nil)
 	e := entity.New("", "requirement")
 	e.SetString("title", "Candidate")
@@ -323,6 +332,7 @@ func TestValidateCreate_PersistsNothing(t *testing.T) {
 // unset field returns as a soft warning (not a hard error), matching
 // what CreateEntity would surface on the persisted result.
 func TestValidateCreate_SoftWarningForRequiredUnset(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	e := entity.New("", "requirement") // title is required, omitted
 
@@ -345,6 +355,7 @@ func TestValidateCreate_SoftWarningForRequiredUnset(t *testing.T) {
 // create produce the SAME soft warnings for the same candidate — the
 // shared buildCandidateEntity guarantees no drift (RR-Y85M).
 func TestValidateCreate_MatchesCreateWarnings(t *testing.T) {
+	t.Parallel()
 	dryMgr, _ := newManager(t, nil)
 	realMgr, _ := newManager(t, nil)
 
@@ -374,6 +385,7 @@ func TestValidateCreate_MatchesCreateWarnings(t *testing.T) {
 
 // TestValidateCreate_NilEntity rejects a nil candidate.
 func TestValidateCreate_NilEntity(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	if _, _, err := mgr.ValidateCreate(context.Background(), nil, entity.CreateOptions{}); err == nil {
 		t.Error("ValidateCreate(nil) should error")
@@ -385,6 +397,7 @@ func TestValidateCreate_NilEntity(t *testing.T) {
 // runs per debounced keystroke on the create form. A store-wide scan
 // per keystroke would hitch the UI and pile on backend load.
 func TestValidateCreate_SkipsIDGeneration(t *testing.T) {
+	t.Parallel()
 	mgr, cs := newManager(t, nil)
 	// Seed two entities so an ID-gen path WOULD see them via ListEntities.
 	createReq(t, mgr, "Seed 1")
@@ -404,6 +417,7 @@ func TestValidateCreate_SkipsIDGeneration(t *testing.T) {
 // TestCreate_WritesTwiceWithAutomationProperty pins the
 // "two writes when automation sets a property" pipeline shape.
 func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
+	t.Parallel()
 	const wantStatus = "proposed"
 	auto := automation.Automation{
 		Name: "set-status-on-create",
@@ -434,6 +448,7 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 }
 
 func TestCreate_SkipAutomation(t *testing.T) {
+	t.Parallel()
 	auto := automation.Automation{
 		Name: "set-status",
 		On:   automation.Trigger{Entity: []string{"requirement"}, Created: true},
@@ -459,6 +474,7 @@ func TestCreate_SkipAutomation(t *testing.T) {
 // outcome lands on entity.CreateResult and that the cascade-driven create
 // does NOT re-trigger automation (the no-recursion invariant).
 func TestCreate_AutomationCreatesRelatedEntity(t *testing.T) {
+	t.Parallel()
 	// Single automation: when a requirement is created, create a
 	// checklist linked back to it.
 	auto := automation.Automation{
@@ -497,6 +513,7 @@ func TestCreate_AutomationCreatesRelatedEntity(t *testing.T) {
 // the invariant holds, the cascade-created checklist carries the
 // engine's default ("draft") because no automation fired on it.
 func TestCreate_CascadeNoRecursion(t *testing.T) {
+	t.Parallel()
 	const onRequirementMarker = "proposed"
 	parentAuto := automation.Automation{
 		Name: "create-checklist",
@@ -571,6 +588,7 @@ func (r *recordingScripts) Run(_ context.Context, _ autocascade.ScriptAction, m 
 // future refactors could silently drop the assignment and only
 // fail when an actual script tried to mutate.
 func TestCreate_PassesManagerAsMutator(t *testing.T) {
+	t.Parallel()
 	scripts := &recordingScripts{}
 	cs := &countingStore{Store: memstore.New()}
 	auto := automation.Automation{
@@ -618,6 +636,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 // --- Update path: oldEntity gate, typed errors ---
 
 func TestUpdate_NotFoundReturnsTypedError(t *testing.T) {
+	t.Parallel()
 	auto := automation.Automation{
 		Name: "should-not-fire",
 		On:   automation.Trigger{Entity: []string{"requirement"}, Property: "title"},
@@ -639,6 +658,7 @@ func TestUpdate_NotFoundReturnsTypedError(t *testing.T) {
 // --- Delete path: typed errors, cascade behavior ---
 
 func TestDelete_NotFoundReturnsTypedError(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	_, err := mgr.DeleteEntity(context.Background(), "REQ-999", false)
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
@@ -647,6 +667,7 @@ func TestDelete_NotFoundReturnsTypedError(t *testing.T) {
 }
 
 func TestDelete_HasRelationsRejectsWhenNotCascading(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "Linked Source")
@@ -661,6 +682,7 @@ func TestDelete_HasRelationsRejectsWhenNotCascading(t *testing.T) {
 }
 
 func TestDelete_CascadeRemovesIncidentRelations(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "Source")
@@ -684,6 +706,7 @@ func TestDelete_CascadeRemovesIncidentRelations(t *testing.T) {
 // --- Rename path ---
 
 func TestRename_DryRunDoesNotChangeStore(t *testing.T) {
+	t.Parallel()
 	mgr, cs := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "To Be Renamed")
@@ -719,6 +742,7 @@ func TestRename_DryRunDoesNotChangeStore(t *testing.T) {
 }
 
 func TestRename_AppliesAndRewritesRelations(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "Original")
@@ -743,6 +767,7 @@ func TestRename_AppliesAndRewritesRelations(t *testing.T) {
 }
 
 func TestRename_NotFoundReturnsTypedError(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	_, err := mgr.RenameEntity(context.Background(), "REQ-999", "REQ-998", entity.RenameOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
@@ -753,6 +778,7 @@ func TestRename_NotFoundReturnsTypedError(t *testing.T) {
 // --- Relation methods ---
 
 func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
@@ -768,6 +794,7 @@ func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
 }
 
 func TestCreateRelation_SourceNotFoundTyped(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	dec := createDec(t, mgr, "Target")
 	_, err := mgr.CreateRelation(context.Background(), "REQ-999", "addresses", dec.ID, entity.RelationOptions{})
@@ -777,6 +804,7 @@ func TestCreateRelation_SourceNotFoundTyped(t *testing.T) {
 }
 
 func TestUpdateRelation_MergesProperties(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
@@ -804,6 +832,7 @@ func TestUpdateRelation_MergesProperties(t *testing.T) {
 }
 
 func TestUpdateRelation_NotFoundTyped(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	_, err := mgr.UpdateRelation(context.Background(), "DEC-1", "addresses", "REQ-1", entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrRelationNotFound) {
@@ -812,6 +841,7 @@ func TestUpdateRelation_NotFoundTyped(t *testing.T) {
 }
 
 func TestDeleteRelation_RoundTrip(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
@@ -838,6 +868,7 @@ func TestDeleteRelation_RoundTrip(t *testing.T) {
 // reach UpdateEntity and likely return ErrNotFound, hiding the
 // real cause.
 func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
+	t.Parallel()
 	sentinel := errors.New("simulated disk failure")
 	cs := &failingCreateStore{
 		Store: memstore.New(),
@@ -895,6 +926,7 @@ types:
 // required-but-missing soft-validation condition surfaces as a entity.Warning
 // on entity.CreateResult while the write succeeds.
 func TestCreate_SoftValidationProducesWarning(t *testing.T) {
+	t.Parallel()
 	meta, err := metamodel.Parse([]byte(softValidationMetamodel))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
@@ -933,6 +965,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 // TestCreate_HardValidationStillAborts pins that hard validation
 // errors still abort the write (DEC-HWZHA hard class is unchanged).
 func TestCreate_HardValidationStillAborts(t *testing.T) {
+	t.Parallel()
 	mgr, cs := newManager(t, nil)
 
 	// Unknown entity type is a hard error.
@@ -952,6 +985,7 @@ func TestCreate_HardValidationStillAborts(t *testing.T) {
 // TestUpdate_SoftValidationProducesWarning pins the same DEC-HWZHA
 // behavior on the update path.
 func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
+	t.Parallel()
 	meta, err := metamodel.Parse([]byte(softValidationMetamodel))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)

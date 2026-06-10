@@ -106,6 +106,7 @@ func mkStep(t *testing.T, mgr *entitymanager.Manager, title string) *entity.Enti
 }
 
 func TestCreateRelation_AssignsOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		mode           string
@@ -167,6 +168,7 @@ func TestCreateRelation_AssignsOrder(t *testing.T) {
 }
 
 func TestCreateRelation_ExplicitOrderRespected(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newOrderableManager(t, "outgoing")
 	ctx := context.Background()
 	recipe := mkRecipe(t, mgr, "Stew")
@@ -187,6 +189,7 @@ func TestCreateRelation_ExplicitOrderRespected(t *testing.T) {
 // non-HTTP write paths must be overwritten with the auto-assigned next
 // ordinal so the on-disk relation always has a sortable value.
 func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value interface{}
@@ -218,6 +221,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 }
 
 func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
+	t.Parallel()
 	mgr, st := newOrderableManager(t, "both")
 	ctx := context.Background()
 	recipe := mkRecipe(t, mgr, "X")
@@ -252,6 +256,7 @@ func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
 }
 
 func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value interface{}
@@ -295,6 +300,7 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 // renumber: triggered-by so they are distinguishable from the user-initiated
 // UpdateRelation that spawned them.
 func TestRenumber_EmitsAuditRecords(t *testing.T) {
+	t.Parallel()
 	mgr, _, mem := newOrderableManagerWithAudit(t, "outgoing")
 	ctx := context.Background()
 	recipe := mkRecipe(t, mgr, "X")

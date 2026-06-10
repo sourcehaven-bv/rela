@@ -81,6 +81,7 @@ func seedRelation(t *testing.T, store *countingStore, from, relType, to string) 
 // with the read-only Decision, and records a denied-write audit row.
 // Table-driven across all 7 entry points.
 func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// run exercises the write entry point against mgr. Returns the
@@ -254,6 +255,7 @@ func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
 // just pins that the same 7 entry points succeed under NopACL using
 // the exact same fixtures and seed data.
 func TestManager_NopACLAllows_AllWritePathsSucceed(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemory()
 	mgr, store := newManagerWithACL(t, acl.NopACL{}, sink)
 
@@ -313,6 +315,7 @@ func TestManager_NopACLAllows_AllWritePathsSucceed(t *testing.T) {
 // grant without any test noticing, because v0 has no concept of
 // per-entity authorisation.
 func TestManager_DeclarativeACL_LocalRoleAllowsWrite(t *testing.T) {
+	t.Parallel()
 	// A bug-tracking metamodel: people, tickets, and an `assigned-to`
 	// relation from people to tickets. The metamodel doesn't know about
 	// authorisation — that lives in acl.yaml.
@@ -483,6 +486,7 @@ role_relations:
 // attribution (`viewer via group:viewers`) and denies because no role
 // grants write. The audit row must surface that attribution.
 func TestManager_DeniedWrite_AuditCarriesSourceAttribution(t *testing.T) {
+	t.Parallel()
 	const metamodelYAML = `version: "1.0"
 entities:
   person:
