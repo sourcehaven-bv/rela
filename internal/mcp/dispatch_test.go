@@ -133,6 +133,7 @@ var toolCalls = map[string]struct {
 // dispatch case below (or removed while still listed here) fails this
 // test by name.
 func TestDispatch_ToolInventoryMatches(t *testing.T) {
+	t.Parallel()
 	s := newDispatchServer(t)
 
 	result, rpcErr := dispatch(t, s, "tools/list", `{}`)
@@ -173,6 +174,7 @@ func TestDispatch_ToolInventoryMatches(t *testing.T) {
 // through a real tools/call. Each subtest gets a fresh server because
 // the write tools mutate the seeded graph.
 func TestDispatch_EveryToolDecodesAndRuns(t *testing.T) {
+	t.Parallel()
 	names := make([]string, 0, len(toolCalls))
 	for name := range toolCalls {
 		names = append(names, name)
@@ -197,6 +199,7 @@ func TestDispatch_EveryToolDecodesAndRuns(t *testing.T) {
 // TestDispatch_UnknownToolRejected pins that the dispatch layer (not our
 // handlers) rejects calls to unregistered tool names.
 func TestDispatch_UnknownToolRejected(t *testing.T) {
+	t.Parallel()
 	s := newDispatchServer(t)
 
 	result, rpcErr := dispatch(t, s, "tools/call", `{"name":"no_such_tool","arguments":{}}`)
@@ -213,6 +216,7 @@ func TestDispatch_UnknownToolRejected(t *testing.T) {
 // pins the client-visible contract regardless of which layer enforces
 // it.
 func TestDispatch_MalformedArgumentsSurface(t *testing.T) {
+	t.Parallel()
 	s := newDispatchServer(t)
 
 	text, isError := callTool(t, s, "show_entity", `{}`)
