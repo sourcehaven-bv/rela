@@ -94,7 +94,16 @@ func createCore(
 		return nil, nil, err
 	}
 
-	if err := upsertEntity(ctx, deps.Store, e); err != nil {
+	// A create must never fall through to an update — that would
+	// overwrite a colliding entity (a racing create, or a stale-scan
+	// duplicate ID). Write with a direct CreateEntity and surface a
+	// conflict as ErrEntityAlreadyExists. upsertEntity's
+	// create-then-update fallback is only for write-back-existing
+	// callers, never the create path.
+	if err := deps.Store.CreateEntity(ctx, e); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
+		}
 		return nil, nil, fmt.Errorf("write entity: %w", err)
 	}
 

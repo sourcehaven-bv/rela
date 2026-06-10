@@ -258,9 +258,11 @@ func (m *Manager) CreateEntity(
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
 			return nil, customIDNotAllowedError(e.Type, def, opts.ID)
 		}
-		if _, err := m.deps.Store.GetEntity(ctx, opts.ID); err == nil {
-			return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, opts.ID)
-		}
+		// No GetEntity pre-check: it was a TOCTOU duplicate of the
+		// store's atomic uniqueness guarantee. createCore now writes
+		// with a direct CreateEntity and surfaces a conflict as
+		// ErrEntityAlreadyExists, so a racing create can't slip past a
+		// passed pre-check and become an overwrite.
 	}
 
 	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreOpts{
