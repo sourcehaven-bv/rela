@@ -258,9 +258,11 @@ func (m *Manager) CreateEntity(
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
 			return nil, customIDNotAllowedError(e.Type, def, opts.ID)
 		}
-		if _, err := m.deps.Store.GetEntity(ctx, opts.ID); err == nil {
-			return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, opts.ID)
-		}
+		// No GetEntity pre-check: it was a TOCTOU duplicate of the
+		// store's atomic uniqueness guarantee. createCore now writes
+		// with a direct CreateEntity and surfaces a conflict as
+		// ErrEntityAlreadyExists, so a racing create can't slip past a
+		// passed pre-check and become an overwrite.
 	}
 
 	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreOpts{
@@ -276,9 +278,16 @@ func (m *Manager) CreateEntity(
 
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
+	// Audit the durable write now, before automation re-writes or the
+	// cascade run. createCore has already persisted the entity; if a
+	// later step fails (the post-automation upsert, or a cascade that
+	// hard-errors) the entity is still on disk, so the audit log must
+	// already reflect it. Recording after the cascade left a window
+	// where a committed write produced no audit record.
+	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
+
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {
-		m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 		return result, nil
 	}
 
@@ -318,7 +327,6 @@ func (m *Manager) CreateEntity(
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
-	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	return result, nil
 }
 
@@ -426,10 +434,12 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
-	updateSummary := updateEntitySummary(oldEntity, e)
+	// Audit the durable write now, before the cascade run. The entity
+	// is already persisted; gating the audit on cascade success left a
+	// window where a committed write produced no audit record.
+	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateEntitySummary(oldEntity, e))
 
 	if !runAutomation {
-		m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 		return result, nil
 	}
 
@@ -448,7 +458,6 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
-	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 	return result, nil
 }
 
@@ -471,8 +480,14 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, aclErr
 	}
 
-	incoming := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
-	outgoing := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
+	incoming, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
+	if err != nil {
+		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
+	if err != nil {
+		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	}
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
@@ -524,17 +539,26 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	// ACL needs the entity type, so we fetch first. If the entity
-	// doesn't exist, renameEntity below returns the same error with
-	// a clearer message; we only consult the ACL when there's an
-	// entity to authorize against.
-	if current, err := m.deps.Store.GetEntity(ctx, oldID); err == nil {
+	// ACL needs the entity type, so we fetch first. Distinguish the two
+	// failure modes:
+	//   - not-found: skip ACL and fall through; renameEntity below
+	//     returns ErrEntityNotFound with a clearer message, and there is
+	//     nothing to authorize against.
+	//   - any other error (transient I/O, backend hiccup): fail closed.
+	//     Proceeding would run the rename with NO authorization at all —
+	//     a store read that flakes must not turn an ACL-gated operation
+	//     into an ungated one.
+	current, getErr := m.deps.Store.GetEntity(ctx, oldID)
+	switch {
+	case getErr == nil:
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 			Op:      acl.OpRename,
 			Subject: acl.EntitySubject{Type: current.Type, ID: oldID},
 		}); aclErr != nil {
 			return nil, aclErr
 		}
+	case !errors.Is(getErr, store.ErrNotFound):
+		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, getErr)
 	}
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {

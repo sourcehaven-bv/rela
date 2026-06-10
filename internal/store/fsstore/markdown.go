@@ -1,7 +1,6 @@
 package fsstore
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -16,13 +15,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
 )
 
 // errConflictedFile is returned when a file has unresolved git conflict markers.
 var errConflictedFile = errors.New("file has unresolved git conflicts")
 
 const (
-	frontmatterDelimiter = "---"
+	frontmatterDelimiter = frontmatter.Delimiter
 	defaultLineWidth     = 80
 )
 
@@ -87,10 +87,7 @@ func parseDocument(raw string) (*document, error) {
 		return nil, errConflictedFile
 	}
 
-	fm, body, err := splitFrontmatter(raw)
-	if err != nil {
-		return nil, err
-	}
+	fm, body := frontmatter.Split(raw)
 
 	var parsed map[string]interface{}
 	if fm != "" {
@@ -100,44 +97,6 @@ func parseDocument(raw string) (*document, error) {
 	}
 
 	return &document{frontmatter: parsed, content: body}, nil
-}
-
-func splitFrontmatter(content string) (frontmatter, body string, err error) {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	var lines []string
-	inFrontmatter := false
-	frontmatterEnded := false
-	var frontmatterLines []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if !inFrontmatter && !frontmatterEnded && strings.TrimSpace(line) == frontmatterDelimiter {
-			inFrontmatter = true
-			continue
-		}
-
-		if inFrontmatter && strings.TrimSpace(line) == frontmatterDelimiter {
-			inFrontmatter = false
-			frontmatterEnded = true
-			continue
-		}
-
-		if inFrontmatter {
-			frontmatterLines = append(frontmatterLines, line)
-		} else if frontmatterEnded || !inFrontmatter {
-			lines = append(lines, line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", "", err
-	}
-
-	frontmatter = strings.Join(frontmatterLines, "\n")
-	body = strings.TrimPrefix(strings.Join(lines, "\n"), "\n")
-
-	return frontmatter, body, nil
 }
 
 // --- document formatting ---

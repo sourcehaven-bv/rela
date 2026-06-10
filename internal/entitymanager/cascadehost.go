@@ -113,8 +113,14 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 
-	incoming := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionIncoming)
-	outgoing := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionOutgoing)
+	incoming, err := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionIncoming)
+	if err != nil {
+		return fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionOutgoing)
+	if err != nil {
+		return fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	}
 	if (len(incoming)+len(outgoing)) > 0 && !cascade {
 		return ErrHasRelations
 	}

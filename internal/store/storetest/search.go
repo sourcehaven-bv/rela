@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 )
 
@@ -193,73 +192,31 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		assert.Empty(t, results)
 	})
 
-	t.Run("FilterGt", func(t *testing.T) {
-		s, searcher := sf(t)
-		seedSearchData(t, s)
+	// Ordered property filters are unsupported on the search backend: it
+	// matches raw stringified values with no property-type context, so an
+	// ordered comparison could only be lexicographic ("10" < "9"), which
+	// is silently wrong for integer/date properties. The contract is now
+	// "reject up front" rather than "compare lexicographically". Typed
+	// ordering belongs on the metamodel-aware filter path.
+	for _, op := range []struct {
+		name string
+		op   search.FilterOp
+	}{
+		{"FilterGt", search.FilterGt},
+		{"FilterGte", search.FilterGte},
+		{"FilterLt", search.FilterLt},
+		{"FilterLte", search.FilterLte},
+	} {
+		t.Run("OrderedFilterUnsupported/"+op.name, func(t *testing.T) {
+			s, searcher := sf(t)
+			seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{
-			Filters: []search.PropertyFilter{
-				{Property: "priority", Value: "high", Op: search.FilterGt},
-			},
-		}))
-		// "low" > "high" lexicographically
-		assert.Len(t, results, 1)
-		assert.Equal(t, "FEAT-002", results[0].ID)
-	})
-
-	t.Run("FilterGte", func(t *testing.T) {
-		s, searcher := sf(t)
-		seedSearchData(t, s)
-
-		results := collectHits(t, searcher.Search(ctx(), search.Query{
-			Filters: []search.PropertyFilter{
-				{Property: "priority", Value: "high", Op: search.FilterGte},
-			},
-		}))
-		assert.Len(t, results, 2)
-	})
-
-	t.Run("FilterLtExcludesEqual", func(t *testing.T) {
-		s, searcher := sf(t)
-		e1 := entity.New("A", "t")
-		e1.SetString("score", "5")
-		e2 := entity.New("B", "t")
-		e2.SetString("score", "3")
-		e3 := entity.New("C", "t")
-		e3.SetString("score", "5")
-		require.NoError(t, s.CreateEntity(ctx(), e1))
-		require.NoError(t, s.CreateEntity(ctx(), e2))
-		require.NoError(t, s.CreateEntity(ctx(), e3))
-
-		results := collectHits(t, searcher.Search(ctx(), search.Query{
-			Filters: []search.PropertyFilter{
-				{Property: "score", Value: "5", Op: search.FilterLt},
-			},
-		}))
-		assert.Len(t, results, 1)
-		assert.Equal(t, "B", results[0].ID)
-	})
-
-	t.Run("FilterLteIncludesEqual", func(t *testing.T) {
-		s, searcher := sf(t)
-		e1 := entity.New("A", "t")
-		e1.SetString("score", "5")
-		e2 := entity.New("B", "t")
-		e2.SetString("score", "3")
-		e3 := entity.New("C", "t")
-		e3.SetString("score", "7")
-		require.NoError(t, s.CreateEntity(ctx(), e1))
-		require.NoError(t, s.CreateEntity(ctx(), e2))
-		require.NoError(t, s.CreateEntity(ctx(), e3))
-
-		results := collectHits(t, searcher.Search(ctx(), search.Query{
-			Filters: []search.PropertyFilter{
-				{Property: "score", Value: "5", Op: search.FilterLte},
-			},
-		}))
-		assert.Len(t, results, 2)
-		ids := []string{results[0].ID, results[1].ID}
-		assert.Contains(t, ids, "A")
-		assert.Contains(t, ids, "B")
-	})
+			err := searchError(searcher.Search(ctx(), search.Query{
+				Filters: []search.PropertyFilter{
+					{Property: "priority", Value: "high", Op: op.op},
+				},
+			}))
+			require.ErrorIs(t, err, search.ErrOrderedFilterUnsupported)
+		})
+	}
 }

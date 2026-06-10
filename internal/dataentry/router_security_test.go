@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // newSecuredTestApp returns an app with the security middlewares wired up
@@ -124,17 +123,18 @@ func TestSecuredRouter_AllowsSameOriginSSE(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody)
 	r.Host = "127.0.0.1:8080"
 	r.Header.Set("Origin", "http://127.0.0.1:8080")
-	// Cancel the context quickly so the long-lived handler returns.
+	// Cancel the context once the handler has flushed its keepalive so
+	// the long-lived handler returns.
 	ctx, cancel := context.WithCancel(r.Context())
 	r = r.WithContext(ctx)
-	w := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := newFlusherRecorder()
 
 	done := make(chan struct{})
 	go func() {
 		h.ServeHTTP(w, r)
 		close(done)
 	}()
-	time.Sleep(20 * time.Millisecond)
+	w.awaitFlush(t)
 	cancel()
 	<-done
 
