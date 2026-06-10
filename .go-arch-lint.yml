@@ -64,6 +64,7 @@ components:
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
+  frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
@@ -478,6 +479,8 @@ deps:
     mayDependOn:
       - storage
   markdown:
+    mayDependOn:
+      - frontmatter
     canUse:
       - goldmark
   filter:
@@ -536,6 +539,7 @@ deps:
   fsstore:
     mayDependOn:
       - cache
+      - frontmatter
       - graphquerynaive
       - storage
       - store
