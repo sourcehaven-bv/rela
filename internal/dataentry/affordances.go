@@ -49,6 +49,21 @@ func translateVerb(verb, entityType, entityID string) acl.WriteRequest {
 	panic("dataentry.translateVerb: unknown verb: " + verb)
 }
 
+// translateRelationWrite maps a relation write to the [acl.WriteRequest]
+// that authorizes it, mirroring how entitymanager gates relation
+// updates: Op=update with a [acl.RelationSubject] evaluated against the
+// source entity's type. It lives here so the lint_test
+// single-construction-site invariant covers relation writes too; the
+// only caller today is the conflict-resolve handler, whose write is
+// file-level and cannot route through entitymanager.
+func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
+	return acl.WriteRequest{Op: acl.OpUpdate, Subject: acl.RelationSubject{
+		Type:     relType,
+		FromType: fromType,
+		FromID:   fromID,
+	}}
+}
+
 // perItemVerbs are the verbs computed per entity instance.
 var perItemVerbs = []string{"update", "delete", "rename"}
 
