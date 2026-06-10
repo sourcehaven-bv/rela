@@ -2,10 +2,7 @@ package fsstore
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"iter"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -127,11 +124,8 @@ func (s *FSStore) CreateRelation(
 			return nil, err
 		}
 	}
-	if strings.Contains(relType, "--") {
-		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
-	}
-	if relType == "" {
-		return nil, errors.New("store: empty relation type")
+	if err := storeutil.ValidateRelationType(relType); err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
