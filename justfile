@@ -153,6 +153,12 @@ fuzz:
     go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=30s ./internal/entity/
     go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=30s ./internal/entity/
 
+# Run the hot-path benchmarks (dry-run validation, affordance verdicts,
+# search, write-path validation, plus the pre-existing lua/pgstore ones)
+bench:
+    @echo "Running benchmarks..."
+    go test -run='^$$' -bench=. -benchmem ./internal/entitymanager/ ./internal/affordances/ ./internal/search/ ./internal/validation/ ./internal/lua/
+
 # Run quick fuzz tests (5 seconds each)
 fuzz-short:
     @echo "Running quick fuzz tests..."
