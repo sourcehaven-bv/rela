@@ -9,6 +9,7 @@ import (
 
 // AC1.2: NopACL allows every write regardless of request shape.
 func TestNopACL_AllowsAllWrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		req  acl.WriteRequest

@@ -45,6 +45,7 @@ import (
 // this test fails if the member-of walk regresses or the affordances
 // resolver stops consulting the declarative role attribution.
 func TestFeature_UC10_PropertyRedaction(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -123,6 +124,7 @@ assignments:
 //
 // Same group-mediated wiring as UC10: alice in the viewers group.
 func TestFeature_UC11_ReadAndVisibleCompose(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -194,6 +196,7 @@ assignments:
 // (which the design doc calls out as a supported case) silently
 // degrade to "no role at all".
 func TestFeature_UnstampedEveryone(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -280,6 +283,7 @@ roles:
 // affordance path's behavior observably depends on whether the
 // injected Declarative is consulted.
 func TestFeature_AC8_WriteAffordanceParity(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -379,6 +383,7 @@ role_relations:
 // editor-of edge from alice to D-secret) and internal_notes is
 // indistinguishable from the bogus case.
 func TestFeature_HasRole_AncestorConferred(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"document": {

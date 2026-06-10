@@ -8,6 +8,7 @@ import (
 )
 
 func TestCheckContentRule(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -91,6 +92,7 @@ func TestCheckContentRule(t *testing.T) {
 }
 
 func TestCheckChecklistRule(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		items []markdown.ChecklistItem
@@ -174,6 +176,7 @@ func TestCheckChecklistRule(t *testing.T) {
 }
 
 func TestCheckContentRuleWithChecklist(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string

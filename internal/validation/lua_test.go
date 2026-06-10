@@ -80,6 +80,7 @@ func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 }
 
 func TestLuaValidation_SingleViolation(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -134,6 +135,7 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 }
 
 func TestLuaValidation_MultipleViolations(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -201,6 +203,7 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 }
 
 func TestLuaValidation_SeverityOverride(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -232,6 +235,7 @@ func TestLuaValidation_SeverityOverride(t *testing.T) {
 }
 
 func TestLuaValidation_SeverityDefault(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -263,6 +267,7 @@ func TestLuaValidation_SeverityDefault(t *testing.T) {
 }
 
 func TestLuaValidation_ReturnValues(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 
 	tests := []struct {
@@ -338,6 +343,7 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 }
 
 func TestLuaValidation_EntityContext(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -397,6 +403,7 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 }
 
 func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -434,6 +441,7 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 }
 
 func TestLuaValidation_MutationsBlocked(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -470,6 +478,7 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 }
 
 func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -528,6 +537,7 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 }
 
 func TestLuaValidation_SyntaxError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -556,6 +566,7 @@ func TestLuaValidation_SyntaxError(t *testing.T) {
 }
 
 func TestLuaValidation_RuntimeError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -584,6 +595,7 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 }
 
 func TestLuaValidation_ScriptFile(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 
 	// Create temp directory with validations/ subdirectory
@@ -641,6 +653,7 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 }
 
 func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 
@@ -677,6 +690,7 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 }
 
 func TestLuaValidation_CrossEntityValidation(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -728,6 +742,7 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 }
 
 func TestLuaValidation_Timeout(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -758,6 +773,7 @@ func TestLuaValidation_Timeout(t *testing.T) {
 }
 
 func TestLuaValidation_PathTraversal(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCheck(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -94,6 +95,7 @@ func TestCheck(t *testing.T) {
 }
 
 func TestCheckWarnings(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {
@@ -135,6 +137,7 @@ func TestCheckWarnings(t *testing.T) {
 }
 
 func TestCountBySeverity(t *testing.T) {
+	t.Parallel()
 	violations := []Violation{
 		{Severity: "error"},
 		{Severity: "error"},
@@ -152,6 +155,7 @@ func TestCountBySeverity(t *testing.T) {
 }
 
 func TestRules(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Validations: []metamodel.ValidationRule{
 			{Name: "rule-1"},
@@ -168,6 +172,7 @@ func TestRules(t *testing.T) {
 }
 
 func TestNoRules(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{}
 
 	svc := New(meta, lua.ReadDeps{})
@@ -179,6 +184,7 @@ func TestNoRules(t *testing.T) {
 }
 
 func TestAllEntityTypes(t *testing.T) {
+	t.Parallel()
 	// Rule without entity_type applies to all entities
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{

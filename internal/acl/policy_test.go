@@ -13,6 +13,7 @@ import (
 
 // AC2.1: empty file decodes to a zero Policy.
 func TestLoadPolicy_Empty(t *testing.T) {
+	t.Parallel()
 	path := writeTempPolicy(t, "")
 	p, err := acl.LoadPolicy(path)
 	if err != nil {
@@ -29,6 +30,7 @@ func TestLoadPolicy_Empty(t *testing.T) {
 // AC2.1: a complete acl.yaml example round-trips into the typed shape
 // downstream code consumes.
 func TestLoadPolicy_FullExample(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 user_entity_type: person
 roles:
@@ -84,6 +86,7 @@ role_relations:
 // otherwise ignored — the loader returns the typed Policy with known
 // fields populated.
 func TestLoadPolicy_UnknownKey_LogsWarning(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 roles:
   admin:
@@ -118,6 +121,7 @@ also_unknown:
 // AC2.1: missing file returns an error wrapping os.ErrNotExist so
 // callers (appbuild in PR 3) can fall back to NopACL via errors.Is.
 func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
 	_, err := acl.LoadPolicy(missing)
 	if err == nil {
@@ -131,6 +135,7 @@ func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {
 // AC2.1: malformed YAML returns a wrapped parse error (not a panic,
 // not os.ErrNotExist).
 func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
+	t.Parallel()
 	path := writeTempPolicy(t, "roles:\n  admin:\n    write: [not-closed\n")
 	_, err := acl.LoadPolicy(path)
 	if err == nil {
@@ -148,6 +153,7 @@ func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
 // consumes: per-field write/visibility, per-option, per-relation
 // with create/remove pointers and meta-field grants.
 func TestLoadPolicy_AffordanceGrants(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 roles:
   triager:
@@ -233,6 +239,7 @@ roles:
 // so HasAffordanceGrants reports false and the entry point falls
 // through to the permissive Nop resolver.
 func TestPolicy_HasAffordanceGrants_NoneWhenWriteOnly(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 roles:
   admin:
@@ -261,6 +268,7 @@ roles:
 // a security decision, so present-either-way = opt-in is the
 // contract.
 func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		fieldsBlock string
@@ -301,6 +309,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 // Create/Remove *bool must distinguish explicit true, explicit
 // false, and unset across the YAML forms operators actually write.
 func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		createLine string
@@ -340,6 +349,7 @@ func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
 // RelationQuery.Type meaning "all relations" — silently widening
 // containment to every relation type in the workspace.
 func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		yaml string
@@ -365,6 +375,7 @@ func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {
 // Covers both the empty-string and whitespace-only cases, mirroring
 // the inherit_roles_through test's coverage.
 func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		yaml string

@@ -10,6 +10,7 @@ import (
 // types that the feature tests rely on as building blocks.
 
 func TestSourceKindString_AllKindsRender(t *testing.T) {
+	t.Parallel()
 	// Pin the wire/log strings for every declared kind. A reorder of
 	// the const block (or a typo in a new kind's String case) shows up
 	// as a failing test, not as a wire-format regression in audit logs.
@@ -33,6 +34,7 @@ func TestSourceKindString_AllKindsRender(t *testing.T) {
 }
 
 func TestSourceKindString_UnknownKind(t *testing.T) {
+	t.Parallel()
 	// A SourceKind outside the declared range must not panic and must
 	// not produce a recognized wire string.
 	var k SourceKind = 99
@@ -43,6 +45,7 @@ func TestSourceKindString_UnknownKind(t *testing.T) {
 }
 
 func TestSourceKindPriority_DeclaredKinds(t *testing.T) {
+	t.Parallel()
 	// Each declared kind has a priority distinct from every other,
 	// matching the documented sort order (Global < Group < Local <
 	// LocalViaGroup < LocalViaAncestor < LocalViaGroupAndAncestor).
@@ -69,6 +72,7 @@ func TestSourceKindPriority_DeclaredKinds(t *testing.T) {
 }
 
 func TestSourceKindPriority_UnknownKind(t *testing.T) {
+	t.Parallel()
 	// Unknown kinds sort after every declared kind, so adding a new
 	// kind without registering it in the priority map doesn't
 	// accidentally promote it to "primary".
@@ -80,6 +84,7 @@ func TestSourceKindPriority_UnknownKind(t *testing.T) {
 }
 
 func TestSourceString_PerKind(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  Source
@@ -118,6 +123,7 @@ func TestSourceString_PerKind(t *testing.T) {
 }
 
 func TestPrimarySource_Empty(t *testing.T) {
+	t.Parallel()
 	got := PrimarySource(nil)
 	if got != (Source{}) {
 		t.Errorf("PrimarySource(nil) = %+v, want zero Source", got)
@@ -129,6 +135,7 @@ func TestPrimarySource_Empty(t *testing.T) {
 }
 
 func TestPrimarySource_Single(t *testing.T) {
+	t.Parallel()
 	only := Source{Kind: SourceLocalViaGroup, Group: "eng", Relation: "editor-of"}
 	got := PrimarySource([]Source{only})
 	if got != only {
@@ -137,6 +144,7 @@ func TestPrimarySource_Single(t *testing.T) {
 }
 
 func TestPrimarySource_MultiKind_LowestPriorityWins(t *testing.T) {
+	t.Parallel()
 	// Group < Local < LocalViaGroup — the Group source should win
 	// regardless of input order. Multiple paths to the same role is
 	// the realistic case (UC5).
@@ -153,6 +161,7 @@ func TestPrimarySource_MultiKind_LowestPriorityWins(t *testing.T) {
 }
 
 func TestPrimarySource_TiedKind_AlphaWins(t *testing.T) {
+	t.Parallel()
 	// Both Group; alpha sort on Group wins. "a" < "b".
 	srcs := []Source{
 		{Kind: SourceGroup, Group: "b-team"},
@@ -166,6 +175,7 @@ func TestPrimarySource_TiedKind_AlphaWins(t *testing.T) {
 }
 
 func TestPrimarySource_TiedGroup_AlphaRelationWins(t *testing.T) {
+	t.Parallel()
 	// Same Kind and Group; tied on Ancestor (empty); Relation alpha wins.
 	srcs := []Source{
 		{Kind: SourceLocalViaGroup, Group: "eng", Relation: "viewer-of"},
@@ -179,6 +189,7 @@ func TestPrimarySource_TiedGroup_AlphaRelationWins(t *testing.T) {
 }
 
 func TestPrimarySource_NonMutating(t *testing.T) {
+	t.Parallel()
 	// PrimarySource must not reorder the caller's slice; callers may
 	// keep the full attribution chain for audit purposes.
 	srcs := []Source{
@@ -197,6 +208,7 @@ func TestPrimarySource_NonMutating(t *testing.T) {
 }
 
 func TestRoleAttributionAsMapKey(t *testing.T) {
+	t.Parallel()
 	// attrKey is a struct, comparable by value. Confirm that two
 	// attributions with the same (Role, Source) collide and two with
 	// any difference do not — the dedup logic in computeGlobals /
@@ -221,6 +233,7 @@ func TestRoleAttributionAsMapKey(t *testing.T) {
 // string forms share a prefix that prevents structured parsing, a
 // future parser would silently misroute.
 func TestSourceKindString_UniquePrefixes(t *testing.T) {
+	t.Parallel()
 	kinds := []SourceKind{
 		SourceGlobal, SourceGroup, SourceLocal,
 		SourceLocalViaGroup, SourceLocalViaAncestor, SourceLocalViaGroupAndAncestor,
