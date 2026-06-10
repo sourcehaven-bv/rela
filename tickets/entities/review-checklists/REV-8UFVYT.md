@@ -22,4 +22,4 @@ status: done
 
 - [x] Negative check: untested scratch package fails the floor; removed after verification
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/966
