@@ -531,17 +531,26 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	// ACL needs the entity type, so we fetch first. If the entity
-	// doesn't exist, renameEntity below returns the same error with
-	// a clearer message; we only consult the ACL when there's an
-	// entity to authorize against.
-	if current, err := m.deps.Store.GetEntity(ctx, oldID); err == nil {
+	// ACL needs the entity type, so we fetch first. Distinguish the two
+	// failure modes:
+	//   - not-found: skip ACL and fall through; renameEntity below
+	//     returns ErrEntityNotFound with a clearer message, and there is
+	//     nothing to authorize against.
+	//   - any other error (transient I/O, backend hiccup): fail closed.
+	//     Proceeding would run the rename with NO authorization at all —
+	//     a store read that flakes must not turn an ACL-gated operation
+	//     into an ungated one.
+	current, getErr := m.deps.Store.GetEntity(ctx, oldID)
+	switch {
+	case getErr == nil:
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 			Op:      acl.OpRename,
 			Subject: acl.EntitySubject{Type: current.Type, ID: oldID},
 		}); aclErr != nil {
 			return nil, aclErr
 		}
+	case !errors.Is(getErr, store.ErrNotFound):
+		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, getErr)
 	}
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {
