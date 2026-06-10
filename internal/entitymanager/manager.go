@@ -471,8 +471,14 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, aclErr
 	}
 
-	incoming := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
-	outgoing := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
+	incoming, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
+	if err != nil {
+		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
+	if err != nil {
+		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	}
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
