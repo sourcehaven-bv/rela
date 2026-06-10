@@ -11,7 +11,7 @@ why3: There is no project convention for the error boundary contract — each co
 why4: No test asserts what a consumer receives when the API fails — unit tests mock api/* modules above the interceptor, so the boundary's rejection shape was never pinned by a contract test.
 why5: Cross-cutting infrastructure (error normalization, like cache invalidation and conflict handling) had no owner or design note; pieces were added per-feature without anyone holding the boundary contract. The frontend review (2026-06-09) now records these contracts; this fix establishes the typed-error convention.
 prevention: Contract tests in frontend/src/api/errors.test.ts pin the rejection shape for every failure class (the gap why4 identified). One getErrorMessage() helper replaces the instanceof-Error idiom so there is no shape knowledge left to copy-paste wrong; errors.ts documents the catch-site conventions in its header comment. The four divergent parsers are deleted, removing the drift surface.
-status: review
+status: done
 ---
 
 Found in the 2026-06-09 frontend architecture review (finding A6). Fix:

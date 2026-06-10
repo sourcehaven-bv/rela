@@ -25,7 +25,7 @@
 import { ref, computed, type Ref } from 'vue'
 import type { Entity } from '@/types'
 import type { EntityPatch } from '@/api/entities'
-import { ApiError, getErrorMessage } from '@/api/errors'
+import { getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 
 // Sentinel for "unset this property" pending entries. Distinct from
@@ -321,13 +321,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
         }
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
+        const message = getErrorMessage(err, 'Save failed')
         const newer = pending[property]
         const isLatestIntent = !newer || newer.enqueuedAt <= enqueuedAt
         if (isLatestIntent) {
-          fieldErrors.value = { ...fieldErrors.value, [property]: info.message }
-          setStatus('error', info.message)
-          opts.onError(info.message)
+          fieldErrors.value = { ...fieldErrors.value, [property]: message }
+          setStatus('error', message)
+          opts.onError(message)
         }
       } finally {
         inFlightCount.value--
@@ -368,11 +368,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
         contentError.value = null
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
+        const message = getErrorMessage(err, 'Save failed')
         if (pendingContent === null) {
-          contentError.value = info.message
-          setStatus('error', info.message)
-          opts.onError(info.message)
+          contentError.value = message
+          setStatus('error', message)
+          opts.onError(message)
         }
       } finally {
         inFlightCount.value--
@@ -410,9 +410,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
         lastCommitAt['__relations__'] = Date.now()
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
-        setStatus('error', info.message)
-        opts.onError(info.message)
+        const message = getErrorMessage(err, 'Save failed')
+        setStatus('error', message)
+        opts.onError(message)
       } finally {
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
@@ -586,8 +586,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       queueTail
         .then(() => resolve({ settled: true }))
         .catch((err: unknown) => {
-          const info = parseError(err)
-          resolve({ settled: true, error: info.message })
+          resolve({ settled: true, error: getErrorMessage(err, 'Save failed') })
         })
         .finally(() => clearTimeout(timer))
     })
@@ -635,10 +634,4 @@ function deepEqual(a: unknown, b: unknown): boolean {
   if (ak.length !== bk.length) return false
   for (const k of ak) if (!deepEqual(ao[k], bo[k])) return false
   return true
-}
-
-function parseError(err: unknown): { status: number; message: string } {
-  // The shared client rejects with a normalized ApiError (api/errors.ts).
-  const status = err instanceof ApiError ? (err.status ?? 0) : 0
-  return { status, message: getErrorMessage(err, 'Save failed') }
 }

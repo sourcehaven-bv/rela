@@ -5,7 +5,7 @@ title: 'Pinia Colada foundation: targeted SSE invalidation + KanbanView migratio
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 First slice of the query-cache migration (FEAT-XY2D1L):

@@ -60,9 +60,26 @@ describe('normalizeApiError', () => {
     expect(err.correlationId).toBe('abc-123')
   })
 
-  it.each(['ERR_CANCELED', 'ECONNABORTED'])('maps %s to kind cancelled', (code) => {
+  it.each(['ERR_CANCELED', 'ECONNABORTED'])('maps code %s to kind cancelled', (code) => {
     const err = normalizeApiError(axiosErrorWith(undefined, 0, code))
     expect(err.kind).toBe('cancelled')
+  })
+
+  it.each(['AbortError', 'CanceledError'])('maps name %s to kind cancelled', (name) => {
+    const axiosErr = axiosErrorWith(undefined)
+    axiosErr.name = name
+    expect(normalizeApiError(axiosErr).kind).toBe('cancelled')
+  })
+
+  it('extracts correlation_id from a ProblemDetail body', () => {
+    const err = normalizeApiError(axiosErrorWith({ ...problem, correlation_id: 'corr-9' }))
+    expect(err.kind).toBe('http')
+    expect(err.correlationId).toBe('corr-9')
+  })
+
+  it('falls back to the response status when the ProblemDetail omits its own', () => {
+    const err = normalizeApiError(axiosErrorWith({ ...problem, status: undefined }, 403))
+    expect(err.status).toBe(403)
   })
 
   it('maps a missing response to kind network', () => {

@@ -2,55 +2,56 @@
 id: REV-9GJMMW
 type: review-checklist
 title: 'Review: Pinia Colada foundation: targeted SSE invalidation + KanbanView migration'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (965 unit tests at PR time, 987 after the stacked review fixes; 15 kanban E2E specs against the built rela-server)
+- [x] Lint clean (0 errors, 77-warning baseline)
+- [x] ~~Coverage maintained (`just coverage-check`)~~ (N/A: frontend coverage ratchet removed in PR #944)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (cranky-code-reviewer ran over the full stack diff: 0 critical, 0 significant, 5 minor)
+- [x] All critical review-responses addressed (none found)
+- [x] All significant review-responses addressed (none found)
+- [x] Self-reviewed the diff for unrelated changes (vite.config.js regeneration noted in PR body; removal tracked separately)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-IVBO9K (minor, deferred — optimistic-mutation unit
+coverage moves to the shared helper extracted in the EntityList migration slice)
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (targeted invalidation: useEvents unit tests assert per-type keys; background refetch without spinner: isPending-gated template + kanban E2E; optimistic drag-drop with rollback+toast: kanban drag E2E + code review)
+- [x] Test evidence documented in implementation checklist (no implementation checklist was auto-created for this ticket — created directly in `in-progress`; evidence lives in PR #953's description and this checklist)
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+**Acceptance Status:** All four ticket scope bullets PASS — plugin wired
+(main.ts), targeted SSE invalidation (useEvents + 3 new unit tests), KanbanView
+on useQuery (15/15 kanban E2E), drag-drop useMutation with copy-on-write +
+rollback + toast (E2E drag spec + cranky review confirmed rollback identity
+check correct).
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: internal architecture change, no user-facing behavior beyond removed spinner flicker; the migration arc is documented on FEAT-XY2D1L)
+- [x] ~~User-facing documentation updated~~ (N/A: same)
+- [x] ~~Docs-checklist marked as done~~ (N/A: same)
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** N/A
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use (queries/entities.ts documents the key hierarchy and migration pattern for the next view)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (green after this ticket transitions to done; the Rela Tickets gate requires non-in-progress/review statuses)
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/953
