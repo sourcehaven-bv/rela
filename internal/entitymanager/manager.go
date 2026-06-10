@@ -276,9 +276,16 @@ func (m *Manager) CreateEntity(
 
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
+	// Audit the durable write now, before automation re-writes or the
+	// cascade run. createCore has already persisted the entity; if a
+	// later step fails (the post-automation upsert, or a cascade that
+	// hard-errors) the entity is still on disk, so the audit log must
+	// already reflect it. Recording after the cascade left a window
+	// where a committed write produced no audit record.
+	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
+
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {
-		m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 		return result, nil
 	}
 
@@ -318,7 +325,6 @@ func (m *Manager) CreateEntity(
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
-	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	return result, nil
 }
 
@@ -426,10 +432,12 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
-	updateSummary := updateEntitySummary(oldEntity, e)
+	// Audit the durable write now, before the cascade run. The entity
+	// is already persisted; gating the audit on cascade success left a
+	// window where a committed write produced no audit record.
+	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateEntitySummary(oldEntity, e))
 
 	if !runAutomation {
-		m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 		return result, nil
 	}
 
@@ -448,7 +456,6 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
-	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 	return result, nil
 }
 
