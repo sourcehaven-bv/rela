@@ -4112,11 +4112,11 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 
 // TKT-G7N5 wire-shape tests (AC1, AC2).
 
-// TestAppRouter_PerEntityGet_NoneProfile asserts AC1: under the nop
+// TestV1Affordance_PerEntityGet_NoneProfile asserts AC1: under the nop
 // resolver, per-entity GET responses contain `_fields: {}` and
 // `_relations: {}` (present-but-empty closed-world signal), and no
 // properties are omitted.
-func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
+func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	app := newTestAppV1(t)
 	app.fieldResolver = NopFieldVerdictResolver{}
 
@@ -4175,11 +4175,11 @@ func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
 	}
 }
 
-// TestAppRouter_PerEntityGet_DemoFixture asserts AC2: the demo
+// TestV1Affordance_PerEntityGet_DemoFixture asserts AC2: the demo
 // resolver populates the expected sparse fixture verdicts. Uses a
 // hand-rolled fixture resolver to keep the test independent of the
 // project's real metamodel (which doesn't have all the demo fields).
-func TestAppRouter_PerEntityGet_DemoFixture(t *testing.T) {
+func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	app := newTestAppV1(t)
 	falseVal := false
 
@@ -4279,12 +4279,12 @@ func TestAppRouter_PerEntityGet_DemoFixture(t *testing.T) {
 	}
 }
 
-// TestAppRouter_PatchEcho_StripsHidden proves the C2 fix: PATCH
+// TestV1Affordance_PatchEcho_StripsHidden proves the C2 fix: PATCH
 // responses must run through the same strip-hidden invariant as GET.
 // Before the fix, the PATCH success response echoed the full entity
 // including hidden properties, so a stale client could observe the
 // hidden value via its own write response.
-func TestAppRouter_PatchEcho_StripsHidden(t *testing.T) {
+func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4313,11 +4313,11 @@ func TestAppRouter_PatchEcho_StripsHidden(t *testing.T) {
 	}
 }
 
-// TestAppRouter_Includes_StripHidden proves the C3 fix: ?include=*
+// TestV1Affordance_Includes_StripHidden proves the C3 fix: ?include=*
 // (and named includes) must strip hidden properties from related
 // entities. Before the fix, a related entity's hidden field could
 // leak through the `included` map.
-func TestAppRouter_Includes_StripHidden(t *testing.T) {
+func TestV1Affordance_Includes_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4353,11 +4353,11 @@ func TestAppRouter_Includes_StripHidden(t *testing.T) {
 	}
 }
 
-// TestAppRouter_CollectionList_StripHidden asserts that list rows
+// TestV1Affordance_CollectionList_StripHidden asserts that list rows
 // (which use serializeRelatedEntityForWire) strip hidden properties
 // too — the wire invariant holds regardless of which response shape
 // the entity rides in.
-func TestAppRouter_CollectionList_StripHidden(t *testing.T) {
+func TestV1Affordance_CollectionList_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4409,7 +4409,7 @@ func seedDemoTicketForPatch(t *testing.T) *App {
 
 // AC3: hidden + unknown fields produce structurally identical 403
 // responses (F8 side channel closure).
-func TestAppRouter_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
+func TestV1Affordance_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4447,7 +4447,7 @@ func TestAppRouter_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 }
 
 // AC4: read-only fields reject writes regardless of value.
-func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
+func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 	t.Run("different value", func(t *testing.T) {
 		app := seedDemoTicketForPatch(t)
 		code, body := patchTicketRaw(t, app, `{"properties":{"status":"closed"}}`)
@@ -4497,13 +4497,13 @@ func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
 	})
 }
 
-// TestAppRouter_AffordanceDenial_EmitsAudit proves the C5 fix: every
+// TestV1Affordance_AffordanceDenial_EmitsAudit proves the C5 fix: every
 // affordance-gate rejection produces a `denied-write` audit row
 // attributed to the request principal. The wire stream is uniform
 // with ACL denials (which the entitymanager emits the same op for),
 // so log readers see one stream for every denied write regardless of
 // whether the gate fired in the manager or in the dataentry handler.
-func TestAppRouter_AffordanceDenial_EmitsAudit(t *testing.T) {
+func TestV1Affordance_AffordanceDenial_EmitsAudit(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
 	app.fieldResolver = fakeResolver{
@@ -4546,7 +4546,7 @@ func TestAppRouter_AffordanceDenial_EmitsAudit(t *testing.T) {
 }
 
 // AC5: filtered enum options reject writes.
-func TestAppRouter_PatchFilteredOption_Forbidden(t *testing.T) {
+func TestV1Affordance_PatchFilteredOption_Forbidden(t *testing.T) {
 	app := seedDemoTicketForPatch(t)
 
 	t.Run("filtered value rejected", func(t *testing.T) {
@@ -4567,13 +4567,13 @@ func TestAppRouter_PatchFilteredOption_Forbidden(t *testing.T) {
 	})
 }
 
-// TestAppRouter_PatchFilteredListEnum_Forbidden proves the
+// TestV1Affordance_PatchFilteredListEnum_Forbidden proves the
 // list-typed enum option-filter now rejects rather than silently
 // allowing. Before this change, a `tags: [allowed, denied]` PATCH
 // would slip through because the validator only knew how to inspect
 // scalar string values. This is the security-soft-spot the cranky
 // reviewer flagged as S5.
-func TestAppRouter_PatchFilteredListEnum_Forbidden(t *testing.T) {
+func TestV1Affordance_PatchFilteredListEnum_Forbidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4626,7 +4626,7 @@ func createTicketRaw(t *testing.T, app *App, body string) (code int, respBody st
 // CREATE, not just PATCH. Before the fix, POST went straight to
 // entityManager.CreateEntity, so a denied field could be smuggled in at
 // create time. The create gate must produce the same 403 + rule_id as
-// the PATCH gate (TestAppRouter_Patch* above).
+// the PATCH gate (TestV1Affordance_Patch* above).
 func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 	t.Run("hidden field rejected", func(t *testing.T) {
 		app := newTestAppV1(t)
@@ -4985,7 +4985,7 @@ func seedTicketWithRelationVerdicts(t *testing.T, rv RelationVerdicts) *App {
 // AC6: per-relation POST is gated by creatable; per-relation DELETE
 // is gated by removable. Per-relation-type uniform: the 403 response
 // names the relation type but no link identifier (F5).
-func TestAppRouter_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
+func TestV1Affordance_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: false, Removable: true},
@@ -5007,7 +5007,7 @@ func TestAppRouter_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
 	}
 }
 
-func TestAppRouter_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
+func TestV1Affordance_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: true, Removable: false},
@@ -5029,7 +5029,7 @@ func TestAppRouter_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
 	}
 }
 
-func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
+func TestV1Affordance_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: true, Removable: true},
@@ -5044,7 +5044,7 @@ func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 	}
 }
 
-// TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource proves
+// TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource proves
 // the C4 fix: an incoming-direction POST creates an edge whose SOURCE
 // is the peer, not the path entity. The affordance verdict must be
 // evaluated against the source's type.
@@ -5057,7 +5057,7 @@ func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 //
 // Before the C4 fix this returned 201 (verdict evaluated against the
 // concept, which permitted it). After the fix it returns 403.
-func TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T) {
+func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -5093,7 +5093,7 @@ func TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T)
 
 // AC6: unified PATCH path that ADDS or REMOVES relations is gated by
 // the same verdicts.
-func TestAppRouter_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.T) {
+func TestV1Affordance_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: false, Removable: true},
@@ -5109,7 +5109,7 @@ func TestAppRouter_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.
 	}
 }
 
-func TestAppRouter_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testing.T) {
+func TestV1Affordance_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: true, Removable: false},
@@ -5131,7 +5131,7 @@ func TestAppRouter_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testi
 // AC7: relation-meta gate. Same shape across the three meta-write
 // paths: POST creates with meta, PATCH /relations/<t>/<id> updates
 // meta, unified PATCH upserts meta.
-func TestAppRouter_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
+func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 	rv := RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {
@@ -5203,7 +5203,7 @@ func TestAppRouter_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 // new wire keys are per-entity only in v1). The collection-level
 // response retains its existing shape; per-entity affordances ride on
 // per-entity responses.
-func TestAppRouter_CollectionGet_NoFieldVerdicts(t *testing.T) {
+func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())

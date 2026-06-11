@@ -41,6 +41,9 @@ func CheckEmbeddedSPA() error {
 
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
+//
+// When adding a route, add a probe to the route table in
+// router_walk_test.go so registration stays covered.
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
 
