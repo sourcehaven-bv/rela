@@ -15,8 +15,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// makeTestServer creates a Server with a populated store for handler testing.
-func makeTestServer(t *testing.T) *Server {
+// makeTestFixture returns the shared metamodel and a store seeded with
+// the canonical test graph (3 requirements, 1 decision, 1 relation).
+// Used by makeTestServer (handler-level tests) and the dispatch tests
+// (which build the server through the production NewServer instead).
+func makeTestFixture(t *testing.T) (*metamodel.Metamodel, *memstore.MemStore) {
 	t.Helper()
 
 	meta := &metamodel.Metamodel{
@@ -64,6 +67,14 @@ func makeTestServer(t *testing.T) *Server {
 		t.Fatalf("seed relation: %v", err)
 	}
 
+	return meta, st
+}
+
+// makeTestServer creates a Server with a populated store for handler testing.
+func makeTestServer(t *testing.T) *Server {
+	t.Helper()
+
+	meta, st := makeTestFixture(t)
 	return &Server{
 		deps:   newTestDeps(t, meta, st),
 		logger: slog.New(slog.DiscardHandler),
