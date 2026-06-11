@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@pinia/testing": "^0.1.6",
+    "@pinia/testing": "^1.0.3",
     "@testing-library/vue": "^8.0.3",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^25.8.0",
