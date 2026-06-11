@@ -163,6 +163,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Work tree clean after build
+        # Whole-repo tripwire: fails when any step of this job modified
+        # tracked files or left untracked files behind (e.g. the vue-tsc
+        # artifacts that once shadowed vite.config.ts, BUG-P0DZA5).
+        run: |
+          DIRTY=$(git status --porcelain --untracked-files=all)
+          if [ -n "$DIRTY" ]; then
+            echo "Repo not clean after build:"
+            echo "$DIRTY"
+            exit 1
+          fi
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
