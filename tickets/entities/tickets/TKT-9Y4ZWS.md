@@ -5,7 +5,7 @@ title: 'Hot-path benchmarks: dry-run validation, affordances, search, write vali
 kind: test
 priority: low
 effort: s
-status: planning
+status: done
 ---
 
 ## Problem
