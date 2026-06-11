@@ -798,17 +798,24 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 // deadline-exceeded is 504, everything else is 500 with the
 // acl_query_failed code (RR-89XK). Centralized so every gate call
 // site handles the error shape the same way.
+//
+// The raw error is logged server-side and never echoed in the
+// response body (same RR-372L rationale as attachACLRequest): a
+// backend error string can carry table/column names or other
+// internals an API client has no business seeing.
 func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) {
 		return
 	}
+	slog.Warn("acl: read-gate query failed",
+		"err", err, "path", r.URL.Path, "method", r.Method)
 	if errors.Is(err, context.DeadlineExceeded) {
 		writeV1Error(w, r, http.StatusGatewayTimeout, "acl_query_timeout",
-			"ACL read-permission check timed out", err.Error())
+			"ACL read-permission check timed out", "check server logs")
 		return
 	}
 	writeV1Error(w, r, http.StatusInternalServerError, "acl_query_failed",
-		"ACL read-permission check failed", err.Error())
+		"ACL read-permission check failed", "check server logs")
 }
 
 func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {

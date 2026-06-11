@@ -159,9 +159,19 @@ func TestACLGet_IncludeFilter(t *testing.T) {
 // has disconnected); context.DeadlineExceeded surfaces 504;
 // everything else 500 with the acl_query_failed code. Drives each
 // branch via a fakeGate whose PermitsRead returns a configured error.
+//
+// The raw backend error string MUST NOT appear in any response body
+// (information exposure — a pg error can name tables/columns). The
+// detail is the constant "check server logs"; the real error goes to
+// slog only. Same RR-372L pattern as attachACLRequest; required by
+// the IB review on PR 939 (POLICY-015 §3).
 func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+
+	// Deliberately shaped like a pg error: leaking it would put the
+	// fake table name on the wire, which the assertions below catch.
+	syntheticErr := errors.New(`pq: relation "secret_internal_table" does not exist`)
 
 	cases := []struct {
 		name      string
@@ -184,7 +194,7 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 		},
 		{
 			name:     "generic err surfaces 500",
-			err:      errors.New("synthetic store failure"),
+			err:      syntheticErr,
 			wantCode: http.StatusInternalServerError,
 			wantBody: "acl_query_failed",
 		},
@@ -204,8 +214,17 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 				if rec.Body.Len() != 0 {
 					t.Errorf("client-canceled path wrote body %q; want empty", rec.Body.String())
 				}
-			} else if !strings.Contains(rec.Body.String(), tc.wantBody) {
-				t.Errorf("body %q missing substring %q", rec.Body, tc.wantBody)
+				return
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.wantBody) {
+				t.Errorf("body %q missing substring %q", body, tc.wantBody)
+			}
+			if strings.Contains(body, "secret_internal_table") {
+				t.Errorf("raw backend error leaked into response body: %s", body)
+			}
+			if !strings.Contains(body, "check server logs") {
+				t.Errorf("body %q missing constant detail %q", body, "check server logs")
 			}
 		})
 	}
