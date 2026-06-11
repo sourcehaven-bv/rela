@@ -1,5 +1,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore } from '@/stores'
+import { entityKeys } from '@/queries/entities'
 
 export type SSEEventType =
   | 'refresh'
@@ -57,6 +59,7 @@ const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
 export function useEvents() {
   const gitStore = useGitStore()
   const entitiesStore = useEntitiesStore()
+  const queryCache = useQueryCache()
 
   /* v8 ignore start - reconnection logic tested via e2e */
   function getReconnectDelay(): number {
@@ -106,11 +109,14 @@ export function useEvents() {
       }
       /* v8 ignore stop */
 
-      /* v8 ignore start - SSE event handlers tested via e2e */
       // Handle refresh event (full reload)
       eventSource.addEventListener('refresh', () => {
-        // Invalidate all caches and refetch
+        // Invalidate all caches and refetch. invalidateAll() serves the
+        // legacy entities-store TTL cache; the query-cache invalidation
+        // marks every entity query stale and background-refetches the
+        // active ones (FEAT-XY2D1L).
         entitiesStore.invalidateAll()
+        queryCache.invalidateQueries({ key: entityKeys.root }).catch(() => {})
         gitStore.fetchStatus().catch(() => {})
       })
 
@@ -130,7 +136,16 @@ export function useEvents() {
         eventSource.addEventListener(eventType, (event: MessageEvent) => {
           try {
             const data = JSON.parse(event.data) as EntityEventData
+            // Legacy TTL cache (unmigrated views) is all-or-nothing.
             entitiesStore.invalidateAll()
+            // The query cache uses the event's granularity: stale-mark
+            // every query for this entity type (lists + details); active
+            // queries background-refetch (FEAT-XY2D1L).
+            queryCache
+              .invalidateQueries({
+                key: data.type ? entityKeys.type(data.type) : entityKeys.root,
+              })
+              .catch(() => {})
             // Dispatch to custom handlers
             eventHandlers.get(eventType)?.forEach((handler) => handler(data))
           } catch {
@@ -138,7 +153,6 @@ export function useEvents() {
           }
         })
       }
-      /* v8 ignore stop */
     } catch (err) /* v8 ignore start - connection errors tested via e2e */ {
       connectionState.value = {
         connected: false,
