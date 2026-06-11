@@ -64,8 +64,8 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// Capture output
 	var output bytes.Buffer
 
-	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), "",
-		&output, lua.WithContext(ctx), lua.WithCache(s.ws.LuaCache()))
+	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, "",
+		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
 		return mcp.NewToolResultError("config error: " + err.Error()), nil
 	}
@@ -74,6 +74,11 @@ func (s *Server) handleLuaEval(ctx context.Context, req mcp.CallToolRequest) (*m
 	// scriptPath is intentionally left empty: rela.cache.* in lua_eval
 	// raises "not available in inline/eval contexts" so sessions can't
 	// accidentally share a nameless namespace.
+	//
+	// ctx is threaded via lua.WithContext(ctx) above; the runtime caches it and
+	// RunString applies it to the LState. contextcheck can't see that flow
+	// because it crosses the gopher-lua SetContext boundary.
+	//nolint:contextcheck // ctx threaded via WithContext; see comment above
 	if err := runtime.RunString(code); err != nil {
 		// output stays empty here: print() in non-document/non-action
 		// runtimes writes to os.Stdout (see lua/runtime.go:256), which
@@ -110,7 +115,7 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Parse args if provided
 	args := req.GetStringSlice("args", nil)
 
-	projectRoot := s.ws.Paths().Root
+	projectRoot := s.deps.ProjectRoot
 
 	// Security: Scripts must be in the scripts/ directory
 	// Use os.Root for traversal-resistant path access
@@ -143,8 +148,8 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// Capture output
 	var output bytes.Buffer
 
-	runtime, err := script.NewWriterRuntime(s.ws.LuaWriteDeps(), path,
-		&output, lua.WithContext(ctx), lua.WithCache(s.ws.LuaCache()))
+	runtime, err := script.NewWriterRuntime(s.deps.LuaWriteDeps, path,
+		&output, lua.WithContext(ctx), lua.WithCache(s.deps.LuaCache))
 	if err != nil {
 		return mcp.NewToolResultError("config error: " + err.Error()), nil
 	}
@@ -156,6 +161,8 @@ func (s *Server) handleLuaRun(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// os.OpenRoot above) specifically for traversal resistance; passing
 	// them through RunFileContent keeps that while sharing all the
 	// downstream invariants.
+	//
+	//nolint:contextcheck // ctx threaded via WithContext; see handleLuaEval note
 	if err := runtime.RunFileContent(path, scriptContent, args); err != nil {
 		// See note above: print() bypasses `output` for MCP runs.
 		return luaScriptErrorResult(lua.SurfaceLuaRun,
@@ -208,7 +215,7 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 }
 
 func (s *Server) handleLuaList(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectRoot := s.ws.Paths().Root
+	projectRoot := s.deps.ProjectRoot
 
 	// Only search the scripts/ directory (security restriction)
 	scriptsPath := filepath.Join(projectRoot, scriptsDir)

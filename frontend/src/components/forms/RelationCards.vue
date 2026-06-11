@@ -8,11 +8,15 @@ import {
   getEntityRelations,
   searchEntities,
   getEntity,
+  getErrorMessage,
 } from '@/api'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
 import type { PropertyDef } from '@/types/schema'
 import type { RelationCardState } from './relationsPatch'
+import type { RelationAffordance } from '@/types'
+import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN } from '@/types/schema'
+import { computeNewOrder, extractFiniteNumber } from '@/composables/useRelationReorder'
 
 // Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
 // callers keep working without a churn rename.
@@ -22,6 +26,12 @@ const props = defineProps<{
   field: FormFieldOrRelation
   entityType: string
   entityId: string
+  // TKT-G7N5: per-relation-type affordance verdict from the server.
+  // Undefined / fields all-undefined = default (everything allowed).
+  // `creatable === false` hides the + Add button; `removable === false`
+  // hides every per-link x; `fields[name].writable === false` disables
+  // the inline meta-field input. Per-relation-type uniform.
+  verdict?: RelationAffordance
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +62,18 @@ const selectedTarget = ref<Entity | null>(null)
 const newMeta = ref<Record<string, unknown>>({})
 
 const isIncoming = computed(() => props.field.direction === 'incoming')
+
+// TKT-G7N5: per-relation-type affordance helpers. Defaults preserve
+// today's behavior — buttons render unless explicitly denied.
+const canCreate = computed(() => props.verdict?.creatable !== false)
+const canRemove = computed(() => props.verdict?.removable !== false)
+
+// Per-meta-field disabled lookup. Returns true when the verdict
+// reports writable=false for the named meta field. Absence in the
+// fields map = writable default.
+function isMetaFieldDisabled(propName: string): boolean {
+  return props.verdict?.fields?.[propName]?.writable === false
+}
 
 const relationType = computed(() => {
   if (!props.field.relation) return undefined
@@ -100,11 +122,14 @@ async function loadRelations() {
     addedIds.value.clear()
     removedIds.value.clear()
     updatedIds.value.clear()
-    // Fetch entity details in parallel
+    // Fetch entity details in parallel.
+    // Use entry.type (populated since TKT-ZEKO4) so the URL resolves the
+    // correct plural — passing '' here builds `/api/v1/s/<id>` which 404s
+    // and leaves the title cache empty, surfacing as a bare ID in the UI.
     const uncached = loaded.filter((entry) => !entityCache.value.has(entry.id))
     const results = await Promise.allSettled(
       uncached.map((entry) =>
-        getEntity('', entry.id, { fields: 'id,type,properties.title' }).then((entity) => ({
+        getEntity(entry.type ?? '', entry.id, { fields: 'id,type,properties.title' }).then((entity) => ({
           id: entry.id,
           entity,
         }))
@@ -116,7 +141,7 @@ async function loadRelations() {
       }
     }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load relations'
+    error.value = getErrorMessage(err, 'Failed to load relations')
   } finally {
     loading.value = false
   }
@@ -331,6 +356,98 @@ function entryStatus(id: string): 'added' | 'updated' | null {
   if (updatedIds.value.has(id)) return 'updated'
   return null
 }
+
+// --- Drag-to-reorder (orderable relations) ---
+//
+// Native HTML5 DnD, following the pattern from KanbanView.vue. We only
+// surface drag handles when the relation type declares the relevant side
+// as orderable. The write goes through the existing
+// RelationCardState.updated channel — the parent form's PATCH flow picks
+// up the new order property and sends it as `meta._order_out` or
+// `meta._order_in`.
+
+// Which managed order property applies to this card section, or '' when
+// not orderable on this side.
+const orderProperty = computed<string>(() => {
+  const o = relationType.value?.orderable
+  if (!o) return ''
+  if (isIncoming.value) {
+    return o.incoming ? ORDER_PROPERTY_IN : ''
+  }
+  return o.outgoing ? ORDER_PROPERTY_OUT : ''
+})
+
+const isOrderable = computed(() => orderProperty.value !== '')
+
+const draggedId = ref<string | null>(null)
+const dragOverId = ref<string | null>(null)
+
+function onDragStart(event: DragEvent, id: string) {
+  if (!isOrderable.value) return
+  draggedId.value = id
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+  }
+}
+
+function onDragOver(event: DragEvent, id: string) {
+  if (!isOrderable.value || !draggedId.value || draggedId.value === id) return
+  event.preventDefault()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move'
+  }
+  dragOverId.value = id
+}
+
+function onDragLeave(id: string) {
+  if (dragOverId.value === id) {
+    dragOverId.value = null
+  }
+}
+
+function onDrop(event: DragEvent, targetId: string) {
+  if (!isOrderable.value) return
+  event.preventDefault()
+  const movedId = draggedId.value
+  draggedId.value = null
+  dragOverId.value = null
+  if (!movedId || movedId === targetId) return
+
+  const fromIndex = entries.value.findIndex((e) => e.id === movedId)
+  const toIndex = entries.value.findIndex((e) => e.id === targetId)
+  if (fromIndex === -1 || toIndex === -1) return
+
+  // Reorder the local list optimistically.
+  const [moved] = entries.value.splice(fromIndex, 1)
+  entries.value.splice(toIndex, 0, moved)
+
+  // Compute the new order value from the neighbours at the moved item's
+  // new position.
+  const newIdx = entries.value.findIndex((e) => e.id === movedId)
+  const prev = newIdx > 0 ? entries.value[newIdx - 1] : undefined
+  const next = newIdx < entries.value.length - 1 ? entries.value[newIdx + 1] : undefined
+  const prop = orderProperty.value
+  const newOrder = computeNewOrder({
+    prevOrder: extractFiniteNumber(prev?.meta?.[prop]),
+    nextOrder: extractFiniteNumber(next?.meta?.[prop]),
+  })
+  if (newOrder === undefined) {
+    // Midpoint collapsed; submit the arithmetic midpoint anyway and let
+    // the backend's renumber-on-collapse rewrite to dense ordinals.
+    const a = extractFiniteNumber(prev?.meta?.[prop])
+    const b = extractFiniteNumber(next?.meta?.[prop])
+    if (a === undefined || b === undefined) return
+    updateProperty(movedId, prop, a + (b - a) / 2)
+    return
+  }
+  updateProperty(movedId, prop, newOrder)
+}
+
+function onDragEnd() {
+  draggedId.value = null
+  dragOverId.value = null
+}
 </script>
 
 <template>
@@ -353,9 +470,19 @@ function entryStatus(id: string): 'added' | 'updated' | null {
         :class="{
           'card-added': entryStatus(entry.id) === 'added',
           'card-updated': entryStatus(entry.id) === 'updated',
+          'card-orderable': isOrderable,
+          'card-dragging': draggedId === entry.id,
+          'card-drag-over': dragOverId === entry.id,
         }"
+        :draggable="isOrderable"
+        @dragstart="onDragStart($event, entry.id)"
+        @dragover="onDragOver($event, entry.id)"
+        @dragleave="onDragLeave(entry.id)"
+        @drop="onDrop($event, entry.id)"
+        @dragend="onDragEnd"
       >
         <div class="card-header">
+          <span v-if="isOrderable" class="drag-handle" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
           <div class="card-identity">
             <span class="entity-id" @click="navigateToEntity(entry.id)">
               {{ entry.id }}
@@ -364,7 +491,13 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               {{ getEntityTitle(entry.id) }}
             </span>
           </div>
-          <button type="button" class="remove-btn" title="Remove relation" @click="removeRelation(entry.id)">
+          <button
+            v-if="canRemove"
+            type="button"
+            class="remove-btn"
+            title="Remove relation"
+            @click="removeRelation(entry.id)"
+          >
             &times;
           </button>
         </div>
@@ -381,6 +514,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               :model-value="String(entry.meta?.[prop.property] || '')"
               :data="slimSelectData(prop.property)"
               :settings="slimSettings"
+              :disabled="isMetaFieldDisabled(prop.property)"
               @update:model-value="handleSlimUpdate(entry.id, prop.property, $event)"
             />
 
@@ -390,6 +524,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               :checked="!!entry.meta?.[prop.property]"
               type="checkbox"
               class="inline-edit-checkbox"
+              :disabled="isMetaFieldDisabled(prop.property)"
               @change="updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).checked)"
             />
 
@@ -399,6 +534,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
               :value="entry.meta?.[prop.property] ?? ''"
               :type="getInputType(prop.property)"
               class="inline-edit"
+              :disabled="isMetaFieldDisabled(prop.property)"
               @input="updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).value)"
             />
           </div>
@@ -496,7 +632,7 @@ function entryStatus(id: string): 'added' | 'updated' | null {
       </button>
     </div>
 
-    <button v-if="!showAddSearch" type="button" class="add-btn" @click="showAddSearch = true">
+    <button v-if="!showAddSearch && canCreate" type="button" class="add-btn" @click="showAddSearch = true">
       + Add {{ field.label || field.relation }}
     </button>
   </div>
@@ -549,6 +685,36 @@ function entryStatus(id: string): 'added' | 'updated' | null {
 .relation-card.card-updated {
   border-color: var(--warning-color, #f59e0b);
   background: rgba(245, 158, 11, 0.03);
+}
+
+.relation-card.card-orderable {
+  cursor: grab;
+}
+
+.relation-card.card-orderable:active {
+  cursor: grabbing;
+}
+
+.relation-card.card-dragging {
+  opacity: 0.5;
+}
+
+.relation-card.card-drag-over {
+  border-color: var(--accent-color, #6366f1);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+.drag-handle {
+  color: var(--muted-text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+  padding-right: 4px;
+}
+
+.relation-card.card-orderable .drag-handle:active {
+  cursor: grabbing;
 }
 
 .card-header {

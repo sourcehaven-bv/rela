@@ -9,6 +9,7 @@ import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
@@ -46,6 +47,37 @@ const entities = ref<Entity[]>([])
 const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
 const loading = ref(true)
 const includedEntities = ref<Record<string, Entity>>({})
+// Collection-scope verb verdicts (e.g. {create: true|false}). Always
+// emitted by the data-entry server; absent only for non-data-entry
+// callers, in which case affordances render defensively (the server
+// still 403s on click). See `_actions` in api-reference.md.
+const collectionActions = ref<Record<string, boolean> | undefined>(undefined)
+
+// Affordance gates: `_actions` map from the server. `false` → hide;
+// anything else → render. Helper keeps the contract DRY across
+// components; see frontend/src/utils/affordancesWarning.ts.
+function canCreate(): boolean {
+  return actionAllowed({ _actions: collectionActions.value }, 'create')
+}
+function canDelete(entity: Entity): boolean {
+  return actionAllowed(entity, 'delete')
+}
+function canUpdate(entity: Entity): boolean {
+  return actionAllowed(entity, 'update')
+}
+// Bulk-action visibility: an action shows iff at least one selected
+// entity permits the underlying `update` write. (All bulk actions
+// today reduce to `update` at the entity level; transition / relation
+// verbs are deferred to phase 3.) Returns true when nothing is
+// selected (the bar isn't visible anyway) or when no `_actions` data
+// is loaded yet (defensive fallback).
+function anySelectedAllowsUpdate(): boolean {
+  if (selectedIds.value.size === 0) return true
+  for (const e of entities.value) {
+    if (selectedIds.value.has(e.id) && canUpdate(e)) return true
+  }
+  return false
+}
 
 // Selection and actions
 const { selectedIds, toggle: toggleSelection, clear: clearActionSelection, isSelected, selectAll } = useListSelection()
@@ -135,7 +167,12 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   },
   onDelete: (index) => {
     const entity = entities.value[index]
-    if (entity) void requestDelete(entity)
+    if (!entity) return
+    if (!canDelete(entity)) {
+      uiStore.warning('Delete not permitted for this entity')
+      return
+    }
+    void requestDelete(entity)
   },
   onSelect: (index) => {
     const entity = entities.value[index]
@@ -276,6 +313,9 @@ async function loadEntities() {
     meta.value = result.meta
     // Store included entities for relation column rendering
     includedEntities.value = result.included || {}
+    // Collection-scope `_actions` (e.g. `create`). Undefined when the
+    // server didn't emit them; consumers fall back to "show all."
+    collectionActions.value = result._actions
   } catch (err) {
     // Drop stale responses (a newer fetch superseded us).
     if (myGeneration !== fetchGeneration) return
@@ -553,7 +593,7 @@ onMounted(() => {
         <h1>{{ listConfig.title || listConfig.entity }}</h1>
       </div>
       <router-link
-        v-if="listConfig.create_form"
+        v-if="listConfig.create_form && canCreate()"
         :to="`/form/${listConfig.create_form}`"
         class="btn btn-primary"
       >
@@ -653,6 +693,7 @@ onMounted(() => {
               {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
             </span>
             <button
+              v-if="canDelete(entity)"
               class="delete-btn"
               title="Delete"
               @click="handleDelete(entity, $event)"
@@ -710,6 +751,7 @@ onMounted(() => {
               <span class="action-header-count">{{ selectedIds.size }} selected</span>
               <button
                 v-for="{ id, config } in resolvedActions"
+                v-show="anySelectedAllowsUpdate()"
                 :key="id"
                 class="action-header-btn"
                 :disabled="actionProcessing"
@@ -790,6 +832,7 @@ onMounted(() => {
             </td>
             <td class="actions-cell">
               <button
+                v-if="canDelete(entity)"
                 class="delete-btn"
                 title="Delete"
                 @click="handleDelete(entity, $event)"

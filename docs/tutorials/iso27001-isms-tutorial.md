@@ -694,7 +694,7 @@ rela trace path RSK-001 EVD-001
 
 ```bash
 # Generate a DOT file for the full ISMS
-rela graph -o isms-graph.dot
+rela graph --file isms-graph.dot
 
 # Render to PNG (requires Graphviz)
 dot -Tpng isms-graph.dot -o isms-graph.png
@@ -952,7 +952,7 @@ Control ← affects ← Nonconformity → addressedBy → Corrective Action
 | Find untreated risks           | `rela analyze cardinality`                      |
 | Find controls without evidence | `rela trace to CTRL-001`                        |
 | Track open findings            | `rela list nonconformity --where "status=open"` |
-| View full graph                | `rela graph -o isms.dot`                        |
+| View full graph                | `rela graph --file isms.dot`                        |
 | Search anything                | `rela tui` then `/`                             |
 
 ---

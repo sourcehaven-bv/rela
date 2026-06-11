@@ -294,67 +294,9 @@ func TestDocumentGetStringSlice_NilFrontmatter(t *testing.T) {
 	}
 }
 
-func TestSplitFrontmatter(t *testing.T) {
-	content := `---
-id: REQ-001
-type: requirement
----
-
-# Heading
-
-Content here.
-`
-
-	frontmatter, body, err := splitFrontmatter(content)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertStringContains(t, frontmatter, "id: REQ-001")
-	testutil.AssertStringContains(t, frontmatter, "type: requirement")
-
-	testutil.AssertStringContains(t, body, "# Heading")
-	testutil.AssertStringContains(t, body, "Content here")
-
-	// Body should not contain frontmatter delimiters
-	testutil.AssertStringNotContains(t, body, "---")
-}
-
-func TestSplitFrontmatter_NoFrontmatter(t *testing.T) {
-	content := `# Just a heading
-
-Some content.
-`
-
-	frontmatter, body, err := splitFrontmatter(content)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, frontmatter, "")
-
-	testutil.AssertStringContains(t, body, "# Just a heading")
-}
-
-func TestSplitFrontmatter_EmptyContent(t *testing.T) {
-	content := ""
-
-	frontmatter, body, err := splitFrontmatter(content)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertEqual(t, frontmatter, "")
-	testutil.AssertEqual(t, body, "")
-}
-
-func TestSplitFrontmatter_OnlyFrontmatter(t *testing.T) {
-	content := `---
-id: REQ-001
----
-`
-
-	frontmatter, body, err := splitFrontmatter(content)
-	testutil.AssertNoError(t, err)
-
-	testutil.AssertStringContains(t, frontmatter, "id: REQ-001")
-
-	testutil.AssertEqual(t, body, "")
-}
+// Frontmatter-split unit tests moved to internal/frontmatter
+// (TestSplit) along with the split implementation. The tests below
+// still exercise the split end-to-end via ParseDocument.
 
 func TestHasConflictMarkers(t *testing.T) {
 	tests := []struct {

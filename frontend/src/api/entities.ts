@@ -10,6 +10,7 @@ import type {
   ModernRelationsField,
 } from '@/types'
 import { useSchemaStore } from '@/stores/schema'
+import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
 function getPlural(type: string): string {
   const schema = useSchemaStore()
@@ -21,7 +22,10 @@ export async function listEntities(
   type: string,
   params?: ListParams
 ): Promise<ListResponse<Entity>> {
-  return api.get<ListResponse<Entity>>(`/${getPlural(type)}`, params as Record<string, unknown>)
+  const path = `/${getPlural(type)}`
+  const res = await api.get<ListResponse<Entity>>(path, params as Record<string, unknown>)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 export async function getEntity(
@@ -29,24 +33,48 @@ export async function getEntity(
   id: string,
   params?: { include?: string; fields?: string }
 ): Promise<Entity> {
-  return api.get<Entity>(`/${getPlural(type)}/${id}`, params)
+  const path = `/${getPlural(type)}/${id}`
+  const res = await api.get<Entity>(path, params)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 export async function createEntity(type: string, entity: CreateEntity): Promise<Entity> {
-  return api.post<Entity>(`/${getPlural(type)}`, entity)
+  const path = `/${getPlural(type)}`
+  const res = await api.post<Entity>(path, entity)
+  warnIfMissingActions(res, path)
+  return res
 }
 
-// EntityPatch is the union of legacy IDs-only and modern JSON:API §9
-// relation shapes the unified PATCH endpoint accepts. The body must
-// not mix shapes (`shape_mixed` 400); the SPA's body-assembly helper
-// in DynamicForm ensures all-modern-or-all-legacy.
+// dryRunCreateEntity evaluates field/option/relation affordances and
+// soft validation against a candidate WITHOUT persisting (TKT-3I5U).
+// The create form calls it on mount and (debounced) as the user types
+// to gate inputs and surface warnings before commit. The verdicts are
+// ADVISORY — the real createEntity re-authorizes. `signal` lets the
+// caller drop a stale in-flight request (RR-ZKL2).
+//
+// Relations are intentionally NOT sent: a candidate has no real ID so
+// edges can't be staged; relation affordances reflect the per-type
+// verdict only.
+export async function dryRunCreateEntity(
+  type: string,
+  candidate: Pick<CreateEntity, 'id' | 'prefix' | 'properties' | 'content'>,
+  signal?: AbortSignal
+): Promise<Entity> {
+  const path = `/${getPlural(type)}?dry_run=true`
+  return api.post<Entity>(path, candidate, { signal })
+}
+
+// EntityPatch is the body shape for the unified PATCH endpoint.
+// `relations` uses the JSON:API §9 wrapper exclusively; the legacy
+// IDs-only form was removed in chore/drop-legacy-relations-shape.
 //
 // `properties_unset` (TKT-E6094) lets callers express "user cleared
 // this field" distinct from "field was untouched". Autosave uses it
 // to delete keys atomically alongside property upserts.
 export type EntityPatch = Omit<Partial<Entity>, 'relations'> & {
   properties_unset?: string[]
-  relations?: Record<string, string[]> | ModernRelationsField
+  relations?: ModernRelationsField
 }
 
 export async function updateEntity(
@@ -56,7 +84,10 @@ export async function updateEntity(
   etag?: string,
   signal?: AbortSignal,
 ): Promise<Entity> {
-  return api.patch<Entity>(`/${getPlural(type)}/${id}`, patch, etag, signal)
+  const path = `/${getPlural(type)}/${id}`
+  const res = await api.patch<Entity>(path, patch, etag, signal)
+  warnIfMissingActions(res, path)
+  return res
 }
 
 export async function deleteEntity(type: string, id: string): Promise<void> {
@@ -78,6 +109,56 @@ export async function searchEntities(
     params.type = type
   }
   return api.get<ListResponse<Entity>>('/_search', params, signal)
+}
+
+/**
+ * ScopeDescriptor encodes the query that defines an ordered result set the
+ * user is navigating — a typed list or a search result today. It is sent to
+ * `/_position` as a single URL-encoded JSON `scope` param. `filters` uses the
+ * same flat bracket-format keys as filterStateToApiParams ("filter[status]")
+ * so the wire format has one source of truth. See backend internal/dataentry/
+ * scope.go and issue #844.
+ */
+export interface ScopeDescriptor {
+  source: 'list' | 'search'
+  // Required for a list scope (single-type). Optional for a search scope,
+  // where it narrows a possibly-mixed-type result to one type; omit it to
+  // navigate across all matched types. The backend enforces this per-source.
+  type?: string
+  filters?: Record<string, string>
+  sort?: string
+  // Required for a search scope; optional free-text filter within a list scope.
+  q?: string
+}
+
+/** A neighbouring entity in a scope. `type` is needed to build the target's
+ * detail route, since a search scope can span entity types. */
+export interface PositionRef {
+  id: string
+  type: string
+}
+
+/** EntityPosition mirrors the backend V1Position payload. */
+export interface EntityPosition {
+  prev: PositionRef | null
+  next: PositionRef | null
+  current: number
+  total: number
+}
+
+/**
+ * Resolve an entity's position within a scope. The server runs the same
+ * filter/sort pipeline as the list endpoint and returns only {prev, next,
+ * current, total} — no entity bodies — so navigation is correct at any set
+ * size. Replaces the old per_page=1000 fetch-and-scan that silently truncated
+ * past the pagination cap (#844).
+ */
+export async function getEntityPosition(
+  id: string,
+  scope: ScopeDescriptor,
+  signal?: AbortSignal,
+): Promise<EntityPosition> {
+  return api.get<EntityPosition>('/_position', { id, scope: JSON.stringify(scope) }, signal)
 }
 
 export async function analyze(): Promise<AnalyzeResult> {
@@ -144,19 +225,3 @@ export async function deleteRelation(
   return api.delete(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}${query}`)
 }
 
-export async function toggleCheckbox(entityId: string, index: number): Promise<string> {
-  const formData = new FormData()
-  formData.append('entity_id', entityId)
-  formData.append('index', String(index))
-
-  const response = await fetch('/api/toggle-checkbox', {
-    method: 'POST',
-    body: formData,
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to toggle checkbox')
-  }
-
-  return response.text()
-}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -20,6 +21,61 @@ type createCoreOpts struct {
 	TemplateVariant string                 // Template variant name (empty = default)
 	Properties      map[string]interface{} // Properties to set (overrides template defaults)
 	Content         string                 // Body content (overrides template content when non-empty)
+	// SkipIDGeneration tells [buildCandidateEntity] to skip real ID
+	// allocation when ID is empty and the type uses auto-IDs.
+	// [Manager.ValidateCreate] sets this so a per-keystroke dry-run does
+	// not scan the entire store to pick a never-used ID. The resulting
+	// entity gets a stable placeholder ID; validation that depends on
+	// the actual ID (ID-prefix check) is not relevant in that path.
+	SkipIDGeneration bool
+}
+
+// resolveCandidateID returns the ID to use for the candidate entity
+// being built by [buildCandidateEntity]. Three branches:
+//   - User-supplied ID → validated (manual-ID types only).
+//   - Empty ID + SkipIDGeneration → synthesized placeholder
+//     (dry-run / validation path; no store scan).
+//   - Empty ID + auto-ID → generated via the full-store scan.
+//
+// Extracted from [buildCandidateEntity] to keep that function's
+// top-level flow flat (avoids the nestif lint warning).
+func resolveCandidateID(
+	ctx context.Context, deps Deps, entityType string, entityDef *metamodel.EntityDef, opts createCoreOpts,
+) (string, error) {
+	if opts.ID != "" {
+		if !entityDef.IsManualID() {
+			return "", customIDNotAllowedError(entityType, entityDef, opts.ID)
+		}
+		if err := entity.ValidateID(opts.ID); err != nil {
+			return "", err
+		}
+		return opts.ID, nil
+	}
+	if opts.SkipIDGeneration {
+		// Dry-run / validation path: skip the full-store scan
+		// generateID would do. The placeholder must pass metamodel
+		// ID-prefix validation; [candidatePlaceholderID] synthesizes
+		// one from the type's first prefix. Never persisted — only
+		// [Manager.ValidateCreate] sets SkipIDGeneration.
+		return candidatePlaceholderID(entityDef, opts.IDPrefix), nil
+	}
+	return generateID(ctx, deps, entityType, opts.IDPrefix)
+}
+
+// candidatePlaceholderID returns the synthetic ID to use for a dry-run
+// candidate entity when no real ID is supplied. It pairs the requested
+// prefix (or the type's first declared prefix) with a fixed suffix so
+// metamodel ID-prefix validation passes. The result is never persisted
+// — only [Manager.ValidateCreate] (which never writes) uses this path.
+func candidatePlaceholderID(def *metamodel.EntityDef, requestedPrefix string) string {
+	const candidateSuffix = "DRYRUN"
+	if requestedPrefix != "" {
+		return requestedPrefix + candidateSuffix
+	}
+	if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
+		return prefixes[0] + candidateSuffix
+	}
+	return candidateSuffix
 }
 
 // createCore is the shared bare-write entity-creation path: resolve
@@ -33,25 +89,45 @@ type createCoreOpts struct {
 func createCore(
 	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
 ) (*entity.Entity, []entity.Warning, error) {
+	e, warnings, err := buildCandidateEntity(ctx, deps, entityType, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// A create must never fall through to an update — that would
+	// overwrite a colliding entity (a racing create, or a stale-scan
+	// duplicate ID). Write with a direct CreateEntity and surface a
+	// conflict as ErrEntityAlreadyExists. upsertEntity's
+	// create-then-update fallback is only for write-back-existing
+	// callers, never the create path.
+	if err := deps.Store.CreateEntity(ctx, e); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
+		}
+		return nil, nil, fmt.Errorf("write entity: %w", err)
+	}
+
+	return e, warnings, nil
+}
+
+// buildCandidateEntity resolves the ID, applies template + status
+// defaults, merges caller properties, and partitions validation errors
+// per DEC-HWZHA (hard errors abort; soft conditions return as warnings)
+// — everything [createCore] does except the final persist. Shared by
+// createCore (which then writes) and [Manager.ValidateCreate] (which
+// returns the would-be entity + warnings without writing), so dry-run
+// validation cannot drift from the real create path.
+func buildCandidateEntity(
+	ctx context.Context, deps Deps, entityType string, opts createCoreOpts,
+) (*entity.Entity, []entity.Warning, error) {
 	entityDef, ok := deps.Meta.GetEntityDef(entityType)
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown entity type: %s", entityType)
 	}
 
-	entityID := opts.ID
-	if entityID == "" {
-		id, err := generateID(ctx, deps, entityType, opts.IDPrefix)
-		if err != nil {
-			return nil, nil, err
-		}
-		entityID = id
-	} else {
-		if !entityDef.IsManualID() {
-			return nil, nil, customIDNotAllowedError(entityType, entityDef, entityID)
-		}
-		if err := entity.ValidateID(entityID); err != nil {
-			return nil, nil, err
-		}
+	entityID, err := resolveCandidateID(ctx, deps, entityType, entityDef, opts)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	e := entity.New(entityID, entityType)
@@ -91,10 +167,6 @@ func createCore(
 		warnings = soft
 	}
 
-	if err := upsertEntity(ctx, deps.Store, e); err != nil {
-		return nil, nil, fmt.Errorf("write entity: %w", err)
-	}
-
 	return e, warnings, nil
 }
 
@@ -116,7 +188,10 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string) (stri
 		prefix = prefixes[0]
 	}
 
-	existingIDs := collectAllIDs(ctx, deps.Store)
+	existingIDs, err := collectAllIDs(ctx, deps.Store)
+	if err != nil {
+		return "", fmt.Errorf("collect existing IDs: %w", err)
+	}
 	if entityDef.IsShortID() {
 		return entity.GenerateShortID(existingIDs, prefix, len(existingIDs), entityDef.GetIDCaps()), nil
 	}
@@ -124,36 +199,40 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string) (stri
 }
 
 // collectAllIDs returns every entity ID currently in the store.
-// Errors from the iterator are swallowed — a partial result is
-// preferable to failing ID generation outright.
-func collectAllIDs(ctx context.Context, st store.Store) []string {
+// A partial scan must not feed ID generation: a truncated list can hide
+// a high-numbered existing ID, so the generator would mint one that
+// already exists and (via upsertEntity's create-then-update fallback)
+// overwrite that entity. Fail loudly instead.
+func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 	ids := make([]string, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
-			return ids
+			return nil, err
 		}
 		ids = append(ids, e.ID)
 	}
-	return ids
+	return ids, nil
 }
 
 // collectIncidentRelations gathers a store's relations in the given
-// direction for the given entity. Errors from the iterator are
-// swallowed — partial results are preferable to a failing cascade.
+// direction for the given entity. The result gates the delete-safety
+// check (refuse a non-cascade delete that would orphan relations), so a
+// partial scan must not silently under-count — propagate the error and
+// let the caller refuse the delete rather than proceed on partial data.
 func collectIncidentRelations(
 	ctx context.Context, st store.Store, id string, dir store.Direction,
-) []*entity.Relation {
+) ([]*entity.Relation, error) {
 	out := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{
 		EntityID:  id,
 		Direction: dir,
 	}) {
 		if err != nil {
-			continue
+			return nil, err
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, nil
 }
 
 // findExistingRelationTarget locates an existing target entity of the

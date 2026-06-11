@@ -52,6 +52,16 @@ export class FormPage extends BasePage {
     await this.waitForSpinnerToDisappear();
   }
 
+  /** Assert the form route guard rendered the "not editable" inline
+   *  message (instead of the form). Triggered when the server says
+   *  `_actions.update === false` for the target entity — AC10 of the
+   *  read-only payoff. */
+  async expectNotEditableMessage(timeoutMs = 10_000) {
+    const banner = this.page.locator('.not-editable-state');
+    await expect(banner).toBeVisible({ timeout: timeoutMs });
+    await expect(banner).toContainText(/not editable/i);
+  }
+
   /** Wait for the URL to be the edit form for the given form/entity. Used
    *  when navigation is triggered by another page (e.g. Edit button on the
    *  document view). */
@@ -281,6 +291,20 @@ export class FormPage extends BasePage {
   async typeMarkdownBody(text: string) {
     await this.codeMirror.click();
     await this.page.keyboard.type(text);
+  }
+
+  /** Computed `font-family` of the bold toolbar button's `::before` pseudo
+   *  element. Used by markdown-editor.spec.ts to assert that the bundled
+   *  Font Awesome stylesheet actually applied (TKT-ZDRS) — EasyMDE renders
+   *  its icons via FA glyph classes, so a non-FA family means the bundle
+   *  failed to land. Returns null if the button isn't in the DOM (the
+   *  caller asserts that separately, so failure messages stay diagnostic).
+   *  Implemented via `evaluate` rather than a Locator because computed-style
+   *  on a pseudo-element isn't exposed through Playwright's selector API. */
+  async getBoldToolbarIconFontFamily(): Promise<string | null> {
+    return this.markdownToolbar.locator('.fa-bold').first().evaluate(
+      (el) => window.getComputedStyle(el, '::before').fontFamily,
+    ).catch(() => null);
   }
 
   // --- Entity-reference picker (TKT-I5NO) ---

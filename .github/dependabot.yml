@@ -52,6 +52,13 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 14
+    # vue-router@5+ on npm is a separate package (the vue-router unplugin
+    # tool, by the same maintainers); the actual router for Vue 3 stays
+    # on the 4.x line. Pin to 4.x to keep Dependabot from re-proposing
+    # what looks like a major bump but is in fact a different package.
+    ignore:
+      - dependency-name: "vue-router"
+        update-types: ["version-update:semver-major"]
     # Groups bundle minor+patch only. Majors fall out as individual PRs
     # so a single breaking upgrade can't block the safe ones in its group.
     # Auto-merge is unconditional on green CI, so each PR (group or

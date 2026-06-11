@@ -15,8 +15,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// makeTestServer creates a Server with a populated store for handler testing.
-func makeTestServer(t *testing.T) *Server {
+// makeTestFixture returns the shared metamodel and a store seeded with
+// the canonical test graph (3 requirements, 1 decision, 1 relation).
+// Used by makeTestServer (handler-level tests) and the dispatch tests
+// (which build the server through the production NewServer instead).
+func makeTestFixture(t *testing.T) (*metamodel.Metamodel, *memstore.MemStore) {
 	t.Helper()
 
 	meta := &metamodel.Metamodel{
@@ -64,10 +67,16 @@ func makeTestServer(t *testing.T) *Server {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	svc := newTestServices(t, meta, st)
+	return meta, st
+}
 
+// makeTestServer creates a Server with a populated store for handler testing.
+func makeTestServer(t *testing.T) *Server {
+	t.Helper()
+
+	meta, st := makeTestFixture(t)
 	return &Server{
-		ws:     svc,
+		deps:   newTestDeps(t, meta, st),
 		logger: slog.New(slog.DiscardHandler),
 	}
 }
@@ -84,6 +93,7 @@ func isErrorResult(result *mcp.CallToolResult) bool {
 // --- Entity handler tests ---
 
 func TestHandleListEntities_All(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleListEntities(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -100,6 +110,7 @@ func TestHandleListEntities_All(t *testing.T) {
 }
 
 func TestHandleListEntities_ByType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"type": "requirement"})
 	result, err := s.handleListEntities(context.Background(), req)
@@ -117,6 +128,7 @@ func TestHandleListEntities_ByType(t *testing.T) {
 }
 
 func TestHandleListEntities_WithFilter(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"type":  "requirement",
@@ -137,6 +149,7 @@ func TestHandleListEntities_WithFilter(t *testing.T) {
 }
 
 func TestHandleListEntities_WithPagination(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"limit":  float64(2),
@@ -157,6 +170,7 @@ func TestHandleListEntities_WithPagination(t *testing.T) {
 }
 
 func TestHandleShowEntity(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
 	result, err := s.handleShowEntity(context.Background(), req)
@@ -173,6 +187,7 @@ func TestHandleShowEntity(t *testing.T) {
 }
 
 func TestHandleShowEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "NONEXISTENT"})
 	result, err := s.handleShowEntity(context.Background(), req)
@@ -189,6 +204,7 @@ func TestHandleShowEntity_NotFound(t *testing.T) {
 }
 
 func TestHandleSearchEntities(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"query": "accepted"})
 	result, err := s.handleSearchEntities(context.Background(), req)
@@ -207,6 +223,7 @@ func TestHandleSearchEntities(t *testing.T) {
 }
 
 func TestHandleSearchEntities_ByType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"query": "accepted",
@@ -228,6 +245,7 @@ func TestHandleSearchEntities_ByType(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_NoUpdates(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
 	result, err := s.handleUpdateEntity(context.Background(), req)
@@ -244,6 +262,7 @@ func TestHandleUpdateEntity_NoUpdates(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"id":         "NONEXISTENT",
@@ -259,6 +278,7 @@ func TestHandleUpdateEntity_NotFound(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	// REQ-001 starts with status=accepted; null should remove it.
 	req := makeToolRequest(map[string]interface{}{
@@ -272,7 +292,7 @@ func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, getErr := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, getErr := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if getErr != nil {
 		t.Fatalf("get entity: %v", getErr)
 	}
@@ -282,6 +302,7 @@ func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_DeleteOnlyCallSurvivesGuard(t *testing.T) {
+	t.Parallel()
 	// AC 7: a delete-only call must NOT trigger the "no updates specified" guard.
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
@@ -302,9 +323,10 @@ func TestHandleUpdateEntity_DeleteOnlyCallSurvivesGuard(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
+	t.Parallel()
 	// `priority` is in the metamodel but not set on REQ-001; deleting it should be a no-op.
 	s := makeTestServer(t)
-	before, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := before.Properties["priority"]; present {
 		t.Fatalf("test setup: REQ-001 should not have a priority property")
 	}
@@ -320,7 +342,7 @@ func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success on no-op delete, got error: %s", getResultText(t, result))
 	}
-	after, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	after, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := after.Properties["priority"]; present {
 		t.Errorf("priority should remain absent")
 	}
@@ -330,10 +352,11 @@ func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
+	t.Parallel()
 	// `title` is required; attempting to delete it must surface an actionable error
 	// rather than silently producing a now-invalid entity.
 	s := makeTestServer(t)
-	before, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	beforeTitle := before.GetString("title")
 
 	req := makeToolRequest(map[string]interface{}{
@@ -351,13 +374,14 @@ func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
 		t.Errorf("expected 'required' in error message, got %s", getResultText(t, result))
 	}
 	// Entity must be unchanged.
-	after, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	after, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if after.GetString("title") != beforeTitle {
 		t.Errorf("entity must be unchanged after rejected delete: title was %q, now %q", beforeTitle, after.GetString("title"))
 	}
 }
 
 func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
+	t.Parallel()
 	// End-to-end check that the JSON-string `properties` fallback also supports null-as-delete.
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
@@ -371,13 +395,14 @@ func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := updated.Properties["status"]; present {
 		t.Errorf("status should be removed when sent as JSON string with null")
 	}
 }
 
 func TestHandleUpdateEntity_DeleteUnknownPropertyRejected(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"id":         "REQ-001",
@@ -396,6 +421,7 @@ func TestHandleUpdateEntity_DeleteUnknownPropertyRejected(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"id": "REQ-001",
@@ -411,7 +437,7 @@ func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if _, present := updated.Properties["status"]; present {
 		t.Errorf("status should be removed")
 	}
@@ -421,6 +447,7 @@ func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
 }
 
 func TestHandleUpdateEntity_EmptyStringIsNoOp(t *testing.T) {
+	t.Parallel()
 	// AC 8: empty string is silently filtered, so it must NOT delete an existing value
 	// AND it must NOT itself satisfy the "no updates specified" guard alone.
 	s := makeTestServer(t)
@@ -440,13 +467,14 @@ func TestHandleUpdateEntity_EmptyStringIsNoOp(t *testing.T) {
 		t.Errorf("expected 'no updates specified', got %s", getResultText(t, result))
 	}
 	// And the existing status is untouched.
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if got := updated.GetString("status"); got != "accepted" {
 		t.Errorf("status should remain 'accepted', got %q", got)
 	}
 }
 
 func TestHandleUpdateEntity_SetAndOverwriteStillWorks(t *testing.T) {
+	t.Parallel()
 	// AC 3: regression guard for the existing positive set/overwrite path.
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
@@ -460,13 +488,14 @@ func TestHandleUpdateEntity_SetAndOverwriteStillWorks(t *testing.T) {
 	if isErrorResult(result) {
 		t.Fatalf("expected success, got error: %s", getResultText(t, result))
 	}
-	updated, _ := s.ws.Store().GetEntity(context.Background(), "REQ-001")
+	updated, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	if got := updated.GetString("status"); got != "rejected" {
 		t.Errorf("expected status 'rejected', got %q", got)
 	}
 }
 
 func TestUpdateEntityToolDescriptionMentionsNullDelete(t *testing.T) {
+	t.Parallel()
 	const phrase = "set a property to null"
 	tool := toolUpdateEntity()
 	if !strings.Contains(strings.ToLower(tool.Description), phrase) {
@@ -483,6 +512,7 @@ func TestUpdateEntityToolDescriptionMentionsNullDelete(t *testing.T) {
 }
 
 func TestHandleDeleteEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "NONEXISTENT"})
 	result, err := s.handleDeleteEntity(context.Background(), req)
@@ -495,6 +525,7 @@ func TestHandleDeleteEntity_NotFound(t *testing.T) {
 }
 
 func TestHandleDeleteEntity_NoCascade(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	// DEC-001 has a relation, so delete without cascade should fail
 	req := makeToolRequest(map[string]interface{}{"id": "DEC-001", "cascade": false})
@@ -514,6 +545,7 @@ func TestHandleDeleteEntity_NoCascade(t *testing.T) {
 // --- Relation handler tests ---
 
 func TestHandleListRelations_All(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleListRelations(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -530,6 +562,7 @@ func TestHandleListRelations_All(t *testing.T) {
 }
 
 func TestHandleListRelations_ByType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"type": "addresses"})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -547,6 +580,7 @@ func TestHandleListRelations_ByType(t *testing.T) {
 }
 
 func TestHandleListRelations_ByFrom(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"from": "DEC-001"})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -564,6 +598,7 @@ func TestHandleListRelations_ByFrom(t *testing.T) {
 }
 
 func TestHandleListRelations_NoMatch(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"type": "implements"})
 	result, err := s.handleListRelations(context.Background(), req)
@@ -577,9 +612,10 @@ func TestHandleListRelations_NoMatch(t *testing.T) {
 }
 
 func TestHandleListRelations_Pagination(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	// Add another relation for pagination testing
-	if _, err := s.ws.Store().CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
+	if _, err := s.deps.Store.CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-002", nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -599,6 +635,7 @@ func TestHandleListRelations_Pagination(t *testing.T) {
 }
 
 func TestHandleCreateRelation_MissingFields(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	// Missing "type".
 	req := makeToolRequest(map[string]interface{}{
@@ -641,6 +678,7 @@ func TestHandleCreateRelation_MissingFields(t *testing.T) {
 }
 
 func TestHandleCreateEntity_RejectsCustomIDForShortType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"type":       "requirement",
@@ -665,6 +703,7 @@ func TestHandleCreateEntity_RejectsCustomIDForShortType(t *testing.T) {
 }
 
 func TestHandleDeleteRelation_MissingFields(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	// Missing "type".
 	req := makeToolRequest(map[string]interface{}{
@@ -681,6 +720,7 @@ func TestHandleDeleteRelation_MissingFields(t *testing.T) {
 }
 
 func TestHandleDeleteRelation_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{
 		"from": "REQ-001",
@@ -699,6 +739,7 @@ func TestHandleDeleteRelation_NotFound(t *testing.T) {
 // --- Trace handler tests ---
 
 func TestHandleTraceFrom(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
 	result, err := s.handleTraceFrom(context.Background(), req)
@@ -712,6 +753,7 @@ func TestHandleTraceFrom(t *testing.T) {
 }
 
 func TestHandleTraceFrom_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "NONEXISTENT"})
 	result, err := s.handleTraceFrom(context.Background(), req)
@@ -724,6 +766,7 @@ func TestHandleTraceFrom_NotFound(t *testing.T) {
 }
 
 func TestHandleTraceTo(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
 	result, err := s.handleTraceTo(context.Background(), req)
@@ -737,6 +780,7 @@ func TestHandleTraceTo(t *testing.T) {
 }
 
 func TestHandleFindPath(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"from": "DEC-001", "to": "REQ-001"})
 	result, err := s.handleFindPath(context.Background(), req)
@@ -750,6 +794,7 @@ func TestHandleFindPath(t *testing.T) {
 }
 
 func TestHandleFindPath_NoPath(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"from": "REQ-002", "to": "REQ-003"})
 	result, err := s.handleFindPath(context.Background(), req)
@@ -763,6 +808,7 @@ func TestHandleFindPath_NoPath(t *testing.T) {
 }
 
 func TestHandleFindPath_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"from": "NONEXISTENT", "to": "REQ-001"})
 	result, err := s.handleFindPath(context.Background(), req)
@@ -777,6 +823,7 @@ func TestHandleFindPath_NotFound(t *testing.T) {
 // --- Analysis handler tests ---
 
 func TestHandleAnalyzeOrphans(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleAnalyzeOrphans(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -790,6 +837,7 @@ func TestHandleAnalyzeOrphans(t *testing.T) {
 }
 
 func TestHandleAnalyzeOrphans_ByType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := makeToolRequest(map[string]interface{}{"type": "decision"})
 	result, err := s.handleAnalyzeOrphans(context.Background(), req)
@@ -804,6 +852,7 @@ func TestHandleAnalyzeOrphans_ByType(t *testing.T) {
 }
 
 func TestHandleAnalyzeCardinality_NoViolations(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleAnalyzeCardinality(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -816,10 +865,11 @@ func TestHandleAnalyzeCardinality_NoViolations(t *testing.T) {
 }
 
 func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	// Set a minimum cardinality that won't be met
 	minVal := 5
-	meta := s.ws.Meta()
+	meta := s.deps.Meta
 	meta.Relations["addresses"] = metamodel.RelationDef{
 		From:        []string{"decision"},
 		To:          []string{"requirement"},
@@ -836,6 +886,7 @@ func TestHandleAnalyzeCardinality_WithViolation(t *testing.T) {
 }
 
 func TestHandleAnalyzeProperties(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleAnalyzeProperties(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -849,6 +900,7 @@ func TestHandleAnalyzeProperties(t *testing.T) {
 }
 
 func TestHandleAnalyzeValidations_NoRules(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleAnalyzeValidations(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -863,6 +915,7 @@ func TestHandleAnalyzeValidations_NoRules(t *testing.T) {
 // --- Schema handler tests ---
 
 func TestHandleGetMetamodel(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleGetMetamodel(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -882,6 +935,7 @@ func TestHandleGetMetamodel(t *testing.T) {
 }
 
 func TestHandleListEntityTypes(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleListEntityTypes(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -898,6 +952,7 @@ func TestHandleListEntityTypes(t *testing.T) {
 }
 
 func TestHandleListRelationTypes(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, err := s.handleListRelationTypes(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -916,6 +971,7 @@ func TestHandleListRelationTypes(t *testing.T) {
 // --- Resource handler tests ---
 
 func TestHandleReadEntity(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = "rela://entity/requirement/REQ-001"
@@ -933,6 +989,7 @@ func TestHandleReadEntity(t *testing.T) {
 }
 
 func TestHandleReadEntity_TypeMismatch(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = "rela://entity/decision/REQ-001"
@@ -946,6 +1003,7 @@ func TestHandleReadEntity_TypeMismatch(t *testing.T) {
 }
 
 func TestHandleReadEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = "rela://entity/requirement/REQ-999"
@@ -956,6 +1014,7 @@ func TestHandleReadEntity_NotFound(t *testing.T) {
 }
 
 func TestHandleReadEntity_InvalidURI(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = "rela://entity/onlyone"
@@ -966,6 +1025,7 @@ func TestHandleReadEntity_InvalidURI(t *testing.T) {
 }
 
 func TestHandleReadRelation(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = "rela://relation/DEC-001/addresses/REQ-001"
@@ -983,6 +1043,7 @@ func TestHandleReadRelation(t *testing.T) {
 }
 
 func TestHandleReadRelation_NotFound(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = "rela://relation/REQ-001/nonexistent/REQ-002"
@@ -995,6 +1056,7 @@ func TestHandleReadRelation_NotFound(t *testing.T) {
 // --- Helper function tests ---
 
 func TestResolveType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	tests := []struct {
 		input    string
@@ -1015,6 +1077,7 @@ func TestResolveType(t *testing.T) {
 }
 
 func TestResolveEntityType(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	resolved, def, err := s.resolveEntityType("requirement")
 	if err != nil {
@@ -1029,6 +1092,7 @@ func TestResolveEntityType(t *testing.T) {
 }
 
 func TestResolveEntityType_Unknown(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	_, _, err := s.resolveEntityType("nonexistent")
 	if err == nil {
@@ -1037,6 +1101,7 @@ func TestResolveEntityType_Unknown(t *testing.T) {
 }
 
 func TestApplyPagination(t *testing.T) {
+	t.Parallel()
 	items := []int{1, 2, 3, 4, 5}
 
 	// No pagination

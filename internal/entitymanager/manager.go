@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -174,11 +175,25 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 // Summary carries the deny rule_kind / rule_id / reason and the
 // attempted op so jq filters can ask "what did Alice try to do?".
 func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl.WriteRequest) {
+	// RR-79HD: surface the target ID (entity ID, or relation
+	// from-ID) so forensic queries against the audit log can answer
+	// "which specific entity did Alice try to mutate?" without
+	// re-parsing the deny summary string. ToID is omitted because
+	// RR-F9M9 removed it from RelationSubject.
 	var subject *audit.Subject
-	if req.RelationType != "" {
-		subject = &audit.Subject{Kind: "relation", RelationType: req.RelationType}
-	} else {
-		subject = &audit.Subject{Kind: "entity", Type: req.EntityType}
+	switch s := req.Subject.(type) {
+	case acl.RelationSubject:
+		subject = &audit.Subject{
+			Kind:         "relation",
+			RelationType: s.Type,
+			FromID:       s.FromID,
+		}
+	case acl.EntitySubject:
+		subject = &audit.Subject{
+			Kind: "entity",
+			Type: s.Type,
+			ID:   s.ID,
+		}
 	}
 	m.deps.Audit.Record(audit.Record{
 		Time:        time.Now().UTC(),
@@ -186,9 +201,27 @@ func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s) attempted op=%s",
-			d.Reason, d.RuleKind, d.RuleID, req.Op),
+		Summary:     formatDeniedSummary(d, req.Op),
 	})
+}
+
+// formatDeniedSummary builds the audit Summary for a denied-write row.
+// Appends `attribution=[role=X via source, ...]` when the Decision
+// carries Attributions so operators can answer "which roles did the
+// resolver consider and via which paths" without re-running the
+// resolver (AC7). The wire 403 path stays opaque — only audit reads
+// Attributions.
+func formatDeniedSummary(d acl.Decision, op acl.Op) string {
+	base := fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s) attempted op=%s",
+		d.Reason, d.RuleKind, d.RuleID, op)
+	if len(d.Attributions) == 0 {
+		return base
+	}
+	parts := make([]string, 0, len(d.Attributions))
+	for _, a := range d.Attributions {
+		parts = append(parts, fmt.Sprintf("role=%s via %s", a.Role, a.Source.String()))
+	}
+	return base + " attribution=[" + strings.Join(parts, ", ") + "]"
 }
 
 // CreateEntity creates a new entity, runs on-create automations, and
@@ -216,7 +249,8 @@ func (m *Manager) CreateEntity(
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate, EntityType: e.Type,
+		Op:      acl.OpCreate,
+		Subject: acl.EntitySubject{Type: e.Type, ID: opts.ID},
 	}); err != nil {
 		return nil, err
 	}
@@ -224,9 +258,11 @@ func (m *Manager) CreateEntity(
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
 			return nil, customIDNotAllowedError(e.Type, def, opts.ID)
 		}
-		if _, err := m.deps.Store.GetEntity(ctx, opts.ID); err == nil {
-			return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, opts.ID)
-		}
+		// No GetEntity pre-check: it was a TOCTOU duplicate of the
+		// store's atomic uniqueness guarantee. createCore now writes
+		// with a direct CreateEntity and surfaces a conflict as
+		// ErrEntityAlreadyExists, so a racing create can't slip past a
+		// passed pre-check and become an overwrite.
 	}
 
 	created, warnings, err := createCore(ctx, m.deps, e.Type, createCoreOpts{
@@ -242,9 +278,16 @@ func (m *Manager) CreateEntity(
 
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
+	// Audit the durable write now, before automation re-writes or the
+	// cascade run. createCore has already persisted the entity; if a
+	// later step fails (the post-automation upsert, or a cascade that
+	// hard-errors) the entity is still on disk, so the audit log must
+	// already reflect it. Recording after the cascade left a window
+	// where a committed write produced no audit record.
+	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
+
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {
-		m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 		return result, nil
 	}
 
@@ -284,8 +327,44 @@ func (m *Manager) CreateEntity(
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
-	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
 	return result, nil
+}
+
+// ValidateCreate runs the create path's defaults + validation against a
+// candidate entity WITHOUT persisting, authorizing, auditing, or
+// running automation. It returns the would-be entity (post template /
+// status defaults) and the DEC-HWZHA soft warnings the real create
+// would surface — so a dry-run create can show as-you-type validation
+// feedback that cannot drift from [Manager.CreateEntity] (both share
+// [buildCandidateEntity]).
+//
+// Contract:
+//   - No write, no audit row, no automation — it is advisory only.
+//     The real CreateEntity remains the sole authorization and audit
+//     point; callers MUST re-authorize at commit (e.g. the data-entry
+//     create handler's affordance gate).
+//   - Hard structural errors (unknown type, bad manual ID, ID-prefix
+//     mismatch) return as an error; soft conditions (required-unset,
+//     type / value mismatch) return as warnings on a nil error.
+//   - opts.ID may be empty: an ID is generated only to satisfy
+//     validation that doesn't depend on it; it is not reserved.
+func (m *Manager) ValidateCreate(
+	ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
+) (*entity.Entity, []entity.Warning, error) {
+	if e == nil {
+		return nil, nil, errors.New("entitymanager: ValidateCreate: entity is nil")
+	}
+	return buildCandidateEntity(ctx, m.deps, e.Type, createCoreOpts{
+		ID:              opts.ID,
+		IDPrefix:        opts.Prefix,
+		TemplateVariant: opts.Variant,
+		Properties:      e.Properties,
+		Content:         e.Content,
+		// Skip the full-store scan generateID would do — dry-run runs
+		// per debounced keystroke and a real ID is not needed for
+		// validation. RR-8I07.
+		SkipIDGeneration: true,
+	})
 }
 
 // UpdateEntity validates the new state, runs on-update automation
@@ -305,7 +384,8 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, EntityType: e.Type,
+		Op:      acl.OpUpdate,
+		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID},
 	}); err != nil {
 		return nil, err
 	}
@@ -354,10 +434,12 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
-	updateSummary := updateEntitySummary(oldEntity, e)
+	// Audit the durable write now, before the cascade run. The entity
+	// is already persisted; gating the audit on cascade success left a
+	// window where a committed write produced no audit record.
+	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateEntitySummary(oldEntity, e))
 
 	if !runAutomation {
-		m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 		return result, nil
 	}
 
@@ -376,7 +458,6 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	result.AutomationErrors = append(result.AutomationErrors, outcome.Errors...)
 	result.AutomationWarnings = append(result.AutomationWarnings, outcome.Warnings...)
 
-	m.recordEntityAudit(ctx, audit.OpUpdateEntity, e, updateSummary)
 	return result, nil
 }
 
@@ -393,64 +474,58 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// real entity type; a deny on a non-existent entity would be more
 	// confusing than the ErrEntityNotFound returned above.
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpDelete, EntityType: current.Type,
+		Op:      acl.OpDelete,
+		Subject: acl.EntitySubject{Type: current.Type, ID: id},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
 
-	incoming := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
-	outgoing := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
+	incoming, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionIncoming)
+	if err != nil {
+		return nil, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, m.deps.Store, id, store.DirectionOutgoing)
+	if err != nil {
+		return nil, fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	}
 	totalRelations := len(incoming) + len(outgoing)
 
 	if totalRelations > 0 && !cascade {
 		return nil, ErrHasRelations
 	}
 
-	// Cascade-deleted relations get triggered_by set so the audit log
-	// records the parent op that caused them. Wrap ctx once before the
-	// delete loop — recordRelationAudit reads triggered_by from this
-	// derived ctx, the original ctx still flows to anything else that
-	// needs the un-decorated principal context.
-	cascadeCtx := ctx
-	if cascade && totalRelations > 0 {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
-	}
-
-	deletedRelations := make([]*entity.Relation, 0, totalRelations)
-	for _, rel := range incoming {
-		if delErr := m.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
-			!errors.Is(delErr, store.ErrNotFound) {
-
-			continue
-		}
-		deletedRelations = append(deletedRelations, rel)
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
-	}
-	for _, rel := range outgoing {
-		if delErr := m.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
-			!errors.Is(delErr, store.ErrNotFound) {
-
-			continue
-		}
-		deletedRelations = append(deletedRelations, rel)
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
-	}
-
-	if _, delErr := m.deps.Store.DeleteEntity(ctx, id, false); delErr != nil &&
-		!errors.Is(delErr, store.ErrNotFound) {
-
+	// Delegate the actual deletion to the store's cascade, which removes
+	// the relation files and the entity file under a single lock and aborts
+	// fail-secure if any relation file cannot be removed — so the entity is
+	// never deleted while a relation is left behind (issue #888). A real
+	// error surfaces to the caller rather than being swallowed; previously
+	// the Manager looped per-relation and `continue`d past I/O failures,
+	// deleting the entity anyway and leaving orphans untraced.
+	res, delErr := m.deps.Store.DeleteEntity(ctx, id, cascade)
+	if delErr != nil {
 		return nil, fmt.Errorf("delete entity: %w", delErr)
 	}
 
+	// Audit exactly what the store reports deleting. Cascade-deleted
+	// relations carry triggered_by so the log attributes them to this
+	// delete; recordRelationAudit reads it from cascadeCtx.
+	cascadeCtx := ctx
+	if cascade && len(res.DeletedRelations) > 0 {
+		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
+	}
+	for _, rel := range res.DeletedRelations {
+		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
+	}
+
 	deleteSummary := "deleted"
-	if cascade && totalRelations > 0 {
-		deleteSummary = fmt.Sprintf("deleted (cascade: %d relations)", totalRelations)
+	if cascade && len(res.DeletedRelations) > 0 {
+		deleteSummary = fmt.Sprintf("deleted (cascade: %d relations)", len(res.DeletedRelations))
 	}
 	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, deleteSummary)
 
 	return &entity.DeleteResult{
 		DeletedEntities:  []*entity.Entity{current},
-		DeletedRelations: deletedRelations,
+		DeletedRelations: res.DeletedRelations,
 	}, nil
 }
 
@@ -464,16 +539,26 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	// ACL needs the entity type, so we fetch first. If the entity
-	// doesn't exist, renameEntity below returns the same error with
-	// a clearer message; we only consult the ACL when there's an
-	// entity to authorize against.
-	if current, err := m.deps.Store.GetEntity(ctx, oldID); err == nil {
+	// ACL needs the entity type, so we fetch first. Distinguish the two
+	// failure modes:
+	//   - not-found: skip ACL and fall through; renameEntity below
+	//     returns ErrEntityNotFound with a clearer message, and there is
+	//     nothing to authorize against.
+	//   - any other error (transient I/O, backend hiccup): fail closed.
+	//     Proceeding would run the rename with NO authorization at all —
+	//     a store read that flakes must not turn an ACL-gated operation
+	//     into an ungated one.
+	current, getErr := m.deps.Store.GetEntity(ctx, oldID)
+	switch {
+	case getErr == nil:
 		if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-			Op: acl.OpRename, EntityType: current.Type,
+			Op:      acl.OpRename,
+			Subject: acl.EntitySubject{Type: current.Type, ID: oldID},
 		}); aclErr != nil {
 			return nil, aclErr
 		}
+	case !errors.Is(getErr, store.ErrNotFound):
+		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, getErr)
 	}
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {
@@ -511,7 +596,11 @@ func (m *Manager) CreateRelation(
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate, EntityType: fromEntity.Type, RelationType: relType,
+		Op: acl.OpCreate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: fromEntity.Type, FromID: from,
+		},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -542,6 +631,14 @@ func (m *Manager) CreateRelation(
 		rel.Content = *opts.Content
 	}
 
+	// Auto-assign managed order properties (_order_out / _order_in) when
+	// the relation type declares the side orderable. Overrides any
+	// non-finite caller-supplied value with AppendOrder over existing
+	// siblings; keeps finite caller values as-is.
+	if err := m.assignManagedOrder(ctx, rel, relType); err != nil {
+		return nil, err
+	}
+
 	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
 		return nil, err
 	}
@@ -565,7 +662,11 @@ func (m *Manager) UpdateRelation(
 		sourceType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate, EntityType: sourceType, RelationType: relType,
+		Op: acl.OpUpdate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: sourceType, FromID: from,
+		},
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -573,6 +674,18 @@ func (m *Manager) UpdateRelation(
 	// Snapshot pre-update meta keys so the audit summary names exactly
 	// which keys changed (values never appear).
 	oldProps := cloneProperties(rel.Properties)
+
+	// Reject non-finite numeric values on managed order properties.
+	// HTTP wire validators already cover the dataentry path; this is
+	// the engine-level backstop for MCP/Lua/CLI write paths.
+	relDef, hasDef := m.deps.Meta.Relations[relType]
+	touchedOut := hasDef && relDef.OutgoingOrderProperty() != "" && touchesOrderKey(opts, relDef.OutgoingOrderProperty())
+	touchedIn := hasDef && relDef.IncomingOrderProperty() != "" && touchesOrderKey(opts, relDef.IncomingOrderProperty())
+	if hasDef {
+		if err := validateOrderUpdate(opts, relDef); err != nil {
+			return nil, err
+		}
+	}
 
 	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
 		rel.Properties = make(map[string]interface{})
@@ -591,6 +704,12 @@ func (m *Manager) UpdateRelation(
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))
+
+	// Engine-initiated renumber when an order PATCH collapsed sibling
+	// spacing. Errors are operator-visible (slog.Error) but do not fail
+	// the user-visible Update — the caller's write already succeeded.
+	m.runRenumberAfterUpdate(ctx, from, to, relType, touchedOut, touchedIn)
+
 	return rel, nil
 }
 
@@ -606,7 +725,11 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 		sourceType = fromEntity.Type
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpDelete, EntityType: sourceType, RelationType: relType,
+		Op: acl.OpDelete,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: sourceType, FromID: from,
+		},
 	}); aclErr != nil {
 		return aclErr
 	}

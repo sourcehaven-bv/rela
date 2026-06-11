@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -14,7 +14,7 @@ import (
 )
 
 // testFS returns an in-memory FS + project context suitable for
-// appbuild.NewForTest tests that exercise the EntityManager
+// appbuildtest.New tests that exercise the EntityManager
 // templater path.
 func testFS(t *testing.T) (storage.FS, *project.Context) {
 	t.Helper()
@@ -50,9 +50,9 @@ relations: {}
 	}
 
 	fs, paths := testFS(t)
-	svc := appbuild.NewForTest(meta,
-		appbuild.WithFS(fs, paths),
-		appbuild.WithTestACL(acl.ReadOnlyACL{}),
+	svc := appbuildtest.New(meta,
+		appbuildtest.WithFS(fs, paths),
+		appbuildtest.WithACL(acl.ReadOnlyACL{}),
 	)
 	defer svc.Close()
 
@@ -97,7 +97,7 @@ relations: {}
 	}
 
 	fs, paths := testFS(t)
-	svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, paths))
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths))
 	defer svc.Close()
 
 	e := entity.New("", "ticket")

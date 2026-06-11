@@ -24,7 +24,7 @@ func (s *Server) handleExport(
 	}
 	entityType := request.GetString("type", "")
 
-	st := s.ws.Store()
+	st := s.deps.Store
 	q := store.EntityQuery{}
 	if entityType != "" {
 		q.Type = s.resolveType(entityType)

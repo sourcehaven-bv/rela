@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { getEntityRelations } from '@/api'
-import type { FormFieldOrRelation, Entity, RelationEntry } from '@/types'
+import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
 import InlineCreateModal from './InlineCreateModal.vue'
 
 // Per-edge state emitted on the incoming-changed channel after
@@ -24,6 +24,11 @@ const props = defineProps<{
   entityType: string
   entityId?: string
   value: string[]
+  // TKT-G7N5: per-relation-type affordance verdict from the server.
+  // Undefined / all fields undefined = default (everything allowed).
+  // `creatable === false` hides every "+ Add" affordance (search,
+  // inline-create); `removable === false` hides the per-entity x.
+  verdict?: RelationAffordance
 }>()
 
 const emit = defineEmits<{
@@ -62,6 +67,11 @@ const createTargetType = ref('')
 // `incoming-changed` event fires until the user actually selects or
 // removes a peer, AND the snapshot is non-null.
 const isIncoming = computed(() => props.field.direction === 'incoming')
+
+// TKT-G7N5 affordance helpers. Defaults preserve today's behavior —
+// affordances render unless explicitly denied.
+const canCreate = computed(() => props.verdict?.creatable !== false)
+const canRemove = computed(() => props.verdict?.removable !== false)
 const incomingValue = ref<string[]>([])
 const incomingOriginal = ref<string[]>([])
 // Snapshot of the loaded edges keyed by ID. Used by the new
@@ -304,14 +314,19 @@ onBeforeUnmount(() => {
       >
         <span class="entity-type">{{ entity.type }}</span>
         <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
-        <button type="button" class="remove-btn" @click="removeEntity(entity.id)">
+        <button
+          v-if="canRemove"
+          type="button"
+          class="remove-btn"
+          @click="removeEntity(entity.id)"
+        >
           &times;
         </button>
       </div>
     </div>
 
-    <!-- Search input -->
-    <div class="search-wrapper">
+    <!-- Search input (TKT-G7N5: hidden when relation is not creatable) -->
+    <div v-if="canCreate" class="search-wrapper">
       <input
         v-model="searchQuery"
         type="text"

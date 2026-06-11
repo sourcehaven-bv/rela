@@ -2,6 +2,12 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed, shallowRef } from 'vue'
 import EasyMDE from 'easymde'
 import 'easymde/dist/easymde.min.css'
+// Bundled Font Awesome 4.7 — supplies the `fa fa-*` glyphs used by EasyMDE's
+// default toolbar (bold, italic, heading, link, code, quote, preview,
+// side-by-side, fullscreen, guide). Paired with `autoDownloadFontAwesome: false`
+// below so EasyMDE doesn't inject a `<link>` to maxcdn.bootstrapcdn.com at
+// runtime — that would defeat the //go:embed self-contained deployment story.
+import 'font-awesome/css/font-awesome.min.css'
 import EntityPickerModal from './EntityPickerModal.vue'
 import BacktickAutocompletePopup from './BacktickAutocompletePopup.vue'
 import { insertEntityRef } from './insertEntityRef'
@@ -80,13 +86,22 @@ onMounted(() => {
     title: 'Insert entity reference',
   }
 
-  editor = new EasyMDE({
+  // `satisfies EasyMDE.Options` (TKT-ZDRS): if a future EasyMDE upgrade
+  // renames or drops `autoDownloadFontAwesome`, our option becomes inert and
+  // EasyMDE silently starts injecting the CDN <link> again. The satisfies
+  // clause turns that into a typecheck failure instead of a runtime
+  // regression — caught at `npm run typecheck`, not in production.
+  const easyMDEOptions = {
     element: textareaRef.value,
     initialValue: props.modelValue,
     placeholder: props.placeholder || 'Markdown content...',
     spellChecker: false,
     autofocus: false,
     status: false,
+    // Suppress EasyMDE's runtime <link> to maxcdn.bootstrapcdn.com. The
+    // bundled `font-awesome/css/font-awesome.min.css` import above ships
+    // the glyphs locally via Vite.
+    autoDownloadFontAwesome: false,
     // Custom button: opens the entity-reference picker (TKT-I5NO).
     // Placed after the inline group with its own '|' separator so the
     // toolbar's visual rhythm stays intact (RR-91NT). The connected-
@@ -120,7 +135,8 @@ onMounted(() => {
       'guide',
     ],
     minHeight: '200px',
-  })
+  } satisfies EasyMDE.Options
+  editor = new EasyMDE(easyMDEOptions)
 
   editor.codemirror.on('change', () => {
     if (editor) {
@@ -132,15 +148,20 @@ onMounted(() => {
   // composable owns its own CodeMirror subscriptions and runs them
   // alongside the existing change handler.
   //
-  // Tests can shrink the open-delay grace period to a few milliseconds
-  // by setting `window.__BACKTICK_AUTOCOMPLETE_DELAY_MS__` before the
-  // editor mounts. Production builds never set this, so the 600 ms
-  // default stands (RR-1629).
-  const w = window as Window & { __BACKTICK_AUTOCOMPLETE_DELAY_MS__?: number }
-  const testDelay =
-    typeof w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__ === 'number'
-      ? w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__
-      : undefined
+  // Tests can shrink the open-delay grace period to a few milliseconds by
+  // setting `window.__BACKTICK_AUTOCOMPLETE_DELAY_MS__` before the editor
+  // mounts. The read is guarded by the compile-time `__E2E_TEST_HOOKS__` flag
+  // (vite define) so the whole block — and the magic property name — is
+  // tree-shaken out of production bundles; the test knob must not ship
+  // (issue #890). The flag is true only for the E2E dev-mode build
+  // (npm run build:e2e), so the knob still works there (RR-1629).
+  let testDelay: number | undefined
+  if (__E2E_TEST_HOOKS__) {
+    const w = window as Window & { __BACKTICK_AUTOCOMPLETE_DELAY_MS__?: number }
+    if (typeof w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__ === 'number') {
+      testDelay = w.__BACKTICK_AUTOCOMPLETE_DELAY_MS__
+    }
+  }
   autocomplete.value = useBacktickAutocomplete(
     editor,
     () => schemaStore.entityTypes,

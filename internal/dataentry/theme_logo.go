@@ -144,14 +144,13 @@ func (a *App) loadUserLogo() ([]byte, string, error) {
 // saveUserLogo persists the bytes and extension. Caller must hold
 // writeMu (i.e. invoke from inside mutateState) so the bytes/sidecar
 // pair cannot be observed half-written by a concurrent reload.
-func (a *App) saveUserLogo(bytes []byte, ext string) error {
+func (a *App) saveUserLogo(ctx context.Context, bytes []byte, ext string) error {
 	if a.kv == nil {
 		return errors.New("kv not configured")
 	}
 	if _, ok := allowedLogoExts[ext]; !ok {
 		return fmt.Errorf("invalid logo extension %q", ext)
 	}
-	ctx := context.Background()
 	if err := a.kv.Put(ctx, userLogoFile, bytes); err != nil {
 		return fmt.Errorf("write %s: %w", userLogoFile, err)
 	}
@@ -163,11 +162,10 @@ func (a *App) saveUserLogo(bytes []byte, ext string) error {
 
 // deleteUserLogo removes both the bytes file and the sidecar. Idempotent;
 // missing files are not errors.
-func (a *App) deleteUserLogo() error {
+func (a *App) deleteUserLogo(ctx context.Context) error {
 	if a.kv == nil {
 		return nil
 	}
-	ctx := context.Background()
 	if err := a.kv.Delete(ctx, userLogoFile); err != nil {
 		return fmt.Errorf("delete %s: %w", userLogoFile, err)
 	}

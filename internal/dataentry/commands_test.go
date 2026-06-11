@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -254,7 +255,7 @@ func TestBuildEntityInput(t *testing.T) {
 	bindRepo(app, "/test/project")
 	seedRelation(app, entity.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	input := app.buildEntityInput(entities.ticket1)
+	input := app.buildEntityInput(context.Background(), entities.ticket1)
 
 	if input.Context != "entity" {
 		t.Errorf("expected entity context, got %s", input.Context)
@@ -313,12 +314,12 @@ func TestBuildViewInput(t *testing.T) {
 			{From: "entry", Follow: "belongs_to", CollectAs: "components"},
 		},
 	}
-	vr, err := app.executeView(view, "TKT-001")
+	vr, err := app.executeView(context.Background(), view, "TKT-001")
 	if err != nil {
 		t.Fatalf("executeView: %v", err)
 	}
 
-	input := app.buildViewInput("test_view", vr)
+	input := app.buildViewInput(context.Background(), "test_view", vr)
 
 	if input.Context != "view" {
 		t.Errorf("expected view context, got %s", input.Context)
@@ -362,7 +363,7 @@ func TestBuildCommandEnv(t *testing.T) {
 		Context: "entity",
 		Env:     map[string]string{"FORMAT": "pdf"},
 	}
-	input := app.buildEntityInput(entities.ticket1)
+	input := app.buildEntityInput(context.Background(), entities.ticket1)
 	env := app.buildCommandEnv(cmd, input)
 
 	envMap := envToMap(env)

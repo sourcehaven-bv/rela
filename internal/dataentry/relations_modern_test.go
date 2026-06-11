@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -544,16 +545,21 @@ func TestModern_AC20a_NonStringInMetaUnsetReturns400(t *testing.T) {
 	}
 }
 
-// AC15: backwards compat with IDs-only shape.
-func TestModern_AC15_LegacyShapeStillWorks(t *testing.T) {
+// The legacy IDs-only shape is no longer accepted. PATCH that
+// submits it gets a 400 with `legacy_shape_unsupported`; no edges
+// are written.
+func TestModern_LegacyShape_Rejected(t *testing.T) {
 	app := newRelationsTestApp(t)
 	body := `{"relations": {"tagged": ["L-001", "L-002"]}}`
 	rec := patch(t, app, "tickets", "TKT-001", body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("legacy shape status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	if rels := outgoingByType(app, "TKT-001", "tagged"); len(rels) != 2 {
-		t.Errorf("len=%d, want 2", len(rels))
+	if !strings.Contains(rec.Body.String(), "legacy_shape_unsupported") {
+		t.Errorf("body should name legacy_shape_unsupported: %s", rec.Body.String())
+	}
+	if rels := outgoingByType(app, "TKT-001", "tagged"); len(rels) != 0 {
+		t.Errorf("no edges should have been written, got %d", len(rels))
 	}
 }
 

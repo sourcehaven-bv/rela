@@ -62,7 +62,7 @@ type pathStepJSON struct {
 }
 
 // convertStoreEntity converts an entity.Entity to JSON string with optional relations from store.
-func convertStoreEntity(e *entity.Entity, st store.Store, includeRelations bool) (string, error) {
+func convertStoreEntity(ctx context.Context, e *entity.Entity, st store.Store, includeRelations bool) (string, error) {
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -70,7 +70,7 @@ func convertStoreEntity(e *entity.Entity, st store.Store, includeRelations bool)
 		Content:    e.Content,
 	}
 	if includeRelations {
-		ej.Relations = buildStoreRelations(e.ID, st)
+		ej.Relations = buildStoreRelations(ctx, e.ID, st)
 	}
 	return marshalJSON(ej)
 }
@@ -91,8 +91,7 @@ func convertStoreEntitySummary(e *entity.Entity) map[string]interface{} {
 }
 
 // buildStoreRelations builds relation JSON for an entity using the store.
-func buildStoreRelations(entityID string, st store.Store) *relationsJSON {
-	ctx := context.Background()
+func buildStoreRelations(ctx context.Context, entityID string, st store.Store) *relationsJSON {
 	rels := &relationsJSON{
 		Outgoing: make(map[string][]relationTargetJSON),
 		Incoming: make(map[string][]relationTargetJSON),

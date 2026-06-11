@@ -1,6 +1,8 @@
 package dataentry
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,7 +31,7 @@ func TestAnalyzeOrphans(t *testing.T) {
 	g.AddEdge(&entity.Relation{From: "T-002", Type: "blocks", To: "T-003"})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeOrphans()
+	section := app.analyzeOrphans(context.Background())
 
 	if section.Name != "Orphans" {
 		t.Errorf("expected section name 'Orphans', got %q", section.Name)
@@ -58,7 +60,7 @@ func TestAnalyzeOrphans_NoOrphans(t *testing.T) {
 	g.AddEdge(&entity.Relation{From: "T-001", Type: "blocks", To: "T-002"})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeOrphans()
+	section := app.analyzeOrphans(context.Background())
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 orphans, got %d", len(section.Issues))
@@ -80,7 +82,7 @@ func TestAnalyzeDuplicates(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Unique"}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeDuplicates()
+	section := app.analyzeDuplicates(context.Background())
 
 	if len(section.Issues) != 2 {
 		t.Fatalf("expected 2 duplicate issues (for the pair), got %d", len(section.Issues))
@@ -106,7 +108,7 @@ func TestAnalyzeDuplicates_NoDuplicates(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Beta"}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeDuplicates()
+	section := app.analyzeDuplicates(context.Background())
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 duplicate issues, got %d", len(section.Issues))
@@ -126,13 +128,24 @@ func TestAnalyzeGaps(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeGaps()
+	section := app.analyzeGaps(context.Background())
 
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 gap issue, got %d", len(section.Issues))
 	}
-	if section.Issues[0].Message != "Missing ID: T-002" {
-		t.Errorf("expected 'Missing ID: T-002', got %q", section.Issues[0].Message)
+	issue := section.Issues[0]
+	if issue.Message != "Missing ID: T-002" {
+		t.Errorf("expected 'Missing ID: T-002', got %q", issue.Message)
+	}
+	// EntityType is populated from the prefix → type map so the
+	// data-entry SPA can render a type badge on gap rows. EntityID
+	// stays empty (no entity exists at that ID), which keeps the row
+	// non-clickable.
+	if issue.EntityType != "ticket" {
+		t.Errorf("expected EntityType 'ticket', got %q", issue.EntityType)
+	}
+	if issue.EntityID != "" {
+		t.Errorf("expected empty EntityID for gap row, got %q", issue.EntityID)
 	}
 }
 
@@ -148,10 +161,38 @@ func TestAnalyzeGaps_ManualIDsSkipped(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "C-005", Type: "component", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeGaps()
+	section := app.analyzeGaps(context.Background())
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 gap issues for manual ID type, got %d", len(section.Issues))
+	}
+}
+
+// Entity types with multiple ID prefixes (id_prefixes plural) must still
+// resolve each prefix to the same entity type for gap-row attribution.
+func TestAnalyzeGaps_MultiplePrefixes(t *testing.T) {
+	g := newFixture()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"feature": {
+				IDPrefixes: []string{"FEAT-", "F-"},
+				Properties: map[string]metamodel.PropertyDef{},
+			},
+		},
+	}
+
+	g.AddNode(&entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{}})
+	// FEAT-002 missing
+	g.AddNode(&entity.Entity{ID: "FEAT-003", Type: "feature", Properties: map[string]interface{}{}})
+
+	app := newTestApp(g, meta)
+	section := app.analyzeGaps(context.Background())
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 gap issue, got %d", len(section.Issues))
+	}
+	if section.Issues[0].EntityType != "feature" {
+		t.Errorf("expected EntityType 'feature' (resolved via id_prefixes), got %q", section.Issues[0].EntityType)
 	}
 }
 
@@ -183,7 +224,7 @@ func TestAnalyzeCardinality(t *testing.T) {
 	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeCardinality()
+	section := app.analyzeCardinality(context.Background())
 
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 cardinality violation, got %d", len(section.Issues))
@@ -218,7 +259,7 @@ func TestAnalyzeCardinality_AllSatisfied(t *testing.T) {
 	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeCardinality()
+	section := app.analyzeCardinality(context.Background())
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 violations, got %d", len(section.Issues))
@@ -245,7 +286,7 @@ func TestAnalyzeProperties(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Good", "status": "open"}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeProperties()
+	section := app.analyzeProperties(context.Background())
 
 	if len(section.Issues) < 2 {
 		t.Fatalf("expected at least 2 property errors (missing title + invalid enum), got %d", len(section.Issues))
@@ -277,7 +318,7 @@ func TestAnalyzeProperties_AllValid(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Valid"}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeProperties()
+	section := app.analyzeProperties(context.Background())
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 property issues, got %d", len(section.Issues))
@@ -313,7 +354,7 @@ func TestAnalyzeValidations(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 validation issue, got %d", len(section.Issues))
@@ -348,7 +389,7 @@ func TestAnalyzeValidations_SurfacesScriptError(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) == 0 {
 		t.Fatal("expected the script error to surface as an analysis issue, got 0 issues")
@@ -393,7 +434,7 @@ func TestAnalyzeValidations_SurfacesLoadError(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) == 0 {
 		t.Fatal("expected the load error to surface as an analysis issue, got 0 issues")
@@ -427,7 +468,7 @@ func TestAnalyzeValidations_NoRules(t *testing.T) {
 	}
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) != 0 {
 		t.Errorf("expected 0 issues with no rules, got %d", len(section.Issues))
@@ -451,7 +492,7 @@ func TestRunAnalysis(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
-	result := app.runAnalysis()
+	result := app.runAnalysis(context.Background())
 
 	if len(result.Sections) != 6 {
 		t.Errorf("expected 6 sections, got %d", len(result.Sections))
@@ -472,7 +513,7 @@ func TestRunAnalysis_EmptyGraph(t *testing.T) {
 	}
 
 	app := newTestApp(g, meta)
-	result := app.runAnalysis()
+	result := app.runAnalysis(context.Background())
 
 	if result.ErrorCount != 0 {
 		t.Errorf("expected 0 errors for empty graph, got %d", result.ErrorCount)
@@ -518,7 +559,7 @@ func TestAnalysisIssueCounts(t *testing.T) {
 	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
 
 	app := newTestApp(g, meta)
-	errors, warnings := app.analysisIssueCounts()
+	errors, warnings := app.analysisIssueCounts(context.Background())
 
 	if errors < 1 {
 		t.Errorf("expected at least 1 error, got %d", errors)
@@ -594,7 +635,7 @@ func TestAnalyzeValidationsWithContentRules(t *testing.T) {
 	})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 content validation issue, got %d", len(section.Issues))
@@ -657,7 +698,7 @@ func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
 	})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) != 2 {
 		t.Fatalf("expected 2 violations (DEC-001 and DEC-002), got %d", len(section.Issues))
@@ -724,7 +765,7 @@ func TestAnalyzeValidationsWithChecklistRule(t *testing.T) {
 	})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 checklist validation issue, got %d", len(section.Issues))
@@ -779,12 +820,35 @@ func TestAnalyzeValidationsWithChecklistAllowSkipped(t *testing.T) {
 	})
 
 	app := newTestApp(g, meta)
-	section := app.analyzeValidations()
+	section := app.analyzeValidations(context.Background())
 
 	if len(section.Issues) != 1 {
 		t.Fatalf("expected 1 checklist validation issue, got %d", len(section.Issues))
 	}
 	if section.Issues[0].EntityID != "CHK-002" {
 		t.Errorf("expected violation on CHK-002, got %s", section.Issues[0].EntityID)
+	}
+}
+
+// TestRunAnalysisSectionNames pins the ordered list of section names that
+// runAnalysis() publishes. These names are load-bearing across the wire:
+// the data-entry SPA (frontend/src/views/AnalyzeView.vue CHECK_TYPES) keys
+// off them to render check-cards, and the e2e suite
+// (e2e/tests/fixtures.ts ANALYSIS_CHECKS) asserts the same ordered list.
+// Renaming a section here without updating both consumers silently
+// regresses the GH#785 hidden-card bug.
+func TestRunAnalysisSectionNames(t *testing.T) {
+	app := newTestApp(newFixture(), &metamodel.Metamodel{})
+	result := app.runAnalysis(context.Background())
+	got := make([]string, len(result.Sections))
+	for i, s := range result.Sections {
+		got[i] = s.Name
+	}
+	want := []string{"Properties", "Cardinality", "Validations", "Orphans", "Duplicates", "ID Gaps"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("runAnalysis section names changed: got %v, want %v.\n"+
+			"If this is intentional, update frontend/src/views/AnalyzeView.vue\n"+
+			"CHECK_TYPES and e2e/tests/fixtures.ts ANALYSIS_CHECKS in lockstep.",
+			got, want)
 	}
 }

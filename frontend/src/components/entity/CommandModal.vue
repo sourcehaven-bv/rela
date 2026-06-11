@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import type { Command } from '@/types'
 import { useModalStack } from '@/composables/modalStack'
+import { getErrorMessage } from '@/api'
 import { useConfirm } from '@/composables/useConfirm'
 
 const props = defineProps<{
@@ -82,7 +83,7 @@ async function runCommand(cmd: Command) {
       running.value = false
     }
   } catch (err) {
-    output.value.push({ type: 'text', text: `Error: ${err instanceof Error ? err.message : 'Connection failed'}` })
+    output.value.push({ type: 'text', text: `Error: ${getErrorMessage(err, 'Connection failed')}` })
     success.value = false
     running.value = false
   }

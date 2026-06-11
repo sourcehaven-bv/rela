@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/natsort"
 )
 
 // LinearSearch is a SearchIndex that performs brute-force substring matching.
@@ -67,6 +68,14 @@ func (l *LinearSearch) advanceLastModified(t time.Time) {
 	}
 }
 
+// Search returns the IDs of entities whose indexed text matches.
+//
+// LinearSearch has no relevance scoring (it is brute-force substring
+// matching), so the contract's "ordered by relevance" cannot apply;
+// results are returned in natural-sort ID order instead — stable and
+// deterministic across calls. All matches are collected before sorting
+// and truncating, so a limit returns the first-N of that defined order
+// rather than an arbitrary subset of the map's randomized iteration.
 func (l *LinearSearch) Search(text string, limit int) ([]string, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -75,10 +84,11 @@ func (l *LinearSearch) Search(text string, limit int) ([]string, error) {
 	for _, e := range l.entities {
 		if MatchText(e, text) {
 			ids = append(ids, e.ID)
-			if limit > 0 && len(ids) >= limit {
-				break
-			}
 		}
+	}
+	natsort.Strings(ids)
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
 	}
 	return ids, nil
 }

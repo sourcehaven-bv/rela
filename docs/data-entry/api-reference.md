@@ -308,6 +308,37 @@ branch in production. A principal with all verbs denied receives
 `_actions: {}` — same shape, all values false. A principal with
 every verb granted receives `_actions` with all values true.
 
+### How the SPA consumes `_actions`
+
+Phase 2 (TKT-LFT2) ships the SPA consumers. Each write affordance
+(delete button, edit button, "+ New" button, drag-drop, Del-key
+handler) consults `entity._actions[verb]` and renders only when the
+verdict is anything other than explicit `false`. Concretely:
+
+- `entity._actions?.delete !== false` → render the delete button.
+- `entity._actions?.update !== false` → render the edit button and
+  enable drag-drop in Kanban.
+- `listResponse._actions?.create !== false` → render the "+ New"
+  button on list / Kanban pages.
+- Absent `_actions` (non-data-entry callers, pre-rollout servers) →
+  defensive render; the server still 403s on the actual write.
+- Direct-URL navigation to `/form/:id/:entityId` when the loaded
+  entity's `_actions.update === false` → renders a "This entity is
+  not editable" message in place of the form.
+
+In **read-only mode** (`rela-server --read-only`), entity-CRUD
+controls are absent across the SPA — no "+ New", no delete buttons,
+no Edit buttons, drag-drop disabled. Deferred phase-2 sites (Lua
+command buttons, settings / theme / git writes, relation add/remove
+inside form widgets, inline-edit buttons in related-entity cards)
+remain visible and 403 at the server on click; future phases gate
+them as new verbs land in the ACL primitive (see TKT-XZEY).
+
+A development-mode console warning fires once per request path when
+a whitelisted API response (`listEntities`, `getEntity`,
+`createEntity`, `updateEntity`) omits `_actions`. Production builds
+suppress it.
+
 ### The cardinal rule
 
 **`_actions` is a UI hint, not authorization.** The server
@@ -351,3 +382,162 @@ that's expected and documents the scope.
   v1 is replacement-only at the list level + upsert at the per-edge level.
 - **Cross-entity atomic transactions.** A single PATCH targets one entity;
   there is no batch / transaction surface across entities.
+
+## Affordances: `_fields` and `_relations` (TKT-G7N5)
+
+Per-entity GET responses carry two affordance maps alongside the entity
+payload: `_fields` (field-level write / option verdicts) and `_relations`
+(relation-type-level create / remove / meta-field verdicts). The SPA reads
+these to render disabled inputs, filtered enum selects, and hidden + Add /
+x buttons. Writes that contradict a verdict return 403.
+
+### Verdict source
+
+Verdicts come from one of three sources, selected at server startup by the
+`RELA_AFFORDANCE_PROFILE` env var (tests pass the resolver directly):
+
+| Value | Behavior |
+|---|---|
+| unset / empty | **Policy-backed** when `acl.yaml` declares any affordance block (`fields:` / `visible:` / `options:` / `relations:`); otherwise permissive (both wire maps emit as `{}`). |
+| `none` | Permissive — explicit opt-out even when a policy has affordance blocks. |
+| `demo` | Hardcoded fixture against the `ticket` entity type — exercises every affordance code path for manual UI testing. Overrides the policy. |
+| any other | Unknown — logs a warning and falls back to policy / permissive. Never panics. |
+
+The policy-backed resolver compiles `when:` predicates from `acl.yaml` at
+startup and evaluates them per entity. See the [security model
+affordances section](../security.md#field--and-relation-level-affordances)
+for the `acl.yaml` schema, the predicate language, and the closed-world /
+cross-role semantics. The wire shape and SPA rendering below are identical
+regardless of source.
+
+### Wire shape
+
+```json
+{
+  "id": "TKT-001",
+  "type": "ticket",
+  "properties": { /* hidden fields are OMITTED entirely */ },
+  "_fields": {
+    "kind": { "writable": false },
+    "status": { "options": { "done": false } }
+  },
+  "_relations": {
+    "affects":    { "creatable": false },
+    "implements": { "removable": false },
+    "has-planning": { "fields": { "note": { "writable": false } } }
+  }
+}
+```
+
+Both `_fields` and `_relations` are **sparse**: only entries that deviate
+from the permissive default appear. An absent key in either map means
+"default" — writable, all options allowed, creatable / removable. Under the
+`none` profile both maps emit as `{}` (present, empty) — a closed-world
+signal letting the SPA distinguish "evaluated, no deviations" from
+"affordances not available" (anonymous fallback / pre-rollout server).
+
+Hidden fields are doubly invisible: omitted from `properties` AND absent
+from `_fields`. The SPA filters its config-driven form-field list against
+both: a field declared in `data-entry.yaml` is rendered only if it appears
+in `_fields` OR `properties`. This makes "hidden = omitted" actually hide
+the input.
+
+### Write-side parity
+
+Every relevant PATCH / POST / DELETE handler consults the same resolver as
+the GET. A stale SPA client that submits a write contradicting a verdict
+receives 403:
+
+| Operation | Verdict checked | 403 `rule_id` shape |
+|---|---|---|
+| `PATCH /entities/<type>/<id>` with hidden field set or unset | `_fields.<name>` visibility | `field-affordance:hidden:<name>` |
+| Same, with read-only field set or unset | `_fields.<name>.writable` | `field-affordance:read-only:<name>` |
+| Same, with disallowed enum value | `_fields.<name>.options.<value>` | `field-affordance:enum-filtered:<name>=<value>` |
+| `POST /entities/<type>/<id>/relations/<rel>` | `_relations.<rel>.creatable` | `relation-affordance:not-creatable:<rel>` |
+| `DELETE /entities/<type>/<id>/relations/<rel>/<peer>` | `_relations.<rel>.removable` | `relation-affordance:not-removable:<rel>` |
+| `PATCH /entities/<type>/<id>/relations/<rel>/<peer>` with non-writable meta | `_relations.<rel>.fields.<meta>.writable` | `relation-affordance:meta-read-only:<rel>.<meta>` |
+| Unified `PATCH /entities/<type>/<id>` adding / removing edges or writing meta | as above | as above |
+
+Unknown fields (declared neither in the metamodel nor by the resolver)
+return 403 with the SAME `field-affordance:hidden:<name>` shape as
+genuinely-hidden fields. This closes the side channel where an attacker
+could otherwise distinguish "hidden from me" from "doesn't exist."
+
+The 403 body shape is the same as for ACL denials:
+
+```json
+{
+  "error": "forbidden",
+  "rule_kind": "affordance",
+  "rule_id": "field-affordance:read-only:kind",
+  "reason": "field \"kind\" is not writable"
+}
+```
+
+Audit log entries for these 403s use the existing `denied-write` op with
+the `reason` field prefixed `affordance:<rule>:<path>` (vs `acl:` for true
+ACL denials), so log readers can distinguish the two sources.
+
+Read-only fields use strict 403 semantics: any presence of a read-only
+field in `properties` or `properties_unset` rejects the whole PATCH,
+including any writable fields in the same body. The SPA's `useAutoSave`
+suppresses no-op PATCHes client-side via its `lastSeenServer` snapshot,
+so no real SPA path produces a same-value PATCH; the rejection exists
+for defense against hand-crafted clients.
+
+### Create-mode affordances: dry-run (`?dry_run=true`) (TKT-3I5U)
+
+The create form has no persisted entity to derive `_fields` from, and
+verdicts can depend on the candidate's field *values* (value-dependent
+`when:` predicates), so a static per-type verdict won't do. Instead the
+create path is evaluated as a **dry run**:
+
+```http
+POST /api/v1/<plural>?dry_run=true
+Content-Type: application/json
+
+{ "properties": { ... }, "content": "..." }
+```
+
+The handler runs the same defaults + affordance evaluation the real
+create would, against the candidate (type + supplied properties, no
+persisted ID), and returns a normal per-entity response shape —
+`_fields`, `_relations`, stripped hidden `properties`, and DEC-HWZHA
+soft `warnings` — **without persisting anything, without an audit row,
+and without taking the write lock** (it is a read-shaped operation).
+The response is `Cache-Control: no-store` with no ETag.
+
+Properties:
+
+- **Advisory only.** The verdicts are a UI hint. The real create
+  (`POST` without `?dry_run`) re-runs the affordance gate and is the
+  sole authorization point — a client that POSTs a denied field still
+  gets the 403 from the [write-side parity](#write-side-parity) table.
+- **Value-dependent.** Because verdicts are computed against the
+  supplied values, the SPA re-requests (debounced) as the user types so
+  a field whose writability depends on another field updates live.
+- **Relations not staged.** A candidate has no real ID, so edges can't
+  be staged; `_relations` reflects the per-type verdict only.
+- **Fail-open client.** If the dry-run request fails, the SPA renders
+  the form unrestricted — the commit gate, not the hint, is the
+  boundary.
+
+The SPA create form (`DynamicForm`) consumes this to disable read-only
+fields, omit hidden fields, and filter enum options, then commits only
+the visible + writable keys; the server fills hidden / read-only
+defaults itself (downstream of the gate).
+
+### Out of scope (this ticket)
+
+- **List-query affordances.** `_fields` and `_relations` ride only on
+  per-entity GET and the dry-run create; list / collection responses
+  keep their existing shape.
+- **Per-link verdicts** (different verdicts for different links of the
+  same relation type). Deferred — requires per-link state-dependent
+  gates.
+- **Staged-relation validation.** The create form's relation pickers are
+  gated only at commit, not during the dry-run (no candidate ID to hang
+  edges on).
+- **Inline dry-run warning display.** The dry-run returns soft
+  `warnings`, but the create form does not yet render them per-field;
+  they still surface on the commit response.

@@ -5,23 +5,21 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// setupTestGraph builds a small graph and attaches services to the
-// test context. Returns the metamodel used so tests can reference it.
-func setupTestGraph(t *testing.T) *metamodel.Metamodel {
+// setupExportGraph builds a small graph and returns the services and
+// metamodel for export tests to share.
+func setupExportGraph(t *testing.T) (*cliServices, *metamodel.Metamodel) {
 	t.Helper()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -50,86 +48,71 @@ func setupTestGraph(t *testing.T) *metamodel.Metamodel {
 		},
 	}
 
-	s := memstore.New()
-	ctx := context.Background()
-	seedE := func(b *testutil.EntityBuilder) {
-		_ = s.CreateEntity(ctx, b.Build())
-	}
-	seedR := func(from, relType, to string) {
-		_, _ = s.CreateRelation(ctx, from, relType, to, nil)
-	}
-
-	seedE(testutil.EntityFor(meta, "control").
+	seeder := newStoreSeeder(meta)
+	seeder.addEntity(testutil.EntityFor(meta, "control").
 		ID("CTRL-001").
 		With("title", "Access Control Policy").
 		With("status", "implemented").
 		With("iso27001", "A.5.15"))
 
-	seedE(testutil.EntityFor(meta, "control").
+	seeder.addEntity(testutil.EntityFor(meta, "control").
 		ID("CTRL-002").
 		With("title", "Password Policy").
 		With("status", "draft").
 		With("iso27001", "A.9.4.3"))
 
-	seedE(testutil.EntityFor(meta, "risk").
+	seeder.addEntity(testutil.EntityFor(meta, "risk").
 		ID("RISK-001").
 		With("title", "Unauthorized Access").
 		With("severity", "high"))
 
-	seedE(testutil.EntityFor(meta, "evidence").
+	seeder.addEntity(testutil.EntityFor(meta, "evidence").
 		ID("EV-001").
 		With("title", "Access Control Audit Report").
 		With("valid_until", "2025-12-31"))
 
-	seedR("CTRL-001", "mitigates", "RISK-001")
-	seedR("CTRL-002", "mitigates", "RISK-001")
-	seedR("CTRL-001", "evidencedBy", "EV-001")
+	seeder.addRelation("CTRL-001", "mitigates", "RISK-001")
+	seeder.addRelation("CTRL-002", "mitigates", "RISK-001")
+	seeder.addRelation("CTRL-001", "evidencedBy", "EV-001")
 
-	svc, err := newCLIServicesFromAppbuild(
-		appbuild.NewForTest(meta, appbuild.WithTestStore(s)),
-	)
-	if err != nil {
-		t.Fatalf("newCLIServicesFromAppbuild: %v", err)
-	}
-	//nolint:fatcontext // testCtx is a sequential-test fixture, not a per-call context
-	testCtx = attachServices(t.Context(), svc)
-	out = output.New(output.FormatTable)
-	return meta
+	return seeder.build(t), meta
 }
 
-func TestExportEntitiesJSON(t *testing.T) {
-	setupTestGraph(t)
-	exportFormat = "json"
-	exportWithRelations = false
-
-	// Capture stdout
+// captureStdout runs fn while redirecting os.Stdout into a buffer.
+// Returns the captured output.
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
+	err := fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), err
+}
 
-	err := exportEntities(cliReadFromContext(testCtx), "control")
+func TestExportEntitiesJSON(t *testing.T) {
+	svc, _ := setupExportGraph(t)
+	cmd := &ExportCmd{Format: "json"}
+
+	output, err := captureStdout(t, func() error {
+		return cmd.exportEntities(context.Background(), svc, "control")
+	})
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
 
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	jsonOutput := buf.String()
-
-	// Parse JSON
 	var entities []ExportEntity
-	if err := json.Unmarshal([]byte(jsonOutput), &entities); err != nil {
-		t.Fatalf("Failed to parse JSON output: %v\nOutput was: %s", err, jsonOutput)
+	if err := json.Unmarshal([]byte(output), &entities); err != nil {
+		t.Fatalf("Failed to parse JSON output: %v\nOutput was: %s", err, output)
 	}
 
 	if len(entities) != 2 {
 		t.Errorf("Expected 2 entities, got %d", len(entities))
 	}
 
-	// Check first entity (should be CTRL-001 due to sorting)
 	if entities[0].ID != "CTRL-001" {
 		t.Errorf("Expected first entity to be CTRL-001, got %s", entities[0].ID)
 	}
@@ -142,32 +125,21 @@ func TestExportEntitiesJSON(t *testing.T) {
 }
 
 func TestExportEntitiesWithRelations(t *testing.T) {
-	setupTestGraph(t)
-	exportFormat = "json"
-	exportWithRelations = true
+	svc, _ := setupExportGraph(t)
+	cmd := &ExportCmd{Format: "json", WithRelations: true}
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := exportEntities(cliReadFromContext(testCtx), "control")
+	output, err := captureStdout(t, func() error {
+		return cmd.exportEntities(context.Background(), svc, "control")
+	})
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
 
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	jsonOutput := buf.String()
-
 	var entities []ExportEntity
-	if err := json.Unmarshal([]byte(jsonOutput), &entities); err != nil {
+	if err := json.Unmarshal([]byte(output), &entities); err != nil {
 		t.Fatalf("Failed to parse JSON output: %v", err)
 	}
 
-	// CTRL-001 should have relations
 	var ctrl1 *ExportEntity
 	for i := range entities {
 		if entities[i].ID == "CTRL-001" {
@@ -188,7 +160,6 @@ func TestExportEntitiesWithRelations(t *testing.T) {
 		t.Fatal("Expected outgoing relations")
 	}
 
-	// Check mitigates relation
 	mitigates := ctrl1.Relations.Outgoing["mitigates"]
 	if len(mitigates) != 1 {
 		t.Errorf("Expected 1 mitigates relation, got %d", len(mitigates))
@@ -197,7 +168,6 @@ func TestExportEntitiesWithRelations(t *testing.T) {
 		t.Errorf("Expected target RISK-001, got %s", mitigates[0].ID)
 	}
 
-	// Check evidencedBy relation
 	evidencedBy := ctrl1.Relations.Outgoing["evidencedBy"]
 	if len(evidencedBy) != 1 {
 		t.Errorf("Expected 1 evidencedBy relation, got %d", len(evidencedBy))
@@ -205,40 +175,28 @@ func TestExportEntitiesWithRelations(t *testing.T) {
 }
 
 func TestExportEntitiesCSV(t *testing.T) {
-	setupTestGraph(t)
-	exportFormat = "csv"
-	exportWithRelations = false
+	svc, _ := setupExportGraph(t)
+	cmd := &ExportCmd{Format: "csv"}
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	entities := fixtureEntities("control")
+	entities := fixtureEntities(t, svc, "control")
 	exportData := make([]ExportEntity, 0, len(entities))
 	for _, e := range entities {
 		exportData = append(exportData, entityToExport(e))
 	}
 
-	err := writeCSV(exportData, entities)
+	output, err := captureStdout(t, func() error {
+		return cmd.writeCSV(exportData, entities)
+	})
 	if err != nil {
 		t.Fatalf("writeCSV failed: %v", err)
 	}
 
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	csvOutput := buf.String()
-
-	// Parse CSV
-	reader := csv.NewReader(strings.NewReader(csvOutput))
+	reader := csv.NewReader(strings.NewReader(output))
 	records, err := reader.ReadAll()
 	if err != nil {
 		t.Fatalf("Failed to parse CSV: %v", err)
 	}
 
-	// Check header
 	if len(records) < 1 {
 		t.Fatal("Expected at least header row")
 	}
@@ -248,7 +206,6 @@ func TestExportEntitiesCSV(t *testing.T) {
 		t.Errorf("Unexpected header: %v", header)
 	}
 
-	// Should have title and status columns
 	hasTitle := false
 	hasStatus := false
 	for _, h := range header {
@@ -265,30 +222,19 @@ func TestExportEntitiesCSV(t *testing.T) {
 }
 
 func TestExportEntitiesYAML(t *testing.T) {
-	setupTestGraph(t)
-	exportFormat = "yaml"
-	exportWithRelations = false
+	svc, _ := setupExportGraph(t)
+	cmd := &ExportCmd{Format: "yaml"}
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := exportEntities(cliReadFromContext(testCtx), "control")
+	output, err := captureStdout(t, func() error {
+		return cmd.exportEntities(context.Background(), svc, "control")
+	})
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
 
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	yamlOutput := buf.String()
-
-	// Parse YAML
 	var entities []ExportEntity
-	if err := yaml.Unmarshal([]byte(yamlOutput), &entities); err != nil {
-		t.Fatalf("Failed to parse YAML output: %v\nOutput was: %s", err, yamlOutput)
+	if err := yaml.Unmarshal([]byte(output), &entities); err != nil {
+		t.Fatalf("Failed to parse YAML output: %v\nOutput was: %s", err, output)
 	}
 
 	if len(entities) != 2 {
@@ -297,73 +243,50 @@ func TestExportEntitiesYAML(t *testing.T) {
 }
 
 func TestExportAllData(t *testing.T) {
-	setupTestGraph(t)
-	exportFormat = "json"
-	exportWithRelations = false
-	exportAll = true
+	svc, _ := setupExportGraph(t)
+	cmd := &ExportCmd{Format: "json", All: true}
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := exportAllData(cliReadFromContext(testCtx))
+	output, err := captureStdout(t, func() error {
+		return cmd.exportAllData(context.Background(), svc)
+	})
 	if err != nil {
 		t.Fatalf("exportAllData failed: %v", err)
 	}
 
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	jsonOutput := buf.String()
-
 	var fullExport FullExport
-	if err := json.Unmarshal([]byte(jsonOutput), &fullExport); err != nil {
+	if err := json.Unmarshal([]byte(output), &fullExport); err != nil {
 		t.Fatalf("Failed to parse JSON output: %v", err)
 	}
 
-	// Should have 4 entities (2 controls, 1 risk, 1 evidence)
 	if len(fullExport.Entities) != 4 {
 		t.Errorf("Expected 4 entities, got %d", len(fullExport.Entities))
 	}
 
-	// Should have 3 relations
 	if len(fullExport.Relations) != 3 {
 		t.Errorf("Expected 3 relations, got %d", len(fullExport.Relations))
 	}
 }
 
 func TestExportEmptyResult(t *testing.T) {
-	meta := setupTestGraph(t)
-	exportFormat = "json"
-	exportWithRelations = false
+	svc, meta := setupExportGraph(t)
+	cmd := &ExportCmd{Format: "json"}
 
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	// Export a type that exists in metamodel but has no entities
-	// We need to add the type to metamodel first
+	// Export a type that exists in metamodel but has no entities.
 	meta.Entities["procedure"] = metamodel.EntityDef{
 		Label:    "Procedure",
 		IDPrefix: "PROC-",
 	}
 
-	err := exportEntities(cliReadFromContext(testCtx), "procedure")
+	output, err := captureStdout(t, func() error {
+		return cmd.exportEntities(context.Background(), svc, "procedure")
+	})
 	if err != nil {
 		t.Fatalf("exportEntities failed: %v", err)
 	}
 
-	w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	jsonOutput := strings.TrimSpace(buf.String())
-
-	if jsonOutput != "[]" {
-		t.Errorf("Expected empty array '[]', got: %s", jsonOutput)
+	trimmed := strings.TrimSpace(output)
+	if trimmed != "[]" {
+		t.Errorf("Expected empty array '[]', got: %s", trimmed)
 	}
 }
 
@@ -388,7 +311,6 @@ func TestFormatValue(t *testing.T) {
 }
 
 func TestFormatRelationsMap(t *testing.T) {
-	// Empty map
 	result := formatRelationsMap(nil)
 	if result != "" {
 		t.Errorf("Expected empty string for nil map, got: %s", result)
@@ -399,7 +321,6 @@ func TestFormatRelationsMap(t *testing.T) {
 		t.Errorf("Expected empty string for empty map, got: %s", result)
 	}
 
-	// Single relation type
 	m := map[string][]RelationTarget{
 		"mitigates": {{ID: "RISK-001"}},
 	}
@@ -408,7 +329,6 @@ func TestFormatRelationsMap(t *testing.T) {
 		t.Errorf("Unexpected result: %s", result)
 	}
 
-	// Multiple targets
 	m = map[string][]RelationTarget{
 		"mitigates": {{ID: "RISK-001"}, {ID: "RISK-002"}},
 	}
@@ -417,7 +337,6 @@ func TestFormatRelationsMap(t *testing.T) {
 		t.Errorf("Unexpected result: %s", result)
 	}
 
-	// Multiple relation types (should be sorted)
 	m = map[string][]RelationTarget{
 		"mitigates":   {{ID: "RISK-001"}},
 		"evidencedBy": {{ID: "EV-001"}},
@@ -436,7 +355,6 @@ func TestCollectPropertyKeys(t *testing.T) {
 
 	keys := collectPropertyKeys(entities)
 
-	// title and status should come first (priority)
 	if len(keys) < 2 {
 		t.Fatalf("Expected at least 2 keys, got %d", len(keys))
 	}
@@ -447,7 +365,6 @@ func TestCollectPropertyKeys(t *testing.T) {
 		t.Errorf("Expected 'status' second, got %s", keys[1])
 	}
 
-	// All keys should be present
 	keySet := make(map[string]bool)
 	for _, k := range keys {
 		keySet[k] = true

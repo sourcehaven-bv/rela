@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -10,11 +11,12 @@ import (
 // entity package tests — no need to duplicate either here.
 
 func TestUpdateCmd_PropertyFlagExists(t *testing.T) {
-	flag := updateCmd.Flags().Lookup("property")
-	if flag == nil {
-		t.Fatal("update command should have --property flag")
+	rt := reflect.TypeOf(UpdateCmd{})
+	f, ok := rt.FieldByName("Property")
+	if !ok {
+		t.Fatal("update command struct should have a Property field")
 	}
-	if flag.Shorthand != "P" {
-		t.Errorf("--property flag shorthand = %q, want %q", flag.Shorthand, "P")
+	if got := f.Tag.Get("short"); got != "P" {
+		t.Errorf("Property field short tag = %q, want %q", got, "P")
 	}
 }

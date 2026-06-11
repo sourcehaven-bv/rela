@@ -15,9 +15,48 @@ import (
 // unknown/unknown audit attribution in production would be an
 // invisible bug.
 func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
-	_, err := NewServer(nil, "0.0.0")
+	t.Parallel()
+	_, err := NewServer(Deps{}, "0.0.0")
 	if err == nil {
 		t.Fatal("expected error when WithPrincipal is omitted")
+	}
+}
+
+// TestNewServer_RejectsIncompleteDeps verifies that NewServer rejects a
+// Deps missing any required field, with a valid Principal supplied so
+// the Deps validation (not the Principal gate) is what fails. A zero
+// field deferred to request time would either nil-deref in a handler or
+// — for ProjectRoot — make lua_list silently walk the process CWD.
+func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
+	t.Parallel()
+	withPrincipal := WithPrincipal(principal.Principal{User: "test", Tool: principal.ToolMCP})
+
+	// makeTestServer builds a complete Deps; reuse it as the baseline.
+	complete := makeTestServer(t).deps
+	if _, err := NewServer(complete, "0.0.0", withPrincipal); err != nil {
+		t.Fatalf("complete Deps should construct: %v", err)
+	}
+
+	mutators := map[string]func(*Deps){
+		"Store":         func(d *Deps) { d.Store = nil },
+		"Meta":          func(d *Deps) { d.Meta = nil },
+		"Tracer":        func(d *Deps) { d.Tracer = nil },
+		"Searcher":      func(d *Deps) { d.Searcher = nil },
+		"Validator":     func(d *Deps) { d.Validator = nil },
+		"EntityManager": func(d *Deps) { d.EntityManager = nil },
+		"Config":        func(d *Deps) { d.Config = nil },
+		"Watcher":       func(d *Deps) { d.Watcher = nil },
+		"ProjectRoot":   func(d *Deps) { d.ProjectRoot = "" },
+	}
+	for field, zero := range mutators {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			deps := makeTestServer(t).deps
+			zero(&deps)
+			if _, err := NewServer(deps, "0.0.0", withPrincipal); err == nil {
+				t.Fatalf("expected error when %s is zero", field)
+			}
+		})
 	}
 }
 
@@ -26,6 +65,7 @@ func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
 // middleware. Registered handlers (including new write tools added
 // later) inherit the stamp automatically; no per-handler opt-in.
 func TestPrincipalMiddleware_WithOption(t *testing.T) {
+	t.Parallel()
 	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 
@@ -48,6 +88,7 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 // write tools) still inherit the Principal stamp because the
 // middleware sits in front of every registered handler.
 func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
+	t.Parallel()
 	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 

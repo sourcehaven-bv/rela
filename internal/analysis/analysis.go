@@ -131,8 +131,7 @@ func New(d Deps) (*Service, error) {
 // existing CLI summary behavior (AnalyzeAll reports `len(orphans)`
 // without an error channel). A returning-errors variant is a
 // candidate follow-up; not in scope for the package lift.
-func (s *Service) FindOrphansWithScope(opts Options) []*entity.Entity {
-	ctx := context.Background()
+func (s *Service) FindOrphansWithScope(ctx context.Context, opts Options) []*entity.Entity {
 	ids, err := s.deps.Tracer.FindOrphans(ctx)
 	if err != nil {
 		slog.Warn("analysis: tracer.FindOrphans failed; returning no orphans (results may under-count)", "error", err)
@@ -158,8 +157,8 @@ func (s *Service) FindOrphansWithScope(opts Options) []*entity.Entity {
 
 // FindDuplicates returns groups of entities with similar titles,
 // filtered by scope.
-func (s *Service) FindDuplicates(opts Options) []DuplicateGroup {
-	entities := filterByScope(collectEntities(s.deps.Store, store.EntityQuery{}), opts.Scope)
+func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateGroup {
+	entities := filterByScope(collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
 
 	titleGroups := make(map[string][]*entity.Entity)
 	for _, e := range entities {
@@ -185,7 +184,7 @@ func (s *Service) FindDuplicates(opts Options) []DuplicateGroup {
 
 // FindGaps returns gaps in ID sequences, filtered by scope. Excludes
 // entity types with manual (string) IDs.
-func (s *Service) FindGaps(opts Options) []GapResult {
+func (s *Service) FindGaps(ctx context.Context, opts Options) []GapResult {
 	meta := s.deps.Meta
 	stringIDPrefixes := make(map[string]bool)
 	for _, entityDef := range meta.Entities {
@@ -198,7 +197,7 @@ func (s *Service) FindGaps(opts Options) []GapResult {
 	}
 
 	prefixGroups := make(map[string][]int)
-	for _, e := range collectEntities(s.deps.Store, store.EntityQuery{}) {
+	for _, e := range collectEntities(ctx, s.deps.Store, store.EntityQuery{}) {
 		if !inScope(e.ID, opts.Scope) {
 			continue
 		}
@@ -242,28 +241,29 @@ func (s *Service) FindGaps(opts Options) []GapResult {
 
 // CheckCardinality checks all cardinality constraints, filtered by
 // scope.
-func (s *Service) CheckCardinality(opts Options) []CardinalityViolation {
+func (s *Service) CheckCardinality(ctx context.Context, opts Options) []CardinalityViolation {
 	violations := make([]CardinalityViolation, 0) //nolint:prealloc // capacity unknown
 
 	for relName, relDef := range s.deps.Meta.Relations {
-		violations = append(violations, s.checkMinOutgoing(relName, relDef, opts.Scope)...)
-		violations = append(violations, s.checkMaxOutgoing(relName, relDef, opts.Scope)...)
-		violations = append(violations, s.checkMinIncoming(relName, relDef, opts.Scope)...)
-		violations = append(violations, s.checkMaxIncoming(relName, relDef, opts.Scope)...)
+		violations = append(violations, s.checkMinOutgoing(ctx, relName, relDef, opts.Scope)...)
+		violations = append(violations, s.checkMaxOutgoing(ctx, relName, relDef, opts.Scope)...)
+		violations = append(violations, s.checkMinIncoming(ctx, relName, relDef, opts.Scope)...)
+		violations = append(violations, s.checkMaxIncoming(ctx, relName, relDef, opts.Scope)...)
 	}
 	return violations
 }
 
 func (s *Service) checkMinOutgoing(
-	relName string, relDef metamodel.RelationDef, scope map[string]bool,
+	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
 ) []CardinalityViolation {
 	if relDef.MinOutgoing == nil || *relDef.MinOutgoing == 0 {
 		return nil
 	}
 	var violations []CardinalityViolation
 	for _, sourceType := range relDef.From {
-		for _, e := range filterByScope(collectEntities(s.deps.Store, store.EntityQuery{Type: sourceType}), scope) {
-			count := s.countOutgoingByType(e.ID, relName)
+		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: sourceType})
+		for _, e := range filterByScope(entities, scope) {
+			count := s.countOutgoingByType(ctx, e.ID, relName)
 			if count < *relDef.MinOutgoing {
 				violations = append(violations, CardinalityViolation{
 					EntityID:     e.ID,
@@ -279,15 +279,16 @@ func (s *Service) checkMinOutgoing(
 }
 
 func (s *Service) checkMaxOutgoing(
-	relName string, relDef metamodel.RelationDef, scope map[string]bool,
+	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
 ) []CardinalityViolation {
 	if relDef.MaxOutgoing == nil {
 		return nil
 	}
 	var violations []CardinalityViolation
 	for _, sourceType := range relDef.From {
-		for _, e := range filterByScope(collectEntities(s.deps.Store, store.EntityQuery{Type: sourceType}), scope) {
-			count := s.countOutgoingByType(e.ID, relName)
+		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: sourceType})
+		for _, e := range filterByScope(entities, scope) {
+			count := s.countOutgoingByType(ctx, e.ID, relName)
 			if count > *relDef.MaxOutgoing {
 				violations = append(violations, CardinalityViolation{
 					EntityID:     e.ID,
@@ -303,15 +304,16 @@ func (s *Service) checkMaxOutgoing(
 }
 
 func (s *Service) checkMinIncoming(
-	relName string, relDef metamodel.RelationDef, scope map[string]bool,
+	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
 ) []CardinalityViolation {
 	if relDef.MinIncoming == nil || *relDef.MinIncoming == 0 {
 		return nil
 	}
 	var violations []CardinalityViolation
 	for _, targetType := range relDef.To {
-		for _, e := range filterByScope(collectEntities(s.deps.Store, store.EntityQuery{Type: targetType}), scope) {
-			count := s.countIncomingByType(e.ID, relName)
+		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: targetType})
+		for _, e := range filterByScope(entities, scope) {
+			count := s.countIncomingByType(ctx, e.ID, relName)
 			if count < *relDef.MinIncoming {
 				relLabel := relName
 				if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
@@ -331,15 +333,16 @@ func (s *Service) checkMinIncoming(
 }
 
 func (s *Service) checkMaxIncoming(
-	relName string, relDef metamodel.RelationDef, scope map[string]bool,
+	ctx context.Context, relName string, relDef metamodel.RelationDef, scope map[string]bool,
 ) []CardinalityViolation {
 	if relDef.MaxIncoming == nil {
 		return nil
 	}
 	var violations []CardinalityViolation
 	for _, targetType := range relDef.To {
-		for _, e := range filterByScope(collectEntities(s.deps.Store, store.EntityQuery{Type: targetType}), scope) {
-			count := s.countIncomingByType(e.ID, relName)
+		entities := collectEntities(ctx, s.deps.Store, store.EntityQuery{Type: targetType})
+		for _, e := range filterByScope(entities, scope) {
+			count := s.countIncomingByType(ctx, e.ID, relName)
 			if count > *relDef.MaxIncoming {
 				relLabel := relName
 				if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
@@ -358,8 +361,8 @@ func (s *Service) checkMaxIncoming(
 	return violations
 }
 
-func (s *Service) countOutgoingByType(entityID, relName string) int {
-	n, _ := s.deps.Store.CountRelations(context.Background(), store.RelationQuery{
+func (s *Service) countOutgoingByType(ctx context.Context, entityID, relName string) int {
+	n, _ := s.deps.Store.CountRelations(ctx, store.RelationQuery{
 		EntityID:  entityID,
 		Direction: store.DirectionOutgoing,
 		Type:      relName,
@@ -367,8 +370,8 @@ func (s *Service) countOutgoingByType(entityID, relName string) int {
 	return n
 }
 
-func (s *Service) countIncomingByType(entityID, relName string) int {
-	n, _ := s.deps.Store.CountRelations(context.Background(), store.RelationQuery{
+func (s *Service) countIncomingByType(ctx context.Context, entityID, relName string) int {
+	n, _ := s.deps.Store.CountRelations(ctx, store.RelationQuery{
 		EntityID:  entityID,
 		Direction: store.DirectionIncoming,
 		Type:      relName,
@@ -393,7 +396,7 @@ func (s *Service) newValidationService() *validation.Service {
 // RunValidations executes all custom validation rules from the
 // metamodel, filtered by scope.
 func (s *Service) RunValidations(ctx context.Context, opts Options) ValidationResult {
-	return s.newValidationService().Check(ctx, collectEntities(s.deps.Store, store.EntityQuery{}), opts.Scope)
+	return s.newValidationService().Check(ctx, collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
 }
 
 // RunValidationsFiltered executes custom validation rules matching
@@ -415,7 +418,7 @@ func (s *Service) RunValidationsFiltered(
 		}
 	}
 
-	return svc.CheckRules(ctx, collectEntities(s.deps.Store, store.EntityQuery{}), opts.Scope, ruleNames)
+	return svc.CheckRules(ctx, collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope, ruleNames)
 }
 
 // matchesFilter returns true if the rule matches the filter criteria.
@@ -440,13 +443,13 @@ func CountValidationsBySeverity(violations []ValidationViolation) (errors, warni
 // AnalyzeAll runs all analyses and returns a summary of counts.
 func (s *Service) AnalyzeAll(ctx context.Context, opts Options) *Summary {
 	summary := &Summary{
-		Orphans:     len(s.FindOrphansWithScope(opts)),
-		Duplicates:  len(s.FindDuplicates(opts)),
-		Gaps:        len(s.FindGaps(opts)),
-		Cardinality: len(s.CheckCardinality(opts)),
+		Orphans:     len(s.FindOrphansWithScope(ctx, opts)),
+		Duplicates:  len(s.FindDuplicates(ctx, opts)),
+		Gaps:        len(s.FindGaps(ctx, opts)),
+		Cardinality: len(s.CheckCardinality(ctx, opts)),
 	}
 
-	for _, pe := range schema.ValidateEntityProperties(s.deps.Store, s.deps.Meta) {
+	for _, pe := range schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta) {
 		if !inScope(pe.EntityID, opts.Scope) {
 			continue
 		}
@@ -517,9 +520,9 @@ func findTempFilesInDir(fs storage.FS, dir string) []string {
 // collectEntities iterates the store yielding entities. On iteration
 // error, logs and returns the partial slice (callers cannot signal
 // errors today — see [Service.FindOrphansWithScope] for the rationale).
-func collectEntities(s store.Store, q store.EntityQuery) []*entity.Entity {
+func collectEntities(ctx context.Context, s store.Store, q store.EntityQuery) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
-	for e, err := range s.ListEntities(context.Background(), q) {
+	for e, err := range s.ListEntities(ctx, q) {
 		if err != nil {
 			slog.Warn("analysis: store.ListEntities iterator error; results may under-count",
 				"type", q.Type, "error", err)

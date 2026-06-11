@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -97,6 +98,13 @@ func (a *App) validateRelationsModern(
 				}
 			}
 
+			// Wire-format violation for managed order properties: only
+			// finite numeric values are acceptable on _order_out / _order_in
+			// because the engine's sort/midpoint math depends on them.
+			if err := validateManagedOrderMeta(canonical, ref, edgePath, &relDef); err != nil {
+				return nil, err
+			}
+
 			// Soft conditions surfaced as warnings. The peer is whichever
 			// side the path entity is NOT on.
 			ws := a.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
@@ -175,8 +183,19 @@ func (a *App) collectEdgeWarnings(
 		}
 	}
 
+	// Managed order properties are recognized when the relation type is
+	// orderable on the corresponding side. They are not declared in
+	// relDef.Properties — the engine reserves them.
+	isManagedOrderProperty := func(name string) bool {
+		return (name == metamodel.OrderPropertyOut && relDef.OutgoingOrderProperty() != "") ||
+			(name == metamodel.OrderPropertyIn && relDef.IncomingOrderProperty() != "")
+	}
+
 	// Closed-schema check on meta keys.
 	for k := range ref.Meta {
+		if isManagedOrderProperty(k) {
+			continue
+		}
 		if _, known := relDef.Properties[k]; !known {
 			warnings = append(warnings, Warning{
 				Code:      "unknown_meta_key",
@@ -187,6 +206,9 @@ func (a *App) collectEdgeWarnings(
 		}
 	}
 	for _, k := range ref.MetaUnset {
+		if isManagedOrderProperty(k) {
+			continue
+		}
 		if _, known := relDef.Properties[k]; !known {
 			warnings = append(warnings, Warning{
 				Code:      "unknown_meta_key",
@@ -257,15 +279,24 @@ func (a *App) applyRelationsModern(
 		relDef := meta.Relations[canonical]
 		direction := directionLabel(incoming)
 
+		// Dedup by ID. Duplicate resource identifiers in the body
+		// collapse to a single edge — matches the legacy IDs-only
+		// reconciler's set semantics and is what callers expect when
+		// e.g. a picker re-emits the same selection twice.
 		desiredByID := make(map[string]V1ResourceIdentifier, len(upd.Data))
+		desiredOrder := make([]string, 0, len(upd.Data))
 		for _, ref := range upd.Data {
+			if _, dup := desiredByID[ref.ID]; !dup {
+				desiredOrder = append(desiredOrder, ref.ID)
+			}
 			desiredByID[ref.ID] = ref
 		}
 
-		current := a.currentEdgesByPeer(entityID, canonical, incoming)
+		current := a.currentEdgesByPeer(ctx, entityID, canonical, incoming)
 
 		// Adds and upserts.
-		for _, ref := range upd.Data {
+		for _, id := range desiredOrder {
+			ref := desiredByID[id]
 			finalProps, finalContent, contentSet := mergeEdgeMeta(current[ref.ID], ref)
 
 			ws := requiredMetaWarnings(canonical, &relDef, ref, finalProps,
@@ -492,6 +523,38 @@ func requiredMetaWarnings(
 		}
 	}
 	return ws
+}
+
+// validateManagedOrderMeta enforces that values written into the managed
+// order properties (_order_out / _order_in) are finite numeric. Non-finite
+// or non-numeric values are wire-format violations (400) — the engine's
+// midpoint and sort logic depends on finite float64 values.
+func validateManagedOrderMeta(relType string, ref V1ResourceIdentifier, edgePath string, relDef *metamodel.RelationDef) error {
+	check := func(prop string) error {
+		v, present := ref.Meta[prop]
+		if !present {
+			return nil
+		}
+		if _, ok := entitymanager.FiniteOrder(v); ok {
+			return nil
+		}
+		return &wireError{
+			Code:   "order_value_invalid",
+			Path:   edgePath + "/meta/" + jsonPointerEscape(prop),
+			Detail: fmt.Sprintf("relation type %q managed order property %q must be a finite number", relType, prop),
+		}
+	}
+	if relDef.OutgoingOrderProperty() != "" {
+		if err := check(metamodel.OrderPropertyOut); err != nil {
+			return err
+		}
+	}
+	if relDef.IncomingOrderProperty() != "" {
+		if err := check(metamodel.OrderPropertyIn); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // structuralError is a typed hard-422 error from the modern reconciler:

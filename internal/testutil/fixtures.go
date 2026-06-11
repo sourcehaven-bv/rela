@@ -395,6 +395,15 @@ func (b *MetamodelBuilder) WithEntityProperty(entityName, propName, propType str
 	return b
 }
 
+// WithValidation appends a validation rule to the metamodel. Use for
+// tests whose subject is the rule itself (when/then or Lua) — the rule
+// stays at the call site while the entity-shape boilerplate comes from
+// the builder.
+func (b *MetamodelBuilder) WithValidation(rule metamodel.ValidationRule) *MetamodelBuilder {
+	b.meta.Validations = append(b.meta.Validations, rule)
+	return b
+}
+
 // WithRelation adds a relation definition to the metamodel.
 func (b *MetamodelBuilder) WithRelation(name, label string, from, to []string) *MetamodelBuilder {
 	b.meta.Relations[name] = metamodel.RelationDef{

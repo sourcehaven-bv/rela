@@ -33,6 +33,7 @@ func loadAndRun(t *testing.T, chunkname, code string) ([]StackFrame, error) {
 }
 
 func TestBuildScriptError_RuntimeNilIndex(t *testing.T) {
+	t.Parallel()
 	frames, err := loadAndRun(t, "actions/foo.lua", "local x = nil\nreturn x.bar")
 	if err == nil {
 		t.Fatal("expected error")
@@ -61,6 +62,7 @@ func TestBuildScriptError_RuntimeNilIndex(t *testing.T) {
 }
 
 func TestBuildScriptError_CompileError(t *testing.T) {
+	t.Parallel()
 	frames, err := loadAndRun(t, "actions/bad.lua", "local x is broken")
 	if err == nil {
 		t.Fatal("expected compile error")
@@ -85,6 +87,7 @@ func TestBuildScriptError_CompileError(t *testing.T) {
 }
 
 func TestBuildScriptError_ErrorRaisedWithTable(t *testing.T) {
+	t.Parallel()
 	frames, err := loadAndRun(t, "scripts/x.lua", "error({code=42})")
 	if err == nil {
 		t.Fatal("expected error")
@@ -108,6 +111,7 @@ func TestBuildScriptError_ErrorRaisedWithTable(t *testing.T) {
 }
 
 func TestBuildScriptError_PlainGoError(t *testing.T) {
+	t.Parallel()
 	se := BuildScriptError(BuildInput{
 		Surface: SurfaceAction,
 		Path:    "actions/foo.lua",
@@ -126,6 +130,7 @@ func TestBuildScriptError_PlainGoError(t *testing.T) {
 }
 
 func TestBuildScriptError_PopulatesSource(t *testing.T) {
+	t.Parallel()
 	// Use `local q = z.foo` instead of `return z.foo` — a `return` followed
 	// by another statement is a Lua syntax error, not a runtime one.
 	const code = "local x = 1\nlocal y = 2\nlocal z = nil\nlocal q = z.foo\nlocal w = 3\n"
@@ -165,6 +170,7 @@ func TestBuildScriptError_PopulatesSource(t *testing.T) {
 }
 
 func TestBuildScriptError_SourceClippedAtBoundaries(t *testing.T) {
+	t.Parallel()
 	const code = "local q = nil.foo\n"
 	frames, err := loadAndRun(t, "actions/edge.lua", code)
 	if err == nil {
@@ -193,6 +199,7 @@ func TestBuildScriptError_SourceClippedAtBoundaries(t *testing.T) {
 }
 
 func TestBuildScriptError_SourceSkippedForOversizedFile(t *testing.T) {
+	t.Parallel()
 	const code = "local q = nil.foo\n"
 	frames, err := loadAndRun(t, "actions/big.lua", code)
 
@@ -220,6 +227,7 @@ func TestBuildScriptError_SourceSkippedForOversizedFile(t *testing.T) {
 }
 
 func TestBuildScriptError_SourceRejectsTraversal(t *testing.T) {
+	t.Parallel()
 	const code = "local q = nil.foo\n"
 	frames, err := loadAndRun(t, "../etc/passwd", code)
 
@@ -242,6 +250,7 @@ func TestBuildScriptError_SourceRejectsTraversal(t *testing.T) {
 }
 
 func TestBuildScriptError_RedactsArgsByKey(t *testing.T) {
+	t.Parallel()
 	se := BuildScriptError(BuildInput{
 		Surface: SurfaceAction,
 		Path:    "actions/x.lua",
@@ -281,6 +290,7 @@ func TestBuildScriptError_RedactsArgsByKey(t *testing.T) {
 }
 
 func TestBuildScriptError_RedactsValueShape(t *testing.T) {
+	t.Parallel()
 	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.signature"
 	longHex := strings.Repeat("a1b2c3d4", 8) // 64 hex chars
 	longB64 := strings.Repeat("AbCdEfGh", 5) // 40 b64-ish chars
@@ -324,6 +334,7 @@ func TestBuildScriptError_RedactsValueShape(t *testing.T) {
 }
 
 func TestBuildScriptError_RedactsNestedArgs(t *testing.T) {
+	t.Parallel()
 	se := BuildScriptError(BuildInput{
 		Surface: SurfaceAction,
 		Path:    "x",
@@ -350,6 +361,7 @@ func TestBuildScriptError_RedactsNestedArgs(t *testing.T) {
 }
 
 func TestBuildScriptError_CapturedOutputRedactedAndCapped(t *testing.T) {
+	t.Parallel()
 	jwt := "eyJabc.def.ghi"
 	captured := []byte("hello\n" + jwt + "\nworld\n")
 
@@ -372,6 +384,7 @@ func TestBuildScriptError_CapturedOutputRedactedAndCapped(t *testing.T) {
 }
 
 func TestBuildScriptError_CapturedOutputCappedAt16K(t *testing.T) {
+	t.Parallel()
 	// Build 32KB of distinct lines so the value-shape redactor doesn't
 	// collapse the whole thing to "<redacted>" before truncation kicks in.
 	var sb strings.Builder
@@ -395,6 +408,7 @@ func TestBuildScriptError_CapturedOutputCappedAt16K(t *testing.T) {
 }
 
 func TestScriptError_Error(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		se   *ScriptError
@@ -418,6 +432,7 @@ func TestScriptError_Error(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tc.se.Error(); got != tc.want {
 				t.Errorf("Error()=%q, want %q", got, tc.want)
 			}

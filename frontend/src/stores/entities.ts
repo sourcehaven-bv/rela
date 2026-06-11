@@ -9,6 +9,7 @@ import {
   type EntityPatch,
 } from '@/api/entities'
 import type { Entity, CreateEntity, ListParams, ListMeta } from '@/types'
+import { getErrorMessage } from '@/api/errors'
 import { useGitStore } from './git'
 
 interface EntityCache {
@@ -31,7 +32,7 @@ function refreshGitStatus() {
 export const useEntitiesStore = defineStore('entities', () => {
   // State
   const cache = ref<Map<string, EntityCache>>(new Map())
-  const listCache = ref<Map<string, { data: Entity[]; meta: ListMeta; included?: Record<string, Entity>; timestamp: number }>>(
+  const listCache = ref<Map<string, { data: Entity[]; meta: ListMeta; included?: Record<string, Entity>; _actions?: Record<string, boolean>; timestamp: number }>>(
     new Map()
   )
   const loading = ref<Set<string>>(new Set())
@@ -73,12 +74,12 @@ export const useEntitiesStore = defineStore('entities', () => {
   })
 
   // Actions
-  async function fetchList(type: string, params?: ListParams): Promise<{ data: Entity[]; meta: ListMeta; included?: Record<string, Entity> }> {
+  async function fetchList(type: string, params?: ListParams): Promise<{ data: Entity[]; meta: ListMeta; included?: Record<string, Entity>; _actions?: Record<string, boolean> }> {
     const key = listCacheKey(type, params)
     const cached = listCache.value.get(key)
 
     if (cached && isCacheValid(cached.timestamp)) {
-      return { data: cached.data, meta: cached.meta, included: cached.included }
+      return { data: cached.data, meta: cached.meta, included: cached.included, _actions: cached._actions }
     }
 
     loading.value.add(`list:${type}`)
@@ -90,6 +91,7 @@ export const useEntitiesStore = defineStore('entities', () => {
         data: response.data,
         meta: response.meta,
         included: response.included,
+        _actions: response._actions,
         timestamp: Date.now(),
       })
 
@@ -101,7 +103,7 @@ export const useEntitiesStore = defineStore('entities', () => {
         })
       }
 
-      return { data: response.data, meta: response.meta, included: response.included }
+      return { data: response.data, meta: response.meta, included: response.included, _actions: response._actions }
     } finally {
       loading.value.delete(`list:${type}`)
     }
@@ -129,7 +131,7 @@ export const useEntitiesStore = defineStore('entities', () => {
       })
       return entity
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch entity'
+      const message = getErrorMessage(err, 'Failed to fetch entity')
       errors.value.set(key, message)
       throw err
     } finally {

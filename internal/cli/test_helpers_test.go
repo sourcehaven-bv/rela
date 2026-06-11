@@ -1,74 +1,23 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"testing"
 
-	"github.com/spf13/cobra"
-
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// testCtx is the cobra-context the test fixture stamps services into.
-// Subcommand RunE handlers read services via cli{Read,Write,Analyze}FromContext;
-// applySeeder attaches the seeder's bundle here so tests calling RunE(cmd, args)
-// with a `cmd` that wraps testCtx pick up the right services.
-//
-// Sequential by design: there is no `t.Parallel()` in this package yet —
-// the cobra-context migration removes the package-global blocker, but
-// actually opting tests into parallel is a separate cleanup.
-var testCtx context.Context
-
-// fixtureEntities returns every entity of the given type the active
-// test fixture knows about. Reads through the test context's read bundle.
-func fixtureEntities(entityType string) []*entity.Entity {
-	svc := cliReadFromContext(testCtx)
-	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store().ListEntities(
-		context.Background(),
-		store.EntityQuery{Type: entityType},
-	) {
-		if err != nil {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
-// fixtureAllEntities returns every entity in the active fixture.
-func fixtureAllEntities() []*entity.Entity {
-	svc := cliReadFromContext(testCtx)
-	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store().ListEntities(context.Background(), store.EntityQuery{}) {
-		if err != nil {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
-// fixtureAllRelations returns every relation in the active fixture.
-func fixtureAllRelations() []*entity.Relation {
-	svc := cliReadFromContext(testCtx)
-	out := make([]*entity.Relation, 0)
-	for r, err := range svc.Store().ListRelations(context.Background(), store.RelationQuery{}) {
-		if err != nil {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out
-}
-
-// storeSeeder is the test-side equivalent of a workspace fixture:
-// add entities/relations via seeder, then applySeeder to snapshot
-// them into a cliServices bundle and attach it to the test context.
+// storeSeeder builds a *cliServices around an in-memory store the
+// test populates via addEntity/addRelation. Same shape the production
+// code uses — newCLIServicesFromAppbuild wraps an appbuild.Services
+// that itself wraps the seeded memstore.
 type storeSeeder struct {
 	s    store.Store
 	meta *metamodel.Metamodel
@@ -91,49 +40,67 @@ func (ss *storeSeeder) addRelation(from, relType, to string) {
 	}
 }
 
-// build wraps the seeded store in an *appbuild.Services and returns a
-// *cliServices that satisfies cliRead / cliWrite / cliAnalyze. Tests
-// share the same appbuild-backed implementation production uses.
-func (ss *storeSeeder) build() *cliServices {
+func (ss *storeSeeder) build(t *testing.T) *cliServices {
+	t.Helper()
 	svc, err := newCLIServicesFromAppbuild(
-		appbuild.NewForTest(ss.meta, appbuild.WithTestStore(ss.s)),
+		appbuildtest.New(ss.meta, appbuildtest.WithStore(ss.s)),
 	)
 	if err != nil {
-		panic("storeSeeder.build: " + err.Error())
+		t.Fatalf("storeSeeder.build: %v", err)
 	}
 	return svc
 }
 
-// applySeeder snapshots the seeder's store into the package-level
-// testCtx so subcommand RunE handlers retrieve services via the
-// FromContext accessors. Walks all rooted commands and stamps the
-// context on each so tests that call subCmd.RunE(subCmd, args)
-// directly pick up the services.
-func applySeeder(s *storeSeeder) {
-	//nolint:fatcontext // applySeeder seeds a fresh test context; not reading from a passed-in one
-	testCtx = attachServices(context.Background(), s.build())
-	rootCmd.SetContext(testCtx)
-	setContextRecursive(testCtx, rootCmd)
+// fixtureEntities returns every entity of the given type from svc.
+func fixtureEntities(t *testing.T, svc *cliServices, entityType string) []*entity.Entity {
+	t.Helper()
+	out := make([]*entity.Entity, 0)
+	for e, err := range svc.Store().ListEntities(
+		context.Background(),
+		store.EntityQuery{Type: entityType},
+	) {
+		if err != nil {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
-func setContextRecursive(ctx context.Context, cmd *cobra.Command) {
-	cmd.SetContext(ctx)
-	for _, child := range cmd.Commands() {
-		setContextRecursive(ctx, child)
+// fixtureAllEntities returns every entity in svc.
+func fixtureAllEntities(t *testing.T, svc *cliServices) []*entity.Entity {
+	t.Helper()
+	out := make([]*entity.Entity, 0)
+	for e, err := range svc.Store().ListEntities(context.Background(), store.EntityQuery{}) {
+		if err != nil {
+			continue
+		}
+		out = append(out, e)
 	}
+	return out
 }
 
-// testCmd returns a *cobra.Command with the test context attached.
-// Pass this into subcommand RunE calls when the test needs to drive
-// the handler through the cobra path; the handler will read its
-// bundle via cliXFromContext(cmd.Context()). Panics if applySeeder
-// hasn't been called yet — that's almost certainly a test setup
-// bug (subcommand handler will nil-deref on its bundle accessor).
-func testCmd() *cobra.Command {
-	if testCtx == nil {
-		panic("testCmd: applySeeder must be called before testCmd")
+// fixtureAllRelations returns every relation in svc.
+func fixtureAllRelations(t *testing.T, svc *cliServices) []*entity.Relation {
+	t.Helper()
+	out := make([]*entity.Relation, 0)
+	for r, err := range svc.Store().ListRelations(context.Background(), store.RelationQuery{}) {
+		if err != nil {
+			continue
+		}
+		out = append(out, r)
 	}
-	c := &cobra.Command{}
-	c.SetContext(testCtx)
-	return c
+	return out
+}
+
+// withOutput captures the test's stdout into a buffer. Restores the
+// previous out writer on test cleanup. Use the returned buffer to
+// assert on rendered output.
+func withOutput(t *testing.T, format output.Format) *bytes.Buffer {
+	t.Helper()
+	buf := new(bytes.Buffer)
+	prev := out
+	out = output.NewWithWriter(buf, format)
+	t.Cleanup(func() { out = prev })
+	return buf
 }

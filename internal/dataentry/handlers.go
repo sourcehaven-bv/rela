@@ -5,7 +5,6 @@ import (
 	htmltemplate "html/template"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -27,61 +26,6 @@ type RelationHelp struct {
 	Cardinality string
 	Required    bool // true if min cardinality >= 1
 	Description htmltemplate.HTML
-}
-
-// maxFormBody caps request-body size for ParseForm handlers. 1 MiB is far
-// above any legitimate data-entry form payload but prevents a malicious or
-// buggy client from exhausting RAM.
-const maxFormBody = 1 << 20
-
-// handleToggleCheckbox toggles a markdown checkbox in entity content.
-func (a *App) handleToggleCheckbox(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
-	r.ParseForm() //nolint:errcheck // form parse errors are handled by empty values
-
-	entityID := r.FormValue("entity_id")
-	indexStr := r.FormValue("index")
-
-	idx, err := strconv.Atoi(indexStr)
-	if err != nil {
-		http.Error(w, "Invalid checkbox index", http.StatusBadRequest)
-		return
-	}
-
-	// Serialize against other mutations and against workspace reloads.
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	live, ok := a.getEntity(entityID)
-	if !ok {
-		http.Error(w, "Entity not found", http.StatusNotFound)
-		return
-	}
-
-	newContent, err := toggleCheckbox(live.Content, idx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Clone to avoid mutating the live graph node while other readers
-	// (which take no lock) may be iterating it.
-	updated := live.Clone()
-	updated.Content = newContent
-	if _, err := a.entityManager.UpdateEntity(r.Context(), updated); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		http.Error(w, fmt.Sprintf("Failed to write: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprint(w, simpleMarkdownToHTML(updated.Content))
 }
 
 // handleEntityHelp returns HTML fragment with documentation for an entity type.

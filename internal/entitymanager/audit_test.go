@@ -55,6 +55,7 @@ func ctxWithPrincipal(user, tool string) context.Context {
 // --- AC1: every entity write produces one audit record ---
 
 func TestAudit_AC1_EntityCreateRecordsOnce(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -94,6 +95,7 @@ func TestAudit_AC1_EntityCreateRecordsOnce(t *testing.T) {
 }
 
 func TestAudit_AC1_EntityUpdateRecordsChangedPropertyNames(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -139,6 +141,7 @@ func TestAudit_AC1_EntityUpdateRecordsChangedPropertyNames(t *testing.T) {
 }
 
 func TestAudit_AC1_EntityDeleteRecords(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -169,6 +172,7 @@ func TestAudit_AC1_EntityDeleteRecords(t *testing.T) {
 }
 
 func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -245,6 +249,7 @@ func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
 // --- AC2: every relation write produces one audit record ---
 
 func TestAudit_AC2_RelationCreateRecordsWithRelationSubject(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -288,6 +293,7 @@ func TestAudit_AC2_RelationCreateRecordsWithRelationSubject(t *testing.T) {
 }
 
 func TestAudit_AC2_RelationDeleteRecords(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -320,6 +326,7 @@ func TestAudit_AC2_RelationDeleteRecords(t *testing.T) {
 // --- AC3: Principal flows from ctx into the record ---
 
 func TestAudit_AC3_PrincipalFromCtx(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -339,6 +346,7 @@ func TestAudit_AC3_PrincipalFromCtx(t *testing.T) {
 }
 
 func TestAudit_AC3_PrincipalDefaultsUnknownWhenAbsent(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -357,6 +365,7 @@ func TestAudit_AC3_PrincipalDefaultsUnknownWhenAbsent(t *testing.T) {
 // --- AC7: delete-cascade produces 1+N records ---
 
 func TestAudit_AC7_DeleteCascadeProduces1PlusNRecords(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
@@ -413,6 +422,7 @@ func TestAudit_AC7_DeleteCascadeProduces1PlusNRecords(t *testing.T) {
 // --- AC5: triggered_by populated for automation-driven writes ---
 
 func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 
 	// Automation: when a requirement is created, auto-create a checklist
@@ -483,6 +493,7 @@ func TestAudit_AC5_TriggeredByOnAutomationCascade(t *testing.T) {
 // the intermediate hops fails this test, not just a direct
 // cascadeHost call.
 func TestAudit_IfExistsReplaceUsesCascadeLabel(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 
 	// Automation: when requirement.status becomes "active", create a
@@ -561,6 +572,7 @@ func TestAudit_IfExistsReplaceUsesCascadeLabel(t *testing.T) {
 // which causes the Runner to call WriteEntity — and asserts no
 // duplicate entity-create record appears.
 func TestAudit_CascadeWriteEntityIsSilent(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 
 	autos := []automation.Automation{
@@ -620,6 +632,7 @@ func TestAudit_CascadeWriteEntityIsSilent(t *testing.T) {
 // --- AC11: Nop is safe ---
 
 func TestAudit_AC11_NopRecordsNothing(t *testing.T) {
+	t.Parallel()
 	// Construct with Nop — no panics, no observable side effects.
 	mgr := newManagerWithAudit(t, audit.Nop{}, nil)
 	_, err := mgr.CreateEntity(context.Background(),

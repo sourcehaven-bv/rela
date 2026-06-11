@@ -84,12 +84,13 @@ func seedRelation(t *testing.T, st store.Store, from, relType, to string) {
 }
 
 func TestConvertStoreEntity_WithoutRelations(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(e, st, false)
+	result, err := convertStoreEntity(context.Background(), e, st, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,6 +118,7 @@ func TestConvertStoreEntity_WithoutRelations(t *testing.T) {
 }
 
 func TestConvertStoreEntity_WithRelations(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	e1 := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
@@ -125,7 +127,7 @@ func TestConvertStoreEntity_WithRelations(t *testing.T) {
 	seedEntity(t, st, e2)
 	seedRelation(t, st, e2.ID, "addresses", e1.ID)
 
-	result, err := convertStoreEntity(e1, st, true)
+	result, err := convertStoreEntity(context.Background(), e1, st, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,12 +151,13 @@ func TestConvertStoreEntity_WithRelations(t *testing.T) {
 }
 
 func TestConvertStoreEntity_NoRelationsPresent(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(e, st, true)
+	result, err := convertStoreEntity(context.Background(), e, st, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,6 +172,7 @@ func TestConvertStoreEntity_NoRelationsPresent(t *testing.T) {
 }
 
 func TestConvertStoreEntitySummary(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "My Title").With("status", "accepted"))
 
@@ -189,6 +193,7 @@ func TestConvertStoreEntitySummary(t *testing.T) {
 }
 
 func TestConvertStoreEntitySummary_NoTitleNoStatus(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-002").Without("title").Without("status"))
 
@@ -206,6 +211,7 @@ func TestConvertStoreEntitySummary_NoTitleNoStatus(t *testing.T) {
 }
 
 func TestConvertStoreRelation(t *testing.T) {
+	t.Parallel()
 	r := &entity.Relation{
 		From:       "SOL-001",
 		Type:       "addresses",
@@ -242,6 +248,7 @@ func TestConvertStoreRelation(t *testing.T) {
 }
 
 func TestConvertStoreRelation_NoProperties(t *testing.T) {
+	t.Parallel()
 	r := &entity.Relation{From: "SOL-001", Type: "addresses", To: "REQ-001"}
 
 	result, err := convertStoreRelation(r)
@@ -263,6 +270,7 @@ func TestConvertStoreRelation_NoProperties(t *testing.T) {
 }
 
 func TestConvertTraceResult(t *testing.T) {
+	t.Parallel()
 	tr := &tracer.TraceResult{
 		ID:    "REQ-001",
 		Type:  "requirement",
@@ -312,6 +320,7 @@ func TestConvertTraceResult(t *testing.T) {
 }
 
 func TestConvertTraceResult_Nil(t *testing.T) {
+	t.Parallel()
 	node := convertTraceNode(nil)
 	if node != nil {
 		t.Error("expected nil result for nil input")
@@ -319,6 +328,7 @@ func TestConvertTraceResult_Nil(t *testing.T) {
 }
 
 func TestConvertPathSteps(t *testing.T) {
+	t.Parallel()
 	steps := []tracer.PathStep{
 		{ID: "REQ-001", Type: "requirement", Title: "Start"},
 		{ID: "SOL-001", Type: "solution", Title: "Middle", Relation: "addresses"},
@@ -350,6 +360,7 @@ func TestConvertPathSteps(t *testing.T) {
 }
 
 func TestConvertPathSteps_Empty(t *testing.T) {
+	t.Parallel()
 	result, err := convertPathSteps([]tracer.PathStep{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -360,18 +371,20 @@ func TestConvertPathSteps_Empty(t *testing.T) {
 }
 
 func TestBuildStoreRelations_NoEdges(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	rels := buildStoreRelations(e.ID, st)
+	rels := buildStoreRelations(context.Background(), e.ID, st)
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
 }
 
 func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	sol := buildEntity(testutil.EntityFor(meta, "solution").ID("SOL-001").With("title", "Solution"))
@@ -380,7 +393,7 @@ func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 	seedEntity(t, st, req)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(sol.ID, st)
+	rels := buildStoreRelations(context.Background(), sol.ID, st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -399,6 +412,7 @@ func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 }
 
 func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	req := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Requirement"))
@@ -407,7 +421,7 @@ func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 	seedEntity(t, st, sol)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(req.ID, st)
+	rels := buildStoreRelations(context.Background(), req.ID, st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -423,6 +437,7 @@ func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 }
 
 func TestBuildStoreRelations_BothDirections(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	seedEntity(t, st, buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Req")))
@@ -431,7 +446,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	seedRelation(t, st, "SOL-001", "addresses", "REQ-001")
 	seedRelation(t, st, "REQ-001", "motivates", "DEC-001")
 
-	rels := buildStoreRelations("REQ-001", st)
+	rels := buildStoreRelations(context.Background(), "REQ-001", st)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -450,6 +465,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 }
 
 func TestConvertStoreRelationsList(t *testing.T) {
+	t.Parallel()
 	relations := []*entity.Relation{
 		{From: "SOL-001", Type: "addresses", To: "REQ-001", Properties: map[string]interface{}{"weight": "high"}},
 		{From: "CMP-001", Type: "implements", To: "SOL-001"},
@@ -480,6 +496,7 @@ func TestConvertStoreRelationsList(t *testing.T) {
 }
 
 func TestConvertStoreRelationsList_Empty(t *testing.T) {
+	t.Parallel()
 	result, err := convertStoreRelationsList([]*entity.Relation{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -490,6 +507,7 @@ func TestConvertStoreRelationsList_Empty(t *testing.T) {
 }
 
 func TestSortStoreRelations(t *testing.T) {
+	t.Parallel()
 	relations := []*entity.Relation{
 		{From: "SOL-001", Type: "implements", To: "REQ-001"},
 		{From: "SOL-001", Type: "addresses", To: "REQ-001"},
@@ -510,6 +528,7 @@ func TestSortStoreRelations(t *testing.T) {
 }
 
 func TestSortStoreRelations_ByTo(t *testing.T) {
+	t.Parallel()
 	relations := []*entity.Relation{
 		{From: "SOL-001", Type: "addresses", To: "REQ-002"},
 		{From: "SOL-001", Type: "addresses", To: "REQ-001"},
@@ -531,6 +550,7 @@ func TestSortStoreRelations_Empty(_ *testing.T) {
 }
 
 func TestMarshalJSON(t *testing.T) {
+	t.Parallel()
 	data := map[string]string{"key": "value"}
 	result, err := marshalJSON(data)
 	if err != nil {
@@ -542,6 +562,7 @@ func TestMarshalJSON(t *testing.T) {
 }
 
 func TestMarshalJSON_Indented(t *testing.T) {
+	t.Parallel()
 	data := map[string]interface{}{
 		"a": "b",
 	}
@@ -555,6 +576,7 @@ func TestMarshalJSON_Indented(t *testing.T) {
 }
 
 func TestConvertTraceResult_DeepNesting(t *testing.T) {
+	t.Parallel()
 	tr := &tracer.TraceResult{
 		ID:    "REQ-001",
 		Type:  "requirement",
@@ -606,12 +628,13 @@ func TestConvertTraceResult_DeepNesting(t *testing.T) {
 }
 
 func TestConvertStoreEntity_WithProperties(t *testing.T) {
+	t.Parallel()
 	meta := testMeta()
 	st := memstore.New()
 	e := buildEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(e, st, false)
+	result, err := convertStoreEntity(context.Background(), e, st, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -628,6 +651,7 @@ func TestConvertStoreEntity_WithProperties(t *testing.T) {
 }
 
 func TestExtractProperties_MapArgument(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": map[string]interface{}{
 			"title":  "Test",
@@ -648,6 +672,7 @@ func TestExtractProperties_MapArgument(t *testing.T) {
 }
 
 func TestExtractProperties_JSONString(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": `{"title":"From JSON","priority":"high"}`,
 	})
@@ -662,6 +687,7 @@ func TestExtractProperties_JSONString(t *testing.T) {
 }
 
 func TestExtractProperties_NoProperties(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"id": "REQ-001",
 	})
@@ -673,6 +699,7 @@ func TestExtractProperties_NoProperties(t *testing.T) {
 }
 
 func TestExtractProperties_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": "not valid json",
 	})
@@ -684,6 +711,7 @@ func TestExtractProperties_InvalidJSON(t *testing.T) {
 }
 
 func TestExtractProperties_UnsupportedType(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": 42,
 	})
@@ -695,6 +723,7 @@ func TestExtractProperties_UnsupportedType(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_PreservesNil(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": map[string]interface{}{
 			"foo": nil,
@@ -717,6 +746,7 @@ func TestExtractPropertiesAllowNil_PreservesNil(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_OnlyNilEntriesStillReturnsMap(t *testing.T) {
+	t.Parallel()
 	// Critical: a delete-only call must yield len()>0 so the "no updates specified"
 	// guard does not reject it.
 	req := makeToolRequest(map[string]interface{}{
@@ -729,6 +759,7 @@ func TestExtractPropertiesAllowNil_OnlyNilEntriesStillReturnsMap(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_StringJSONNullDeletes(t *testing.T) {
+	t.Parallel()
 	// JSON-string fallback must preserve null as nil entry.
 	req := makeToolRequest(map[string]interface{}{
 		"properties": `{"foo": null, "bar": "x"}`,
@@ -746,6 +777,7 @@ func TestExtractPropertiesAllowNil_StringJSONNullDeletes(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_FiltersEmptyString(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": map[string]interface{}{"foo": ""},
 	})
@@ -756,6 +788,7 @@ func TestExtractPropertiesAllowNil_FiltersEmptyString(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_NoArg(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
 	props := extractPropertiesAllowNil(req)
 	if props != nil {
@@ -764,6 +797,7 @@ func TestExtractPropertiesAllowNil_NoArg(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	req := makeToolRequest(map[string]interface{}{
 		"properties": "not valid json",
 	})
@@ -774,6 +808,7 @@ func TestExtractPropertiesAllowNil_InvalidJSON(t *testing.T) {
 }
 
 func TestExtractPropertiesAllowNil_JSONNullArg(t *testing.T) {
+	t.Parallel()
 	// JSON `null` as the entire properties value: ambiguous (no map to interpret).
 	// Treat as missing/malformed, not as an empty map.
 	req := makeToolRequest(map[string]interface{}{

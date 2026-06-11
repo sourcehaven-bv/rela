@@ -25,6 +25,11 @@ func (PanicOnUse) CreateEntity(context.Context, *entity.Entity,
 	panic("entitymanagertest.PanicOnUse.CreateEntity: not expected in this test")
 }
 
+func (PanicOnUse) ValidateCreate(context.Context, *entity.Entity,
+	entity.CreateOptions) (*entity.Entity, []entity.Warning, error) {
+	panic("entitymanagertest.PanicOnUse.ValidateCreate: not expected in this test")
+}
+
 func (PanicOnUse) UpdateEntity(context.Context,
 	*entity.Entity) (*entity.UpdateResult, error) {
 	panic("entitymanagertest.PanicOnUse.UpdateEntity: not expected in this test")

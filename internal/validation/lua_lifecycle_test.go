@@ -14,6 +14,7 @@ import (
 // iterations, which would not be possible if the runtime were
 // rebuilt per (rule, entity).
 func TestLuaValidation_RuntimeHoistedAcrossEntities(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -73,6 +74,7 @@ func TestLuaValidation_RuntimeHoistedAcrossEntities(t *testing.T) {
 // globals from the failed run cannot be observed by subsequent
 // entities.
 func TestLuaValidation_RuntimeRebuiltAfterScriptError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -131,6 +133,7 @@ func TestLuaValidation_RuntimeRebuiltAfterScriptError(t *testing.T) {
 // across iterations. Catches regressions where the rebuild itself
 // leaks state.
 func TestLuaValidation_RuntimeRebuiltAfterEveryError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -172,6 +175,7 @@ func TestLuaValidation_RuntimeRebuiltAfterEveryError(t *testing.T) {
 // previous run left state behind in a process-global, that state
 // must not leak into the next CheckRule call.
 func TestLuaValidation_FreshRuntimePerCheckCall(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{

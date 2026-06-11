@@ -21,7 +21,6 @@ package memstore
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -60,8 +59,17 @@ type attachment struct {
 type Option func(*MemStore)
 
 // WithObserver adds an entity observer that is notified on writes.
+// A nil observer is dropped silently so callers can pass the result
+// of an optional construction (e.g. a search-backend factory that
+// returns nil on failure) without an extra nil guard at every call
+// site. Matches the [app.FSFactory.AddObserver] contract.
 func WithObserver(o store.EntityObserver) Option {
-	return func(m *MemStore) { m.observers = append(m.observers, o) }
+	return func(m *MemStore) {
+		if o == nil {
+			return
+		}
+		m.observers = append(m.observers, o)
+	}
 }
 
 func New(opts ...Option) *MemStore {
@@ -561,16 +569,12 @@ func (m *MemStore) CreateRelation(
 			return nil, err
 		}
 	}
-	if strings.Contains(relType, "--") {
-		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	if err := storeutil.ValidateRelationType(relType); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if relType == "" {
-		return nil, errors.New("store: empty relation type")
-	}
 
 	r := entity.NewRelation(from, relType, to)
 	r.UpdatedAt = time.Now()

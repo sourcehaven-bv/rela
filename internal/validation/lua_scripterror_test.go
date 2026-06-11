@@ -19,6 +19,7 @@ import (
 // field is populated from the rule's inline Lua text so the modal can
 // show the offending line — same render as file-backed rules.
 func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	const ruleLua = `if oops invalid`
 	rule := metamodel.ValidationRule{
@@ -81,6 +82,7 @@ func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
 // a bare message bar even though the rule body is right there in the
 // metamodel.
 func TestLuaValidation_InlineRuntimeErrorIncludesSourceSlice(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	// Multi-line so we can verify the failing line is highlighted and
 	// surrounding context lines are present. `return` must be the last
@@ -140,6 +142,7 @@ func TestLuaValidation_InlineRuntimeErrorIncludesSourceSlice(t *testing.T) {
 // living at validations/<name>.lua. The Path on a captured frame
 // must match the envelope so source-slice resolution still aligns.
 func TestLuaValidation_InlineRuleUsesDistinctCacheNamespace(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	rule := metamodel.ValidationRule{
 		Name:       "shared-name.lua",
@@ -178,6 +181,7 @@ func TestLuaValidation_InlineRuleUsesDistinctCacheNamespace(t *testing.T) {
 // a runtime error in a `lua_file:` script populates Source with the
 // failing line + context, and Path resolves to validations/<file>.
 func TestLuaValidation_FileRuntimeErrorIncludesSourceSlice(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 
@@ -285,6 +289,7 @@ func TestLuaValidation_FileRuntimeErrorIncludesSourceSlice(t *testing.T) {
 // broken rule and several valid rules, the broken one yields a
 // ScriptError but the valid rules still produce their violations.
 func TestLuaValidation_FailOpenWithMixedRules(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -336,6 +341,7 @@ func TestLuaValidation_FailOpenWithMixedRules(t *testing.T) {
 // `lua_file:` rule produces a LoadError, not a ScriptError — load
 // failures and Lua failures are categorized separately.
 func TestLuaValidation_LoadErrorWhenFileMissing(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, "validations"), 0755); err != nil {
@@ -384,6 +390,7 @@ func TestLuaValidation_LoadErrorWhenFileMissing(t *testing.T) {
 // Lua portion errors, the content check still runs so the operator
 // sees both the ScriptError and any content violation.
 func TestLuaValidation_LuaErrorDoesNotSuppressContentCheck(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	rule := metamodel.ValidationRule{
 		Name:       "broken-lua-with-content-check",
@@ -431,6 +438,7 @@ func TestLuaValidation_LuaErrorDoesNotSuppressContentCheck(t *testing.T) {
 // text. That gives the operator something to look at in the modal
 // instead of a bare message bar.
 func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	const ruleLua = `return 42`
 	meta := &metamodel.Metamodel{
@@ -485,6 +493,7 @@ func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
 // not tested here; that pre-existing gap is tracked separately
 // (PLAN-KAK2R, out of scope).
 func TestLuaValidation_ContractErrorArrayElementMissingMessage(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},

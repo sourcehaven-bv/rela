@@ -4,10 +4,20 @@ import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
+import { actionAllowed } from '@/utils/affordancesWarning'
+import { isFieldWritable, optionVerdictsFor as optionVerdictsForVerdict } from '@/utils/affordances'
+import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
-import type { PropertyDef, FormFieldOrRelation, Template, ModernRelationsField } from '@/types'
-import { getTemplates, createRelation } from '@/api'
+import type {
+  PropertyDef,
+  FormFieldOrRelation,
+  Template,
+  ModernRelationsField,
+  FieldAffordance,
+  RelationAffordance,
+} from '@/types'
+import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
@@ -50,6 +60,33 @@ const returnTo = ref<string | null>(null)
 // State
 const formData = ref<Record<string, unknown>>({})
 const relations = ref<Record<string, string[]>>({})
+// Per-entity field affordances from the server. Loaded together with
+// the entity in edit mode; populated as `_fields` from the API. Drives
+// readonly + option-filter rendering and the F1 hidden-field filter
+// (TKT-G7N5).
+const fieldAffordances = ref<Record<string, FieldAffordance>>({})
+// Same for relation affordances. Drives RelationCards' +Add / x button
+// visibility and meta-field disable.
+const relationAffordances = ref<Record<string, RelationAffordance>>({})
+// TKT-3I5U: in create mode the form models a staged `++new++` entity
+// and re-derives affordances from the server's dry-run (no persist) as
+// the user types. `stagedVisibleProps` holds the property keys the
+// dry-run returned as visible (hidden fields are stripped server-side),
+// so the field filter can hide policy-hidden fields in create mode the
+// same way edit mode uses the loaded entity's `properties`. Empty until
+// the first dry-run resolves.
+const stagedVisibleProps = ref<Set<string>>(new Set())
+// True once at least one create-mode dry-run has resolved, so the field
+// filter switches from "render everything" (first paint, F19) to the
+// affordance-filtered list. Stays false in edit mode.
+const stagedAffordancesReady = ref(false)
+// Property keys the user has explicitly edited via updateField in
+// create mode. The commit-side filter always preserves these keys even
+// when the dry-run hasn't reported them as visible-writable yet (debounce
+// race, RR-2U2D), and they're authoritative over a stale metamodel
+// default for "what was the user's intent" — the server's gate (BUG-Q60V)
+// is the boundary that rejects a touched key the policy denies.
+const userTouched = ref<Set<string>>(new Set())
 // Per-relation `id -> entity type` map, fed by RelationPicker's
 // `update:types` emit. Required by the unified PATCH builder to emit
 // JSON:API §9 resource identifiers without guessing target types
@@ -57,6 +94,13 @@ const relations = ref<Record<string, string[]>>({})
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
 const loading = ref(true)
+// Set to true in edit mode when the loaded entity's `_actions.update`
+// is explicitly false. The template renders an inline "not editable"
+// message instead of the form. The EntityDetail Edit button already
+// gates on the same verdict, so this branch only fires for direct-URL
+// navigation (bookmark, paste) or when the policy tightened after the
+// detail view loaded.
+const notEditable = ref(false)
 const saveGeneration = ref(0) // Incremented after save to reset RelationCards
 const saving = ref(false)
 const dirty = ref(false)
@@ -95,7 +139,7 @@ const title = computed(() => {
   return isEdit.value ? `Edit ${label}` : `New ${label}`
 })
 
-const fields = computed((): FormFieldOrRelation[] => {
+const allFields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []
   if (formConfig.value.sections?.length) {
     return formConfig.value.sections.flatMap((s) => s.fields) as FormFieldOrRelation[]
@@ -105,6 +149,85 @@ const fields = computed((): FormFieldOrRelation[] => {
   const relFields = (formConfig.value.relations || []) as FormFieldOrRelation[]
   return [...propFields, ...relFields]
 })
+
+// TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
+// the entity's affordances. A property field is rendered only if it is
+// visible: either (a) it appears in `_fields` (server emitted a verdict,
+// including the implicit "writable default") or (b) the server treated
+// it as visible — in edit mode that's "present in `properties`"; in
+// create mode the staged dry-run reports visible props in
+// `stagedVisibleProps` (hidden fields are stripped server-side in both
+// cases). Relations / non-property fields are never filtered here.
+//
+// F19 flicker prevention: render the unfiltered list until affordances
+// are available — during initial `loading` (edit), and in create until
+// the first dry-run resolves (`stagedAffordancesReady`). Otherwise a
+// policy-hidden field would flash in then disappear. If a create-mode
+// dry-run never resolves (fail-open, RR-HUQ3) the form stays unfiltered
+// and usable; the commit gate is the real boundary.
+const fields = computed((): FormFieldOrRelation[] => {
+  const all = allFields.value
+  if (loading.value) return all
+  if (!isEdit.value && !stagedAffordancesReady.value) return all
+  const visibleProps = isEdit.value ? formData.value : undefined
+  return all.filter((f) => {
+    if (!f.property) return true // relations / non-property fields untouched
+    if (f.property in fieldAffordances.value) return true
+    if (visibleProps && f.property in visibleProps) return true
+    if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
+    return false
+  })
+})
+
+// TKT-G7N5 readonly helper: the rendered field is readonly if either
+// the config marks it so OR the server's _fields verdict reports
+// writable=false. Both sources are honored — the server's affordance
+// is the strongest signal but the config can still set its own
+// readonly for static cases (e.g. ID display).
+function isFieldReadonly(field: FormFieldOrRelation): boolean {
+  if (!field.property) return field.readonly === true
+  const verdict = fieldAffordances.value[field.property]
+  return !isFieldWritable(verdict, field.readonly)
+}
+
+// TKT-G7N5 option-verdict helper: pulls per-option allowed-map from
+// the server's _fields verdict. Undefined if no verdict for this
+// field (all options allowed by default). Sparse: only false entries
+// appear in the map.
+function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> | undefined {
+  if (!field.property) return undefined
+  return optionVerdictsForVerdict(fieldAffordances.value[field.property])
+}
+
+// TKT-3I5U: build the create-commit property map, sending ONLY visible
+// and writable keys. Hidden fields (stripped from the staged dry-run's
+// visible set) and read-only fields (writable=false in `_fields`) are
+// omitted so the server applies their defaults itself, downstream of
+// the affordance gate (RR-SIA6). Without affordances (fail-open) we
+// send everything — the commit gate is the boundary that rejects any
+// denied write.
+function visibleWritablePropertiesForCommit(): Record<string, unknown> {
+  if (isEdit.value || !stagedAffordancesReady.value) {
+    return { ...formData.value }
+  }
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(formData.value)) {
+    // RR-2U2D: never drop a key the user explicitly typed into — the
+    // dry-run may not have resolved yet for that key (debounce in
+    // flight) and silently dropping the value would lose user intent.
+    // The server's affordance gate (BUG-Q60V) rejects denied writes,
+    // so this is safe: an under-resolved touched key that the policy
+    // actually denies still 403s at commit, with a clear rule_id.
+    if (userTouched.value.has(key)) {
+      out[key] = value
+      continue
+    }
+    if (!stagedVisibleProps.value.has(key)) continue // hidden → omit
+    if (fieldAffordances.value[key]?.writable === false) continue // read-only → omit
+    out[key] = value
+  }
+  return out
+}
 
 // Helper to look up entity type from ID prefix (e.g., "TKT-001" -> "ticket")
 function getTypeFromId(entityId: string): string | undefined {
@@ -128,9 +251,20 @@ async function loadEntity() {
       formConfig.value.entity,
       props.entityId
     )
+    // Route-guard: if the server says this entity is not updatable,
+    // render an inline "not editable" message instead of the form.
+    // The EntityDetail Edit button already hides for the same
+    // verdict, so this branch fires only for direct-URL navigation.
+    notEditable.value = !actionAllowed(entity, 'update')
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
     content.value = entity.content || ''
+    // TKT-G7N5: per-entity affordances from the server. The wire keys
+    // are always present on per-entity GET (possibly empty); we
+    // default to empty maps so the filter / readonly / options paths
+    // can treat absence as "default everything".
+    fieldAffordances.value = entity._fields ?? {}
+    relationAffordances.value = entity._relations ?? {}
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
@@ -191,8 +325,13 @@ function initializeDefaults() {
     }
   }
 
-  // Apply form-level defaults
-  for (const field of fields.value) {
+  // Apply form-level defaults. Iterate `allFields.value` directly
+  // (not the affordance-filtered `fields` computed): defaults must seed
+  // from every configured field, independent of any incidental
+  // affordance state. RR-00VT made this dependency explicit so a
+  // future change to `fields`'s early-return can't silently drop
+  // create-mode defaults.
+  for (const field of allFields.value) {
     if (field.property && field.default !== undefined) {
       formData.value[field.property] = field.default
     }
@@ -248,6 +387,74 @@ async function loadTemplates() {
     // Templates are optional, ignore errors
     console.warn('Failed to load templates:', err)
   }
+}
+
+// TKT-3I5U create-mode affordance machinery.
+//
+// The staged entity's verdicts depend on its current field VALUES
+// (value-dependent predicates), so we re-derive them via the server's
+// dry-run create (no persist) on mount and, debounced, as the user
+// types. Verdicts are ADVISORY — the real create re-authorizes; on any
+// dry-run failure we fail OPEN (leave the form unfiltered/usable),
+// since a missing hint is a UX regression, not a security hole
+// (RR-HUQ3). Only the latest request's result is applied (RR-ZKL2).
+const STAGED_DRYRUN_DEBOUNCE_MS = 400
+let stagedDryRunController: AbortController | null = null
+let stagedDryRunTimer: ReturnType<typeof setTimeout> | null = null
+// RR-2PZB: signals that the component is gone so a dry-run response
+// arriving post-unmount doesn't write to refs of a destroyed component.
+let stagedUnmounted = false
+
+async function refreshStagedAffordances() {
+  if (isEdit.value || !formConfig.value) return
+
+  // Drop any in-flight request: only the newest form state matters.
+  stagedDryRunController?.abort()
+  const controller = new AbortController()
+  stagedDryRunController = controller
+
+  try {
+    const candidate = await dryRunCreateEntity(
+      formConfig.value.entity,
+      { properties: { ...formData.value }, content: content.value || undefined },
+      controller.signal,
+    )
+    // A newer request superseded this one between await points — discard.
+    if (controller !== stagedDryRunController) return
+    // Component is gone (unmount fired between resolve and here) — bail
+    // so we don't write to dead refs (RR-2PZB).
+    if (stagedUnmounted) return
+
+    fieldAffordances.value = candidate._fields ?? {}
+    relationAffordances.value = candidate._relations ?? {}
+    // The dry-run strips hidden fields from `properties`; the remaining
+    // keys are exactly the visible-by-default props the field filter
+    // needs to render (since they won't appear in the sparse `_fields`).
+    stagedVisibleProps.value = new Set(Object.keys(candidate.properties ?? {}))
+    // Note: dry-run soft warnings are intentionally NOT surfaced as
+    // toasts here — nothing is saved, and a per-keystroke "Saved with
+    // warnings" toast would be noisy and misleading. Warnings still
+    // surface on the real commit response. Inline per-field validation
+    // feedback from the dry-run is a future enhancement.
+    stagedAffordancesReady.value = true
+  } catch (err) {
+    if (isCancelledFetch(err)) return // superseded / unmounted — not an error
+    if (stagedUnmounted) return // post-unmount; don't write to dead refs
+    // Fail open: leave whatever affordances we have (possibly none) and
+    // let the form render. The commit gate is the real boundary.
+    console.warn('Dry-run affordance check failed; create form left unfiltered:', err)
+    stagedAffordancesReady.value = true
+  }
+}
+
+// scheduleStagedAffordances debounces refreshStagedAffordances so a
+// burst of keystrokes collapses to one dry-run.
+function scheduleStagedAffordances() {
+  if (isEdit.value) return
+  if (stagedDryRunTimer) clearTimeout(stagedDryRunTimer)
+  stagedDryRunTimer = setTimeout(() => {
+    void refreshStagedAffordances()
+  }, STAGED_DRYRUN_DEBOUNCE_MS)
 }
 
 function applyTemplate(template: Template) {
@@ -362,13 +569,11 @@ async function handleSubmit() {
       }
     }
 
-    // Build modern relations from card edits. If any card was touched
-    // (outgoing or incoming), the entire body uses modern shape — the
-    // wire format forbids mixing legacy and modern (`shape_mixed` 400).
-    // Reshape the legacy picker IDs via `pickerTypes`; if any picker
-    // target has no resolved type, fall back to legacy + warn
-    // (TKT-ZEKO4 Q5). Incoming-suffix entries become inverse-named
-    // body keys via the inverseByRelation lookup (TKT-GFQK).
+    // Build the modern relations body. Picker selections (IDs-only
+    // in memory) are reshaped to JSON:API §9 wrappers via pickerTypes;
+    // card edits already carry per-edge meta. Incoming-suffix entries
+    // become inverse-named body keys via the inverseByRelation lookup
+    // (TKT-GFQK).
     const inverseByRelation = new Map<string, string>()
     for (const f of fields.value) {
       if (!f.relation) continue
@@ -376,32 +581,30 @@ async function handleSubmit() {
       if (inverse) inverseByRelation.set(f.relation, inverse)
     }
     const modernRelations = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
-    const hasModernCardEntries = Object.keys(modernRelations).length > 0
-    let relationsPayload: Record<string, string[]> | ModernRelationsField = filteredRelations
-    if (hasModernCardEntries) {
-      const reshaped = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
-      if (reshaped) {
-        relationsPayload = { ...reshaped, ...modernRelations }
-      } else {
-        // Pathological form — surface and stay legacy for THIS save.
-        // Per-edge card meta is lost; user is told to reload to get
-        // fresh edge types from backend Step 0.
-        uiStore.error(
-          'Some related entities have unknown types. Card-only changes are not saved. Reload the form and try again.',
-        )
-        // Drop the outgoing card-edit Map entries so they aren't
-        // mistakenly cleared on success below.
-        for (const key of Array.from(pendingCardChanges.value.keys())) {
-          if (key.endsWith(OUTGOING_SUFFIX)) pendingCardChanges.value.delete(key)
-        }
+    const reshapedPickers = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
+    if (!reshapedPickers) {
+      // Pathological form — no resolved type for some picker target,
+      // so we cannot emit a modern resource identifier. Abort the save
+      // and tell the user to reload (the type comes from backend Step 0
+      // and is normally always present).
+      uiStore.error(
+        'Some related entities have unknown types. Save aborted; reload the form and try again.',
+      )
+      // Drop the outgoing card-edit Map entries so they aren't
+      // mistakenly cleared on success below.
+      for (const key of Array.from(pendingCardChanges.value.keys())) {
+        if (key.endsWith(OUTGOING_SUFFIX)) pendingCardChanges.value.delete(key)
       }
+      saving.value = false
+      return
     }
+    const relationsPayload: ModernRelationsField = { ...reshapedPickers, ...modernRelations }
 
     const payload: {
       id?: string
       prefix?: string
       properties: Record<string, unknown>
-      relations: Record<string, string[]> | ModernRelationsField
+      relations: ModernRelationsField
       content?: string
     } = {
       properties: formData.value,
@@ -419,16 +622,16 @@ async function handleSubmit() {
       surfaceWarnings(updated.warnings)
       uiStore.success('Entity updated successfully')
     } else {
-      // Create path stays legacy: POST handler hard-codes
-      // `map[string][]string`, modern shape is not accepted. Cards
-      // never render in create mode (they require entityId), so
-      // `pendingCardChanges` is empty and relationsPayload is the
-      // legacy `filteredRelations`. The cast is safe by construction.
+      // Create path uses the same modern shape as edit. Cards never
+      // render in create mode (they require entityId), so
+      // pendingCardChanges is empty and relationsPayload is composed
+      // entirely from reshaped picker selections.
+      //
+      // TKT-3I5U: send only visible + writable property keys; the server
+      // fills hidden / read-only defaults after the affordance gate.
+      payload.properties = visibleWritablePropertiesForCommit()
       Object.assign(payload, idControls.buildPayloadFields())
-      const entity = await entitiesStore.create(formConfig.value.entity, {
-        ...payload,
-        relations: filteredRelations,
-      })
+      const entity = await entitiesStore.create(formConfig.value.entity, payload)
 
       // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
       // For link_as=to, the relation is already included in relations.value (pre-filled)
@@ -474,19 +677,16 @@ async function handleSubmit() {
     // not a user-facing failure; the user clicked away before the
     // save completed, which is their choice.
     if (isCancelledFetch(err)) return
-    if (err && typeof err === 'object' && 'errors' in err && Array.isArray((err as { errors: unknown }).errors)) {
-      const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
-      for (const e of problemErrors) {
+    const validationErrors = err instanceof ApiError ? err.validationErrors : []
+    if (validationErrors.length > 0) {
+      for (const e of validationErrors) {
         if (e.field) {
           errors.value[e.field] = e.message || e.detail || 'Invalid value'
         }
       }
       uiStore.error('Please fix the validation errors')
-    } else if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
-      const problem = err as { detail?: string; title?: string }
-      uiStore.error(problem.detail || problem.title || 'Failed to save entity')
     } else {
-      uiStore.error('Failed to save entity')
+      uiStore.error(getErrorMessage(err, 'Failed to save entity'))
     }
     console.error(err)
   } finally {
@@ -501,6 +701,16 @@ function handleCancel() {
 function updateField(property: string, value: unknown) {
   formData.value[property] = value
   checkDirty()
+  // TKT-3I5U: in create mode, re-derive affordances from the staged
+  // entity's new values (value-dependent verdicts) — debounced. Also
+  // track that the user explicitly touched this key (RR-2U2D) so the
+  // commit-side filter never drops it even if the dry-run hasn't
+  // resolved yet for it.
+  if (!isEdit.value) {
+    userTouched.value.add(property)
+    scheduleStagedAffordances()
+    return
+  }
   if (!autoSave.value) return
   // TKT-E6094: clear semantics per type. For string/list properties an
   // empty value means "user cleared" → properties_unset. Boolean false
@@ -511,12 +721,6 @@ function updateField(property: string, value: unknown) {
   } else {
     autoSave.value.scheduleFieldSave(property, value)
   }
-}
-
-function isClearedForType(value: unknown, def: PropertyDef | undefined): boolean {
-  if (def?.type === 'boolean') return false
-  if (Array.isArray(value)) return value.length === 0
-  return value === '' || value === null || value === undefined
 }
 
 function updateRelation(relation: string, value: string[]) {
@@ -543,6 +747,9 @@ const autoSave = computed(() => {
 })
 // Lazy holder so we construct the composable once per (entityId, formId).
 const _autoSaveInstance = ref<ReturnType<typeof useAutoSave> | null>(null)
+// Dirty-registry cleanup, assigned in onMounted (after awaits) and run
+// from the top-level onBeforeUnmount.
+let unregisterDirtyForm: (() => void) | null = null
 
 function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // Mirror handleSubmit's body assembly. Two sources of relation
@@ -683,6 +890,14 @@ onMounted(async () => {
   }
   loading.value = false
 
+  // TKT-3I5U: derive the staged entity's initial affordances from the
+  // dry-run so the first affordance-filtered paint reflects defaults +
+  // template values. Awaited so `stagedAffordancesReady` flips before
+  // the user can interact, avoiding a hidden-field flash (F19).
+  if (!isEdit.value) {
+    await refreshStagedAffordances()
+  }
+
   // TKT-E6094: mount the autosave composable in edit mode. The save
   // path replaces handleSubmit's Save button for edit forms; create
   // forms keep the explicit submit.
@@ -712,11 +927,13 @@ onMounted(async () => {
     })
     // Register with the dirty registry so SSE-driven re-fetches in
     // other forms on the same entity preserve this form's dirty state.
-    const unregister = registerForm(
+    // The cleanup runs from the top-level onBeforeUnmount below —
+    // registering a lifecycle hook after an `await` has no active
+    // instance, so Vue would silently drop it and leak the registration.
+    unregisterDirtyForm = registerForm(
       props.entityId,
       (property) => _autoSaveInstance.value?.isDirty(property) ?? false,
     )
-    onBeforeUnmount(unregister)
   }
 
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
@@ -741,6 +958,15 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
+  unregisterDirtyForm?.()
+  unregisterDirtyForm = null
+  // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
+  // the component as gone so a response that has already arrived (but
+  // is awaiting the microtask queue) doesn't write to dead refs
+  // (RR-2PZB).
+  stagedUnmounted = true
+  if (stagedDryRunTimer) clearTimeout(stagedDryRunTimer)
+  stagedDryRunController?.abort()
 })
 
 // Returning a promise from the guard preserves the original navigation's
@@ -815,6 +1041,22 @@ onBeforeRouteLeave(async () => {
         <span>Loading...</span>
       </div>
 
+      <div v-else-if="notEditable" class="not-editable-state">
+        <h2>This entity is not editable</h2>
+        <p>
+          Your current permissions don't allow updating
+          <code>{{ entityId }}</code>. Return to the entity view to see
+          available actions.
+        </p>
+        <router-link
+          v-if="formConfig && entityId"
+          :to="`/entity/${formConfig.entity}/${entityId}`"
+          class="btn btn-secondary"
+        >
+          ← Back to entity
+        </router-link>
+      </div>
+
       <form v-else @submit.prevent="handleSubmit">
         <div v-if="showReadOnlyID" class="form-field id-field">
           <label>ID</label>
@@ -851,7 +1093,8 @@ onBeforeRouteLeave(async () => {
                   :property-def="getPropertyDef(field.property)"
                   :value="formData[field.property]"
                   :error="errors[field.property]"
-                  :readonly="field.readonly"
+                  :readonly="isFieldReadonly(field)"
+                  :option-verdicts="optionVerdictsFor(field)"
                   @update="updateField(field.property!, $event)"
                 />
                 <RelationCards
@@ -860,6 +1103,7 @@ onBeforeRouteLeave(async () => {
                   :field="field"
                   :entity-type="formConfig.entity"
                   :entity-id="entityId"
+                  :verdict="relationAffordances[field.relation!]"
                   @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
                 />
                 <RelationPicker
@@ -869,6 +1113,7 @@ onBeforeRouteLeave(async () => {
                   :entity-type="formConfig.entity"
                   :entity-id="entityId"
                   :value="relations[field.relation] || []"
+                  :verdict="relationAffordances[field.relation!]"
                   @update="updateRelation(field.relation!, $event)"
                   @update:types="(types) => updateRelationTypes(field.relation!, types)"
                   @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
@@ -886,7 +1131,8 @@ onBeforeRouteLeave(async () => {
               :property-def="getPropertyDef(field.property)"
               :value="formData[field.property]"
               :error="errors[field.property]"
-              :readonly="field.readonly"
+              :readonly="isFieldReadonly(field)"
+              :option-verdicts="optionVerdictsFor(field)"
               @update="updateField(field.property!, $event)"
             />
             <RelationCards
@@ -895,6 +1141,7 @@ onBeforeRouteLeave(async () => {
               :field="field"
               :entity-type="formConfig.entity"
               :entity-id="entityId"
+              :verdict="relationAffordances[field.relation!]"
               @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
             />
             <RelationPicker
@@ -904,6 +1151,7 @@ onBeforeRouteLeave(async () => {
               :entity-type="formConfig.entity"
               :entity-id="entityId"
               :value="relations[field.relation] || []"
+              :verdict="relationAffordances[field.relation!]"
               @update="updateRelation(field.relation!, $event)"
               @update:types="(types) => updateRelationTypes(field.relation!, types)"
               @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -40,6 +41,9 @@ func CheckEmbeddedSPA() error {
 
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
+//
+// When adding a route, add a probe to the route table in
+// router_walk_test.go so registration stays covered.
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
 
@@ -68,7 +72,6 @@ func (a *App) NewRouter() http.Handler {
 	inner := http.NewServeMux()
 
 	// APIs used by Vue SPA
-	inner.HandleFunc("/api/toggle-checkbox", a.handleToggleCheckbox)
 	inner.HandleFunc("/api/help/", a.handleEntityHelp)
 	inner.HandleFunc("/api/command/", a.handleCommandExec)
 	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
@@ -100,7 +103,41 @@ func (a *App) NewRouter() http.Handler {
 		resolver = defaultPrincipalResolver
 	}
 	handler = stampAuditPrincipal(handler, resolver)
+	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
+		handler = attachACLRequest(handler, d)
+	}
 	return handler
+}
+
+// attachACLRequest opens an acl.Request for the principal stamped on
+// ctx (by stampAuditPrincipal above) and attaches it via
+// [acl.WithRequest], so downstream affordance + read-gate consumers
+// reuse the one member-of walk per HTTP request (RR-JJYW). Wired only
+// when the ACL is a *acl.Declarative — NopACL / ReadOnlyACL paths
+// don't open Requests.
+//
+// An unstamped principal (the ForPrincipal error case) skips
+// attachment; downstream consumers fall back to the legacy
+// per-call Request and the "only everyone applies" rule.
+//
+// RR-8ZGO: respect a Request already attached by an upstream handler
+// (chiefly tests that wrap the handler with their own
+// acl.WithRequest). The middleware is at the outer edge of the
+// production chain so this guard rarely fires in production, but it
+// makes the test composition story safer.
+func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if acl.FromContext(ctx) != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		req, err := d.ForPrincipal(principal.From(ctx))
+		if err == nil {
+			ctx = acl.WithRequest(ctx, req)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // PrincipalResolver maps an incoming HTTP request to the audit

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { FormFieldOrRelation, PropertyDef } from '@/types'
-import RruleBuilder from './RruleBuilder.vue'
-import TagSelect from '@/components/ui/TagSelect.vue'
+import { defaultRegistry, defaultWidgetFor } from '@/widgets/registry'
+import FieldShell from './FieldShell.vue'
 
 const props = defineProps<{
   field: FormFieldOrRelation
@@ -10,330 +10,60 @@ const props = defineProps<{
   value: unknown
   error?: string
   readonly?: boolean
+  // Sparse per-option allow map: only `false` entries appear; absent
+  // keys default to allowed. An option is disabled when EITHER this
+  // map denies it or the existing transition rules deny it — the two
+  // signals are independent and either one is sufficient.
+  optionVerdicts?: Record<string, boolean>
 }>()
 
 const emit = defineEmits<{
   update: [value: unknown]
 }>()
 
+const fieldId = computed(() => `field-${props.field.property}`)
 const label = computed(() => props.field.label || props.field.property || '')
 const placeholder = computed(() => props.field.placeholder || '')
 const help = computed(() => props.field.help || props.propertyDef?.description || '')
 
-const inputType = computed(() => {
-  const propType = props.propertyDef?.type || 'string'
-  switch (propType) {
-    case 'date':
-      return 'date'
-    case 'integer':
-      return 'number'
-    case 'boolean':
-      return 'checkbox'
-    default:
-      return 'text'
-  }
-})
+// Resolve the widget once from config + property def. The registry
+// honours an explicit field.widget then falls back to type defaulting.
+const resolvedWidgetName = computed(() =>
+  props.field.widget && props.field.widget.trim() !== ''
+    ? props.field.widget
+    : defaultWidgetFor(props.propertyDef)
+)
+const widgetComponent = computed(() =>
+  defaultRegistry.resolve(props.field.widget, props.propertyDef)
+)
 
-const isTextarea = computed(() => {
-  return props.field.widget === 'textarea'
-})
-
-const isSelect = computed(() => {
-  return (props.propertyDef?.values?.length ?? 0) > 0 || props.field.widget === 'select'
-})
-
-const isMultiSelect = computed(() => {
-  return props.propertyDef?.list === true || props.field.widget === 'multiselect'
-})
-
-const isCheckbox = computed(() => {
-  return props.propertyDef?.type === 'boolean' || props.field.widget === 'checkbox'
-})
-
-const isRrule = computed(() => {
-  return props.propertyDef?.type === 'rrule' || props.field.widget === 'rrule'
-})
-
-const options = computed(() => props.propertyDef?.values || [])
-
-const hasTransitions = computed(() => {
-  return props.field.transitions && Object.keys(props.field.transitions).length > 0
-})
-
-// Check if an option is disabled due to transition rules
-function isOptionDisabled(opt: string): boolean {
-  if (!hasTransitions.value || !props.field.transitions) {
-    return false
-  }
-  const currentVal = stringValue.value
-  if (!currentVal || opt === currentVal) {
-    return false
-  }
-  const allowedTransitions = props.field.transitions[currentVal] || []
-  return !allowedTransitions.includes(opt)
-}
-
-const transitionEntries = computed(() => {
-  if (!props.field.transitions) return []
-  return Object.entries(props.field.transitions).sort((a, b) => a[0].localeCompare(b[0]))
-})
-
-const stringValue = computed(() => {
-  if (props.value === null || props.value === undefined) return ''
-  return String(props.value)
-})
-
-const boolValue = computed(() => {
-  return props.value === true || props.value === 'true'
-})
-
-const arrayValue = computed(() => {
-  if (Array.isArray(props.value)) return props.value
-  if (props.value) return [props.value]
-  return []
-})
-
-function handleInput(event: Event) {
-  const target = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-
-  if (isCheckbox.value) {
-    emit('update', (target as HTMLInputElement).checked)
-  } else if (inputType.value === 'number') {
-    const num = parseInt(target.value, 10)
-    emit('update', isNaN(num) ? target.value : num)
-  } else {
-    emit('update', target.value)
-  }
-}
-
-function handleTagSelect(value: string[]) {
-  emit('update', value)
-}
+const isCheckbox = computed(() => resolvedWidgetName.value === 'checkbox')
 </script>
 
 <template>
-  <div class="form-field" :class="{ 'has-error': error }">
-    <label v-if="!isCheckbox" :for="`field-${field.property}`">
-      {{ label }}
-      <span v-if="propertyDef?.required" class="required">*</span>
-    </label>
-
-    <!-- Checkbox -->
-    <div v-if="isCheckbox" class="checkbox-wrapper">
-      <input
-        :id="`field-${field.property}`"
-        type="checkbox"
-        :checked="boolValue"
-        :disabled="readonly"
-        @change="handleInput"
-      />
-      <label :for="`field-${field.property}`">
-        {{ label }}
-        <span v-if="propertyDef?.required" class="required">*</span>
-      </label>
-    </div>
-
-    <!-- Textarea -->
-    <textarea
-      v-else-if="isTextarea"
-      :id="`field-${field.property}`"
-      :value="stringValue"
+  <FieldShell
+    :field-id="fieldId"
+    :label="label"
+    :required="propertyDef?.required"
+    :help="help"
+    :error="error"
+    :label-position="isCheckbox ? 'after' : 'before'"
+  >
+    <component
+      :is="widgetComponent"
+      :id="fieldId"
+      :model-value="value"
+      :mode="'edit'"
+      :property-def="propertyDef"
+      :property-name="field.property"
+      :disabled="readonly"
+      :required="propertyDef?.required"
+      :error="error"
       :placeholder="placeholder"
-      :disabled="readonly"
-      rows="4"
-      @input="handleInput"
-    />
-
-    <!-- Multi-select (SlimSelect via TagSelect) -->
-    <TagSelect
-      v-else-if="isMultiSelect"
-      :model-value="arrayValue.map(String)"
-      :options="options"
-      :placeholder="placeholder || 'Select...'"
-      @update:model-value="handleTagSelect"
-    />
-
-    <!-- Select -->
-    <select
-      v-else-if="isSelect"
-      :id="`field-${field.property}`"
-      :value="stringValue"
-      :disabled="readonly"
-      @change="handleInput"
-    >
-      <option value="">Select...</option>
-      <option
-        v-for="opt in options"
-        :key="opt"
-        :value="opt"
-        :disabled="isOptionDisabled(opt)"
-        :class="{ 'disabled-transition': isOptionDisabled(opt) }"
-      >
-        {{ opt }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
-      </option>
-    </select>
-
-    <!-- Transitions info -->
-    <div v-if="hasTransitions" class="transitions-info">
-      <p class="transitions-title">Allowed transitions</p>
-      <div v-for="[from, tos] in transitionEntries" :key="from" class="transitions-row">
-        <span class="transitions-from">{{ from }}</span>
-        <span class="transitions-arrow">&rarr;</span>
-        <span class="transitions-to">{{ tos.join(', ') }}</span>
-      </div>
-    </div>
-
-    <!-- RRULE builder -->
-    <RruleBuilder
-      v-else-if="isRrule"
-      :model-value="stringValue"
       :help="help"
-      :readonly="readonly"
+      :option-verdicts="optionVerdicts"
+      :transitions="field.transitions"
       @update:model-value="emit('update', $event)"
     />
-
-    <!-- Standard input -->
-    <input
-      v-if="!isCheckbox && !isTextarea && !isMultiSelect && !isSelect && !isRrule"
-      :id="`field-${field.property}`"
-      :type="inputType"
-      :value="stringValue"
-      :placeholder="placeholder"
-      :disabled="readonly"
-      @input="handleInput"
-    />
-
-    <p v-if="help" class="field-help">{{ help }}</p>
-    <p v-if="error" class="field-error">{{ error }}</p>
-  </div>
+  </FieldShell>
 </template>
-
-<style scoped>
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-field label {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-color);
-}
-
-.required {
-  color: var(--error-color, #ef4444);
-}
-
-.checkbox-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.checkbox-wrapper input {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-
-.checkbox-wrapper label {
-  cursor: pointer;
-}
-
-input[type="text"],
-input[type="number"],
-input[type="date"],
-textarea,
-select {
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
-  transition: all 0.15s;
-}
-
-input:focus,
-textarea:focus,
-select:focus {
-  outline: none;
-  border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
-}
-
-input:disabled,
-textarea:disabled,
-select:disabled {
-  background: var(--hover-bg);
-  cursor: not-allowed;
-}
-
-.has-error input,
-.has-error textarea,
-.has-error select {
-  border-color: var(--error-color, #ef4444);
-}
-
-.has-error input:focus,
-.has-error textarea:focus,
-.has-error select:focus {
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
-}
-
-.field-help {
-  font-size: 13px;
-  color: var(--muted-text);
-  margin: 0;
-}
-
-.field-error {
-  font-size: 13px;
-  color: var(--error-color, #ef4444);
-  margin: 0;
-}
-
-.transitions-info {
-  margin-top: 8px;
-  padding: 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-}
-
-.transitions-title {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted-text);
-  margin: 0 0 8px;
-}
-
-.transitions-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  padding: 4px 0;
-}
-
-.transitions-from {
-  font-weight: 500;
-  color: var(--text-color);
-}
-
-.transitions-arrow {
-  color: var(--muted-text);
-}
-
-.transitions-to {
-  color: var(--muted-text);
-}
-
-.disabled-transition {
-  color: var(--muted-text);
-  font-style: italic;
-}
-</style>

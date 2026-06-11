@@ -120,8 +120,9 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 	hash := hashLogoBytes(bytes)
 
 	var saveErr error
+	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.saveUserLogo(bytes, ext); err != nil {
+		if err := a.saveUserLogo(ctx, bytes, ext); err != nil {
 			// On failure the snapshot copy is left untouched and
 			// mutateState republishes a bytewise-identical pointer.
 			// Cheap (one struct copy) and keeps the path simple — do
@@ -148,10 +149,11 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 // logo is set the call still succeeds (the on-disk Delete is itself
 // idempotent), so callers that don't track current logo state can just
 // hit the endpoint.
-func (a *App) handleAPIDeleteThemeLogo(w http.ResponseWriter, _ *http.Request) {
+func (a *App) handleAPIDeleteThemeLogo(w http.ResponseWriter, r *http.Request) {
 	var deleteErr error
+	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.deleteUserLogo(); err != nil {
+		if err := a.deleteUserLogo(ctx); err != nil {
 			deleteErr = err
 			return
 		}

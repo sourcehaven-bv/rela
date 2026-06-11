@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -20,13 +20,14 @@ import (
 type renameTestEnv struct {
 	dir   string
 	paths *project.Context
+	svc   *cliServices
 }
 
 func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	t.Helper()
 	dir := t.TempDir()
 
-	out = output.New(output.FormatTable)
+	_ = withOutput(t, output.FormatTable)
 	paths := &project.Context{
 		Root:                 dir,
 		EntitiesDir:          filepath.Join(dir, "entities"),
@@ -54,21 +55,16 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	}
 
 	// Set up project services backed by a real filesystem so the
-	// rename command can modify files on disk. NewForTest takes
-	// *Metamodel directly (bypassing the loader) because
-	// SimpleMetamodelYAML deliberately uses pre-migration syntax which
-	// the loader rejects.
+	// rename command can modify files on disk.
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	svc, err := newCLIServicesFromAppbuild(
-		appbuild.NewForTest(meta, appbuild.WithFS(fs, paths)),
+		appbuildtest.New(meta, appbuildtest.WithFS(fs, paths)),
 	)
 	if err != nil {
 		t.Fatalf("newCLIServicesFromAppbuild: %v", err)
 	}
-	//nolint:fatcontext // test setup
-	testCtx = attachServices(t.Context(), svc)
 
-	return renameTestEnv{dir: dir, paths: paths}
+	return renameTestEnv{dir: dir, paths: paths, svc: svc}
 }
 
 func writeEntityFile(t *testing.T, path, id, entityType, title string) {
@@ -116,7 +112,6 @@ func TestRenameEntityCommand(t *testing.T) {
 	t.Run("renames entity type end to end", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
 		dir := env.dir
-		svc := cliAnalyzeFromContext(testCtx)
 
 		// Create entity files
 		writeEntityFile(t,
@@ -127,9 +122,7 @@ func TestRenameEntityCommand(t *testing.T) {
 			"REQ-002", "requirement", "Second Requirement")
 
 		// Run rename
-		renameForce = true
-		renamePlural = ""
-		err := runRenameEntity(svc, "requirement", "feature")
+		err := runRenameEntity(env.svc, "requirement", "feature", true, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -174,11 +167,9 @@ func TestRenameEntityCommand(t *testing.T) {
 	})
 
 	t.Run("error when old type not found", func(t *testing.T) {
-		setupRenameTestEnv(t)
-		svc := cliAnalyzeFromContext(testCtx)
+		env := setupRenameTestEnv(t)
 
-		renameForce = true
-		err := runRenameEntity(svc, "nonexistent", "feature")
+		err := runRenameEntity(env.svc, "nonexistent", "feature", true, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -188,11 +179,9 @@ func TestRenameEntityCommand(t *testing.T) {
 	})
 
 	t.Run("error when new type already exists", func(t *testing.T) {
-		setupRenameTestEnv(t)
-		svc := cliAnalyzeFromContext(testCtx)
+		env := setupRenameTestEnv(t)
 
-		renameForce = true
-		err := runRenameEntity(svc, "requirement", "decision")
+		err := runRenameEntity(env.svc, "requirement", "decision", true, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -202,11 +191,9 @@ func TestRenameEntityCommand(t *testing.T) {
 	})
 
 	t.Run("error when new type name is invalid", func(t *testing.T) {
-		setupRenameTestEnv(t)
-		svc := cliAnalyzeFromContext(testCtx)
+		env := setupRenameTestEnv(t)
 
-		renameForce = true
-		err := runRenameEntity(svc, "requirement", "Bad-Name")
+		err := runRenameEntity(env.svc, "requirement", "Bad-Name", true, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -218,15 +205,12 @@ func TestRenameEntityCommand(t *testing.T) {
 	t.Run("custom plural form", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
 		dir := env.dir
-		svc := cliAnalyzeFromContext(testCtx)
 
 		writeEntityFile(t,
 			filepath.Join(dir, "entities", "requirements", "REQ-001.md"),
 			"REQ-001", "requirement", "Test")
 
-		renameForce = true
-		renamePlural = "policies"
-		err := runRenameEntity(svc, "requirement", "policy")
+		err := runRenameEntity(env.svc, "requirement", "policy", true, "policies")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -240,7 +224,6 @@ func TestRenameEntityCommand(t *testing.T) {
 	t.Run("renames template if exists", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
 		dir := env.dir
-		svc := cliAnalyzeFromContext(testCtx)
 
 		// Create template
 		templateDir := filepath.Join(dir, "templates", "entities")
@@ -248,9 +231,7 @@ func TestRenameEntityCommand(t *testing.T) {
 		templatePath := filepath.Join(templateDir, "requirement.md")
 		os.WriteFile(templatePath, []byte("---\nstatus: draft\n---\n"), 0644)
 
-		renameForce = true
-		renamePlural = ""
-		err := runRenameEntity(svc, "requirement", "feature")
+		err := runRenameEntity(env.svc, "requirement", "feature", true, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -266,15 +247,12 @@ func TestRenameEntityCommand(t *testing.T) {
 
 	t.Run("handles no entity directory", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
-		svc := cliAnalyzeFromContext(testCtx)
 
 		// Remove the entities directory entirely
 		os.RemoveAll(env.paths.EntitiesDir)
 		os.MkdirAll(env.paths.EntitiesDir, 0755)
 
-		renameForce = true
-		renamePlural = ""
-		err := runRenameEntity(svc, "requirement", "feature")
+		err := runRenameEntity(env.svc, "requirement", "feature", true, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -37,6 +37,7 @@ components:
   # Application services
   app:              { in: internal/app }
   appbuild:         { in: internal/appbuild }
+  appbuildtest:     { in: internal/appbuild/appbuildtest }
 
   # Domain services
   analysis:         { in: internal/analysis }
@@ -63,6 +64,7 @@ components:
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
+  frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
@@ -71,6 +73,8 @@ components:
   store:            { in: internal/store }
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
+  graphquerynaive:  { in: internal/store/graphquerynaive }
+  pgstore:          { in: internal/store/pgstore }
   storeutil:        { in: internal/store/storeutil }
 
   # Project bootstrap utilities
@@ -78,6 +82,7 @@ components:
 
   # Infrastructure
   acl:              { in: internal/acl }
+  affordances:      { in: internal/affordances }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
   principal:        { in: internal/principal }
@@ -98,7 +103,7 @@ components:
 # -- Vendors --------------------------------------------------------------
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
-  cobra:       { in: github.com/spf13/cobra }
+  kong:        { in: github.com/alecthomas/kong }
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
@@ -120,6 +125,7 @@ vendors:
       - github.com/olekukonko/tablewriter/**
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
+  pgx:         { in: github.com/jackc/pgx/** }
   singleflight: { in: golang.org/x/sync/singleflight }
   http2:
     in:
@@ -168,7 +174,10 @@ deps:
     canUse:
       - wails
 
-  # CLI layer — orchestrates everything
+  # CLI layer — orchestrates everything. memstore is here because
+  # cli/mcp_wiring has its own per-build store seam (the FS variant
+  # uses app+bleveindex, the -tags memorybackend variant uses
+  # memstore). Union over build tags, same rationale as appbuild.
   cli:
     mayDependOn:
       - acl
@@ -189,8 +198,10 @@ deps:
       - lua
       - markdown
       - mcp
+      - memstore
       - metamodel
       - output
+      - pgstore
       - principal
       - project
       - projectsetup
@@ -207,7 +218,7 @@ deps:
       - tracer
       - validator
     canUse:
-      - cobra
+      - kong
       - color
       - glamour
       - huh
@@ -217,6 +228,7 @@ deps:
   dataentry:
     mayDependOn:
       - acl
+      - affordances
       - audit
       - config
       - conflict
@@ -253,6 +265,12 @@ deps:
       - wails
 
   # Server protocols
+  #
+  # mcp takes a focused mcp.Deps struct (domain types only) from the
+  # cli wiring site; it holds no composition-root aggregate, so
+  # appbuild is deliberately absent from this whitelist. The project
+  # context no longer leaks in either — mcp.Deps carries ProjectRoot
+  # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
       - ai
@@ -264,7 +282,6 @@ deps:
       - principal
       - lua
       - metamodel
-      - project
       - rename
       - schema
       - script
@@ -287,6 +304,11 @@ deps:
       - project
       - storage
       - store
+  # appbuild deps are the union across build tags. Default build
+  # (!postgres && !memorybackend) imports app + bleveindex via the
+  # FS seam files; -tags memorybackend imports memstore via its
+  # alternative seam. arch-lint sees the whole graph reachable under
+  # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
       - acl
@@ -296,6 +318,30 @@ deps:
       - automation
       - bleveindex
       - config
+      - entitymanager
+      - lua
+      - memstore
+      - metamodel
+      - pgstore
+      - project
+      - script
+      - search
+      - state
+      - storage
+      - store
+      - templating
+      - tracer
+      - validator
+  appbuildtest:
+    mayDependOn:
+      - acl
+      - appbuild
+      - audit
+      - autocascade
+      - automation
+      - bleveindex
+      - config
+      - entity
       - entitymanager
       - lua
       - memstore
@@ -335,6 +381,15 @@ deps:
       - store
   acl:
     mayDependOn:
+      - entity
+      - principal
+      - store
+  affordances:
+    mayDependOn:
+      - acl
+      - entity
+      - metamodel
+      - predicate
       - principal
   audit:
     mayDependOn:
@@ -424,6 +479,8 @@ deps:
     mayDependOn:
       - storage
   markdown:
+    mayDependOn:
+      - frontmatter
     canUse:
       - goldmark
   filter:
@@ -482,6 +539,8 @@ deps:
   fsstore:
     mayDependOn:
       - cache
+      - frontmatter
+      - graphquerynaive
       - storage
       - store
       - storeutil
@@ -489,8 +548,21 @@ deps:
       - goldmark
   memstore:
     mayDependOn:
+      - graphquerynaive
       - store
       - storeutil
+  graphquerynaive:
+    mayDependOn:
+      - entity
+      - store
+  pgstore:
+    mayDependOn:
+      - graphquerynaive
+      - search
+      - store
+      - storeutil
+    canUse:
+      - pgx
   storeutil:
     mayDependOn:
       - store

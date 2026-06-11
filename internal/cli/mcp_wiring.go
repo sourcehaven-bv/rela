@@ -1,210 +1,93 @@
 package cli
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"log/slog"
-	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/app"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
-	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/templating"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
-	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// mcpServices is the focused-services bundle MCP needs. It satisfies
-// [mcp.Services] without going through workspace. Constructed once by
-// [newMCPServices] and held for the lifetime of the MCP process.
+// mcpServices owns the per-project services the MCP process needs and
+// their lifecycle (Close). It is constructed once by [newMCPServices]
+// and held for the lifetime of the MCP process. The MCP server itself
+// receives a flattened [mcp.Deps] via [mcpServices.Deps] — it never
+// holds a reference to this struct, so `internal/mcp` does not depend
+// on this wiring code.
+//
+// The service stack (store, search, metamodel, entitymanager,
+// automation, audit, validator, lua deps) is built by [appbuild] — the
+// single composition root shared with rela-server and rela-desktop — so
+// the MCP wiring is not a second composition root. Only the watcher
+// adapter is MCP-specific (appbuild deliberately has no watcher story).
 type mcpServices struct {
-	paths        *project.Context
-	meta         *metamodel.Metamodel
-	store        store.Store
-	backend      *bleveindex.Index
-	tracer       tracer.Tracer
-	searcher     search.Searcher
-	validator    validator.Validator
-	manager      *entitymanager.Manager
-	cfg          config.Loader
-	scriptEngine *script.Engine
-	watcher      relamcp.Watcher
+	svc     *appbuild.Services
+	watcher relamcp.Watcher
 }
 
-// compile-time check that *mcpServices satisfies mcp.Services so a
-// method-signature drift surfaces here rather than at the call site
-// where the value is handed to relamcp.NewServer.
-var _ relamcp.Services = (*mcpServices)(nil)
-
-// newMCPServices discovers the project at startDir, opens its store
-// with the search backend pre-wired as an [store.EntityObserver],
-// constructs the focused services MCP needs, and returns a bundle
-// that satisfies [mcp.Services].
+// newMCPServices discovers the project at startDir, builds the focused
+// services via [appbuild.Discover], and returns a bundle whose
+// [mcpServices.Deps] builds the [mcp.Deps] handed to the server.
+//
+// MCP is wired with [acl.NopACL] (allow-all) on purpose: it is a local
+// stdio transport, so anyone who can launch `rela mcp` already has
+// filesystem write access to the entity files and can edit them
+// directly, bypassing any gate. The filesystem is the trust boundary
+// here, not the tool surface — policy enforcement on MCP would defend
+// nothing. Access control that matters belongs on the deployed HTTP API,
+// which serves callers who do not have direct file access. WithACL makes
+// this an explicit, justified opt-out rather than a silent default.
 func newMCPServices(startDir string) (*mcpServices, error) {
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	paths, discErr := project.Discover(startDir, fs)
-	if discErr != nil {
-		return nil, discErr
+	svc, err := appbuild.Discover(startDir, script.NewEngine(), appbuild.WithACL(acl.NopACL{}))
+	if err != nil {
+		return nil, err
 	}
-	mm, _, metaErr := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
-	if metaErr != nil {
-		return nil, fmt.Errorf("load metamodel: %w", metaErr)
-	}
-
-	// Build the search backend BEFORE opening the store so the store
-	// hooks it in as a synchronous observer (TKT-Q1JT pattern).
-	var backend *bleveindex.Index
-	if idx, idxErr := bleveindex.NewMem(); idxErr == nil {
-		backend = idx
-	} else {
-		slog.Warn("search backend unavailable; MCP search tool will return errors", "error", idxErr)
-	}
-
-	factory := &app.FSFactory{FS: fs, Paths: paths}
-	if backend != nil {
-		factory.AddObserver(backend)
-	}
-
-	st, openErr := factory.OpenStore(mm)
-	if openErr != nil {
-		return nil, fmt.Errorf("open store: %w", openErr)
-	}
-
-	// Backfill the initial state — observers are not invoked for
-	// entities already on disk when the store opens.
-	if backend != nil {
-		// Partial-index failures are non-fatal but must be logged so
-		// the operator knows search is incomplete.
-		if err := backfillBackend(context.Background(), backend, st); err != nil {
-			slog.Warn("search index backfill incomplete", "error", err)
-		}
-	}
-
-	svc := &mcpServices{
-		paths:        paths,
-		meta:         mm,
-		store:        st,
-		backend:      backend,
-		tracer:       tracer.New(st),
-		cfg:          config.NewFSLoader(fs, paths.Root),
-		scriptEngine: script.NewEngine(),
-	}
-	if backend != nil {
-		svc.searcher = search.New(st, backend)
-	} else {
-		svc.searcher = search.ErrSearcher(errors.New("search index not available"))
-	}
-	svc.validator = validator.New(st, mm, svc.luaReadDeps())
-
-	// Build the Manager. Wire autocascade if metamodel declares
-	// automations; the ScriptRunner takes only the static lua.ReadDeps
-	// (per-cascade Mutator is supplied via Request.Mutator inside
-	// Manager.runWriteCascade — Manager satisfies autocascade.Mutator).
-	var autoEngine *automation.Engine
-	var cascadeRunner *autocascade.Runner
-	if len(mm.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(mm.Automations)
-		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
-		if rerr != nil {
-			return nil, fmt.Errorf("build autocascade runner: %w", rerr)
-		}
-		cascadeRunner = r
-	}
-	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
-	if auditErr != nil {
-		return nil, fmt.Errorf("build audit sink: %w", auditErr)
-	}
-
-	mgr, mgrErr := entitymanager.New(entitymanager.Deps{
-		Store:        st,
-		Meta:         mm,
-		Templater:    templating.NewFSTemplater(fs, paths),
-		Audit:        auditSink,
-		ACL:          acl.NopACL{},
-		Automations:  autoEngine,
-		Cascade:      cascadeRunner,
-		ScriptRunner: script.NewLuaScriptRunner(svc.scriptEngine, svc.luaReadDeps()),
-	})
-	if mgrErr != nil {
-		return nil, fmt.Errorf("build entitymanager: %w", mgrErr)
-	}
-	svc.manager = mgr
-
-	// Watcher: hand-off to fsstore's own watcher via type assertion.
-	// MCP today has no ExtraDirs / ExtraFiles use case, so the
-	// adapter is minimal.
-	svc.watcher = &mcpWatcher{store: st}
-
-	return svc, nil
+	return &mcpServices{
+		svc:     svc,
+		watcher: &mcpWatcher{store: svc.Store()},
+	}, nil
 }
 
-// --- mcp.Services satisfaction ---
-
-func (s *mcpServices) Store() store.Store                         { return s.store }
-func (s *mcpServices) Meta() *metamodel.Metamodel                 { return s.meta }
-func (s *mcpServices) Tracer() tracer.Tracer                      { return s.tracer }
-func (s *mcpServices) Searcher() search.Searcher                  { return s.searcher }
-func (s *mcpServices) Validator() validator.Validator             { return s.validator }
-func (s *mcpServices) EntityManager() entitymanager.EntityManager { return s.manager }
-func (s *mcpServices) Config() config.Loader                      { return s.cfg }
-func (s *mcpServices) Paths() *project.Context                    { return s.paths }
-func (s *mcpServices) LuaCache() *lua.Cache                       { return s.scriptEngine.LuaCache() }
-func (s *mcpServices) Watcher() relamcp.Watcher                   { return s.watcher }
-
-func (s *mcpServices) LuaWriteDeps() lua.WriteDeps {
-	return lua.WriteDeps{ReadDeps: s.luaReadDeps(), EntityManager: s.manager}
-}
-
-func (s *mcpServices) luaReadDeps() lua.ReadDeps {
-	var root string
-	if s.paths != nil {
-		root = s.paths.Root
-	}
-	return lua.ReadDeps{
-		Store:       s.store,
-		Tracer:      s.tracer,
-		Searcher:    s.searcher,
-		Meta:        s.meta,
-		ProjectRoot: root,
+// Deps flattens the per-project services into the focused [mcp.Deps]
+// the MCP server consumes. Built once at wiring time; the resulting
+// value holds domain types only, so the server has no path back to
+// this struct or to any composition-root aggregate.
+func (s *mcpServices) Deps() relamcp.Deps {
+	return relamcp.Deps{
+		Store:         s.svc.Store(),
+		Meta:          s.svc.Meta(),
+		Tracer:        s.svc.Tracer(),
+		Searcher:      s.svc.Searcher(),
+		Validator:     s.svc.Validator(),
+		EntityManager: s.svc.EntityManager(),
+		Config:        s.svc.Config(),
+		LuaWriteDeps:  s.svc.LuaWriteDeps(),
+		LuaCache:      s.svc.ScriptEngine().LuaCache(),
+		Watcher:       s.watcher,
+		ProjectRoot:   s.svc.Paths().Root,
 	}
 }
 
-// Close releases the search backend and store. Store close before
-// backend close so no observer callbacks land on a closed bleve.
+// Close stops the watcher and releases the underlying services (store
+// then search backend, in that order). Safe to call repeatedly — both
+// the watcher and [appbuild.Services.Close] are idempotent.
 func (s *mcpServices) Close() error {
 	if s.watcher != nil {
 		s.watcher.Stop()
 	}
-	if lc, ok := s.store.(store.Lifecycle); ok {
-		_ = lc.Close()
-	}
-	if s.backend != nil {
-		_ = s.backend.Close()
-		s.backend = nil
-	}
-	return nil
+	return s.svc.Close()
 }
 
 // --- Watcher adapter ---
 
 // storeStartStopper is the optional capability MCP needs from the
-// store to start / stop its file watcher. fsstore implements it; the
-// adapter no-ops when the store doesn't.
+// store to start / stop its file watcher. Only fsstore implements it;
+// in-memory store backends (memstore, used under //go:build
+// memorybackend) cannot watch a filesystem and therefore opt out.
+// The adapter silently no-ops in that case — see [mcpWatcher.Start]
+// for the operator-visible warning log.
 type storeStartStopper interface {
 	StartWatching() error
 	StopWatching()
@@ -224,10 +107,16 @@ type mcpWatcher struct {
 
 func (w *mcpWatcher) Start(onChange func()) error {
 	w.onChange = onChange
-	if sw, ok := w.store.(storeStartStopper); ok {
-		return sw.StartWatching()
+	sw, ok := w.store.(storeStartStopper)
+	if !ok {
+		// Backend doesn't watch (memstore under -tags memorybackend);
+		// MCP change notifications will not fire. Warn so operators
+		// running a non-FS build see this rather than silently
+		// wondering why subscriptions never deliver.
+		slog.Warn("mcp: store backend does not support file watching; change notifications are disabled")
+		return nil
 	}
-	return nil
+	return sw.StartWatching()
 }
 
 func (w *mcpWatcher) Stop() {
@@ -238,34 +127,3 @@ func (w *mcpWatcher) Stop() {
 
 func (w *mcpWatcher) Pause()  {}
 func (w *mcpWatcher) Resume() {}
-
-// --- backfill helper ---
-
-// backfillBackend populates a search backend from the store at
-// startup. Mirrors the per-entity loop in
-// workspace.backfillSearchBackend with the same error-accounting:
-// list errors and per-entity index errors are collected and returned
-// together, so the caller can log a summary instead of swallowing
-// failures silently. Partial-index outcomes are tolerable; a missing
-// telemetry path is not.
-func backfillBackend(ctx context.Context, backend *bleveindex.Index, st store.Store) error {
-	if backend == nil || st == nil {
-		return nil
-	}
-	entities := make([]*entity.Entity, 0)
-	var listErrs []error
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
-		if err != nil {
-			listErrs = append(listErrs, err)
-			continue
-		}
-		entities = append(entities, e)
-	}
-	indexed, indexErr := backend.IndexBatch(entities)
-	if len(listErrs) == 0 && indexErr == nil {
-		return nil
-	}
-	skipped := len(entities) - indexed
-	return fmt.Errorf("backfill indexed %d entities, skipped %d, list errors: %v, index error: %w",
-		indexed, skipped, listErrs, indexErr)
-}

@@ -73,7 +73,7 @@ func TestFindOrphansWithScope(t *testing.T) {
 	})
 
 	t.Run("no scope", func(t *testing.T) {
-		orphans := svc.FindOrphansWithScope(analysis.Options{})
+		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{})
 		if len(orphans) != 1 {
 			t.Errorf("got %d orphans, want 1", len(orphans))
 		}
@@ -83,7 +83,7 @@ func TestFindOrphansWithScope(t *testing.T) {
 	})
 
 	t.Run("with scope including orphan", func(t *testing.T) {
-		orphans := svc.FindOrphansWithScope(analysis.Options{
+		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{
 			Scope: map[string]bool{"DOC-003": true},
 		})
 		if len(orphans) != 1 {
@@ -92,7 +92,7 @@ func TestFindOrphansWithScope(t *testing.T) {
 	})
 
 	t.Run("with scope excluding orphan", func(t *testing.T) {
-		orphans := svc.FindOrphansWithScope(analysis.Options{
+		orphans := svc.FindOrphansWithScope(context.Background(), analysis.Options{
 			Scope: map[string]bool{"DOC-001": true, "DOC-002": true},
 		})
 		if len(orphans) != 0 {
@@ -115,7 +115,7 @@ func TestFindDuplicates(t *testing.T) {
 	})
 
 	t.Run("finds duplicates", func(t *testing.T) {
-		dups := svc.FindDuplicates(analysis.Options{})
+		dups := svc.FindDuplicates(context.Background(), analysis.Options{})
 		if len(dups) != 1 {
 			t.Errorf("got %d duplicate groups, want 1", len(dups))
 		}
@@ -125,7 +125,7 @@ func TestFindDuplicates(t *testing.T) {
 	})
 
 	t.Run("scope filters duplicates", func(t *testing.T) {
-		dups := svc.FindDuplicates(analysis.Options{
+		dups := svc.FindDuplicates(context.Background(), analysis.Options{
 			Scope: map[string]bool{"DOC-001": true},
 		})
 		if len(dups) != 0 {
@@ -159,7 +159,7 @@ func TestCheckCardinality(t *testing.T) {
 	})
 
 	t.Run("finds violations", func(t *testing.T) {
-		violations := svc.CheckCardinality(analysis.Options{})
+		violations := svc.CheckCardinality(context.Background(), analysis.Options{})
 		if len(violations) != 1 {
 			t.Errorf("got %d violations, want 1", len(violations))
 		}
@@ -174,7 +174,7 @@ func TestCheckCardinality(t *testing.T) {
 	})
 
 	t.Run("scope filters violations", func(t *testing.T) {
-		violations := svc.CheckCardinality(analysis.Options{
+		violations := svc.CheckCardinality(context.Background(), analysis.Options{
 			Scope: map[string]bool{"TKT-001": true},
 		})
 		if len(violations) != 0 {

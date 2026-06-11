@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
+import { useQueryCache } from '@pinia/colada'
 import { useEvents, type SSEConnectionState } from './useEvents'
 
 // Mock stores
@@ -15,6 +16,31 @@ vi.mock('@/stores', () => ({
     invalidateAll: mockEntitiesInvalidateAll,
   }),
 }))
+
+// Wrap the MockEventSource from test/setup.ts so tests can grab the
+// instance the composable connected to and drive server-sent events
+// through its _emit helper.
+interface EmittingSource {
+  _emit: (type: string, data?: string) => void
+}
+const BaseEventSource = globalThis.EventSource as unknown as new (url: string) => EventSource
+let lastSource: EmittingSource | null = null
+vi.stubGlobal(
+  'EventSource',
+  class extends BaseEventSource {
+    constructor(url: string) {
+      super(url)
+      lastSource = this as unknown as EmittingSource
+    }
+  }
+)
+
+interface TestVm {
+  connect: () => void
+  disconnect: () => void
+  on: (type: string, handler: (data: unknown) => void) => void
+  off: (type: string, handler: (data: unknown) => void) => void
+}
 
 describe('useEvents', () => {
   let connectionState: { value: SSEConnectionState }
@@ -37,6 +63,20 @@ describe('useEvents', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
+
+  // The SSE connection is a module-level singleton that can survive from
+  // a previous test, with listeners bound to that test's Pinia stores.
+  // Recycle it so the listeners close over this test's instances.
+  async function mountConnected() {
+    const wrapper = mount(TestComponent)
+    await nextTick()
+    const vm = wrapper.vm as unknown as TestVm
+    vm.disconnect()
+    vm.connect()
+    await vi.runAllTimersAsync()
+    await flushPromises()
+    return { wrapper, vm }
+  }
 
   it('connects on mount', async () => {
     mount(TestComponent)
@@ -96,41 +136,30 @@ describe('useEvents', () => {
       expect(handler).not.toHaveBeenCalled()
     })
 
-    it('creates new handler set when registering first handler for event type', async () => {
-      const wrapper = mount(TestComponent)
-      await nextTick()
-
-      const vm = wrapper.vm as unknown as {
-        on: (type: string, handler: () => void) => void
-      }
+    it('dispatches entity events to all registered handlers', async () => {
+      const { vm } = await mountConnected()
 
       const handler1 = vi.fn()
       const handler2 = vi.fn()
-
-      // Register multiple handlers for same event
       vm.on('entity:updated', handler1)
       vm.on('entity:updated', handler2)
 
-      // No errors means handlers registered successfully
-      expect(true).toBe(true)
+      lastSource!._emit('entity:updated', JSON.stringify({ type: 'ticket', id: 'TKT-9' }))
+
+      expect(handler1).toHaveBeenCalledWith({ type: 'ticket', id: 'TKT-9' })
+      expect(handler2).toHaveBeenCalledWith({ type: 'ticket', id: 'TKT-9' })
     })
 
     it('cleans up handlers on unmount', async () => {
-      const wrapper = mount(TestComponent)
-      await nextTick()
+      const { wrapper, vm } = await mountConnected()
 
-      const vm = wrapper.vm as unknown as {
-        on: (type: string, handler: () => void) => void
-      }
+      const handler = vi.fn()
+      vm.on('entity:deleted', handler)
 
-      vm.on('entity:deleted', vi.fn())
-      vm.on('entity:created', vi.fn())
-
-      // Unmounting should clean up registered handlers
       wrapper.unmount()
+      lastSource!._emit('entity:deleted', JSON.stringify({ type: 'ticket', id: 'TKT-2' }))
 
-      // No error means cleanup worked
-      expect(true).toBe(true)
+      expect(handler).not.toHaveBeenCalled()
     })
 
     it('handles off for non-existent handler', async () => {
@@ -145,6 +174,44 @@ describe('useEvents', () => {
 
       // Should not throw when removing handler that was never added
       expect(() => vm.off('entity:created', handler)).not.toThrow()
+    })
+  })
+
+  describe('cache invalidation (FEAT-XY2D1L)', () => {
+    it('invalidates the entity-type query prefix on entity events', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+
+      lastSource!._emit('entity:updated', JSON.stringify({ type: 'ticket', id: 'TKT-1' }))
+
+      expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] })
+    })
+
+    it('invalidates per event type for created and deleted too', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+
+      lastSource!._emit('entity:created', JSON.stringify({ type: 'risk', id: 'RSK-1' }))
+      lastSource!._emit('entity:deleted', JSON.stringify({ type: 'measure', id: 'MSR-1' }))
+
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'risk'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'measure'] })
+      expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(2)
+    })
+
+    it('invalidates every entity query on refresh', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+
+      lastSource!._emit('refresh')
+
+      expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities'] })
+      expect(mockGitFetchStatus).toHaveBeenCalled()
     })
   })
 

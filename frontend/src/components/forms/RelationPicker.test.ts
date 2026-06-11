@@ -124,3 +124,67 @@ describe('RelationPicker — entity label rendering', () => {
     wrapper.unmount()
   })
 })
+
+// TKT-G7N5: RelationPicker consumes the per-relation-type affordance
+// verdict. `creatable === false` hides the search input + inline-add
+// button; `removable === false` hides every per-entity x.
+describe('RelationPicker — affordance verdicts', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  async function mountWithVerdict(
+    value: string[],
+    candidates: Entity[],
+    verdict: { creatable?: boolean; removable?: boolean }
+  ) {
+    seedSchema()
+    seedCandidates(candidates)
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value, verdict },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('default (no verdict): search input and per-entity x button both visible', async () => {
+    const wrapper = await mountPicker([entity('TKT-100').id], [entity('TKT-100')])
+    expect(wrapper.find('.search-wrapper').exists()).toBe(true)
+    expect(wrapper.find('.remove-btn').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('creatable=false: search wrapper absent', async () => {
+    const wrapper = await mountWithVerdict([entity('TKT-100').id], [entity('TKT-100')], {
+      creatable: false,
+    })
+    expect(wrapper.find('.search-wrapper').exists()).toBe(false)
+    // Removal still permitted.
+    expect(wrapper.find('.remove-btn').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('removable=false: per-entity x absent on every selected entity', async () => {
+    const a = entity('TKT-100')
+    const b = entity('TKT-101')
+    const wrapper = await mountWithVerdict([a.id, b.id], [a, b], {
+      removable: false,
+    })
+    expect(wrapper.findAll('.remove-btn').length).toBe(0)
+    // Search still available.
+    expect(wrapper.find('.search-wrapper').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('both creatable=false and removable=false: both affordances hidden', async () => {
+    const wrapper = await mountWithVerdict([entity('TKT-100').id], [entity('TKT-100')], {
+      creatable: false,
+      removable: false,
+    })
+    expect(wrapper.find('.search-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.remove-btn').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

@@ -39,11 +39,14 @@ export const PRIORITY = {
   high: 'high',
 } as const;
 
-/** The metamodel analysis check types the backend emits and the SPA renders
- *  as check-cards at /analyze. Mirrors CHECK_TYPES in
- *  frontend/src/views/AnalyzeView.vue; if that list grows the spec will fail
- *  and the list here should be updated in lockstep. */
-export const ANALYSIS_CHECKS = ['Properties', 'Cardinality', 'Validations', 'Orphans'] as const;
+/** The metamodel analysis check types the backend emits (via runAnalysis()
+ *  in internal/dataentry/analyze.go) and the SPA renders as check-cards at
+ *  /analyze. Order matters: Playwright's `toContainText([...])` matches
+ *  array entries in sequence, and `expectCheckCardCount` asserts the count.
+ *  Keep in lockstep with runAnalysis() and with CHECK_TYPES in
+ *  frontend/src/views/AnalyzeView.vue. The Go-side test
+ *  TestRunAnalysisSectionNames pins the wire contract. */
+export const ANALYSIS_CHECKS = ['Properties', 'Cardinality', 'Validations', 'Orphans', 'Duplicates', 'ID Gaps'] as const;
 
 /** Seed entity IDs present in every fresh test project. Assumes the inline
  *  seed data below, in insertion order. Import from specs instead of
@@ -75,6 +78,9 @@ export interface EntityResponse {
   id: string;
   type: string;
   properties: Record<string, unknown>;
+  /** Server emits outgoing relations as a flat IDs-only map on GET responses
+   *  (the readback shape). The write-side accepts only the JSON:API §9
+   *  wrapper — see ModernRelationsField below. */
   relations?: Record<string, string[]>;
   /** Set when fsstore could not read the file (today: git-crypt
    *  encrypted, no key locally). Each entry names a schema property —
@@ -82,13 +88,21 @@ export interface EntityResponse {
   inaccessible?: Array<{ name: string; reason: string }>;
 }
 
+/** Modern JSON:API §9-style relations body for create/update. The
+ *  server rejects the legacy IDs-only form (`["id-1", "id-2"]`) with a
+ *  400 `legacy_shape_unsupported`. */
+export type ModernRelationsField = Record<
+  string,
+  { data: Array<{ type: string; id: string; meta?: Record<string, unknown> }> }
+>;
+
 export interface PaginatedResponse<T = EntityResponse> {
   data: T[];
   meta: { total: number; page: number; per_page: number; has_more: boolean };
 }
 
 export interface ApiHelpers {
-  createEntity(plural: string, data: { properties: Record<string, unknown>; content?: string; relations?: Record<string, string[]>; id?: string; prefix?: string }): Promise<EntityResponse>;
+  createEntity(plural: string, data: { properties: Record<string, unknown>; content?: string; relations?: ModernRelationsField; id?: string; prefix?: string }): Promise<EntityResponse>;
   getEntity(plural: string, id: string): Promise<EntityResponse>;
   updateEntity(plural: string, id: string, properties: Record<string, unknown>): Promise<EntityResponse>;
   deleteEntity(plural: string, id: string): Promise<void>;
@@ -313,14 +327,50 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     }
   },
 
-  appPage: async ({ browser, serverUrl }, use) => {
+  appPage: async ({ browser, serverUrl }, use, testInfo) => {
     const context = await browser.newContext({
       extraHTTPHeaders: { Origin: serverUrl },
     });
     const page = await context.newPage();
+
+    // Self-contained-binary guard (TKT-ZDRS): rela-server embeds the SPA via
+    // //go:embed and is meant to run without third-party network access.
+    // Capture every off-origin http(s) request the browser makes during a
+    // test; if any fire, fail the test in afterEach with the offending URLs.
+    // This catches both the original EasyMDE-FontAwesome regression and any
+    // future "let me just grab this CDN script" mistake across the whole SPA.
+    const allowedOrigin = new URL(serverUrl).origin;
+    const offOriginRequests: string[] = [];
+    page.on('request', (req) => {
+      const url = req.url();
+      if (!/^https?:/i.test(url)) return; // data:, blob:, file: are local
+      let origin: string;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        // Malformed enough that URL() throws — surface it instead of silently
+        // classifying as same-origin.
+        offOriginRequests.push(`<unparseable> ${url}`);
+        return;
+      }
+      if (origin !== allowedOrigin) offOriginRequests.push(url);
+    });
+
     await page.goto(`${serverUrl}/`);
     await use(page);
     await context.close();
+
+    if (offOriginRequests.length > 0) {
+      await testInfo.attach('off-origin-requests', {
+        body: offOriginRequests.join('\n'),
+        contentType: 'text/plain',
+      });
+      throw new Error(
+        `rela-server is meant to be self-contained but the SPA fetched ${offOriginRequests.length} ` +
+          `off-origin URL(s): ${offOriginRequests.slice(0, 5).join(', ')}` +
+          (offOriginRequests.length > 5 ? ` (+${offOriginRequests.length - 5} more — see attachment)` : ''),
+      );
+    }
   },
 
   api: async ({ serverUrl, appPage }, use) => {

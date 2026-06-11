@@ -2,9 +2,13 @@ package dataentry
 
 import (
 	"context"
+	"io"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -109,7 +113,7 @@ func bindRepo(app *App, root string) {
 // needs to share a specific filesystem (e.g., an in-memory FS across
 // multiple App instances).
 func bindRepoWithFS(app *App, fs storage.FS, paths *project.Context) {
-	newSvc := appbuild.NewForTest(app.Meta(), appbuild.WithFS(fs, paths))
+	newSvc := appbuildtest.New(app.Meta(), appbuildtest.WithFS(fs, paths))
 	reseedStore(newSvc.Store(), app.store)
 	rebindApp(app, fs, paths, newSvc)
 }
@@ -128,6 +132,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
 	app.acl = svc.ACL()
+	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents
 	// handler. Script engine can be the real one (tests that use script:
 	// configs will need to seed scripts on disk).
@@ -170,7 +175,11 @@ func reseedStore(dst, src store.Store) {
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
-	app := &App{scriptEngine: script.NewEngine()}
+	app := &App{
+		scriptEngine:  script.NewEngine(),
+		fieldResolver: NopFieldVerdictResolver{},
+		auditSink:     audit.Nop{},
+	}
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,
@@ -179,7 +188,7 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		fs := storage.NewMemFS()
 		ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 		_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-		svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+		svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 		rebindApp(app, fs, ctx, svc)
 		seedFromFixture(app.store, f)
 	}
@@ -206,6 +215,26 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		OpenAPIGen:   openAPIGen,
 	})
 	return app
+}
+
+// doRequest drives a request through the production router
+// (app.NewRouter().ServeHTTP), so mux registration, URL-pattern
+// parsing, and middleware ordering are exercised — unlike calling
+// app.handleV1* methods directly with pre-parsed route params.
+//
+// Convention (TKT-TLQ94B): new endpoint tests should go through this
+// helper; existing handler-level tests migrate opportunistically when
+// touched. TestRouterWalk_AllAPIRoutesReachHandlers covers route
+// registration itself.
+func doRequest(t *testing.T, app *App, method, path string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, path, body)
+	if body != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(w, r)
+	return w
 }
 
 // newHandlerTestApp builds an App for handler tests.
@@ -250,10 +279,14 @@ func newHandlerTestApp(t *testing.T) *App {
 	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
 
-	svc := appbuild.NewForTest(meta, appbuild.WithFS(fs, ctx))
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 	seedFromFixture(svc.Store(), g)
 
-	app := &App{}
+	// fieldResolver must be set explicitly because this fixture bypasses
+	// NewApp (which rejects a nil resolver). Without it, any handler that
+	// serializes entities for the wire panics — caught by the router walk
+	// test driving _search through the full router (TKT-TLQ94B).
+	app := &App{fieldResolver: NopFieldVerdictResolver{}}
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)
@@ -261,11 +294,18 @@ func newHandlerTestApp(t *testing.T) *App {
 		t.Fatalf("NewRootedFS: %v", err)
 	}
 	app.kv = state.NewFSKV(kvRoot)
+	// Populate the snapshot fields handlers deref unconditionally — the
+	// router walk test hits every route, including _openapi.json, which
+	// panics on a nil OpenAPIGen. UserPalette stays nil on purpose: the
+	// theme tests use its nil-ness as the "nothing saved yet" signal.
 	app.state.Store(&AppState{
-		Cfg:         cfg,
-		Meta:        meta,
-		StyleMap:    styleMap,
-		StyledTypes: styledTypes,
+		Cfg:          cfg,
+		Meta:         meta,
+		StyleMap:     styleMap,
+		StyledTypes:  styledTypes,
+		UserDefaults: &UserDefaults{},
+		Palette:      ResolvePalette(cfg.Palette, nil),
+		OpenAPIGen:   openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
 	})
 	return app
 }

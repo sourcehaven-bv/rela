@@ -2,6 +2,7 @@ package script
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,7 @@ var validMessageTypes = map[string]bool{
 // HTTP response and the slog log line stay matched up. Callers without
 // a correlation context (CLI, scheduler) may pass "".
 func (e *Engine) ExecuteAction(
+	ctx context.Context,
 	scriptPath string,
 	deps lua.WriteDeps,
 	triggerEntity *entity.Entity,
@@ -67,6 +69,7 @@ func (e *Engine) ExecuteAction(
 		lua.WithActionMode(),
 		lua.WithTimeout(timeout),
 		lua.WithCache(e.cache),
+		lua.WithContext(ctx),
 	)
 	if err != nil {
 		return nil, err
@@ -83,6 +86,10 @@ func (e *Engine) ExecuteAction(
 		ls.SetGlobal("entity", lua.EntityToTable(ls, triggerEntity))
 	}
 
+	// ctx is threaded into the runtime via lua.WithContext(ctx) above;
+	// RunActionString applies it to the LState. contextcheck can't follow that
+	// flow across the gopher-lua SetContext boundary.
+	//nolint:contextcheck // ctx threaded via WithContext; see comment above
 	ret, err := runtime.RunActionString(scriptCode, scriptPath)
 	if errors.Is(err, lua.ErrNoReturnValue) {
 		return &ActionResponse{}, nil

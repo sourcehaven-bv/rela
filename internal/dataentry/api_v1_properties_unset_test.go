@@ -6,6 +6,7 @@
 package dataentry
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,18 @@ func patchTicketJSON(t *testing.T, app *App, body string) (int, updateResponse) 
 		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	}
 	return rec.Code, resp
+}
+
+// patchTicketRaw returns the raw response body for assertions that
+// need to inspect non-V1Entity-shaped responses (e.g. 403 affordance
+// denials).
+func patchTicketRaw(t *testing.T, app *App, body string) (code int, respBody string) {
+	t.Helper()
+	const entityID = "TKT-001"
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+entityID, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", entityID)
+	return rec.Code, rec.Body.String()
 }
 
 // AC15: PATCH with `properties_unset` removes the named keys.
@@ -76,7 +89,14 @@ func TestV1UpdateEntity_PropertiesUnset_RemovesKeys(t *testing.T) {
 
 // AC16: PATCH with `properties_unset` of an undeclared key produces a
 // `unknown_property_unset_key` warning (200 + warning, DEC-HWZHA).
-func TestV1UpdateEntity_PropertiesUnset_UnknownKeyWarns(t *testing.T) {
+// TKT-G7N5 F8: unknown property unset keys are now rejected with 403
+// (rule_id=field-affordance:hidden) — the same shape as a true
+// hidden-field rejection. This closes the side channel where unknown
+// vs hidden produced distinguishable responses. The previous
+// behavior was a 200 with an `unknown_property_unset_key` warning;
+// that behavior is incompatible with the affordance-parity invariant
+// and was removed.
+func TestV1UpdateEntity_PropertiesUnset_UnknownKey_Forbidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -87,25 +107,16 @@ func TestV1UpdateEntity_PropertiesUnset_UnknownKeyWarns(t *testing.T) {
 		Properties: map[string]interface{}{"title": "x", "status": "open"},
 	})
 
-	code, resp := patchTicketJSON(t, app,
+	code, body := patchTicketRaw(t, app,
 		`{"properties_unset":["nonexistent_property"]}`)
-	if code != http.StatusOK {
-		t.Fatalf("PATCH returned %d", code)
+	if code != http.StatusForbidden {
+		t.Fatalf("PATCH returned %d, want 403; body=%s", code, body)
 	}
-	if len(resp.Warnings) == 0 {
-		t.Fatal("expected at least one warning")
+	if !strings.Contains(body, `"rule_kind":"affordance"`) {
+		t.Errorf("body should name rule_kind=affordance; got: %s", body)
 	}
-	var found bool
-	for _, w := range resp.Warnings {
-		if w.Code == "unknown_property_unset_key" && strings.Contains(w.Path, "0") {
-			found = true
-			if !strings.Contains(w.Detail, "nonexistent_property") {
-				t.Errorf("warning detail should name the key: %q", w.Detail)
-			}
-		}
-	}
-	if !found {
-		t.Errorf("expected unknown_property_unset_key warning, got %+v", resp.Warnings)
+	if !strings.Contains(body, `"rule_id":"field-affordance:hidden:nonexistent_property"`) {
+		t.Errorf("body should contain hidden-shaped rule_id; got: %s", body)
 	}
 }
 
@@ -176,7 +187,7 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 		t.Error("status not removed")
 	}
 	// Relation written
-	edges := app.outgoingRelations("TKT-001")
+	edges := app.outgoingRelations(context.Background(), "TKT-001")
 	if len(edges) != 1 || edges[0].Type != "blocks" || edges[0].To != "FEAT-001" {
 		t.Errorf("expected one blocks→FEAT-001 edge, got %+v", edges)
 	}

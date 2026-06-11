@@ -164,7 +164,7 @@ func TestEntityToAPI_WithoutRelations(t *testing.T) {
 		},
 	}
 
-	result := app.entityToAPI(e, false)
+	result := app.entityToAPI(context.Background(), e, false)
 
 	if result.ID != "TKT-001" {
 		t.Errorf("expected ID TKT-001, got %q", result.ID)
@@ -186,7 +186,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	// Add a relation to test graph
 	seedRelation(app, entity.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	result := app.entityToAPI(entities.ticket1, true)
+	result := app.entityToAPI(context.Background(), entities.ticket1, true)
 
 	if len(result.Relations) == 0 {
 		t.Fatal("expected relations, got none")
@@ -203,7 +203,7 @@ func TestEntityToAPI_WithRelations(t *testing.T) {
 	}
 
 	// Check incoming from perspective of TKT-002
-	result2 := app.entityToAPI(entities.ticket2, true)
+	result2 := app.entityToAPI(context.Background(), entities.ticket2, true)
 	hasIncoming := false
 	for _, r := range result2.Relations {
 		if r.Direction == DirectionIncoming && r.Type == "depends_on" && r.From == entities.ticket1.ID {

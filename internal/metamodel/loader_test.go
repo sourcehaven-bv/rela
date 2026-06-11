@@ -2007,3 +2007,182 @@ func findRepoRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+func TestParse_RelationOrderable(t *testing.T) {
+	const base = `
+version: "1.0"
+entities:
+  recipe:
+    label: Recipe
+    id_prefix: "REC-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+  step:
+    label: Step
+    id_prefix: "STP-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+relations:
+  has-step:
+    label: has step
+    from: [recipe]
+    to: [step]
+`
+	tests := []struct {
+		name             string
+		orderableYAML    string
+		wantErr          bool
+		wantOutgoingProp string
+		wantIncomingProp string
+		wantMode         OrderableMode
+	}{
+		{
+			name:          "absent (default)",
+			orderableYAML: "",
+			wantMode:      OrderableNone,
+		},
+		{
+			name:             "outgoing",
+			orderableYAML:    "    orderable: outgoing\n",
+			wantMode:         OrderableOutgoing,
+			wantOutgoingProp: OrderPropertyOut,
+		},
+		{
+			name:             "incoming",
+			orderableYAML:    "    orderable: incoming\n",
+			wantMode:         OrderableIncoming,
+			wantIncomingProp: OrderPropertyIn,
+		},
+		{
+			name:             "both",
+			orderableYAML:    "    orderable: both\n",
+			wantMode:         OrderableBoth,
+			wantOutgoingProp: OrderPropertyOut,
+			wantIncomingProp: OrderPropertyIn,
+		},
+		{
+			name:          "invalid string",
+			orderableYAML: "    orderable: yes\n",
+			wantErr:       true,
+		},
+		{
+			name:          "invalid uppercase",
+			orderableYAML: "    orderable: OUTGOING\n",
+			wantErr:       true,
+		},
+		{
+			name:          "invalid arbitrary",
+			orderableYAML: "    orderable: sometimes\n",
+			wantErr:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := base + tt.orderableYAML
+			m, err := Parse([]byte(yaml))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error for invalid orderable value, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			rel := m.Relations["has-step"]
+			if rel.Orderable != tt.wantMode {
+				t.Errorf("Orderable = %q, want %q", rel.Orderable, tt.wantMode)
+			}
+			if got := rel.OutgoingOrderProperty(); got != tt.wantOutgoingProp {
+				t.Errorf("OutgoingOrderProperty() = %q, want %q", got, tt.wantOutgoingProp)
+			}
+			if got := rel.IncomingOrderProperty(); got != tt.wantIncomingProp {
+				t.Errorf("IncomingOrderProperty() = %q, want %q", got, tt.wantIncomingProp)
+			}
+		})
+	}
+}
+
+func TestParse_RelationOrderable_RejectsManagedPropertyDecl(t *testing.T) {
+	tests := []struct {
+		name string
+		prop string
+	}{
+		{"_order_out is reserved", OrderPropertyOut},
+		{"_order_in is reserved", OrderPropertyIn},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := `
+version: "1.0"
+entities:
+  recipe:
+    label: Recipe
+    id_prefix: "REC-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+  step:
+    label: Step
+    id_prefix: "STP-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+relations:
+  has-step:
+    label: has step
+    from: [recipe]
+    to: [step]
+    orderable: outgoing
+    properties:
+      ` + tt.prop + `:
+        type: integer
+`
+			_, err := Parse([]byte(yaml))
+			if err == nil {
+				t.Fatalf("expected error for declaring managed property %q", tt.prop)
+			}
+			if !strings.Contains(err.Error(), tt.prop) {
+				t.Errorf("error %q does not mention managed property %q", err.Error(), tt.prop)
+			}
+		})
+	}
+}
+
+// E5: orderable on a symmetric relation has no meaningful semantics — a
+// symmetric edge has no canonical direction to order, so the engine
+// refuses the combination at load time.
+func TestParse_RelationOrderable_RejectsSymmetric(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+relations:
+  related-to:
+    label: related to
+    from: [task]
+    to: [task]
+    symmetric: true
+    orderable: outgoing
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for orderable + symmetric combination")
+	}
+	if !strings.Contains(err.Error(), "symmetric") {
+		t.Errorf("error %q does not mention the symmetric conflict", err.Error())
+	}
+}

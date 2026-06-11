@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
@@ -96,29 +96,22 @@ func TestParseChecks(t *testing.T) {
 	}
 }
 
-// seedServices builds an *appbuild.Services from a seeded memstore
-// using the given metamodel and seed function. Used to feed
+// seedAppbuildServices builds an *appbuild.Services from a seeded
+// memstore using the given metamodel and seed function. Used to feed
 // runValidationChecks in CLI-layer tests — that function takes
 // *appbuild.Services directly because validate.go constructs its own
 // services bundle for the --check pass.
-func seedServices(meta *metamodel.Metamodel, seed func(*storeSeeder)) *appbuild.Services {
+func seedAppbuildServices(meta *metamodel.Metamodel, seed func(*storeSeeder)) *appbuild.Services {
 	seeder := newStoreSeeder(meta)
 	if seed != nil {
 		seed(seeder)
 	}
-	return appbuild.NewForTest(meta, appbuild.WithTestStore(seeder.s))
+	return appbuildtest.New(meta, appbuildtest.WithStore(seeder.s))
 }
 
 // TestRunValidationChecks_JSONOutput exercises the CLI JSON output
-// envelope once, using a cardinality violation as the trigger. The
-// actual cardinality, property, and custom-rule logic is covered in
-// internal/analysis/analysis_test.go; here we only verify the CLI shape.
+// envelope once, using a cardinality violation as the trigger.
 func TestRunValidationChecks_JSONOutput(t *testing.T) {
-	origOut, origChecks, origQuiet := out, validateChecks, quiet
-	t.Cleanup(func() {
-		out, validateChecks, quiet = origOut, origChecks, origQuiet
-	})
-
 	minOne := 1
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -136,14 +129,11 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 	}
 	meta.InitAliases()
 
-	svc := seedServices(meta, func(s *storeSeeder) {
+	svc := seedAppbuildServices(meta, func(s *storeSeeder) {
 		s.addEntity(testutil.EntityFor(meta, "feature").ID("FEAT-001"))
 	})
 
-	var buf bytes.Buffer
-	out = output.NewWithWriter(&buf, output.FormatJSON)
-
-	validateChecks = []string{"cardinality"}
+	buf := withOutput(t, output.FormatJSON)
 
 	tr := tracer.New(svc.Store())
 	an, err := analysis.New(analysis.Deps{
@@ -155,7 +145,7 @@ func TestRunValidationChecks_JSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}
-	hasErrors, err := runValidationChecks(context.Background(), svc, an, out, meta)
+	hasErrors, err := runValidationChecks(context.Background(), svc, an, out, meta, []string{"cardinality"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

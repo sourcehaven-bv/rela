@@ -77,6 +77,26 @@ export class EntityPage extends BasePage {
     await this.page.waitForURL(/\/form\//);
   }
 
+  /** Wait for the page heading to render. Use after navigating to a
+   *  detail URL directly without going through navigateToEntity. */
+  async waitForHeading(timeoutMs = 10_000) {
+    await this.heading.waitFor({ timeout: timeoutMs });
+  }
+
+  /** Assert no Edit button is rendered. Used to verify the AC10
+   *  read-only payoff: per-entity `_actions.update=false` hides the
+   *  Edit affordance. */
+  async expectNoEditButton() {
+    await expect(this.page.getByRole('button', { name: /^Edit/ })).toHaveCount(0);
+  }
+
+  /** Assert no Delete button is rendered. Used to verify the AC10
+   *  read-only payoff: per-entity `_actions.delete=false` hides the
+   *  Delete affordance. */
+  async expectNoDeleteButton() {
+    await expect(this.page.getByRole('button', { name: /^Delete/ })).toHaveCount(0);
+  }
+
   async clickRelationLink(targetId: string) {
     // Detail screens render related entities as cards / list items with a
     // data-entity-id attribute on the row root and a clickable header
@@ -114,13 +134,39 @@ export class EntityPage extends BasePage {
   }
 
   async containsText(text: string): Promise<boolean> {
-    return this.page.getByText(text).first().isVisible();
+    // Inline-edit (TKT-IHC7B): properties may render as <input value="…">
+    // or <textarea>…</textarea>, neither of which produce text nodes
+    // matchable by getByText. Fall through to a form-control sweep so
+    // tests against property values work in both display and edit mode.
+    if (await this.page.getByText(text).first().isVisible().catch(() => false)) return true;
+    return this.matchesFormControlValue(this.page.locator('body'), text);
   }
 
   /** Check that a property value is rendered inside the entity-detail container
-   *  (scoped to avoid matching nav/sidebar elements). */
+   *  (scoped to avoid matching nav/sidebar elements). Matches either visible
+   *  text (display mode: Badge / span) or form-control values (inline-edit
+   *  mode: input / textarea / selected option) — see TKT-IHC7B. */
   async hasPropertyValue(value: string): Promise<boolean> {
-    return this.detailContainer.getByText(value, { exact: true }).first().isVisible();
+    if (await this.detailContainer.getByText(value, { exact: true }).first().isVisible().catch(() => false)) {
+      return true;
+    }
+    return this.matchesFormControlValue(this.detailContainer, value);
+  }
+
+  /** Internal: scan inputs / textareas / selected options under `scope` for
+   *  a control whose value === text. Returns true on first match. */
+  private async matchesFormControlValue(scope: Locator, text: string): Promise<boolean> {
+    const inputs = await scope.locator('input, textarea').all();
+    for (const ctrl of inputs) {
+      const v = await ctrl.inputValue().catch(() => '');
+      if (v === text) return true;
+    }
+    const selects = await scope.locator('select').all();
+    for (const sel of selects) {
+      const v = await sel.inputValue().catch(() => '');
+      if (v === text) return true;
+    }
+    return false;
   }
 
   /** True if the entity-detail body contains any blocking-relation text. */
@@ -158,12 +204,15 @@ export class EntityPage extends BasePage {
   }
 
   /** Click the checkbox with data-cb-idx="index" in the content body.
-   *  `force: true` because GFM-rendered checkboxes are disabled by default —
-   *  Vue installs a click handler that toggles via the API regardless. */
+   *  The Vue handler calls preventDefault(), PATCHes the entity with the
+   *  toggled content, and reactively splices the updated entity back into
+   *  viewData — so the rendered checked state tracks the server source
+   *  without a full-view refetch (and without the flicker that refetching
+   *  the entity detail tree would cause). */
   async clickContentCheckbox(index: number): Promise<void> {
     await this.contentBody
       .locator(`input[type="checkbox"][data-cb-idx="${index}"]`)
-      .click({ force: true });
+      .click();
   }
 
   async contentCheckboxIsChecked(index: number): Promise<boolean> {

@@ -19,10 +19,13 @@ status: pending
 
 ## Research
 
+- [ ] For larger features: run `/research` to create a structured research doc
 - [ ] Searched for existing libraries that solve this problem
 - [ ] Checked codebase for similar patterns or reusable code
 - [ ] Looked for reference implementations in other projects
 - [ ] Reviewed relevant rela concepts for prior art
+
+**Research Doc:** <!-- Link RES-xxxx if created, or N/A for small changes -->
 
 **Existing Solutions:**
 <!-- Document what you found:
@@ -98,11 +101,11 @@ For enhancements: identify what documentation needs updating.
 
 **Documentation Impact:**
 <!-- Which docs need updating? Check all that apply:
-- [ ] User guide / reference docs
-- [ ] CLI help text (if commands changed)
-- [ ] CLAUDE.md (if new patterns)
-- [ ] README.md (if project-level changes)
-- [ ] API docs (if applicable)
+- [ ] docs/metamodel.md - New metamodel features
+- [ ] docs/cli-reference.md - New/changed commands
+- [ ] docs/data-entry.md - UI changes
+- [ ] CLAUDE.md - New patterns or conventions
+- [ ] README.md - Project-level changes
 - [ ] N/A - Internal change, no user-facing docs needed
 -->
 

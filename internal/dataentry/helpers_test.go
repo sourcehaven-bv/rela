@@ -1,8 +1,7 @@
 package dataentry
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -676,103 +675,6 @@ func TestSimpleMarkdownToHTML(t *testing.T) {
 	}
 }
 
-func TestToggleCheckbox(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		index   int
-		want    string
-		wantErr bool
-	}{
-		{
-			"check unchecked",
-			"- [ ] task one",
-			0,
-			"- [x] task one",
-			false,
-		},
-		{
-			"uncheck checked",
-			"- [x] task one",
-			0,
-			"- [ ] task one",
-			false,
-		},
-		{
-			"uncheck uppercase",
-			"- [X] task one",
-			0,
-			"- [ ] task one",
-			false,
-		},
-		{
-			"toggle second of three",
-			"- [ ] first\n- [ ] second\n- [x] third",
-			1,
-			"- [ ] first\n- [x] second\n- [x] third",
-			false,
-		},
-		{
-			"index out of range",
-			"- [ ] only one",
-			1,
-			"",
-			true,
-		},
-		{
-			"no checkboxes",
-			"just text",
-			0,
-			"",
-			true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := toggleCheckbox(tt.content, tt.index)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("toggleCheckbox(%q, %d)\n  got:  %q\n  want: %q", tt.content, tt.index, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCheckboxStats(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		checked int
-		total   int
-	}{
-		{"empty", "", 0, 0},
-		{"no checkboxes", "just text\n- list item", 0, 0},
-		{"one unchecked", "- [ ] task", 0, 1},
-		{"one checked", "- [x] task", 1, 1},
-		{"mixed", "- [ ] first\n- [x] second\n- [ ] third", 1, 3},
-		{"all checked", "- [x] a\n- [X] b", 2, 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stats := checkboxStats(tt.content)
-			if stats.Checked != tt.checked || stats.Total != tt.total {
-				t.Errorf("checkboxStats(%q) = {Checked:%d, Total:%d}, want {Checked:%d, Total:%d}",
-					tt.content, stats.Checked, stats.Total, tt.checked, tt.total)
-			}
-		})
-	}
-}
-
 func TestResolveRelationColumnValue(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -804,7 +706,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	app := newAppFromParts(nil, meta, g)
 
 	t.Run("resolves multiple targets", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -812,7 +714,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("filters by relation type", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "otherRel", "")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "otherRel", "")
 		want := []string{"Alice"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -820,21 +722,21 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("returns empty for no matching relations", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "nonexistent", "")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "nonexistent", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("returns empty for unknown entity", func(t *testing.T) {
-		got := app.resolveRelationColumnValues("UNKNOWN", "assessmentBy", "")
+		got := app.resolveRelationColumnValues(context.Background(), "UNKNOWN", "assessmentBy", "")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
 	})
 
 	t.Run("direction outgoing explicit", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "outgoing")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "outgoing")
 		want := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -844,7 +746,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	t.Run("direction incoming returns sources", func(t *testing.T) {
 		// PER-001 has an incoming edge from ASS-001 via assessmentBy
 		// Assessment title is not required, so falls back to ID
-		got := app.resolveRelationColumnValues(person1.ID, "assessmentBy", "incoming")
+		got := app.resolveRelationColumnValues(context.Background(), person1.ID, "assessmentBy", "incoming")
 		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -853,7 +755,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 
 	t.Run("direction incoming returns multiple sources", func(t *testing.T) {
 		// PER-001 is target of both assessmentBy and otherRel from ASS-001
-		got := app.resolveRelationColumnValues(person1.ID, "otherRel", "incoming")
+		got := app.resolveRelationColumnValues(context.Background(), person1.ID, "otherRel", "incoming")
 		want := []string{assessment.ID}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
@@ -861,7 +763,7 @@ func TestResolveRelationColumnValue(t *testing.T) {
 	})
 
 	t.Run("direction incoming no matches", func(t *testing.T) {
-		got := app.resolveRelationColumnValues(assessment.ID, "assessmentBy", "incoming")
+		got := app.resolveRelationColumnValues(context.Background(), assessment.ID, "assessmentBy", "incoming")
 		if len(got) != 0 {
 			t.Errorf("got %v, want empty slice", got)
 		}
@@ -981,7 +883,7 @@ func TestFilterByRelation(t *testing.T) {
 	allTickets := g.NodesByType("ticket")
 
 	t.Run("filters by relation target title", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Frontend")
 		gotIDs := collectModelIDs(got)
 		if len(got) != 2 {
 			t.Fatalf("expected 2 results, got %d: %v", len(got), gotIDs)
@@ -992,7 +894,7 @@ func TestFilterByRelation(t *testing.T) {
 	})
 
 	t.Run("filters by different relation target", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Backend")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Backend")
 		gotIDs := collectModelIDs(got)
 		if len(got) != 1 {
 			t.Fatalf("expected 1 result, got %d: %v", len(got), gotIDs)
@@ -1003,21 +905,21 @@ func TestFilterByRelation(t *testing.T) {
 	})
 
 	t.Run("returns empty for non-matching value", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Nonexistent")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Nonexistent")
 		if len(got) != 0 {
 			t.Errorf("expected 0 results, got %d", len(got))
 		}
 	})
 
 	t.Run("returns empty for unknown relation type", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "unknown_relation", "Frontend")
+		got := app.filterByRelation(context.Background(), allTickets, "unknown_relation", "Frontend")
 		if len(got) != 0 {
 			t.Errorf("expected 0 results, got %d", len(got))
 		}
 	})
 
 	t.Run("handles entities without relations", func(t *testing.T) {
-		got := app.filterByRelation(allTickets, "belongs_to", "Frontend")
+		got := app.filterByRelation(context.Background(), allTickets, "belongs_to", "Frontend")
 		for _, e := range got {
 			if e.ID == tkt4.ID {
 				t.Errorf("%s should not be in results (has no belongs_to relation)", tkt4.ID)
@@ -1080,7 +982,7 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	allTickets := g.NodesByType("ticket")
 
 	t.Run("returns unique sorted values", func(t *testing.T) {
-		got := app.resolveRelationFilterValues(allTickets, "belongs_to")
+		got := app.resolveRelationFilterValues(context.Background(), allTickets, "belongs_to")
 		// Only Frontend and Backend are referenced, API is not
 		// Should be sorted: Backend, Frontend
 		if len(got) != 2 {
@@ -1095,14 +997,14 @@ func TestResolveRelationFilterValues(t *testing.T) {
 	})
 
 	t.Run("returns empty for unknown relation type", func(t *testing.T) {
-		got := app.resolveRelationFilterValues(allTickets, "unknown_relation")
+		got := app.resolveRelationFilterValues(context.Background(), allTickets, "unknown_relation")
 		if len(got) != 0 {
 			t.Errorf("expected 0 values, got %d", len(got))
 		}
 	})
 
 	t.Run("returns empty for empty entities list", func(t *testing.T) {
-		got := app.resolveRelationFilterValues([]*entity.Entity{}, "belongs_to")
+		got := app.resolveRelationFilterValues(context.Background(), []*entity.Entity{}, "belongs_to")
 		if len(got) != 0 {
 			t.Errorf("expected 0 values, got %d", len(got))
 		}
@@ -1116,281 +1018,6 @@ func sliceContainsStr(slice []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func TestResolveScope(t *testing.T) {
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"status":   {Type: "string"},
-					"priority": {Type: "string"},
-				},
-			},
-		},
-	}
-
-	makeGraph := func() *fixture {
-		g := newFixture()
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-001").With("status", "open").With("priority", "high").Build())
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-002").With("status", "closed").With("priority", "low").Build())
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-003").With("status", "open").With("priority", "medium").Build())
-		g.AddNode(testutil.EntityFor(meta, "ticket").ID("T-004").With("status", "open").With("priority", "low").Build())
-		return g
-	}
-
-	makeApp := func() *App {
-		return newAppFromParts(&Config{
-			Lists: map[string]List{
-				"tickets": {
-					EntityType: "ticket",
-					Title:      "Tickets",
-					Sort:       []SortSpec{{Property: "priority", Direction: "asc"}},
-					Filters:    nil,
-					FilterControls: []FilterControl{
-						{Property: "status"},
-					},
-				},
-			},
-		}, meta, makeGraph())
-	}
-
-	makeRequest := func(urlStr string) *http.Request {
-		return httptest.NewRequest(http.MethodGet, urlStr, http.NoBody)
-	}
-
-	t.Run("no scope param returns nil", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-002")
-		got := app.resolveScope("T-002", r)
-		if got != nil {
-			t.Errorf("expected nil, got %+v", got)
-		}
-	})
-
-	t.Run("empty scope param returns nil", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-002?scope=")
-		got := app.resolveScope("T-002", r)
-		if got != nil {
-			t.Errorf("expected nil, got %+v", got)
-		}
-	})
-
-	t.Run("invalid scope prefix returns nil", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-002?scope=bogus:foo")
-		got := app.resolveScope("T-002", r)
-		if got != nil {
-			t.Errorf("expected nil, got %+v", got)
-		}
-	})
-
-	t.Run("unknown list returns nil", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-002?scope=list:nonexistent")
-		got := app.resolveScope("T-002", r)
-		if got != nil {
-			t.Errorf("expected nil, got %+v", got)
-		}
-	})
-
-	t.Run("entity not in scope returns nil", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-999?scope=list:tickets")
-		got := app.resolveScope("T-999", r)
-		if got != nil {
-			t.Errorf("expected nil, got %+v", got)
-		}
-	})
-
-	t.Run("list scope middle item has prev and next", func(t *testing.T) {
-		app := makeApp()
-		// Sort by status asc: closed(T-002), open(T-001), open(T-003), open(T-004)
-		// T-001 has status=open which sorts after closed.
-		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&sort=status&sort_dir=asc")
-		got := app.resolveScope("T-001", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		if got.PrevURL == "" {
-			t.Error("expected PrevURL to be set for non-first item")
-		}
-		if got.Label != "4 Tickets" {
-			t.Errorf("Label = %q, want %q", got.Label, "4 Tickets")
-		}
-	})
-
-	t.Run("list scope first item has no prev", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&sort=status&sort_dir=asc")
-		got := app.resolveScope("T-001", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		if got.Progress == "[1/4]" && got.PrevURL != "" {
-			t.Error("first item should not have PrevURL")
-		}
-	})
-
-	t.Run("list scope last item has no next", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-001?scope=list:tickets&sort=priority&sort_dir=desc")
-		got := app.resolveScope("T-001", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		if got.Progress == "[4/4]" && got.NextURL != "" {
-			t.Error("last item should not have NextURL")
-		}
-	})
-
-	t.Run("list scope with filter narrows results", func(t *testing.T) {
-		app := makeApp()
-		// Filter to status=open should give T-001, T-003, T-004 (3 items)
-		r := makeRequest("/entity/ticket/T-003?scope=list:tickets&filter_status=open")
-		got := app.resolveScope("T-003", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		if got.Label != "3 Tickets" {
-			t.Errorf("Label = %q, want %q", got.Label, "3 Tickets")
-		}
-	})
-
-	t.Run("list scope preserves query params in prev/next URLs", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-003?from=tickets&scope=list:tickets&filter_status=open")
-		got := app.resolveScope("T-003", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		checkURL := got.NextURL
-		if checkURL == "" {
-			checkURL = got.PrevURL
-		}
-		if checkURL == "" {
-			t.Fatal("expected at least one nav URL")
-		}
-		for _, param := range []string{"scope=list%3Atickets", "filter_status=open", "from=tickets"} {
-			if !strings.Contains(checkURL, param) {
-				t.Errorf("URL %q missing expected param %q", checkURL, param)
-			}
-		}
-	})
-
-	t.Run("single item scope has no prev or next", func(t *testing.T) {
-		app := makeApp()
-		// Filter to status=closed should give only T-002
-		r := makeRequest("/entity/ticket/T-002?scope=list:tickets&filter_status=closed")
-		got := app.resolveScope("T-002", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		if got.PrevURL != "" {
-			t.Errorf("single item should have empty PrevURL, got %q", got.PrevURL)
-		}
-		if got.NextURL != "" {
-			t.Errorf("single item should have empty NextURL, got %q", got.NextURL)
-		}
-		if got.Progress != "[1/1]" {
-			t.Errorf("Progress = %q, want [1/1]", got.Progress)
-		}
-	})
-
-	t.Run("search scope finds entity", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-002?scope=search:type:ticket")
-		got := app.resolveScope("T-002", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope for search")
-		}
-		if got.Label == "" {
-			t.Error("expected non-empty label for search scope")
-		}
-	})
-
-	t.Run("search scope with no results returns nil", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/entity/ticket/T-002?scope=search:type:nonexistent")
-		got := app.resolveScope("T-002", r)
-		if got != nil {
-			t.Errorf("expected nil for search with no results, got %+v", got)
-		}
-	})
-
-	t.Run("list scope with relation filter narrows results", func(t *testing.T) {
-		// Create an app with relation-based filter
-		relMeta := &metamodel.Metamodel{
-			Entities: map[string]metamodel.EntityDef{
-				"ticket": {
-					Properties: map[string]metamodel.PropertyDef{
-						"title": {Type: "string", Required: true},
-					},
-				},
-				"component": {
-					Properties: map[string]metamodel.PropertyDef{
-						"name": {Type: "string", Required: true},
-					},
-				},
-			},
-			Relations: map[string]metamodel.RelationDef{
-				"belongs_to": {From: []string{"ticket"}, To: []string{"component"}},
-			},
-		}
-
-		relGraph := newFixture()
-		cmp := testutil.EntityFor(relMeta, "component").ID("CMP-001").With("name", "Frontend").Build()
-		relGraph.AddNode(cmp)
-
-		t1 := testutil.EntityFor(relMeta, "ticket").ID("T-001").With("title", "Ticket 1").Build()
-		t2 := testutil.EntityFor(relMeta, "ticket").ID("T-002").With("title", "Ticket 2").Build()
-		t3 := testutil.EntityFor(relMeta, "ticket").ID("T-003").With("title", "Ticket 3").Build()
-		relGraph.AddNode(t1)
-		relGraph.AddNode(t2)
-		relGraph.AddNode(t3)
-
-		// Only T-001 and T-002 belong to Frontend
-		relGraph.AddEdge(testutil.NewRelation(t1.ID, "belongs_to", cmp.ID).Build())
-		relGraph.AddEdge(testutil.NewRelation(t2.ID, "belongs_to", cmp.ID).Build())
-
-		relApp := newAppFromParts(&Config{
-			Lists: map[string]List{
-				"tickets": {
-					EntityType: "ticket",
-					Title:      "Tickets",
-					FilterControls: []FilterControl{
-						{Relation: "belongs_to"},
-					},
-				},
-			},
-		}, relMeta, relGraph)
-
-		r := makeRequest("/entity/ticket/" + t1.ID + "?scope=list:tickets&filter_belongs_to=Frontend")
-		got := relApp.resolveScope(t1.ID, r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		// Filter to Frontend should give only T-001 and T-002 (2 tickets)
-		if got.Label != "2 Tickets" {
-			t.Errorf("Label = %q, want %q", got.Label, "2 Tickets")
-		}
-	})
-
-	t.Run("view path scope replaces entity ID correctly", func(t *testing.T) {
-		app := makeApp()
-		r := makeRequest("/view/ticket-detail/T-002?scope=list:tickets&sort=priority&sort_dir=asc")
-		got := app.resolveScope("T-002", r)
-		if got == nil {
-			t.Fatal("expected non-nil scope")
-		}
-		if got.PrevURL != "" && !strings.Contains(got.PrevURL, "/view/ticket-detail/") {
-			t.Errorf("PrevURL should preserve view path prefix, got %q", got.PrevURL)
-		}
-		if got.NextURL != "" && !strings.Contains(got.NextURL, "/view/ticket-detail/") {
-			t.Errorf("NextURL should preserve view path prefix, got %q", got.NextURL)
-		}
-	})
 }
 
 func TestResolveFilterVariable(t *testing.T) {

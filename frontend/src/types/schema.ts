@@ -40,7 +40,19 @@ export interface RelationType {
   min_incoming?: number
   max_incoming?: number
   properties?: Record<string, PropertyDef>
+  orderable?: RelationOrderable
 }
+
+export interface RelationOrderable {
+  outgoing?: boolean
+  incoming?: boolean
+}
+
+// Reserved property names that hold managed ordering values on a relation.
+// These match the names the backend writes; the frontend never spells
+// other strings for ordering.
+export const ORDER_PROPERTY_OUT = '_order_out'
+export const ORDER_PROPERTY_IN = '_order_in'
 
 export interface InverseDef {
   id: string

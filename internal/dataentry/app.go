@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -145,6 +146,10 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
+	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
+	// StartWatching; nil when watching is not active.
+	stopStoreWatch func()
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
@@ -156,6 +161,22 @@ type App struct {
 	// cmd/rela-server chains an env resolver + a header resolver
 	// here when --principal-header is set.
 	principalResolver PrincipalResolver
+
+	// fieldResolver decides per-entity field, option, and
+	// relation-meta affordances surfaced as `_fields` / `_relations`
+	// on the wire and enforced on writes. Required (never nil) —
+	// callers that don't want affordances pass NopFieldVerdictResolver{}.
+	// The eventual predicate-engine ticket replaces the stub
+	// implementations with a policy-driven resolver via the same
+	// interface.
+	fieldResolver FieldVerdictResolver
+
+	// auditSink records short-circuit rejections (affordance gates)
+	// that never reach the entitymanager. ACL denials already get a
+	// `denied-write` row from the manager; affordance denials emit
+	// the same op via this sink so log readers see a unified stream.
+	// Required (never nil) — callers pass [audit.Nop] to opt out.
+	auditSink audit.Audit
 }
 
 // StopWatching releases the data-entry.yaml subscription started by
@@ -163,10 +184,17 @@ type App struct {
 // own lifecycle managed by the store and is stopped during store
 // close, not here — asymmetric on purpose: dataentry doesn't own the
 // store, only its config subscription.
+// StopWatching is lifecycle-only and must be called from a single goroutine
+// (it is the StartWatching counterpart). The stop fields are not synchronized;
+// concurrent Start/Stop is not supported.
 func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
+	}
+	if a.stopStoreWatch != nil {
+		a.stopStoreWatch()
+		a.stopStoreWatch = nil
 	}
 }
 
@@ -261,6 +289,8 @@ func NewApp(
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
 	aclImpl acl.ACL,
+	fieldResolver FieldVerdictResolver,
+	auditSink audit.Audit,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
@@ -281,6 +311,12 @@ func NewApp(
 	}
 	if aclImpl == nil {
 		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
+	}
+	if fieldResolver == nil {
+		return nil, errors.New("dataentry.NewApp: fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)")
+	}
+	if auditSink == nil {
+		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
 	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
@@ -371,6 +407,8 @@ func NewApp(
 		acl:           aclImpl,
 		broker:        newEventBroker(),
 		scriptEngine:  scriptEngine,
+		fieldResolver: fieldResolver,
+		auditSink:     auditSink,
 	}
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
@@ -452,7 +490,7 @@ type NavElement struct {
 }
 
 // enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
-func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
+func (a *App) enrichNavEntry(ctx context.Context, nav NavigationEntry) NavItem {
 	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Kanban: nav.Kanban}
 	if nav.Dashboard || nav.Kanban != "" {
 		return item
@@ -460,7 +498,7 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 	s := a.State()
 	if list, ok := s.Cfg.Lists[nav.List]; ok {
 		item.EntityType = list.EntityType
-		entities := listFromStoreByTypes(a.Services(), []string{list.EntityType})
+		entities := listFromStoreByTypes(ctx, a.Services(), []string{list.EntityType})
 		entities = applyFilters(entities, list.Filters)
 		item.Count = len(entities)
 	}
@@ -469,8 +507,8 @@ func (a *App) enrichNavEntry(nav NavigationEntry) NavItem {
 
 // navElements returns the navigation structure with groups and items resolved.
 // The activeList parameter is used to auto-expand the group containing the active item.
-func (a *App) navElements(activeList string) []NavElement {
-	uiState := a.loadUIState()
+func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
+	uiState := a.loadUIState(ctx)
 	cfgNav := a.State().Cfg.Navigation
 	elements := make([]NavElement, 0, len(cfgNav))
 	for _, nav := range cfgNav {
@@ -484,7 +522,7 @@ func (a *App) navElements(activeList string) []NavElement {
 			}
 			grp.Items = make([]NavItem, len(nav.Items))
 			for i, child := range nav.Items {
-				grp.Items[i] = a.enrichNavEntry(child)
+				grp.Items[i] = a.enrichNavEntry(ctx, child)
 				// Auto-expand group if it contains the active list
 				if child.List == activeList && activeList != "" {
 					grp.Collapsed = false
@@ -492,7 +530,7 @@ func (a *App) navElements(activeList string) []NavElement {
 			}
 			elements = append(elements, NavElement{Group: &grp})
 		} else {
-			item := a.enrichNavEntry(nav)
+			item := a.enrichNavEntry(ctx, nav)
 			elements = append(elements, NavElement{Item: &item})
 		}
 	}
@@ -501,12 +539,12 @@ func (a *App) navElements(activeList string) []NavElement {
 
 // loadUIState reads .rela/ui-state.json and returns the persisted state.
 // Returns an empty UIState if the file doesn't exist or can't be parsed.
-func (a *App) loadUIState() UIState {
+func (a *App) loadUIState(ctx context.Context) UIState {
 	st := UIState{CollapsedGroups: make(map[string]bool)}
 	if a.kv == nil {
 		return st
 	}
-	data, err := a.kv.Get(context.Background(), uiStateFile)
+	data, err := a.kv.Get(ctx, uiStateFile)
 	if err != nil {
 		return st
 	}
@@ -549,7 +587,7 @@ func (a *App) loadUserDefaults() *UserDefaults {
 }
 
 // saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
-func (a *App) saveUserDefaults(ud *UserDefaults) error {
+func (a *App) saveUserDefaults(ctx context.Context, ud *UserDefaults) error {
 	if a.kv == nil {
 		return nil
 	}
@@ -557,7 +595,7 @@ func (a *App) saveUserDefaults(ud *UserDefaults) error {
 	if err != nil {
 		return err
 	}
-	return a.kv.Put(context.Background(), userDefaultsFile, data)
+	return a.kv.Put(ctx, userDefaultsFile, data)
 }
 
 // coverage-ignore: requires running workspace, tested via e2e
@@ -592,7 +630,7 @@ func (a *App) loadUserPalette() (*PaletteConfig, error) {
 }
 
 // saveUserPalette writes the user palette to .rela/palette.yaml.
-func (a *App) saveUserPalette(p *PaletteConfig) error {
+func (a *App) saveUserPalette(ctx context.Context, p *PaletteConfig) error {
 	if a.kv == nil {
 		return nil
 	}
@@ -600,7 +638,7 @@ func (a *App) saveUserPalette(p *PaletteConfig) error {
 	if err != nil {
 		return err
 	}
-	return a.kv.Put(context.Background(), userPaletteFile, data)
+	return a.kv.Put(ctx, userPaletteFile, data)
 }
 
 // firstNavTarget returns the first navigable item from the navigation config,

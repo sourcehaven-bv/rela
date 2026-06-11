@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -24,7 +24,7 @@ import (
 // The test catches drift between the read-time verdict path
 // (computeActions) and the write-time enforcement path (the actual
 // handler going through entitymanager.Manager). Both paths share an
-// acl.ACL instance via appbuild.WithTestACL — exactly how production
+// acl.ACL instance via appbuildtest.WithACL — exactly how production
 // wiring works.
 func TestAffordances_BidirectionalContract(t *testing.T) {
 	cases := []struct {
@@ -86,14 +86,14 @@ func buildAppWithACLAndAudit(t *testing.T, a acl.ACL, auditSink audit.Audit) *Ap
 	fs := storage.NewMemFS()
 	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-	opts := []appbuild.TestOption{
-		appbuild.WithFS(fs, ctx),
-		appbuild.WithTestACL(a),
+	opts := []appbuildtest.Option{
+		appbuildtest.WithFS(fs, ctx),
+		appbuildtest.WithACL(a),
 	}
 	if auditSink != nil {
-		opts = append(opts, appbuild.WithTestAudit(auditSink))
+		opts = append(opts, appbuildtest.WithAudit(auditSink))
 	}
-	svc := appbuild.NewForTest(meta, opts...)
+	svc := appbuildtest.New(meta, opts...)
 	rebindApp(app, fs, ctx, svc)
 	app.broker = newEventBroker()
 	return app

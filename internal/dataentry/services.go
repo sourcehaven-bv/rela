@@ -44,8 +44,8 @@ func (a *App) Services() Services {
 }
 
 // getEntity looks up an entity by ID via the store.
-func (a *App) getEntity(id string) (*entity.Entity, bool) {
-	e, err := a.store.GetEntity(context.Background(), id)
+func (a *App) getEntity(ctx context.Context, id string) (*entity.Entity, bool) {
+	e, err := a.store.GetEntity(ctx, id)
 	if err != nil {
 		return nil, false
 	}
@@ -57,18 +57,17 @@ func (a *App) getEntity(id string) (*entity.Entity, bool) {
 // by the relation GET handlers to emit a `type` field per edge so SPA
 // clients can construct JSON:API §9 resource identifiers without
 // guessing.
-func (a *App) peerType(id string) string {
-	if e, ok := a.getEntity(id); ok {
+func (a *App) peerType(ctx context.Context, id string) string {
+	if e, ok := a.getEntity(ctx, id); ok {
 		return e.Type
 	}
 	return ""
 }
 
-// outgoingRelations returns all outgoing relations for id using the
-// background context. Prefer outgoingRelationsCtx when a request context
-// is in scope.
-func (a *App) outgoingRelations(id string) []*entity.Relation {
-	rels, _ := a.outgoingRelationsCtx(context.Background(), id)
+// outgoingRelations returns all outgoing relations for id. Iterator
+// errors are swallowed; use outgoingRelationsCtx to surface them.
+func (a *App) outgoingRelations(ctx context.Context, id string) []*entity.Relation {
+	rels, _ := a.outgoingRelationsCtx(ctx, id)
 	return rels
 }
 
@@ -82,15 +81,11 @@ func (a *App) outgoingRelationsCtx(ctx context.Context, id string) ([]*entity.Re
 }
 
 // incomingRelations returns all incoming relations for id.
-func (a *App) incomingRelations(id string) []*entity.Relation {
-	return listRelations(a.store, store.RelationQuery{
+func (a *App) incomingRelations(ctx context.Context, id string) []*entity.Relation {
+	rels, _ := listRelationsCtx(ctx, a.store, store.RelationQuery{
 		EntityID:  id,
 		Direction: store.DirectionIncoming,
 	})
-}
-
-func listRelations(s store.Store, q store.RelationQuery) []*entity.Relation {
-	rels, _ := listRelationsCtx(context.Background(), s, q)
 	return rels
 }
 

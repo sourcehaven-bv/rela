@@ -67,14 +67,14 @@ type AnalysisResult struct {
 }
 
 // runAnalysis executes all analysis checks and returns a combined result.
-func (a *App) runAnalysis() AnalysisResult {
+func (a *App) runAnalysis(ctx context.Context) AnalysisResult {
 	sections := []AnalysisSection{
-		a.analyzeProperties(),
-		a.analyzeCardinality(),
-		a.analyzeValidations(),
-		a.analyzeOrphans(),
-		a.analyzeDuplicates(),
-		a.analyzeGaps(),
+		a.analyzeProperties(ctx),
+		a.analyzeCardinality(ctx),
+		a.analyzeValidations(ctx),
+		a.analyzeOrphans(ctx),
+		a.analyzeDuplicates(ctx),
+		a.analyzeGaps(ctx),
 	}
 
 	var errors, warnings int
@@ -92,20 +92,19 @@ func (a *App) runAnalysis() AnalysisResult {
 
 // analysisIssueCounts returns just the total error and warning counts
 // without building the full issue details. Used by the dashboard.
-func (a *App) analysisIssueCounts() (errors, warnings int) {
-	result := a.runAnalysis()
+func (a *App) analysisIssueCounts(ctx context.Context) (errors, warnings int) {
+	result := a.runAnalysis(ctx)
 	return result.ErrorCount, result.WarningCount
 }
 
 // analyzeOrphans finds entities with no connections.
-func (a *App) analyzeOrphans() AnalysisSection {
+func (a *App) analyzeOrphans(ctx context.Context) AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
 		Name:        "Orphans",
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	ctx := context.Background()
 	orphanIDs, _ := a.tracer.FindOrphans(ctx)
 
 	var orphans []*entity.Entity
@@ -131,14 +130,13 @@ func (a *App) analyzeOrphans() AnalysisSection {
 }
 
 // analyzeDuplicates finds entities with identical normalized titles.
-func (a *App) analyzeDuplicates() AnalysisSection {
+func (a *App) analyzeDuplicates(ctx context.Context) AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
 		Name:        "Duplicates",
 		Description: "Entities with identical titles",
 	}
 
-	ctx := context.Background()
 	titleGroups := make(map[string][]*entity.Entity)
 	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
@@ -181,25 +179,29 @@ func (a *App) analyzeDuplicates() AnalysisSection {
 }
 
 // analyzeGaps finds gaps in ID sequences for auto-numbered entity types.
-func (a *App) analyzeGaps() AnalysisSection {
+func (a *App) analyzeGaps(ctx context.Context) AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
 		Name:        "ID Gaps",
 		Description: "Missing numbers in auto-generated ID sequences",
 	}
 
-	// Build set of manual ID prefixes to skip
+	// Build prefix → entity type lookup and the manual-prefix skip set
+	// in a single pass over the metamodel.
 	manualPrefixes := make(map[string]bool)
-	for _, entityDef := range s.Meta.Entities {
-		if entityDef.IsManualID() {
-			for _, idPrefix := range entityDef.GetIDPrefixes() {
-				manualPrefixes[strings.TrimSuffix(idPrefix, "-")] = true
+	typeByPrefix := make(map[string]string)
+	for typeName, entityDef := range s.Meta.Entities {
+		for _, idPrefix := range entityDef.GetIDPrefixes() {
+			trimmed := strings.TrimSuffix(idPrefix, "-")
+			if entityDef.IsManualID() {
+				manualPrefixes[trimmed] = true
+				continue
 			}
+			typeByPrefix[trimmed] = typeName
 		}
 	}
 
 	// Group IDs by prefix
-	ctx := context.Background()
 	prefixGroups := make(map[string][]int)
 	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
@@ -233,11 +235,17 @@ func (a *App) analyzeGaps() AnalysisSection {
 			}
 		}
 
+		// EntityType is populated from the prefix → type map so the
+		// data-entry UI's type column renders the type badge. The row
+		// stays inert (EntityID is empty), so isClickable in the SPA
+		// remains false; the type is informational only.
+		entityType := typeByPrefix[strings.TrimSuffix(prefix, "-")]
 		for _, n := range gaps {
 			missingID := fmt.Sprintf("%s%03d", prefix, n)
 			section.Issues = append(section.Issues, AnalysisIssue{
-				Message:  "Missing ID: " + missingID,
-				Severity: "warning",
+				EntityType: entityType,
+				Message:    "Missing ID: " + missingID,
+				Severity:   "warning",
 			})
 		}
 	}
@@ -246,14 +254,13 @@ func (a *App) analyzeGaps() AnalysisSection {
 }
 
 // analyzeCardinality checks relation cardinality constraints.
-func (a *App) analyzeCardinality() AnalysisSection {
+func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
 		Name:        "Cardinality",
 		Description: "Relation cardinality constraint violations",
 	}
 
-	ctx := context.Background()
 	st := a.store
 
 	// Sort relation names for deterministic output
@@ -372,14 +379,13 @@ func (a *App) analyzeCardinality() AnalysisSection {
 }
 
 // analyzeProperties validates all entity properties against the metamodel.
-func (a *App) analyzeProperties() AnalysisSection {
+func (a *App) analyzeProperties(ctx context.Context) AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
 		Name:        "Properties",
 		Description: "Property validation errors (required fields, invalid values, ID patterns)",
 	}
 
-	ctx := context.Background()
 	entities := make([]*entity.Entity, 0)
 	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
@@ -412,14 +418,13 @@ func (a *App) analyzeProperties() AnalysisSection {
 // (lua_file: missing, traversal-rejected) appear as error issues
 // alongside per-entity violations. Without this, broken Lua rules
 // would vanish silently from the data-entry analyze view.
-func (a *App) analyzeValidations() AnalysisSection {
+func (a *App) analyzeValidations(ctx context.Context) AnalysisSection {
 	s := a.State()
 	section := AnalysisSection{
 		Name:        "Validations",
 		Description: "Custom validation rules defined in the metamodel",
 	}
 
-	ctx := context.Background()
 	st := a.store
 	validator := a.validator
 

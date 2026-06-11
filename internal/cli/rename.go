@@ -9,50 +9,30 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-var (
-	renameForce    bool
-	renamePlural   string
-	renameIDDryRun bool
-)
-
-var renameCmd = &cobra.Command{
-	Use:   "rename",
-	Short: "Rename entities or relations",
-	Long:  `Rename entity types or relation types across the project.`,
+// RenameCmd is the parent of rename subcommands.
+type RenameCmd struct {
+	Entity RenameEntityCmd `cmd:"" help:"Rename an entity type."`
+	ID     RenameIDCmd     `cmd:"" name:"id" help:"Rename an entity's ID."`
 }
 
-var renameEntityCmd = &cobra.Command{
-	Use:   "entity <old-type> <new-type>",
-	Short: "Rename an entity type",
-	Long: `Renames an entity type across the entire project.
-
-This updates:
-  - The entity key in metamodel.yaml
-  - All relation from/to references in metamodel.yaml
-  - All validation entity_type references in metamodel.yaml
-  - The entity directory (e.g., entities/issues/ → entities/tickets/)
-  - The type field in all entity markdown files
-  - Entity templates (if they exist)
-
-Examples:
-  rela rename entity issue ticket
-  rela rename entity issue ticket --plural tickets
-  rela rename entity requirement feature --force`,
-	Args: cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliAnalyzeFromContext(cmd.Context())
-		return runRenameEntity(svc, args[0], args[1])
-	},
+// RenameEntityCmd renames an entity type.
+type RenameEntityCmd struct {
+	OldType string `arg:"" help:"Existing entity type name."`
+	NewType string `arg:"" help:"New entity type name."`
+	Force   bool   `short:"f" help:"Skip confirmation prompt."`
+	Plural  string `help:"Override plural form for directory name."`
 }
 
-// renameEntityInfo holds the resolved information needed for a rename operation.
+// Run dispatches `rela rename entity <old> <new>`.
+func (c *RenameEntityCmd) Run(svc *cliServices) error {
+	return runRenameEntity(svc, c.OldType, c.NewType, c.Force, c.Plural)
+}
+
 type renameEntityInfo struct {
 	resolvedOld     string
 	newType         string
@@ -67,15 +47,14 @@ type renameEntityInfo struct {
 }
 
 // coverage-ignore: interactive CLI - tested via integration tests
-func runRenameEntity(svc cliAnalyze, oldType, newType string) error {
-	info, err := resolveRenameEntity(svc, oldType, newType)
+func runRenameEntity(svc *cliServices, oldType, newType string, force bool, plural string) error {
+	info, err := resolveRenameEntity(svc, oldType, newType, plural)
 	if err != nil {
 		return err
 	}
-
 	showRenamePreview(info)
 
-	if !renameForce {
+	if !force {
 		confirmed, confirmErr := confirmRename()
 		if confirmErr != nil {
 			return confirmErr
@@ -85,36 +64,30 @@ func runRenameEntity(svc cliAnalyze, oldType, newType string) error {
 			return nil
 		}
 	}
-
 	return applyRenameEntity(svc, info)
 }
 
-func resolveRenameEntity(svc cliAnalyze, oldType, newType string) (*renameEntityInfo, error) {
+func resolveRenameEntity(svc *cliServices, oldType, newType, renamePlural string) (*renameEntityInfo, error) {
 	meta := svc.Meta()
 	resolvedOld := meta.ResolveAlias(oldType)
 	oldDef, ok := meta.GetEntityDef(resolvedOld)
 	if !ok {
 		return nil, fmt.Errorf("entity type %q not found in metamodel", oldType)
 	}
-
 	if err := validateTypeName(newType); err != nil {
 		return nil, err
 	}
-
 	if _, exists := meta.GetEntityDef(newType); exists {
 		return nil, fmt.Errorf("entity type %q already exists in metamodel", newType)
 	}
-
 	oldPlural := oldDef.GetPlural(resolvedOld)
 	newPlural := renamePlural
 	if newPlural == "" {
 		newPlural = newType + "s"
 	}
-
 	paths := svc.Paths()
 	oldTemplatePath := paths.EntityTemplatePath(resolvedOld)
 	_, statErr := svc.FS().Stat(oldTemplatePath)
-
 	entityCount, _ := svc.Store().CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
 
 	return &renameEntityInfo{
@@ -172,7 +145,7 @@ func confirmRename() (bool, error) {
 	return response == "y" || response == "yes", nil
 }
 
-func applyRenameEntity(svc cliAnalyze, info *renameEntityInfo) error {
+func applyRenameEntity(svc *cliServices, info *renameEntityInfo) error {
 	count, err := svc.RenameEntityType(info.resolvedOld, info.newType, info.newPlural)
 	if err != nil {
 		return err
@@ -184,16 +157,13 @@ func applyRenameEntity(svc cliAnalyze, info *renameEntityInfo) error {
 	return nil
 }
 
-// validateTypeName checks that a type name is valid for use in the metamodel.
 func validateTypeName(name string) error {
 	if name == "" {
 		return errors.New("type name cannot be empty")
 	}
-
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("invalid characters in type name: %s", name)
 	}
-
 	valid := regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 	if !valid.MatchString(name) {
 		return fmt.Errorf(
@@ -201,51 +171,27 @@ func validateTypeName(name string) error {
 			name,
 		)
 	}
-
 	return nil
 }
 
-var renameIDCmd = &cobra.Command{
-	Use:   "id <old-id> <new-id>",
-	Short: "Rename an entity's ID",
-	Long: `Renames an entity's ID and updates all relations that reference it.
-
-This updates:
-  - The entity file (renamed and id field updated)
-  - All relation files where this entity is the 'from' or 'to' endpoint
-
-Examples:
-  rela rename id REQ-001 REQ-100
-  rela rename id REQ-001 REQ-100 --dry-run`,
-	Args: cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		svc := cliWriteFromContext(cmd.Context())
-		return runRenameID(svc, args[0], args[1])
-	},
+// RenameIDCmd renames an entity's ID.
+type RenameIDCmd struct {
+	OldID  string `arg:"" name:"old-id" help:"Existing entity ID."`
+	NewID  string `arg:"" name:"new-id" help:"New entity ID."`
+	DryRun bool   `name:"dry-run" help:"Preview changes without applying."`
 }
 
-func runRenameID(svc cliWrite, oldID, newID string) error {
+// Run dispatches `rela rename id <old> <new>`.
+func (c *RenameIDCmd) Run(svc *cliServices) error {
 	result, err := svc.EntityManager().RenameEntity(
-		context.Background(), oldID, newID, entity.RenameOptions{DryRun: renameIDDryRun})
+		context.Background(), c.OldID, c.NewID, entity.RenameOptions{DryRun: c.DryRun})
 	if err != nil {
 		return err
 	}
-
 	verb := "Renamed"
-	if renameIDDryRun {
+	if c.DryRun {
 		verb = "Dry run — would rename"
 	}
 	out.WriteMessage("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)
 	return nil
-}
-
-func init() {
-	renameEntityCmd.Flags().BoolVarP(&renameForce, "force", "f", false, "Skip confirmation prompt")
-	renameEntityCmd.Flags().StringVar(&renamePlural, "plural", "", "Override plural form for directory name")
-
-	renameIDCmd.Flags().BoolVar(&renameIDDryRun, "dry-run", false, "Preview changes without applying")
-
-	renameCmd.AddCommand(renameEntityCmd)
-	renameCmd.AddCommand(renameIDCmd)
-	rootCmd.AddCommand(renameCmd)
 }

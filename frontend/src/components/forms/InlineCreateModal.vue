@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, toRef, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
-import { createEntity } from '@/api'
+import { createEntity, getErrorMessage } from '@/api'
 import { useModalStack } from '@/composables/modalStack'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import type { Entity, PropertyDef } from '@/types'
@@ -125,12 +125,7 @@ async function handleSubmit() {
     emit('created', entity)
     emit('close')
   } catch (err) {
-    if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
-      const problem = err as { detail?: string; title?: string }
-      error.value = problem.detail || problem.title || 'Failed to create entity'
-    } else {
-      error.value = err instanceof Error ? err.message : 'Failed to create entity'
-    }
+    error.value = getErrorMessage(err, 'Failed to create entity')
   } finally {
     loading.value = false
   }

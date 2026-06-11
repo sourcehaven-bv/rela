@@ -19,9 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
-
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -74,11 +71,25 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
+	// Note: there is no --database-url flag. The postgres build reads the DSN
+	// from $RELA_DATABASE_URL only, so the credential never lands in process
+	// listings or shell history. See appbuild.Config.DatabaseURL.
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
 	}
 	return f
+}
+
+// discoverOptions maps server flags to appbuild options. --read-only injects a
+// read-only ACL. The postgres DSN is not an option here — it is read from
+// $RELA_DATABASE_URL by appbuild.Discover (env-only, never a flag).
+func discoverOptions(f *serverFlags) []appbuild.Option {
+	var opts []appbuild.Option
+	if f.readOnly {
+		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	return opts
 }
 
 // coverage-ignore: main function - entry point
@@ -97,11 +108,7 @@ func main() {
 		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	var discoverOpts []appbuild.Option
-	if f.readOnly {
-		discoverOpts = append(discoverOpts, appbuild.WithACL(acl.ReadOnlyACL{}))
-	}
-	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOpts...)
+	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOptions(f)...)
 	if err != nil {
 		slog.Error("failed to initialize project services", "error", err)
 		os.Exit(1)
@@ -116,9 +123,13 @@ func main() {
 	// Close() *is* required in long-running hosts that switch
 	// projects (see rela-desktop); this is the daemon-lifetime case.
 
+	fieldResolver := buildFieldResolver(svc)
+
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
 		svc.EntityManager(), svc.Searcher(), svc.ACL(),
+		fieldResolver,
+		svc.Audit(),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
@@ -208,24 +219,27 @@ func main() {
 	}
 }
 
-// newHTTPServer wraps the data-entry handler with cleartext HTTP/2 (h2c)
+// newHTTPServer serves the data-entry handler with cleartext HTTP/2
 // alongside HTTP/1.1. Go's http.Server only negotiates HTTP/2 automatically
-// when serving TLS, so for plaintext we opt in via h2c.NewHandler. This
-// matters because the data-entry SPA holds a permanent EventSource to
+// when serving TLS, so for plaintext we opt in via Protocols.SetUnencryptedHTTP2.
+// This matters because the data-entry SPA holds a permanent EventSource to
 // /api/v1/_events — under HTTP/1.1 that eats one of the browser's per-host
 // connection slots (Firefox default 6), and under concurrent navigation the
 // pool runs dry. HTTP/2 multiplexes many streams over a single connection
-// so the per-host limit becomes irrelevant. The wrapper is transparent to
+// so the per-host limit becomes irrelevant. The opt-in is transparent to
 // HTTP/1.1 clients (curl without --http2) and to all existing middlewares —
 // they still see a normal *http.Request with Host/Origin/etc. populated the
 // same way.
 //
 // coverage-ignore: server construction, exercised via integration tests
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
-	h2s := &http2.Server{}
+	protocols := &http.Protocols{}
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
 	return &http.Server{
 		Addr:              addr,
-		Handler:           h2c.NewHandler(handler, h2s),
+		Handler:           handler,
+		Protocols:         protocols,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// WriteTimeout intentionally 0: SSE and command-exec stream
@@ -237,6 +251,18 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// buildFieldResolver constructs the data-entry affordance resolver
+// from the active services. A predicate compile error in acl.yaml is
+// fatal — surfaced loudly rather than silently disabling a gate.
+func buildFieldResolver(svc *appbuild.Services) dataentry.FieldVerdictResolver {
+	resolver, err := dataentry.ResolverFromServices(svc)
+	if err != nil {
+		slog.Error("failed to build affordance resolver", "error", err)
+		os.Exit(1)
+	}
+	return resolver
 }
 
 // shouldWarnNoACL reports whether the operator should be told they

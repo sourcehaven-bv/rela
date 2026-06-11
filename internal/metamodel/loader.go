@@ -236,6 +236,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationReferences(m)...)
 	validationErrors = append(validationErrors, validateRelationProperties(m)...)
 	validationErrors = append(validationErrors, validateRelationInverses(m)...)
+	validationErrors = append(validationErrors, validateRelationOrderable(m)...)
 
 	if len(validationErrors) > 0 {
 		return &SchemaValidationError{Errors: validationErrors}
@@ -535,7 +536,7 @@ func validateRelationInverses(m *Metamodel) []string {
 // validateRelationProperties validates property definitions on relation types.
 // Reserved property names for relations are: from, relation, to (used in YAML frontmatter).
 func validateRelationProperties(m *Metamodel) []string {
-	errs := make([]string, 0) //nolint:prealloc // capacity unknown
+	errs := make([]string, 0)
 
 	// Reserved property names for relations
 	reservedRelProps := map[string]bool{
@@ -548,6 +549,42 @@ func validateRelationProperties(m *Metamodel) []string {
 	for _, name := range relNames {
 		rel := m.Relations[name]
 		errs = append(errs, validatePropertyDefs(fmt.Sprintf("relation %q", name), rel.Properties, m, reservedRelProps)...)
+		// Forbid users from declaring the managed order properties explicitly:
+		// rela owns these names, and a user-supplied PropertyDef would conflict
+		// with the auto-assigned float values written by the entity manager.
+		if _, ok := rel.Properties[OrderPropertyOut]; ok {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: property %q is managed by rela and cannot be declared", name, OrderPropertyOut))
+		}
+		if _, ok := rel.Properties[OrderPropertyIn]; ok {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: property %q is managed by rela and cannot be declared", name, OrderPropertyIn))
+		}
+	}
+
+	return errs
+}
+
+// validateRelationOrderable rejects relation types that declare an Orderable
+// value outside the allowed enum, or that combine Orderable with Symmetric
+// (which has no meaningful semantics — a symmetric relation has only one
+// edge between any pair of entities, so "ordering" is undefined).
+func validateRelationOrderable(m *Metamodel) []string {
+	var errs []string
+
+	for _, name := range sortedKeys(m.Relations) {
+		rel := m.Relations[name]
+		if !rel.Orderable.IsValid() {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: invalid orderable value %q (allowed: outgoing, incoming, both)",
+				name, string(rel.Orderable)))
+			continue
+		}
+		if rel.Orderable != OrderableNone && rel.Symmetric {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: orderable cannot be combined with symmetric — symmetric relations have no canonical direction to order",
+				name))
+		}
 	}
 
 	return errs
