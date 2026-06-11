@@ -153,12 +153,28 @@ fuzz:
     go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=30s ./internal/entity/
     go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=30s ./internal/entity/
 
+# Run the hot-path benchmarks (dry-run validation, affordance verdicts,
+# search, write-path validation, plus the pre-existing markdown-parse
+# benchmark in internal/lua). The pgstore graphquery benchmark is
+# DB-gated and postgres-tagged — run it via:
+#   go test -tags postgres -run='^$' -bench=. ./internal/store/pgstore/
+bench:
+    @echo "Running benchmarks..."
+    go test -run='^$$' -bench=. -benchmem ./internal/entitymanager/ ./internal/affordances/ ./internal/search/ ./internal/validation/ ./internal/lua/
+
 # Run quick fuzz tests (5 seconds each)
 fuzz-short:
     @echo "Running quick fuzz tests..."
     go test -run='^$$' -fuzz='^FuzzParseDocument$$' -fuzztime=5s ./internal/markdown/
     go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=5s ./internal/entity/
     go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=5s ./internal/entity/
+
+# Run EVERY fuzz target briefly (discovery-based; the weekly CI sweep
+# runs this with the default budget). KNOWN RED until BUG-RHFHTH is
+# fixed: FuzzGenerateShortID reliably finds the GenerateShortID
+# prefix-validation bug.
+fuzz-all fuzztime="25s":
+    FUZZTIME='{{fuzztime}}' scripts/fuzz-all.sh
 
 # ── Lint & Format ──
 
