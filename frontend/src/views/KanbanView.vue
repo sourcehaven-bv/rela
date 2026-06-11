@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useSchemaStore, useEntitiesStore } from '@/stores'
+import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { listEntities, updateEntity } from '@/api'
 import type { Entity, KanbanConfig } from '@/types'
 import Badge from '@/components/common/Badge.vue'
@@ -16,6 +16,7 @@ const props = defineProps<{
 const router = useRouter()
 const schemaStore = useSchemaStore()
 const entitiesStore = useEntitiesStore()
+const uiStore = useUIStore()
 
 // Back affordance — renders when ?return_to= or ?from= is present.
 const backTarget = useBackTarget()
@@ -293,6 +294,10 @@ async function onDrop(event: DragEvent, columnValue: string, swimlaneValue?: str
       entity.properties[prop] = val
     }
     console.error('Failed to update entity:', err)
+    // The API interceptor rejects with a raw ProblemDetail object, not
+    // an Error — read its fields directly so the server message survives.
+    const problem = err as { detail?: string; title?: string } | null
+    uiStore.error(problem?.detail || problem?.title || 'Failed to move card')
   }
 
   draggedCard.value = null
@@ -452,7 +457,7 @@ watch(() => entitiesStore.cacheVersion, () => {
             v-for="entity in entitiesByCell[column.value]?.[swimlane.value] || []"
             :key="entity.id"
             class="kanban-card"
-            draggable="true"
+            :draggable="canUpdate(entity) ? 'true' : 'false'"
             @dragstart="onDragStart($event, entity)"
             @dragend="onDragEnd"
             @click="openCard(entity)"

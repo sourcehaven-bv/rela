@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import axios from 'axios'
+import DOMPurify from 'dompurify'
 import { isCancelledFetch } from '@/composables/usePageData'
 
 const props = defineProps<{
@@ -25,7 +26,10 @@ async function loadHelp() {
 
   try {
     const response = await axios.get(`/api/help/${props.entityType}`)
-    helpContent.value = response.data
+    // The server renders metamodel descriptions with goldmark in unsafe
+    // mode (raw HTML passes through), so sanitize at the sink like every
+    // other v-html consumer (utils/markdown.ts, DocumentView).
+    helpContent.value = DOMPurify.sanitize(response.data)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
