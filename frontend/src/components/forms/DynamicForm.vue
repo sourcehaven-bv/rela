@@ -5,6 +5,8 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { isFieldWritable, optionVerdictsFor as optionVerdictsForVerdict } from '@/utils/affordances'
+import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import type {
@@ -183,10 +185,9 @@ const fields = computed((): FormFieldOrRelation[] => {
 // is the strongest signal but the config can still set its own
 // readonly for static cases (e.g. ID display).
 function isFieldReadonly(field: FormFieldOrRelation): boolean {
-  if (field.readonly) return true
-  if (!field.property) return false
+  if (!field.property) return field.readonly === true
   const verdict = fieldAffordances.value[field.property]
-  return verdict?.writable === false
+  return !isFieldWritable(verdict, field.readonly)
 }
 
 // TKT-G7N5 option-verdict helper: pulls per-option allowed-map from
@@ -195,7 +196,7 @@ function isFieldReadonly(field: FormFieldOrRelation): boolean {
 // appear in the map.
 function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> | undefined {
   if (!field.property) return undefined
-  return fieldAffordances.value[field.property]?.options
+  return optionVerdictsForVerdict(fieldAffordances.value[field.property])
 }
 
 // TKT-3I5U: build the create-commit property map, sending ONLY visible
@@ -720,12 +721,6 @@ function updateField(property: string, value: unknown) {
   } else {
     autoSave.value.scheduleFieldSave(property, value)
   }
-}
-
-function isClearedForType(value: unknown, def: PropertyDef | undefined): boolean {
-  if (def?.type === 'boolean') return false
-  if (Array.isArray(value)) return value.length === 0
-  return value === '' || value === null || value === undefined
 }
 
 function updateRelation(relation: string, value: string[]) {

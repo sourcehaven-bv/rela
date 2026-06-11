@@ -25,7 +25,7 @@
 import { ref, computed, type Ref } from 'vue'
 import type { Entity } from '@/types'
 import type { EntityPatch } from '@/api/entities'
-import { getErrorMessage } from '@/api/errors'
+import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 
 // Sentinel for "unset this property" pending entries. Distinct from
@@ -116,8 +116,19 @@ export interface AutoSaveOptions {
   applyServerProperty: (property: string, value: unknown) => void
   applyServerContent: (content: string) => void
   // User-facing error surface (e.g., toast). Called once per save
-  // failure that isn't superseded by a newer edit.
-  onError: (msg: string) => void
+  // failure that isn't superseded by a newer edit. The structured
+  // `info` carries the HTTP status, the failing property (when
+  // applicable), and the channel that originated the failure so a
+  // host can dispatch on 401/403 distinctly from validation errors.
+  // The arg is optional so existing callers (`(msg) => uiStore.error(msg)`)
+  // ignore it silently. Set per call site inside the composable.
+  onError: (msg: string, info?: AutoSaveErrorInfo) => void
+}
+
+export interface AutoSaveErrorInfo {
+  status?: number
+  property?: string
+  channel?: 'property' | 'content' | 'relations'
 }
 
 export class AutoSaveChannelDisabledError extends Error {
@@ -327,7 +338,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (isLatestIntent) {
           fieldErrors.value = { ...fieldErrors.value, [property]: message }
           setStatus('error', message)
-          opts.onError(message)
+          opts.onError(message, { status: getErrorStatus(err), property, channel: 'property' })
         }
       } finally {
         inFlightCount.value--
@@ -372,7 +383,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (pendingContent === null) {
           contentError.value = message
           setStatus('error', message)
-          opts.onError(message)
+          opts.onError(message, { status: getErrorStatus(err), channel: 'content' })
         }
       } finally {
         inFlightCount.value--
@@ -412,7 +423,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       } catch (err: unknown) {
         const message = getErrorMessage(err, 'Save failed')
         setStatus('error', message)
-        opts.onError(message)
+        opts.onError(message, { status: getErrorStatus(err), channel: 'relations' })
       } finally {
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
@@ -615,6 +626,15 @@ export function useAutoSave(opts: AutoSaveOptions) {
     recordServerSnapshot,
     mergeServerResponse,
   }
+}
+
+// Extract the HTTP status from a thrown error, when available. Returns
+// undefined for non-ApiError rejections (network errors, cancellations,
+// programming bugs) — callers should treat undefined as "unknown status,
+// not necessarily success." Used to populate AutoSaveErrorInfo.status
+// for the host's 401/403 dispatch.
+function getErrorStatus(err: unknown): number | undefined {
+  return err instanceof ApiError ? err.status : undefined
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {

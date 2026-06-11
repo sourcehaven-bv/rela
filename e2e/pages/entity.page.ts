@@ -134,13 +134,39 @@ export class EntityPage extends BasePage {
   }
 
   async containsText(text: string): Promise<boolean> {
-    return this.page.getByText(text).first().isVisible();
+    // Inline-edit (TKT-IHC7B): properties may render as <input value="…">
+    // or <textarea>…</textarea>, neither of which produce text nodes
+    // matchable by getByText. Fall through to a form-control sweep so
+    // tests against property values work in both display and edit mode.
+    if (await this.page.getByText(text).first().isVisible().catch(() => false)) return true;
+    return this.matchesFormControlValue(this.page.locator('body'), text);
   }
 
   /** Check that a property value is rendered inside the entity-detail container
-   *  (scoped to avoid matching nav/sidebar elements). */
+   *  (scoped to avoid matching nav/sidebar elements). Matches either visible
+   *  text (display mode: Badge / span) or form-control values (inline-edit
+   *  mode: input / textarea / selected option) — see TKT-IHC7B. */
   async hasPropertyValue(value: string): Promise<boolean> {
-    return this.detailContainer.getByText(value, { exact: true }).first().isVisible();
+    if (await this.detailContainer.getByText(value, { exact: true }).first().isVisible().catch(() => false)) {
+      return true;
+    }
+    return this.matchesFormControlValue(this.detailContainer, value);
+  }
+
+  /** Internal: scan inputs / textareas / selected options under `scope` for
+   *  a control whose value === text. Returns true on first match. */
+  private async matchesFormControlValue(scope: Locator, text: string): Promise<boolean> {
+    const inputs = await scope.locator('input, textarea').all();
+    for (const ctrl of inputs) {
+      const v = await ctrl.inputValue().catch(() => '');
+      if (v === text) return true;
+    }
+    const selects = await scope.locator('select').all();
+    for (const sel of selects) {
+      const v = await sel.inputValue().catch(() => '');
+      if (v === text) return true;
+    }
+    return false;
   }
 
   /** True if the entity-detail body contains any blocking-relation text. */

@@ -463,4 +463,50 @@ describe('useAutoSave', () => {
     expect(result.settled).toBe(true)
     expect(updateMock).not.toHaveBeenCalled()
   })
+
+  // ---- TKT-IHC7B: onError structured info ---------------------------------
+
+  it('IHC7B: onError receives { status, property, channel } on property-channel failure', async () => {
+    const h = makeHarness({ title: 'x' })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('forbidden', { kind: 'http', status: 403, original: null }),
+    )
+    h.autoSave.scheduleFieldSave('title', 'bad')
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.runOnlyPendingTimersAsync()
+    expect(h.onError).toHaveBeenCalledWith('forbidden', {
+      status: 403,
+      property: 'title',
+      channel: 'property',
+    })
+  })
+
+  it('IHC7B: onError carries channel:"content" on content-channel failure', async () => {
+    const h = makeHarness({})
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('too large', { kind: 'http', status: 413, original: null }),
+    )
+    h.autoSave.scheduleContentSave('big body')
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.runOnlyPendingTimersAsync()
+    expect(h.onError).toHaveBeenCalledWith('too large', {
+      status: 413,
+      channel: 'content',
+    })
+  })
+
+  it('IHC7B: onError carries channel:"relations" on relations-channel failure', async () => {
+    const h = makeHarness({})
+    h.buildRelationsBody.mockReturnValueOnce({ blocks: { data: [{ id: 'TKT-002', type: 'ticket' }] } })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('cycle', { kind: 'http', status: 409, original: null }),
+    )
+    h.autoSave.scheduleRelationsChange()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.runOnlyPendingTimersAsync()
+    expect(h.onError).toHaveBeenCalledWith('cycle', {
+      status: 409,
+      channel: 'relations',
+    })
+  })
 })
