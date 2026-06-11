@@ -22,4 +22,4 @@ status: done
 
 - [x] First numbers on record: ValidateCreate 1.4µs (no-scan holds at 1000 entities), Verdicts 8.6µs uncached, Search 2.5ms, Lua validation ~150× when/then
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/969
