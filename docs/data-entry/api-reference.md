@@ -527,11 +527,41 @@ fields, omit hidden fields, and filter enum options, then commits only
 the visible + writable keys; the server fills hidden / read-only
 defaults itself (downstream of the gate).
 
+### View-section row entities (TKT-IHC7D)
+
+Cards/list view sections (`display: properties | list | content | cards`)
+serve as a per-entity surface from the user's POV: each row is the
+inline-edit target of the next interaction. Their row entities
+(`V1ViewEntity`) carry **typed `_props`** (the entity's property values,
+typed not display-stringified) and **per-row `_fields`** with the same
+sparse semantics as `V1Entity._fields`:
+
+```json
+{
+  "id": "TKT-001",
+  "title": "Add login",
+  "type": "ticket",
+  "fields": [{"property": "status", "label": "Status", "values": ["open"]}],
+  "_props": {"status": "open", "title": "Add login"},
+  "_fields": {"status": {"writable": false}}
+}
+```
+
+`_props` and `_fields` are hidden-property-stripped at the source: a
+property hidden by the metamodel + ACL never appears in either map. The
+two maps may diverge in one direction only — `_fields` can carry a key
+absent from `_props` when the property has no stored value but a
+non-default verdict (e.g. `writable: false` on an unset field). Table
+sections (`display: table`) and the entry-source section keep their
+existing shape; the entry section's properties + affordances ride on
+the parent `entry` (`V1Entity`).
+
 ### Out of scope (this ticket)
 
 - **List-query affordances.** `_fields` and `_relations` ride only on
-  per-entity GET and the dry-run create; list / collection responses
-  keep their existing shape.
+  per-entity GET, the dry-run create, and view-section row entities;
+  list / collection responses (`GET /entities/<type>`) keep their
+  existing shape.
 - **Per-link verdicts** (different verdicts for different links of the
   same relation type). Deferred — requires per-link state-dependent
   gates.
