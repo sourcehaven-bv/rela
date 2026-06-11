@@ -23,6 +23,7 @@ func newHTTPRuntime(t *testing.T) *Runtime {
 }
 
 func TestLuaHTTP_GlobalRegistered(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		assert(type(http) == "table", "http global must be a table")
@@ -40,6 +41,7 @@ func TestLuaHTTP_GlobalRegistered(t *testing.T) {
 }
 
 func TestLuaHTTP_RequestGetSuccess(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
@@ -67,6 +69,7 @@ func TestLuaHTTP_RequestGetSuccess(t *testing.T) {
 }
 
 func TestLuaHTTP_RequestPostWithBody(t *testing.T) {
+	t.Parallel()
 	var receivedBody string
 	var receivedMethod string
 	var receivedContentType string
@@ -106,6 +109,7 @@ func TestLuaHTTP_RequestPostWithBody(t *testing.T) {
 }
 
 func TestLuaHTTP_ConvenienceGet(t *testing.T) {
+	t.Parallel()
 	var receivedMethod string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedMethod = r.Method
@@ -128,6 +132,7 @@ func TestLuaHTTP_ConvenienceGet(t *testing.T) {
 }
 
 func TestLuaHTTP_ConveniencePost(t *testing.T) {
+	t.Parallel()
 	var receivedMethod string
 	var receivedBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +160,7 @@ func TestLuaHTTP_ConveniencePost(t *testing.T) {
 }
 
 func TestLuaHTTP_ConveniencePut(t *testing.T) {
+	t.Parallel()
 	var receivedMethod string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedMethod = r.Method
@@ -175,6 +181,7 @@ func TestLuaHTTP_ConveniencePut(t *testing.T) {
 }
 
 func TestLuaHTTP_ConveniencePatch(t *testing.T) {
+	t.Parallel()
 	var receivedMethod string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedMethod = r.Method
@@ -195,6 +202,7 @@ func TestLuaHTTP_ConveniencePatch(t *testing.T) {
 }
 
 func TestLuaHTTP_ConvenienceDelete(t *testing.T) {
+	t.Parallel()
 	var receivedMethod string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedMethod = r.Method
@@ -215,6 +223,7 @@ func TestLuaHTTP_ConvenienceDelete(t *testing.T) {
 }
 
 func TestLuaHTTP_ConvenienceWithOpts(t *testing.T) {
+	t.Parallel()
 	var receivedAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAuth = r.Header.Get("Authorization")
@@ -237,6 +246,7 @@ func TestLuaHTTP_ConvenienceWithOpts(t *testing.T) {
 }
 
 func TestLuaHTTP_TimeoutError(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(2 * time.Second)
 		_, _ = w.Write([]byte("too late"))
@@ -269,6 +279,7 @@ func TestLuaHTTP_TimeoutError(t *testing.T) {
 // via this classifier; scripts that want to observe it would need to
 // return before the next opcode (not a realistic scenario).
 func TestClassifyHTTPError_Canceled(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		err  error
@@ -281,6 +292,7 @@ func TestClassifyHTTPError_Canceled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := classifyHTTPError(tc.err)
 			if got == nil {
 				t.Fatal("classifyHTTPError returned nil")
@@ -293,6 +305,7 @@ func TestClassifyHTTPError_Canceled(t *testing.T) {
 }
 
 func TestLuaHTTP_NetworkError(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local resp, err = http.get("http://127.0.0.1:1")
@@ -305,6 +318,7 @@ func TestLuaHTTP_NetworkError(t *testing.T) {
 }
 
 func TestLuaHTTP_ResponseBodyTooLarge(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Write more than 10 MiB
 		data := make([]byte, 11*1024*1024)
@@ -324,6 +338,7 @@ func TestLuaHTTP_ResponseBodyTooLarge(t *testing.T) {
 }
 
 func TestLuaHTTP_EmptyResponseBody(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -341,6 +356,7 @@ func TestLuaHTTP_EmptyResponseBody(t *testing.T) {
 }
 
 func TestLuaHTTP_RedirectNotFollowed(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", "http://example.com/other")
 		w.WriteHeader(http.StatusFound)
@@ -359,6 +375,7 @@ func TestLuaHTTP_RedirectNotFollowed(t *testing.T) {
 }
 
 func TestLuaHTTP_NonSuccessStatusReturnsResponse(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("not found"))
@@ -379,6 +396,7 @@ func TestLuaHTTP_NonSuccessStatusReturnsResponse(t *testing.T) {
 // --- Programming error tests (RaiseError) ---
 
 func TestLuaHTTP_RequestMissingURL(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.request({})`)
 	if err == nil {
@@ -390,6 +408,7 @@ func TestLuaHTTP_RequestMissingURL(t *testing.T) {
 }
 
 func TestLuaHTTP_RequestInvalidURL(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.request({url = "not-a-url"})`)
 	if err == nil {
@@ -401,6 +420,7 @@ func TestLuaHTTP_RequestInvalidURL(t *testing.T) {
 }
 
 func TestLuaHTTP_RequestFTPScheme(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.request({url = "ftp://example.com/file"})`)
 	if err == nil {
@@ -412,6 +432,7 @@ func TestLuaHTTP_RequestFTPScheme(t *testing.T) {
 }
 
 func TestLuaHTTP_RequestNoArgs(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.request()`)
 	if err == nil {
@@ -420,6 +441,7 @@ func TestLuaHTTP_RequestNoArgs(t *testing.T) {
 }
 
 func TestLuaHTTP_GetNoArgs(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.get()`)
 	if err == nil {
@@ -430,6 +452,7 @@ func TestLuaHTTP_GetNoArgs(t *testing.T) {
 // --- JSON tests ---
 
 func TestLuaHTTP_JSONEncodeTable(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local s = rela.json.encode({name = "test", value = 42})
@@ -445,6 +468,7 @@ func TestLuaHTTP_JSONEncodeTable(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONEncodeArray(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local s = rela.json.encode({"a", "b", "c"})
@@ -455,6 +479,7 @@ func TestLuaHTTP_JSONEncodeArray(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONEncodeNested(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local s = rela.json.encode({items = {"x", "y"}, count = 2})
@@ -469,6 +494,7 @@ func TestLuaHTTP_JSONEncodeNested(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONEncodePrimitives(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		assert(rela.json.encode("hello") == '"hello"')
@@ -481,6 +507,7 @@ func TestLuaHTTP_JSONEncodePrimitives(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeObject(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local t, err = rela.json.decode('{"name":"test","value":42,"active":true}')
@@ -494,6 +521,7 @@ func TestLuaHTTP_JSONDecodeObject(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeArray(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local t, err = rela.json.decode('[1, 2, 3]')
@@ -507,6 +535,7 @@ func TestLuaHTTP_JSONDecodeArray(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeNested(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local t, err = rela.json.decode('{"items":[{"id":1},{"id":2}]}')
@@ -519,6 +548,7 @@ func TestLuaHTTP_JSONDecodeNested(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeNull(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local t, err = rela.json.decode('{"key":null}')
@@ -530,6 +560,7 @@ func TestLuaHTTP_JSONDecodeNull(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeInvalidReturnsError(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local result, err = rela.json.decode("not valid json")
@@ -547,6 +578,7 @@ func TestLuaHTTP_JSONDecodeInvalidReturnsError(t *testing.T) {
 // way to mark "this empty table is intended as an array." Scripts needing an
 // empty array should construct it server-side or send a non-empty placeholder.
 func TestLuaHTTP_JSONEncodeEmptyTableIsObject(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local s, err = rela.json.encode({})
@@ -558,6 +590,7 @@ func TestLuaHTTP_JSONEncodeEmptyTableIsObject(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONEncodeCycleSubstitutesSentinel(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local t = {}
@@ -579,6 +612,7 @@ func TestLuaHTTP_JSONEncodeCycleSubstitutesSentinel(t *testing.T) {
 // we don't crash. (The decode side, where input comes from the network and
 // is untrusted, has an explicit depth cap; see the decode test below.)
 func TestLuaHTTP_JSONEncodeDeepTableDoesNotCrash(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local t = {}
@@ -597,6 +631,7 @@ func TestLuaHTTP_JSONEncodeDeepTableDoesNotCrash(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeDeepResponseSubstitutesSentinel(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	// Build a deeply-nested JSON string: {"n":{"n":{"n":...}}} 100 levels deep.
 	deep := strings.Repeat(`{"n":`, 100) + `null` + strings.Repeat(`}`, 100)
@@ -618,6 +653,7 @@ func TestLuaHTTP_JSONDecodeDeepResponseSubstitutesSentinel(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONEncodeNoArgs(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`rela.json.encode()`)
 	if err == nil {
@@ -626,6 +662,7 @@ func TestLuaHTTP_JSONEncodeNoArgs(t *testing.T) {
 }
 
 func TestLuaHTTP_JSONDecodeWrongType(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`rela.json.decode({})`)
 	if err == nil {
@@ -637,6 +674,7 @@ func TestLuaHTTP_JSONDecodeWrongType(t *testing.T) {
 }
 
 func TestLuaHTTP_NonStringHeaderValueRaises(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`
 		http.request({
@@ -653,6 +691,7 @@ func TestLuaHTTP_NonStringHeaderValueRaises(t *testing.T) {
 }
 
 func TestLuaHTTP_NonStringHeaderValueInConvenienceRaises(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`
 		http.get("http://example.com", {
@@ -668,6 +707,7 @@ func TestLuaHTTP_NonStringHeaderValueInConvenienceRaises(t *testing.T) {
 }
 
 func TestLuaHTTP_DefaultTimeoutApplied(t *testing.T) {
+	t.Parallel()
 	// Verify that requests without explicit timeout still have the 30s default.
 	// We can't easily test this directly, but we can verify the server receives
 	// the request (proving the shared client works).
@@ -694,6 +734,7 @@ func TestLuaHTTP_DefaultTimeoutApplied(t *testing.T) {
 // --- Error table shape test ---
 
 func TestLuaHTTP_ErrorTableShape(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	if err := rt.RunString(`
 		local resp, err = http.get("http://127.0.0.1:1")
@@ -716,6 +757,7 @@ func TestLuaHTTP_ErrorTableShape(t *testing.T) {
 }
 
 func TestLuaHTTP_InvalidMethodRaises(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.request({url = "http://127.0.0.1:1", method = "GET HACK"})`)
 	if err == nil {
@@ -724,6 +766,7 @@ func TestLuaHTTP_InvalidMethodRaises(t *testing.T) {
 }
 
 func TestLuaHTTP_ConvenienceTimeoutZeroRaises(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.get("http://127.0.0.1:1", {timeout = 0})`)
 	if err == nil {
@@ -735,6 +778,7 @@ func TestLuaHTTP_ConvenienceTimeoutZeroRaises(t *testing.T) {
 // Auth credentials embedded in the URL. Scripts that need Basic Auth
 // should set the Authorization header explicitly.
 func TestLuaHTTP_UserinfoInURLRejected(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.get("http://user:pass@example.com/")`)
 	if err == nil {
@@ -749,6 +793,7 @@ func TestLuaHTTP_UserinfoInURLRejected(t *testing.T) {
 // convenience methods carry the entry-point name (http.get / http.post /
 // etc.) rather than always "http.request:".
 func TestLuaHTTP_ConvenienceErrorPrefix(t *testing.T) {
+	t.Parallel()
 	rt := newHTTPRuntime(t)
 	err := rt.RunString(`http.delete("not a url")`)
 	if err == nil {
@@ -762,6 +807,7 @@ func TestLuaHTTP_ConvenienceErrorPrefix(t *testing.T) {
 // --- Integration-style test: full API call flow ---
 
 func TestLuaHTTP_FullAPIFlow(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)

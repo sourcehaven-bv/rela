@@ -15,6 +15,7 @@ import (
 // unknown/unknown audit attribution in production would be an
 // invisible bug.
 func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
+	t.Parallel()
 	_, err := NewServer(Deps{}, "0.0.0")
 	if err == nil {
 		t.Fatal("expected error when WithPrincipal is omitted")
@@ -27,6 +28,7 @@ func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
 // field deferred to request time would either nil-deref in a handler or
 // — for ProjectRoot — make lua_list silently walk the process CWD.
 func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
+	t.Parallel()
 	withPrincipal := WithPrincipal(principal.Principal{User: "test", Tool: principal.ToolMCP})
 
 	// makeTestServer builds a complete Deps; reuse it as the baseline.
@@ -48,6 +50,7 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 	}
 	for field, zero := range mutators {
 		t.Run(field, func(t *testing.T) {
+			t.Parallel()
 			deps := makeTestServer(t).deps
 			zero(&deps)
 			if _, err := NewServer(deps, "0.0.0", withPrincipal); err == nil {
@@ -62,6 +65,7 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 // middleware. Registered handlers (including new write tools added
 // later) inherit the stamp automatically; no per-handler opt-in.
 func TestPrincipalMiddleware_WithOption(t *testing.T) {
+	t.Parallel()
 	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 
@@ -84,6 +88,7 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 // write tools) still inherit the Principal stamp because the
 // middleware sits in front of every registered handler.
 func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
+	t.Parallel()
 	want := principal.Principal{User: "alice", Tool: principal.ToolMCP}
 	s := &Server{principal: want}
 

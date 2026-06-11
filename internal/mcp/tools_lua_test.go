@@ -44,6 +44,7 @@ func decodeScriptError(t *testing.T, result *mcp.CallToolResult) *lua.ScriptErro
 }
 
 func TestHandleLuaEval_ReturnsScriptErrorEnvelope(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 
 	result, err := s.handleLuaEval(context.Background(),
@@ -78,6 +79,7 @@ func TestHandleLuaEval_ReturnsScriptErrorEnvelope(t *testing.T) {
 }
 
 func TestHandleLuaEval_PreservesIsErrorFlag(t *testing.T) {
+	t.Parallel()
 	s := makeTestServer(t)
 	result, _ := s.handleLuaEval(context.Background(),
 		luaCallToolReq(map[string]any{"code": "error('x')"}))

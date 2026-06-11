@@ -30,6 +30,7 @@ func (s *failingDeleteStore) DeleteEntity(context.Context, string, bool) (*store
 // the fix, Manager.DeleteEntity looped per-relation and `continue`d past I/O
 // errors, deleting the entity anyway and returning success.
 func TestDeleteEntity_PropagatesStoreError(t *testing.T) {
+	t.Parallel()
 	sentinel := errors.New("simulated delete failure")
 	deps := entitymanager.Deps{
 		Store:     &failingDeleteStore{Store: memstore.New(), err: sentinel},
@@ -67,6 +68,7 @@ func TestDeleteEntity_PropagatesStoreError(t *testing.T) {
 // deleting, each carrying the cascade triggered-by, plus the delete-entity
 // record (issue #888 — audit preserved after delegating to the store cascade).
 func TestDeleteEntity_CascadeAuditsReportedRelations(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemory()
 	deps := entitymanager.Deps{
 		Store:     memstore.New(),

@@ -1,5 +1,10 @@
 package validation
 
+// The tests in this file assert wall-clock latency bounds (per-rule
+// timeout budgets), so they deliberately do NOT call t.Parallel():
+// running them alongside other tests would skew the elapsed-time
+// measurements under CPU contention and turn them flaky (TKT-VRZVXW).
+
 import (
 	"context"
 	"strings"

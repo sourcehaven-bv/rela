@@ -92,6 +92,7 @@ func relCreate(fromType, relType string) acl.WriteRequest {
 
 // AC2.2: a role's `write` list grants creation of that type.
 func TestAuthorizeWrite_RoleGrantsType_Allows(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	got := d.AuthorizeWrite(ctxAs("alice"), entityCreate("ticket"))
@@ -108,6 +109,7 @@ func TestAuthorizeWrite_RoleGrantsType_Allows(t *testing.T) {
 
 // AC2.3: no role grants → structured deny.
 func TestAuthorizeWrite_NoRoleGrants_Denies(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	got := d.AuthorizeWrite(ctxAs("bob"), entityCreate("ticket"))
@@ -128,6 +130,7 @@ func TestAuthorizeWrite_NoRoleGrants_Denies(t *testing.T) {
 
 // AC2.4: wildcard `*` grants any type.
 func TestAuthorizeWrite_WildcardRole_Allows(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	for _, etype := range []string{"ticket", "concept", "person", "made-up-type"} {
@@ -144,6 +147,7 @@ func TestAuthorizeWrite_WildcardRole_Allows(t *testing.T) {
 // AC2.5: writing a role-relation that requires a permission the
 // principal doesn't hold → delegate-permission deny.
 func TestAuthorizeWrite_RoleRelation_DelegatePermissionMissing_Denies(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	// alice (contributor) holds delegate-reviewer but not
@@ -164,6 +168,7 @@ func TestAuthorizeWrite_RoleRelation_DelegatePermissionMissing_Denies(t *testing
 // AC2.5: writing the same role-relation with the required permission
 // proceeds to the type-level write check and (here) succeeds.
 func TestAuthorizeWrite_RoleRelation_DelegatePermissionHeld_Allows(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	// jeroen (admin) holds delegate-contributor AND can write any
@@ -178,6 +183,7 @@ func TestAuthorizeWrite_RoleRelation_DelegatePermissionHeld_Allows(t *testing.T)
 // the delegate gate — any principal who can write the source entity
 // can write the relation.
 func TestAuthorizeWrite_RoleRelation_NoDelegateRequired_Allows(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	got := d.AuthorizeWrite(ctxAs("alice"), relCreate("ticket", "open-relation"))
@@ -189,6 +195,7 @@ func TestAuthorizeWrite_RoleRelation_NoDelegateRequired_Allows(t *testing.T) {
 // AC2.6: a principal with no Assignments entry inherits the `everyone`
 // role's capabilities.
 func TestAuthorizeWrite_UnknownPrincipal_GetsDefaultRole(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	// `everyone` has no write entries — every write is denied, but the
@@ -206,6 +213,7 @@ func TestAuthorizeWrite_UnknownPrincipal_GetsDefaultRole(t *testing.T) {
 // AC2.6 + AC2.7: when the everyone role grants writes, an unknown
 // principal gets them via it. RuleID surfaces "everyone".
 func TestAuthorizeWrite_DefaultRoleGrantsWrites(t *testing.T) {
+	t.Parallel()
 	policy := testPolicy()
 	policy.Roles[acl.EveryoneRole] = acl.RoleDef{
 		Write: []string{"comment"},
@@ -226,6 +234,7 @@ func TestAuthorizeWrite_DefaultRoleGrantsWrites(t *testing.T) {
 // gets the union of writes. The explicit role takes priority for
 // RuleID when it covers the type.
 func TestAuthorizeWrite_MultipleRoles_Unions(t *testing.T) {
+	t.Parallel()
 	policy := testPolicy()
 	// Make everyone also grant writes on a type the explicit role
 	// doesn't cover, so we can prove the union.
@@ -258,6 +267,7 @@ func TestAuthorizeWrite_MultipleRoles_Unions(t *testing.T) {
 // Negative test: an Assignments entry referencing an undefined role
 // is silently ignored — the principal falls through to default only.
 func TestAuthorizeWrite_AssignmentToUndefinedRole_DropsToDefault(t *testing.T) {
+	t.Parallel()
 	policy := testPolicy()
 	policy.Assignments["typo"] = "contribtuor" // misspelled role name
 	d := newACL(t, policy)
@@ -279,6 +289,7 @@ func TestAuthorizeWrite_AssignmentToUndefinedRole_DropsToDefault(t *testing.T) {
 // that briefly existed during the v0→v1 migration was removed because
 // it bypassed the unstamped-principal check.
 func TestAuthorizeWrite_NilSubject_Panics(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	defer func() {
@@ -294,6 +305,7 @@ func TestAuthorizeWrite_NilSubject_Panics(t *testing.T) {
 // wrapped at the manager boundary into the same *ForbiddenError shape
 // PR 1 ships. Sanity-check the round trip.
 func TestAuthorizeWrite_DenyConvertsToForbiddenError(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 
 	dec := d.AuthorizeWrite(ctxAs("bob"), entityCreate("ticket"))
@@ -312,6 +324,7 @@ func TestAuthorizeWrite_DenyConvertsToForbiddenError(t *testing.T) {
 // identity gets a clean deny instead of silently picking up
 // Assignments["unknown"] or "everyone".
 func TestAuthorizeWrite_UnstampedPrincipal_Denies(t *testing.T) {
+	t.Parallel()
 	d := newACL(t, testPolicy())
 	ctx := principal.With(context.Background(), principal.Principal{User: "unknown", Tool: principal.ToolCLI})
 

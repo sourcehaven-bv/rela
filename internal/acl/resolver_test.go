@@ -22,6 +22,7 @@ import (
 // package; graphquerynaive is a generic store helper). The test below
 // is the structural pin.
 func TestDepthCap_LockstepWithGraphquerynaive(t *testing.T) {
+	t.Parallel()
 	if DepthCap != graphquerynaive.DepthCap {
 		t.Fatalf("acl.DepthCap=%d, graphquerynaive.DepthCap=%d; must be equal", DepthCap, graphquerynaive.DepthCap)
 	}
@@ -105,6 +106,7 @@ func aliceDataEntry() principal.Principal {
 // ---- Unknown principal --------------------------------------------------
 
 func TestForPrincipal_UnstampedRejected(t *testing.T) {
+	t.Parallel()
 	// Each of the unstamped shapes the resolver must refuse. The
 	// audit-log misattribution-visible default that From(ctx) returns
 	// is a non-issue here — the resolver is the boundary where the
@@ -123,6 +125,7 @@ func TestForPrincipal_UnstampedRejected(t *testing.T) {
 	d := newTestDeclarative(t, &Policy{}, newFakeGraph())
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			req, err := d.ForPrincipal(c.p)
 			if req != nil {
 				t.Errorf("ForPrincipal(%+v) returned non-nil Request", c.p)
@@ -135,6 +138,7 @@ func TestForPrincipal_UnstampedRejected(t *testing.T) {
 }
 
 func TestNewDeclarative_RejectsNil(t *testing.T) {
+	t.Parallel()
 	// The constructor must reject nil policy and nil graph at
 	// construction time — silently producing a half-built Declarative
 	// would defer the failure to a downstream symptom that's harder
@@ -150,6 +154,7 @@ func TestNewDeclarative_RejectsNil(t *testing.T) {
 // ---- Walk termination ---------------------------------------------------
 
 func TestWalkMembers_SelfLoop(t *testing.T) {
+	t.Parallel()
 	// alice --member-of--> alice. The walk must terminate after one
 	// iteration with just {alice}.
 	g := newFakeGraph()
@@ -168,6 +173,7 @@ func TestWalkMembers_SelfLoop(t *testing.T) {
 }
 
 func TestWalkMembers_Cycle(t *testing.T) {
+	t.Parallel()
 	// A --member-of--> B --member-of--> C --member-of--> A.
 	// Starting from A, the walk must reach {A, B, C} and terminate
 	// (not loop back to A).
@@ -192,6 +198,7 @@ func TestWalkMembers_Cycle(t *testing.T) {
 }
 
 func TestWalkMembers_DepthCap_ReachableAtCap(t *testing.T) {
+	t.Parallel()
 	// A chain of length equal to depthCap. The role assigned at the
 	// cap-th hop is reachable.
 	g := newFakeGraph()
@@ -217,6 +224,7 @@ func TestWalkMembers_DepthCap_ReachableAtCap(t *testing.T) {
 }
 
 func TestWalkMembers_DepthCap_TruncatedBeyondCap(t *testing.T) {
+	t.Parallel()
 	// Chain longer than depthCap. Nodes beyond the cap must NOT be
 	// reached.
 	g := newFakeGraph()
@@ -243,6 +251,7 @@ func TestWalkMembers_DepthCap_TruncatedBeyondCap(t *testing.T) {
 }
 
 func TestWalkMembers_GraphError_AbortsWalk(t *testing.T) {
+	t.Parallel()
 	// When OutgoingRelations errors, the walk must abort rather than
 	// silently undercount or proceed with partial data. The result is
 	// the order accumulated so far — at minimum the principal itself.
@@ -271,6 +280,7 @@ func TestWalkMembers_GraphError_AbortsWalk(t *testing.T) {
 // ---- Globals memoization ------------------------------------------------
 
 func TestRequest_GlobalsMemoized(t *testing.T) {
+	t.Parallel()
 	// Two calls to Globals on the same Request must share the cached
 	// result — the second call performs zero graph traffic.
 	g := newFakeGraph()
@@ -299,6 +309,7 @@ func TestRequest_GlobalsMemoized(t *testing.T) {
 }
 
 func TestRequest_ForEntityReusesGlobals(t *testing.T) {
+	t.Parallel()
 	// ForEntity must not re-walk member-of when Globals is already
 	// cached. The architect's S5a no-rewalk discipline — pinned here
 	// by the call counter on the fake graph.
@@ -336,6 +347,7 @@ func TestRequest_ForEntityReusesGlobals(t *testing.T) {
 // with multiple role-relations all matching, and asserting that the
 // (role, source) sequence is byte-identical every iteration.
 func TestRequest_ForEntity_AttributionsDeterministic(t *testing.T) {
+	t.Parallel()
 	g := newFakeGraph()
 	// alice is a direct member of two groups so member-of is multi-edge.
 	g.add("alice", "member-of", "engineering")

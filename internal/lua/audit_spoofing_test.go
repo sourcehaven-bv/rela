@@ -12,10 +12,7 @@ import (
 // attribution. If a future change accidentally registers an audit
 // binding, this test fails — a deliberate stop the gate.
 func TestAuditNotExposedInLuaAPI(t *testing.T) {
-	ws := newMockWorkspace(t)
-	var buf bytes.Buffer
-	r := NewWriter(ws.services("/tmp"), &buf)
-	defer r.Close()
+	t.Parallel()
 
 	// type() is nil-safe and stays valid through chained-nil access if
 	// we type-check the parent first.
@@ -34,6 +31,15 @@ func TestAuditNotExposedInLuaAPI(t *testing.T) {
 
 	for _, probe := range probes {
 		t.Run(probe.name, func(t *testing.T) {
+			t.Parallel()
+			// Each parallel subtest needs its own runtime: a shared
+			// LState is not goroutine-safe, and a parent-level
+			// `defer r.Close()` would run before parallel subtests do.
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			r := NewWriter(ws.services("/tmp"), &buf)
+			defer r.Close()
+
 			script := `if (` + probe.expr + `) then error("found") end`
 			if err := r.RunString(script); err != nil {
 				t.Errorf("audit binding %q is reachable from Lua: %v", probe.name, err)
@@ -46,6 +52,7 @@ func TestAuditNotExposedInLuaAPI(t *testing.T) {
 // registered at the global table level either (some bindings live at
 // `audit.foo()` rather than `rela.audit.foo()`).
 func TestAuditNotExposedAsTopLevelGlobal(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 	r := NewWriter(ws.services("/tmp"), &buf)

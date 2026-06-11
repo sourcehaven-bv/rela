@@ -25,7 +25,9 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        # -shuffle=on randomizes test order to surface inter-test ordering
+        # dependencies; the seed is printed on failure for reproduction.
+        run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
         uses: vladopajic/go-test-coverage@v2.18.7

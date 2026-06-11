@@ -22,6 +22,7 @@ func metaWithExtras(t *testing.T) *metamodel.Metamodel {
 // has_relation gates a field on whether the entity has an outgoing
 // edge of a given type.
 func TestHostFunc_HasRelation(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -48,6 +49,7 @@ assignments:
 
 // count_relations gates a field on an edge count.
 func TestHostFunc_CountRelations(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -80,6 +82,7 @@ assignments:
 // function call, so the list argument is an entity list property, not
 // an inline literal — the canonical usage.
 func TestHostFunc_StringInList(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -113,6 +116,7 @@ assignments:
 // Boolean property coercion: a bool-typed property binds as a predicate
 // bool and compares correctly.
 func TestCoerce_Boolean(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -142,6 +146,7 @@ assignments:
 // coerces non-string elements to Nil holes rather than failing Eval.
 // The string elements still match.
 func TestCoerce_List_NonStringElements(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -167,6 +172,7 @@ assignments:
 
 // List property coercion + string_in_list over the entity's own list.
 func TestCoerce_List(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:

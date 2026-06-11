@@ -21,6 +21,7 @@ import (
 // to see that the role was conferred via my group membership, not
 // direct assignment.
 func TestFeature_UC1_GroupConferredWrite(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -54,6 +55,7 @@ assignments:
 // server to compute Alice's group set once per request, not once per
 // entity.
 func TestFeature_UC2_NestedGroupsAllowAll(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -102,6 +104,7 @@ assignments:
 // record to attribute the grant to F-eng (the ancestor that holds
 // the role-relation), not to the document itself.
 func TestFeature_UC3_ContainmentRead(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -146,6 +149,7 @@ role_relations:
 // The fact that D-roadmap also lives in F-public (where I have no
 // grant) does not revoke my access.
 func TestFeature_UC4_MultiParentUnion(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -184,6 +188,7 @@ role_relations:
 // RuleID is the highest-priority one (Group < Local <
 // LocalViaGroup, per AC8a's sort).
 func TestFeature_UC5_MultiSourceAttribution(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -225,6 +230,7 @@ role_relations:
 // denied — even though I have the `editor` role myself, that
 // doesn't authorize me to grant it to others.
 func TestFeature_UC6_DelegateXRelationWrite(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -262,6 +268,7 @@ role_relations:
 // editor on it. TKT-099 (no edge to me) stays denied. The audit
 // record attributes the grant to the local edge.
 func TestFeature_UC7_LocalRoleOnEntity(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -295,6 +302,7 @@ role_relations:
 // of `read: []` is intentional ("you have a role, but it lists no
 // readable types").
 func TestFeature_UC8_ClosedWorldDeny(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -320,6 +328,7 @@ roles:
 // holds the viewer role on it — even though I have no global role
 // granting read on projects and no direct edge to PRJ-foo.
 func TestFeature_UC9_LocalViaGroupRead(t *testing.T) {
+	t.Parallel()
 	w := NewWorld().
 		Policy(`
 roles:
@@ -350,11 +359,13 @@ role_relations:
 
 // TestFeature_UC10_PropertyRedaction — moved to internal/affordances.
 func TestFeature_UC10_PropertyRedaction(t *testing.T) {
+	t.Parallel()
 	t.Skip("UC10 lives in internal/affordances/features_test.go (property redaction is an affordance-layer concern).")
 }
 
 // TestFeature_UC11_ReadAndVisibleCompose — moved to internal/affordances.
 func TestFeature_UC11_ReadAndVisibleCompose(t *testing.T) {
+	t.Parallel()
 	t.Skip("UC11 lives in internal/affordances/features_test.go (Read + visible composition is an affordance-layer concern).")
 }
 
@@ -371,5 +382,6 @@ func TestFeature_UC11_ReadAndVisibleCompose(t *testing.T) {
 // Tracked for a follow-up ticket once the MCP transport's
 // per-request filtering shape is designed.
 func TestFeature_UC12_MCPScopeIntersection(t *testing.T) {
+	t.Parallel()
 	t.Skip("UC12 lives in internal/mcp (transport-layer intersection); follow-up ticket once the MCP filtering shape is designed.")
 }

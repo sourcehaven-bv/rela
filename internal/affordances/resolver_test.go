@@ -113,6 +113,7 @@ func ticket(id string, props map[string]interface{}) *entity.Entity {
 // AC2: a policy with no affordance blocks yields empty verdicts
 // (permissive default — byte-identical to Nop downstream).
 func TestResolver_NoAffordanceBlocks_EmptyVerdicts(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   admin: { write: ["*"] }
@@ -133,6 +134,7 @@ assignments:
 // field with a passing predicate is writable; an unlisted field is
 // denied (writable=false).
 func TestResolver_FieldsClosedWorld(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -160,6 +162,7 @@ assignments:
 
 // AC3: a field grant whose predicate evaluates false denies the field.
 func TestResolver_FieldPredicateFalse_Denies(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -190,6 +193,7 @@ assignments:
 
 // AC4: an opted-in option grant filters disallowed options.
 func TestResolver_OptionFiltered(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -220,6 +224,7 @@ assignments:
 
 // AC5: a relation grant with create:false denies creation.
 func TestResolver_RelationCreateFalse(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -251,6 +256,7 @@ assignments:
 // DR-S3: cross-role union is monotonic. A user with two roles, one
 // granting status and one granting title, can write BOTH.
 func TestResolver_CrossRoleUnion(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   a:
@@ -286,6 +292,7 @@ assignments:
 
 // DR-C6: has_role with a local role conferred by a role-relation edge.
 func TestResolver_LocalRole_HasRole(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   owner:
@@ -321,6 +328,7 @@ role_relations:
 
 // DR-C7: has_global_role checks only assignment-based roles.
 func TestResolver_HasGlobalRole(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   admin: {}
@@ -349,6 +357,7 @@ assignments:
 // or vice versa) coerces to Nil rather than failing Eval and locking
 // the field. A predicate referencing it just sees nil.
 func TestResolver_OffTypeProperty_CoercesNotFails(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -382,6 +391,7 @@ assignments:
 // A malformed predicate fails construction with the grant path in the
 // error (DR-S2 multi-error collection).
 func TestResolver_New_CompileError_IncludesPath(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -403,6 +413,7 @@ roles:
 // attributed role is deterministic (first in sorted order), not
 // dependent on map iteration. Run repeatedly to catch flakiness.
 func TestResolver_MultiRoleDeny_DeterministicAttribution(t *testing.T) {
+	t.Parallel()
 	// Both zeta and alpha opt-in for status with a false predicate, so
 	// status is denied by both. Sorted order → "alpha" is attributed.
 	p := policyFromYAML(t, `
@@ -450,6 +461,7 @@ assignments:
 // declare fails construction with the grant path — a typo can't
 // silently invert closed-world intent.
 func TestResolver_New_UnknownFieldTarget_Rejected(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -470,6 +482,7 @@ roles:
 
 // S2: an option grant on a non-declared option value is rejected.
 func TestResolver_New_UnknownOptionTarget_Rejected(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -489,6 +502,7 @@ roles:
 
 // S2: a relation grant on a type the metamodel lacks is rejected.
 func TestResolver_New_UnknownRelationTarget_Rejected(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -509,6 +523,7 @@ roles:
 // failing meta predicate denies just that field (AND-ed with the
 // grant). Exercises the previously-untested relation_accum meta path.
 func TestResolver_RelationMetaField(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -570,6 +585,7 @@ func (l *ctxRecordingLookup) OutgoingCounts(ctx context.Context, fromID string) 
 // predicate that invokes a relation host func is evaluated with a
 // marker on the context; the lookup must observe it.
 func TestResolver_CallerContext_ThreadsToHostFuncs(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -637,6 +653,7 @@ func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string) ([]str
 // the attached Request, each FieldVerdicts opens its own Request
 // and increments the counter.
 func TestResolver_ReusesRequestFromContext(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   viewer:

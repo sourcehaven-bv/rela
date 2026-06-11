@@ -9,6 +9,7 @@ import (
 
 // AC1.2: NopACL allows every write regardless of request shape.
 func TestNopACL_AllowsAllWrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		req  acl.WriteRequest
@@ -24,6 +25,7 @@ func TestNopACL_AllowsAllWrites(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			d := acl.NopACL{}.AuthorizeWrite(context.Background(), tt.req)
 			if !d.Allow {
 				t.Errorf("Allow = false, want true (NopACL must never deny). Decision = %+v", d)

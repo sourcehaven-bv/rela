@@ -9,6 +9,7 @@ import (
 
 // AC1.3: ReadOnlyACL denies every write with the documented Decision shape.
 func TestReadOnlyACL_DeniesAllWrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		req  acl.WriteRequest
@@ -23,6 +24,7 @@ func TestReadOnlyACL_DeniesAllWrites(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			d := acl.ReadOnlyACL{}.AuthorizeWrite(context.Background(), tt.req)
 			if d.Allow {
 				t.Errorf("Allow = true, want false (ReadOnlyACL must always deny)")

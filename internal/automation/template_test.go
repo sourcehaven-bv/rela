@@ -8,6 +8,7 @@ import (
 )
 
 func TestInterpolate_SimpleVariables(t *testing.T) {
+	t.Parallel()
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC) },
 		User: UserVars{
@@ -37,6 +38,7 @@ func TestInterpolate_SimpleVariables(t *testing.T) {
 }
 
 func TestInterpolate_EntityVariables(t *testing.T) {
+	t.Parallel()
 	vars := DefaultTemplateVars()
 	vars.Now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
@@ -64,6 +66,7 @@ func TestInterpolate_EntityVariables(t *testing.T) {
 }
 
 func TestInterpolate_OldEntityVariables(t *testing.T) {
+	t.Parallel()
 	vars := DefaultTemplateVars()
 	vars.Now = func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) }
 
@@ -93,6 +96,7 @@ func TestInterpolate_OldEntityVariables(t *testing.T) {
 }
 
 func TestInterpolate_NowFormat(t *testing.T) {
+	t.Parallel()
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 6, 15, 14, 30, 45, 0, time.UTC) },
 	}
@@ -105,6 +109,7 @@ func TestInterpolate_NowFormat(t *testing.T) {
 }
 
 func TestInterpolate_MixedTemplate(t *testing.T) {
+	t.Parallel()
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC) },
 		User: UserVars{
@@ -124,6 +129,7 @@ func TestInterpolate_MixedTemplate(t *testing.T) {
 }
 
 func TestInterpolateSafeOnly_SafeVariables(t *testing.T) {
+	t.Parallel()
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC) },
 		User: UserVars{
@@ -153,6 +159,7 @@ func TestInterpolateSafeOnly_SafeVariables(t *testing.T) {
 }
 
 func TestInterpolateSafeOnly_DoesNotInterpolateEntityProperties(t *testing.T) {
+	t.Parallel()
 	// This is the key security test: entity properties should NOT be interpolated
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 3, 15, 14, 30, 0, 0, time.UTC) },
@@ -185,6 +192,7 @@ func TestInterpolateSafeOnly_DoesNotInterpolateEntityProperties(t *testing.T) {
 }
 
 func TestInterpolateSafeOnly_SecurityInjectionPrevention(t *testing.T) {
+	t.Parallel()
 	// Test that malicious entity properties cannot be injected into Lua code
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -205,6 +213,7 @@ func TestInterpolateSafeOnly_SecurityInjectionPrevention(t *testing.T) {
 }
 
 func TestInterpolateSafeOnly_NowFormat(t *testing.T) {
+	t.Parallel()
 	vars := TemplateVars{
 		Now: func() time.Time { return time.Date(2025, 6, 15, 14, 30, 45, 0, time.UTC) },
 	}

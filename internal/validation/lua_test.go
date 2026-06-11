@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
@@ -79,32 +80,41 @@ func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	}
 }
 
-func TestLuaValidation_SingleViolation(t *testing.T) {
-	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"status": {Type: "string"},
-				},
-			},
-		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:        "status-not-empty",
-				Description: "Status must not be empty",
-				EntityType:  "ticket",
-				Lua: `
-					local status = entity.properties.status
-					if status == nil or status == "" then
-						return { message = "Status is required" }
-					end
-					return nil
-				`,
-				Severity: "error",
-			},
-		},
+// ticketMeta builds the single-entity-type metamodel these tests
+// share: a "ticket" with the given string properties and the
+// validation rules under test. The rules — the actual subject of each
+// test — stay at the call site; only the entity-shape boilerplate is
+// consolidated (TKT-R2KBG6; this file previously inlined the same
+// ~30-line metamodel literal in every test).
+func ticketMeta(rules []metamodel.ValidationRule, props ...string) *metamodel.Metamodel {
+	b := testutil.NewMetamodel().WithEntity("ticket", "Ticket", nil)
+	for _, p := range props {
+		b = b.WithEntityProperty("ticket", p, "string", false)
 	}
+	for _, r := range rules {
+		b = b.WithValidation(r)
+	}
+	return b.Build()
+}
+
+func TestLuaValidation_SingleViolation(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace()
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:        "status-not-empty",
+			Description: "Status must not be empty",
+			EntityType:  "ticket",
+			Lua: `
+			local status = entity.properties.status
+			if status == nil or status == "" then
+				return { message = "Status is required" }
+			end
+			return nil
+		`,
+			Severity: "error",
+		},
+	}, "status")
 
 	entities := []*entity.Entity{
 		{
@@ -134,38 +144,29 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 }
 
 func TestLuaValidation_MultipleViolations(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"status": {Type: "string"},
-					"owner":  {Type: "string"},
-				},
-			},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:        "required-fields",
+			Description: "Required fields check",
+			EntityType:  "ticket",
+			Lua: `
+			local issues = {}
+			if entity.properties.status == nil or entity.properties.status == "" then
+				table.insert(issues, { message = "Status is required", severity = "error" })
+			end
+			if entity.properties.owner == nil or entity.properties.owner == "" then
+				table.insert(issues, { message = "Owner is required", severity = "warning" })
+			end
+			if #issues > 0 then
+				return issues
+			end
+			return nil
+		`,
+			Severity: "error",
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:        "required-fields",
-				Description: "Required fields check",
-				EntityType:  "ticket",
-				Lua: `
-					local issues = {}
-					if entity.properties.status == nil or entity.properties.status == "" then
-						table.insert(issues, { message = "Status is required", severity = "error" })
-					end
-					if entity.properties.owner == nil or entity.properties.owner == "" then
-						table.insert(issues, { message = "Owner is required", severity = "warning" })
-					end
-					if #issues > 0 then
-						return issues
-					end
-					return nil
-				`,
-				Severity: "error",
-			},
-		},
-	}
+	}, "status", "owner")
 
 	entities := []*entity.Entity{
 		{
@@ -201,20 +202,16 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 }
 
 func TestLuaValidation_SeverityOverride(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "test-rule",
+			EntityType: "ticket",
+			Lua:        `return { message = "Custom warning", severity = "warning" }`,
+			Severity:   "error", // default is error, but Lua overrides to warning
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "test-rule",
-				EntityType: "ticket",
-				Lua:        `return { message = "Custom warning", severity = "warning" }`,
-				Severity:   "error", // default is error, but Lua overrides to warning
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -232,20 +229,16 @@ func TestLuaValidation_SeverityOverride(t *testing.T) {
 }
 
 func TestLuaValidation_SeverityDefault(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "test-rule",
+			EntityType: "ticket",
+			Lua:        `return { message = "Uses default severity" }`, // no severity specified
+			Severity:   "warning",
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "test-rule",
-				EntityType: "ticket",
-				Lua:        `return { message = "Uses default severity" }`, // no severity specified
-				Severity:   "warning",
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -263,6 +256,7 @@ func TestLuaValidation_SeverityDefault(t *testing.T) {
 }
 
 func TestLuaValidation_ReturnValues(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 
 	tests := []struct {
@@ -309,18 +303,14 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			meta := &metamodel.Metamodel{
-				Entities: map[string]metamodel.EntityDef{
-					"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+			t.Parallel()
+			meta := ticketMeta([]metamodel.ValidationRule{
+				{
+					Name:       "test-rule",
+					EntityType: "ticket",
+					Lua:        tt.lua,
 				},
-				Validations: []metamodel.ValidationRule{
-					{
-						Name:       "test-rule",
-						EntityType: "ticket",
-						Lua:        tt.lua,
-					},
-				},
-			}
+			})
 
 			entities := []*entity.Entity{
 				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -338,44 +328,35 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 }
 
 func TestLuaValidation_EntityContext(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: "string"},
-					"status": {Type: "string"},
-				},
-			},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "check-entity-context",
+			EntityType: "ticket",
+			Lua: `
+			-- Check entity.id and entity.type are available
+			if entity.id ~= "TKT-001" then
+				return { message = "entity.id mismatch" }
+			end
+			if entity.type ~= "ticket" then
+				return { message = "entity.type mismatch" }
+			end
+			-- Check prop() method works
+			if entity:prop("title") ~= "Test Ticket" then
+				return { message = "title mismatch" }
+			end
+			if entity:prop("status") ~= "open" then
+				return { message = "status mismatch" }
+			end
+			-- Check prop() with default
+			if entity:prop("missing", "default") ~= "default" then
+				return { message = "default value mismatch" }
+			end
+			return nil
+		`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "check-entity-context",
-				EntityType: "ticket",
-				Lua: `
-					-- Check entity.id and entity.type are available
-					if entity.id ~= "TKT-001" then
-						return { message = "entity.id mismatch" }
-					end
-					if entity.type ~= "ticket" then
-						return { message = "entity.type mismatch" }
-					end
-					-- Check prop() method works
-					if entity:prop("title") ~= "Test Ticket" then
-						return { message = "title mismatch" }
-					end
-					if entity:prop("status") ~= "open" then
-						return { message = "status mismatch" }
-					end
-					-- Check prop() with default
-					if entity:prop("missing", "default") ~= "default" then
-						return { message = "default value mismatch" }
-					end
-					return nil
-				`,
-			},
-		},
-	}
+	}, "title", "status")
 
 	entities := []*entity.Entity{
 		{
@@ -397,29 +378,25 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 }
 
 func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "cross-entity-lookup",
+			EntityType: "ticket",
+			Lua: `
+			-- Can look up other entities
+			local other = rela.get_entity("PARENT-001")
+			if not other then
+				return { message = "get_entity failed" }
+			end
+			if other:prop("status") ~= "approved" then
+				return { message = "status mismatch" }
+			end
+			return nil
+		`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "cross-entity-lookup",
-				EntityType: "ticket",
-				Lua: `
-					-- Can look up other entities
-					local other = rela.get_entity("PARENT-001")
-					if not other then
-						return { message = "get_entity failed" }
-					end
-					if other:prop("status") ~= "approved" then
-						return { message = "status mismatch" }
-					end
-					return nil
-				`,
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -434,28 +411,24 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 }
 
 func TestLuaValidation_MutationsBlocked(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "try-create",
+			EntityType: "ticket",
+			Lua: `
+			local ok, err = pcall(function()
+				rela.create_entity("ticket", {title = "New"})
+			end)
+			-- Should fail, if it succeeded that's a problem
+			if ok then
+				return { message = "mutation should have been blocked" }
+			end
+			return nil
+		`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "try-create",
-				EntityType: "ticket",
-				Lua: `
-					local ok, err = pcall(function()
-						rela.create_entity("ticket", {title = "New"})
-					end)
-					-- Should fail, if it succeeded that's a problem
-					if ok then
-						return { message = "mutation should have been blocked" }
-					end
-					return nil
-				`,
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -470,31 +443,22 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 }
 
 func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"status":   {Type: "string"},
-					"priority": {Type: "string"},
-				},
-			},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "ready-needs-priority-and-lua-check",
+			EntityType: "ticket",
+			When:       []string{"status=ready"},
+			Then:       []string{"priority!="},
+			Lua: `
+			if entity:prop("priority") == "invalid" then
+				return { message = "Priority cannot be 'invalid'" }
+			end
+			return nil
+		`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "ready-needs-priority-and-lua-check",
-				EntityType: "ticket",
-				When:       []string{"status=ready"},
-				Then:       []string{"priority!="},
-				Lua: `
-					if entity:prop("priority") == "invalid" then
-						return { message = "Priority cannot be 'invalid'" }
-					end
-					return nil
-				`,
-			},
-		},
-	}
+	}, "status", "priority")
 
 	entities := []*entity.Entity{
 		// Passes both when/then and Lua
@@ -528,19 +492,15 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 }
 
 func TestLuaValidation_SyntaxError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "syntax-error",
+			EntityType: "ticket",
+			Lua:        `this is not valid lua!!!`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "syntax-error",
-				EntityType: "ticket",
-				Lua:        `this is not valid lua!!!`,
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -556,19 +516,15 @@ func TestLuaValidation_SyntaxError(t *testing.T) {
 }
 
 func TestLuaValidation_RuntimeError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "runtime-error",
+			EntityType: "ticket",
+			Lua:        `return nil_variable.property`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "runtime-error",
-				EntityType: "ticket",
-				Lua:        `return nil_variable.property`,
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -584,6 +540,7 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 }
 
 func TestLuaValidation_ScriptFile(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 
 	// Create temp directory with validations/ subdirectory
@@ -604,22 +561,13 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"status": {Type: "string"},
-				},
-			},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "status-valid",
+			EntityType: "ticket",
+			LuaFile:    "validate-status.lua",
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "status-valid",
-				EntityType: "ticket",
-				LuaFile:    "validate-status.lua",
-			},
-		},
-	}
+	}, "status")
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "valid"}},
@@ -641,6 +589,7 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 }
 
 func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 
@@ -650,18 +599,13 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "missing-script",
+			EntityType: "ticket",
+			LuaFile:    "nonexistent.lua",
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "missing-script",
-				EntityType: "ticket",
-				LuaFile:    "nonexistent.lua",
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -677,40 +621,32 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 }
 
 func TestLuaValidation_CrossEntityValidation(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {
-				Properties: map[string]metamodel.PropertyDef{
-					"status": {Type: "string"},
-				},
-			},
-		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:        "parent-must-be-approved",
-				Description: "If ticket has parent, parent must be approved",
-				EntityType:  "ticket",
-				Lua: `
-					-- Get relations where this entity is "from" with type "child-of"
-					local rels = rela.get_relations({from = entity.id, type = "child-of"})
-					if #rels == 0 then
-						return nil -- no parent, OK
-					end
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:        "parent-must-be-approved",
+			Description: "If ticket has parent, parent must be approved",
+			EntityType:  "ticket",
+			Lua: `
+			-- Get relations where this entity is "from" with type "child-of"
+			local rels = rela.get_relations({from = entity.id, type = "child-of"})
+			if #rels == 0 then
+				return nil -- no parent, OK
+			end
 
-					local parent = rela.get_entity(rels[1].to)
-					if not parent then
-						return nil -- parent doesn't exist, OK (shouldn't happen)
-					end
+			local parent = rela.get_entity(rels[1].to)
+			if not parent then
+				return nil -- parent doesn't exist, OK (shouldn't happen)
+			end
 
-					if parent:prop("status") ~= "approved" then
-						return { message = "Parent ticket must be approved" }
-					end
-					return nil
-				`,
-			},
+			if parent:prop("status") ~= "approved" then
+				return { message = "Parent ticket must be approved" }
+			end
+			return nil
+		`,
 		},
-	}
+	}, "status")
 
 	// TKT-001 has a parent (PARENT-001) which is approved - should pass
 	// TKT-002 has no parent - should pass
@@ -728,20 +664,16 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 }
 
 func TestLuaValidation_Timeout(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
-	meta := &metamodel.Metamodel{
-		Entities: map[string]metamodel.EntityDef{
-			"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+	meta := ticketMeta([]metamodel.ValidationRule{
+		{
+			Name:       "infinite-loop",
+			EntityType: "ticket",
+			// This would run forever without timeout
+			Lua: `while true do end`,
 		},
-		Validations: []metamodel.ValidationRule{
-			{
-				Name:       "infinite-loop",
-				EntityType: "ticket",
-				// This would run forever without timeout
-				Lua: `while true do end`,
-			},
-		},
-	}
+	})
 
 	entities := []*entity.Entity{
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
@@ -758,6 +690,7 @@ func TestLuaValidation_Timeout(t *testing.T) {
 }
 
 func TestLuaValidation_PathTraversal(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace()
 	tmpDir := t.TempDir()
 
@@ -810,18 +743,14 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			meta := &metamodel.Metamodel{
-				Entities: map[string]metamodel.EntityDef{
-					"ticket": {Properties: map[string]metamodel.PropertyDef{}},
+			t.Parallel()
+			meta := ticketMeta([]metamodel.ValidationRule{
+				{
+					Name:       "test-rule",
+					EntityType: "ticket",
+					LuaFile:    tt.luaFile,
 				},
-				Validations: []metamodel.ValidationRule{
-					{
-						Name:       "test-rule",
-						EntityType: "ticket",
-						LuaFile:    tt.luaFile,
-					},
-				},
-			}
+			})
 
 			entities := []*entity.Entity{
 				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
