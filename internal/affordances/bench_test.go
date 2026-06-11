@@ -110,8 +110,7 @@ assignments:
 
 	b.ReportAllocs()
 	for b.Loop() {
-		fv := resolver.FieldVerdicts(pctx, tkt)
-		rv := resolver.RelationVerdicts(pctx, tkt)
-		_, _ = fv, rv
+		_ = resolver.FieldVerdicts(pctx, tkt)
+		_ = resolver.RelationVerdicts(pctx, tkt)
 	}
 }
