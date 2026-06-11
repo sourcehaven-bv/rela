@@ -30,7 +30,7 @@ jobs:
         run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
-        uses: vladopajic/go-test-coverage@v2.18.7
+        uses: vladopajic/go-test-coverage@v2.18.8
         with:
           config: .testcoverage.yml
           github-action-output: true
