@@ -111,7 +111,8 @@ jobs:
           go-version: '1.26'
 
       - name: Install go-arch-lint
-        run: go install github.com/fe3dback/go-arch-lint@latest
+        # Keep in sync with go_arch_lint_version in the justfile.
+        run: go install github.com/fe3dback/go-arch-lint@v1.15.0
 
       - name: Check architecture
         run: go-arch-lint check
