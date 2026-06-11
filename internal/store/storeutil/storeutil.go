@@ -43,6 +43,34 @@ func ValidateID(id string) error {
 	return nil
 }
 
+// ValidateRelationType rejects relation types that would cause
+// relation-key collisions or storage hazards. The rules mirror
+// [ValidateID]: relation types are embedded in the same
+// from--type--to key format (so `--` collides), become path segments
+// in fsstore relation filenames (so separators nest directories), and
+// appear in the pgstore change-feed payload whose field separator is
+// a control character (internal/store/pgstore/feed.go already
+// documents that assumption). Previously each backend hand-rolled a
+// subset of these checks inline; the shared rule is also the validity
+// oracle for the storetest fuzz harness (TKT-PCLGGL).
+func ValidateRelationType(relType string) error {
+	if relType == "" {
+		return errors.New("store: empty relation type")
+	}
+	if strings.Contains(relType, "--") {
+		return fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	}
+	if strings.ContainsAny(relType, "/\\") {
+		return fmt.Errorf("store: relation type %q contains path separator", relType)
+	}
+	for i := range len(relType) {
+		if relType[i] < 0x20 || relType[i] == 0x7f {
+			return fmt.Errorf("store: relation type %q contains control character", relType)
+		}
+	}
+	return nil
+}
+
 // ValidateProperty rejects property names that would cause
 // attachment key collisions in the entityID/property format.
 func ValidateProperty(prop string) error {

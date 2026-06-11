@@ -21,7 +21,6 @@ package memstore
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -562,16 +561,12 @@ func (m *MemStore) CreateRelation(
 			return nil, err
 		}
 	}
-	if strings.Contains(relType, "--") {
-		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	if err := storeutil.ValidateRelationType(relType); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if relType == "" {
-		return nil, errors.New("store: empty relation type")
-	}
 
 	r := entity.NewRelation(from, relType, to)
 	r.UpdatedAt = time.Now()
