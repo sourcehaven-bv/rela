@@ -3,6 +3,8 @@ package testutil
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -76,21 +78,23 @@ func AssertError(t *testing.T, err error) {
 	}
 }
 
-// AssertEqual checks that two values are equal.
+// AssertEqual checks that two values are deeply equal. DeepEqual (not
+// ==) so that slices, maps, and other uncomparable types diff instead
+// of panicking.
 func AssertEqual(t *testing.T, got, want interface{}) {
 	t.Helper()
 
-	if got != want {
-		t.Errorf("got %v, want %v", got, want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v, want %#v", got, want)
 	}
 }
 
-// AssertNotEqual checks that two values are not equal.
+// AssertNotEqual checks that two values are not deeply equal.
 func AssertNotEqual(t *testing.T, got, notWant interface{}) {
 	t.Helper()
 
-	if got == notWant {
-		t.Errorf("got %v, expected different value", got)
+	if reflect.DeepEqual(got, notWant) {
+		t.Errorf("got %#v, expected different value", got)
 	}
 }
 
@@ -98,21 +102,7 @@ func AssertNotEqual(t *testing.T, got, notWant interface{}) {
 func AssertStringContains(t *testing.T, s, substr string) {
 	t.Helper()
 
-	if s == "" && substr != "" {
-		t.Errorf("string is empty, expected to contain %q", substr)
-		return
-	}
-
-	// Simple substring check
-	found := false
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			found = true
-			break
-		}
-	}
-
-	if !found {
+	if !strings.Contains(s, substr) {
 		t.Errorf("string %q does not contain %q", s, substr)
 	}
 }
@@ -121,16 +111,7 @@ func AssertStringContains(t *testing.T, s, substr string) {
 func AssertStringNotContains(t *testing.T, s, substr string) {
 	t.Helper()
 
-	// Simple substring check
-	found := false
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			found = true
-			break
-		}
-	}
-
-	if found {
+	if strings.Contains(s, substr) {
 		t.Errorf("string %q unexpectedly contains %q", s, substr)
 	}
 }
