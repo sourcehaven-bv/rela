@@ -311,6 +311,9 @@ func TestACLList_QueryErrorMapping(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "search_failed") {
 		t.Errorf("ACL failure mislabeled as search_failed: %s", rec.Body)
 	}
+	if strings.Contains(rec.Body.String(), "synthetic graph query failure") {
+		t.Errorf("raw backend error leaked into response body: %s", rec.Body)
+	}
 }
 
 // TestACLPosition_SearchScopeGated pins the CRIT finding from the
@@ -378,6 +381,9 @@ func TestACLList_AllowAllLoadErrorSurfaces(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "list_load_failed") {
 		t.Errorf("body missing list_load_failed: %s", rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "synthetic list failure") {
+		t.Errorf("raw backend error leaked into response body: %s", rec.Body)
 	}
 }
 

@@ -853,14 +853,24 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 // and anything else is the free-text search failure the pipeline
 // always surfaced. Shared by the list and _position handlers so the
 // two consumers of the pipeline can't drift.
+//
+// All branches log the raw error server-side and keep it out of the
+// response body (RR-372L / IB-review PR939 #1): a store or search
+// backend error string can name tables, columns, or index paths.
 func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, errListLoad):
-		writeV1Error(w, r, http.StatusInternalServerError, "list_load_failed", "Loading entities failed", err.Error())
+		slog.Warn("dataentry: list load failed",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusInternalServerError, "list_load_failed",
+			"Loading entities failed", "check server logs")
 	default:
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		slog.Warn("dataentry: list free-text search failed",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusInternalServerError, "search_failed",
+			"Free-text search failed", "check server logs")
 	}
 }
 
