@@ -94,7 +94,16 @@ func createCore(
 		return nil, nil, err
 	}
 
-	if err := upsertEntity(ctx, deps.Store, e); err != nil {
+	// A create must never fall through to an update — that would
+	// overwrite a colliding entity (a racing create, or a stale-scan
+	// duplicate ID). Write with a direct CreateEntity and surface a
+	// conflict as ErrEntityAlreadyExists. upsertEntity's
+	// create-then-update fallback is only for write-back-existing
+	// callers, never the create path.
+	if err := deps.Store.CreateEntity(ctx, e); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
+		}
 		return nil, nil, fmt.Errorf("write entity: %w", err)
 	}
 
@@ -179,7 +188,10 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string) (stri
 		prefix = prefixes[0]
 	}
 
-	existingIDs := collectAllIDs(ctx, deps.Store)
+	existingIDs, err := collectAllIDs(ctx, deps.Store)
+	if err != nil {
+		return "", fmt.Errorf("collect existing IDs: %w", err)
+	}
 	if entityDef.IsShortID() {
 		return entity.GenerateShortID(existingIDs, prefix, len(existingIDs), entityDef.GetIDCaps()), nil
 	}
@@ -187,36 +199,40 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string) (stri
 }
 
 // collectAllIDs returns every entity ID currently in the store.
-// Errors from the iterator are swallowed — a partial result is
-// preferable to failing ID generation outright.
-func collectAllIDs(ctx context.Context, st store.Store) []string {
+// A partial scan must not feed ID generation: a truncated list can hide
+// a high-numbered existing ID, so the generator would mint one that
+// already exists and (via upsertEntity's create-then-update fallback)
+// overwrite that entity. Fail loudly instead.
+func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 	ids := make([]string, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
-			return ids
+			return nil, err
 		}
 		ids = append(ids, e.ID)
 	}
-	return ids
+	return ids, nil
 }
 
 // collectIncidentRelations gathers a store's relations in the given
-// direction for the given entity. Errors from the iterator are
-// swallowed — partial results are preferable to a failing cascade.
+// direction for the given entity. The result gates the delete-safety
+// check (refuse a non-cascade delete that would orphan relations), so a
+// partial scan must not silently under-count — propagate the error and
+// let the caller refuse the delete rather than proceed on partial data.
 func collectIncidentRelations(
 	ctx context.Context, st store.Store, id string, dir store.Direction,
-) []*entity.Relation {
+) ([]*entity.Relation, error) {
 	out := make([]*entity.Relation, 0)
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{
 		EntityID:  id,
 		Direction: dir,
 	}) {
 		if err != nil {
-			continue
+			return nil, err
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, nil
 }
 
 // findExistingRelationTarget locates an existing target entity of the

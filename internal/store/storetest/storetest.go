@@ -120,6 +120,18 @@ func collectHits(t *testing.T, it iter.Seq2[search.Hit, error]) []search.Hit {
 	return results
 }
 
+// searchError drains a search iterator and returns the first error it
+// yields (nil if the search succeeded). Used by conformance cases that
+// assert a query is rejected rather than asserting on hits.
+func searchError(it iter.Seq2[search.Hit, error]) error {
+	for _, err := range it {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // countRelations counts relations matching a query.
 func countRelations(t *testing.T, s store.Store) int {
 	t.Helper()

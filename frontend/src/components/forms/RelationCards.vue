@@ -8,6 +8,7 @@ import {
   getEntityRelations,
   searchEntities,
   getEntity,
+  getErrorMessage,
 } from '@/api'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
@@ -140,7 +141,7 @@ async function loadRelations() {
       }
     }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load relations'
+    error.value = getErrorMessage(err, 'Failed to load relations')
   } finally {
     loading.value = false
   }

@@ -113,7 +113,8 @@ jobs:
           go-version: '1.26'
 
       - name: Install go-arch-lint
-        run: go install github.com/fe3dback/go-arch-lint@latest
+        # Keep in sync with go_arch_lint_version in the justfile.
+        run: go install github.com/fe3dback/go-arch-lint@v1.15.0
 
       - name: Check architecture
         run: go-arch-lint check
@@ -159,11 +160,23 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test with coverage
-        run: npm run test:coverage
+      - name: Test
+        run: npm run test:run
 
       - name: Build
         run: npm run build
+
+      - name: Work tree clean after build
+        # Whole-repo tripwire: fails when any step of this job modified
+        # tracked files or left untracked files behind (e.g. the vue-tsc
+        # artifacts that once shadowed vite.config.ts, BUG-P0DZA5).
+        run: |
+          DIRTY=$(git status --porcelain --untracked-files=all)
+          if [ -n "$DIRTY" ]; then
+            echo "Repo not clean after build:"
+            echo "$DIRTY"
+            exit 1
+          fi
 
   e2e:
     name: E2E

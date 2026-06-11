@@ -432,12 +432,13 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
-	// upsertEntity tries Create first then Update on conflict. Second
-	// persist therefore runs Create→conflict→Update. Both counts pin
-	// the shape: a future change that switches to "check-then-write"
-	// would flip creates from 2 to 1 without changing updates.
+	// The initial create is a direct CreateEntity (no upsert fallback —
+	// a create must never become an update). The post-automation
+	// re-write goes through upsertEntity, which runs
+	// Create→conflict→Update. So creates=2 (initial + upsert probe),
+	// updates=1 (the upsert fallback).
 	if got := cs.creates.Load(); got != 2 {
-		t.Errorf("CreateEntity calls = %d, want 2 (initial + upsert probe)", got)
+		t.Errorf("CreateEntity calls = %d, want 2 (initial create + upsert probe)", got)
 	}
 	if got := cs.updates.Load(); got != 1 {
 		t.Errorf("UpdateEntity calls = %d, want 1", got)

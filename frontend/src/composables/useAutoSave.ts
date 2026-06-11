@@ -25,6 +25,7 @@
 import { ref, computed, type Ref } from 'vue'
 import type { Entity } from '@/types'
 import type { EntityPatch } from '@/api/entities'
+import { getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 
 // Sentinel for "unset this property" pending entries. Distinct from
@@ -320,13 +321,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
         }
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
+        const message = getErrorMessage(err, 'Save failed')
         const newer = pending[property]
         const isLatestIntent = !newer || newer.enqueuedAt <= enqueuedAt
         if (isLatestIntent) {
-          fieldErrors.value = { ...fieldErrors.value, [property]: info.message }
-          setStatus('error', info.message)
-          opts.onError(info.message)
+          fieldErrors.value = { ...fieldErrors.value, [property]: message }
+          setStatus('error', message)
+          opts.onError(message)
         }
       } finally {
         inFlightCount.value--
@@ -367,11 +368,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
         contentError.value = null
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
+        const message = getErrorMessage(err, 'Save failed')
         if (pendingContent === null) {
-          contentError.value = info.message
-          setStatus('error', info.message)
-          opts.onError(info.message)
+          contentError.value = message
+          setStatus('error', message)
+          opts.onError(message)
         }
       } finally {
         inFlightCount.value--
@@ -409,9 +410,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
         lastCommitAt['__relations__'] = Date.now()
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
-        setStatus('error', info.message)
-        opts.onError(info.message)
+        const message = getErrorMessage(err, 'Save failed')
+        setStatus('error', message)
+        opts.onError(message)
       } finally {
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
@@ -585,8 +586,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       queueTail
         .then(() => resolve({ settled: true }))
         .catch((err: unknown) => {
-          const info = parseError(err)
-          resolve({ settled: true, error: info.message })
+          resolve({ settled: true, error: getErrorMessage(err, 'Save failed') })
         })
         .finally(() => clearTimeout(timer))
     })
@@ -634,21 +634,4 @@ function deepEqual(a: unknown, b: unknown): boolean {
   if (ak.length !== bk.length) return false
   for (const k of ak) if (!deepEqual(ao[k], bo[k])) return false
   return true
-}
-
-interface ApiErr {
-  status?: number
-  title?: string
-  detail?: string
-  response?: { status?: number; data?: { status?: number; detail?: string; title?: string } }
-  message?: string
-}
-
-function parseError(err: unknown): { status: number; message: string } {
-  const e = err as ApiErr
-  const status = e?.status ?? e?.response?.status ?? e?.response?.data?.status ?? 0
-  const detail = e?.detail ?? e?.response?.data?.detail
-  const title = e?.title ?? e?.response?.data?.title
-  const message = detail || title || e?.message || 'Save failed'
-  return { status, message }
 }

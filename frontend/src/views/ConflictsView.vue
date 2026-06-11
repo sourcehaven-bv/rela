@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { getConflicts, getConflictDetail, resolveConflict, type ConflictItem, type ConflictDetail } from '@/api'
+import { getConflicts, getConflictDetail, resolveConflict, getErrorMessage, type ConflictItem, type ConflictDetail } from '@/api'
 import { useGitStore } from '@/stores'
 
 const router = useRouter()
@@ -34,7 +34,7 @@ async function loadConflicts() {
     const result = await getConflicts()
     conflicts.value = result.conflicts
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load conflicts'
+    error.value = getErrorMessage(err, 'Failed to load conflicts')
   } finally {
     loading.value = false
   }
@@ -65,7 +65,7 @@ async function selectConflict(path: string) {
       manualContent.value = detail.value.content_ours
     }
   } catch (err) {
-    detailError.value = err instanceof Error ? err.message : 'Failed to load conflict details'
+    detailError.value = getErrorMessage(err, 'Failed to load conflict details')
   } finally {
     detailLoading.value = false
   }
@@ -107,7 +107,7 @@ async function applyResolution() {
     // Go back to list if no more conflicts
     backToList()
   } catch (err) {
-    detailError.value = err instanceof Error ? err.message : 'Failed to resolve conflict'
+    detailError.value = getErrorMessage(err, 'Failed to resolve conflict')
   } finally {
     resolving.value = false
   }

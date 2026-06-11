@@ -15,7 +15,7 @@ import type {
   FieldAffordance,
   RelationAffordance,
 } from '@/types'
-import { getTemplates, createRelation, dryRunCreateEntity } from '@/api'
+import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
@@ -676,19 +676,16 @@ async function handleSubmit() {
     // not a user-facing failure; the user clicked away before the
     // save completed, which is their choice.
     if (isCancelledFetch(err)) return
-    if (err && typeof err === 'object' && 'errors' in err && Array.isArray((err as { errors: unknown }).errors)) {
-      const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
-      for (const e of problemErrors) {
+    const validationErrors = err instanceof ApiError ? err.validationErrors : []
+    if (validationErrors.length > 0) {
+      for (const e of validationErrors) {
         if (e.field) {
           errors.value[e.field] = e.message || e.detail || 'Invalid value'
         }
       }
       uiStore.error('Please fix the validation errors')
-    } else if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
-      const problem = err as { detail?: string; title?: string }
-      uiStore.error(problem.detail || problem.title || 'Failed to save entity')
     } else {
-      uiStore.error('Failed to save entity')
+      uiStore.error(getErrorMessage(err, 'Failed to save entity'))
     }
     console.error(err)
   } finally {
@@ -755,6 +752,9 @@ const autoSave = computed(() => {
 })
 // Lazy holder so we construct the composable once per (entityId, formId).
 const _autoSaveInstance = ref<ReturnType<typeof useAutoSave> | null>(null)
+// Dirty-registry cleanup, assigned in onMounted (after awaits) and run
+// from the top-level onBeforeUnmount.
+let unregisterDirtyForm: (() => void) | null = null
 
 function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // Mirror handleSubmit's body assembly. Two sources of relation
@@ -932,11 +932,13 @@ onMounted(async () => {
     })
     // Register with the dirty registry so SSE-driven re-fetches in
     // other forms on the same entity preserve this form's dirty state.
-    const unregister = registerForm(
+    // The cleanup runs from the top-level onBeforeUnmount below —
+    // registering a lifecycle hook after an `await` has no active
+    // instance, so Vue would silently drop it and leak the registration.
+    unregisterDirtyForm = registerForm(
       props.entityId,
       (property) => _autoSaveInstance.value?.isDirty(property) ?? false,
     )
-    onBeforeUnmount(unregister)
   }
 
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
@@ -961,6 +963,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
+  unregisterDirtyForm?.()
+  unregisterDirtyForm = null
   // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
   // the component as gone so a response that has already arrived (but
   // is awaiting the microtask queue) doesn't write to dead refs

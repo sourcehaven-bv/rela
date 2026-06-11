@@ -125,11 +125,8 @@ func (s *Store) CreateRelation(
 			return nil, err
 		}
 	}
-	if relType == "" {
-		return nil, errors.New("store: empty relation type")
-	}
-	if strings.Contains(relType, "--") {
-		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	if err := storeutil.ValidateRelationType(relType); err != nil {
+		return nil, err
 	}
 
 	var props map[string]interface{}
