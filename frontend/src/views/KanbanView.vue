@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { listEntities, updateEntity } from '@/api'
+import { listEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import type { Entity, KanbanConfig, ListResponse } from '@/types'
 import Badge from '@/components/common/Badge.vue'
@@ -63,10 +63,7 @@ const loading = computed(() => boardQuery.isPending.value)
 const loadError = computed(() => {
   const err = boardQuery.error.value
   if (!err) return null
-  // The API interceptor rejects with a raw ProblemDetail object, not an
-  // Error — read its fields directly so the server message survives.
-  const problem = err as { detail?: string; title?: string } | null
-  return problem?.detail || problem?.title || 'Failed to load board'
+  return getErrorMessage(err, 'Failed to load board')
 })
 
 const entityType = computed(() => {
@@ -254,10 +251,7 @@ const { mutate: moveCard } = useMutation({
       queryCache.setQueryData(key, previous)
     }
     console.error('Failed to update entity:', err)
-    // The API interceptor rejects with a raw ProblemDetail object, not
-    // an Error — read its fields directly so the server message survives.
-    const problem = err as { detail?: string; title?: string } | null
-    uiStore.error(problem?.detail || problem?.title || 'Failed to move card')
+    uiStore.error(getErrorMessage(err, 'Failed to move card'))
   },
   async onSettled(_data, _err, _vars, context) {
     if (context.key) await queryCache.invalidateQueries({ key: context.key })

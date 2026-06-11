@@ -9,6 +9,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { ref } from 'vue'
 import { useEntitiesStore } from '@/stores/entities'
 import { useAutoSave, type AutoSaveOptions, type AutoSaveWarning } from './useAutoSave'
+import { ApiError } from '@/api/errors'
 import type { Entity } from '@/types'
 
 interface Harness {
@@ -225,7 +226,9 @@ describe('useAutoSave', () => {
 
   it('422 on a property surfaces fieldError; other fields keep working', async () => {
     const h = makeHarness({ title: 'x' })
-    h.updateMock.mockRejectedValueOnce({ detail: 'invalid value', status: 422 })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('invalid value', { kind: 'http', status: 422, original: null })
+    )
     h.autoSave.scheduleFieldSave('title', 'bad')
     await vi.advanceTimersByTimeAsync(150)
     await vi.runOnlyPendingTimersAsync()

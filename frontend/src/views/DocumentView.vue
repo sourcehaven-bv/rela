@@ -9,7 +9,7 @@ import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { renderMermaidDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
-import { isScriptError } from '@/types/scriptError'
+import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
 import DOMPurify from 'dompurify'
 
@@ -97,10 +97,11 @@ async function loadDocument(refresh = false) {
     isCached.value = result.cached
     entityIds.value = result.entity_ids || []
   } catch (err: unknown) {
-    if (isScriptError(err)) {
-      scriptErrorStore.show(err)
+    const scriptErr = getScriptError(err)
+    if (scriptErr) {
+      scriptErrorStore.show(scriptErr)
     } else {
-      uiStore.error('Failed to render document')
+      uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
     docContent.value = ''
     entityIds.value = []

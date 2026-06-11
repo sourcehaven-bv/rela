@@ -5,7 +5,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { fetchView, getCommands } from '@/api'
+import { fetchView, getCommands, getErrorMessage } from '@/api'
 import type { ViewResponse, ViewSectionField } from '@/api'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
@@ -230,7 +230,7 @@ function handleCheckboxToggle(index: number) {
     // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
     // task items in marked but are rejected here). Surface the thrown
     // detail so users know which line of the source the click missed.
-    const detail = err instanceof Error ? err.message : 'unknown error'
+    const detail = getErrorMessage(err, 'unknown error')
     uiStore.error(`Failed to toggle checkbox: ${detail}`)
     console.error(err)
     return
@@ -330,7 +330,7 @@ async function loadView() {
     await Promise.all([loadCommands(), loadScopeNav()])
   } catch (err) {
     if (isCancelledFetch(err)) return
-    error.value = err instanceof Error ? err.message : 'Failed to load entity'
+    error.value = getErrorMessage(err, 'Failed to load entity')
     console.error('Failed to load entity view:', err)
   } finally {
     loading.value = false

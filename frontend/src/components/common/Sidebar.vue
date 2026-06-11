@@ -5,7 +5,7 @@ import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
 import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { isScriptError } from '@/types/scriptError'
+import { ApiError, getErrorMessage, getScriptError } from '@/api/errors'
 import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
@@ -116,16 +116,13 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       router.push(response.redirect)
     }
   } catch (err: unknown) {
-    if (isScriptError(err)) {
-      scriptErrorStore.show(err, triggerEl)
+    const scriptErr = getScriptError(err)
+    if (scriptErr) {
+      scriptErrorStore.show(scriptErr, triggerEl)
     } else {
-      let msg = 'Action failed'
-      const e = err as { response?: { data?: { correlation_id?: string } }; correlation_id?: string }
-      const corrID = e?.response?.data?.correlation_id ?? e?.correlation_id
-      if (corrID) {
-        msg = `Action failed (ref: ${corrID})`
-      }
-      uiStore.error(msg)
+      const corrID = err instanceof ApiError ? err.correlationId : undefined
+      const msg = getErrorMessage(err, 'Action failed')
+      uiStore.error(corrID ? `${msg} (ref: ${corrID})` : msg)
     }
   } finally {
     actionInFlight.value.delete(item.action)

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useConfirm } from '@/composables/useConfirm'
-import { getSettings, saveSettings, savePalette, uploadLogo, removeLogo, exportTheme, importTheme } from '@/api'
+import { getSettings, saveSettings, savePalette, uploadLogo, removeLogo, exportTheme, importTheme, getErrorMessage } from '@/api'
 import type {
   SettingsData,
   SettingsPropertyDef,
@@ -111,7 +111,7 @@ async function handleLogoUpload() {
     // Server may report the authoritative size cap on 413 — prefer that
     // over the soft client-side number so the toast doesn't lie if the
     // server limit moves.
-    const msg = err instanceof Error ? err.message : 'Failed to upload logo'
+    const msg = getErrorMessage(err, 'Failed to upload logo')
     uiStore.error(msg)
   } finally {
     uploadingLogo.value = false
@@ -129,7 +129,7 @@ async function handleLogoRemove() {
     if (logoFileInput.value) logoFileInput.value.value = ''
     uiStore.success('Logo removed')
   } catch (err) {
-    uiStore.error(err instanceof Error ? err.message : 'Failed to remove logo')
+    uiStore.error(getErrorMessage(err, 'Failed to remove logo'))
   } finally {
     removingLogo.value = false
   }
@@ -152,7 +152,7 @@ async function handleThemeExport() {
     await exportTheme()
     uiStore.success('Theme exported')
   } catch (err) {
-    uiStore.error(err instanceof Error ? err.message : 'Failed to export theme')
+    uiStore.error(getErrorMessage(err, 'Failed to export theme'))
   } finally {
     exportingTheme.value = false
   }
@@ -196,7 +196,7 @@ async function handleThemePicked(ev: Event) {
     applyImportedPalette(result.palette)
     uiStore.success('Theme installed. Click Save palette to apply colors.')
   } catch (err) {
-    uiStore.error(err instanceof Error ? err.message : 'Failed to install theme')
+    uiStore.error(getErrorMessage(err, 'Failed to install theme'))
   } finally {
     importingTheme.value = false
     reset()
@@ -439,7 +439,7 @@ async function loadSettings() {
     paletteDarkColors.value = state.dark
     paletteDarkBadges.value = state.darkBadges
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load settings'
+    error.value = getErrorMessage(err, 'Failed to load settings')
   } finally {
     loading.value = false
   }
@@ -462,7 +462,7 @@ async function handleSave() {
     uiStore.success('Settings saved successfully')
   } catch (err) {
     uiStore.error('Failed to save settings')
-    error.value = err instanceof Error ? err.message : 'Failed to save settings'
+    error.value = getErrorMessage(err, 'Failed to save settings')
   } finally {
     saving.value = false
   }
@@ -482,7 +482,7 @@ async function handleSavePalette() {
     uiStore.success('Palette saved')
     await schemaStore.reload()
   } catch (err) {
-    uiStore.error(err instanceof Error ? err.message : 'Failed to save palette')
+    uiStore.error(getErrorMessage(err, 'Failed to save palette'))
   } finally {
     savingPalette.value = false
   }

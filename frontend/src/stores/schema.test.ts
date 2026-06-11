@@ -157,7 +157,9 @@ describe('Schema Store', () => {
 
       await expect(store.load()).rejects.toBe('string error')
 
-      expect(store.error).toBe('Failed to load schema')
+      // getErrorMessage surfaces a thrown string as-is — better than the
+      // old generic fallback.
+      expect(store.error).toBe('string error')
     })
 
     it('handles missing optional fields', async () => {

@@ -15,7 +15,7 @@ import type {
   FieldAffordance,
   RelationAffordance,
 } from '@/types'
-import { getTemplates, createRelation, dryRunCreateEntity } from '@/api'
+import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
@@ -676,19 +676,16 @@ async function handleSubmit() {
     // not a user-facing failure; the user clicked away before the
     // save completed, which is their choice.
     if (isCancelledFetch(err)) return
-    if (err && typeof err === 'object' && 'errors' in err && Array.isArray((err as { errors: unknown }).errors)) {
-      const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
-      for (const e of problemErrors) {
+    const validationErrors = err instanceof ApiError ? err.validationErrors : []
+    if (validationErrors.length > 0) {
+      for (const e of validationErrors) {
         if (e.field) {
           errors.value[e.field] = e.message || e.detail || 'Invalid value'
         }
       }
       uiStore.error('Please fix the validation errors')
-    } else if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
-      const problem = err as { detail?: string; title?: string }
-      uiStore.error(problem.detail || problem.title || 'Failed to save entity')
     } else {
-      uiStore.error('Failed to save entity')
+      uiStore.error(getErrorMessage(err, 'Failed to save entity'))
     }
     console.error(err)
   } finally {

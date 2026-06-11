@@ -30,6 +30,7 @@
 //   from having to discover and handle this independently.
 
 import { onBeforeUnmount, onMounted } from 'vue'
+import { ApiError } from '@/api/errors'
 
 export interface PageDataOptions {
   /** Called once on mount. Receives an AbortSignal that fires on unmount. */
@@ -46,9 +47,12 @@ export interface PageDataOptions {
  */
 export function isCancelledFetch(err: unknown): boolean {
   if (err == null) return false
+  // Errors from the shared client arrive normalized (api/errors.ts).
+  if (err instanceof ApiError) return err.kind === 'cancelled'
+  // Raw-axios paths (e.g. HelpModal's /api/help fetch) bypass the
+  // interceptor. axios surfaces aborts as ECONNABORTED (legacy) or
+  // ERR_CANCELED (new); some fetch paths as DOMException name=AbortError.
   const e = err as { code?: string; name?: string; message?: string }
-  // axios surfaces aborts as ECONNABORTED (legacy) or ERR_CANCELED (new).
-  // Some versions of fetch surface them as DOMException with name=AbortError.
   if (e.code === 'ECONNABORTED' || e.code === 'ERR_CANCELED') return true
   if (e.name === 'AbortError' || e.name === 'CanceledError') return true
   return false
