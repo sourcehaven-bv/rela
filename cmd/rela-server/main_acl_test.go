@@ -35,7 +35,7 @@ func TestShouldWarnNoACL(t *testing.T) {
 
 func mustDeclarative(t *testing.T) acl.ACL {
 	t.Helper()
-	d, err := acl.NewDeclarative(&acl.Policy{}, acl.NullGraph{})
+	d, err := acl.NewDeclarative(&acl.Policy{}, acl.NullGraph{}, acl.NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

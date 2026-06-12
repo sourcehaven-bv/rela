@@ -157,7 +157,7 @@ func (w *World) Build(t *testing.T) *World {
 	}
 	w.store = ms
 
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms))
+	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("World.Build: NewDeclarative: %v", err)
 	}
@@ -229,6 +229,20 @@ func (w *World) Visible(actor, entityType string) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// CanSee reports whether `actor` is permitted to read entity
+// (entityType, entityID) per Request.PermitsRead. Used by the
+// PermitsRead-helper feature tests; mirrors the per-entity GET gate
+// in dataentry.
+func (w *World) CanSee(actor, entityType, entityID string) bool {
+	w.t.Helper()
+	req := w.requestFor(actor)
+	ok, err := req.PermitsRead(w.ctx, entityType, entityID)
+	if err != nil {
+		w.t.Fatalf("CanSee(%q, %q, %q): PermitsRead: %v", actor, entityType, entityID, err)
+	}
+	return ok
 }
 
 // assertExists fails the test if any of `ids` is missing from the

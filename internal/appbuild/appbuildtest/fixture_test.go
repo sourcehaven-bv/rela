@@ -78,7 +78,7 @@ func TestNew_NilMetaPanics(t *testing.T) {
 // (svc.ACLDeclarative() returns non-nil for the affordance resolver).
 func TestNew_WithDeclarative_WiresBothACLAndDeclarative(t *testing.T) {
 	meta := parseTestMetamodel(t)
-	d, err := acl.NewDeclarative(&acl.Policy{}, acl.NullGraph{})
+	d, err := acl.NewDeclarative(&acl.Policy{}, acl.NullGraph{}, acl.NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

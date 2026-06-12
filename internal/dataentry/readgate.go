@@ -1,0 +1,109 @@
+package dataentry
+
+import (
+	"context"
+	"errors"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+)
+
+// readGate is the dataentry-package consumer-side interface for ACL
+// read decisions. Centralizing the surface here means every read
+// chokepoint (per-entity GET, ?include= filter, write-path 404 parity,
+// and future list / sidebar / _position consumers) calls the same
+// boolean rather than threading `acl.FromContext(ctx)` plus a
+// nil-check plus a per-call switch through each handler.
+//
+// Two flavors of decision, both phrased as ACL permission questions:
+//
+//   - PermitsRead(ctx, type, id) — single-entity probe. Used by GET,
+//     write paths, and per-id include checks.
+//   - PermitsReadMany(ctx, type, ids) — batched probe returning a
+//     permission map. Used by the ?include= filter and any future
+//     list consumer.
+//
+// Neither method verifies existence — they answer "the policy permits
+// reading this id IF it exists". Callers that need existence follow
+// up with getEntity.
+//
+// The production impl (aclReadGate) wraps a per-request *acl.Request;
+// the no-op impl (nopReadGate) is what handlers get when no ACL is
+// configured.
+type readGate interface {
+	PermitsRead(ctx context.Context, entityType, entityID string) (bool, error)
+	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
+}
+
+// aclReadGate is the production implementation of readGate. Wraps a
+// per-request *acl.Request constructed by attachACLRequest so the
+// member-of cache is shared across every gate call in one HTTP
+// request.
+type aclReadGate struct {
+	req *acl.Request
+}
+
+// newACLReadGate constructs an aclReadGate, rejecting a nil Request.
+// The two production wiring sites (attachACLRequest, both branches)
+// and any future caller MUST go through this constructor so a nil
+// Request can never silently produce a gate that panics on use.
+func newACLReadGate(r *acl.Request) (readGate, error) {
+	if r == nil {
+		return nil, errors.New("dataentry: newACLReadGate: acl.Request is nil")
+	}
+	return aclReadGate{req: r}, nil
+}
+
+func (g aclReadGate) PermitsRead(ctx context.Context, entityType, entityID string) (bool, error) {
+	return g.req.PermitsRead(ctx, entityType, entityID)
+}
+
+func (g aclReadGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
+	return g.req.PermitsReadMany(ctx, entityType, ids)
+}
+
+// nopReadGate answers "permitted" for every probe. It's the gate the
+// handlers see under NopACL / ReadOnlyACL — the wire response shape
+// is then byte-identical to today's pre-ACL behavior, which is what
+// the NopACL regression test pins (TKT-VQGN AC6).
+type nopReadGate struct{}
+
+func (nopReadGate) PermitsRead(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+
+func (nopReadGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m, nil
+}
+
+// readGateCtxKey is the unexported type for context.WithValue. The
+// stdlib contract requires non-bare-string context keys.
+type readGateCtxKey struct{}
+
+// withReadGate attaches g to ctx so handlers can pull it via
+// readGateFromContext. Wired by attachACLRequest; tests that bypass
+// the middleware (calling handlers directly) attach an explicit gate
+// via this helper.
+func withReadGate(ctx context.Context, g readGate) context.Context {
+	return context.WithValue(ctx, readGateCtxKey{}, g)
+}
+
+// readGateFromContext returns the gate attached via withReadGate, or
+// nopReadGate when none is present. Handlers MUST go through this
+// helper (not direct ctx.Value lookups) so the nil-handling stays in
+// one place — a handler that forgets to nil-check would silently
+// become permits-all on a misconfigured chain (the fail-open shape
+// RR-875A flagged on attachACLRequest).
+func readGateFromContext(ctx context.Context) readGate {
+	if ctx == nil {
+		return nopReadGate{}
+	}
+	g, ok := ctx.Value(readGateCtxKey{}).(readGate)
+	if !ok || g == nil {
+		return nopReadGate{}
+	}
+	return g
+}

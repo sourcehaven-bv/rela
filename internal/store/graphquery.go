@@ -61,4 +61,20 @@ type GraphQueryer interface {
 	// entities of q.EntityType ignoring those predicates. Callers use
 	// (total - matched) for "filtered by" counts.
 	GraphCount(ctx context.Context, q GraphQuery) (matched, total int, err error)
+
+	// MatchingIDs answers: "of these candidate ids, which ones satisfy
+	// q's predicates?" Returns a map keyed by every candidate id with
+	// the boolean value indicating match (true) or no-match (false).
+	// All input ids appear in the result regardless of outcome, so
+	// callers can distinguish "absent because no-match" from "absent
+	// because no answer."
+	//
+	// q is passed by value: implementations MUST NOT mutate it, and
+	// the caller is free to reuse the input on the next call. ids is
+	// the candidate set; an empty slice yields an empty map.
+	//
+	// Use this rather than threading id filters through GraphQuery —
+	// it's the single-entity-visibility and batched-include shape used
+	// by the ACL read gate.
+	MatchingIDs(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error)
 }

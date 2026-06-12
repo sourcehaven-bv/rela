@@ -1,6 +1,12 @@
 package acl
 
-import "context"
+import (
+	"context"
+	"iter"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+)
 
 // Graph is the narrow contract the resolver needs from the store.
 // Declared at the consumer per CLAUDE.md's "interfaces at the call
@@ -61,4 +67,33 @@ func (NullGraph) HasEdge(context.Context, string, string, string) bool { return 
 // OutgoingRelations always returns nil, nil.
 func (NullGraph) OutgoingRelations(context.Context, string, string) ([]string, error) {
 	return nil, nil
+}
+
+// NullGraphQueryer implements [store.GraphQueryer] with empty results.
+// Intended for tests that construct a [*Declarative] but don't
+// exercise [Request.PermitsRead] / [Request.PermitsReadMany] or the
+// list-side ReadQuery path. Returns (matched=0, total=0), an empty
+// iterator, and a "no match" verdict for every id probe.
+//
+// Production wiring never uses NullGraphQueryer; it always passes the
+// store itself (which implements GraphQueryer).
+type NullGraphQueryer struct{}
+
+// GraphQuery returns an empty iterator.
+func (NullGraphQueryer) GraphQuery(context.Context, store.GraphQuery) iter.Seq2[*entity.Entity, error] {
+	return func(_ func(*entity.Entity, error) bool) {}
+}
+
+// GraphCount returns (0, 0, nil).
+func (NullGraphQueryer) GraphCount(context.Context, store.GraphQuery) (matched, total int, err error) {
+	return 0, 0, nil
+}
+
+// MatchingIDs returns a map with every input id mapped to false.
+func (NullGraphQueryer) MatchingIDs(_ context.Context, _ store.GraphQuery, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = false
+	}
+	return out, nil
 }

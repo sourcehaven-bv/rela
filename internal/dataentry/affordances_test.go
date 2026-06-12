@@ -113,7 +113,7 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 		Assignments: map[string]string{
 			"test-user": "ticket-writer",
 		},
-	}, acl.NullGraph{})
+	}, acl.NullGraph{}, acl.NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

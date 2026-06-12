@@ -88,6 +88,34 @@ func Count(ctx context.Context, r Reader, q store.GraphQuery) (matched, total in
 	return matched, total, nil
 }
 
+// MatchingIDs returns a map keyed by every input id with bool value
+// indicating whether that id satisfies q's predicates. Ids not in the
+// store, or in the store but of the wrong type, map to false. The
+// returned map always has len(ids) keys (after dedup).
+func MatchingIDs(ctx context.Context, r Reader, q store.GraphQuery, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = false
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: q.EntityType}) {
+		if err != nil {
+			return nil, err
+		}
+		if _, want := out[e.ID]; !want {
+			continue
+		}
+		ok, mErr := matches(ctx, r, e, q)
+		if mErr != nil {
+			return nil, mErr
+		}
+		out[e.ID] = ok
+	}
+	return out, nil
+}
+
 func collectByType(ctx context.Context, r Reader, typ string) ([]*entity.Entity, error) {
 	var out []*entity.Entity
 	for e, err := range r.ListEntities(ctx, store.EntityQuery{Type: typ}) {

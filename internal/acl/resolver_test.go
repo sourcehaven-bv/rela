@@ -5,9 +5,11 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/graphquerynaive"
 )
 
@@ -92,7 +94,7 @@ func (g *fakeGraph) OutgoingRelations(_ context.Context, from, relType string) (
 
 func newTestDeclarative(t *testing.T, p *Policy, g Graph) *Declarative {
 	t.Helper()
-	d, err := NewDeclarative(p, g)
+	d, err := NewDeclarative(p, g, NullGraphQueryer{})
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -139,15 +141,38 @@ func TestForPrincipal_UnstampedRejected(t *testing.T) {
 
 func TestNewDeclarative_RejectsNil(t *testing.T) {
 	t.Parallel()
-	// The constructor must reject nil policy and nil graph at
-	// construction time — silently producing a half-built Declarative
-	// would defer the failure to a downstream symptom that's harder
-	// to diagnose.
-	if _, err := NewDeclarative(nil, NullGraph{}); err == nil {
-		t.Error("NewDeclarative(nil policy, ...) returned nil error; want error")
+	// The constructor must reject nil policy, graph, and graphQueryer
+	// at construction time — silently producing a half-built
+	// Declarative would defer the failure to a downstream symptom
+	// that's harder to diagnose. RR-A62O tightens this by asserting
+	// the error MESSAGE so a future change that drops one check (or
+	// keeps the check but rewords the error) doesn't silently weaken
+	// the contract.
+	cases := []struct {
+		name       string
+		policy     *Policy
+		graph      Graph
+		gq         store.GraphQueryer
+		wantSubstr string
+	}{
+		{"nil policy", nil, NullGraph{}, NullGraphQueryer{}, "policy must be non-nil"},
+		{"nil graph", &Policy{}, nil, NullGraphQueryer{}, "graph must be non-nil"},
+		{"nil graphQueryer", &Policy{}, NullGraph{}, nil, "graphQueryer must be non-nil"},
 	}
-	if _, err := NewDeclarative(&Policy{}, nil); err == nil {
-		t.Error("NewDeclarative(..., nil graph) returned nil error; want error")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := NewDeclarative(tc.policy, tc.graph, tc.gq)
+			if d != nil {
+				t.Errorf("returned non-nil *Declarative")
+			}
+			if err == nil {
+				t.Fatalf("returned nil error; want %q", tc.wantSubstr)
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantSubstr)
+			}
+		})
 	}
 }
 
