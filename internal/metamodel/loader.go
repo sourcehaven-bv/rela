@@ -458,6 +458,18 @@ func validateRelationReferences(m *Metamodel) []string {
 	relNames := sortedKeys(m.Relations)
 	for _, name := range relNames {
 		rel := m.Relations[name]
+		// A relation with no 'from' or no 'to' types is meaningless: no
+		// entity can ever be a valid source/target, so any cardinality
+		// constraint on it is a silent no-op. Reject at load (likely a
+		// typo or an omitted field) rather than letting it pass quietly.
+		if len(rel.From) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: must declare at least one 'from' entity type", name))
+		}
+		if len(rel.To) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: must declare at least one 'to' entity type", name))
+		}
 		for _, fromType := range rel.From {
 			if _, ok := m.Entities[fromType]; !ok {
 				errs = append(errs, fmt.Sprintf(
