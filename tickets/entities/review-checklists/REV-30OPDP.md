@@ -21,4 +21,5 @@ status: done
 
 - [x] 5-whys (why1–why5) + prevention recorded on the bug; regression seed committed; adds-measure → weekly-fuzz-sweep (the measure that found it now guards it)
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/970 (auto-merge armed,
+tschmits requested)
