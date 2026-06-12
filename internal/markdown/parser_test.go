@@ -97,19 +97,22 @@ type: requirement
 	testutil.AssertEqual(t, doc.Content, "")
 }
 
-func TestParseDocument_UnclosedFrontmatter(t *testing.T) {
+func TestParseDocument_UnclosedFrontmatter_BodyIsInvalidYAML(t *testing.T) {
 	content := `---
 id: REQ-001
 
 This content should be part of body since frontmatter was never closed.
 `
 
-	// Unclosed frontmatter is a parse error: the body text gets
-	// consumed as (invalid) YAML. Previously this test accepted
-	// either outcome and pinned nothing.
+	// Without a closing ---, the splitter absorbs the whole document
+	// into the YAML block, so the prose body makes the YAML invalid
+	// and parsing fails. NOTE: this is not a general unclosed-
+	// frontmatter guarantee — an unclosed block whose remainder is
+	// all key:value lines parses cleanly. Previously this test
+	// accepted either outcome and pinned nothing.
 	doc, err := ParseDocument(content)
 	if err == nil {
-		t.Fatalf("unclosed frontmatter must fail to parse, got doc %+v", doc)
+		t.Fatalf("unclosed frontmatter with prose body must fail to parse, got doc %+v", doc)
 	}
 	testutil.AssertStringContains(t, err.Error(), "frontmatter")
 }

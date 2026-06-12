@@ -5,7 +5,7 @@ title: 'Test hygiene batch: pin vacuous tests, git skip guard, context-aware tim
 kind: test
 priority: low
 effort: xs
-status: in-progress
+status: done
 ---
 
 ## Problem

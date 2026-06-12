@@ -361,8 +361,11 @@ func TestProvider_Chat_NetworkError(t *testing.T) {
 
 func TestProvider_Chat_Timeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Out-wait the client timeout, returning as soon as the client
-		// gives up so server.Close doesn't block on this handler.
+		// Out-wait the client's 50ms ctx deadline. The deadline only
+		// abandons the request (the keep-alive socket stays open), so
+		// r.Context() does NOT cancel when the client gives up — the
+		// cleanup below force-closes connections to unblock this select
+		// before server.Close.
 		select {
 		case <-time.After(500 * time.Millisecond):
 		case <-r.Context().Done():
@@ -371,7 +374,13 @@ func TestProvider_Chat_Timeout(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(canonicalSuccessBody))
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		// CloseClientConnections cancels in-flight request contexts so
+		// the handler returns immediately; otherwise Close would wait
+		// out the 500ms timer.
+		server.CloseClientConnections()
+		server.Close()
+	})
 
 	cfg := &Config{
 		BaseURL:        server.URL + "/v1",
