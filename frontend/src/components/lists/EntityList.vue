@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
+import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
-import { isCancelledFetch } from '@/composables/usePageData'
+import { listEntities, deleteEntity, getErrorMessage } from '@/api'
+import { entityKeys } from '@/queries/entities'
+import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
-import type { Entity, ListMeta, ListParams, FilterState } from '@/types'
+import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
@@ -19,7 +22,7 @@ import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
-import { useConfirm, withConfirmError } from '@/composables/useConfirm'
+import { useConfirm } from '@/composables/useConfirm'
 
 const props = defineProps<{
   listId: string
@@ -28,7 +31,6 @@ const props = defineProps<{
 const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
-const entitiesStore = useEntitiesStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
 
@@ -43,15 +45,51 @@ onMounted(() => { mobileQuery?.addEventListener('change', onMediaChange) })
 onUnmounted(() => { mobileQuery?.removeEventListener('change', onMediaChange) })
 
 // State
-const entities = ref<Entity[]>([])
-const meta = ref<ListMeta>({ total: 0, page: 1, per_page: 25, has_more: false })
-const loading = ref(true)
-const includedEntities = ref<Record<string, Entity>>({})
+//
+// Page is the only piece of list state the client owns directly; it feeds
+// the query key (input). Everything else below is derived from the query
+// result (output). Splitting page-as-input from meta-as-output removes the
+// read/write cycle the old single `meta.page` had.
+//
+// The actual useQuery() call lives lower (after queryParams is defined,
+// since its `enabled` is evaluated synchronously during setup) and assigns
+// into this holder. The derived computeds here read it lazily, so they can
+// be declared up top where useListActions / useListKeyboard need them.
+const page = ref(1)
+const queryCache = useQueryCache()
+
+type ListQuery = ReturnType<typeof useQuery<ListResponse<Entity>>>
+const listQueryRef = shallowRef<ListQuery>()
+
+const entities = computed<Entity[]>(() => listQueryRef.value?.data.value?.data ?? [])
+const meta = computed<ListMeta>(
+  () =>
+    listQueryRef.value?.data.value?.meta ?? {
+      total: 0,
+      page: page.value,
+      per_page: listConfig.value?.page_size || 25,
+      has_more: false,
+    }
+)
+// `isPending` is true while a query key has no resolved data. Same-key SSE
+// refetches keep the entry `success` (placeholderData holds the rows, no
+// spinner — the liveness win). A param change (page/filter/sort) swaps to a
+// new key that starts pending, so the spinner shows then, as before.
+const loading = computed(() => listQueryRef.value?.isPending.value ?? true)
+const loadError = computed(() => {
+  const err = listQueryRef.value?.error.value
+  return err ? getErrorMessage(err, 'Failed to load entities') : null
+})
+const includedEntities = computed<Record<string, Entity>>(
+  () => listQueryRef.value?.data.value?.included ?? {}
+)
 // Collection-scope verb verdicts (e.g. {create: true|false}). Always
 // emitted by the data-entry server; absent only for non-data-entry
 // callers, in which case affordances render defensively (the server
 // still 403s on click). See `_actions` in api-reference.md.
-const collectionActions = ref<Record<string, boolean> | undefined>(undefined)
+const collectionActions = computed<Record<string, boolean> | undefined>(
+  () => listQueryRef.value?.data.value?._actions
+)
 
 // Affordance gates: `_actions` map from the server. `false` → hide;
 // anything else → render. Helper keeps the contract DRY across
@@ -93,7 +131,11 @@ const { resolvedActions, processing: actionProcessing, executeAction, triggerAct
   onRequestConfirm: (action, actionId, triggerEl) => {
     void requestActionConfirm(action, actionId, triggerEl)
   },
-  onComplete: () => scheduleFetch(),
+  // Bulk actions mutate entities server-side; invalidate the list so it
+  // refetches the post-action state.
+  onComplete: () => {
+    void queryCache.invalidateQueries({ key: entityKeys.list(listConfig.value?.entity ?? '') })
+  },
 })
 
 // Bulk action confirm. We don't pass executeAction as onConfirm because it
@@ -141,8 +183,8 @@ const sortSpecs = ref<SortSpec[]>([])
 
 // Computed for keyboard navigation
 const itemCount = computed(() => entities.value.length)
-const hasPrevPage = computed(() => meta.value.page > 1)
-const hasNextPage = computed(() => meta.value.has_more || meta.value.page * meta.value.per_page < meta.value.total)
+const hasPrevPage = computed(() => page.value > 1)
+const hasNextPage = computed(() => meta.value.has_more || page.value * meta.value.per_page < meta.value.total)
 
 // Keyboard navigation
 const { selectedIndex, clearSelection } = useListKeyboard({
@@ -183,12 +225,12 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   },
   onPrevPage: () => {
     if (hasPrevPage.value) {
-      handlePageChange(meta.value.page - 1)
+      handlePageChange(page.value - 1)
     }
   },
   onNextPage: () => {
     if (hasNextPage.value) {
-      handlePageChange(meta.value.page + 1)
+      handlePageChange(page.value + 1)
     }
   },
   onFocusSearch: () => {
@@ -218,10 +260,11 @@ const hasRelationColumns = computed(() => {
 
 const hasActions = computed(() => resolvedActions.value.length > 0)
 
-// Build query params
+// Build query params. Reads `page` (input state), never `meta` (query
+// output) — otherwise the query key would depend on its own result.
 const queryParams = computed((): ListParams => {
   const params: ListParams = {
-    page: meta.value.page,
+    page: page.value,
     per_page: listConfig.value?.page_size || 25,
   }
 
@@ -272,64 +315,28 @@ const queryParams = computed((): ListParams => {
   return params
 })
 
-// Generation counter for stale-response protection. Every call to
-// loadEntities captures the current generation; when the fetch resolves, we
-// drop the result if the generation has advanced (meaning a newer fetch was
-// triggered by a list switch, filter change, sort, etc.). Without this, a
-// slow fetch for list A can resolve AFTER a fast fetch for list B and
-// overwrite B's UI state.
-let fetchGeneration = 0
-
-// Coalesce multiple synchronous triggers (list switch + filter reseed + sort)
-// into a single fetch per microtask. Every trigger sets the flag; the next
-// microtask fires one loadEntities() and the generation counter above drops
-// anything already in flight.
-let fetchPending = false
-function scheduleFetch() {
-  if (fetchPending) return
-  fetchPending = true
-  nextTick(() => {
-    fetchPending = false
-    loadEntities()
-  })
-}
-
-// Methods
-async function loadEntities() {
-  if (!listConfig.value) return
-
-  const myGeneration = ++fetchGeneration
-  const requestedListEntity = listConfig.value.entity
-  loading.value = true
-  try {
-    const result = await entitiesStore.fetchList(
-      requestedListEntity,
-      queryParams.value
-    )
-    // Drop stale responses: if another fetch was started while we were
-    // awaiting, this result is for a previous filter/list/sort state.
-    if (myGeneration !== fetchGeneration) return
-    entities.value = result.data
-    meta.value = result.meta
-    // Store included entities for relation column rendering
-    includedEntities.value = result.included || {}
-    // Collection-scope `_actions` (e.g. `create`). Undefined when the
-    // server didn't emit them; consumers fall back to "show all."
-    collectionActions.value = result._actions
-  } catch (err) {
-    // Drop stale responses (a newer fetch superseded us).
-    if (myGeneration !== fetchGeneration) return
-    // Suppress cancellation errors from rapid navigation in Firefox
-    // (see BUG-6C3V and src/composables/usePageData.ts).
-    if (isCancelledFetch(err)) return
-    uiStore.error('Failed to load entities')
-    console.error(err)
-  } finally {
-    if (myGeneration === fetchGeneration) {
-      loading.value = false
-    }
-  }
-}
+// The list query (FEAT-XY2D1L). Declared here — after queryParams /
+// listConfig — because Pinia Colada evaluates `enabled` synchronously
+// during setup; the derived computeds up in the State block read it
+// through `listQueryRef`. Keyed on the canonicalized params, so
+// page/filter/sort/search changes swap cache entries automatically — the
+// reactive key coalesces synchronous trigger bursts and drops stale
+// responses, replacing the old generation counter + scheduleFetch
+// microtask. useEvents' SSE invalidation on ['entities', <type>] marks it
+// stale and background-refetches while mounted, so lists go live (they
+// never reacted to SSE before). placeholderData keeps the previous rows
+// visible during a param change instead of flashing the spinner.
+const listQuery = useQuery({
+  key: () => entityKeys.listParams(listConfig.value?.entity ?? '', queryParams.value),
+  query: () => {
+    const config = listConfig.value
+    if (!config) throw new Error(`unknown list: ${props.listId}`)
+    return listEntities(config.entity, queryParams.value)
+  },
+  enabled: () => !!listConfig.value,
+  placeholderData: (prev) => prev,
+})
+listQueryRef.value = listQuery
 
 function handleSort(field: string, event: MouseEvent) {
   const existingIndex = sortSpecs.value.findIndex((s) => s.property === field)
@@ -360,8 +367,8 @@ function handleSort(field: string, event: MouseEvent) {
     }
   }
 
-  meta.value.page = 1
-  scheduleFetch()
+  // Sort changed → reset to page 1; the query reacts to both inputs.
+  page.value = 1
 }
 
 // Helper to get sort index and direction for a field
@@ -420,9 +427,8 @@ const adHocFilterChips = computed(() => {
     .map(([property, fv]) => ({ property, value: fv.value }))
 })
 
-function handlePageChange(page: number) {
-  meta.value.page = page
-  scheduleFetch()
+function handlePageChange(newPage: number) {
+  page.value = newPage
 }
 
 // Resolve a link configuration value to a path (mirrors backend resolveLinkTarget)
@@ -528,60 +534,83 @@ function handleDelete(entity: Entity, event: Event) {
   void requestDelete(entity)
 }
 
+// Delete as an optimistic mutation: the row vanishes immediately, rolls
+// back on failure, and the list prefix is invalidated on settle so every
+// param variant (other pages/filters where the entity might appear)
+// refetches and reconciles with the server.
+const { mutate: deleteEntityMutation } = useMutation({
+  mutation: ({ entity }: { entity: Entity }) => deleteEntity(entity.type, entity.id),
+  onMutate({ entity }: { entity: Entity }) {
+    return beginOptimisticRemove(
+      queryCache,
+      entityKeys.listParams(entity.type, queryParams.value),
+      entity.id
+    )
+  },
+  onError(err, _vars, context) {
+    rollbackOptimistic(queryCache, context)
+    uiStore.error(getErrorMessage(err, 'Failed to delete entity'))
+  },
+  onSuccess(_data, { entity }) {
+    uiStore.success(`Deleted ${entity.id}`)
+  },
+  async onSettled(_data, _err, { entity }) {
+    // Invalidate the whole list (all param variants), not just the
+    // visible page — the deleted entity may appear under other filters.
+    await queryCache.invalidateQueries({ key: entityKeys.list(entity.type) })
+  },
+})
+
 async function requestDelete(entity: Entity) {
   const ok = await confirm({
     title: 'Delete Entity?',
     message: `Are you sure you want to delete '${entity.id}'? This action cannot be undone.`,
     confirmLabel: 'Delete',
     danger: true,
-    onConfirm: withConfirmError(
-      () => entitiesStore.remove(entity.type, entity.id),
-      'Failed to delete entity',
-      uiStore,
-    ),
   })
   if (!ok) return
-  uiStore.success(`Deleted ${entity.id}`)
-  scheduleFetch()
+  deleteEntityMutation({ entity })
 }
 
-// Watchers — all three converge on scheduleFetch(), which coalesces into a
-// single fetch per microtask (with stale-response protection via the
-// generation counter above). This is how we avoid a double-fetch when a list
-// switch ALSO changes the filter state: both watchers set fetchPending, but
-// only one loadEntities() runs on the next tick.
+// Reconcile input `page` with the server's returned page. If the backend
+// clamps an out-of-range page (e.g. requested 5, only 3 exist), adopt the
+// server's value so the query key, keyboard nav, and Pagination controls
+// all agree on one page-of-truth.
+watch(
+  () => listQuery.data.value?.meta.page,
+  (serverPage) => {
+    if (serverPage !== undefined && serverPage !== page.value) {
+      page.value = serverPage
+    }
+  }
+)
+
+// Reset paging/sort/selection on list switch. The query reacts to the
+// input changes — no manual fetch trigger needed.
 watch(() => props.listId, () => {
   sortSpecs.value = []
-  meta.value.page = 1
+  page.value = 1
   clearSelection()
   clearActionSelection()
-  scheduleFetch()
 })
 
-// Clear selection when entities change
+// Clear selection when the visible entities change (incl. background
+// SSE-driven refetches).
 watch(entities, () => {
   clearSelection()
   clearActionSelection()
 })
 
-// Re-fetch when filters change (covers both user edits via writeToQuery and
-// external nav like back/forward that the URL sync composable picks up).
+// Reset to page 1 when filters or free-text search change (covers user
+// edits via writeToQuery and back/forward nav the URL sync picks up). The
+// query re-keys off page + filters + search together, so a simultaneous
+// filter+search edit still produces one fetch.
 watch(filters, () => {
-  meta.value.page = 1
-  scheduleFetch()
+  page.value = 1
 }, { deep: true })
 
-// Re-fetch on free-text search changes. Same coalescing path as filters; the
-// scheduleFetch microtask debounces a search-edit + filter-edit pair into a
-// single network call.
 watch(searchQuery, () => {
-  meta.value.page = 1
-  scheduleFetch()
-})
-
-// Lifecycle
-onMounted(() => {
-  scheduleFetch()
+  page.value = 1
 })
 </script>
 
@@ -656,6 +685,13 @@ onMounted(() => {
       <div v-if="loading" class="loading-state">
         <div class="spinner"/>
         <span>Loading...</span>
+      </div>
+
+      <div v-else-if="loadError" class="empty-state load-error">
+        <p>{{ loadError }}</p>
+        <button type="button" class="btn btn-secondary" @click="listQuery.refetch()">
+          Retry
+        </button>
       </div>
 
       <div v-else-if="entities.length === 0" class="empty-state">
