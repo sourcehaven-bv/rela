@@ -161,6 +161,7 @@ func TestNewDeclarative_RejectsNil(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			d, err := NewDeclarative(tc.policy, tc.graph, tc.gq)
 			if d != nil {
 				t.Errorf("returned non-nil *Declarative")
