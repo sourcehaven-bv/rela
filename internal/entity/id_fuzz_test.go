@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // FuzzParseEntityID tests the entity ID parser with arbitrary input
@@ -290,10 +292,12 @@ func FuzzGenerateShortID(f *testing.F) {
 		if prefix == "" || !utf8.ValidString(prefix) {
 			return
 		}
-		for _, c := range prefix {
-			if !isAllowedIDChar(c) {
-				return
-			}
+		// GenerateShortID's documented precondition is a load-validated
+		// prefix: metamodel.Parse rejects anything ValidateIDPrefix
+		// refuses (BUG-RHFHTH), so the fuzz domain mirrors that gate
+		// instead of hand-modeling the character rules.
+		if metamodel.ValidateIDPrefix(prefix) != nil {
+			return
 		}
 
 		// Limit entity count to reasonable values
