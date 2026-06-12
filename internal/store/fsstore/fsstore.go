@@ -322,6 +322,15 @@ func (s *FSStore) notifyDelete(id string) {
 	}
 }
 
+// notifyRenamed fans out a rename to all observers. The rename code
+// path emits this INSTEAD OF the EntityDelete(oldID)+EntityPut(renamed)
+// pair — see store.EntityObserver.EntityRenamed.
+func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
+	for _, o := range s.observers {
+		_ = o.EntityRenamed(oldID, renamed)
+	}
+}
+
 // entityFileKey returns the key for an entity file:
 // "<entitiesKey>/<plural>/<id>.md" — forward slashes, no leading slash.
 func (s *FSStore) entityFileKey(entityType, id string) string {

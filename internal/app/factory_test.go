@@ -17,12 +17,18 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// recordingObserver captures every EntityPut / EntityDelete it
-// receives. Used by tests that assert the factory wires observers
-// into the store correctly.
+// recordingObserver captures every EntityPut / EntityDelete /
+// EntityRenamed it receives. Used by tests that assert the factory
+// wires observers into the store correctly.
 type recordingObserver struct {
 	puts    []*entity.Entity
 	deletes []string
+	renames []renameRecord
+}
+
+type renameRecord struct {
+	OldID   string
+	Renamed *entity.Entity
 }
 
 func (r *recordingObserver) EntityPut(e *entity.Entity) error {
@@ -32,6 +38,11 @@ func (r *recordingObserver) EntityPut(e *entity.Entity) error {
 
 func (r *recordingObserver) EntityDelete(id string) error {
 	r.deletes = append(r.deletes, id)
+	return nil
+}
+
+func (r *recordingObserver) EntityRenamed(oldID string, renamed *entity.Entity) error {
+	r.renames = append(r.renames, renameRecord{OldID: oldID, Renamed: renamed})
 	return nil
 }
 
@@ -107,12 +118,21 @@ func TestFSFactoryObserversReceiveWrites(t *testing.T) {
 	_, err = s.DeleteEntity(ctx, "POL-2", false)
 	require.NoError(t, err)
 
-	// Create POL-1 → put(POL-1). Rename POL-1→POL-2 → delete(POL-1) + put(POL-2).
-	// Delete POL-2 → delete(POL-2).
-	assert.Equal(t, []string{"POL-1", "POL-2"}, rec.putIDs(),
-		"observer should see one put per create and one per rename target")
-	assert.Equal(t, []string{"POL-1", "POL-2"}, rec.deletes,
-		"observer should see one delete per rename source and one per delete")
+	// Contract per store.EntityObserver:
+	//   Create POL-1 → EntityPut(POL-1).
+	//   Rename POL-1→POL-2 → EntityRenamed("POL-1", POL-2) ONLY.
+	//     (No EntityDelete/EntityPut pair — that was the pre-rename-event
+	//     contract; the rename test pins the new single-event contract.)
+	//   Delete POL-2 → EntityDelete(POL-2).
+	assert.Equal(t, []string{"POL-1"}, rec.putIDs(),
+		"create fires put; rename does NOT fire a put")
+	assert.Equal(t, []string{"POL-2"}, rec.deletes,
+		"final delete fires delete; rename does NOT fire a delete")
+	require.Len(t, rec.renames, 1, "rename should fire exactly one EntityRenamed")
+	assert.Equal(t, "POL-1", rec.renames[0].OldID)
+	require.NotNil(t, rec.renames[0].Renamed)
+	assert.Equal(t, "POL-2", rec.renames[0].Renamed.ID,
+		"renamed entity carries the new ID so content-driven observers don't need a store lookup")
 }
 
 func TestFSFactoryOpenStoreReturnsIndependentStores(t *testing.T) {

@@ -40,6 +40,18 @@ func (l *LinearSearch) EntityDelete(id string) error {
 	return nil
 }
 
+// EntityRenamed removes the old key and inserts a clone of the
+// renamed entity in one critical section so concurrent readers
+// never observe a half-renamed state.
+func (l *LinearSearch) EntityRenamed(oldID string, renamed *entity.Entity) error {
+	l.mu.Lock()
+	delete(l.entities, oldID)
+	l.entities[renamed.ID] = renamed.Clone()
+	l.advanceLastModified(renamed.UpdatedAt)
+	l.mu.Unlock()
+	return nil
+}
+
 // LastModified returns the latest mtime observed by this index across all
 // EntityPut and EntityDelete calls. Consumers compare this against the
 // store's LastModified to decide whether the index needs repopulating.

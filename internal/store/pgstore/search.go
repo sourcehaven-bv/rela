@@ -41,6 +41,11 @@ func (b *SearchBackend) EntityPut(*entity.Entity) error { return nil }
 // EntityDelete is a no-op: deleting the entity row removes it from search.
 func (b *SearchBackend) EntityDelete(string) error { return nil }
 
+// EntityRenamed is a no-op: RenameEntity rewrites the row's id and
+// recomputes search_text in the same transaction, so the new ID is
+// searchable and the old one gone without this backend touching anything.
+func (b *SearchBackend) EntityRenamed(string, *entity.Entity) error { return nil }
+
 // Search returns entity IDs whose search_text contains the query (case-
 // insensitive substring), ordered by trigram similarity to the query (best
 // first) then by ID for stable ties. limit <= 0 means no limit.
