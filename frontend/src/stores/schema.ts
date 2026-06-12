@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getSchema, getConfig } from '@/api/schema'
+import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
 import type {
   EntityType,
@@ -103,6 +104,15 @@ export const useSchemaStore = defineStore('schema', () => {
       entityTypes.value = new Map(Object.entries(schemaData.entities || {}))
       relationTypes.value = new Map(Object.entries(schemaData.relations || {}))
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
+
+      // Feed the API layer's plural registry so it doesn't have to import
+      // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
+      // for entity types that don't declare an explicit plural.
+      const plurals = new Map<string, string>()
+      for (const [type, def] of entityTypes.value) {
+        plurals.set(type, def.plural || `${type}s`)
+      }
+      registerEntityPlurals(plurals)
 
       // Config
       app.value = configData.app || { name: 'rela' }

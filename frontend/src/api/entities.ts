@@ -9,13 +9,34 @@ import type {
   RelationEntry,
   ModernRelationsField,
 } from '@/types'
-import { useSchemaStore } from '@/stores/schema'
 import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
+// Type → URL-path-segment (plural) registry. The API layer is a pure HTTP
+// boundary; it must not import a Pinia store (the producer/consumer
+// inversion the project's CLAUDE.md warns against, BUG-style B1a). The
+// schema store calls registerEntityPlurals() once on load with the
+// metamodel's plurals, before any view fires an entity request.
+const pluralRegistry = new Map<string, string>()
+
+export function registerEntityPlurals(plurals: Map<string, string>): void {
+  pluralRegistry.clear()
+  for (const [type, plural] of plurals) pluralRegistry.set(type, plural)
+}
+
+// For tests that exercise the API layer without the schema store.
+export function _setEntityPluralForTest(type: string, plural: string): void {
+  pluralRegistry.set(type, plural)
+}
+
 function getPlural(type: string): string {
-  const schema = useSchemaStore()
-  const entityType = schema.entityTypes.get(type)
-  return entityType?.plural ?? type + 's'
+  const plural = pluralRegistry.get(type)
+  if (!plural) {
+    // Fail fast instead of fabricating a URL (`category` → `/categorys`
+    // would 404 confusingly). An unknown type here means the schema
+    // wasn't loaded or the caller passed a typo.
+    throw new Error(`unknown entity type "${type}" — no registered plural`)
+  }
+  return plural
 }
 
 export async function listEntities(

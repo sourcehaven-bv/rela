@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { setActivePinia, createPinia } from 'pinia'
-import { dryRunCreateEntity } from './entities'
+import { dryRunCreateEntity, _setEntityPluralForTest } from './entities'
 import { api } from './client'
-import { useSchemaStore } from '@/stores/schema'
 import type { Entity } from '@/types'
 
 vi.mock('./client', () => ({
@@ -12,14 +10,9 @@ vi.mock('./client', () => ({
 describe('dryRunCreateEntity (TKT-3I5U)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    setActivePinia(createPinia())
-    // Seed a plural so getPlural resolves ticket -> tickets.
-    const schema = useSchemaStore()
-    schema.entityTypes.set('ticket', {
-      name: 'ticket',
-      plural: 'tickets',
-      properties: {},
-    } as never)
+    // Register a plural so getPlural resolves ticket -> tickets. The API
+    // layer no longer reads the schema store (B1a).
+    _setEntityPluralForTest('ticket', 'tickets')
     vi.mocked(api.post).mockResolvedValue({
       id: '',
       type: 'ticket',

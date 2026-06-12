@@ -5,7 +5,8 @@ import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { listEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
-import type { Entity, KanbanConfig, ListResponse } from '@/types'
+import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
+import type { Entity, KanbanConfig } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -230,31 +231,20 @@ const { mutate: moveCard } = useMutation({
     return updateEntity(config.entity, entity.id, { properties: updates })
   },
   onMutate({ entity, updates }: MoveCardVars) {
-    const key = entityKeys.list(kanbanConfig.value?.entity ?? '')
-    // Stop an in-flight refetch from overwriting the optimistic state.
-    queryCache.cancelQueries({ key })
-    const previous = queryCache.getQueryData<ListResponse<Entity>>(key)
-    const optimistic = previous && {
-      ...previous,
-      data: previous.data.map((e) =>
-        e.id === entity.id ? { ...e, properties: { ...e.properties, ...updates } } : e
-      ),
-    }
-    if (optimistic) queryCache.setQueryData(key, optimistic)
-    return { key, previous, optimistic }
+    return beginOptimistic(
+      queryCache,
+      entityKeys.list(kanbanConfig.value?.entity ?? ''),
+      entity.id,
+      (e) => ({ ...e, properties: { ...e.properties, ...updates } })
+    )
   },
   onError(err, _vars, context) {
-    const { key, previous, optimistic } = context
-    // Roll back only if the cache still holds our optimistic value — a
-    // refetch that landed in between is newer than what we saved.
-    if (key && optimistic && queryCache.getQueryData(key) === optimistic) {
-      queryCache.setQueryData(key, previous)
-    }
+    rollbackOptimistic(queryCache, context)
     console.error('Failed to update entity:', err)
     uiStore.error(getErrorMessage(err, 'Failed to move card'))
   },
   async onSettled(_data, _err, _vars, context) {
-    if (context.key) await queryCache.invalidateQueries({ key: context.key })
+    await settleOptimistic(queryCache, context)
   },
 })
 
