@@ -91,7 +91,7 @@ assignments:
 		}
 	}
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms))
+	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
 	if err != nil {
 		b.Fatal(err)
 	}
