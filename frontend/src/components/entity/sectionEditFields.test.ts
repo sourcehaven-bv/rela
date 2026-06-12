@@ -3,8 +3,10 @@ import {
   buildSectionEditFields,
   sectionShouldRouteToInlineEdit,
   applyPropertyToEntry,
+  applyPropertyToRow,
+  rowShouldRouteToInlineEdit,
 } from './sectionEditFields'
-import type { ViewSection, ViewSectionField } from '@/api'
+import type { ViewEntity, ViewSection, ViewSectionField } from '@/api'
 import type { Entity, PropertyDef } from '@/types'
 
 const TEXT_DEF: PropertyDef = { type: 'string' } as PropertyDef
@@ -90,26 +92,26 @@ describe('sectionShouldRouteToInlineEdit', () => {
 
   it('returns true when entry._fields is undefined (default writable)', () => {
     const section = makeSection(makeFields())
-    expect(sectionShouldRouteToInlineEdit(section, makeEntity(), schemaResolver)).toBe(true)
+    expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(true)
   })
 
   it('returns true when entry._fields is {} (evaluated, no deviations)', () => {
     const section = makeSection(makeFields())
     const entry = makeEntity({ _fields: {} })
-    expect(sectionShouldRouteToInlineEdit(section, entry, schemaResolver)).toBe(true)
+    expect(sectionShouldRouteToInlineEdit(section.fields, entry, schemaResolver)).toBe(true)
   })
 
   it('returns false when all listed fields are explicitly non-writable', () => {
     const section = makeSection([{ property: 'status', label: 'Status' }])
     const entry = makeEntity({ _fields: { status: { writable: false } } })
-    expect(sectionShouldRouteToInlineEdit(section, entry, schemaResolver)).toBe(false)
+    expect(sectionShouldRouteToInlineEdit(section.fields, entry, schemaResolver)).toBe(false)
   })
 
   it('returns true when at least one field is writable', () => {
     const section = makeSection(makeFields())
     const entry = makeEntity({ _fields: { status: { writable: false } } })
     // title has no verdict → defaults writable
-    expect(sectionShouldRouteToInlineEdit(section, entry, schemaResolver)).toBe(true)
+    expect(sectionShouldRouteToInlineEdit(section.fields, entry, schemaResolver)).toBe(true)
   })
 
   it('returns false when any field is inaccessible (git-crypt etc.)', () => {
@@ -120,7 +122,7 @@ describe('sectionShouldRouteToInlineEdit', () => {
       { property: 'title', label: 'Title', inaccessible: true },
       { property: 'status', label: 'Status' },
     ])
-    expect(sectionShouldRouteToInlineEdit(section, makeEntity(), schemaResolver)).toBe(false)
+    expect(sectionShouldRouteToInlineEdit(section.fields, makeEntity(), schemaResolver)).toBe(false)
   })
 })
 
@@ -156,5 +158,151 @@ describe('applyPropertyToEntry', () => {
     const result = applyPropertyToEntry(entry, 'title', undefined, { type: 'ticket', id: 'TKT-001' })
     expect(result?.properties).not.toHaveProperty('title')
     expect(result?.properties.status).toBe('open')
+  })
+})
+
+// TKT-IHC7C — parameterized helpers + applyPropertyToRow ------------------
+
+function makeRow(overrides: Partial<ViewEntity> = {}): ViewEntity {
+  return {
+    id: 'TKT-002',
+    title: 'Some Row',
+    type: 'ticket',
+    hasContent: false,
+    fields: [
+      { property: 'title', label: 'Title', values: ['Some Row'] },
+      { property: 'status', label: 'Status', values: ['open'] },
+    ],
+    _props: { title: 'Some Row', status: 'open' },
+    ...overrides,
+  } as ViewEntity
+}
+
+describe('buildSectionEditFields — parameterized over FieldVerdictSource', () => {
+  it('accepts a ViewEntity (cards/list row) as the source', () => {
+    const row = makeRow({ _fields: { status: { writable: false } } })
+    const fields = makeFields()
+    const out = buildSectionEditFields(fields, row, schemaResolver)
+    expect(out).toHaveLength(2)
+    const status = out.find((f) => f.property === 'status')
+    expect(status?.verdict?.writable).toBe(false)
+  })
+
+  it('falls back to hint kind for a ViewEntity row whose type is not in the schema', () => {
+    const row = makeRow({ type: 'unknown_type' })
+    const fields: ViewSectionField[] = [{ property: 'title', label: 'Title' }]
+    const out = buildSectionEditFields(fields, row, schemaResolver)
+    expect(out[0].kind).toBe('hint')
+  })
+})
+
+describe('sectionShouldRouteToInlineEdit — parameterized', () => {
+  it('returns true for a ViewEntity row with at least one writable field', () => {
+    const row = makeRow({ _fields: { status: { writable: false } } })
+    expect(sectionShouldRouteToInlineEdit(makeFields(), row, schemaResolver)).toBe(true)
+  })
+
+  it('returns false for a ViewEntity row with all fields non-writable', () => {
+    const row = makeRow({
+      _fields: { title: { writable: false }, status: { writable: false } },
+    })
+    expect(sectionShouldRouteToInlineEdit(makeFields(), row, schemaResolver)).toBe(false)
+  })
+
+  it('returns false for a ViewEntity row with any inaccessible field', () => {
+    const row = makeRow()
+    const fields: ViewSectionField[] = [
+      { property: 'title', label: 'Title', inaccessible: true },
+      { property: 'status', label: 'Status' },
+    ]
+    expect(sectionShouldRouteToInlineEdit(fields, row, schemaResolver)).toBe(false)
+  })
+})
+
+describe('applyPropertyToRow', () => {
+  it('returns null for null/undefined input', () => {
+    expect(applyPropertyToRow(null, 'title', 'x', { type: 'ticket', id: 'TKT-002' })).toBeNull()
+    expect(applyPropertyToRow(undefined, 'title', 'x', { type: 'ticket', id: 'TKT-002' })).toBeNull()
+  })
+
+  it('rejects stale owner (different id)', () => {
+    const row = makeRow({ id: 'TKT-003' })
+    expect(applyPropertyToRow(row, 'title', 'leaked', { type: 'ticket', id: 'TKT-002' })).toBeNull()
+  })
+
+  it('rejects stale owner (different type)', () => {
+    const row = makeRow()
+    expect(applyPropertyToRow(row, 'title', 'leaked', { type: 'feature', id: 'TKT-002' })).toBeNull()
+  })
+
+  it('produces a new row with patched _props when owner matches', () => {
+    const row = makeRow()
+    const result = applyPropertyToRow(row, 'title', 'New', { type: 'ticket', id: 'TKT-002' })
+    expect(result?._props?.title).toBe('New')
+    expect(result?._props?.status).toBe('open') // unchanged
+    expect(result).not.toBe(row) // new reference
+    expect(result?._props).not.toBe(row._props) // new _props reference
+  })
+
+  it('deletes the key when value is undefined', () => {
+    const row = makeRow()
+    const result = applyPropertyToRow(row, 'title', undefined, { type: 'ticket', id: 'TKT-002' })
+    expect(result?._props).not.toHaveProperty('title')
+    expect(result?._props?.status).toBe('open')
+  })
+
+  it('does NOT touch fields[i].values (string mirror; RR-FC1C)', () => {
+    // Display-mode reads _props first, so the string mirror is left
+    // intentionally stale. Verifying this guarantees the verdict-flip
+    // race condition stays closed.
+    const row = makeRow()
+    const result = applyPropertyToRow(row, 'title', 'New', { type: 'ticket', id: 'TKT-002' })
+    expect(result?.fields).toBe(row.fields) // same reference
+  })
+
+  it('handles a row with no _props (legacy server / shape drift)', () => {
+    const row = makeRow()
+    delete row._props
+    const result = applyPropertyToRow(row, 'title', 'New', { type: 'ticket', id: 'TKT-002' })
+    expect(result?._props).toEqual({ title: 'New' })
+  })
+})
+
+describe('rowShouldRouteToInlineEdit (TKT-IHC7C cap behaviour)', () => {
+  const CAP = 100
+
+  it('returns false for a row without _props (legacy fallback)', () => {
+    const row = makeRow()
+    delete row._props
+    expect(rowShouldRouteToInlineEdit(row, 10, CAP, schemaResolver)).toBe(false)
+  })
+
+  it('returns true under the cap with a writable row', () => {
+    const row = makeRow({ _fields: {} })
+    expect(rowShouldRouteToInlineEdit(row, 50, CAP, schemaResolver)).toBe(true)
+  })
+
+  it('returns true at exactly the cap', () => {
+    const row = makeRow({ _fields: {} })
+    expect(rowShouldRouteToInlineEdit(row, 100, CAP, schemaResolver)).toBe(true)
+  })
+
+  it('returns false when rowCount exceeds the cap (RR-FC1D + RR-FC2C)', () => {
+    const row = makeRow({ _fields: {} })
+    expect(rowShouldRouteToInlineEdit(row, 101, CAP, schemaResolver)).toBe(false)
+  })
+
+  it('returns false for an inaccessible field even under the cap', () => {
+    const row = makeRow({
+      fields: [{ property: 'title', label: 'Title', inaccessible: true }],
+    })
+    expect(rowShouldRouteToInlineEdit(row, 1, CAP, schemaResolver)).toBe(false)
+  })
+
+  it('returns false when every field is non-writable', () => {
+    const row = makeRow({
+      _fields: { title: { writable: false }, status: { writable: false } },
+    })
+    expect(rowShouldRouteToInlineEdit(row, 1, CAP, schemaResolver)).toBe(false)
   })
 })

@@ -177,9 +177,17 @@ defineExpose({
 
 <template>
   <div class="section-edit-form">
-    <div class="section-edit-form-indicator">
-      <AutoSaveIndicator :status="autoSave.status.value" :error="autoSave.lastError.value" />
-    </div>
+    <!--
+      Indicator slot (TKT-IHC7C / RR-FC1D + RR-FC2A): scope props `status`
+      and `error` so a host can render the indicator anywhere (e.g. via
+      Vue `<Teleport>` into a card header). Default preserves IHC7B
+      behaviour: an inline-positioned AutoSaveIndicator inside the form.
+    -->
+    <slot name="indicator" :status="autoSave.status.value" :error="autoSave.lastError.value">
+      <div class="section-edit-form-indicator">
+        <AutoSaveIndicator :status="autoSave.status.value" :error="autoSave.lastError.value" />
+      </div>
+    </slot>
     <dl class="properties-list">
       <div
         v-for="row in widgetRows"
