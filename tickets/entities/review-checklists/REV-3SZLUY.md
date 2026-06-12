@@ -21,4 +21,5 @@ status: done
 
 - [x] Cascade 3/1 pin and 4/2 failure mode independently traced; requireGit completeness verified; lua handler unblock measured in µs
 
-**PR:** (added once created)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/978 (auto-merge armed,
+tschmits requested)
