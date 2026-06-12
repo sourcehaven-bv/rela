@@ -217,6 +217,80 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		require.True(t, errors.Is(streamErr, search.ErrScope), "must wrap search.ErrScope, got: %v", streamErr)
 	})
 
+	t.Run("FiltersThenLimit", func(t *testing.T) {
+		// RR (code review): pins the q.Filters dimension of the
+		// contract — residual property filters apply BEFORE the limit,
+		// on every backend. A backend that pushes the limit below the
+		// filter (e.g. SQL LIMIT before Go-side MatchFilters) would
+		// spend the budget on filtered-out hits and under-fill.
+		s, ungated, vs := vsf(t)
+		seedVisibleSearchWorld(t, s)
+		scope := map[string]search.TypeScope{"ticket": allow}
+		q := search.Query{
+			Text:    "alpha",
+			Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
+		}
+
+		// Expected: the first Limit hits of the OPEN-filtered ungated
+		// ticket stream — i.e. the filter consumed no limit budget. A
+		// limit-before-filter implementation under-fills whenever the
+		// closed ticket outranks an open one (true on the linear and
+		// bleve runs; pgstore's SQL-side LIMIT placement is pinned
+		// deterministically by its own builder unit test).
+		base := collectHits(t, ungated.Search(ctx(), search.Query{Text: "alpha", Types: []string{"ticket"}}))
+		require.GreaterOrEqual(t, len(base), 3, "fixture sanity: all three tickets must match")
+		var want []string
+		for _, h := range base {
+			if h.ID != "TKT-1" { // TKT-1 is the closed one
+				want = append(want, h.ID)
+			}
+		}
+		q.Limit = 2
+		want = want[:2]
+		got := collectHits(t, vs.SearchVisible(ctx(), q, scope))
+		require.Equal(t, want, hitIDs(got),
+			"filters must apply before the limit, in backend order")
+	})
+
+	t.Run("InvalidFilterRejectedIdentically", func(t *testing.T) {
+		// Both implementations must reject an unsupported (ordered)
+		// filter with the same sentinel, before yielding any hit —
+		// the Filters dimension of the contract is shared, not
+		// implementation-defined.
+		s, _, vs := vsf(t)
+		seedVisibleSearchWorld(t, s)
+		scope := map[string]search.TypeScope{"ticket": allow}
+		q := search.Query{
+			Text:    "alpha",
+			Filters: []search.PropertyFilter{{Property: "status", Value: "1", Op: search.FilterGt}},
+		}
+		var hits int
+		var streamErr error
+		for _, err := range vs.SearchVisible(ctx(), q, scope) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+			hits++
+		}
+		require.Zero(t, hits, "no hit may precede the validation error")
+		require.ErrorIs(t, streamErr, search.ErrOrderedFilterUnsupported)
+	})
+
+	t.Run("SortIsIgnored", func(t *testing.T) {
+		// The contract says q.Sort is ignored (matching Service.Search);
+		// prove no backend accidentally honors it.
+		s, _, vs := vsf(t)
+		seedVisibleSearchWorld(t, s)
+		scope := map[string]search.TypeScope{"ticket": allow}
+		plain := collectHits(t, vs.SearchVisible(ctx(), search.Query{Text: "alpha"}, scope))
+		sorted := collectHits(t, vs.SearchVisible(ctx(), search.Query{
+			Text: "alpha",
+			Sort: []search.SortClause{{Field: "title", Direction: search.SortDesc}},
+		}, scope))
+		require.Equal(t, plain, sorted, "q.Sort must be ignored by every implementation")
+	})
+
 	t.Run("EmptyTextListsVisible", func(t *testing.T) {
 		s, ungated, vs := vsf(t)
 		seedVisibleSearchWorld(t, s)
@@ -255,9 +329,15 @@ func seedVisibleSearchWorld(t *testing.T, s store.Store) {
 	seed("PRJ-1", "project", "Apollo program")
 	seed("PRJ-2", "project", "Artemis program")
 	seed("EPIC-1", "epic", "Epic One")
-	seed("TKT-1", "ticket", "alpha rocket")
-	seed("TKT-2", "ticket", "alpha lander")
-	seed("TKT-3", "ticket", "alpha probe")
+	seedStatus := func(id, typ, title, status string) {
+		e := entity.New(id, typ)
+		e.SetString("title", title)
+		e.SetString("status", status)
+		require.NoError(t, s.CreateEntity(ctx(), e), "create %s", id)
+	}
+	seedStatus("TKT-1", "ticket", "alpha rocket", "closed")
+	seedStatus("TKT-2", "ticket", "alpha lander", "open")
+	seedStatus("TKT-3", "ticket", "alpha probe", "open")
 	seed("DOC-1", "doc", "alpha handbook")
 	seed("MEMO-1", "memo", "alpha secret")
 	seed("GHOST-1", "ghost", "alpha ghost")

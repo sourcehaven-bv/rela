@@ -67,6 +67,12 @@ func (v *Visible) SearchVisible(
 // because visibility probes are batched per type, which needs the hits
 // grouped before any MatchingIDs call.
 func (v *Visible) visibleHits(ctx context.Context, q Query, scope map[string]TypeScope) ([]Hit, error) {
+	// Validate up front for parity with the pgstore-native impl: both
+	// implementations reject an unsupported filter with the same
+	// sentinel before any backend or scope work (conformance-pinned).
+	if err := ValidateFilters(q.Filters); err != nil {
+		return nil, err
+	}
 	if len(scope) == 0 {
 		return nil, nil // nothing is visible; do not touch the backend
 	}

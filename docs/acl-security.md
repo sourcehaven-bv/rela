@@ -240,7 +240,12 @@ Key properties:
 - **Candidate-window caveat (bleve only).** The bleve backend caps
   candidate retrieval at 10000 hits; on the default build, "true
   top-1000 of the visible corpus" holds within that window. The
-  linear and postgres backends have no such window.
+  linear and postgres backends have no such window. Related load
+  note: a free-text query that also carries property filters defers
+  all truncation until after the filters, so the generic path may
+  load up to the candidate window's worth of entity bodies for one
+  request — in-process on the local backends, but worth knowing
+  when diagnosing search latency on very large projects.
 - **Deny short-circuit.** An all-denied principal gets `data: []`
   without the search backend being invoked at all (no latency
   probe); a recording-searcher test pins zero calls — and exactly
