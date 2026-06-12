@@ -22,14 +22,20 @@ import type { ListParams } from '@/types'
 // so two callers building the same filters/sort/page in different property
 // order resolve to the same cache entry (the param-order cache-key bug from
 // the frontend review). undefined/empty values are dropped.
+//
+// Uses JSON of sorted [key, value] pairs rather than `k=v&...` joining: a
+// filter value containing `&` or `=` (both legal in a `contains` filter)
+// would otherwise let two distinct param sets collapse to the same key and
+// serve the wrong cached list — the same false-negative class that
+// utils/filters.ts:stringifyFilterQuery documents and avoids.
 export function canonicalListParams(params?: ListParams): string {
   if (!params) return ''
   const record = params as Record<string, unknown>
   const pairs = Object.keys(record)
     .sort()
     .filter((k) => record[k] !== undefined && record[k] !== '')
-    .map((k) => `${k}=${String(record[k])}`)
-  return pairs.join('&')
+    .map((k) => [k, record[k]] as const)
+  return pairs.length ? JSON.stringify(pairs) : ''
 }
 
 export const entityKeys = {

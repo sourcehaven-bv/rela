@@ -5,7 +5,7 @@ title: EntityList migration to Pinia Colada (FEAT-XY2D1L slice 2)
 kind: enhancement
 priority: high
 effort: m
-status: in-progress
+status: done
 ---
 
 Second slice of the query-cache migration (FEAT-XY2D1L), after the KanbanView

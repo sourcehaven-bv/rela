@@ -71,8 +71,10 @@ const meta = computed<ListMeta>(
       has_more: false,
     }
 )
-// Spinner only on the first load (no data yet); background refetches keep
-// the current rows via placeholderData.
+// `isPending` is true while a query key has no resolved data. Same-key SSE
+// refetches keep the entry `success` (placeholderData holds the rows, no
+// spinner — the liveness win). A param change (page/filter/sort) swaps to a
+// new key that starts pending, so the spinner shows then, as before.
 const loading = computed(() => listQueryRef.value?.isPending.value ?? true)
 const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
@@ -569,6 +571,19 @@ async function requestDelete(entity: Entity) {
   if (!ok) return
   deleteEntityMutation({ entity })
 }
+
+// Reconcile input `page` with the server's returned page. If the backend
+// clamps an out-of-range page (e.g. requested 5, only 3 exist), adopt the
+// server's value so the query key, keyboard nav, and Pagination controls
+// all agree on one page-of-truth.
+watch(
+  () => listQuery.data.value?.meta.page,
+  (serverPage) => {
+    if (serverPage !== undefined && serverPage !== page.value) {
+      page.value = serverPage
+    }
+  }
+)
 
 // Reset paging/sort/selection on list switch. The query reacts to the
 // input changes — no manual fetch trigger needed.

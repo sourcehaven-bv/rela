@@ -6,6 +6,7 @@ import { PiniaColada } from '@pinia/colada'
 import EntityList from './EntityList.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 import { useSchemaStore } from '@/stores/schema'
+import { useUIStore } from '@/stores/ui'
 import { _setEntityPluralForTest } from '@/api/entities'
 import { _resetModalStack } from '@/composables/modalStack'
 import { useConfirmHost, _resetConfirmForTest } from '@/composables/useConfirm'
@@ -232,12 +233,36 @@ describe('EntityList delete integration', () => {
     wrapper.unmount()
   })
 
-  it('surfaces an error toast when delete fails', async () => {
+  it('rolls back the row and toasts when delete fails (onError wiring)', async () => {
+    const entities = [makeEntity('T-1'), makeEntity('T-2')]
+    const wrapper = await mountList(entities)
+    deleteEntityMock.mockRejectedValue(new Error('boom'))
+    const uiStore = useUIStore()
+    const errorSpy = vi.spyOn(uiStore, 'error')
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    // Confirm deletion of the second row.
+    const deleteButtons = wrapper.findAll('.delete-btn')
+    await deleteButtons[1].trigger('click')
+    await flushPromises()
+    modalButtons()[1].click()
+    await flushPromises()
+
+    // After the mutation rejects, onError rolls the optimistic removal back
+    // (the row is present again) and toasts the failure. This fails if the
+    // onError handler is dropped — pinning the optimistic+rollback wiring.
+    expect(deleteEntityMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Title T-2')
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    errorSpy.mockRestore()
+    consoleSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('closes the confirm modal after a failed delete', async () => {
     const entities = [makeEntity('T-1')]
     const wrapper = await mountList(entities)
     deleteEntityMock.mockRejectedValue(new Error('boom'))
-    // The mutation logs nothing, but rollback + toast fire; silence any
-    // incidental console noise.
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await wrapper.find('.delete-btn').trigger('click')

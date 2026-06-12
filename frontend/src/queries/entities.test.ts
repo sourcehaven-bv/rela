@@ -10,12 +10,21 @@ describe('canonicalListParams', () => {
   })
 
   it('drops undefined and empty values so they do not split the cache', () => {
-    expect(canonicalListParams({ page: 1, q: '' } as ListParams)).toBe('page=1')
-    expect(canonicalListParams({ page: 1, sort: undefined } as ListParams)).toBe('page=1')
+    const bare = canonicalListParams({ page: 1 } as ListParams)
+    expect(canonicalListParams({ page: 1, q: '' } as ListParams)).toBe(bare)
+    expect(canonicalListParams({ page: 1, sort: undefined } as ListParams)).toBe(bare)
   })
 
   it('returns empty string for no params', () => {
     expect(canonicalListParams()).toBe('')
+    expect(canonicalListParams({} as ListParams)).toBe('')
+  })
+
+  it('does not collide when a value contains & or = (the delimiter bug)', () => {
+    // Two distinct filter sets that a naive k=v&... join would conflate.
+    const a = canonicalListParams({ 'filter[a]': 'x', 'filter[b]': 'y' } as ListParams)
+    const b = canonicalListParams({ 'filter[a]': 'x&filter[b]=y' } as ListParams)
+    expect(a).not.toBe(b)
   })
 
   it('distinguishes different param sets', () => {

@@ -28,6 +28,10 @@ export function _setEntityPluralForTest(type: string, plural: string): void {
   pluralRegistry.set(type, plural)
 }
 
+export function _resetEntityPluralsForTest(): void {
+  pluralRegistry.clear()
+}
+
 function getPlural(type: string): string {
   const plural = pluralRegistry.get(type)
   if (!plural) {

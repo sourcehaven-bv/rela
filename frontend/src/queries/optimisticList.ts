@@ -52,13 +52,19 @@ export function beginOptimisticRemove(
   key: readonly string[],
   matchId: string
 ): OptimisticListContext {
-  queryCache.cancelQueries({ key })
   const previous = queryCache.getQueryData<ListResponse<Entity>>(key)
-  const optimistic = previous && {
+  // If the row isn't on the visible page there's nothing to remove here —
+  // skip the cancel + churn; settle's prefix-invalidate still refetches the
+  // page(s) where it does live.
+  if (!previous || !previous.data.some((e) => e.id === matchId)) {
+    return { key, previous, optimistic: undefined }
+  }
+  queryCache.cancelQueries({ key })
+  const optimistic = {
     ...previous,
     data: previous.data.filter((e) => e.id !== matchId),
   }
-  if (optimistic) queryCache.setQueryData(key, optimistic)
+  queryCache.setQueryData(key, optimistic)
   return { key, previous, optimistic }
 }
 
