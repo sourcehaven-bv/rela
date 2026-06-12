@@ -72,9 +72,9 @@ surfaces, short-circuit condition, _position deny behavior. Design-review round
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (local `just ci` green; stacked-PR CI subset monitored — full suite re-fires on retarget to develop after #949 merges, same flow as PR 949 itself)
+- [x] PR URL documented below
 
-**PR:** <!-- pending: created stacked on feat/acl-listside-tkt-vmd8 after ticket
-reaches done -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/972 (base:
+feat/acl-listside-tkt-vmd8 — 3rd PR of the read-side stack)
