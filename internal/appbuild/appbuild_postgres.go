@@ -30,10 +30,15 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	// nil VisibleSearcher → assemble derives the generic
-	// search.NewVisible wrapper; the pgstore-native implementation
-	// replaces it in the follow-up commit (TKT-BA8BSX).
-	return assemble(base, st, searcher, nil, closer)
+	// The postgres store implements search.VisibleSearcher natively
+	// (visibility composed into the search SQL — pgstore.SearchVisible,
+	// TKT-BA8BSX). Assert loudly rather than silently falling back to
+	// the generic wrapper: a fallback would hide a wiring regression.
+	visible, ok := st.(search.VisibleSearcher)
+	if !ok {
+		return nil, errors.New("appbuild: postgres store does not implement search.VisibleSearcher")
+	}
+	return assemble(base, st, searcher, visible, closer)
 }
 
 // openBackend delegates pool construction, migration, and store+search wiring
