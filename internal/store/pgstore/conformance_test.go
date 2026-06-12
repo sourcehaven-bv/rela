@@ -10,7 +10,7 @@ import (
 // and searchFactory live in testdb_test.go (they provision an isolated schema
 // per call). The whole suite is skipped when RELA_TEST_DATABASE_URL is unset.
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory, searchFactory, storetest.Capabilities{Attachments: true})
+	storetest.RunAll(t, factory, searchFactory, nil, storetest.Capabilities{Attachments: true})
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {

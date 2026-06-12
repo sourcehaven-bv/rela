@@ -211,7 +211,9 @@ Rules when touching this:
 - Prefer table-driven tests with `t.Run(tc.name, ...)` subtests.
 - Use `t.Helper()` on assertion helpers.
 - `internal/store/storetest` provides the store conformance harness — any
-  new `store.Store` implementation must pass it.
+  new `store.Store` implementation must pass it. Likewise any new
+  `search.VisibleSearcher` implementation must pass
+  `storetest.RunVisibleSearchTests` (the ACL-scoped search contract).
 - Race detector is on in CI; don't add `//go:build !race` tags.
 
 ## Coverage

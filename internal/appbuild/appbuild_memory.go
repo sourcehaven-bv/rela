@@ -25,7 +25,10 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	return assemble(base, st, searcher, closer)
+	// nil VisibleSearcher → assemble derives the generic
+	// search.NewVisible wrapper (TKT-BA8BSX); only the postgres
+	// recipe wires a native implementation.
+	return assemble(base, st, searcher, nil, closer)
 }
 
 // openBackend opens a memstore with a LinearSearch index wired as a

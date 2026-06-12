@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -256,6 +257,10 @@ func (g fakeGate) PermitsReadMany(_ context.Context, _ string, ids []string) (ma
 
 func (g fakeGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 	return acl.ReadQueryResult{DenyAll: true}
+}
+
+func (g fakeGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
+	return nil // all-deny, matching ReadQuery above
 }
 
 // principalCtx returns a context carrying a stamped data-entry

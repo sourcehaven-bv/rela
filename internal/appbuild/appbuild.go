@@ -57,20 +57,24 @@ import (
 // constructor inputs — through structural typing, without adapters
 // at the wiring site.
 type Services struct {
-	fs            storage.FS
-	paths         *project.Context
-	meta          *metamodel.Metamodel
-	store         store.Store
-	searcher      search.Searcher
-	entityManager entitymanager.EntityManager
-	tracer        tracer.Tracer
-	validator     validator.Validator
-	templater     templating.Templater
-	cfgLoader     config.Loader
-	stateKV       state.KV
-	scriptEngine  *script.Engine
-	searchCloser  io.Closer
-	acl           acl.ACL
+	fs       storage.FS
+	paths    *project.Context
+	meta     *metamodel.Metamodel
+	store    store.Store
+	searcher search.Searcher
+	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
+	// the generic search.NewVisible wrapper on the fs/memory builds,
+	// the pgstore-native implementation on the postgres build.
+	visibleSearcher search.VisibleSearcher
+	entityManager   entitymanager.EntityManager
+	tracer          tracer.Tracer
+	validator       validator.Validator
+	templater       templating.Templater
+	cfgLoader       config.Loader
+	stateKV         state.KV
+	scriptEngine    *script.Engine
+	searchCloser    io.Closer
+	acl             acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
 	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
 	aclDeclarative *acl.Declarative
@@ -96,6 +100,11 @@ func (s *Services) Store() store.Store { return s.store }
 // Searcher returns the search service (a sentinel error-searcher when
 // the search backend failed to construct).
 func (s *Services) Searcher() search.Searcher { return s.searcher }
+
+// VisibleSearcher returns the ACL-scoped search seam. Per-backend: the
+// generic scope-filter wrapper on the fs/memory builds, the native
+// SQL-composed implementation on the postgres build.
+func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSearcher }
 
 // EntityManager returns the production write path.
 func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
@@ -198,20 +207,25 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 // does not own a closable resource (the error-Searcher placeholder
 // has nothing to close).
 type Collaborators struct {
-	FS            storage.FS
-	Paths         *project.Context
-	Meta          *metamodel.Metamodel
-	Store         store.Store
-	Searcher      search.Searcher
-	EntityManager entitymanager.EntityManager
-	Tracer        tracer.Tracer
-	Validator     validator.Validator
-	Templater     templating.Templater
-	CfgLoader     config.Loader
-	StateKV       state.KV
-	ScriptEngine  *script.Engine
-	ACL           acl.ACL
-	Audit         audit.Audit
+	FS       storage.FS
+	Paths    *project.Context
+	Meta     *metamodel.Metamodel
+	Store    store.Store
+	Searcher search.Searcher
+	// VisibleSearcher may be nil: the constructor then derives the
+	// generic search.NewVisible(Searcher, Store) wrapper, which is the
+	// correct implementation for every in-process store. Only wire it
+	// explicitly to exercise a native implementation.
+	VisibleSearcher search.VisibleSearcher
+	EntityManager   entitymanager.EntityManager
+	Tracer          tracer.Tracer
+	Validator       validator.Validator
+	Templater       templating.Templater
+	CfgLoader       config.Loader
+	StateKV         state.KV
+	ScriptEngine    *script.Engine
+	ACL             acl.ACL
+	Audit           audit.Audit
 
 	// Declarative is the optional concrete *acl.Declarative the test
 	// is wiring. When non-nil, [Services.ACLDeclarative] returns it;
@@ -286,24 +300,33 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if c.Declarative != nil {
 		aclPolicy = c.Declarative.Policy()
 	}
+	visible := c.VisibleSearcher
+	if visible == nil {
+		v, err := search.NewVisible(c.Searcher, c.Store)
+		if err != nil {
+			return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
+		}
+		visible = v
+	}
 	return &Services{
-		fs:             c.FS,
-		paths:          c.Paths,
-		meta:           c.Meta,
-		store:          c.Store,
-		searcher:       c.Searcher,
-		entityManager:  c.EntityManager,
-		tracer:         c.Tracer,
-		validator:      c.Validator,
-		templater:      c.Templater,
-		cfgLoader:      c.CfgLoader,
-		stateKV:        c.StateKV,
-		scriptEngine:   c.ScriptEngine,
-		searchCloser:   c.SearchCloser,
-		acl:            c.ACL,
-		aclDeclarative: c.Declarative,
-		aclPolicy:      aclPolicy,
-		audit:          c.Audit,
+		fs:              c.FS,
+		paths:           c.Paths,
+		meta:            c.Meta,
+		store:           c.Store,
+		searcher:        c.Searcher,
+		visibleSearcher: visible,
+		entityManager:   c.EntityManager,
+		tracer:          c.Tracer,
+		validator:       c.Validator,
+		templater:       c.Templater,
+		cfgLoader:       c.CfgLoader,
+		stateKV:         c.StateKV,
+		scriptEngine:    c.ScriptEngine,
+		searchCloser:    c.SearchCloser,
+		acl:             c.ACL,
+		aclDeclarative:  c.Declarative,
+		aclPolicy:       aclPolicy,
+		audit:           c.Audit,
 	}, nil
 }
 
@@ -546,8 +569,24 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 // Keeping this shared is the invariant that prevents the three New
 // recipes from drifting: a recipe may CHOOSE and ORDER backend steps,
 // but build-agnostic wiring lives here and nowhere else.
-func assemble(base *buildBase, st store.Store, searcher search.Searcher, searchCloser io.Closer) (*Services, error) {
+//
+// visible may be nil: assemble then derives the generic
+// search.NewVisible(searcher, st) wrapper, the correct ACL-scoped
+// search implementation for every in-process store. The postgres
+// recipe passes its native implementation instead.
+func assemble(
+	base *buildBase, st store.Store, searcher search.Searcher,
+	visible search.VisibleSearcher, searchCloser io.Closer,
+) (*Services, error) {
 	cfg := base.cfg
+
+	if visible == nil {
+		v, err := search.NewVisible(searcher, st)
+		if err != nil {
+			return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
+		}
+		visible = v
+	}
 
 	// Now the store is open: build the Declarative ACL with a
 	// store-backed Graph. This is deferred from prepare because
@@ -613,23 +652,24 @@ func assemble(base *buildBase, st store.Store, searcher search.Searcher, searchC
 	}
 
 	return &Services{
-		fs:             cfg.FS,
-		paths:          cfg.Paths,
-		meta:           base.meta,
-		store:          st,
-		searcher:       searcher,
-		entityManager:  mgr,
-		tracer:         tr,
-		validator:      val,
-		templater:      templater,
-		cfgLoader:      cfgLoader,
-		stateKV:        stateKV,
-		scriptEngine:   cfg.ScriptEngine,
-		searchCloser:   searchCloser,
-		acl:            resolvedACL,
-		aclDeclarative: aclDeclarative,
-		aclPolicy:      base.aclPolicy,
-		audit:          cfg.Audit,
+		fs:              cfg.FS,
+		paths:           cfg.Paths,
+		meta:            base.meta,
+		store:           st,
+		searcher:        searcher,
+		visibleSearcher: visible,
+		entityManager:   mgr,
+		tracer:          tr,
+		validator:       val,
+		templater:       templater,
+		cfgLoader:       cfgLoader,
+		stateKV:         stateKV,
+		scriptEngine:    cfg.ScriptEngine,
+		searchCloser:    searchCloser,
+		acl:             resolvedACL,
+		aclDeclarative:  aclDeclarative,
+		aclPolicy:       base.aclPolicy,
+		audit:           cfg.Audit,
 	}, nil
 }
 

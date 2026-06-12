@@ -188,8 +188,9 @@ with the list it links to.
   regression test pins the searcher at zero calls on the deny path.
   New work in the list pipeline must keep the scope resolution first.
 - **Search runs after ACL, on the filtered slice.** This ordering is
-  the contract the future `/_search` ticket builds on; a mock-asserted
-  test pins GraphQuery-before-search.
+  the contract the `/_search` gate (TKT-BA8BSX, below) generalized to
+  mixed-type search; a mock-asserted test pins
+  GraphQuery-before-search on the list pipeline.
 - **No count from an unfiltered source.** Any new aggregate (badge,
   dashboard card, export count) must derive from the gated set, never
   from `Store.CountEntities` on a principal-reachable path.
@@ -203,6 +204,57 @@ with the list it links to.
   `relations:`) restrict surfaces within an authorized write and
   never confer writability by themselves, so they are intentionally
   outside the check.
+
+### Global search (`/_search`, TKT-BA8BSX)
+
+The search view runs through `search.VisibleSearcher` — a seam that
+executes a free-text query restricted to a per-type visibility scope.
+The dataentry layer resolves the principal's `ReadQuery` verdict for
+every metamodel type into a scope map; the searcher guarantees no hit
+outside that scope is ever yielded. The conformance suite
+(`storetest.RunVisibleSearchTests`) pins the contract for every
+implementation: any new searcher must pass it.
+
+Key properties:
+
+- **Scope lookup is fail-closed.** Exact type entry → reserved `"*"`
+  wildcard entry → deny. With no ACL configured the gate supplies
+  `{"*": allow-all}`, so entities whose type is absent from the
+  metamodel stay searchable exactly as before ACL existed. Under a
+  policy, no wildcard is emitted — an off-metamodel type (removed
+  from `metamodel.yaml` while its files remain) is hidden from
+  search rather than leaked.
+- **The result limit applies after visibility.** `/_search` returns
+  up to 1000 results; the bound counts *visible* hits. A
+  pre-visibility cap would starve restricted principals — the top
+  candidates may all be hidden while their own matches rank below.
+  Both gate placement and limit placement are pinned by conformance
+  cases on every backend.
+- **Two implementations, one contract.** The fs/memory builds wrap
+  the regular searcher in a generic filter (`search.NewVisible`,
+  batched `MatchingIDs` probes — in-process, cheap). The postgres
+  build composes visibility into the search SQL itself
+  (`pgstore.SearchVisible`): hidden rows never leave the database,
+  the `LIMIT` is post-visibility, and there is no hidden-row work to
+  measure through timing.
+- **Candidate-window caveat (bleve only).** The bleve backend caps
+  candidate retrieval at 10000 hits; on the default build, "true
+  top-1000 of the visible corpus" holds within that window. The
+  linear and postgres backends have no such window.
+- **Deny short-circuit.** An all-denied principal gets `data: []`
+  without the search backend being invoked at all (no latency
+  probe); a recording-searcher test pins zero calls — and exactly
+  one call for a granted search.
+- **Visible hits don't expose hidden neighbors.** Search results
+  serialize without relation maps (`includeRelations=false`, pinned
+  by test): a visible hit that relates to a hidden entity exposes no
+  hidden ID or title through any field of its body.
+- **Errors carry constant detail.** A visibility-evaluation failure
+  maps to `500 acl_query_failed` / `504` / silent-on-cancel exactly
+  like the list pipeline; a plain backend failure maps to
+  `500 search_failed`. Raw backend error strings go to the server
+  log only. (Previously these errors were silently swallowed into
+  empty results.)
 
 ### Caching: per-principal responses
 
@@ -262,17 +314,14 @@ The `attachACLRequest` middleware:
   neighbor-disclosure analysis (a visible neighbor's id confirms a
   visible entity, but gap analysis around hidden entities needs its
   own treatment).
-- **`/_search`** — the bleve / pgstore search backends need their
-  own query-rewrite. Separate ticket; it builds on the
-  search-after-ACL ordering contract pinned above.
 - **SSE `/api/v1/_events`** — the broker today fans `{type, id}` to
   every subscriber. Per-subscriber filtering is its own ticket.
 - **MCP transport** — tracked as TKT-G3PPD.
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, sidebar, and pagination channels are tight. The global search
-endpoint and the SSE event stream still reveal `{type, id}`-level
-existence to any connected principal.
+list, sidebar, pagination, and global-search channels are tight. The
+SSE event stream still reveals `{type, id}`-level existence to any
+connected principal.
 
 ## Where to read next
 

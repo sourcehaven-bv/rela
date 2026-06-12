@@ -30,7 +30,10 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err != nil {
 		return nil, err
 	}
-	return assemble(base, st, searcher, closer)
+	// nil VisibleSearcher → assemble derives the generic
+	// search.NewVisible wrapper; the pgstore-native implementation
+	// replaces it in the follow-up commit (TKT-BA8BSX).
+	return assemble(base, st, searcher, nil, closer)
 }
 
 // openBackend delegates pool construction, migration, and store+search wiring

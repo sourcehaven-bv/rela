@@ -1764,7 +1764,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entities := a.executeQuery(r.Context(), query)
+	// executeQuery is read-gated (TKT-BA8BSX): only entities the
+	// request principal may read come back, and gate/load/search
+	// failures surface instead of silently truncating.
+	entities, err := a.executeQuery(r.Context(), query)
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return
+	}
 
 	// Apply type filter if provided
 	if typeFilter := r.URL.Query().Get("type"); typeFilter != "" {
@@ -1782,6 +1789,11 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
+		// includeRelations stays false on search results: the read gate
+		// covers root entities only, and a relation map would expose
+		// {ID, Title} of related entities this principal may not read.
+		// Flipping this requires per-target gating first (RR-QO01XY) —
+		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
 		data = append(data, a.serializeRelatedEntityForWire(r.Context(), e, plural, false))
 	}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -126,6 +127,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.store = svc.Store()
 	app.entityManager = svc.EntityManager()
 	app.searcher = svc.Searcher()
+	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
 	app.validator = svc.Validator()
 	app.templater = svc.Templater()
@@ -139,6 +141,23 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	if app.scriptEngine != nil {
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
 	}
+}
+
+// rebindVisibleSearcher re-derives the generic visible-search wrapper
+// over the app's CURRENT searcher+store pair. Tests that inject a fake
+// via `app.searcher = ...` and exercise an executeQuery consumer
+// (/_search, _position search scope) must call this afterwards —
+// executeQuery routes through app.visibleSearcher (TKT-BA8BSX), which
+// otherwise still wraps the searcher from construction time. Tests
+// that only hit the list pipeline (?q= on list endpoints) don't need
+// it: that path reads app.searcher directly.
+func rebindVisibleSearcher(t *testing.T, app *App) {
+	t.Helper()
+	v, err := search.NewVisible(app.searcher, app.store)
+	if err != nil {
+		t.Fatalf("rebindVisibleSearcher: %v", err)
+	}
+	app.visibleSearcher = v
 }
 
 // reseedStore copies every entity and relation from src into dst.
