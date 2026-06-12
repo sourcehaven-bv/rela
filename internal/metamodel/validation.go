@@ -8,6 +8,38 @@ import (
 	"time"
 )
 
+// validIDPrefixBase matches a prefix after trimming one trailing dash:
+// the character set entity IDs allow. Dashes are permitted here — the
+// dash-run constraints (no "--", no trailing dash on the base) are
+// checked separately below so the non-dash case gets a more targeted
+// error message.
+var validIDPrefixBase = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ValidateIDPrefix rejects id_prefix values whose generated IDs would
+// fail entity ID validation (BUG-RHFHTH). Generated short/sequential
+// IDs have the shape <base>-<suffix>, where base is the prefix with
+// one trailing dash trimmed — so the base must be non-empty, contain
+// only [A-Za-z0-9_-], and neither contain nor end in a dash run that
+// would re-create the forbidden "--" sequence (reserved as the
+// relation key separator). Enforced at metamodel load;
+// entity.GenerateShortID assumes a load-validated prefix.
+func ValidateIDPrefix(prefix string) error {
+	base := strings.TrimSuffix(prefix, "-")
+	if base == "" {
+		return fmt.Errorf("id_prefix %q has no characters besides %q", prefix, "-")
+	}
+	if !validIDPrefixBase.MatchString(base) {
+		return fmt.Errorf(
+			"id_prefix %q contains characters not allowed in entity IDs (allowed: A-Z a-z 0-9 _ -)", prefix)
+	}
+	if strings.Contains(base, "--") || strings.HasSuffix(base, "-") {
+		return fmt.Errorf(
+			"id_prefix %q would generate IDs with consecutive dashes (\"--\" is the relation key separator)",
+			prefix)
+	}
+	return nil
+}
+
 // ValidationErrorType indicates the kind of validation error.
 type ValidationErrorType string
 

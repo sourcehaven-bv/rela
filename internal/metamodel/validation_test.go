@@ -1070,3 +1070,32 @@ func TestValidationError_IsSoft(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateIDPrefix(t *testing.T) {
+	valid := []string{"TKT-", "TKT", "tkt-", "MY-TYPE-", "a_b-", "A1-", "_x-"}
+	for _, p := range valid {
+		if err := ValidateIDPrefix(p); err != nil {
+			t.Errorf("ValidateIDPrefix(%q) = %v, want nil", p, err)
+		}
+	}
+
+	invalid := []struct {
+		prefix string
+		why    string
+	}{
+		{"--", "double dash collapses to a dash-only base (BUG-RHFHTH repro)"},
+		{"-", "dash-only"},
+		{"A--B-", "embedded double dash"},
+		{"TKT--", "trailing double dash"},
+		{"a/b-", "path separator"},
+		{`a\b-`, "backslash"},
+		{"a b-", "space"},
+		{"héllo-", "non-ASCII"},
+		{"x\x00-", "control character"},
+	}
+	for _, tc := range invalid {
+		if err := ValidateIDPrefix(tc.prefix); err == nil {
+			t.Errorf("ValidateIDPrefix(%q) = nil, want error (%s)", tc.prefix, tc.why)
+		}
+	}
+}

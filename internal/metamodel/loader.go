@@ -272,6 +272,11 @@ func validateEntityStructure(m *Metamodel) error {
 		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {
 			return &ConflictingIDPrefixError{EntityType: name}
 		}
+		for _, prefix := range def.GetIDPrefixes() {
+			if err := ValidateIDPrefix(prefix); err != nil {
+				return &InvalidIDPrefixError{EntityType: name, Prefix: prefix, Reason: err.Error()}
+			}
+		}
 
 		m.aliasMap[strings.ToLower(name)] = name
 		for _, alias := range def.Aliases {

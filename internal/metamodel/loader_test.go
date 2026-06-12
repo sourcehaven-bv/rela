@@ -2186,3 +2186,88 @@ relations:
 		t.Errorf("error %q does not mention the symmetric conflict", err.Error())
 	}
 }
+
+// TestParse_InvalidIDPrefixRejected pins the load-time gate for
+// id_prefix values whose generated IDs would fail entity ID validation
+// (BUG-RHFHTH: GenerateShortID("--", ...) emitted "--9HHF", which the
+// ID validator rejects — found by the weekly fuzz sweep). Prefixes are
+// only ever consumed after metamodel load, so the gate belongs here.
+func TestParse_InvalidIDPrefixRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		prefix string
+	}{
+		{"double dash", "--"},
+		{"dash only", "-"},
+		{"embedded double dash", "A--B-"},
+		{"path separator", "a/b-"},
+		{"space", "a b-"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "` + tc.prefix + `"
+    properties:
+      title:
+        type: string
+`
+			_, err := Parse([]byte(yaml))
+			assertError(t, err)
+
+			var prefixErr *InvalidIDPrefixError
+			if !errors.As(err, &prefixErr) {
+				t.Errorf("expected InvalidIDPrefixError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestParse_InvalidIDPrefixRejected_ManualIDType pins a deliberate
+// scope decision: the gate applies to ALL declared prefixes, including
+// id_type: manual types that declare one purely for type-routing
+// (EntityDef.MatchesID). A routing prefix outside the ID charset could
+// never match a ValidateID-legal ID anyway, so rejecting it at load is
+// strictly more honest than letting it silently never match.
+func TestParse_InvalidIDPrefixRejected_ManualIDType(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_type: manual
+    id_prefix: "auth--mod-"
+    properties:
+      title:
+        type: string
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	var prefixErr *InvalidIDPrefixError
+	if !errors.As(err, &prefixErr) {
+		t.Errorf("expected InvalidIDPrefixError, got %T: %v", err, err)
+	}
+}
+
+// TestParse_InvalidIDPrefixRejected_Plural covers the id_prefixes
+// (list) form: one bad prefix among valid ones fails the load.
+func TestParse_InvalidIDPrefixRejected_Plural(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefixes: ["TSK-", "A--B-"]
+    properties:
+      title:
+        type: string
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+
+	var prefixErr *InvalidIDPrefixError
+	if !errors.As(err, &prefixErr) {
+		t.Errorf("expected InvalidIDPrefixError, got %T: %v", err, err)
+	}
+}
