@@ -104,18 +104,14 @@ id: REQ-001
 This content should be part of body since frontmatter was never closed.
 `
 
+	// Unclosed frontmatter is a parse error: the body text gets
+	// consumed as (invalid) YAML. Previously this test accepted
+	// either outcome and pinned nothing.
 	doc, err := ParseDocument(content)
-	// The parser will attempt to parse unclosed frontmatter as YAML
-	// which will fail if it's not valid YAML
-	if err != nil {
-		// Error is expected since unclosed frontmatter with invalid YAML fails
-		return
+	if err == nil {
+		t.Fatalf("unclosed frontmatter must fail to parse, got doc %+v", doc)
 	}
-
-	// If it succeeds, verify the result
-	if doc == nil {
-		t.Fatal("doc should not be nil")
-	}
+	testutil.AssertStringContains(t, err.Error(), "frontmatter")
 }
 
 func TestFormatDocument(t *testing.T) {

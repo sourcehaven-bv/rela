@@ -360,8 +360,14 @@ func TestProvider_Chat_NetworkError(t *testing.T) {
 }
 
 func TestProvider_Chat_Timeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(500 * time.Millisecond)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Out-wait the client timeout, returning as soon as the client
+		// gives up so server.Close doesn't block on this handler.
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(canonicalSuccessBody))
 	}))
