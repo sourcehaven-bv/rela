@@ -266,10 +266,13 @@ func (g *recordingReadGate) callCount(typ string) int {
 	return g.calls[typ]
 }
 
-// TestSSEACL_VerdictCachedAndInvalidated pins AC6: the type verdict is
-// resolved once per connection and cached (no per-event walk), and a
-// RelationChange clears the cache so the verdict re-resolves.
-func TestSSEACL_VerdictCachedAndInvalidated(t *testing.T) {
+// TestSSEACL_VerdictCached pins the caching half of AC6: the type
+// verdict is resolved once per connection and cached (no per-event
+// walk), and a RelationChange clears the cache so the next event
+// re-resolves. Uses a counting mock to observe resolve calls; the
+// genuine membership-flip is pinned separately against a real resolver
+// (TestSSEACL_MembershipChangeReGates).
+func TestSSEACL_VerdictCached(t *testing.T) {
 	app := newTestAppV1(t)
 	rg := &recordingReadGate{
 		calls:    map[string]int{},
@@ -290,11 +293,53 @@ func TestSSEACL_VerdictCachedAndInvalidated(t *testing.T) {
 	}
 
 	// A relation change clears the cache; the next ticket event re-resolves.
+	// (app.acl is nil here → freshReadGate keeps the mock, so the same gate
+	// is re-queried — this pins the cache-clear, not the membership walk.)
 	send <- sseEvent{RelationChange: true}
 	send <- sseEvent{EntityType: "ticket"}
 	settle()
 	if c := rg.callCount("ticket"); c != 2 {
 		t.Errorf("ReadQuery(ticket) called %d times after invalidation, want 2 (re-resolved)", c)
+	}
+}
+
+// TestSSEACL_MembershipChangeReGates pins the genuine-membership half of
+// AC6 against a REAL acl.Declarative (RR — code review): a principal who
+// GAINS read access mid-connection (via a new group membership / role
+// edge) starts receiving the type's nudges after the relation-change
+// re-derives the gate, WITHOUT reconnecting. This is the case the mocked
+// test could not show — it exercises acl.Request.Globals being re-walked
+// against the current graph rather than the connection-start snapshot.
+func TestSSEACL_MembershipChangeReGates(t *testing.T) {
+	app := newTestAppV1(t)
+	// alice is initially NOT in the group that confers ticket read.
+	seedEntity(app, &entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}})
+	seedEntity(app, &entity.Entity{ID: "editors", Type: "person", Properties: map[string]any{"title": "Editors"}})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"editors": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
+	defer stop()
+
+	// Before membership: alice has DenyAll on ticket → no nudge.
+	send <- sseEvent{EntityType: "ticket"}
+	settle()
+	if strings.Contains(sink.String(), "entity:changed") {
+		t.Fatalf("alice received a ticket nudge before gaining membership:\n%s", sink.String())
+	}
+
+	// Grant: alice joins the editors group (member-of edge). This is a
+	// role-conferring relation write → RelationChange → re-derive gate.
+	seedRelation(app, entity.NewRelation("alice", "member-of", "editors"))
+	send <- sseEvent{RelationChange: true}
+	send <- sseEvent{EntityType: "ticket"}
+	settle()
+	if !strings.Contains(sink.String(), `"type":"ticket"`) {
+		t.Errorf("alice should receive ticket nudges after joining the conferring group (re-gate), got:\n%s", sink.String())
 	}
 }
 

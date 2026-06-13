@@ -12,7 +12,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -41,9 +43,10 @@ type storeWatcher interface {
 //     (TKT-POT9GQ). The per-connection gate is why entity events can't
 //     be pre-rendered in the principal-less pump goroutine.
 //
-// RelationChange marks a relation write (member-of / role-relation /
-// containment edges can all alter a principal's read verdicts). It is
-// never written to the wire; it signals handleSSE to drop its cached
+// RelationChange marks a role-conferring relation write (member-of /
+// role-relation / containment edge — the types that can alter a
+// principal's read verdicts). It is never written to the wire; it
+// signals handleSSE to re-derive a fresh read gate and drop its cached
 // per-type verdicts so the next entity event re-resolves against
 // current membership (RR-K2WKEJ).
 type sseEvent struct {
@@ -335,14 +338,14 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 }
 
 // handleSSE serves Server-Sent Events for live-reload notifications.
-// Connected browsers receive events when project files change or entities are modified.
-// Event types:
+// Connected browsers receive events when project files change or entities
+// are modified. Event types on the wire:
 //   - refresh: Files changed, reload needed
-//   - git: Git status changed
-//   - git:status: Git status update (with empty JSON data)
-//   - entity:created: Entity created (data: {"type": "...", "id": "..."})
-//   - entity:updated: Entity updated (data: {"type": "...", "id": "..."})
-//   - entity:deleted: Entity deleted (data: {"type": "...", "id": "..."})
+//   - git / git:status: Git status changed (git:status carries empty JSON)
+//   - entity:changed: Entities of a type changed; data is {"type": "..."}
+//     with NO id. Create/update/delete all collapse to this single
+//     type-scoped staleness signal, ACL-gated per connection — a
+//     connection only receives a type its principal may read (TKT-POT9GQ).
 func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -385,14 +388,25 @@ const sseFlushInterval = 200 * time.Millisecond
 // Entity events are gated per-connection: the connection's principal
 // read verdict for each entity type is resolved via the read gate and
 // cached. A pending set of "stale types" is accumulated and flushed on a
-// timer (coalescing bursts, AC5). Relation-change signals clear the
-// cached verdicts so the next entity event re-resolves against current
-// membership (RR-K2WKEJ). Non-entity events (refresh, git) pass through
-// ungated and immediately.
+// timer (coalescing bursts, AC5).
+//
+// A RelationChange marks a role-conferring relation write, which can
+// alter the principal's read scope (a member-of edge changes group
+// membership; a role-relation / containment edge changes inheritance).
+// It re-derives a FRESH read gate (a new acl.Request whose member-of
+// closure is walked against the current graph — the connection's
+// original Request memoizes that closure for its lifetime, RR-K2WKEJ)
+// and clears the cached verdicts so the next entity event re-resolves
+// against current membership. The re-derive is coalesced into the same
+// flush window so a burst of relation writes triggers one re-walk, not
+// one per edge.
+//
+// Non-entity events (refresh, git) pass through ungated and immediately.
 func (a *App) runSSELoop(w io.Writer, r *http.Request, flusher http.Flusher, ch <-chan sseEvent) {
 	gate := readGateFromContext(r.Context())
 	verdicts := make(map[string]bool) // entityType -> visible; cached per connection
 	pending := make(map[string]struct{})
+	regate := false // a coalesced relation change is pending → re-derive on flush
 
 	// One timer for the connection's lifetime, created stopped and reset
 	// to (re)arm the coalescing window. flushArmed tracks whether the
@@ -418,24 +432,43 @@ func (a *App) runSSELoop(w io.Writer, r *http.Request, flusher http.Flusher, ch 
 			}
 			switch {
 			case event.RelationChange:
-				// Membership may have changed — drop cached verdicts so
-				// the next entity event re-resolves. Rare relative to
-				// entity writes; never written to the wire.
-				clear(verdicts)
+				// Coalesce: re-derive the gate at most once per flush
+				// window (a bulk relation import otherwise walks member-of
+				// per edge per connection).
+				regate = true
+				armFlush()
 			case event.EntityType != "":
-				if a.entityTypeVisible(r.Context(), gate, verdicts, event.EntityType) {
+				// While a re-gate is pending the current gate is known
+				// stale, so defer the visibility decision to the flush
+				// (which re-checks every pending type against the fresh
+				// gate). Otherwise filter at entry to avoid buffering
+				// types the principal can't read.
+				if regate || a.entityTypeVisible(r.Context(), gate, verdicts, event.EntityType) {
 					pending[event.EntityType] = struct{}{}
 					armFlush()
 				}
-			default:
+			case event.Name != "":
 				// Non-entity frame (refresh, git, git:status): pre-rendered, ungated.
 				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data)
 				flusher.Flush()
+			default:
+				// A zero-value frame is a programming error (every
+				// production construction site sets exactly one
+				// discriminant). Drop it rather than emit a malformed
+				// empty frame.
+				slog.Warn("sse: dropping zero-value broker event")
 			}
 		case <-flush.C:
+			if regate {
+				gate = a.freshReadGate(r.Context(), gate)
+				clear(verdicts)
+				regate = false
+			}
 			for typ := range pending {
-				data, _ := json.Marshal(map[string]string{"type": typ})
-				fmt.Fprintf(w, "event: entity:changed\ndata: %s\n\n", data)
+				if a.entityTypeVisible(r.Context(), gate, verdicts, typ) {
+					data, _ := json.Marshal(map[string]string{"type": typ})
+					fmt.Fprintf(w, "event: entity:changed\ndata: %s\n\n", data)
+				}
 			}
 			flusher.Flush()
 			clear(pending)
@@ -444,6 +477,33 @@ func (a *App) runSSELoop(w io.Writer, r *http.Request, flusher http.Flusher, ch 
 			return
 		}
 	}
+}
+
+// freshReadGate returns a read gate whose member-of closure is resolved
+// against the CURRENT graph, for use after a role-conferring relation
+// change invalidates the connection's cached membership. When ACL is a
+// *acl.Declarative it opens a new acl.Request for the principal (a fresh
+// Globals walk); otherwise (NopACL, or ForPrincipal failure) it keeps
+// the existing gate — for NopACL the verdict is constant-true so there
+// is nothing to refresh, and on a transient resolve error keeping the
+// prior gate is fail-safe (it can only be equal-or-narrower than a stale
+// allow, and the next relation change retries).
+func (a *App) freshReadGate(ctx context.Context, current readGate) readGate {
+	d, ok := a.acl.(*acl.Declarative)
+	if !ok || d == nil {
+		return current
+	}
+	req, err := d.ForPrincipal(principal.From(ctx))
+	if err != nil {
+		slog.Warn("sse: re-deriving read gate failed; keeping prior gate", "err", err)
+		return current
+	}
+	gate, err := newACLReadGate(req)
+	if err != nil {
+		slog.Warn("sse: re-deriving read gate failed; keeping prior gate", "err", err)
+		return current
+	}
+	return gate
 }
 
 // entityTypeVisible returns whether the connection's principal may read
