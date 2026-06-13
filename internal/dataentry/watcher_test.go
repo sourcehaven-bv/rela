@@ -161,8 +161,8 @@ func TestEventBrokerBroadcast(t *testing.T) {
 
 	select {
 	case msg := <-ch1:
-		if msg.Type != "refresh" {
-			t.Errorf("ch1: expected 'refresh', got %q", msg.Type)
+		if msg.Name != "refresh" {
+			t.Errorf("ch1: expected 'refresh', got %q", msg.Name)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("ch1: timed out waiting for broadcast")
@@ -170,8 +170,8 @@ func TestEventBrokerBroadcast(t *testing.T) {
 
 	select {
 	case msg := <-ch2:
-		if msg.Type != "refresh" {
-			t.Errorf("ch2: expected 'refresh', got %q", msg.Type)
+		if msg.Name != "refresh" {
+			t.Errorf("ch2: expected 'refresh', got %q", msg.Name)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("ch2: timed out waiting for broadcast")
@@ -198,7 +198,7 @@ func TestEventBrokerBroadcastSkipsSlowClient(t *testing.T) {
 	// Channel should be empty now (fifth was dropped)
 	select {
 	case extra := <-ch:
-		t.Errorf("expected no more messages, got %q", extra.Type)
+		t.Errorf("expected no more messages, got %q", extra.Name)
 	default:
 		// expected
 	}

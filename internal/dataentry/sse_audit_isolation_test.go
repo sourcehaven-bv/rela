@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -58,41 +57,35 @@ func TestSSE_DoesNotFlowAuditEvents(t *testing.T) {
 		// Found an event. Even a benign one (e.g. a "refresh")
 		// triggered by the deny would be a regression — denies
 		// must be invisible to SSE subscribers.
-		t.Fatalf("unexpected SSE event after denied write: type=%q data=%q",
-			ev.Type, ev.Data)
+		t.Fatalf("unexpected SSE event after denied write: %+v", ev)
 	case <-time.After(100 * time.Millisecond):
 		// Expected: zero events.
 	}
 }
 
-// TestSSE_BroadcastEntityEvent_PayloadShape pins the wire format of
-// the events the broker DOES emit: `{type, id}` only — no full entity
-// payload, no audit attribution. A reader of this test can verify
-// at a glance that the SSE wire shape carries nothing beyond the
-// entity marker; ACL-protected content is fetched separately by the
-// browser and gates on the entity-read path.
-func TestSSE_BroadcastEntityEvent_PayloadShape(t *testing.T) {
+// TestSSE_BroadcastEntityChange_CarriesTypeOnly pins the broker-level
+// shape of an entity change: it carries the entity TYPE and nothing
+// else — no id, no audit attribution. Per-type granularity is the
+// security boundary (TKT-POT9GQ): the wire never carries an entity id,
+// so the feed cannot be a per-entity existence oracle. The handler
+// (runSSELoop) gates the type per-connection before rendering it.
+func TestSSE_BroadcastEntityChange_CarriesTypeOnly(t *testing.T) {
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, nil)
 
 	ch := app.broker.subscribe()
 	defer app.broker.unsubscribe(ch)
 
-	app.broker.broadcastEntityEvent("created", "ticket", "TKT-001")
+	app.broker.broadcastEntityChange("ticket")
 
 	select {
 	case ev := <-ch:
-		if ev.Type != "entity:created" {
-			t.Errorf("Type = %q, want entity:created", ev.Type)
+		if ev.EntityType != "ticket" {
+			t.Errorf("EntityType = %q, want ticket", ev.EntityType)
 		}
-		// The data payload is exactly {type, id} — no Subject,
-		// no FromID, no Principal, no role attribution.
-		for _, leak := range []string{"subject", "principal", "role", "attribution", "user", "from_id", "to_id"} {
-			if strings.Contains(strings.ToLower(ev.Data), leak) {
-				t.Errorf("SSE data leaked field %q: %s", leak, ev.Data)
-			}
-		}
-		if !strings.Contains(ev.Data, `"id":"TKT-001"`) || !strings.Contains(ev.Data, `"type":"ticket"`) {
-			t.Errorf("SSE data missing expected marker fields: %s", ev.Data)
+		// No id, no name, no pre-rendered data on an entity change —
+		// the handler synthesizes the {type}-only frame after gating.
+		if ev.Name != "" || ev.Data != "" {
+			t.Errorf("entity change carried wire data Name=%q Data=%q; want both empty", ev.Name, ev.Data)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no SSE event received within 1s")

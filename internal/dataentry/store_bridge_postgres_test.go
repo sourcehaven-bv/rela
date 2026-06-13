@@ -65,10 +65,11 @@ func TestStoreEventBridgeCrossProcessSSE(t *testing.T) {
 	sse := app.broker.subscribe()
 	defer app.broker.unsubscribe(sse)
 
-	// A writes; B's SSE feed must emit entity:created for it.
+	// A writes; B's SSE feed must surface a cross-process entity change
+	// for the feature type (no id on the wire — TKT-POT9GQ).
 	require.NoError(t, a.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
-	ev := waitForSSE(t, sse, "entity:created")
-	require.Contains(t, ev.Data, "FEAT-1")
+	ev := waitForEntityChange(t, sse, "feature")
+	require.Empty(t, ev.Data, "cross-process entity change must carry no id")
 }
 
 func dsnWithSchema(t *testing.T, base, schema string) string {

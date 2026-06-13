@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -23,10 +24,33 @@ type storeWatcher interface {
 	StartWatching() error
 }
 
-// sseEvent represents a Server-Sent Event with optional JSON data.
+// sseEvent represents a Server-Sent Event broadcast to subscribers.
+//
+// Two shapes flow through the broker:
+//
+//   - Non-entity events (refresh, git, git:status): Name + Data are the
+//     pre-rendered wire frame, delivered to every subscriber unchanged.
+//     They carry no entity identity, so there is nothing to gate.
+//   - Entity events (create/update/delete): EntityType is set and Name
+//     is empty. These are NOT pre-rendered. handleSSE applies the
+//     per-connection ACL read gate to EntityType and, if permitted,
+//     writes a type-scoped staleness frame (`event: entity:changed`,
+//     `data: {"type": <EntityType>}`). No entity id reaches the wire —
+//     the feed is a "your views of type T are stale, re-fetch" signal,
+//     and the re-fetch goes through the already-gated REST endpoints
+//     (TKT-POT9GQ). The per-connection gate is why entity events can't
+//     be pre-rendered in the principal-less pump goroutine.
+//
+// RelationChange marks a relation write (member-of / role-relation /
+// containment edges can all alter a principal's read verdicts). It is
+// never written to the wire; it signals handleSSE to drop its cached
+// per-type verdicts so the next entity event re-resolves against
+// current membership (RR-K2WKEJ).
 type sseEvent struct {
-	Type string // Event type (e.g., "refresh", "entity:created", "git:status")
-	Data string // JSON data payload (empty for simple events)
+	Name           string // non-entity frame type ("refresh", "git", "git:status"); empty for entity/relation events
+	Data           string // pre-rendered JSON for non-entity frames
+	EntityType     string // set for entity create/update/delete events; gated per-connection
+	RelationChange bool   // set for relation writes; invalidates cached verdicts, never written to the wire
 }
 
 // eventBroker manages SSE client connections for live-reload notifications.
@@ -53,12 +77,13 @@ func (b *eventBroker) unsubscribe(ch chan sseEvent) {
 	b.mu.Unlock()
 }
 
-// broadcast sends a simple event (backward compatible).
+// broadcast sends a simple non-entity event (refresh / git).
 func (b *eventBroker) broadcast(eventType string) {
-	b.broadcastEvent(sseEvent{Type: eventType, Data: eventType})
+	b.broadcastEvent(sseEvent{Name: eventType, Data: eventType})
 }
 
-// broadcastEvent sends an event with optional JSON data.
+// broadcastEvent fans an event out to every subscriber. Lossy: a full
+// client buffer drops the event (the SSE feed is a hint, not a log).
 func (b *eventBroker) broadcastEvent(event sseEvent) {
 	b.mu.Lock()
 	for ch := range b.clients {
@@ -70,21 +95,27 @@ func (b *eventBroker) broadcastEvent(event sseEvent) {
 	b.mu.Unlock()
 }
 
-// broadcastEntityEvent sends an entity mutation event (create/update/delete).
-func (b *eventBroker) broadcastEntityEvent(action, entityType, entityID string) {
-	data, _ := json.Marshal(map[string]string{
-		"type": entityType,
-		"id":   entityID,
-	})
-	b.broadcastEvent(sseEvent{
-		Type: "entity:" + action,
-		Data: string(data),
-	})
+// broadcastEntityChange fans a type-scoped staleness event. create,
+// update, and delete all collapse to the same signal — "type T
+// changed, re-fetch" — because the client acts identically on all
+// three (invalidate active queries of that type). No entity id is
+// carried; handleSSE gates EntityType per-connection before writing
+// (TKT-POT9GQ).
+func (b *eventBroker) broadcastEntityChange(entityType string) {
+	b.broadcastEvent(sseEvent{EntityType: entityType})
+}
+
+// broadcastRelationChange signals subscribers to drop their cached
+// per-type read verdicts: member-of, role-relation, and containment
+// edge writes can all change what a principal may read. Never written
+// to the wire (RelationChange is the marker).
+func (b *eventBroker) broadcastRelationChange() {
+	b.broadcastEvent(sseEvent{RelationChange: true})
 }
 
 // broadcastGitStatus sends a git status update event.
 func (b *eventBroker) broadcastGitStatus() {
-	b.broadcastEvent(sseEvent{Type: "git:status", Data: "{}"})
+	b.broadcastEvent(sseEvent{Name: "git:status", Data: "{}"})
 }
 
 // StartWatching begins file watching for live-reload. It does two
@@ -183,15 +214,20 @@ func (a *App) startStoreEventBridge() {
 func (a *App) pumpStoreEvents(events <-chan store.Event) {
 	for ev := range events {
 		switch ev.Op {
-		case store.EventEntityCreated:
-			a.broker.broadcastEntityEvent("created", ev.EntityType, ev.EntityID)
-		case store.EventEntityUpdated:
-			a.broker.broadcastEntityEvent("updated", ev.EntityType, ev.EntityID)
-		case store.EventEntityDeleted:
-			a.broker.broadcastEntityEvent("deleted", ev.EntityType, ev.EntityID)
-		default:
-			// Relation/attachment events are not part of the live feed (no
-			// browser broadcast existed for them before either). Ignored.
+		case store.EventEntityCreated, store.EventEntityUpdated, store.EventEntityDeleted:
+			// All three collapse to one type-scoped staleness signal:
+			// the client acts identically (invalidate active queries of
+			// the type), and carrying no id keeps the feed from being a
+			// per-entity existence oracle (TKT-POT9GQ).
+			a.broker.broadcastEntityChange(ev.EntityType)
+		case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
+			// Relation writes are not surfaced as browser refreshes (no
+			// broadcast existed for them before), but they CAN change a
+			// principal's read verdicts (member-of / role-relation /
+			// containment edges). Signal connections to drop their
+			// cached per-type verdicts so the next entity event
+			// re-resolves against current membership (RR-K2WKEJ).
+			a.broker.broadcastRelationChange()
 		}
 	}
 }
@@ -331,15 +367,104 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
 
+	a.runSSELoop(w, r, flusher, ch)
+}
+
+// sseFlushInterval bounds how long a coalesced type-change burst waits
+// before flushing. A write burst (e.g. a `git pull` landing many files,
+// or a cascade) produces many store events in quick succession; instead
+// of one wire frame per event we accumulate the affected types over this
+// window and emit one `entity:changed` frame per type. The window is a
+// hint-latency tradeoff — the client re-fetches a fraction of a second
+// later, invisible to users — not a correctness knob.
+const sseFlushInterval = 200 * time.Millisecond
+
+// runSSELoop is the per-connection event loop. It is split out from
+// handleSSE so tests can drive it with an in-memory writer.
+//
+// Entity events are gated per-connection: the connection's principal
+// read verdict for each entity type is resolved via the read gate and
+// cached. A pending set of "stale types" is accumulated and flushed on a
+// timer (coalescing bursts, AC5). Relation-change signals clear the
+// cached verdicts so the next entity event re-resolves against current
+// membership (RR-K2WKEJ). Non-entity events (refresh, git) pass through
+// ungated and immediately.
+func (a *App) runSSELoop(w io.Writer, r *http.Request, flusher http.Flusher, ch <-chan sseEvent) {
+	gate := readGateFromContext(r.Context())
+	verdicts := make(map[string]bool) // entityType -> visible; cached per connection
+	pending := make(map[string]struct{})
+
+	// One timer for the connection's lifetime, created stopped and reset
+	// to (re)arm the coalescing window. flushArmed tracks whether the
+	// timer is currently running so a burst doesn't keep resetting it.
+	flush := time.NewTimer(sseFlushInterval)
+	if !flush.Stop() {
+		<-flush.C
+	}
+	defer flush.Stop()
+	flushArmed := false
+	armFlush := func() {
+		if !flushArmed {
+			flush.Reset(sseFlushInterval)
+			flushArmed = true
+		}
+	}
+
 	for {
 		select {
-		case event := <-ch:
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, event.Data)
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			switch {
+			case event.RelationChange:
+				// Membership may have changed — drop cached verdicts so
+				// the next entity event re-resolves. Rare relative to
+				// entity writes; never written to the wire.
+				clear(verdicts)
+			case event.EntityType != "":
+				if a.entityTypeVisible(r.Context(), gate, verdicts, event.EntityType) {
+					pending[event.EntityType] = struct{}{}
+					armFlush()
+				}
+			default:
+				// Non-entity frame (refresh, git, git:status): pre-rendered, ungated.
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data)
+				flusher.Flush()
+			}
+		case <-flush.C:
+			for typ := range pending {
+				data, _ := json.Marshal(map[string]string{"type": typ})
+				fmt.Fprintf(w, "event: entity:changed\ndata: %s\n\n", data)
+			}
 			flusher.Flush()
+			clear(pending)
+			flushArmed = false
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+// entityTypeVisible returns whether the connection's principal may read
+// the type at all, caching the verdict for the connection's lifetime
+// (cleared on a relation change). DenyAll → not visible (withhold the
+// nudge). AllowAll / Query → visible (the principal can read at least
+// some entities of the type, so "the type changed, re-fetch" leaks
+// nothing beyond the gated list they could already poll).
+//
+// Fail-closed: an unresolvable / zero verdict withholds (RR-MTUW2N) —
+// the only signal on the wire is the type, so there is no error to
+// echo; the miss degrades to "no nudge", and the client's periodic
+// reconnect re-fetch reconciles.
+func (a *App) entityTypeVisible(ctx context.Context, gate readGate, cache map[string]bool, entityType string) bool {
+	if v, ok := cache[entityType]; ok {
+		return v
+	}
+	rqr := gate.ReadQuery(ctx, entityType)
+	visible := rqr.AllowAll || rqr.Query != nil
+	cache[entityType] = visible
+	return visible
 }
 
 // noCacheMiddleware sets no-cache headers on dynamic responses so that
