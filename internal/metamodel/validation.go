@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -244,8 +245,20 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 
 	case PropertyTypeInteger:
 		switch v := val.(type) {
-		case int, int64, float64:
-			// OK - YAML may parse integers as these types
+		case int, int64:
+			// OK
+		case float64:
+			// YAML parses bare integers (count: 3) as int, but a value
+			// with a fractional part (count: 3.5) arrives as float64.
+			// Accept only when it is integral — silently truncating 3.5
+			// to 3 would corrupt the value on a hand-edit typo.
+			if v != math.Trunc(v) {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid integer %v (must not have a fractional part)", v),
+				}
+			}
 		case string:
 			if _, err := strconv.Atoi(v); err != nil {
 				return &ValidationError{
@@ -542,7 +555,10 @@ func ParseDateValue(s string, propDef *PropertyDef) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("parsing time %q: cannot parse with format %q or common fallbacks", s, format)
 }
 
-// ParseIntegerValue parses an integer from various input types
+// ParseIntegerValue parses an integer from various input types. A
+// float64 is accepted only when it has no fractional part — truncating
+// 3.5 to 3 would silently corrupt the value (matching the integer
+// property-validation rule).
 func ParseIntegerValue(val interface{}) (int, error) {
 	switch v := val.(type) {
 	case int:
@@ -550,6 +566,9 @@ func ParseIntegerValue(val interface{}) (int, error) {
 	case int64:
 		return int(v), nil
 	case float64:
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("invalid integer %v (must not have a fractional part)", v)
+		}
 		return int(v), nil
 	case string:
 		return strconv.Atoi(v)
