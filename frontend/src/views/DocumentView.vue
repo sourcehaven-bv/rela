@@ -29,7 +29,6 @@ const { on, off } = useEvents()
 const docContent = ref<string>('')
 const loading = ref(true)
 const isCached = ref(false)
-const entityIds = ref<string[]>([])
 
 // Sanitized content for safe rendering
 const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
@@ -95,7 +94,6 @@ async function loadDocument(refresh = false) {
     })
     docContent.value = result.html
     isCached.value = result.cached
-    entityIds.value = result.entity_ids || []
   } catch (err: unknown) {
     const scriptErr = getScriptError(err)
     if (scriptErr) {
@@ -104,7 +102,6 @@ async function loadDocument(refresh = false) {
       uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
     docContent.value = ''
-    entityIds.value = []
   } finally {
     loading.value = false
   }

@@ -33,7 +33,6 @@ const selectedDoc = ref<string | null>(null)
 const docContent = ref<string>('')
 const loading = ref(false)
 const isCached = ref(false)
-const entityIds = ref<string[]>([]) // Entity IDs involved in current document
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
 // Sanitized content for safe rendering
@@ -110,7 +109,6 @@ async function loadDocument(refresh = false) {
     })
     docContent.value = result.html
     isCached.value = result.cached
-    entityIds.value = result.entity_ids || []
   } catch (err: unknown) {
     const scriptErr = getScriptError(err)
     if (scriptErr) {
@@ -119,7 +117,6 @@ async function loadDocument(refresh = false) {
       uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
     docContent.value = ''
-    entityIds.value = []
   } finally {
     loading.value = false
   }
