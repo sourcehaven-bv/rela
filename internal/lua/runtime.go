@@ -17,6 +17,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1154,12 +1156,29 @@ func luaValueToGo(lv lua.LValue) interface{} {
 	return luaValueToGoSeen(lv, make(map[*lua.LTable]bool))
 }
 
+// luaNumberToGo converts a Lua number to the most faithful Go type.
+// gopher-lua has a single float64-backed number type, but a value that
+// is integral and fits in int64 round-trips better as an int64 — an
+// entity ID, a ticket number, or epoch-nanos would otherwise lose its
+// integer type (and re-serialize in exponential / trailing-.0 form). The
+// reverse direction (GoToLuaValue) already preserves int/int64, so this
+// closes the lossy leg. Non-integral or out-of-int64-range values stay
+// float64. (Integers beyond 2^53 can't be held by the float64 LNumber in
+// the first place, so this is type-faithful up to that ceiling.)
+func luaNumberToGo(n lua.LNumber) interface{} {
+	f := float64(n)
+	if f == math.Trunc(f) && f >= math.MinInt64 && f <= math.MaxInt64 {
+		return int64(f)
+	}
+	return f
+}
+
 func luaValueToGoSeen(lv lua.LValue, seen map[*lua.LTable]bool) interface{} {
 	switch v := lv.(type) {
 	case lua.LBool:
 		return bool(v)
 	case lua.LNumber:
-		return float64(v)
+		return luaNumberToGo(v)
 	case lua.LString:
 		return string(v)
 	case *lua.LTable:
@@ -1631,45 +1650,41 @@ func (r *Runtime) luaSortEntities(ls *lua.LState) int {
 	return 1
 }
 
-// sortEntries sorts entity entries by their property value using bubble sort.
+// sortEntries sorts entity entries by their property value. Stable so
+// entries with equal sort keys keep their input order.
 func sortEntries(entries []sortableEntry, descending bool) {
-	for i := range len(entries) - 1 {
-		for j := range len(entries) - i - 1 {
-			if shouldSwapEntries(entries[j].prop, entries[j+1].prop, descending) {
-				entries[j], entries[j+1] = entries[j+1], entries[j]
-			}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if descending {
+			return entryLess(entries[j].prop, entries[i].prop)
 		}
-	}
+		return entryLess(entries[i].prop, entries[j].prop)
+	})
 }
 
-// shouldSwapEntries returns true if entries should be swapped for the desired order.
-func shouldSwapEntries(a, b lua.LValue, descending bool) bool {
+// entryLess reports whether a sorts before b. Two numeric values compare
+// numerically; otherwise both compare as strings.
+func entryLess(a, b lua.LValue) bool {
 	aStr, aNum, aIsNum := luaValueToSortable(a)
 	bStr, bNum, bIsNum := luaValueToSortable(b)
-
-	var aLess bool
 	if aIsNum && bIsNum {
-		aLess = aNum < bNum
-	} else {
-		aLess = aStr < bStr
+		return aNum < bNum
 	}
-
-	if descending {
-		return aLess // swap if a < b (we want larger first)
-	}
-	return !aLess && (aStr != bStr || aNum != bNum) // swap if a > b
+	return aStr < bStr
 }
 
-// luaValueToSortable converts a Lua value to sortable string and number representations.
+// luaValueToSortable converts a Lua value to sortable string and number
+// representations. A string is treated as numeric only when it parses
+// *entirely* as a number — strconv.ParseFloat over the trimmed value —
+// so "1.2.0" or "3 blind mice" sort lexicographically rather than being
+// silently reduced to their numeric prefix (1 and 3), which the old
+// fmt.Sscanf("%f") accepted.
 func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
 	switch val := v.(type) {
 	case lua.LNumber:
 		return "", float64(val), true
 	case lua.LString:
 		s := string(val)
-		// Try to parse as number for numeric sorting
-		var n float64
-		if _, err := fmt.Sscanf(s, "%f", &n); err == nil {
+		if n, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
 			return s, n, true
 		}
 		return s, 0, false
