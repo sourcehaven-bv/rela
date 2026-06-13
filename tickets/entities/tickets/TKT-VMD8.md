@@ -5,7 +5,7 @@ title: 'ACL read-side (PR 2/2): list endpoints + sidebar counts + pagination hea
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: done
 ---
 
 Second of a two-PR read-side ACL series. Builds on the per-entity gate landed in

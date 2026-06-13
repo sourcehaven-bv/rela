@@ -367,16 +367,70 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 	}
 }
 
-// scopedSortedEntities runs the shared list pipeline — load-by-type,
-// free-text intersection (?q=), structured filters (filter[...]), then the
-// configured sort — and returns the fully ordered result set *before*
-// pagination. Both handleV1ListEntities and handleV1EntityPosition call this,
-// so a list and its scope navigator are guaranteed to observe identical
-// ordering. The only error returned is a free-text search failure (HTTP 500
-// at the call site); everything else degrades to an empty/whole set as the
-// list endpoint always did.
+// errACLListQuery wraps a store.GraphQuery failure during ACL list
+// filtering so call sites can route it through writeGateError (500
+// acl_query_failed / 504 / silent-on-cancel) instead of mislabeling
+// it as a free-text search failure.
+var errACLListQuery = errors.New("acl list query failed")
+
+// errListLoad wraps a store iterator failure while loading the
+// unfiltered (AllowAll) list. Surfaced as 500 list_load_failed at the
+// call sites: before TKT-VMD8 a mid-stream error silently truncated
+// the result, which under ACL would make the AllowAll and Query paths
+// observably asymmetric (truncated-200 vs 500) for the same backend
+// fault — and a truncated list with authoritative-looking pagination
+// is worse than an error either way.
+var errListLoad = errors.New("list load failed")
+
+// scopedSortedEntities runs the shared list pipeline — ACL read scope,
+// load, free-text intersection (?q=), structured filters (filter[...]),
+// then the configured sort — and returns the fully ordered result set
+// *before* pagination. Both handleV1ListEntities and
+// handleV1EntityPosition call this, so a list and its scope navigator
+// are guaranteed to observe identical ordering (under ACL both operate
+// on the same visible subset — hidden entities don't occupy ordinals).
+//
+// ACL ordering contract (TKT-VMD8, RR-X56H + RR-3IO2): the read-scope
+// verdict resolves FIRST. DenyAll returns before the search backend,
+// filters, or sort run — a denied principal must not be able to probe
+// backend latency through ?q=. A composed Query loads the visible
+// subset via store.GraphQuery; search/filter/sort then operate on that
+// filtered slice only (search-after-ACL). AllowAll keeps the pre-ACL
+// load path byte-identical.
+//
+// Errors: free-text search failures surface verbatim (HTTP 500
+// search_failed at the call site); ACL query failures are wrapped in
+// errACLListQuery so call sites map them via writeGateError. Everything
+// else degrades to an empty/whole set as the list endpoint always did.
 func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error) {
-	entities := listFromStoreByTypes(ctx, a.Services(), []string{typeName})
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+
+	var entities []*entityPkg.Entity
+	switch {
+	case rqr.DenyAll:
+		return []*entityPkg.Entity{}, nil
+	case rqr.AllowAll:
+		// Inline iteration rather than listFromStoreByTypes: that
+		// helper swallows iterator errors into a partial slice, and
+		// the list pipeline must fail loud on both verdict paths.
+		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
+			}
+			entities = append(entities, e)
+		}
+	case rqr.Query == nil:
+		// Defensive: a zero ReadQueryResult would otherwise alias
+		// AllowAll. Fail loud instead of silently widening the list.
+		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
+	default:
+		for e, err := range a.Services().Store.GraphQuery(ctx, *rqr.Query) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+			}
+			entities = append(entities, e)
+		}
+	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
 	// present. Bleve scores are discarded — the list's configured sort wins
@@ -416,7 +470,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 
 	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		writeListPipelineError(w, r, err)
 		return
 	}
 
@@ -791,6 +845,33 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// writeListPipelineError maps a scopedSortedEntities / resolveScope
+// error to the right HTTP shape: ACL query failures route through
+// writeGateError, store-load failures surface as list_load_failed,
+// and anything else is the free-text search failure the pipeline
+// always surfaced. Shared by the list and _position handlers so the
+// two consumers of the pipeline can't drift.
+//
+// All branches log the raw error server-side and keep it out of the
+// response body (RR-372L / IB-review PR939 #1): a store or search
+// backend error string can name tables, columns, or index paths.
+func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, errACLListQuery):
+		writeGateError(w, r, err)
+	case errors.Is(err, errListLoad):
+		slog.Warn("dataentry: list load failed",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusInternalServerError, "list_load_failed",
+			"Loading entities failed", "check server logs")
+	default:
+		slog.Warn("dataentry: list free-text search failed",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusInternalServerError, "search_failed",
+			"Free-text search failed", "check server logs")
+	}
 }
 
 // writeGateError maps a readGate.PermitsRead / PermitsReadMany error
@@ -2439,21 +2520,8 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := a.State()
-	svc := a.Services()
-
-	// Build entity type counts as a fallback for items without filters.
-	typeCounts := make(map[string]int)
-	for _, entityType := range s.Meta.EntityTypes() {
-		n, err := svc.Store.CountEntities(r.Context(), store.EntityQuery{Type: entityType})
-		if err != nil {
-			typeCounts[entityType] = 0
-			continue
-		}
-		typeCounts[entityType] = n
-	}
 
 	counts := sidebarCounts{
-		typeCounts:  typeCounts,
 		filterCache: make(map[string]int),
 		app:         a,
 	}
@@ -2495,10 +2563,14 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 }
 
 // sidebarCounts caches sidebar entity counts, applying list- or kanban-
-// level filters when present. Unfiltered views fall back to the
-// type-level total.
+// level filters when present. Every count flows through the ACL read
+// scope (TKT-VMD8) — one code path regardless of NopACL vs. Declarative
+// (RR-2O27), so the sidebar can never disagree with the list it links
+// to. filterCache is a within-request memo keyed by list/kanban id; it
+// is safe precisely because a sidebarCounts value lives for one request
+// (one principal) — a longer-lived cache would alias counts across
+// principals (RR-BZ4M).
 type sidebarCounts struct {
-	typeCounts  map[string]int
 	filterCache map[string]int // key: "list:<id>" or "kanban:<id>"
 	app         *App
 }
@@ -2528,13 +2600,55 @@ func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban
 }
 
 // countWithFilters returns the count of entities of the given type that
-// pass the supplied filters. When filters is empty, the precomputed
-// type total is returned directly.
+// are visible to the requesting principal AND pass the supplied config
+// filters. Ordering is ACL → config filter → count (TKT-VMD8 AC7).
+//
+// Without config filters the count comes straight from GraphCount —
+// identical cost to the old Store.CountEntities for the AllowAll case.
+// With config filters the visible entities are loaded and filtered
+// in-memory; performance scales with the visible-set size (RR-REQW —
+// for visible sets >10k prefer pre-filtering via entity_type in nav
+// config, or file the follow-up that pushes filters into GraphQuery).
+//
+// Backend errors degrade to 0 with a warning — parity with the old
+// CountEntities error path: a broken sidebar count must not take the
+// whole sidebar down, and the list endpoint surfaces the real error.
+//
+// ReadQuery (one member-of walk reuse via the request-scoped
+// acl.Request) and the GraphQuery/GraphCount run once per nav item —
+// two lists over the same type recompute rather than share. Accepted:
+// filterCache keys on list/kanban id, not (type, filters); a
+// (type, filters)-keyed memo is the obvious upgrade if sidebar
+// latency ever warrants it.
 func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig) int {
-	if len(filters) == 0 {
-		return c.typeCounts[entityType]
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
+	if rqr.DenyAll {
+		return 0
 	}
-	entities := listFromStoreByTypes(ctx, c.app.Services(), []string{entityType})
+	q := store.GraphQuery{EntityType: entityType}
+	if rqr.Query != nil {
+		q = *rqr.Query
+	}
+
+	if len(filters) == 0 {
+		matched, _, err := c.app.Services().Store.GraphCount(ctx, q)
+		if err != nil {
+			slog.Warn("sidebar: GraphCount failed; count degraded to 0",
+				"entity_type", entityType, "error", err)
+			return 0
+		}
+		return matched
+	}
+
+	var entities []*entityPkg.Entity
+	for e, err := range c.app.Services().Store.GraphQuery(ctx, q) {
+		if err != nil {
+			slog.Warn("sidebar: GraphQuery failed; count degraded to 0",
+				"entity_type", entityType, "error", err)
+			return 0
+		}
+		entities = append(entities, e)
+	}
 	return len(applyFilters(entities, filters))
 }
 

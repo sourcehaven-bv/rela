@@ -38,6 +38,7 @@ func TestDiscover_ACLPresent_LoadsDeclarative(t *testing.T) {
 	writePolicy(t, root, `roles:
   admin:
     write: ["*"]
+    read: ["*"]
 assignments:
   jeroen: admin
 `)
@@ -79,6 +80,7 @@ func TestWithACL_OverridesLoadedPolicy(t *testing.T) {
 	writePolicy(t, root, `roles:
   admin:
     write: ["*"]
+    read: ["*"]
 assignments:
   jeroen: admin
 `)

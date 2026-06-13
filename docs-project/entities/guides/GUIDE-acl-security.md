@@ -107,9 +107,20 @@ attribution chain. This is by design:
 If you're debugging "why was alice denied X?" — read the audit log
 on the server, not the response body in the browser.
 
-## Read-path gating: per-entity responses
+## Read-path gating
 
-ACL v1 (TKT-VQGN) gates every per-entity-response code path:
+Read-side enforcement landed in two PRs with deliberately different
+deny models:
+
+- **Per-entity responses** (TKT-VQGN): deny is shaped exactly like
+  not-found — a 404 indistinguishable from a nonexistent id.
+- **Aggregates** (TKT-VMD8): lists, sidebar counts, and pagination
+  metadata are shaped exactly like "the hidden entities don't exist" —
+  filtered sets, filtered totals, no cardinality residue.
+
+### Per-entity responses (TKT-VQGN)
+
+ACL v1 gates every per-entity-response code path:
 
 | Surface | Hidden-target behaviour |
 |---|---|
@@ -146,6 +157,88 @@ operator debugging.
   surfaces (e.g. nested includes in a list response) MUST go through
   the same gate.
 
+### Lists, sidebar counts, pagination (TKT-VMD8)
+
+Anything that enumerates entities of a type returns only the visible
+subset, with no leak surface revealing hidden cardinality. The list
+pipeline (`scopedSortedEntities`, shared by `GET /api/v1/<plural>` and
+`/api/v1/_position`) resolves the read scope **first**:
+
+- **AllowAll** — a global role grants read on the type; the pre-ACL
+  load path runs unchanged.
+- **DenyAll** — no role grants any read; the pipeline returns empty
+  **before** the search backend, structured filters, or sort run. A
+  denied principal cannot probe backend latency (or induce index
+  load) through `?q=`.
+- **Query** — read is conferred via role-relations; a composed
+  `store.GraphQuery` selects the visible subset, and search / filter /
+  sort operate on that filtered slice only.
+
+Every pagination surface derives from the post-filter total:
+`data.length`, `meta.total`, `meta.has_more`, `X-Total-Count`,
+`X-Page`, `X-Per-Page`, and the `Link` header rels — `rel="next"` is
+absent when no *visible* next page exists, even when hidden pages
+exist after it.
+
+Sidebar counts go through the same gate, single-mode: there is no
+"ACL off" code branch (a count path that only runs under ACL is a
+count path that silently drifts). `listCount` / `kanbanCount` always
+resolve the read scope, then `GraphCount` (no config filters) or
+GraphQuery-then-filter (with config filters). Ordering is always
+ACL → config filter → count, so a sidebar badge can never disagree
+with the list it links to.
+
+### Invariants downstream maintainers MUST preserve (aggregates)
+
+- **The DenyAll short-circuit precedes the search backend.** A
+  regression test pins the searcher at zero calls on the deny path.
+  New work in the list pipeline must keep the scope resolution first.
+- **Search runs after ACL, on the filtered slice.** This ordering is
+  the contract the future `/_search` ticket builds on; a mock-asserted
+  test pins GraphQuery-before-search.
+- **No count from an unfiltered source.** Any new aggregate (badge,
+  dashboard card, export count) must derive from the gated set, never
+  from `Store.CountEntities` on a principal-reachable path.
+- **Write grants imply read grants.** The policy loader rejects a
+  role with `write: [x]` but no covering `read` entry at boot
+  (structured error naming the role and type). Downstream affordance
+  logic may therefore assume "writable ⇒ readable" — a DenyAll list
+  response always carries `_actions.create == false`. The invariant
+  covers the `write:` list, which is the only field that authorizes
+  writes; the affordance grant maps (`fields:` / `options:` /
+  `relations:`) restrict surfaces within an authorized write and
+  never confer writability by themselves, so they are intentionally
+  outside the check.
+
+### Caching: per-principal responses
+
+Under ACL, `/api/` responses differ per principal. Two layers keep
+caches from leaking one principal's view to another:
+
+- All `/api/` responses already carry
+  `Cache-Control: no-cache, no-store, must-revalidate`.
+- When `--principal-header` is configured, responses also carry
+  `Vary: <that header>` — defense in depth for any cache layer that
+  ignores `no-store`.
+
+### Sidebar menu structure is principal-independent
+
+The sidebar's *structure* (groups, labels, links) reveals metamodel
+shape, not data shape, and is served identically to every principal —
+only the *counts* are gated. Hiding whole menu entries per principal
+is a possible future tightening, deliberately not done here: the
+metamodel is not a secret (it's served by `/api/v1/_schema`), and a
+divergent menu per principal complicates SPA caching for no
+confidentiality gain today.
+
+### Sidebar config-filter performance caveat
+
+A sidebar list with `filters:` evaluates them in-memory after the ACL
+GraphQuery — cost scales with the principal's visible-set size. For
+visible sets beyond ~10k entities per type, prefer narrowing the nav
+entry to a dedicated entity type, or file the follow-up that pushes
+config filters down into GraphQuery.
+
 ## ACL fail-loud and middleware scope
 
 The `attachACLRequest` middleware:
@@ -166,25 +259,26 @@ The `attachACLRequest` middleware:
 
 ## What still leaks (deferred)
 
-- **List endpoints** (`GET /api/v1/<plural>`) — every principal
-  with reach to the URL sees every entity of the type, regardless
-  of role grant. TKT-VMD8 (PR 2/2) closes this with the same
-  composable `Request.ReadQuery` infrastructure the per-entity
-  path uses.
-- **Sidebar counts** (`listCount`, `kanbanCount`) — same; TKT-VMD8.
-- **`/api/v1/_position`** — takes an `id` but resolves a scope walk,
-  so it's list-derived. A hidden id appears in the scope today and
-  the response leaks its ordinal. Scoped to a follow-up after
-  TKT-VMD8 lands.
+- **`/api/v1/_position` per-id semantics** — `_position` is gated on
+  both scope sources: list scopes share the gated list pipeline, and
+  search scopes filter the search result through the read gate before
+  computing ordinals, so totals and prev/next always come from the
+  principal's visible subset. What remains scoped to the follow-up
+  ticket: the per-id gate on the *requested* id and the
+  neighbor-disclosure analysis (a visible neighbor's id confirms a
+  visible entity, but gap analysis around hidden entities needs its
+  own treatment).
 - **`/_search`** — the bleve / pgstore search backends need their
-  own query-rewrite. Separate ticket.
+  own query-rewrite. Separate ticket; it builds on the
+  search-after-ACL ordering contract pinned above.
 - **SSE `/api/v1/_events`** — the broker today fans `{type, id}` to
   every subscriber. Per-subscriber filtering is its own ticket.
 - **MCP transport** — tracked as TKT-G3PPD.
 
-For threat-modelling purposes today: assume any principal with API
-reach can enumerate every entity via the LIST endpoint (PR 2 closes
-this). Per-entity GET, write, and include channels are tight.
+For threat-modelling purposes today: per-entity GET, write, include,
+list, sidebar, and pagination channels are tight. The global search
+endpoint and the SSE event stream still reveal `{type, id}`-level
+existence to any connected principal.
 
 ## Where to read next
 

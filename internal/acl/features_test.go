@@ -234,8 +234,8 @@ func TestFeature_UC6_DelegateXRelationWrite(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  admin:  { write: ["*"], permissions: [delegate-editor] }
-  editor: { write: [ticket] }
+  admin:  { write: ["*"], read: ["*"], permissions: [delegate-editor] }
+  editor: { write: [ticket], read: [ticket] }
 assignments:
   jeroen: admin
   alice:  editor

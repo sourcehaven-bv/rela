@@ -93,6 +93,7 @@ func TestLoadPolicy_UnknownKey_LogsWarning(t *testing.T) {
 roles:
   admin:
     write: ["*"]
+    read: ["*"]
 unknown_top_level: oops
 also_unknown:
   nested: true
@@ -160,6 +161,7 @@ func TestLoadPolicy_AffordanceGrants(t *testing.T) {
 roles:
   triager:
     write: [ticket]
+    read: [ticket]
     fields:
       ticket:
         - field: status
@@ -295,7 +297,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			yaml := "roles:\n  triager:\n    write: [ticket]\n" + tc.fieldsBlock
+			yaml := "roles:\n  triager:\n    write: [ticket]\n    read: [ticket]\n" + tc.fieldsBlock
 			p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
 			if err != nil {
 				t.Fatalf("LoadPolicy: %v", err)
@@ -395,6 +397,89 @@ func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
 			_, err := acl.LoadPolicy(path)
 			if err == nil {
 				t.Fatalf("LoadPolicy: expected error on blank role_relations key; got nil")
+			}
+		})
+	}
+}
+
+// TKT-VMD8 AC8: a role granting write on a type it cannot read is
+// rejected at load with a structured error naming the role and type.
+// The invariant lets every downstream read-side consumer assume
+// "writable implies readable" — without it a principal gets an empty
+// list with a working Create button (RR-W2J6).
+func TestLoadPolicy_WriteWithoutRead_Rejected(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+		// substrings the error must carry so the operator can find
+		// the offending role without reading source code.
+		wantInErr []string
+	}{
+		{
+			name:      "write without read rejected",
+			yaml:      "roles:\n  triager:\n    write: [ticket]\n",
+			wantErr:   true,
+			wantInErr: []string{"triager", "ticket", "read"},
+		},
+		{
+			name:      "wildcard write without wildcard read rejected",
+			yaml:      "roles:\n  admin:\n    write: [\"*\"]\n    read: [ticket]\n",
+			wantErr:   true,
+			wantInErr: []string{"admin", "read"},
+		},
+		{
+			name:    "write covered by exact read ok",
+			yaml:    "roles:\n  editor:\n    write: [ticket]\n    read: [ticket]\n",
+			wantErr: false,
+		},
+		{
+			name:    "write covered by wildcard read ok",
+			yaml:    "roles:\n  editor:\n    write: [ticket]\n    read: [\"*\"]\n",
+			wantErr: false,
+		},
+		{
+			name:    "wildcard write covered by wildcard read ok",
+			yaml:    "roles:\n  admin:\n    write: [\"*\"]\n    read: [\"*\"]\n",
+			wantErr: false,
+		},
+		{
+			name:    "read-only role ok",
+			yaml:    "roles:\n  viewer:\n    read: [ticket]\n",
+			wantErr: false,
+		},
+		{
+			name:    "empty role ok",
+			yaml:    "roles:\n  nobody: {}\n",
+			wantErr: false,
+		},
+		{
+			// Affordance grants restrict surfaces within a write the
+			// Write list authorized; they never authorize by
+			// themselves, so they are intentionally outside the
+			// write⊆read invariant (see Validate godoc).
+			name: "affordance-only role without read ok",
+			yaml: "roles:\n  shaper:\n    fields:\n      ticket:\n        - field: status\n" +
+				"    relations:\n      ticket:\n        - relation: implements\n          create: true\n",
+			wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := acl.LoadPolicy(writeTempPolicy(t, tc.yaml))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("LoadPolicy: expected write-without-read rejection; got nil")
+				}
+				for _, want := range tc.wantInErr {
+					if !contains(err.Error(), want) {
+						t.Errorf("error %q missing substring %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadPolicy: unexpected error: %v", err)
 			}
 		})
 	}

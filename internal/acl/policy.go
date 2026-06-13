@@ -259,21 +259,38 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // policy. Run automatically by [LoadPolicy] / [LoadPolicyBytes].
 // Operators can also call it before persisting a generated policy.
 //
-// Current checks (RR-NIGK):
+// Current checks (RR-NIGK, RR-W2J6):
 //
 //   - InheritRolesThrough entries must be non-empty and non-whitespace.
 //     A blank entry would expand ancestor sets through every relation
 //     type (StoreGraph treats RelationQuery.Type=="" as "all relations"),
 //     silently turning a typo into a containment widening.
+//
 //   - RoleRelations keys must be non-empty and non-whitespace, for the
 //     same reason — an empty key would gate "all relation writes" on
 //     a delegate permission, breaking writes the operator didn't mean
 //     to gate.
 //
+//   - Every role's write grants must be covered by its read grants
+//     (write ⊆ read, wildcard-aware). A role that can create or update
+//     a type it cannot read produces incoherent UX (empty list with a
+//     working Create button) and would force every affordance consumer
+//     to handle the combination. Rejecting it at load lets downstream
+//     read-side logic assume "writable implies readable" (RR-W2J6).
+//
+//     Scope: the invariant covers [RoleDef.Write] — the only field
+//     that authorizes writes (both entity and relation authz resolve
+//     through decideFromAttrs against Write). The affordance grant
+//     maps (Fields / Options / Relations) are deliberately NOT
+//     checked: they restrict field/option/relation surfaces *within*
+//     a write the Write list already authorized and never confer
+//     writability by themselves, so a fields-only role without read
+//     grants is inert, not incoherent.
+//
 // Validation is intentionally narrow: misspelled role names, unknown
 // entity types in grants, etc. remain warnings (or analyze-tool
 // findings) per the "tolerant by design" stance. Security-relevant
-// invariants like the two above are the exception.
+// invariants like the ones above are the exception.
 func (p *Policy) Validate() error {
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
@@ -283,6 +300,20 @@ func (p *Policy) Validate() error {
 	for k := range p.RoleRelations {
 		if isBlank(k) {
 			return errors.New("role_relations: relation type key must not be empty or whitespace")
+		}
+	}
+	for name, role := range p.Roles {
+		for _, w := range role.Write {
+			if !roleGrantsRead(role, w) {
+				hint := fmt.Sprintf("add %q (or \"*\")", w)
+				if w == "*" {
+					hint = `add "*"`
+				}
+				return fmt.Errorf(
+					"roles.%s: grants write on %q without a covering read grant; "+
+						"%s to the role's read list — a principal must "+
+						"be able to read every type it can write", name, w, hint)
+			}
 		}
 	}
 	return nil

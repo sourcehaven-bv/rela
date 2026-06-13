@@ -162,6 +162,16 @@ type App struct {
 	// here when --principal-header is set.
 	principalResolver PrincipalResolver
 
+	// principalHeader is the name of the HTTP header that carries the
+	// principal identity (the --principal-header flag value), or ""
+	// when no header is configured. Used by noCacheMiddleware to emit
+	// `Vary: <header>` on /api/ responses — under ACL those responses
+	// are per-principal, and a shared cache keyed only on the URL
+	// would serve principal A's filtered list to principal B
+	// (TKT-VMD8 AC10, RR-VDTW). Set via SetPrincipalHeader before
+	// NewRouter.
+	principalHeader string
+
 	// fieldResolver decides per-entity field, option, and
 	// relation-meta affordances surfaced as `_fields` / `_relations`
 	// on the wire and enforced on writes. Required (never nil) —
@@ -268,6 +278,14 @@ func (a *App) SetSecurityConfig(cfg SecurityConfig) error {
 // [defaultPrincipalResolver] behavior.
 func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 	a.principalResolver = r
+}
+
+// SetPrincipalHeader records the name of the HTTP header that carries
+// the principal identity so API responses can declare `Vary` on it.
+// Call alongside [App.SetPrincipalResolver] (before [App.NewRouter])
+// when wiring a [HeaderPrincipalResolver]; leave unset otherwise.
+func (a *App) SetPrincipalHeader(name string) {
+	a.principalHeader = name
 }
 
 // NewApp creates and initializes an App. Callers pass in the

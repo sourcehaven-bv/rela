@@ -169,6 +169,9 @@ func main() {
 		dataentry.EnvPrincipalResolver(),
 		dataentry.HeaderPrincipalResolver(f.principalHeader),
 	))
+	// Vary on the identity header: under ACL, API responses are
+	// per-principal (TKT-VMD8). No-op when the flag is empty.
+	app.SetPrincipalHeader(f.principalHeader)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 
