@@ -535,24 +535,15 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 		On:   automation.Trigger{Entity: []string{"checklist"}, Created: true},
 		Do:   []automation.Action{{Set: "status", Value: onRequirementMarker}},
 	}
-	mgr, _ := newManager(t, []automation.Automation{parentAuto, childAuto})
+	mgr, cs := newManager(t, []automation.Automation{parentAuto, childAuto})
 
 	// NOTE: childAuto WILL fire here, because the cascade's own
 	// Runner.Process re-evaluates the engine for cascade-created
 	// entities at the runner level — that's intentional (the
 	// recursion limit is MaxDepth). We're testing the *Manager-level*
 	// no-recursion: the cascade's createEntity does NOT loop back
-	// through Manager.CreateEntity, which would double-fire
-	// automation. To assert that, we count how many times the
-	// "set-status" action ran. With the bug, it would have fired
-	// twice (once via cascade's engine eval, once via Manager's), so
-	// updates would be higher.
-	//
-	// The simpler way to pin the Manager-level invariant: assert that
-	// the cascade-created entity arrived via createCore (which
-	// validates and writes once) — which means exactly one
-	// CreateEntity call per cascade-spawned entity. If Manager were
-	// recursively invoked, we'd see additional Create+Update pairs.
+	// through Manager.CreateEntity, which would re-dispatch the
+	// automation engine and double-fire childAuto.
 	e := entity.New("", "requirement")
 	e.SetString("title", "Parent")
 	result, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
@@ -562,12 +553,20 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 	if len(result.EntitiesCreated) != 1 {
 		t.Fatalf("EntitiesCreated len = %d, want 1", len(result.EntitiesCreated))
 	}
-	// The trigger entity is "requirement" — childAuto fires on the
-	// cascade-created checklist exactly once (through Runner), and
-	// updates that checklist's status. We tolerate that. The
-	// no-Manager-recursion invariant is that the test completes
-	// without exceeding MaxDepth (which would happen if Manager
-	// re-entered itself recursively).
+
+	// Pin the invariant through store-call counts. Single-dispatch
+	// shape: requirement create (1) + cascade checklist create (1) +
+	// childAuto's Set writing via the Create→conflict→Update upsert
+	// (1 create attempt + 1 update) = 3 creates, 1 update. If the
+	// cascade re-entered Manager.CreateEntity, childAuto would be
+	// dispatched a second time, adding another conflict-create +
+	// update pair (4/2).
+	if got := cs.creates.Load(); got != 3 {
+		t.Errorf("store CreateEntity calls = %d, want 3 (recursion would add a 4th)", got)
+	}
+	if got := cs.updates.Load(); got != 1 {
+		t.Errorf("store UpdateEntity calls = %d, want 1 (recursion would double-fire childAuto)", got)
+	}
 }
 
 // recordingScripts captures the mutator passed to Run so tests can

@@ -247,8 +247,16 @@ func TestLuaHTTP_ConvenienceWithOpts(t *testing.T) {
 
 func TestLuaHTTP_TimeoutError(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(2 * time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Out-wait the client's 0.1s timeout, but return as soon as
+		// the client gives up: server.Close blocks on in-flight
+		// handlers, so a fixed sleep here costs ~2s of wall time per
+		// run for nothing.
+		select {
+		case <-time.After(2 * time.Second):
+		case <-r.Context().Done():
+			return
+		}
 		_, _ = w.Write([]byte("too late"))
 	}))
 	t.Cleanup(server.Close)
