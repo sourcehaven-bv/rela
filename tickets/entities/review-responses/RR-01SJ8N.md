@@ -1,0 +1,9 @@
+---
+id: RR-01SJ8N
+type: review-response
+title: RelationChange did not actually refresh principal membership (acl.Request.Globals memoized); mocked test gave false confidence
+finding: 'Code review S1: the per-connection gate was captured once from r.Context() at connect; acl.Request.Globals memoizes the member-of closure for the Request lifetime. Clearing the verdict cache on RelationChange re-called ReadQuery but against the FROZEN Globals — a mid-connection member-of change was NOT picked up until reconnect, contradicting the comments/docs/AC6 claim. Impact was bounded to per-type timing (no content leak — REST re-fetch builds a fresh Request), but the claim was false. The TestSSEACL_VerdictCachedAndInvalidated mock (counting gate) passed while the real Globals path stayed stale — false confidence in exactly the gap.'
+severity: significant
+resolution: 'Made the claim TRUE: on RelationChange, runSSELoop now re-derives a FRESH read gate via a.freshReadGate → d.ForPrincipal (a new acl.Request whose member-of closure is walked against the current graph). The re-derive + cache-clear + pending re-evaluation are coalesced into the flush window (one re-walk per connection per burst, not per edge — also resolves S2). Entity events arriving while a re-gate is pending are buffered and re-checked against the fresh gate on flush (so a newly-visible type is delivered, a newly-hidden type withheld). New TestSSEACL_MembershipChangeReGates drives a REAL acl.Declarative: alice gains ticket-read by joining a conferring group mid-connection (member-of edge), and the test asserts she starts receiving ticket nudges WITHOUT reconnecting — the genuine Globals re-walk the mock couldn''t show. The old mock test (renamed TestSSEACL_VerdictCached) is kept but scoped to pinning the cache-clear mechanism, with a comment noting app.acl==nil keeps the mock. Race-clean (-race -count=2). Docs updated to describe the fresh-gate re-derive accurately.'
+status: addressed
+---
