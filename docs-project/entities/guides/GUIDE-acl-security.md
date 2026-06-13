@@ -88,11 +88,18 @@ collapses to a single `entity:changed` frame carrying the entity
 `readGate.ReadQuery(type)`: a connection receives the frame only if its
 principal's verdict for that type is not `DenyAll` (AllowAll or a
 relation-scoped Query both deliver). The type verdict is resolved once
-per connection and cached; relation writes (which can change a
-principal's read scope — member-of / role-relation / containment edges)
-clear the cache so the next event re-resolves against current
-membership. A burst of writes is coalesced into one nudge per type per
-window.
+per connection and cached. A relation write (member-of / role-relation /
+containment edge — the types that can change a principal's read scope)
+re-derives a **fresh** read gate for the connection: a new `acl.Request`
+whose member-of closure is walked against the current graph, so a
+principal who gains or loses a group membership mid-connection starts or
+stops receiving a type's nudges without reconnecting. (The connection's
+original request memoizes its membership closure for its lifetime; the
+re-derive is what keeps the verdict honest — without it, only the
+per-entity inbound query would refresh, not the principal's own group
+membership.) Both the re-derive and the nudges are coalesced into one
+flush window, so a bulk relation import triggers one membership re-walk
+per connection, not one per edge.
 
 Why per-type rather than per-id: the wire never carries an entity id,
 so the feed cannot be a per-entity existence oracle for entities a
