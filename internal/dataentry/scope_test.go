@@ -135,6 +135,7 @@ func TestV1Position(t *testing.T) {
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-003", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		scope := ScopeDescriptor{Source: "search", Q: "ticket"}
 		_, pos := getPosition(t, app, "TKT-001", scope)
@@ -161,6 +162,7 @@ func TestV1Position(t *testing.T) {
 			{ID: "FEAT-001", Type: "feature"},
 			{ID: "TKT-003", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		scope := ScopeDescriptor{Source: "search", Q: "anything"}
 		_, pos := getPosition(t, app, "FEAT-001", scope)
@@ -192,6 +194,7 @@ func TestV1Position(t *testing.T) {
 			{ID: "FEAT-001", Type: "feature"},
 			{ID: "TKT-003", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		// type=ticket drops FEAT-001, leaving [TKT-001, TKT-003].
 		scope := ScopeDescriptor{Source: "search", Type: "ticket", Q: "anything"}

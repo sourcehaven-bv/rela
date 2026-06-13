@@ -109,12 +109,19 @@ type App struct {
 	store         store.Store
 	entityManager entitymanager.EntityManager
 	searcher      search.Searcher
-	tracer        tracer.Tracer
-	validator     validator.Validator
-	templater     templating.Templater
-	cfgLoader     config.Loader
-	kv            state.KV
-	acl           acl.ACL
+	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
+	// executeQuery routes free-text searches through it so /_search
+	// and the _position search scope only ever see hits the request
+	// principal may read. Per-backend wiring: search.NewVisible over
+	// the regular searcher on fs/memory builds, pgstore-native on the
+	// postgres build.
+	visibleSearcher search.VisibleSearcher
+	tracer          tracer.Tracer
+	validator       validator.Validator
+	templater       templating.Templater
+	cfgLoader       config.Loader
+	kv              state.KV
+	acl             acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -306,6 +313,7 @@ func NewApp(
 	st store.Store,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
+	visibleSearcher search.VisibleSearcher,
 	aclImpl acl.ACL,
 	fieldResolver FieldVerdictResolver,
 	auditSink audit.Audit,
@@ -326,6 +334,9 @@ func NewApp(
 	}
 	if searcher == nil {
 		return nil, errors.New("dataentry.NewApp: searcher is required")
+	}
+	if visibleSearcher == nil {
+		return nil, errors.New("dataentry.NewApp: visibleSearcher is required (wire appbuild's Services.VisibleSearcher)")
 	}
 	if aclImpl == nil {
 		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
@@ -412,21 +423,22 @@ func NewApp(
 
 	scriptEngine := script.NewEngine()
 	app := &App{
-		fs:            fs,
-		paths:         paths,
-		store:         st,
-		entityManager: em,
-		searcher:      searcher,
-		tracer:        trc,
-		validator:     val,
-		templater:     templater,
-		cfgLoader:     cfgLoader,
-		kv:            kv,
-		acl:           aclImpl,
-		broker:        newEventBroker(),
-		scriptEngine:  scriptEngine,
-		fieldResolver: fieldResolver,
-		auditSink:     auditSink,
+		fs:              fs,
+		paths:           paths,
+		store:           st,
+		entityManager:   em,
+		searcher:        searcher,
+		visibleSearcher: visibleSearcher,
+		tracer:          trc,
+		validator:       val,
+		templater:       templater,
+		cfgLoader:       cfgLoader,
+		kv:              kv,
+		acl:             aclImpl,
+		broker:          newEventBroker(),
+		scriptEngine:    scriptEngine,
+		fieldResolver:   fieldResolver,
+		auditSink:       auditSink,
 	}
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).

@@ -127,7 +127,7 @@ func main() {
 
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
-		svc.EntityManager(), svc.Searcher(), svc.ACL(),
+		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
 	)

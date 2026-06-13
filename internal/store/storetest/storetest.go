@@ -145,8 +145,9 @@ func countRelations(t *testing.T, s store.Store) int {
 
 // RunAll runs the full conformance suite.
 // The optional SearchFactory is used for search tests; if nil, search tests are skipped.
+// The optional VisibleSearchFactory is used for ACL-scoped search tests; if nil, they are skipped.
 // Capabilities gates optional feature tests (e.g. attachments).
-func RunAll(t *testing.T, f Factory, sf SearchFactory, caps Capabilities) {
+func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory, caps Capabilities) {
 	t.Run("Entity", func(t *testing.T) { RunEntityTests(t, f) })
 	t.Run("Relation", func(t *testing.T) { RunRelationTests(t, f) })
 	t.Run("Query", func(t *testing.T) { RunQueryTests(t, f) })
@@ -154,6 +155,9 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, caps Capabilities) {
 	t.Run("Pagination", func(t *testing.T) { RunPaginationTests(t, f) })
 	if sf != nil {
 		t.Run("Search", func(t *testing.T) { RunSearchTests(t, sf) })
+	}
+	if vsf != nil {
+		t.Run("VisibleSearch", func(t *testing.T) { RunVisibleSearchTests(t, vsf) })
 	}
 	if caps.Attachments {
 		t.Run("Attachment", func(t *testing.T) { RunAttachmentTests(t, f) })

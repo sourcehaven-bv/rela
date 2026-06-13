@@ -163,6 +163,19 @@ func searchFactory(t *testing.T) (store.Store, search.Searcher) {
 	return s, search.New(s, backend)
 }
 
+// visibleSearchFactory exercises the NATIVE implementation: the store
+// itself is the search.VisibleSearcher (visibility composed into the
+// SQL), with the generic Service as the ungated parity baseline.
+func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.VisibleSearcher) {
+	t.Helper()
+	pool := newScopedPool(t)
+	backend := pgstore.NewSearchBackend(pool)
+	s, err := pgstore.New(pool, pgstore.WithObserver(backend))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	return s, search.New(s, backend), s
+}
+
 // fuzzFactory adapts the per-schema helper to storetest.FuzzFactory.
 //
 // The FuzzFactory signature takes no testing handle and runs inside f.Fuzz

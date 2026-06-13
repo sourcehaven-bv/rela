@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 )
 
 // readGate is the dataentry-package consumer-side interface for ACL
@@ -25,6 +26,13 @@ import (
 //     pipeline (scopedSortedEntities) and the sidebar counts to decide
 //     between unfiltered (AllowAll), empty (DenyAll), and a composed
 //     store.GraphQuery that selects the visible subset (TKT-VMD8).
+//   - SearchScope(ctx, types) — the mixed-type search scope: ReadQuery
+//     resolved over every metamodel type, shaped for
+//     search.VisibleSearcher (TKT-BA8BSX). The gate owns the nop/ACL
+//     distinction: the nop gate returns the wildcard-allow scope so
+//     off-metamodel entities stay visible exactly as before ACL
+//     existed, while the ACL gate emits per-type entries only — an
+//     entity type the metamodel doesn't know fails closed.
 //
 // None of the methods verify existence — they answer "the policy
 // permits reading this id IF it exists". Callers that need existence
@@ -37,6 +45,7 @@ type readGate interface {
 	PermitsRead(ctx context.Context, entityType, entityID string) (bool, error)
 	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
 	ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult
+	SearchScope(ctx context.Context, types []string) map[string]search.TypeScope
 }
 
 // aclReadGate is the production implementation of readGate. Wraps a
@@ -70,6 +79,26 @@ func (g aclReadGate) ReadQuery(ctx context.Context, entityType string) acl.ReadQ
 	return g.req.ReadQuery(ctx, entityType)
 }
 
+// SearchScope maps per-type ReadQuery verdicts onto the
+// search.TypeScope shape: AllowAll and Query verdicts become entries,
+// DenyAll types are simply absent (absence IS the deny in the seam's
+// fail-closed lookup), and no wildcard is ever emitted — an entity
+// type outside the metamodel cannot be granted by a policy, so it
+// must not be visible through search either.
+func (g aclReadGate) SearchScope(ctx context.Context, types []string) map[string]search.TypeScope {
+	scope := make(map[string]search.TypeScope, len(types))
+	for _, typ := range types {
+		rqr := g.req.ReadQuery(ctx, typ)
+		switch {
+		case rqr.AllowAll:
+			scope[typ] = search.TypeScope{AllowAll: true}
+		case rqr.Query != nil:
+			scope[typ] = search.TypeScope{Query: rqr.Query}
+		}
+	}
+	return scope
+}
+
 // nopReadGate answers "permitted" for every probe. It's the gate the
 // handlers see under NopACL / ReadOnlyACL — the wire response shape
 // is then byte-identical to today's pre-ACL behavior, which is what
@@ -90,6 +119,15 @@ func (nopReadGate) PermitsReadMany(_ context.Context, _ string, ids []string) (m
 
 func (nopReadGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 	return acl.ReadQueryResult{AllowAll: true}
+}
+
+// SearchScope under no ACL is the wildcard-allow scope — NOT one
+// AllowAll entry per metamodel type. The difference is entities whose
+// type is absent from the metamodel (permissive storage tolerates
+// them): they were searchable before ACL existed and must stay so
+// when no policy is configured (NopACL byte-parity, TKT-BA8BSX AC9).
+func (nopReadGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
+	return map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
 }
 
 // readGateCtxKey is the unexported type for context.WithValue. The

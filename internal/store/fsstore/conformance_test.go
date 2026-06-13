@@ -37,8 +37,19 @@ func searchFactory(t *testing.T) (store.Store, search.Searcher) {
 	return s, search.New(s, idx)
 }
 
+// visibleSearchFactory derives the generic scope-filtering wrapper from
+// the same store+searcher pair, per the TKT-BA8BSX wiring rule: simple
+// backends get search.NewVisible, smart backends implement natively.
+func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.VisibleSearcher) {
+	t.Helper()
+	s, searcher := searchFactory(t)
+	v, err := search.NewVisible(searcher, s)
+	require.NoError(t, err)
+	return s, searcher, v
+}
+
 func TestConformance(t *testing.T) {
-	storetest.RunAll(t, factory, searchFactory, storetest.Capabilities{Attachments: true})
+	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{Attachments: true})
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {
