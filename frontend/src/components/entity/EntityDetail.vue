@@ -6,7 +6,7 @@ import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
-import type { ViewResponse, ViewSection, ViewSectionField } from '@/api'
+import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
@@ -35,10 +35,13 @@ import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
+import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import {
   buildSectionEditFields as buildSectionEditFieldsPure,
   sectionShouldRouteToInlineEdit as sectionShouldRouteToInlineEditPure,
   applyPropertyToEntry,
+  applyPropertyToRow,
+  rowShouldRouteToInlineEdit as rowShouldRouteToInlineEditPure,
 } from './sectionEditFields'
 import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
@@ -471,7 +474,7 @@ function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionE
 }
 
 function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
-  return sectionShouldRouteToInlineEditPure(section, ent, getPropertyDef)
+  return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
 // One-shot dedupe for the 401/403 → loadView path. Cleared on each
@@ -501,6 +504,97 @@ function handleSectionEditError(msg: string, info?: AutoSaveErrorInfo) {
 
 function handleVerdictFlip(_prop: string, label: string) {
   uiStore.warning(`Permission changed — your unsaved edit to '${label}' was discarded`)
+}
+
+// ─── Per-row inline edit on cards/list sections (TKT-IHC7C) ──────────────
+
+// Above this row count, a cards/list section falls back to display mode
+// for ALL rows. SectionEditForm instances are cheap individually but
+// quadratic in aggregate (each holds its own debounce timers and watch);
+// 100 rows is the soft cap (RR-FC1D). Above this the user is more
+// likely browsing than editing.
+const INLINE_EDIT_ROW_CAP = 100
+
+// Thin SFC adapter — the cap-behaviour logic lives in the pure module
+// so it's unit-testable without mounting EntityDetail.
+function rowShouldRouteToInlineEdit(ent: ViewEntity, rowCount: number): boolean {
+  return rowShouldRouteToInlineEditPure(ent, rowCount, INLINE_EDIT_ROW_CAP, getPropertyDef)
+}
+
+// Memoize per-row field shape, keyed on the row reference. Spread-clone
+// of the row in handleRowPropertyApplied produces a new reference for
+// THAT row only — surrounding rows retain their references and their
+// cached entry. Cache invalidation is naturally GC-driven via the
+// WeakMap (RR-FC1E NEW-3).
+const rowEditFieldsCache = new WeakMap<ViewEntity, SectionEditField[]>()
+function memoBuildRowEditFields(ent: ViewEntity): SectionEditField[] {
+  const cached = rowEditFieldsCache.get(ent)
+  if (cached) return cached
+  const fields = buildSectionEditFieldsPure(ent.fields, ent, getPropertyDef)
+  rowEditFieldsCache.set(ent, fields)
+  return fields
+}
+
+// rowDisplayValue: per-cell display-mode read prefers `_props` over the
+// display-stringified `fields[i].values`. This eliminates the
+// stale-string-mirror bug where a verdict flips writable→display and
+// the cell shows last-loadView's display string instead of the
+// post-edit value (RR-FC1C).
+function rowDisplayValue(ent: ViewEntity, field: ViewSectionField): unknown {
+  if (field.property && ent._props && field.property in ent._props) {
+    return ent._props[field.property]
+  }
+  return field.values ?? []
+}
+
+// Owner → (sectionIdx, rowIdx) index, rebuilt per viewData change so
+// `handleRowPropertyApplied` is O(1) instead of O(sections × rows)
+// (RR-FC1E NEW-3). The rebuild is itself O(rows) but only fires when
+// `viewData.value` reference changes — including after every confirmed
+// row PATCH, which is acceptable.
+const rowIndex = ref(new Map<string, { sectionIdx: number; rowIdx: number }>())
+watch(
+  viewData,
+  (vd) => {
+    const next = new Map<string, { sectionIdx: number; rowIdx: number }>()
+    if (vd?.sections) {
+      vd.sections.forEach((section, sectionIdx) => {
+        section.entities?.forEach((ent, rowIdx) => {
+          next.set(`${ent.type}/${ent.id}`, { sectionIdx, rowIdx })
+        })
+      })
+    }
+    rowIndex.value = next
+  },
+  { immediate: true },
+)
+
+function handleRowPropertyApplied(
+  prop: string,
+  value: unknown,
+  applyOwner: { type: string; id: string },
+) {
+  const view = viewData.value
+  if (!view) return
+  const key = `${applyOwner.type}/${applyOwner.id}`
+  const loc = rowIndex.value.get(key)
+  if (!loc) return // row deleted / repositioned beyond identity reach
+  const section = view.sections[loc.sectionIdx]
+  const currentRow = section?.entities?.[loc.rowIdx]
+  if (!currentRow) return
+  // applyPropertyToRow rejects the apply if the row at this location
+  // no longer matches the owner identity (defensive against an index
+  // rebuilt mid-flight against a different layout).
+  const nextRow = applyPropertyToRow(currentRow, prop, value, applyOwner)
+  if (!nextRow) return
+  const nextSections = view.sections.map((s, i) => {
+    if (i !== loc.sectionIdx) return s
+    return {
+      ...s,
+      entities: s.entities?.map((e, j) => (j === loc.rowIdx ? nextRow : e)),
+    }
+  })
+  viewData.value = { ...view, sections: nextSections }
 }
 
 function shouldUseBadge(value: string, propType?: string): boolean {
@@ -765,12 +859,20 @@ watch(
               :key="ent.id"
               :data-entity-id="ent.id"
               class="entity-card"
-              @click="navigateToEntity(ent)"
             >
-              <header class="card-header">
+              <!--
+                Navigation handler moved from <article> to .card-header
+                (TKT-IHC7C / RR-FC1B): clicks on inline-edit widgets
+                inside the card must not bubble to the row-level click
+                because that would navigate away mid-edit. The header
+                still navigates; cells stay editable.
+              -->
+              <header class="card-header" @click="navigateToEntity(ent)">
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
+                <!-- Teleport target for the row's SectionEditForm indicator. -->
+                <span :id="`card-indicator-${ent.type}-${ent.id}`" class="card-indicator-slot"/>
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
@@ -780,7 +882,24 @@ watch(
                   &times;
                 </button>
               </header>
-              <div v-if="ent.fields?.length" class="card-fields">
+              <SectionEditForm
+                v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
+                :key="`${ent.type}/${ent.id}`"
+                :entity-type="ent.type"
+                :entity-id="ent.id"
+                :initial-values="ent._props ?? {}"
+                :fields="memoBuildRowEditFields(ent)"
+                :on-property-applied="handleRowPropertyApplied"
+                :on-error="handleSectionEditError"
+                :on-verdict-flip="handleVerdictFlip"
+              >
+                <template #indicator="{ status, error }">
+                  <Teleport :to="`#card-indicator-${ent.type}-${ent.id}`">
+                    <AutoSaveIndicator :status="status" :error="error" />
+                  </Teleport>
+                </template>
+              </SectionEditForm>
+              <div v-else-if="ent.fields?.length" class="card-fields">
                 <div
                   v-for="row in fieldRowsFor(ent)"
                   :key="row.field.label"
@@ -796,7 +915,7 @@ watch(
                   <component
                     :is="row.widget"
                     v-else
-                    :model-value="row.field.values ?? []"
+                    :model-value="rowDisplayValue(ent, row.field)"
                     :mode="'display'"
                     :property-name="row.hint.propertyName"
                     class="field-value"
@@ -817,8 +936,28 @@ watch(
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
+                <!-- Teleport target for the row's SectionEditForm indicator
+                     (TKT-IHC7C). Sits inline-right of the title link. -->
+                <span :id="`list-indicator-${ent.type}-${ent.id}`" class="list-indicator-slot"/>
               </a>
-              <span v-if="ent.fields?.length" class="list-fields">
+              <SectionEditForm
+                v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
+                :key="`${ent.type}/${ent.id}`"
+                :entity-type="ent.type"
+                :entity-id="ent.id"
+                :initial-values="ent._props ?? {}"
+                :fields="memoBuildRowEditFields(ent)"
+                :on-property-applied="handleRowPropertyApplied"
+                :on-error="handleSectionEditError"
+                :on-verdict-flip="handleVerdictFlip"
+              >
+                <template #indicator="{ status, error }">
+                  <Teleport :to="`#list-indicator-${ent.type}-${ent.id}`">
+                    <AutoSaveIndicator :status="status" :error="error" />
+                  </Teleport>
+                </template>
+              </SectionEditForm>
+              <span v-else-if="ent.fields?.length" class="list-fields">
                 <template v-for="row in fieldRowsFor(ent)" :key="row.field.label">
                   <!-- Per-card inaccessibility reason isn't on the wire
                        today (see RR-UD2E follow-up); InaccessibleField
@@ -827,7 +966,7 @@ watch(
                   <component
                     :is="row.widget"
                     v-else
-                    :model-value="row.field.values ?? []"
+                    :model-value="rowDisplayValue(ent, row.field)"
                     :mode="'display'"
                     :property-name="row.hint.propertyName"
                   />

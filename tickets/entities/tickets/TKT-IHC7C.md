@@ -5,7 +5,7 @@ title: Cards/list inline edit (requires typed _props per entity on the wire)
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+status: done
 ---
 
 ## Goal
