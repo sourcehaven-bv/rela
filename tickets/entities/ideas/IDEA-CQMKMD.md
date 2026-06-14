@@ -2,6 +2,9 @@
 id: IDEA-CQMKMD
 type: idea
 title: 'Snapshot-versioned ACL: transaction-id / point-in-time read verdicts for cascade deletes, _position neighbor-gap, and audit time-travel'
+description: 'Evaluate read-permission verdicts against a PAST graph state, not just "now". A read verdict is a function of graph state at a point in time; several problems need the verdict as-of an earlier snapshot: (1) cascade deletes tear down the conferring relation chain in the same op, so post-delete the verdict is unrecoverable; (2) _position neighbor-gap analysis (RR-NDMN/RR-37IY/RR-ATSO); (3) audit time-travel ("what could principal P read on date D?"). Mechanism sketch: every write carries a monotonic snapshot/seq id (pgstore already has WAL LSN / the seq currently discarded in the listener; store.Event carries none today), events+audit rows record it, and PermitsRead gains an asOf param resolving against the graph as-of that snapshot — MVCC snapshot isolation applied to ACL. Epic-sized: store.Event widening across 3 backends, asOf graph evaluation (cheap on pgstore, major on fs/memstore), likely pairs with soft-delete. NOT needed for TKT-POT9GQ (the per-type SSE design sidesteps it); the fully-correct cascade-delete-propagation answer for when a concrete deployment need surfaces.'
+category: architecture
+effort: epic
 status: captured
 ---
 
