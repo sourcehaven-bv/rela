@@ -112,7 +112,9 @@ roles:
     read: [ticket, feature]
   editor:
     read: [ticket, feature]
-    write: [ticket]
+    create: [ticket]
+    update: [ticket]
+    delete: [ticket]
   triager:
     read: [ticket]
     fields:

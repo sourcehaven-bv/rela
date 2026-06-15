@@ -37,7 +37,9 @@ func TestDiscover_ACLPresent_LoadsDeclarative(t *testing.T) {
 	writeMetamodel(t, root)
 	writePolicy(t, root, `roles:
   admin:
-    write: ["*"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
     read: ["*"]
 assignments:
   jeroen: admin
@@ -79,7 +81,9 @@ func TestWithACL_OverridesLoadedPolicy(t *testing.T) {
 	writeMetamodel(t, root)
 	writePolicy(t, root, `roles:
   admin:
-    write: ["*"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
     read: ["*"]
 assignments:
   jeroen: admin
@@ -104,7 +108,7 @@ assignments:
 func TestDiscover_MalformedACL_FailsBoot(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodel(t, root)
-	writePolicy(t, root, "roles:\n  admin:\n    write: [not-closed\n")
+	writePolicy(t, root, "roles:\n  admin:\n    create: [not-closed\n")
 
 	svc, err := appbuildOnDisk(t, root)
 	if err == nil {

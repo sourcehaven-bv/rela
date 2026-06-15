@@ -116,7 +116,7 @@ func TestResolver_NoAffordanceBlocks_EmptyVerdicts(t *testing.T) {
 	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
-  admin: { write: ["*"] }
+  admin: { create: ["*"], update: ["*"], delete: ["*"] }
 assignments:
   alice: admin
 `)

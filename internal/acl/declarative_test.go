@@ -18,18 +18,18 @@ func testPolicy() *acl.Policy {
 		UserEntityType: "person",
 		Roles: map[string]acl.RoleDef{
 			"admin": {
-				Write:       []string{"*"},
+				Create: []string{"*"}, Update: []string{"*"}, Delete: []string{"*"},
 				Read:        []string{"*"},
 				Permissions: []string{"delegate-admin", "delegate-contributor", "delegate-reviewer"},
 			},
 			"contributor": {
-				Write:       []string{"ticket", "concept"},
+				Create: []string{"ticket", "concept"}, Update: []string{"ticket", "concept"}, Delete: []string{"ticket", "concept"},
 				Read:        []string{"*"},
 				Permissions: []string{"delegate-reviewer"},
 			},
 			"reviewer": {
-				Write: []string{"review-response"},
-				Read:  []string{"*"},
+				Create: []string{"review-response"}, Update: []string{"review-response"}, Delete: []string{"review-response"},
+				Read: []string{"*"},
 			},
 			acl.EveryoneRole: {
 				Read: []string{"*"},
@@ -122,7 +122,7 @@ func TestAuthorizeWrite_NoRoleGrants_Denies(t *testing.T) {
 	if got.RuleID != "-" {
 		t.Errorf("RuleID = %q, want %q", got.RuleID, "-")
 	}
-	wantReason := `no role grants write on type "ticket"`
+	wantReason := `no role grants create on type "ticket"`
 	if got.Reason != wantReason {
 		t.Errorf("Reason = %q, want %q", got.Reason, wantReason)
 	}
@@ -216,8 +216,8 @@ func TestAuthorizeWrite_DefaultRoleGrantsWrites(t *testing.T) {
 	t.Parallel()
 	policy := testPolicy()
 	policy.Roles[acl.EveryoneRole] = acl.RoleDef{
-		Write: []string{"comment"},
-		Read:  []string{"*"},
+		Create: []string{"comment"}, Update: []string{"comment"}, Delete: []string{"comment"},
+		Read: []string{"*"},
 	}
 	d := newACL(t, policy)
 
@@ -239,8 +239,8 @@ func TestAuthorizeWrite_MultipleRoles_Unions(t *testing.T) {
 	// Make everyone also grant writes on a type the explicit role
 	// doesn't cover, so we can prove the union.
 	policy.Roles[acl.EveryoneRole] = acl.RoleDef{
-		Write: []string{"comment"},
-		Read:  []string{"*"},
+		Create: []string{"comment"}, Update: []string{"comment"}, Delete: []string{"comment"},
+		Read: []string{"*"},
 	}
 	d := newACL(t, policy)
 

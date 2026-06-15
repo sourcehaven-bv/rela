@@ -31,7 +31,10 @@ role_relations:
 roles:
   admin:
     permissions: [member-of:create]
-    write: ["*"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+    read: ["*"]
 ```
 
 With that in place, only principals who hold `member-of:create`
@@ -232,15 +235,17 @@ with the list it links to.
 - **No count from an unfiltered source.** Any new aggregate (badge,
   dashboard card, export count) must derive from the gated set, never
   from `Store.CountEntities` on a principal-reachable path.
-- **Write grants imply read grants.** The policy loader rejects a
-  role with `write: [x]` but no covering `read` entry at boot
-  (structured error naming the role and type). Downstream affordance
-  logic may therefore assume "writable ⇒ readable" — a DenyAll list
-  response always carries `_actions.create == false`. The invariant
-  covers the `write:` list, which is the only field that authorizes
-  writes; the affordance grant maps (`fields:` / `options:` /
-  `relations:`) restrict surfaces within an authorized write and
-  never confer writability by themselves, so they are intentionally
+- **Update/delete grants imply read grants; create does not.** The policy
+  loader rejects a role with `update: [x]` (or `delete: [x]`) but no covering
+  `read` entry at boot (structured error naming the role and type) — you must
+  read a type to modify or remove it. **Create is exempt** (TKT-4LQMWP): a role
+  may `create: [x]` with no read of `x`, reading back only what it authored via
+  a role-conferring relation (e.g. `created-by`). This lets a "submitter" create
+  a type yet see only its own entities of that type, with the normal Create
+  button still shown (the affordance derives from the `create` grant). The
+  invariant covers the `update:`/`delete:` lists; the affordance grant maps
+  (`fields:` / `options:` / `relations:`) restrict surfaces within an authorized
+  write and never confer writability by themselves, so they are intentionally
   outside the check.
 
 ### Global search (`/_search`, TKT-BA8BSX)

@@ -25,7 +25,7 @@ func TestFeature_UC1_GroupConferredWrite(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  editor:   { write: [ticket], read: [ticket] }
+  editor:   { create: [ticket], update: [ticket], delete: [ticket], read: [ticket] }
   everyone: { read: [project] }
 assignments:
   engineering: editor
@@ -108,7 +108,7 @@ func TestFeature_UC3_ContainmentRead(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  editor: { write: [folder, document], read: [folder, document] }
+  editor: { create: [folder, document], update: [folder, document], delete: [folder, document], read: [folder, document] }
 inherit_roles_through: [belongs-to]
 role_relations:
   editor-of: { confers: editor }
@@ -153,7 +153,7 @@ func TestFeature_UC4_MultiParentUnion(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  editor: { write: [folder, document], read: [folder, document] }
+  editor: { create: [folder, document], update: [folder, document], delete: [folder, document], read: [folder, document] }
 inherit_roles_through: [belongs-to]
 role_relations:
   editor-of: { confers: editor }
@@ -192,7 +192,7 @@ func TestFeature_UC5_MultiSourceAttribution(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  editor: { write: [project], read: [project] }
+  editor: { create: [project], update: [project], delete: [project], read: [project] }
 assignments:
   eng-leads: editor
 role_relations:
@@ -234,8 +234,8 @@ func TestFeature_UC6_DelegateXRelationWrite(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  admin:  { write: ["*"], read: ["*"], permissions: [delegate-editor] }
-  editor: { write: [ticket], read: [ticket] }
+  admin:  { create: ["*"], update: ["*"], delete: ["*"], read: ["*"], permissions: [delegate-editor] }
+  editor: { create: [ticket], update: [ticket], delete: [ticket], read: [ticket] }
 assignments:
   jeroen: admin
   alice:  editor
@@ -272,7 +272,7 @@ func TestFeature_UC7_LocalRoleOnEntity(t *testing.T) {
 	w := NewWorld().
 		Policy(`
 roles:
-  editor: { write: [ticket], read: [ticket] }
+  editor: { create: [ticket], update: [ticket], delete: [ticket], read: [ticket] }
 role_relations:
   assigned-to: { confers: editor }
 `).

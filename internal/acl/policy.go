@@ -57,14 +57,28 @@ type Policy struct {
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
 }
 
-// RoleDef is the capability bundle for a single role. Write,
-// Permissions, and the affordance grants are honored by the write
-// path and the affordances resolver. Read drives the read-filtering
-// path (see [Declarative.ReadQuery]).
+// RoleDef is the capability bundle for a single role. The per-verb
+// mutation grants (Create / Update / Delete), Permissions, and the
+// affordance grants are honored by the write path and the affordances
+// resolver. Read drives the read-filtering path (see
+// [Declarative.ReadQuery]).
 //
-// Wildcard write: a single entry `"*"` grants write on every entity
-// type. Mixing `"*"` with explicit types is allowed but redundant —
-// the wildcard short-circuits the per-type check.
+// Per-verb mutation grants (TKT-4LQMWP): Create / Update / Delete each
+// list the entity types the role may create / update / delete (`"*"`
+// for all). They are SEPARATE because they have different read
+// requirements (see [Policy.Validate]):
+//
+//   - Create implies NO read. A role can create a type it cannot read —
+//     it then reads back only what it authored, via a role-conferring
+//     relation like `created-by`. This is what lets a "submitter" create
+//     tickets yet see only their own.
+//   - Update and Delete require read coverage of the type (you must be
+//     able to read a thing to modify or remove it). Rename routes
+//     through the Update grant.
+//
+// Wildcard: a single entry `"*"` in any verb list grants that verb on
+// every entity type. Mixing `"*"` with explicit types is allowed but
+// redundant — the wildcard short-circuits the per-type check.
 //
 // Affordance grants (Fields / Visible / Options / Relations) drive
 // the data-entry _fields / _relations wire shape via the
@@ -75,7 +89,9 @@ type Policy struct {
 // A present-but-empty list (`fields: {ticket: []}`) is closed-world
 // deny-all for that type, distinct from an absent or null value.
 type RoleDef struct {
-	Write       []string `yaml:"write"`
+	Create      []string `yaml:"create"`
+	Update      []string `yaml:"update"`
+	Delete      []string `yaml:"delete"`
 	Read        []string `yaml:"read"`
 	Permissions []string `yaml:"permissions"`
 
@@ -83,6 +99,30 @@ type RoleDef struct {
 	Visible   map[string][]FieldGrant    `yaml:"visible"`
 	Options   map[string][]OptionGrant   `yaml:"options"`
 	Relations map[string][]RelationGrant `yaml:"relations"`
+}
+
+// grantsVerb reports whether the role may perform op on entity type
+// `target`. Op selects the verb list: Create / Update / Delete; Rename
+// routes through Update (it is a modification). Read is handled
+// separately via roleGrantsRead. An unknown op grants nothing.
+func grantsVerb(role RoleDef, op Op, target string) bool {
+	var list []string
+	switch op {
+	case OpCreate:
+		list = role.Create
+	case OpUpdate, OpRename:
+		list = role.Update
+	case OpDelete:
+		list = role.Delete
+	default:
+		return false
+	}
+	for _, t := range list {
+		if t == "*" || t == target {
+			return true
+		}
+	}
+	return false
 }
 
 // FieldGrant grants a per-field affordance (write under `fields:`,
@@ -271,21 +311,23 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 //     a delegate permission, breaking writes the operator didn't mean
 //     to gate.
 //
-//   - Every role's write grants must be covered by its read grants
-//     (write ⊆ read, wildcard-aware). A role that can create or update
-//     a type it cannot read produces incoherent UX (empty list with a
-//     working Create button) and would force every affordance consumer
-//     to handle the combination. Rejecting it at load lets downstream
-//     read-side logic assume "writable implies readable" (RR-W2J6).
+//   - A role's UPDATE and DELETE grants must be covered by its read
+//     grants (update ⊆ read, delete ⊆ read, wildcard-aware). You must
+//     be able to read a type to modify or remove it. CREATE is EXEMPT
+//     (TKT-4LQMWP): a role may create a type it cannot read — it reads
+//     back only what it authored via a role-conferring relation (e.g.
+//     `created-by`), which is what lets a "submitter" create tickets yet
+//     see only their own. (Was the broader write ⊆ read invariant,
+//     RR-W2J6, before create was split out.)
 //
-//     Scope: the invariant covers [RoleDef.Write] — the only field
-//     that authorizes writes (both entity and relation authz resolve
-//     through decideFromAttrs against Write). The affordance grant
-//     maps (Fields / Options / Relations) are deliberately NOT
-//     checked: they restrict field/option/relation surfaces *within*
-//     a write the Write list already authorized and never confer
-//     writability by themselves, so a fields-only role without read
-//     grants is inert, not incoherent.
+//     Scope: the invariant covers [RoleDef.Update] and [RoleDef.Delete]
+//     — the fields that authorize modification. Both entity and relation
+//     authz resolve through decideFromAttrs against the per-verb grant
+//     (grantsVerb). The affordance grant maps (Fields / Options /
+//     Relations) are deliberately NOT checked: they restrict
+//     field/option/relation surfaces *within* a write the verb grant
+//     already authorized and never confer writability by themselves, so
+//     a fields-only role without read grants is inert, not incoherent.
 //
 // Validation is intentionally narrow: misspelled role names, unknown
 // entity types in grants, etc. remain warnings (or analyze-tool
@@ -303,16 +345,26 @@ func (p *Policy) Validate() error {
 		}
 	}
 	for name, role := range p.Roles {
-		for _, w := range role.Write {
-			if !roleGrantsRead(role, w) {
-				hint := fmt.Sprintf("add %q (or \"*\")", w)
-				if w == "*" {
-					hint = `add "*"`
+		// Update and Delete require read coverage: you must be able to read a
+		// type to modify or remove it (TKT-4LQMWP, was the write⊆read invariant
+		// RR-W2J6). Create is EXEMPT — a role may create a type it cannot read,
+		// reading back only what it authored via a role-conferring relation.
+		for _, verb := range []struct {
+			name  string
+			types []string
+		}{{"update", role.Update}, {"delete", role.Delete}} {
+			for _, t := range verb.types {
+				if !roleGrantsRead(role, t) {
+					hint := fmt.Sprintf("add %q (or \"*\")", t)
+					if t == "*" {
+						hint = `add "*"`
+					}
+					return fmt.Errorf(
+						"roles.%s: grants %s on %q without a covering read grant; "+
+							"%s to the role's read list — a principal must be able to "+
+							"read every type it can %s (create is exempt)",
+						name, verb.name, t, hint, verb.name)
 				}
-				return fmt.Errorf(
-					"roles.%s: grants write on %q without a covering read grant; "+
-						"%s to the role's read list — a principal must "+
-						"be able to read every type it can write", name, w, hint)
 			}
 		}
 	}
