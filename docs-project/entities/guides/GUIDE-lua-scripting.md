@@ -699,6 +699,7 @@ error-handling branches work unchanged.
 | `rela.today` | Current date as "YYYY-MM-DD" |
 | `rela.params` | Action script parameters (table, static string-valued map from data-entry config) |
 | `rela.secrets` | Per-script secrets (table, from `.rela/secrets.yaml`) |
+| `rela.principal` | Read-only `{user, tool}` — the identity this runtime runs as (the request principal, e.g. from `X-Rela-User`). Use it in write-path automations to attribute relations to the acting user, e.g. stamping a `created-by` edge from the submitter. Unstamped/CLI contexts read `{user="unknown", tool="unknown"}`. The table is frozen: assigning to it raises. It only *reads* identity — audit attribution is always derived from the request context inside the write bindings, never from this table, so it is not a spoofing vector. |
 | `rela.cache` | Process-wide memoization cache namespaced per script (see [Cache](#cache)) |
 | `rela.mode` | Set to `"document"` when rendering a data-entry document; `nil` otherwise (see [Document Mode](#document-mode)) |
 | `rela.document` | Present only in document mode; holds `{id, entry_id}` (see [Document Mode](#document-mode)) |

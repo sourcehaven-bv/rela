@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -689,6 +690,26 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
 }
 
+// freezeTable returns a read-only proxy over data: reads fall through to the
+// backing table via __index, while any assignment raises a Lua error via
+// __newindex. The backing table holds the actual key/values and is not exposed
+// directly, so even existing keys cannot be reassigned. Used for rela.principal
+// (TKT-5U6NRR) to make its read-only contract enforced rather than conventional.
+func freezeTable(ls *lua.LState, data *lua.LTable) *lua.LTable {
+	proxy := ls.NewTable()
+	mt := ls.NewTable()
+	ls.SetField(mt, "__index", data)
+	ls.SetField(mt, "__newindex", ls.NewFunction(func(s *lua.LState) int {
+		s.RaiseError("attempt to modify a read-only table")
+		return 0
+	}))
+	// __metatable hides the metatable from getmetatable() and blocks
+	// setmetatable() from swapping it out to bypass the guard.
+	ls.SetField(mt, "__metatable", lua.LString("read-only"))
+	ls.SetMetatable(proxy, mt)
+	return proxy
+}
+
 // registerContextBindings installs per-runtime context tables: args, params,
 // secrets. Present on both reader and writer runtimes.
 func (r *Runtime) registerContextBindings(rela *lua.LTable) {
@@ -708,6 +729,28 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
+
+	// Principal table: the identity on whose behalf this runtime executes,
+	// read from the parent context (TKT-5U6NRR). Write-path automations use
+	// this to attribute relations to the acting user — e.g. stamping a
+	// `created-by` edge from the request principal (X-Rela-User) at submit
+	// time, which the client cannot forge. Unstamped/CLI contexts yield the
+	// documented {user="unknown", tool="unknown"} fallback from principal.From
+	// rather than an error, so scripts can always read the field safely.
+	//
+	// READ-ONLY by design (PLAN-XKMJ AC13 spoofing defense). This field only
+	// *reads* the identity; it is NOT a write/attribution hook. Audit
+	// attribution always derives from callerCtx() inside the write bindings,
+	// never from this table — so even a script that mutates a local copy
+	// cannot forge who a write is recorded as. To make the read-only contract
+	// enforced rather than conventional, the table is frozen: assigning to it
+	// raises a Lua error. (`rela.audit*` / `with_principal` / `with_triggered_by`
+	// remain absent — those WOULD be rewrite vectors.)
+	p := principal.From(r.callerCtx())
+	principalTable := r.L.NewTable()
+	r.L.SetField(principalTable, "user", lua.LString(p.User))
+	r.L.SetField(principalTable, "tool", lua.LString(p.Tool))
+	r.L.SetField(rela, "principal", freezeTable(r.L, principalTable))
 
 	// rela.cache.{get,set,memoize} when a cache is wired. The binding
 	// itself guards against inline/eval contexts (empty scriptPath) by
