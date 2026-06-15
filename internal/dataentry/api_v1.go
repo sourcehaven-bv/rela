@@ -2416,6 +2416,14 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ACL gate (TKT-6N9O1Y): the side panel reveals the entry entity and its
+	// traversal neighbors. Gate the entry read BEFORE getEntity/executeSidePanel
+	// so a principal who cannot read it gets a 404 indistinguishable from a
+	// missing id, and the traversal never runs for a denied caller.
+	if !a.gateReadOrNotFound(w, r, form.EntityType, entityID) {
+		return
+	}
+
 	// Get the entry entity
 	entry, found := a.getEntity(r.Context(), entityID)
 	if !found {
