@@ -3432,6 +3432,15 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ACL gate (TKT-BNX2PN): _views is an entity-read chokepoint just like
+	// GET /{plural}/{id} — it serves _title, properties, and content body via
+	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
+	// id is indistinguishable from a missing one (404, no oracle) and the view
+	// pipeline never runs for a denied principal.
+	if !a.gateReadOrNotFound(w, r, entityType, entityID) {
+		return
+	}
+
 	viewCfg, ok := findViewByEntityType(s.Cfg.Views, entityType)
 	if !ok {
 		viewCfg, ok = buildDefaultViewConfig(s.Meta, entityType)
