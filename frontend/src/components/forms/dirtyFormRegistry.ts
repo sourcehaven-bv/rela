@@ -1,6 +1,6 @@
 // Module-level registry tracking which forms are currently editing which
-// entities, so that incoming SSE entity:updated events don't clobber a
-// user's in-progress keystrokes for any property they're editing.
+// entities, so that an SSE-triggered re-fetch (entity:changed) doesn't
+// clobber a user's in-progress keystrokes for any property they're editing.
 //
 // Multiple forms may register for the same entity (e.g. side panel + main
 // page); a property is considered dirty if any registered form reports it

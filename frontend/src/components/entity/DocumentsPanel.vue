@@ -33,7 +33,6 @@ const selectedDoc = ref<string | null>(null)
 const docContent = ref<string>('')
 const loading = ref(false)
 const isCached = ref(false)
-const entityIds = ref<string[]>([]) // Entity IDs involved in current document
 const docBody = useTemplateRef<HTMLElement>('docBody')
 
 // Sanitized content for safe rendering
@@ -110,7 +109,6 @@ async function loadDocument(refresh = false) {
     })
     docContent.value = result.html
     isCached.value = result.cached
-    entityIds.value = result.entity_ids || []
   } catch (err: unknown) {
     const scriptErr = getScriptError(err)
     if (scriptErr) {
@@ -119,29 +117,27 @@ async function loadDocument(refresh = false) {
       uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
     docContent.value = ''
-    entityIds.value = []
   } finally {
     loading.value = false
   }
 }
 
-// Handle entity change events via centralized SSE
-function handleEntityChange(data: { id?: string }) {
-  if (data.id && entityIds.value.includes(data.id)) {
-    loadDocument(true)
-  }
+// Handle entity change events via centralized SSE. The feed is now
+// type-scoped (no entity id, TKT-POT9GQ), so we re-render the document
+// whenever any entity changes — a document can reference entities of any
+// type, and the re-render is cheap and server-gated. The previous per-id
+// match is no longer possible (and the id never reached the SPA anyway
+// for entities the principal couldn't read).
+function handleEntityChange() {
+  loadDocument(true)
 }
 
 onMounted(() => {
-  on('entity:created', handleEntityChange)
-  on('entity:updated', handleEntityChange)
-  on('entity:deleted', handleEntityChange)
+  on('entity:changed', handleEntityChange)
 })
 
 onUnmounted(() => {
-  off('entity:created', handleEntityChange)
-  off('entity:updated', handleEntityChange)
-  off('entity:deleted', handleEntityChange)
+  off('entity:changed', handleEntityChange)
 })
 
 function getDocTitle(name: string, config: DocumentConfig): string {

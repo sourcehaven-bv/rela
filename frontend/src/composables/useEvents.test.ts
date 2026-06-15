@@ -127,37 +127,37 @@ describe('useEvents', () => {
       const handler = vi.fn()
 
       // Register handler
-      vm.on('entity:created', handler)
+      vm.on('entity:changed', handler)
 
       // Unregister handler
-      vm.off('entity:created', handler)
+      vm.off('entity:changed', handler)
 
       // Handler should not be called after removal (no way to trigger without EventSource)
       expect(handler).not.toHaveBeenCalled()
     })
 
-    it('dispatches entity events to all registered handlers', async () => {
+    it('dispatches entity:changed to all registered handlers (type only, no id)', async () => {
       const { vm } = await mountConnected()
 
       const handler1 = vi.fn()
       const handler2 = vi.fn()
-      vm.on('entity:updated', handler1)
-      vm.on('entity:updated', handler2)
+      vm.on('entity:changed', handler1)
+      vm.on('entity:changed', handler2)
 
-      lastSource!._emit('entity:updated', JSON.stringify({ type: 'ticket', id: 'TKT-9' }))
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
 
-      expect(handler1).toHaveBeenCalledWith({ type: 'ticket', id: 'TKT-9' })
-      expect(handler2).toHaveBeenCalledWith({ type: 'ticket', id: 'TKT-9' })
+      expect(handler1).toHaveBeenCalledWith({ type: 'ticket' })
+      expect(handler2).toHaveBeenCalledWith({ type: 'ticket' })
     })
 
     it('cleans up handlers on unmount', async () => {
       const { wrapper, vm } = await mountConnected()
 
       const handler = vi.fn()
-      vm.on('entity:deleted', handler)
+      vm.on('entity:changed', handler)
 
       wrapper.unmount()
-      lastSource!._emit('entity:deleted', JSON.stringify({ type: 'ticket', id: 'TKT-2' }))
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
 
       expect(handler).not.toHaveBeenCalled()
     })
@@ -173,29 +173,29 @@ describe('useEvents', () => {
       const handler = vi.fn()
 
       // Should not throw when removing handler that was never added
-      expect(() => vm.off('entity:created', handler)).not.toThrow()
+      expect(() => vm.off('entity:changed', handler)).not.toThrow()
     })
   })
 
   describe('cache invalidation (FEAT-XY2D1L)', () => {
-    it('invalidates the entity-type query prefix on entity events', async () => {
+    it('invalidates the entity-type query prefix on an entity:changed event', async () => {
       const queryCache = useQueryCache()
       const spy = vi.spyOn(queryCache, 'invalidateQueries')
       await mountConnected()
 
-      lastSource!._emit('entity:updated', JSON.stringify({ type: 'ticket', id: 'TKT-1' }))
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
       expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] })
     })
 
-    it('invalidates per event type for created and deleted too', async () => {
+    it('invalidates per type across successive entity:changed events', async () => {
       const queryCache = useQueryCache()
       const spy = vi.spyOn(queryCache, 'invalidateQueries')
       await mountConnected()
 
-      lastSource!._emit('entity:created', JSON.stringify({ type: 'risk', id: 'RSK-1' }))
-      lastSource!._emit('entity:deleted', JSON.stringify({ type: 'measure', id: 'MSR-1' }))
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'risk' }))
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'measure' }))
 
       expect(spy).toHaveBeenCalledWith({ key: ['entities', 'risk'] })
       expect(spy).toHaveBeenCalledWith({ key: ['entities', 'measure'] })

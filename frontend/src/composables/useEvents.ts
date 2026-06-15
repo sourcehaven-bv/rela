@@ -3,17 +3,20 @@ import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
 
-export type SSEEventType =
-  | 'refresh'
-  | 'git'
-  | 'git:status'
-  | 'entity:created'
-  | 'entity:updated'
-  | 'entity:deleted'
+export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
+/**
+ * Payload of an `entity:changed` SSE event.
+ *
+ * The server sends a TYPE only — no entity id (TKT-POT9GQ). The feed is a
+ * per-type staleness signal ("entities of type T changed, re-fetch"), ACL-gated
+ * server-side: a connection only receives a type its principal may read. The
+ * re-fetch goes through the already-gated REST endpoints, so the absence of an
+ * id is by design — carrying one would make the feed a per-entity existence
+ * oracle for entities the principal cannot read.
+ */
 export interface EntityEventData {
   type: string
-  id: string
 }
 
 export interface SSEConnectionState {
@@ -52,9 +55,9 @@ const eventHandlers: Map<SSEEventType, Set<EventHandler>> = new Map()
  * Events:
  * - refresh: Files changed, full reload needed
  * - git / git:status: Git status changed
- * - entity:created: Entity created (data: {type, id})
- * - entity:updated: Entity updated (data: {type, id})
- * - entity:deleted: Entity deleted (data: {type, id})
+ * - entity:changed: Entities of a type changed (data: {type}); create, update,
+ *   and delete all collapse to this — the client invalidates by type and
+ *   re-fetches active views through the gated endpoints (TKT-POT9GQ).
  */
 export function useEvents() {
   const gitStore = useGitStore()
@@ -129,30 +132,27 @@ export function useEvents() {
         gitStore.fetchStatus().catch(() => {})
       })
 
-      // Handle entity events
-      // Invalidate caches and dispatch to custom handlers
-      const entityEventTypes: SSEEventType[] = ['entity:created', 'entity:updated', 'entity:deleted']
-      for (const eventType of entityEventTypes) {
-        eventSource.addEventListener(eventType, (event: MessageEvent) => {
-          try {
-            const data = JSON.parse(event.data) as EntityEventData
-            // Legacy TTL cache (unmigrated views) is all-or-nothing.
-            entitiesStore.invalidateAll()
-            // The query cache uses the event's granularity: stale-mark
-            // every query for this entity type (lists + details); active
-            // queries background-refetch (FEAT-XY2D1L).
-            queryCache
-              .invalidateQueries({
-                key: data.type ? entityKeys.type(data.type) : entityKeys.root,
-              })
-              .catch(() => {})
-            // Dispatch to custom handlers
-            eventHandlers.get(eventType)?.forEach((handler) => handler(data))
-          } catch {
-            console.warn(`Failed to parse ${eventType} event data`)
-          }
-        })
-      }
+      // Handle the type-scoped entity-change event. Create/update/delete
+      // all arrive as a single `entity:changed` carrying only {type}; the
+      // client invalidates every query for that type (lists + details) and
+      // active queries background-refetch (FEAT-XY2D1L). The re-fetch goes
+      // through the gated REST endpoints, so the absence of an id is the
+      // security boundary, not a limitation (TKT-POT9GQ).
+      eventSource.addEventListener('entity:changed', (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data) as EntityEventData
+          // Legacy TTL cache (unmigrated views) is all-or-nothing.
+          entitiesStore.invalidateAll()
+          queryCache
+            .invalidateQueries({
+              key: data.type ? entityKeys.type(data.type) : entityKeys.root,
+            })
+            .catch(() => {})
+          eventHandlers.get('entity:changed')?.forEach((handler) => handler(data))
+        } catch {
+          console.warn('Failed to parse entity:changed event data')
+        }
+      })
     } catch (err) /* v8 ignore start - connection errors tested via e2e */ {
       connectionState.value = {
         connected: false,

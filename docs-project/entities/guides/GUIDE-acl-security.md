@@ -74,24 +74,56 @@ on the first request that hits it. The dataentry call sites are
 exhaustively tested for Subject population so this never reaches
 production traffic.
 
-## Audit-isolation invariant on the SSE stream
+## SSE event stream: per-type gating + audit isolation
 
-The data-entry SSE event stream (`/api/events`, `/api/v1/_events`)
-broadcasts `{type, id}` markers when entities are created, updated,
-or deleted. It deliberately does NOT carry audit records, principal
-identity, or attribution chains. A denied write produces a
-`denied-write` audit row server-side (with full attribution) and
-**zero** events on the SSE wire.
+The data-entry SSE event stream (`/api/events`, `/api/v1/_events`) is a
+**cache-invalidation signal**, not an event log: it tells a connected
+browser "entities of type T changed, re-fetch your active views of T."
+The re-fetch goes through the already-gated REST endpoints, so the feed
+itself needs to carry almost nothing.
 
-This separation matters because SSE is a fan-out channel — every
-subscriber sees every event. Putting audit attribution on it would
-leak the principal-to-entity topology to anyone connected,
-including a malicious browser tab the user is unaware of.
+**Per-type ACL gating (TKT-POT9GQ).** Each entity create/update/delete
+collapses to a single `entity:changed` frame carrying the entity
+**type only** — no id. `handleSSE` gates the type per-connection with
+`readGate.ReadQuery(type)`: a connection receives the frame only if its
+principal's verdict for that type is not `DenyAll` (AllowAll or a
+relation-scoped Query both deliver). The type verdict is resolved once
+per connection and cached. A relation write (member-of / role-relation /
+containment edge — the types that can change a principal's read scope)
+re-derives a **fresh** read gate for the connection: a new `acl.Request`
+whose member-of closure is walked against the current graph, so a
+principal who gains or loses a group membership mid-connection starts or
+stops receiving a type's nudges without reconnecting. (The connection's
+original request memoizes its membership closure for its lifetime; the
+re-derive is what keeps the verdict honest — without it, only the
+per-entity inbound query would refresh, not the principal's own group
+membership.) Both the re-derive and the nudges are coalesced into one
+flush window, so a bulk relation import triggers one membership re-walk
+per connection, not one per edge.
+
+Why per-type rather than per-id: the wire never carries an entity id,
+so the feed cannot be a per-entity existence oracle for entities a
+principal cannot read. The only residual is **per-type activity
+timing** for types the principal can already read — which they could
+equally infer by polling the gated list endpoint's count. A
+fully-denied principal receives nothing for that type. (The richer
+per-id / opaque-cache-id and snapshot-versioned-ACL designs were
+considered and rejected as over-engineered for a staleness signal —
+see the TKT-POT9GQ design record and IDEA-CQMKMD.)
+
+**Audit isolation.** The stream deliberately does NOT carry audit
+records, principal identity, or attribution chains. A denied write
+produces a `denied-write` audit row server-side (with full attribution)
+and **zero** events on the SSE wire. This matters because SSE is a
+fan-out channel — putting audit attribution on it would leak the
+principal-to-entity topology to anyone connected. With per-type gating
+the feed now carries even less (just a type a connection may read).
 
 A regression test in `internal/dataentry/sse_audit_isolation_test.go`
-pins the invariant. Future work that adds new SSE event types must
-preserve it; a new audit-aware channel needs to be a separate
-broker with per-subscriber ACL gating.
+pins the audit invariant; `internal/dataentry/sse_acl_test.go` pins the
+per-type gating. Future work that adds new SSE event types must
+preserve both; a new audit-aware channel needs a separate broker with
+its own per-subscriber gating.
 
 ## Deny response shape
 
@@ -325,14 +357,13 @@ The `attachACLRequest` middleware:
   neighbor-disclosure analysis (a visible neighbor's id confirms a
   visible entity, but gap analysis around hidden entities needs its
   own treatment).
-- **SSE `/api/v1/_events`** — the broker today fans `{type, id}` to
-  every subscriber. Per-subscriber filtering is its own ticket.
 - **MCP transport** — tracked as TKT-G3PPD.
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, sidebar, pagination, and global-search channels are tight. The
-SSE event stream still reveals `{type, id}`-level existence to any
-connected principal.
+list, sidebar, pagination, global-search, and the SSE event stream are
+all read-gated (the SSE feed per-type, see above). The remaining
+read-side gap is the MCP transport (TKT-G3PPD); within the data-entry
+server every read channel a browser can reach is tight.
 
 ## Where to read next
 
