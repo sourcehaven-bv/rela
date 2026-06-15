@@ -5,7 +5,7 @@ title: 'ACL: split write into create/update/delete grants; create implies no rea
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: done
 ---
 
 Implements RES-4AS0S4 (Option A, clean variant — no production acl.yaml exists,
