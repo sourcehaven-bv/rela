@@ -646,6 +646,12 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	r.registerReadBindings(rela)
 	if allowWrites {
 		r.registerWriteBindings(rela)
+		// rela.bypass_acl is registered ONLY when an elevated handle was wired
+		// (an allow_acl_bypass automation action — TKT-D8T148). Absent it, the
+		// binding does not exist and a script cannot elevate.
+		if r.deps.ElevatedManager != nil {
+			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(r.luaBypassACL))
+		}
 	}
 	r.registerContextBindings(rela)
 
@@ -1491,6 +1497,108 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 		tbl.Append(wt)
 	}
 	return tbl
+}
+
+// luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
+// a single argument `admin`: a write handle whose mutations skip the ACL deny,
+// backed by the elevated Mutator wired into WriteDeps. Elevation is therefore
+// an OBJECT CAPABILITY scoped to the closure — the gated rela.* bindings are
+// never elevated; only writes made through `admin` bypass ACL.
+//
+// After fn returns (or raises), `admin` is INVALIDATED: its methods raise. A
+// script that squirrels `admin` into a global and calls it later gets a dead
+// handle, so the lexical scope is enforced, not merely conventional (mirrors
+// the frozen rela.principal). fn's return value(s) propagate to the caller; a
+// raise inside fn propagates too (a failed elevated write must surface).
+func (r *Runtime) luaBypassACL(ls *lua.LState) int {
+	fn := ls.CheckFunction(1)
+	if r.deps.ElevatedManager == nil {
+		// Defensive: the binding is only registered when ElevatedManager is
+		// set, but fail loud rather than silently no-op if that ever drifts.
+		ls.RaiseError("rela.bypass_acl: no elevated write handle is available")
+		return 0
+	}
+
+	// live gates every admin.* call; set false after fn returns so a captured
+	// handle is dead outside the closure's dynamic extent.
+	live := true
+	admin := r.newElevatedHandle(ls, r.deps.ElevatedManager, &live)
+
+	// Invalidate on every exit path (normal return or Lua error). pcall keeps
+	// the runtime alive so we can flip `live` before re-raising.
+	defer func() { live = false }()
+
+	ls.Push(fn)
+	ls.Push(admin)
+	// Protected call so we can guarantee invalidation even when fn raises,
+	// then re-surface the error to the caller.
+	if err := ls.PCall(1, lua.MultRet, nil); err != nil {
+		live = false
+		ls.RaiseError("rela.bypass_acl: %s", err.Error())
+		return 0
+	}
+	// Return whatever fn returned (already on the stack after PCall).
+	return ls.GetTop() - 1
+}
+
+// newElevatedHandle builds the `admin` table passed to a rela.bypass_acl
+// closure. Its methods route to the elevated Mutator `em` and check `*live`
+// first, so they raise once the closure has returned. No reads, no principal,
+// no nested bypass.
+//
+// v1 surface: create_relation, delete_relation, delete_entity — the
+// link/unlink + remove operations the system-invariant use cases (e.g.
+// authorship stamping via created-by) need. create_entity / update_entity are a
+// deliberate follow-up: they marshal a full entity table and aren't required by
+// the motivating case; gating elevated *entity* creation is a larger surface
+// best added with its own tests.
+func (r *Runtime) newElevatedHandle(ls *lua.LState, em Mutator, live *bool) *lua.LTable {
+	t := ls.NewTable()
+	guard := func(name string) bool {
+		if !*live {
+			ls.RaiseError("rela.bypass_acl: handle %q used outside its closure (invalidated)", name)
+			return false
+		}
+		return true
+	}
+	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
+		if !guard("create_relation") {
+			return 0
+		}
+		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
+		if _, err := em.CreateRelation(r.callerCtx(), from, relType, to, entity.RelationOptions{}); err != nil {
+			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
+			return 0
+		}
+		s.Push(lua.LTrue)
+		return 1
+	}))
+	ls.SetField(t, "delete_relation", ls.NewFunction(func(s *lua.LState) int {
+		if !guard("delete_relation") {
+			return 0
+		}
+		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
+		if err := em.DeleteRelation(r.callerCtx(), from, relType, to); err != nil {
+			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
+			return 0
+		}
+		s.Push(lua.LTrue)
+		return 1
+	}))
+	ls.SetField(t, "delete_entity", ls.NewFunction(func(s *lua.LState) int {
+		if !guard("delete_entity") {
+			return 0
+		}
+		id := s.CheckString(1)
+		cascade := s.OptBool(2, false)
+		if _, err := em.DeleteEntity(r.callerCtx(), id, cascade); err != nil {
+			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
+			return 0
+		}
+		s.Push(lua.LTrue)
+		return 1
+	}))
+	return t
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean

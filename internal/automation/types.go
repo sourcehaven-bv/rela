@@ -37,6 +37,7 @@ type Action struct {
 	CreateEntity   *CreateEntityAction
 	Lua            string // Inline Lua code to execute
 	LuaFile        string // Path to Lua script file in scripts/ directory
+	AllowACLBypass bool   // allow_acl_bypass: unlock rela.bypass_acl in this Lua action (TKT-D8T148)
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -128,6 +129,7 @@ type LuaToExecute struct {
 	Code           string // Inline Lua code (safe values already interpolated)
 	FilePath       string // Path to script file in scripts/ directory
 	AutomationName string // Name of the originating automation
+	AllowACLBypass bool   // action's allow_acl_bypass flag (TKT-D8T148): unlocks rela.bypass_acl
 }
 
 // Result represents the outcome of running automations.
