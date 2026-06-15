@@ -1817,11 +1817,18 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 
 	analysisResult := a.runAnalysis(r.Context())
 
+	// ACL gate (TKT-QU7REX): runAnalysis walks the WHOLE graph, so every issue
+	// carries an entityId/entityType/title that would leak existence + title to
+	// a principal who cannot read that entity. Filter each issue through the
+	// per-entity read gate (batched by type, fail-closed) BEFORE building the
+	// response, and recompute the Errors/Warnings/ByCheck counts so the
+	// aggregates can't leak the count of hidden issues either. Issues with no
+	// entityId (graph-level checks) name no entity and pass through.
+	visible := a.visibleAnalysisIssues(r.Context(), analysisResult.Sections)
+
 	result := APIAnalysisResult{
-		Errors:   analysisResult.ErrorCount,
-		Warnings: analysisResult.WarningCount,
-		Issues:   make([]APIIssue, 0),
-		ByCheck:  make(map[string]int),
+		Issues:  make([]APIIssue, 0, len(visible)),
+		ByCheck: make(map[string]int),
 	}
 
 	// Loopback gate: same policy as action / document surfaces.
@@ -1829,26 +1836,95 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	// issues (no source slice, no stack, no captured output).
 	fullDetail := a.allowFullScriptDetail(r)
 
-	for _, section := range analysisResult.Sections {
-		for _, issue := range section.Issues {
-			api := APIIssue{
-				EntityID:   issue.EntityID,
-				EntityType: issue.EntityType,
-				Title:      issue.Title,
-				Message:    issue.Message,
-				Severity:   issue.Severity,
-				CheckType:  section.Name,
-			}
-			if issue.ScriptError != nil {
-				env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
-				api.ScriptError = &env
-			}
-			result.Issues = append(result.Issues, api)
-			result.ByCheck[section.Name]++
+	for _, vi := range visible {
+		issue, section := vi.issue, vi.section
+		api := APIIssue{
+			EntityID:   issue.EntityID,
+			EntityType: issue.EntityType,
+			Title:      issue.Title,
+			Message:    issue.Message,
+			Severity:   issue.Severity,
+			CheckType:  section,
+		}
+		if issue.ScriptError != nil {
+			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
+			api.ScriptError = &env
+		}
+		result.Issues = append(result.Issues, api)
+		result.ByCheck[section]++
+		switch issue.Severity {
+		case "error":
+			result.Errors++
+		case "warning":
+			result.Warnings++
 		}
 	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// visibleIssue pairs an analysis issue with its section name, carried
+// through the ACL filter so the wire builder keeps the issue→check
+// association without re-walking sections.
+type visibleIssue struct {
+	issue   AnalysisIssue
+	section string
+}
+
+// visibleAnalysisIssues filters analysis issues through the per-entity read
+// gate (TKT-QU7REX). Issues are batched by entity type and resolved with one
+// PermitsReadMany call per type (mirroring filterVisibleIncludes), so the cost
+// is O(distinct-types) not O(issues). An issue with an empty EntityID names no
+// entity (graph-level checks like ID gaps) and is always kept. On a gate error
+// for a type, that type's issues are dropped fail-closed and logged, matching
+// the include path — under-reporting is safer than leaking a denied entity.
+func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSection) []visibleIssue {
+	gate := readGateFromContext(ctx)
+
+	// Collect entity ids to check, grouped by type.
+	idsByType := make(map[string]map[string]struct{})
+	for _, section := range sections {
+		for _, issue := range section.Issues {
+			if issue.EntityID == "" || issue.EntityType == "" {
+				continue
+			}
+			if idsByType[issue.EntityType] == nil {
+				idsByType[issue.EntityType] = make(map[string]struct{})
+			}
+			idsByType[issue.EntityType][issue.EntityID] = struct{}{}
+		}
+	}
+
+	// Resolve visibility once per type.
+	allowed := make(map[string]map[string]bool, len(idsByType))
+	for typeName, idset := range idsByType {
+		ids := make([]string, 0, len(idset))
+		for id := range idset {
+			ids = append(ids, id)
+		}
+		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		if err != nil {
+			slog.Warn("dataentry: visibleAnalysisIssues: PermitsReadMany failed; dropping type",
+				"type", typeName, "issues", len(ids), "err", err)
+			allowed[typeName] = map[string]bool{} // fail-closed: nothing of this type visible
+			continue
+		}
+		allowed[typeName] = perm
+	}
+
+	// Build the filtered, order-preserving result.
+	var out []visibleIssue
+	for _, section := range sections {
+		for _, issue := range section.Issues {
+			if issue.EntityID != "" && issue.EntityType != "" {
+				if !allowed[issue.EntityType][issue.EntityID] {
+					continue // hidden entity → drop the issue
+				}
+			}
+			out = append(out, visibleIssue{issue: issue, section: section.Name})
+		}
+	}
+	return out
 }
 
 // --- Helper Functions ---
