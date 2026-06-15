@@ -3067,6 +3067,17 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("entity %q not found", entityID), "")
 		return
 	}
+
+	// ACL gate (TKT-C0R07J): document rendering serves entity-derived content
+	// (HTML + EntityIDs) and may run a Lua script that reads related entities.
+	// Gate on the document's declared entity_type BEFORE the type-mismatch
+	// branch (so a denied principal gets a uniform 404, not a 400 oracle) and
+	// BEFORE any rendering runs — a denied caller must never trigger the
+	// (possibly Lua) renderer.
+	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+		return
+	}
+
 	if ent.Type != docCfg.EntityType {
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
