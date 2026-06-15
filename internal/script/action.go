@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // actionsDir is the directory where action scripts must be located.
@@ -70,6 +71,7 @@ func (e *Engine) ExecuteAction(
 		lua.WithTimeout(timeout),
 		lua.WithCache(e.cache),
 		lua.WithContext(ctx),
+		lua.WithPrincipal(principal.From(ctx)),
 	)
 	if err != nil {
 		return nil, err

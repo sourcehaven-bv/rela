@@ -83,6 +83,15 @@ type Runtime struct {
 	cache         cacheStore        // nil means rela.cache.* is not registered
 	scriptPath    string            // set by RunFile; empty for RunString/inline
 
+	// principal is the identity this runtime runs as, exposed read-only as
+	// rela.principal (TKT-5U6NRR). Set by [WithPrincipal] from the caller's
+	// resolved principal; the zero value renders as {user:"", tool:""} which
+	// the binding maps to the documented unknown fallback. The runtime does
+	// NOT read it from the context itself — keeping principal resolution at
+	// the caller avoids a context-flow the linter (contextcheck) would flag
+	// and keeps the lua package free of ctx-identity plumbing.
+	principal principal.Principal
+
 	// errorFrames holds typed stack frames captured by the PCall message
 	// handler on the most recent failed run. Read via ErrorFrames() after
 	// PCall returns an error. Reset before every PCall.
@@ -131,6 +140,17 @@ func WithTimeout(d time.Duration) Option {
 func WithContext(ctx context.Context) Option {
 	return func(r *Runtime) {
 		r.parentCtx = ctx
+	}
+}
+
+// WithPrincipal sets the identity exposed read-only to scripts as
+// rela.principal (TKT-5U6NRR). The caller resolves the principal (e.g.
+// principal.From(ctx)) ONCE and passes the value here, so the lua package
+// never reaches into the context for identity. Omitting this option leaves
+// rela.principal as the unknown fallback.
+func WithPrincipal(p principal.Principal) Option {
+	return func(r *Runtime) {
+		r.principal = p
 	}
 }
 
@@ -731,12 +751,13 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "secrets", secretsTable)
 
 	// Principal table: the identity on whose behalf this runtime executes,
-	// read from the parent context (TKT-5U6NRR). Write-path automations use
-	// this to attribute relations to the acting user — e.g. stamping a
-	// `created-by` edge from the request principal (X-Rela-User) at submit
-	// time, which the client cannot forge. Unstamped/CLI contexts yield the
-	// documented {user="unknown", tool="unknown"} fallback from principal.From
-	// rather than an error, so scripts can always read the field safely.
+	// supplied by the caller via [WithPrincipal] (TKT-5U6NRR). Write-path
+	// automations use this to attribute relations to the acting user — e.g.
+	// stamping a `created-by` edge from the request principal (X-Rela-User) at
+	// submit time, which the client cannot forge. When WithPrincipal was not
+	// passed (CLI, unstamped contexts), the zero Principal renders as the
+	// documented {user="unknown", tool="unknown"} fallback so scripts can
+	// always read the field safely.
 	//
 	// READ-ONLY by design (PLAN-XKMJ AC13 spoofing defense). This field only
 	// *reads* the identity; it is NOT a write/attribution hook. Audit
@@ -746,10 +767,19 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// enforced rather than conventional, the table is frozen: assigning to it
 	// raises a Lua error. (`rela.audit*` / `with_principal` / `with_triggered_by`
 	// remain absent — those WOULD be rewrite vectors.)
-	p := principal.From(r.callerCtx())
+	// "unknown" mirrors the fallback principal.From returns for an unstamped
+	// context, so a script reads the same value whether identity was absent or
+	// simply not passed via WithPrincipal.
+	pUser, pTool := r.principal.User, r.principal.Tool
+	if pUser == "" {
+		pUser = "unknown"
+	}
+	if pTool == "" {
+		pTool = "unknown"
+	}
 	principalTable := r.L.NewTable()
-	r.L.SetField(principalTable, "user", lua.LString(p.User))
-	r.L.SetField(principalTable, "tool", lua.LString(p.Tool))
+	r.L.SetField(principalTable, "user", lua.LString(pUser))
+	r.L.SetField(principalTable, "tool", lua.LString(pTool))
 	r.L.SetField(rela, "principal", freezeTable(r.L, principalTable))
 
 	// rela.cache.{get,set,memoize} when a cache is wired. The binding

@@ -2,7 +2,6 @@ package lua
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
@@ -109,17 +108,17 @@ func TestAuditNotExposedAsTopLevelGlobal(t *testing.T) {
 }
 
 // TestPrincipalReflectsContext pins the core TKT-5U6NRR acceptance: a write-path
-// runtime's rela.principal.user / .tool equal the principal stamped on the
-// parent context (the X-Rela-User-derived identity), not the git user. This is
-// what lets a submit-time automation attribute a created-by edge to the actual
-// submitter.
+// runtime's rela.principal.user / .tool equal the principal the caller passed
+// via WithPrincipal (the X-Rela-User-derived identity), not the git user. This
+// is what lets a submit-time automation attribute a created-by edge to the
+// actual submitter.
 func TestPrincipalReflectsContext(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
-	r := NewWriter(ws.services("/tmp"), &buf, WithContext(ctx), WithActionMode())
+	r := NewWriter(ws.services("/tmp"), &buf,
+		WithPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry}),
+		WithActionMode())
 	defer r.Close()
 
 	ret, err := r.RunActionString(`return rela.principal.user`, "test.lua")
@@ -147,7 +146,7 @@ func TestPrincipalFallsBackToUnknown(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
-	// No WithContext → callerCtx() is context.Background() → unstamped.
+	// No WithPrincipal → the zero Principal → the unknown fallback.
 	r := NewWriter(ws.services("/tmp"), &buf, WithActionMode())
 	defer r.Close()
 

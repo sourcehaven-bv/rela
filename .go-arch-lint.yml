@@ -492,6 +492,7 @@ deps:
       - ai
       - filter
       - metamodel
+      - principal
       - search
       - secrets
       - store
@@ -517,6 +518,7 @@ deps:
       - autocascade
       - lua
       - metamodel
+      - principal
       - project
   search:
     mayDependOn:
