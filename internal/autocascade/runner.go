@@ -269,11 +269,12 @@ func (r *Runner) executeScriptActions(
 
 		actionCtx := audit.WithTriggeredBy(ctx, "automation:"+action.AutomationName)
 		err := scripts.Run(actionCtx, ScriptAction{
-			Code:      action.Code,
-			FilePath:  action.FilePath,
-			Name:      action.AutomationName,
-			NewEntity: newEntity,
-			OldEntity: oldEntity,
+			Code:           action.Code,
+			FilePath:       action.FilePath,
+			Name:           action.AutomationName,
+			NewEntity:      newEntity,
+			OldEntity:      oldEntity,
+			AllowACLBypass: action.AllowACLBypass,
 		}, mutator)
 		if err == nil {
 			continue

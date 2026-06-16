@@ -63,6 +63,46 @@ type TemplateLoader interface {
 //   - DeleteRelation: delete. No automation.
 type Manager struct {
 	deps Deps
+
+	// bypassACL marks this Manager as an ELEVATED write handle: its writes
+	// skip the ACL deny (TKT-D8T148, the `rela.bypass_acl(...)` path). It is
+	// false on the normal Manager and set true ONLY on the throwaway handle
+	// returned by [Manager.elevated]. Carrying elevation on the object (not
+	// the context) is what makes it leak-proof: a nested cascade an elevated
+	// write triggers re-dispatches with the gated Manager (see the cascade
+	// dispatch sites, which pass `m.gated()` as the Mutator), so elevation
+	// never propagates to descendant writes.
+	bypassACL bool
+}
+
+// elevated returns a throwaway Manager handle whose writes skip the ACL deny.
+// Shares all deps with the receiver; differs only in bypassACL. Reserved for
+// the script-runner's elevated write handle (rela.bypass_acl). NOT exported as
+// a general capability — callers obtain it only through the autocascade
+// Mutator seam for an allow_acl_bypass action.
+func (m *Manager) elevated() *Manager {
+	return &Manager{deps: m.deps, bypassACL: true}
+}
+
+// Elevated satisfies [autocascade.ElevatedProvider] (TKT-D8T148): it hands the
+// script runner an elevated Mutator for an `allow_acl_bypass` action. Exported
+// only to cross the package boundary to the script runner; the returned handle
+// bypasses the ACL deny but preserves the real principal in audit and never
+// propagates elevation into nested cascades (it dispatches via gated()).
+func (m *Manager) Elevated() autocascade.Mutator {
+	return m.elevated()
+}
+
+// gated returns a non-elevated Manager sharing the receiver's deps. On a normal
+// Manager it returns the receiver; on an elevated handle it strips the bypass.
+// Used at cascade-dispatch sites so a nested cascade triggered by an elevated
+// write runs with normal ACL authority — elevation does not propagate to
+// descendants (the leak the ctx-marker approach would have had).
+func (m *Manager) gated() *Manager {
+	if !m.bypassACL {
+		return m
+	}
+	return &Manager{deps: m.deps, bypassACL: false}
 }
 
 // Compile-time assertions: Manager must satisfy both the public
@@ -161,13 +201,50 @@ func New(d Deps) (*Manager, error) {
 // The denied-write audit happens regardless of audit backend
 // (Filesystem / Memory / Nop) — forensic posture demands recording
 // what was attempted, not just what landed.
+//
+// When this Manager is an elevated handle (`m.bypassACL` — TKT-D8T148: a
+// `rela.bypass_acl(...)` write), the ACL deny is SKIPPED: the write is allowed
+// regardless of the principal's grants. Elevation is a property of WHICH
+// Manager you hold, not of the context — see [Manager.elevated]. The real
+// principal is still preserved (`principal.From(ctx)`, unchanged) and the
+// bypass is recorded (recordACLBypass) so the audit trail is unambiguous about
+// which writes were elevated and on whose behalf. We do NOT recordDeniedWrite
+// on the bypass path — there is no denial to record.
 func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
+	if m.bypassACL {
+		m.recordACLBypass(ctx, req)
+		return nil
+	}
 	decision := m.deps.ACL.AuthorizeWrite(ctx, req)
 	if decision.Allow {
 		return nil
 	}
 	m.recordDeniedWrite(ctx, decision, req)
 	return &acl.ForbiddenError{Decision: decision}
+}
+
+// recordACLBypass emits one audit row for an elevated (rela.bypass_acl) write.
+// It preserves the real triggering principal (so "who really caused this" is
+// always answerable, like ruid under sudo) and marks the row acl_bypass=true
+// so forensic queries can isolate elevated writes. The op stays the genuine
+// write op; the bypass marker rides the Summary alongside the existing
+// triggered_by=automation:<name>.
+func (m *Manager) recordACLBypass(ctx context.Context, req acl.WriteRequest) {
+	var subject *audit.Subject
+	switch s := req.Subject.(type) {
+	case acl.RelationSubject:
+		subject = &audit.Subject{Kind: "relation", RelationType: s.Type, FromID: s.FromID}
+	case acl.EntitySubject:
+		subject = &audit.Subject{Kind: "entity", Type: s.Type, ID: s.ID}
+	}
+	m.deps.Audit.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpACLBypass,
+		Subject:     subject,
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary:     fmt.Sprintf("acl_bypass=true op=%s", req.Op),
+	})
 }
 
 // recordDeniedWrite emits one audit row describing the refused
@@ -317,7 +394,7 @@ func (m *Manager) CreateEntity(
 		OldTrigger: nil,
 		Result:     autoResult,
 		Scripts:    m.deps.ScriptRunner,
-		Mutator:    m, // Manager satisfies autocascade.Mutator structurally
+		Mutator:    m.gated(), // gated() so elevation never propagates into a nested cascade (TKT-D8T148)
 	})
 	if cascadeErr != nil {
 		return nil, fmt.Errorf("cascade: %w", cascadeErr)
@@ -448,7 +525,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		OldTrigger: oldEntity,
 		Result:     autoResult,
 		Scripts:    m.deps.ScriptRunner,
-		Mutator:    m, // Manager satisfies autocascade.Mutator structurally
+		Mutator:    m.gated(), // gated() so elevation never propagates into a nested cascade (TKT-D8T148)
 	})
 	if cascadeErr != nil {
 		return nil, fmt.Errorf("cascade: %w", cascadeErr)

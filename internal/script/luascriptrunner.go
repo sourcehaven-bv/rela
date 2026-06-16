@@ -83,6 +83,16 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 		// "interfaces at the call site".
 		EntityManager: m,
 	}
+	// TKT-D8T148: when the action is allow_acl_bypass AND the mutator offers
+	// the elevated capability, expose an elevated write handle so the script
+	// can call rela.bypass_acl(fn). Both conditions are required: operator opt-in
+	// (the flag) and a Mutator that chooses to provide elevation. A Mutator
+	// without ElevatedProvider (e.g. a restricted double) simply can't elevate.
+	if action.AllowACLBypass {
+		if ep, ok := m.(autocascade.ElevatedProvider); ok {
+			deps.ElevatedManager = ep.Elevated()
+		}
+	}
 	var err error
 	switch {
 	case action.Code != "":

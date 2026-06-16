@@ -84,10 +84,11 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 
 	for i, a := range def.Do {
 		action := Action{
-			Set:     a.Set,
-			Value:   a.Value,
-			Lua:     a.Lua,
-			LuaFile: a.LuaFile,
+			Set:            a.Set,
+			Value:          a.Value,
+			Lua:            a.Lua,
+			LuaFile:        a.LuaFile,
+			AllowACLBypass: a.AllowACLBypass,
 		}
 		if a.CreateRelation != nil {
 			action.CreateRelation = &CreateRelationAction{
@@ -307,6 +308,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
 			Code:           code,
 			AutomationName: automationName,
+			AllowACLBypass: action.AllowACLBypass,
 		})
 	}
 
@@ -316,6 +318,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
 			FilePath:       action.LuaFile,
 			AutomationName: automationName,
+			AllowACLBypass: action.AllowACLBypass,
 		})
 	}
 }

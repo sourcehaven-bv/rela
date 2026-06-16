@@ -441,6 +441,13 @@ type AutomationAction struct {
 	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
 	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
+
+	// AllowACLBypass unlocks rela.bypass_acl in this Lua action (TKT-D8T148).
+	// Operator-only (lives in metamodel.yaml). When true, the script may call
+	// rela.bypass_acl(fn) to obtain a closure-scoped elevated write handle
+	// whose writes skip the ACL deny (still audited, real principal preserved).
+	// Ignored for non-Lua actions.
+	AllowACLBypass bool `yaml:"allow_acl_bypass,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

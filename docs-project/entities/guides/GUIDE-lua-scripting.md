@@ -345,6 +345,59 @@ local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
 ```
 
+### Elevated writes — `rela.bypass_acl`
+
+By default an automation script's writes are **ACL-checked against the
+triggering principal** (the user whose action fired the automation). That is
+correct for most automations. But some scripts enforce a *system invariant* on
+behalf of a user who isn't authorized to make the write directly — e.g.
+stamping `submitter --created-by--> ticket` on ticket create so the submitter
+(and only they) can later read their own ticket, without the submitter being
+able to write `person` relations themselves.
+
+For those, `rela.bypass_acl(fn)` runs `fn` with a single argument `admin`: a
+write handle whose mutations **skip the ACL deny**. Elevation is scoped to the
+closure and carried by the `admin` object — the ordinary `rela.*` write
+bindings are never elevated.
+
+```lua
+-- on ticket create: stamp the submitter as author, server-side, unforgeable
+local me = rela.principal.user
+rela.bypass_acl(function(admin)
+  admin.create_relation(me, "created-by", entity.id)
+end)
+-- back to normal (gated) authority here
+```
+
+`admin` exposes `create_relation`, `delete_relation`, `delete_entity`.
+
+**Operator opt-in is required.** `rela.bypass_acl` only exists when the
+automation action sets `allow_acl_bypass: true` in `metamodel.yaml` (an
+operator-only file). Without it the function is absent and a script cannot
+elevate:
+
+```yaml
+automations:
+  - name: stamp-ticket-author
+    on: { entity: [ticket], created: true }
+    do:
+      - lua_file: stamp-author.lua
+        allow_acl_bypass: true
+```
+
+**Safety properties:**
+
+- **Audited, not anonymous.** Every elevated write records an `acl-bypass`
+  audit row carrying the **real** triggering principal (not a system user) plus
+  `acl_bypass=true`, so "who caused this elevated write" is always answerable.
+- **No leak into nested cascades.** A cascade that an elevated write triggers
+  runs with normal (gated) ACL authority — elevation does not propagate to
+  descendant writes.
+- **Closure-scoped.** After `fn` returns, `admin` is invalidated; stashing it in
+  a global and calling it later raises.
+- **Cannot forge identity.** `rela.principal` is read-only and the write
+  attribution derives from the request context, never from the script.
+
 ### Schema Functions
 
 | Function | Description | Returns |
