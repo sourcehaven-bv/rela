@@ -261,9 +261,40 @@ jobs:
           go test -run='^$' -fuzz='^FuzzParseEntityID$' -fuzztime=10s ./internal/entity/
           go test -run='^$' -fuzz='^FuzzValidateID$' -fuzztime=10s ./internal/entity/
 
+  # Decide whether the Postgres job can run. The postgres service container
+  # needs CI_POSTGRES_PASSWORD to boot, and GitHub does not expose secrets to
+  # workflows triggered by Dependabot or by PRs from forks — there the secret
+  # resolves to empty and the container fails to initialise ("superuser
+  # password is not specified"), which previously failed CI on every
+  # dependency bump. This guard job needs no secret access itself; it only
+  # reports whether the secret is present so the postgres job can skip cleanly
+  # when it isn't (same short-circuit pattern as the rela-tickets gate below).
+  pg-secret-gate:
+    name: Postgres Secret Gate
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check for CI_POSTGRES_PASSWORD
+        id: check
+        env:
+          CI_POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+        run: |
+          if [ -n "$CI_POSTGRES_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "CI_POSTGRES_PASSWORD present; Postgres Backend job will run."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "CI_POSTGRES_PASSWORD unavailable (Dependabot or fork PR); skipping Postgres Backend job."
+          fi
+
   postgres:
     name: Postgres Backend
     runs-on: ubuntu-latest
+    needs: [pg-secret-gate]
+    # Skip cleanly when the DB secret isn't available (Dependabot / fork PRs)
+    # instead of failing to start the service container. See pg-secret-gate.
+    if: needs.pg-secret-gate.outputs.enabled == 'true'
     # The CI database is ephemeral and reachable only from this job's runner.
     # Per the security audit the password is never hardcoded in the workflow —
     # it comes solely from the CI_POSTGRES_PASSWORD repository secret (no
@@ -330,6 +361,22 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, postgres, frontend, e2e]
+    # The postgres job legitimately skips when CI_POSTGRES_PASSWORD is absent
+    # (Dependabot / fork PRs). A skipped `needs` job would, by default,
+    # cascade-skip this job too — so gate explicitly: every other dependency
+    # must have succeeded, and postgres must be either succeeded or skipped
+    # (never failed/cancelled).
+    if: >-
+      always() &&
+      needs.test.result == 'success' &&
+      needs.vulncheck.result == 'success' &&
+      needs.lint.result == 'success' &&
+      needs.arch-lint.result == 'success' &&
+      needs.lint-markdown.result == 'success' &&
+      needs.fuzz.result == 'success' &&
+      needs.frontend.result == 'success' &&
+      needs.e2e.result == 'success' &&
+      (needs.postgres.result == 'success' || needs.postgres.result == 'skipped')
     steps:
       - uses: actions/checkout@v6
 
