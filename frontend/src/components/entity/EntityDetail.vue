@@ -871,8 +871,6 @@ watch(
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
-                <!-- Teleport target for the row's SectionEditForm indicator. -->
-                <span :id="`card-indicator-${ent.type}-${ent.id}`" class="card-indicator-slot"/>
                 <button
                   v-if="ent.editFormId"
                   class="edit-btn"
@@ -893,10 +891,15 @@ watch(
                 :on-error="handleSectionEditError"
                 :on-verdict-flip="handleVerdictFlip"
               >
+                <!-- Indicator rendered inline in the card (TKT-IHC7C). NOT
+                     teleported: the former <Teleport> target span lived in
+                     the same render subtree as the Teleport itself, so Vue
+                     could leave the teleported child orphaned with a null
+                     instance that crashed on route-driven unmount (#997). -->
                 <template #indicator="{ status, error }">
-                  <Teleport :to="`#card-indicator-${ent.type}-${ent.id}`">
+                  <span class="card-indicator-slot">
                     <AutoSaveIndicator :status="status" :error="error" />
-                  </Teleport>
+                  </span>
                 </template>
               </SectionEditForm>
               <div v-else-if="ent.fields?.length" class="card-fields">
@@ -936,9 +939,6 @@ watch(
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
-                <!-- Teleport target for the row's SectionEditForm indicator
-                     (TKT-IHC7C). Sits inline-right of the title link. -->
-                <span :id="`list-indicator-${ent.type}-${ent.id}`" class="list-indicator-slot"/>
               </a>
               <SectionEditForm
                 v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
@@ -951,10 +951,15 @@ watch(
                 :on-error="handleSectionEditError"
                 :on-verdict-flip="handleVerdictFlip"
               >
+                <!-- Indicator rendered inline in the row (TKT-IHC7C). NOT
+                     teleported: the former <Teleport> target span lived in
+                     the same render subtree as the Teleport itself, so Vue
+                     could leave the teleported child orphaned with a null
+                     instance that crashed on route-driven unmount (#997). -->
                 <template #indicator="{ status, error }">
-                  <Teleport :to="`#list-indicator-${ent.type}-${ent.id}`">
+                  <span class="list-indicator-slot">
                     <AutoSaveIndicator :status="status" :error="error" />
-                  </Teleport>
+                  </span>
                 </template>
               </SectionEditForm>
               <span v-else-if="ent.fields?.length" class="list-fields">
@@ -1576,6 +1581,19 @@ watch(
 .list-fields {
   display: flex;
   gap: 6px;
+}
+
+/* AutoSaveIndicator slot for inline-edit rows (TKT-IHC7C). Rendered inline
+   in the row's SectionEditForm rather than teleported (#997). Pinned to the
+   top-right of the form so it reads as inline-right of the row content,
+   matching the pre-teleport placement. */
+.list-indicator-slot,
+.card-indicator-slot {
+  position: absolute;
+  top: -28px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* Table */

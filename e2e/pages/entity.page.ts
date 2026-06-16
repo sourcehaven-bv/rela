@@ -97,6 +97,25 @@ export class EntityPage extends BasePage {
     await expect(this.page.getByRole('button', { name: /^Delete/ })).toHaveCount(0);
   }
 
+  /** Navigate away from the current detail page via an in-SPA router link
+   *  (NOT a full page load). The issue #997 crash fires during Vue's
+   *  client-side unmount of the EntityDetail subtree, which only happens on
+   *  a router-driven transition — a `page.goto()` reload tears down the whole
+   *  document and never exercises the unmount path. Clicks the sidebar
+   *  Dashboard link and waits for the route to settle. */
+  async navigateAwayViaRouter() {
+    await this.page.locator('a[href="/"]').first().click();
+    await this.page.waitForURL(/\/(dashboard)?$/);
+  }
+
+  /** Assert a `display: list` relation section rendered at least one row
+   *  with an inline-edit SectionEditForm mounted inside the list item.
+   *  This is the DOM shape that triggered the issue #997 unmount crash —
+   *  a guard so the regression test can't pass without exercising it. */
+  async expectListSectionRowMounted() {
+    await expect(this.page.locator('.entity-list .list-item .section-edit-form').first()).toBeVisible();
+  }
+
   async clickRelationLink(targetId: string) {
     // Detail screens render related entities as cards / list items with a
     // data-entity-id attribute on the row root and a clickable header
