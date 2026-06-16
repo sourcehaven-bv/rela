@@ -299,7 +299,9 @@ func TestFeature_AC8_WriteAffordanceParity(t *testing.T) {
 	policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
   editor:
-    write: [ticket]
+    create: [ticket]
+    update: [ticket]
+    delete: [ticket]
     read: [ticket]
     visible:
       ticket:

@@ -98,13 +98,5 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 	return r.AuthorizeWrite(ctx, req)
 }
 
-// roleGrantsWrite reports whether `role.Write` covers `target` —
-// either by an exact match or by the wildcard `"*"`.
-func roleGrantsWrite(role RoleDef, target string) bool {
-	for _, w := range role.Write {
-		if w == "*" || w == target {
-			return true
-		}
-	}
-	return false
-}
+// (roleGrantsWrite removed in TKT-4LQMWP — write grants are now per-verb;
+// see grantsVerb in policy.go, dispatched by decideFromAttrs.)

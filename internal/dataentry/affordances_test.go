@@ -108,7 +108,7 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	d, err := acl.NewDeclarative(&acl.Policy{
 		UserEntityType: "person",
 		Roles: map[string]acl.RoleDef{
-			"ticket-writer": {Write: []string{"ticket"}},
+			"ticket-writer": {Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}},
 		},
 		Assignments: map[string]string{
 			"test-user": "ticket-writer",

@@ -221,7 +221,7 @@ func TestPolicyResolver_NoAffordanceBlocks_PermissiveWire(t *testing.T) {
 	// policy run through affordances.New yields empty verdicts.
 	const aclYAML = `
 roles:
-  admin: { write: ["*"] }
+  admin: { create: ["*"], update: ["*"], delete: ["*"] }
 assignments:
   alice: admin
 `

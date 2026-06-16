@@ -356,7 +356,7 @@ types:
 	// through her local edges.
 	policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
-  editor: { write: [ticket], read: [ticket] }
+  editor: { create: [ticket], update: [ticket], delete: [ticket], read: [ticket] }
 role_relations:
   assigned-to: { confers: editor }
 `))

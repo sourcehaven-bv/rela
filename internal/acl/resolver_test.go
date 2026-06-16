@@ -312,7 +312,7 @@ func TestRequest_GlobalsMemoized(t *testing.T) {
 	g.add("alice", "member-of", "engineering")
 
 	d := newTestDeclarative(t, &Policy{
-		Roles:       map[string]RoleDef{"editor": {Write: []string{"ticket"}}},
+		Roles:       map[string]RoleDef{"editor": {Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}}},
 		Assignments: map[string]string{"engineering": "editor"},
 	}, g)
 
@@ -343,7 +343,7 @@ func TestRequest_ForEntityReusesGlobals(t *testing.T) {
 	g.add("alice", "editor-of", "PRJ-foo")
 
 	d := newTestDeclarative(t, &Policy{
-		Roles:         map[string]RoleDef{"editor": {Write: []string{"project"}}},
+		Roles:         map[string]RoleDef{"editor": {Create: []string{"project"}, Update: []string{"project"}, Delete: []string{"project"}}},
 		RoleRelations: map[string]RoleRelationDef{"editor-of": {Confers: "editor"}},
 	}, g)
 
@@ -383,7 +383,7 @@ func TestRequest_ForEntity_AttributionsDeterministic(t *testing.T) {
 
 	d := newTestDeclarative(t, &Policy{
 		Roles: map[string]RoleDef{
-			"editor":   {Write: []string{"project"}},
+			"editor":   {Create: []string{"project"}, Update: []string{"project"}, Delete: []string{"project"}},
 			"reviewer": {Read: []string{"project"}},
 		},
 		RoleRelations: map[string]RoleRelationDef{

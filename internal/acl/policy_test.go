@@ -35,15 +35,15 @@ func TestLoadPolicy_FullExample(t *testing.T) {
 user_entity_type: person
 roles:
   admin:
-    write: ["*"]
+    create: ["*"]
     read: ["*"]
     permissions: [delegate-admin, delegate-contributor]
   contributor:
-    write: [ticket, concept]
+    create: [ticket, concept]
     read: ["*"]
     permissions: [delegate-reviewer]
   reviewer:
-    write: [review-response]
+    create: [review-response]
     read: ["*"]
   everyone:
     read: ["*"]
@@ -67,8 +67,8 @@ role_relations:
 	if len(p.Roles) != 4 {
 		t.Errorf("len(Roles) = %d, want 4", len(p.Roles))
 	}
-	if got := p.Roles["admin"].Write; len(got) != 1 || got[0] != "*" {
-		t.Errorf("admin.Write = %v, want [*]", got)
+	if got := p.Roles["admin"].Create; len(got) != 1 || got[0] != "*" {
+		t.Errorf("admin.Create = %v, want [*]", got)
 	}
 	if got := p.Roles["contributor"].Permissions; len(got) != 1 || got[0] != "delegate-reviewer" {
 		t.Errorf("contributor.Permissions = %v, want [delegate-reviewer]", got)
@@ -92,7 +92,7 @@ func TestLoadPolicy_UnknownKey_LogsWarning(t *testing.T) {
 	const yaml = `
 roles:
   admin:
-    write: ["*"]
+    create: ["*"]
     read: ["*"]
 unknown_top_level: oops
 also_unknown:
@@ -109,7 +109,7 @@ also_unknown:
 	if err != nil {
 		t.Fatalf("LoadPolicy: %v", err)
 	}
-	if p.Roles["admin"].Write[0] != "*" {
+	if p.Roles["admin"].Create[0] != "*" {
 		t.Errorf("known fields not populated: %+v", p)
 	}
 
@@ -139,7 +139,7 @@ func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {
 // not os.ErrNotExist).
 func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
 	t.Parallel()
-	path := writeTempPolicy(t, "roles:\n  admin:\n    write: [not-closed\n")
+	path := writeTempPolicy(t, "roles:\n  admin:\n    create: [not-closed\n")
 	_, err := acl.LoadPolicy(path)
 	if err == nil {
 		t.Fatal("LoadPolicy returned nil error for malformed YAML")
@@ -160,7 +160,7 @@ func TestLoadPolicy_AffordanceGrants(t *testing.T) {
 	const yaml = `
 roles:
   triager:
-    write: [ticket]
+    create: [ticket]
     read: [ticket]
     fields:
       ticket:
@@ -247,7 +247,7 @@ func TestPolicy_HasAffordanceGrants_NoneWhenWriteOnly(t *testing.T) {
 	const yaml = `
 roles:
   admin:
-    write: ["*"]
+    create: ["*"]
     read: ["*"]
 `
 	p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
@@ -297,7 +297,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			yaml := "roles:\n  triager:\n    write: [ticket]\n    read: [ticket]\n" + tc.fieldsBlock
+			yaml := "roles:\n  triager:\n    create: [ticket]\n    read: [ticket]\n" + tc.fieldsBlock
 			p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
 			if err != nil {
 				t.Fatalf("LoadPolicy: %v", err)
@@ -402,11 +402,11 @@ func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
 	}
 }
 
-// TKT-VMD8 AC8: a role granting write on a type it cannot read is
-// rejected at load with a structured error naming the role and type.
-// The invariant lets every downstream read-side consumer assume
-// "writable implies readable" — without it a principal gets an empty
-// list with a working Create button (RR-W2J6).
+// TKT-4LQMWP (was TKT-VMD8 AC8 / RR-W2J6): a role granting UPDATE or DELETE on
+// a type it cannot read is rejected at load with a structured error naming the
+// role and type — you must read a type to modify or remove it. CREATE is EXEMPT:
+// a role may create a type it cannot read (it reads back only what it authored
+// via a role-conferring relation), so create-without-read loads fine.
 func TestLoadPolicy_WriteWithoutRead_Rejected(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -417,30 +417,42 @@ func TestLoadPolicy_WriteWithoutRead_Rejected(t *testing.T) {
 		wantInErr []string
 	}{
 		{
-			name:      "write without read rejected",
-			yaml:      "roles:\n  triager:\n    write: [ticket]\n",
+			name:      "update without read rejected",
+			yaml:      "roles:\n  triager:\n    update: [ticket]\n",
 			wantErr:   true,
 			wantInErr: []string{"triager", "ticket", "read"},
 		},
 		{
-			name:      "wildcard write without wildcard read rejected",
-			yaml:      "roles:\n  admin:\n    write: [\"*\"]\n    read: [ticket]\n",
+			name:      "delete without read rejected",
+			yaml:      "roles:\n  triager:\n    delete: [ticket]\n",
+			wantErr:   true,
+			wantInErr: []string{"triager", "ticket", "read"},
+		},
+		{
+			// CREATE is exempt — this is the TKT-4LQMWP submitter case.
+			name:    "create without read OK (create is exempt)",
+			yaml:    "roles:\n  submitter:\n    create: [ticket]\n",
+			wantErr: false,
+		},
+		{
+			name:      "wildcard update without wildcard read rejected",
+			yaml:      "roles:\n  admin:\n    update: [\"*\"]\n    read: [ticket]\n",
 			wantErr:   true,
 			wantInErr: []string{"admin", "read"},
 		},
 		{
-			name:    "write covered by exact read ok",
-			yaml:    "roles:\n  editor:\n    write: [ticket]\n    read: [ticket]\n",
+			name:    "update covered by exact read ok",
+			yaml:    "roles:\n  editor:\n    update: [ticket]\n    read: [ticket]\n",
 			wantErr: false,
 		},
 		{
-			name:    "write covered by wildcard read ok",
-			yaml:    "roles:\n  editor:\n    write: [ticket]\n    read: [\"*\"]\n",
+			name:    "update covered by wildcard read ok",
+			yaml:    "roles:\n  editor:\n    update: [ticket]\n    read: [\"*\"]\n",
 			wantErr: false,
 		},
 		{
-			name:    "wildcard write covered by wildcard read ok",
-			yaml:    "roles:\n  admin:\n    write: [\"*\"]\n    read: [\"*\"]\n",
+			name:    "full CUD covered by wildcard read ok",
+			yaml:    "roles:\n  admin:\n    create: [\"*\"]\n    update: [\"*\"]\n    delete: [\"*\"]\n    read: [\"*\"]\n",
 			wantErr: false,
 		},
 		{
@@ -455,9 +467,9 @@ func TestLoadPolicy_WriteWithoutRead_Rejected(t *testing.T) {
 		},
 		{
 			// Affordance grants restrict surfaces within a write the
-			// Write list authorized; they never authorize by
+			// verb grant authorized; they never authorize by
 			// themselves, so they are intentionally outside the
-			// write⊆read invariant (see Validate godoc).
+			// update/delete⊆read invariant (see Validate godoc).
 			name: "affordance-only role without read ok",
 			yaml: "roles:\n  shaper:\n    fields:\n      ticket:\n        - field: status\n" +
 				"    relations:\n      ticket:\n        - relation: implements\n          create: true\n",
