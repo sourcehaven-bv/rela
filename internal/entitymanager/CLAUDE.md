@@ -24,10 +24,23 @@ for the user-facing reference. Rules for new code:
   per-task ctx with `audit.WithTriggeredBy(ctx, "schedule:"+task.Name)`; the
   autocascade runner does the analogous thing for cascades. Direct user
   actions leave `triggered_by` empty.
-- **Lua bindings do not expose audit primitives.** A Lua script must not
-  call `principal.With` or rewrite its attribution — guarded by
-  `internal/lua/audit_spoofing_test.go`. Do not register `rela.audit` or
-  `rela.principal` on the runtime.
+- **Lua bindings do not expose audit *rewrite* primitives.** A Lua script
+  must not be able to change the Principal or triggered_by a write is
+  attributed as — attribution always derives from the caller's context
+  inside the write bindings, never from anything the script controls.
+  Do not register `rela.audit`, `rela.audit.with_principal`, or
+  `rela.audit.with_triggered_by` on the runtime — those would be rewrite
+  vectors. Guarded by `internal/lua/audit_spoofing_test.go`.
+
+  `rela.principal` **is** exposed (TKT-5U6NRR) — but **read-only**: a frozen
+  `{user, tool}` table (`__newindex` raises, `__metatable` locked) read from
+  the request context. It only *reads* the acting identity (so write-path
+  automations can attribute relations like `created-by` to the real
+  submitter); it is not a rewrite hook, and the write bindings ignore it
+  entirely. Reading the identity cannot forge attribution, so it does not
+  weaken the spoofing defense — the test pins both the read-only contract and
+  the can't-forge invariant. Do not add a *setter* or any path from a
+  script-controlled value into audit attribution.
 - **Constructor takes `Audit` as a required collaborator.**
   `entitymanager.Deps.Audit` and `appbuild.New` reject nil. Tests use
   `audit.Nop{}` (explicit opt-out) or `audit.NewMemory()` when asserting.
