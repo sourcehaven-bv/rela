@@ -356,9 +356,37 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       if (origin !== allowedOrigin) offOriginRequests.push(url);
     });
 
+    // Vue-error guard (issue #997). Errors thrown inside a Vue lifecycle
+    // hook / render / watcher — notably the route-driven unmount crash that
+    // motivated this guard — are swallowed by the framework: they never reach
+    // `pageerror` or surface as a thrown exception. They DO reach the SPA's
+    // global `app.config.errorHandler` (see frontend/src/main.ts), which logs
+    // a `[vue-error] ...` line to console.error. We capture those here and
+    // fail the test in afterEach, so EVERY navigation in EVERY spec is an
+    // unmount-error probe for free — not just the dedicated regression test.
+    const vueErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() !== 'error') return;
+      const text = msg.text();
+      if (text.startsWith('[vue-error]')) vueErrors.push(text);
+    });
+
     await page.goto(`${serverUrl}/`);
     await use(page);
     await context.close();
+
+    if (vueErrors.length > 0) {
+      await testInfo.attach('vue-errors', {
+        body: vueErrors.join('\n\n'),
+        contentType: 'text/plain',
+      });
+      throw new Error(
+        `The SPA's Vue error handler fired ${vueErrors.length} time(s) during this test ` +
+          `(framework-swallowed errors — e.g. a lifecycle/unmount crash, see issue #997): ` +
+          `${vueErrors[0].split('\n')[0]}` +
+          (vueErrors.length > 1 ? ` (+${vueErrors.length - 1} more — see attachment)` : ''),
+      );
+    }
 
     if (offOriginRequests.length > 0) {
       await testInfo.attach('off-origin-requests', {
@@ -792,6 +820,39 @@ lists:
       - property: assignee
     create_form: task
     edit_form: task
+
+# Custom entity-detail views. The task view deliberately renders a
+# "display: list" relation section with fields so the row mounts a
+# SectionEditForm whose AutoSaveIndicator is inline in the list row. This
+# is the exact shape that triggered the navigate-away unmount crash in
+# issue #997 (entity-detail-list-unmount.spec.ts). It lives on the task
+# type so it doesn't override the default feature detail rendering that
+# other specs (e.g. git-crypt.spec.ts) assert against.
+views:
+  task:
+    title: "Task"
+    entry:
+      type: task
+    traverse:
+      # TASK-001 implements FEAT-001 in the seed, so this list section
+      # renders one populated row with an inline-edit SectionEditForm.
+      - from: entry
+        follow: implements
+        collect_as: implemented
+    sections:
+      - heading: "Task"
+        source: entry
+        display: properties
+        fields:
+          - property: status
+          - property: assignee
+      - heading: "Implements"
+        source: implemented
+        display: list
+        fields:
+          - property: status
+          - property: priority
+        empty_message: "No implemented features"
 
 kanbans:
   feature-board:
