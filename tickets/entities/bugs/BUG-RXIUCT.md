@@ -14,5 +14,5 @@ why3: The TKT-M8400 security audit chose secret-only with no fallback so the job
 why4: There was no branch in the workflow distinguishing 'secret intentionally absent (Dependabot/fork)' from 'secret misconfigured', so the only outcome was a hard failure.
 why5: Service-container jobs that depend on a secret have no built-in skip-when-unavailable affordance; the workflow needed an explicit gate (the repo already uses one for the rela-tickets job) to express 'run only when the prerequisite secret exists'.
 prevention: Added the `pg-secret-gate` guard job and a `(success || skipped)` tolerance on `Build`. The pattern mirrors the existing `rela-tickets` Dependabot/chore short-circuit. Verified the workflow with actionlint (exit 0). Future secret-gated service jobs should follow the same gate-then-skip pattern rather than relying on a hard failure.
-status: in-progress
+status: done
 ---

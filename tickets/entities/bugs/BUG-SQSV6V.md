@@ -14,5 +14,5 @@ why3: 'The frontend unit suite runs under happy-dom (vitest.config.ts `environme
 why4: renderMarkdown's correctness depends on browser-accurate DOM serialization (DOMPurify parses+reserializes), an assumption happy-dom silently violated only after the DOMPurify minor bump.
 why5: A transitive/dev dependency's runtime behavior under a non-browser test DOM was never pinned or guarded; the auto-merged Dependabot bump (#1000) shipped to develop without the suite catching the env-specific divergence before merge (its own CI was already red for the same reason).
 prevention: 'Pin the DOMPurify-dependent test file to jsdom via `// @vitest-environment jsdom`. For any future test that asserts on DOMPurify/serialized-HTML output, prefer jsdom over happy-dom. Longer-term option (not done here to keep the change minimal): evaluate moving the whole suite to jsdom or adding a happy-dom serialization conformance check.'
-status: in-progress
+status: done
 ---
