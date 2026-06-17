@@ -27,5 +27,5 @@ prevention: |-
     2. Dedicated regression `e2e/tests/entity-detail-list-unmount.spec.ts`: the inline fixture configures a `task` view (kept off `feature` so it doesn't perturb other specs' default-feature assertions) with a populated `display: list` section (TASK-001 implements FEAT-001); the test mounts that shape (guarded by `expectListSectionRowMounted`) and navigates away via an in-SPA router link, leaving the assertion to the fixture guard.
     3. The SPA already wires a global `app.config.errorHandler` → console (`frontend/src/main.ts`); this is what surfaces the class of error and what the e2e guard keys on.
     4. Rule of thumb recorded: never `<Teleport :to>` into an element rendered inside the same unmounting subtree; render inline or teleport only to a stable ancestor that outlives the source.
-status: in-progress
+status: done
 ---
