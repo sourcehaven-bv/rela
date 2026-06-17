@@ -264,21 +264,24 @@ jobs:
   postgres:
     name: Postgres Backend
     runs-on: ubuntu-latest
-    # The CI database is ephemeral and reachable only from this job's runner.
-    # Per the security audit the password is never hardcoded in the workflow —
-    # it comes solely from the CI_POSTGRES_PASSWORD repository secret (no
-    # fallback, so the job fails loudly if the secret is ever removed).
+    # The CI database is ephemeral and reachable only from this job's runner —
+    # it holds no real data and is torn down with the runner. There is no
+    # credential to protect, so the container uses trust auth (no password)
+    # rather than a secret. This lets the job run everywhere, including
+    # Dependabot and fork PRs where GitHub does not expose repository secrets
+    # (a secret-sourced password resolved to empty there and the container
+    # failed to start, failing CI on every dependency bump).
     env:
       POSTGRES_USER: rela
       POSTGRES_DB: rela_test
-      POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: rela
           POSTGRES_DB: rela_test
-          POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+          # Throwaway, runner-local DB: no password, trust auth.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         # Wait for the server to accept connections before tests run.
@@ -295,13 +298,12 @@ jobs:
         with:
           go-version: '1.26'
 
-      # Build the test DSN from the (secret-sourced) password at runtime rather
-      # than hardcoding a connection string with embedded credentials, and write
-      # it to the job env without echoing it to the log.
+      # Trust auth: no password in the DSN. The DB is ephemeral and
+      # runner-local, so there is no credential to keep out of the log.
       - name: Configure test database URL
         run: |
-          printf 'RELA_TEST_DATABASE_URL=postgres://%s:%s@127.0.0.1:5432/%s?sslmode=disable\n' \
-            "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" >> "$GITHUB_ENV"
+          printf 'RELA_TEST_DATABASE_URL=postgres://%s@127.0.0.1:5432/%s?sslmode=disable\n' \
+            "$POSTGRES_USER" "$POSTGRES_DB" >> "$GITHUB_ENV"
 
       # The default build must NOT link pgx, and the postgres build must NOT
       # link bleve. These greps are the load-bearing assertions for the
