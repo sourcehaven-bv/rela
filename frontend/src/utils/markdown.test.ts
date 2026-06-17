@@ -1,3 +1,11 @@
+// @vitest-environment jsdom
+//
+// renderMarkdown sanitizes through DOMPurify, which depends on
+// browser-accurate DOM serialization. happy-dom (the suite default) mangles
+// adjacent block elements under DOMPurify >= 3.4.6 — e.g. it strips the first
+// of two sibling <p> tags — so these assertions fail there while real
+// browsers (and the E2E suite) render correctly. jsdom matches browser
+// serialization, so this file opts into it. See BUG-SQSV6V.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderMarkdown, getCheckboxStats, renderMermaidDiagrams } from './markdown'
 
