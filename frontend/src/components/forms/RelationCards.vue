@@ -10,6 +10,7 @@ import {
   getEntity,
   getErrorMessage,
 } from '@/api'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
 import type { PropertyDef } from '@/types/schema'
@@ -126,10 +127,13 @@ async function loadRelations() {
     // Use entry.type (populated since TKT-ZEKO4) so the URL resolves the
     // correct plural — passing '' here builds `/api/v1/s/<id>` which 404s
     // and leaves the title cache empty, surfacing as a bare ID in the UI.
+    // We only need the display name: `_title` is always serialized by the
+    // backend (metamodel-aware), so request just id/type and let
+    // entityDisplayTitle read `_title`.
     const uncached = loaded.filter((entry) => !entityCache.value.has(entry.id))
     const results = await Promise.allSettled(
       uncached.map((entry) =>
-        getEntity(entry.type ?? '', entry.id, { fields: 'id,type,properties.title' }).then((entity) => ({
+        getEntity(entry.type ?? '', entry.id, { fields: 'id,type' }).then((entity) => ({
           id: entry.id,
           entity,
         }))
@@ -150,7 +154,7 @@ async function loadRelations() {
 function getEntityTitle(id: string): string {
   const entity = entityCache.value.get(id)
   if (!entity) return id
-  return String(entity.properties.title || entity._title || id)
+  return entityDisplayTitle(entity)
 }
 
 function navigateToEntity(id: string) {
@@ -566,7 +570,7 @@ function onDragEnd() {
             @click="selectTarget(entity)"
           >
             <span class="result-id">{{ entity.id }}</span>
-            <span class="result-title">{{ entity._title }}</span>
+            <span class="result-title">{{ entityDisplayTitle(entity) }}</span>
             <span class="result-type">{{ entity.type }}</span>
           </div>
         </div>
@@ -580,7 +584,11 @@ function onDragEnd() {
       <div v-if="selectedTarget" class="new-relation-form">
         <div class="selected-target">
           Linking to: <strong>{{ selectedTarget.id }}</strong>
-          {{ selectedTarget._title ? `- ${selectedTarget._title}` : '' }}
+          {{
+            entityDisplayTitle(selectedTarget) !== selectedTarget.id
+              ? `- ${entityDisplayTitle(selectedTarget)}`
+              : ''
+          }}
         </div>
 
         <div v-if="fieldProperties.length" class="new-meta-fields">

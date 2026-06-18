@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { searchEntities } from '@/api'
 import { useSchemaStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
 import AdHocFilterMenu from '@/components/lists/AdHocFilterMenu.vue'
@@ -152,7 +153,7 @@ function clearAllFilters() {
 }
 
 function getEntityLabel(entity: Entity): string {
-  return String(entity.properties.title || entity.id)
+  return entityDisplayTitle(entity)
 }
 
 function getEntityTypeLabel(type: string): string {

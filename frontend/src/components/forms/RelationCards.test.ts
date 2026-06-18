@@ -160,30 +160,28 @@ describe('RelationCards affordance plumbing', () => {
     wrapper.unmount()
   })
 
-  // Regression: the search dropdown must render the backend's
-  // metamodel-aware `_title`, NOT `properties.title`. For any project
-  // whose `display_property` is not literally `title` (e.g. `naam`),
-  // `properties.title` is empty and the row would otherwise show the
-  // bare ID. `_title` is always populated by the backend.
+  // Regression (BUG-1P88YM): the search dropdown must render the backend's
+  // metamodel-aware _title, NOT properties.title. For any project whose
+  // display_property is not literally "title" (e.g. "naam"),
+  // properties.title is empty and the row would otherwise show the bare ID.
+  // This fixture deliberately seeds only _title (no `title` property).
   it('search result renders _title, not properties.title', async () => {
     ;(searchEntities as ReturnType<typeof vi.fn>).mockResolvedValue({
       data: [
         {
           id: 'FEAT-DO-1',
           type: 'feature',
-          // display_property is `naam`-style: no `title` key here.
-          properties: { naam: 'Pseudoniem API' },
+          properties: { naam: 'Pseudoniem API' }, // display_property is naam
           _title: 'Pseudoniem API',
         },
       ],
     })
     const wrapper = await mountCards({})
 
-    // Open the add picker and type a query to trigger the search.
     await wrapper.find('button.add-btn').trigger('click')
     const input = wrapper.find('input.search-input')
     await input.setValue('pseud')
-    // The watcher debounces 200ms before calling doSearch.
+    // The searchQuery watcher debounces 200ms before calling doSearch.
     await new Promise((r) => setTimeout(r, 250))
     await flushPromises()
 

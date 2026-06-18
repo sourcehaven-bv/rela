@@ -8,6 +8,7 @@ import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
 import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
@@ -80,7 +81,7 @@ const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
 const entry = computed(() => viewData.value?.entry || null)
 const entryTitle = computed(() => {
   if (!entry.value) return props.entityId
-  return (entry.value.properties.title as string) || entry.value.id
+  return entityDisplayTitle(entry.value)
 })
 
 // inaccessibleByName maps each inaccessible field's name to its reason
