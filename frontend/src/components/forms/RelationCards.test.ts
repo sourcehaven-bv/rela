@@ -24,10 +24,11 @@ vi.mock('@/api', async () => {
     ...actual,
     getEntityRelations: vi.fn(),
     getEntity: vi.fn(),
+    searchEntities: vi.fn(),
   }
 })
 
-import { getEntityRelations, getEntity } from '@/api'
+import { getEntityRelations, getEntity, searchEntities } from '@/api'
 
 function seedSchema() {
   const schemaStore = useSchemaStore()
@@ -156,6 +157,40 @@ describe('RelationCards affordance plumbing', () => {
     const metaInput = wrapper.find('input.inline-edit')
     expect(metaInput.exists()).toBe(true)
     expect(metaInput.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  // Regression: the search dropdown must render the backend's
+  // metamodel-aware `_title`, NOT `properties.title`. For any project
+  // whose `display_property` is not literally `title` (e.g. `naam`),
+  // `properties.title` is empty and the row would otherwise show the
+  // bare ID. `_title` is always populated by the backend.
+  it('search result renders _title, not properties.title', async () => {
+    ;(searchEntities as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [
+        {
+          id: 'FEAT-DO-1',
+          type: 'feature',
+          // display_property is `naam`-style: no `title` key here.
+          properties: { naam: 'Pseudoniem API' },
+          _title: 'Pseudoniem API',
+        },
+      ],
+    })
+    const wrapper = await mountCards({})
+
+    // Open the add picker and type a query to trigger the search.
+    await wrapper.find('button.add-btn').trigger('click')
+    const input = wrapper.find('input.search-input')
+    await input.setValue('pseud')
+    // The watcher debounces 200ms before calling doSearch.
+    await new Promise((r) => setTimeout(r, 250))
+    await flushPromises()
+
+    const row = wrapper.find('.search-result .result-title')
+    expect(row.exists()).toBe(true)
+    expect(row.text()).toBe('Pseudoniem API')
+    expect(row.text()).not.toBe('FEAT-DO-1')
     wrapper.unmount()
   })
 })
