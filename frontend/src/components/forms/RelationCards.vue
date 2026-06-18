@@ -566,7 +566,7 @@ function onDragEnd() {
             @click="selectTarget(entity)"
           >
             <span class="result-id">{{ entity.id }}</span>
-            <span class="result-title">{{ entity.properties.title || entity.id }}</span>
+            <span class="result-title">{{ entity._title }}</span>
             <span class="result-type">{{ entity.type }}</span>
           </div>
         </div>
@@ -580,7 +580,7 @@ function onDragEnd() {
       <div v-if="selectedTarget" class="new-relation-form">
         <div class="selected-target">
           Linking to: <strong>{{ selectedTarget.id }}</strong>
-          {{ selectedTarget.properties.title ? `- ${selectedTarget.properties.title}` : '' }}
+          {{ selectedTarget._title ? `- ${selectedTarget._title}` : '' }}
         </div>
 
         <div v-if="fieldProperties.length" class="new-meta-fields">
