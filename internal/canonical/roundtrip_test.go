@@ -9,91 +9,64 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 // TestHashEntity_CrossBackendDecode is the linchpin guarantee of TKT-8FSBGB:
 // the same logical entity must hash identically regardless of which storage
 // backend reconstructed it.
 //
-// Rather than stand up both real stores (fsstore needs schema wiring, pgstore
-// is build-tagged and DB-gated — those round-trips are asserted in each store's
-// own suite when the hash is wired in), this test reproduces the exact decode
-// paths that produce the divergent Go types:
+// To be faithful, each case is expressed as the RAW frontmatter text a user
+// would author. The fsstore arm decodes that YAML directly (fsstore's real
+// path: yaml.Unmarshal of the frontmatter string). The pgstore arm models the
+// pg round-trip: the decoded value is JSON-marshaled (pg write) and re-decoded
+// with json.Decoder.UseNumber (pg read), exactly as pgstore does. If
+// canonicalization is correct, both arms hash identically.
 //
-//   - fsstore decodes YAML frontmatter (gopkg.in/yaml.v3).
-//   - pgstore decodes a JSONB blob with json.Decoder.UseNumber, then runs
-//     normalizeJSONNumbers to fold whole numbers back to int.
-//
-// If canonical hashing is correct, an entity whose properties came through the
-// YAML path and the same entity whose properties came through the JSON path
-// hash to the same value.
+// The cases deliberately include every divergence found in code review
+// (whole-valued floats, dates, non-string-keyed maps, large unsigned ints,
+// control characters) as regression fixtures.
 func TestHashEntity_CrossBackendDecode(t *testing.T) {
 	cases := []struct {
-		name  string
-		props map[string]any
-		body  string
+		name string
+		yaml string // raw frontmatter (properties only)
 	}{
-		{
-			name:  "scalars",
-			props: map[string]any{"title": "Hello", "priority": 3, "done": true},
-		},
-		{
-			name:  "whole and fractional numbers",
-			props: map[string]any{"count": 42, "ratio": 1.5, "zero": 0},
-		},
-		{
-			name:  "string list",
-			props: map[string]any{"tags": []any{"alpha", "beta", "gamma"}},
-		},
-		{
-			name:  "nested map",
-			props: map[string]any{"meta": map[string]any{"a": 1, "b": "two", "c": []any{1, 2}}},
-		},
-		{
-			name:  "unicode and multiline body",
-			props: map[string]any{"title": "café ☕ — über"},
-			body:  "# Heading\n\nA paragraph with some length so that wrapping behavior is exercised across the eighty column boundary.\n\n- a\n- b\n",
-		},
-		{
-			name:  "empty props",
-			props: map[string]any{},
-		},
+		{name: "scalars", yaml: "title: Hello\npriority: 3\ndone: true\n"},
+		{name: "whole-valued float (regression: 2.0)", yaml: "ratio: 2.0\nscore: 5.0\n"},
+		{name: "fractional float", yaml: "ratio: 1.5\n"},
+		{name: "negative and zero ints", yaml: "a: -5\nb: 0\n"},
+		{name: "date (regression: time.Time)", yaml: "due: 2026-06-19\n"},
+		{name: "datetime (regression)", yaml: "ts: 2026-06-19T10:30:00Z\n"},
+		{name: "string list", yaml: "tags:\n  - alpha\n  - beta\n"},
+		{name: "nested string-keyed map", yaml: "meta:\n  a: 1\n  b: two\n"},
+		{name: "unicode strings", yaml: "title: café ☕ — über\n"},
+		{name: "control char in value (regression: collision)", yaml: "weird: \"a\\x1fb\\x1ec\"\n"},
+		{name: "empty", yaml: "\n"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			viaYAML := entity.Entity{
-				ID: "E1", Type: "ticket",
-				Properties: decodeViaYAML(t, tc.props),
-				Content:    tc.body,
-			}
-			viaJSON := entity.Entity{
-				ID: "E1", Type: "ticket",
-				Properties: decodeViaJSON(t, tc.props),
-				Content:    tc.body,
-			}
+			props := decodeYAMLProps(t, tc.yaml)
 
-			hy := canonical.HashEntity(viaYAML)
-			hj := canonical.HashEntity(viaJSON)
-			if hy != hj {
-				t.Fatalf("cross-backend hash mismatch:\n yaml=%s (%#v)\n json=%s (%#v)",
-					hy, viaYAML.Properties, hj, viaJSON.Properties)
+			viaFS := entity.Entity{ID: "E1", Type: "ticket", Properties: props}
+			viaPG := entity.Entity{ID: "E1", Type: "ticket", Properties: pgRoundTrip(t, props)}
+
+			hfs := canonical.HashEntity(viaFS)
+			hpg := canonical.HashEntity(viaPG)
+			if hfs != hpg {
+				t.Fatalf("cross-backend hash mismatch:\n  fs=%s  %#v\n  pg=%s  %#v",
+					hfs, viaFS.Properties, hpg, viaPG.Properties)
 			}
 		})
 	}
 }
 
-// decodeViaYAML round-trips a property map through YAML, reproducing fsstore's
-// frontmatter decode (gopkg.in/yaml.v3) and the concrete Go types it yields.
-func decodeViaYAML(t *testing.T, props map[string]any) map[string]any {
+// decodeYAMLProps decodes raw frontmatter exactly as fsstore.parseDocument does.
+func decodeYAMLProps(t *testing.T, fm string) map[string]any {
 	t.Helper()
-	raw, err := yaml.Marshal(props)
-	if err != nil {
-		t.Fatalf("yaml.Marshal: %v", err)
-	}
 	var out map[string]any
-	if err := yaml.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("yaml.Unmarshal: %v", err)
+	if err := yaml.Unmarshal([]byte(fm), &out); err != nil {
+		t.Fatalf("yaml.Unmarshal(%q): %v", fm, err)
 	}
 	if out == nil {
 		out = map[string]any{}
@@ -101,11 +74,12 @@ func decodeViaYAML(t *testing.T, props map[string]any) map[string]any {
 	return out
 }
 
-// decodeViaJSON round-trips a property map through JSON the way pgstore does:
-// json.Decoder with UseNumber, then whole-number folding (a local copy of
-// pgstore's normalizeJSONNumbers, kept here so the test does not depend on the
-// build-tagged pgstore package).
-func decodeViaJSON(t *testing.T, props map[string]any) map[string]any {
+// pgRoundTrip models pgstore's storage round-trip: marshal the properties to
+// JSON (the JSONB column write) and decode them back with json.Decoder.UseNumber
+// (the read). It does NOT pre-fold numbers — canonical.normalize handles the raw
+// json.Number, so this test exercises the real pg read shape without forking
+// pgstore's normalizeJSONNumbers (the previous version's fragile copy).
+func pgRoundTrip(t *testing.T, props map[string]any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(props)
 	if err != nil {
@@ -120,32 +94,96 @@ func decodeViaJSON(t *testing.T, props map[string]any) map[string]any {
 	if out == nil {
 		out = map[string]any{}
 	}
-	return normalizeJSONNumbers(out).(map[string]any)
+	return out
 }
 
-// normalizeJSONNumbers mirrors pgstore's normalization: json.Number folds to int
-// when whole, else float64.
-func normalizeJSONNumbers(v any) any {
-	switch t := v.(type) {
-	case json.Number:
-		if i, err := t.Int64(); err == nil {
-			return int(i)
-		}
-		if f, err := t.Float64(); err == nil {
-			return f
-		}
-		return t.String()
-	case map[string]any:
-		for k, val := range t {
-			t[k] = normalizeJSONNumbers(val)
-		}
-		return t
-	case []any:
-		for i := range t {
-			t[i] = normalizeJSONNumbers(t[i])
-		}
-		return t
-	default:
-		return v
+// FuzzCrossBackendDecode generates arbitrary frontmatter and asserts the fs and
+// pg arms hash identically. yaml that fails to parse, or values that don't
+// survive a JSON round-trip, are skipped — we only assert the invariant for
+// inputs both real backends could actually store.
+func FuzzCrossBackendDecode(f *testing.F) {
+	seeds := []string{
+		"title: Hello\nn: 3\n",
+		"ratio: 2.0\n",
+		"due: 2026-06-19\n",
+		"tags:\n  - a\n  - b\n",
+		"m:\n  k: v\n",
+		"weird: \"a\\x1fb\"\n",
+		"big: 18446744073709551615\n",
 	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, fm string) {
+		var props map[string]any
+		if err := yaml.Unmarshal([]byte(fm), &props); err != nil {
+			t.Skip() // not valid frontmatter
+		}
+		if props == nil {
+			props = map[string]any{}
+		}
+		// Only compare inputs that survive a JSON round-trip (what pg can store).
+		raw, err := json.Marshal(props)
+		if err != nil {
+			t.Skip()
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		var pg map[string]any
+		if err := dec.Decode(&pg); err != nil {
+			t.Skip()
+		}
+		if pg == nil {
+			pg = map[string]any{}
+		}
+
+		hfs := canonical.HashEntity(entity.Entity{ID: "E", Type: "t", Properties: props})
+		hpg := canonical.HashEntity(entity.Entity{ID: "E", Type: "t", Properties: pg})
+		if hfs != hpg {
+			t.Fatalf("cross-backend hash mismatch for %q:\n  fs props=%#v\n  pg props=%#v", fm, props, pg)
+		}
+	})
+}
+
+// TestBodyConvergence is the regression for the body half of the cross-backend
+// guarantee (RR-G92SKT): pgstore stores a body raw, fsstore stores
+// FormatMarkdown(raw). The two entities must hash identically even when
+// FormatMarkdown is not idempotent (e.g. "0) \n\n0").
+func TestBodyConvergence(t *testing.T) {
+	bodies := []string{
+		"",
+		"# Title\n\nA paragraph.\n",
+		"0) \n\n0", // FormatMarkdown is non-idempotent here
+		"- a\n\n- b\n",
+		"```\ncode\n```\n",
+		"a very long line of prose that the formatter will wrap somewhere near the eighty column mark when it normalizes the body into canonical form for hashing",
+	}
+	for _, raw := range bodies {
+		t.Run(raw, func(t *testing.T) {
+			pg := entity.Entity{ID: "E", Type: "t", Content: raw}                          // pg stores raw
+			fs := entity.Entity{ID: "E", Type: "t", Content: markdown.FormatMarkdown(raw)} // fs stores once-formatted
+			if canonical.HashEntity(pg) != canonical.HashEntity(fs) {
+				t.Fatalf("body did not converge for %q:\n raw->%q\n fmt->%q",
+					raw, raw, markdown.FormatMarkdown(raw))
+			}
+		})
+	}
+}
+
+// FuzzBodyConvergence asserts the body invariant over arbitrary input: an
+// entity whose body is stored raw (pg) and one whose body is stored
+// once-formatted (fs) must hash identically, regardless of FormatMarkdown's
+// idempotency.
+func FuzzBodyConvergence(f *testing.F) {
+	for _, s := range []string{"", "# h\n\ntext\n", "0) \n\n0", "- a\n- b\n", "```\nx\n```\n"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, body string) {
+		pg := canonical.HashEntity(entity.Entity{ID: "E", Type: "t", Content: body})
+		fs := canonical.HashEntity(entity.Entity{ID: "E", Type: "t", Content: markdown.FormatMarkdown(body)})
+		if pg != fs {
+			t.Fatalf("body convergence failed for %q", body)
+		}
+	})
 }

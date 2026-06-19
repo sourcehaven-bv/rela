@@ -163,6 +163,78 @@ func TestHashEntity_NoFieldCollision(t *testing.T) {
 	}
 }
 
+// TestHashEntity_PropertyValueCollision is the regression for the critical
+// review finding (RR-3A4I1Z): a property value containing delimiter bytes must
+// not let one entity forge another's canonical form. Under the old
+// delimiter-by-concatenation scheme these two collided; the length-prefixed
+// encoding makes them distinct.
+func TestHashEntity_PropertyValueCollision(t *testing.T) {
+	// Two properties {a:"p", b:"q"} vs one property whose value embeds the
+	// record/unit separators and the value sigil to imitate a second property.
+	twoProps := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{
+		"a": "p", "b": "q",
+	}}
+	forged := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{
+		"a": "p\x1eb\x1fs:q",
+	}}
+	if canonical.HashEntity(twoProps) == canonical.HashEntity(forged) {
+		t.Fatal("property-value delimiter injection produced a collision")
+	}
+
+	// A value that ends with what looks like the start of another value, and a
+	// key that absorbs it, must also stay distinct.
+	x := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"k": "v", "kk": "w"}}
+	y := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"k": "v\x1fkk\x1fw"}}
+	if canonical.HashEntity(x) == canonical.HashEntity(y) {
+		t.Fatal("key/value boundary collision")
+	}
+}
+
+// TestHashEntity_DateEqualsString is the regression for RR-QUXNPR: a date
+// decoded as time.Time (fsstore) and the same value as the RFC3339 string
+// pgstore reads back must hash identically. The package normalizes time.Time to
+// its RFC3339 string, so a date and a user-typed identical string also agree —
+// which is correct, since pg cannot distinguish them.
+func TestHashEntity_DateEqualsString(t *testing.T) {
+	d := time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC)
+	asTime := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"due": d}}
+	asString := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"due": "2026-06-19T00:00:00Z"}}
+	if canonical.HashEntity(asTime) != canonical.HashEntity(asString) {
+		t.Fatal("time.Time and its RFC3339 string hashed differently")
+	}
+}
+
+// TestHashEntity_WholeFloatEqualsInt is the regression for RR-KTAK7N: a
+// whole-valued float (fsstore's decode of "2.0") and the int pgstore folds it
+// to must hash identically.
+func TestHashEntity_WholeFloatEqualsInt(t *testing.T) {
+	asFloat := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"n": 2.0}}
+	asInt := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"n": 2}}
+	if canonical.HashEntity(asFloat) != canonical.HashEntity(asInt) {
+		t.Fatal("whole-valued float 2.0 and int 2 hashed differently")
+	}
+	// A genuinely fractional float must NOT collapse to an int.
+	frac := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"n": 2.5}}
+	if canonical.HashEntity(frac) == canonical.HashEntity(asInt) {
+		t.Fatal("fractional float 2.5 collided with int 2")
+	}
+}
+
+// TestHashEntity_NonStringKeyedMap is the regression for RR-N7D3OK: yaml decodes
+// a non-string-keyed mapping to map[any]any. It must canonicalize the same as
+// the string-keyed map pgstore produces for the equivalent JSON.
+func TestHashEntity_NonStringKeyedMap(t *testing.T) {
+	anyKeyed := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{
+		"m": map[any]any{1: "a", 2: "b"},
+	}}
+	stringKeyed := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{
+		"m": map[string]any{"1": "a", "2": "b"},
+	}}
+	if canonical.HashEntity(anyKeyed) != canonical.HashEntity(stringKeyed) {
+		t.Fatal("map[any]any and map[string]any with equal logical content hashed differently")
+	}
+}
+
 // TestCanonicalValue_AllKinds exercises every value kind the canonicalizer
 // handles, so the type switch is fully covered and each kind is distinct from
 // the others.
