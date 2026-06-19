@@ -64,6 +64,7 @@ components:
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
+  canonical:        { in: internal/canonical }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
@@ -483,6 +484,10 @@ deps:
       - frontmatter
     canUse:
       - goldmark
+  canonical:
+    mayDependOn:
+      - entity
+      - markdown
   filter:
     mayDependOn:
       - metamodel
@@ -543,11 +548,10 @@ deps:
       - cache
       - frontmatter
       - graphquerynaive
+      - markdown
       - storage
       - store
       - storeutil
-    canUse:
-      - goldmark
   memstore:
     mayDependOn:
       - graphquerynaive

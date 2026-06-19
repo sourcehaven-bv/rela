@@ -2,7 +2,7 @@
 id: IMPL-95G7FT
 type: implementation-checklist
 title: 'Implementation: Sync 1/5: shared canonical entity/relation serializer + content hash'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

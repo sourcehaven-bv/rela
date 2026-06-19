@@ -5,7 +5,7 @@ title: 'Sync 1/5: shared canonical entity/relation serializer + content hash'
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN. **Foundation — everything else depends
