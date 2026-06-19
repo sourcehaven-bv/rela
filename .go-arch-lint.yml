@@ -131,6 +131,10 @@ vendors:
     in:
       - golang.org/x/net/http2
       - golang.org/x/net/http2/**
+  nethtml:
+    in:
+      - golang.org/x/net/html
+      - golang.org/x/net/html/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -255,6 +259,7 @@ deps:
     canUse:
       - goldmark
       - gogit
+      - nethtml
       - singleflight
   dataentryconfig:
     mayDependOn:

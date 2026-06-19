@@ -241,6 +241,8 @@ function createTestProject(): string {
   fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'templates', 'entities'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'scripts', 'docs'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'apps', 'e2e-demo'), { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'apps', 'e2e-demo', 'index.html'), E2E_DEMO_APP_HTML);
   for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
@@ -945,6 +947,59 @@ navigation:
   - label: "Conflicts"
     conflicts: true
 `;
+
+/** Custom-app HTML used by apps.spec.ts. Exercises the rela bridge end-to-end:
+ *  a read (list features) on load, and a relation write (FEAT-001 blocks
+ *  FEAT-002) on button click. Results land in stable data-testid nodes the
+ *  page object reads. The app is plain HTML+JS — it talks to the host only via
+ *  the injected `window.rela` SDK over the MessageChannel. */
+const E2E_DEMO_APP_HTML = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>E2E Demo</title>
+    <meta name="rela-app:label" content="E2E Demo">
+    <meta name="rela-app:description" content="Drives the rela bridge from a sandboxed iframe for e2e tests">
+    <script src="_rela.js"></script></head>
+  <body>
+    <div data-testid="status">starting</div>
+    <div data-testid="feature-count"></div>
+    <button data-testid="link-btn" type="button">Link</button>
+    <div data-testid="link-result"></div>
+    <script>
+      function ready(fn) {
+        var done = false;
+        function go() { if (!done) { done = true; fn(); } }
+        window.addEventListener('rela:ready', go, { once: true });
+        setTimeout(go, 1000);
+      }
+      var statusEl = document.querySelector('[data-testid=status]');
+      var countEl = document.querySelector('[data-testid=feature-count]');
+      var linkResultEl = document.querySelector('[data-testid=link-result]');
+
+      ready(async function () {
+        try {
+          var res = await window.rela.list({ type: 'feature', params: { per_page: 200 } });
+          var n = (res && res.data ? res.data.length : 0);
+          countEl.textContent = String(n);
+          statusEl.textContent = 'loaded';
+        } catch (e) {
+          statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+        }
+      });
+
+      document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {
+        linkResultEl.textContent = 'linking';
+        try {
+          await window.rela.relationCreate({
+            type: 'feature', id: 'FEAT-001', relation: 'blocks', targetId: 'FEAT-002',
+          });
+          linkResultEl.textContent = 'linked';
+        } catch (e) {
+          linkResultEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+        }
+      });
+    </script>
+  </body>
+</html>`;
 
 /** Document script rendered by rela-server when visiting
  *  /entity/feature/FEAT-001?doc=feature-overview. Emits a single link to

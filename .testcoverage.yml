@@ -68,6 +68,7 @@ exclude:
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers
     - ^internal/store/graphquerynaive # exercised through every backend's graphquery tests; cross-package coverage isn't attributed without -coverpkg, so its own number reads 0
     - ^frontend/node_modules   # Go files in npm dependencies
+    - ^e2e/node_modules        # Go files in npm dependencies (e.g. flatted)
 
 # Require coverage-ignore annotations to have explanatory comments
 force-annotation-comment: true
