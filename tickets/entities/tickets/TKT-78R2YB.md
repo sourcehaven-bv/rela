@@ -5,7 +5,7 @@ title: 'Sync 3/5: public ApplyEntity/ApplyRelation (id-preserving upsert, automa
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN. Addresses design-review RR-L1MY0N (crit)
