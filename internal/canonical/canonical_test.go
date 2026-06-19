@@ -1,0 +1,260 @@
+package canonical_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/canonical"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
+)
+
+// mustReflow models the body form fsstore stores on disk: it runs the content
+// through the same markdown normalization fsstore applies before writing.
+func mustReflow(s string) string {
+	return markdown.FormatMarkdown(s)
+}
+
+func TestHashEntity_Deterministic(t *testing.T) {
+	// Two separately constructed but equal entities must hash identically.
+	mk := func() entity.Entity {
+		return entity.Entity{
+			ID:         "TKT-001",
+			Type:       "ticket",
+			Properties: map[string]any{"title": "Hello", "priority": 3},
+			Content:    "Some body text.",
+		}
+	}
+	if got, want := canonical.HashEntity(mk()), canonical.HashEntity(mk()); got != want {
+		t.Fatalf("hash not deterministic: %s != %s", got, want)
+	}
+}
+
+// TestHashEntity_TypeInvariance is the core guarantee: the same logical value
+// produced by the YAML (fsstore) and JSONB (pgstore) decode paths must hash
+// identically despite different concrete Go types.
+func TestHashEntity_TypeInvariance(t *testing.T) {
+	base := func(props map[string]any) entity.Entity {
+		return entity.Entity{ID: "E1", Type: "ticket", Properties: props}
+	}
+
+	cases := []struct {
+		name string
+		a    map[string]any
+		b    map[string]any
+	}{
+		{
+			name: "int vs int64",
+			a:    map[string]any{"n": int(5)},
+			b:    map[string]any{"n": int64(5)},
+		},
+		{
+			name: "int vs int32",
+			a:    map[string]any{"n": int(5)},
+			b:    map[string]any{"n": int32(5)},
+		},
+		{
+			name: "string slice vs interface slice",
+			a:    map[string]any{"tags": []string{"x", "y"}},
+			b:    map[string]any{"tags": []any{"x", "y"}},
+		},
+		{
+			name: "nested map key order",
+			a:    map[string]any{"m": map[string]any{"a": 1, "b": 2}},
+			b:    map[string]any{"m": map[string]any{"b": 2, "a": 1}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ha := canonical.HashEntity(base(tc.a))
+			hb := canonical.HashEntity(base(tc.b))
+			if ha != hb {
+				t.Fatalf("type-variant inputs hashed differently:\n a=%s\n b=%s", ha, hb)
+			}
+		})
+	}
+}
+
+// TestHashEntity_PropertyOrderInvariance asserts the top-level property map
+// order does not affect the hash (Go map iteration order is random).
+func TestHashEntity_PropertyOrderInvariance(t *testing.T) {
+	a := entity.Entity{ID: "E1", Type: "t", Properties: map[string]any{
+		"alpha": "1", "beta": "2", "gamma": "3", "delta": "4",
+	}}
+	b := entity.Entity{ID: "E1", Type: "t", Properties: map[string]any{
+		"delta": "4", "gamma": "3", "beta": "2", "alpha": "1",
+	}}
+	if canonical.HashEntity(a) != canonical.HashEntity(b) {
+		t.Fatal("property order affected the hash")
+	}
+}
+
+// TestHashEntity_IgnoresStorageMetadata asserts UpdatedAt and Inaccessible do
+// not participate in the content hash.
+func TestHashEntity_IgnoresStorageMetadata(t *testing.T) {
+	base := entity.Entity{ID: "E1", Type: "t", Properties: map[string]any{"k": "v"}, Content: "body"}
+	withTime := base
+	withTime.UpdatedAt = time.Date(2026, 6, 19, 0, 0, 0, 0, time.UTC)
+	withInacc := base
+	withInacc.Inaccessible = []entity.InaccessibleField{{Name: "secret", Reason: entity.InaccessibleReasonGitCrypt}}
+
+	if canonical.HashEntity(base) != canonical.HashEntity(withTime) {
+		t.Error("UpdatedAt affected the hash")
+	}
+	if canonical.HashEntity(base) != canonical.HashEntity(withInacc) {
+		t.Error("Inaccessible affected the hash")
+	}
+}
+
+// TestHashEntity_NilVsEmptyProps asserts a nil property map and an empty
+// (non-nil) map hash identically — pgstore yields a non-nil empty map, fsstore
+// may yield nil for a frontmatter-less entity.
+func TestHashEntity_NilVsEmptyProps(t *testing.T) {
+	a := entity.Entity{ID: "E1", Type: "t", Properties: nil}
+	b := entity.Entity{ID: "E1", Type: "t", Properties: map[string]any{}}
+	if canonical.HashEntity(a) != canonical.HashEntity(b) {
+		t.Fatal("nil and empty property maps hashed differently")
+	}
+}
+
+// TestHashEntity_BodyIdempotent asserts the body-canonicalization is idempotent:
+// fsstore stores an already-reflowed body, pgstore stores raw content. Both must
+// converge. We model this by hashing a raw body and its once-reflowed form.
+func TestHashEntity_BodyIdempotent(t *testing.T) {
+	raw := "# Heading\n\nA paragraph that is reasonably long and might get wrapped by the markdown formatter at eighty columns when normalized.\n\n- item one\n- item two\n"
+	rawEnt := entity.Entity{ID: "E1", Type: "t", Content: raw}
+
+	// Hash once; then take the canonical body form and hash an entity built
+	// from it. They must be equal (idempotency of FormatMarkdown).
+	h1 := canonical.HashEntity(rawEnt)
+
+	// Simulate fsstore having stored the reflowed body by reflowing twice.
+	reflowedOnce := entity.Entity{ID: "E1", Type: "t", Content: mustReflow(raw)}
+	h2 := canonical.HashEntity(reflowedOnce)
+
+	if h1 != h2 {
+		t.Fatalf("body canonicalization not idempotent:\n raw=%s\n reflowed=%s", h1, h2)
+	}
+}
+
+func TestHashEntity_DistinctContentDistinctHash(t *testing.T) {
+	a := entity.Entity{ID: "E1", Type: "t", Properties: map[string]any{"k": "v1"}}
+	b := entity.Entity{ID: "E1", Type: "t", Properties: map[string]any{"k": "v2"}}
+	if canonical.HashEntity(a) == canonical.HashEntity(b) {
+		t.Fatal("different property values produced the same hash")
+	}
+}
+
+// TestHashEntity_NoFieldCollision guards against concatenation collisions: a
+// value that moves a delimiter-shaped string between fields must not collide.
+func TestHashEntity_NoFieldCollision(t *testing.T) {
+	// id="A" type="B"  vs  id="A\x1fB" type=""  must differ.
+	a := entity.Entity{ID: "A", Type: "B"}
+	b := entity.Entity{ID: "A\x1fB", Type: ""}
+	if canonical.HashEntity(a) == canonical.HashEntity(b) {
+		t.Fatal("field boundary collision")
+	}
+	// string "1" vs int 1 in a property must differ.
+	s := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"k": "1"}}
+	i := entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"k": 1}}
+	if canonical.HashEntity(s) == canonical.HashEntity(i) {
+		t.Fatal("string and int values collided")
+	}
+}
+
+// TestCanonicalValue_AllKinds exercises every value kind the canonicalizer
+// handles, so the type switch is fully covered and each kind is distinct from
+// the others.
+func TestCanonicalValue_AllKinds(t *testing.T) {
+	mk := func(v any) string {
+		return canonical.HashEntity(entity.Entity{ID: "E", Type: "t", Properties: map[string]any{"k": v}})
+	}
+	hashes := map[string]string{
+		"nil":            mk(nil),
+		"string":         mk("hello"),
+		"bool-true":      mk(true),
+		"bool-false":     mk(false),
+		"int":            mk(int(7)),
+		"int8":           mk(int8(7)),
+		"int16":          mk(int16(7)),
+		"int32":          mk(int32(7)),
+		"int64":          mk(int64(7)),
+		"uint":           mk(uint(7)),
+		"uint8":          mk(uint8(7)),
+		"uint16":         mk(uint16(7)),
+		"uint32":         mk(uint32(7)),
+		"uint64":         mk(uint64(7)),
+		"float64-frac":   mk(3.5),
+		"float32-frac":   mk(float32(3.5)),
+		"slice-string":   mk([]string{"a"}),
+		"slice-any":      mk([]any{"a"}),
+		"map":            mk(map[string]any{"x": 1}),
+		"unknown-struct": mk(struct{ A int }{A: 1}),
+	}
+
+	// All signed/unsigned integer widths of the same value 7 must agree.
+	intKinds := []string{"int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64"}
+	for _, k := range intKinds[1:] {
+		if hashes[k] != hashes["int"] {
+			t.Errorf("integer kind %q hashed differently from int", k)
+		}
+	}
+	// float32(3.5) and float64(3.5) must agree (3.5 is exactly representable).
+	if hashes["float32-frac"] != hashes["float64-frac"] {
+		t.Error("float32 and float64 of 3.5 hashed differently")
+	}
+	// []string{"a"} and []any{"a"} must agree.
+	if hashes["slice-string"] != hashes["slice-any"] {
+		t.Error("[]string and []any hashed differently")
+	}
+	// Distinct kinds must not collide with each other (spot checks).
+	distinct := []string{"nil", "string", "bool-true", "int", "float64-frac", "slice-any", "map", "unknown-struct"}
+	for i := range distinct {
+		for j := i + 1; j < len(distinct); j++ {
+			if hashes[distinct[i]] == hashes[distinct[j]] {
+				t.Errorf("kinds %q and %q collided", distinct[i], distinct[j])
+			}
+		}
+	}
+}
+
+func TestHashRelation_Deterministic(t *testing.T) {
+	mk := func() entity.Relation {
+		return entity.Relation{
+			From: "A", Type: "implements", To: "B",
+			Properties: map[string]any{"weight": 2},
+			Content:    "why",
+		}
+	}
+	if got, want := canonical.HashRelation(mk()), canonical.HashRelation(mk()); got != want {
+		t.Fatalf("relation hash not deterministic: %s != %s", got, want)
+	}
+}
+
+func TestHashRelation_TypeInvariance(t *testing.T) {
+	a := entity.Relation{From: "A", Type: "rel", To: "B", Properties: map[string]any{"w": int(1)}}
+	b := entity.Relation{From: "A", Type: "rel", To: "B", Properties: map[string]any{"w": int64(1)}}
+	if canonical.HashRelation(a) != canonical.HashRelation(b) {
+		t.Fatal("relation type-variant inputs hashed differently")
+	}
+}
+
+// TestHashRelation_DirectionMatters asserts A--rel-->B and B--rel-->A differ.
+func TestHashRelation_DirectionMatters(t *testing.T) {
+	a := entity.Relation{From: "A", Type: "rel", To: "B"}
+	b := entity.Relation{From: "B", Type: "rel", To: "A"}
+	if canonical.HashRelation(a) == canonical.HashRelation(b) {
+		t.Fatal("relation direction did not affect the hash")
+	}
+}
+
+// TestEntityRelationDisjoint asserts an entity and a relation with coincidentally
+// similar fields never collide (the "entity"/"relation" prefix guards this).
+func TestEntityRelationDisjoint(t *testing.T) {
+	e := entity.Entity{ID: "A", Type: "rel"}
+	r := entity.Relation{From: "A", Type: "rel", To: ""}
+	if canonical.HashEntity(e) == canonical.HashRelation(r) {
+		t.Fatal("entity and relation hashes collided")
+	}
+}
