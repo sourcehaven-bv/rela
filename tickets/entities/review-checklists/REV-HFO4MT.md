@@ -9,8 +9,8 @@ status: done
 
 ## Automated Checks
 
-- [x] All tests pass — `go test -race ./internal/canonical/ ./internal/store/fsstore/ ./internal/markdown/` → ok (incl. 966k-exec cross-backend fuzz + 246k body-convergence fuzz)
-- [x] Lint clean — `golangci-lint run` on all three touched packages → 0 issues
+- [x] All tests pass — `go test -race ./internal/canonical/ ./internal/store/fsstore/ ./internal/markdown/` → ok (incl. 966k-exec cross-backend fuzz + 246k body-convergence fuzz); CI Test + Fuzz green on PR #1006
+- [x] Lint clean — `golangci-lint run` on all three touched packages → 0 issues; CI Lint + Architecture green
 - [x] Coverage maintained — canonical package 96% (well above default floor 50); fsstore/markdown unchanged or improved
 
 ## Code Review
@@ -18,7 +18,7 @@ status: done
 - [x] Run `/code-review` command (cranky-code-reviewer) — done; found 5 critical + 4 significant
 - [x] All critical review-responses addressed — RR-3A4I1Z, RR-KTAK7N, RR-QUXNPR, RR-N7D3OK, RR-FQM4NQ
 - [x] All significant review-responses addressed — RR-G92SKT, RR-URBR6S, RR-K484BN, RR-H5A0MZ
-- [x] Self-reviewed the diff for unrelated changes — fsstore formatter dedup is the only adjacent change; behavior-preserving (all store/entitymanager tests pass)
+- [x] Self-reviewed the diff for unrelated changes — fsstore formatter dedup is the only adjacent change; behavior-preserving (all store/entitymanager tests pass). archfile updated to register the new component.
 
 **Review Responses:** RR-3A4I1Z RR-KTAK7N RR-QUXNPR RR-N7D3OK RR-FQM4NQ
 (critical, addressed); RR-G92SKT RR-URBR6S RR-K484BN RR-H5A0MZ (significant,
@@ -54,7 +54,7 @@ sub-ticket.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI — PR opened, auto-merge (squash) enabled, reviewer `tschmits` requested
-- [ ] All CI checks pass — monitoring (pending at time of writing)
+- [x] All CI checks pass — Test, Fuzz, Lint, Architecture, Postgres Backend, E2E, Frontend all green on PR #1006
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1006 — auto-merge enabled
