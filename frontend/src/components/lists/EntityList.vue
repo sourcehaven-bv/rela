@@ -12,6 +12,7 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticList'
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
@@ -520,7 +521,7 @@ function getFormattedCellValue(entity: Entity, column: { property?: string; rela
     const relationIds = entity.relations?.[column.relation] || []
     const titles = relationIds.map((id) => {
       const included = includedEntities.value[id]
-      return included?._title || included?.properties?.title || id
+      return included ? entityDisplayTitle(included) : id
     })
     return titles.join(', ')
   }

@@ -17,6 +17,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { searchEntities } from '@/api'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -137,10 +138,7 @@ onBeforeUnmount(() => {
 })
 
 function entityLabel(entity: Entity): string {
-  if (typeof entity._title === 'string' && entity._title !== '') return entity._title
-  const t = entity.properties?.title
-  if (typeof t === 'string' && t !== '') return t
-  return entity.id
+  return entityDisplayTitle(entity)
 }
 
 function entityTypeLabel(type: string): string {

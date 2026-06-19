@@ -119,6 +119,34 @@ export default tseslint.config(
     },
   },
 
+  // Ban reading `.properties.title` for display. The backend serializes a
+  // metamodel-aware `_title` (honoring each type's `display_property`);
+  // reading the literal `title` property only works when display_property
+  // happens to be `title` and otherwise renders bare IDs (BUG-1P88YM).
+  // Use entityDisplayTitle() from @/utils/entityDisplay instead. The helper
+  // and its test are exempt (they own the `properties.title` reference).
+  {
+    files: ['**/*.vue', '**/*.ts', '**/*.tsx'],
+    ignores: ['src/utils/entityDisplay.ts', '**/*.test.ts', '**/*.spec.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "MemberExpression[property.name='title'] > MemberExpression[property.name='properties']",
+          message:
+            'Do not read `.properties.title` for display — it shows bare IDs when display_property is not "title" (BUG-1P88YM). Use entityDisplayTitle() from @/utils/entityDisplay.',
+        },
+        {
+          selector:
+            "MemberExpression[computed=true][property.value='title'] > MemberExpression[property.name='properties']",
+          message:
+            "Do not read `.properties['title']` for display — use entityDisplayTitle() from @/utils/entityDisplay (BUG-1P88YM).",
+        },
+      ],
+    },
+  },
+
   // Test files - relaxed rules
   {
     files: ['**/*.test.ts', '**/*.spec.ts', '**/test/**/*.ts'],

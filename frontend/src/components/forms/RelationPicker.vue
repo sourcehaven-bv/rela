@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { getEntityRelations } from '@/api'
+import { entityDisplayTitleWithId } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } from '@/types'
 import InlineCreateModal from './InlineCreateModal.vue'
 
@@ -245,12 +246,9 @@ function removeEntity(entityId: string) {
 }
 
 function formatEntityLabel(entity: Entity): string {
-  // _title is the metamodel-aware display title from the API, falling back to id
-  // when the entity type has no display property set. Matches EntityDetail.vue.
-  if (entity._title && entity._title !== entity.id) {
-    return `${entity._title} (${entity.id})`
-  }
-  return entity.id
+  // _title is the metamodel-aware display title from the API, falling back
+  // to id when the entity type has no display property set.
+  return entityDisplayTitleWithId(entity)
 }
 
 function openCreateModal(targetType: string) {
