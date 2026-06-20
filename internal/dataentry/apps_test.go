@@ -73,6 +73,36 @@ func TestAppBaseURL(t *testing.T) {
 	}
 }
 
+// TestAppTokensCSSInSyncWithFrontend pins the embedded token stylesheet
+// (apps_tokens.css) byte-for-byte to the SPA's source of truth
+// (frontend/src/styles/tokens.css). They must never drift: the SPA and the app
+// stylesheet share these tokens. If this fails, re-copy the frontend file.
+func TestAppTokensCSSInSyncWithFrontend(t *testing.T) {
+	frontend, err := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "styles", "tokens.css"))
+	if err != nil {
+		t.Fatalf("read frontend tokens.css: %v", err)
+	}
+	if string(frontend) != appTokensCSS {
+		t.Errorf("apps_tokens.css has drifted from frontend/src/styles/tokens.css — re-copy it")
+	}
+}
+
+func TestAppCSSSource(t *testing.T) {
+	css := appCSSSource()
+	for _, want := range []string{"--text-color", ":root.dark", ".btn", ".btn-primary", ".input", ".card"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("appCSSSource missing %q", want)
+		}
+	}
+	// Stays tokens + atomic controls — must NOT smuggle in component-shaped
+	// classes (the documented line).
+	for _, unwanted := range []string{".table", ".modal", ".select", ".dropdown"} {
+		if strings.Contains(css, unwanted) {
+			t.Errorf("appCSSSource should not include component-shaped %q", unwanted)
+		}
+	}
+}
+
 func TestParseAppMeta(t *testing.T) {
 	t.Run("reads rela-app meta tags", func(t *testing.T) {
 		html := `<html><head>
@@ -263,6 +293,29 @@ func TestHandleV1App(t *testing.T) {
 		}
 		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
 			t.Errorf("SDK Content-Type = %q", ct)
+		}
+	})
+
+	t.Run("serves the reserved _rela.css (tokens + base controls)", func(t *testing.T) {
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela.css")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "--text-color") || !strings.Contains(body, ":root.dark") {
+			t.Errorf("CSS missing theme tokens / dark block: %.120s", body)
+		}
+		if !strings.Contains(body, ".btn") || !strings.Contains(body, ".input") || !strings.Contains(body, ".card") {
+			t.Errorf("CSS missing base controls (.btn/.input/.card)")
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "css") {
+			t.Errorf("CSS Content-Type = %q, want text/css", ct)
+		}
+		// The CSS is served from the app's own path, so the app's own
+		// style-src directive already permits it (no extra CSP origin needed).
+		csp := w.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "style-src "+ /*absolute*/ "http") || !strings.Contains(csp, "/api/v1/_apps/demo/") {
+			t.Errorf("style-src must path-scope the app (which covers _rela.css): %q", csp)
 		}
 	})
 

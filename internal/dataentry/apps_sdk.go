@@ -13,6 +13,12 @@ const appHandshakeType = "rela:port"
 // origin. Must match HELLO_TYPE in AppHostView.vue.
 const appHelloType = "rela:hello"
 
+// appThemeType is a host→iframe message carrying the current theme
+// ({type, dark:bool}) so an app linking _rela.css follows the host's light/dark
+// setting. Sent live when the host theme changes (the initial value also rides
+// on the handshake reply). Must match THEME_TYPE in AppHostView.vue.
+const appThemeType = "rela:theme"
+
 // appSDKMethods is the closed bridge method allow-list the in-iframe SDK
 // exposes as rela.<method>. Must stay in sync with BRIDGE_METHODS in
 // frontend/src/bridge/relaBridge.ts (the host dispatcher that actually
@@ -52,10 +58,20 @@ func appSDKSource() string {
   }
   // Accept the port only from our parent (the host), one time, first wins —
   // so a nested frame the app creates cannot race the handshake and MITM us.
+  // Apply the host theme by toggling .dark on <html> — matches the selector
+  // _rela.css uses (:root.dark), so an app that links _rela.css follows the
+  // host's light/dark setting automatically.
+  function applyTheme(dark) {
+    try { document.documentElement.classList.toggle('dark', !!dark); } catch (e) {}
+  }
   window.addEventListener('message', function (ev) {
     if (ev.source !== window.parent) return;
-    if (!ev.data || ev.data.type !== ` + jsString(appHandshakeType) + `) return;
+    if (!ev.data) return;
+    // Live theme updates (host theme toggled after handshake).
+    if (ev.data.type === ` + jsString(appThemeType) + `) { applyTheme(ev.data.dark); return; }
+    if (ev.data.type !== ` + jsString(appHandshakeType) + `) return;
     if (port || !ev.ports || !ev.ports[0]) return;
+    applyTheme(ev.data.dark);
     port = ev.ports[0];
     port.onmessage = onPortMessage;
     port.start && port.start();

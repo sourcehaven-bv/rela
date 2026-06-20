@@ -85,4 +85,19 @@ test.describe('Custom apps (sandboxed-iframe bridge)', () => {
     expect(sdk.status()).toBe(200);
     expect(await sdk.text()).toContain('window.rela');
   });
+
+  test('serves the optional _rela.css (theme tokens + base controls)', async ({
+    appPage,
+    serverUrl,
+  }) => {
+    const resp = await appPage.request.get(`${serverUrl}/api/v1/_apps/e2e-demo/_rela.css`);
+    expect(resp.status()).toBe(200);
+    expect(resp.headers()['content-type']).toContain('css');
+    const css = await resp.text();
+    expect(css).toContain('--text-color'); // theme tokens
+    expect(css).toContain(':root.dark'); // dark variant
+    expect(css).toContain('.btn'); // base controls
+    expect(css).toContain('.input');
+    expect(css).toContain('.card');
+  });
 });

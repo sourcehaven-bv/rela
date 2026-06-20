@@ -2318,6 +2318,35 @@ src="logo.png">`).
 offline without deleting it, rename the folder (e.g. `ticket-counter` →
 `_ticket-counter`, which fails the id rule) or remove its `index.html`.
 
+### Matching rela's look (optional `_rela.css`)
+
+To render consistently with the rest of the app, opt into rela's styling by
+linking the served stylesheet:
+
+```html
+<head>
+  <link rel="stylesheet" href="_rela.css">
+</head>
+```
+
+`_rela.css` provides two things:
+
+- **Theme tokens** — CSS custom properties for colors (`--text-color`,
+  `--bg-color`, `--card-bg`, `--border-color`, `--accent-color`,
+  `--error/success/warning/info-color`, the `--badge-*` set), surfaces, and
+  borders. Use them in your own CSS (`color: var(--text-color)`) so the app
+  matches the host palette.
+- **Base controls** — three atomic classes: `.btn` / `.btn-primary` (buttons),
+  `.input` (text inputs), `.card` (a bordered surface). These are deliberately
+  minimal; build anything more structural (tables, selects, modals) yourself
+  using the tokens.
+
+**Dark mode follows the host automatically** — when the user switches the data-
+entry theme, rela toggles the same `dark` class on your app, and the tokens
+flip. No work needed beyond linking `_rela.css` and using `var(--…)` for your
+own colors. Opting in is entirely optional; an app that wants full control of
+its look simply doesn't link it.
+
 ### The `rela` bridge
 
 Inside the iframe, a `rela` object (from `_rela.js`) gives the app a

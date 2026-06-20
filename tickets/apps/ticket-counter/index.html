@@ -11,17 +11,22 @@
     <!-- The rela bridge SDK (window.rela). Served by rela at this app's own
          path; the path-scoped CSP allows it. -->
     <script src="_rela.js"></script>
+    <!-- Opt into rela's theme tokens + base controls (.btn/.input/.card).
+         Dark mode follows the host automatically (the SDK toggles .dark). -->
+    <link rel="stylesheet" href="_rela.css" />
     <style>
+      /* App-specific layout, using the rela tokens for colors so it matches the
+         host theme in both light and dark. */
       html,
       body {
         height: 100%;
       }
       body {
-        font-family: system-ui, sans-serif;
+        font-family: inherit;
         margin: 0;
         padding: 1.5rem;
-        color: #1a1a1a;
-        background: #f7f9fc;
+        color: var(--text-color);
+        background: var(--bg-color);
         box-sizing: border-box;
       }
       h1 {
@@ -36,34 +41,30 @@
       td {
         text-align: left;
         padding: 0.35rem 0.75rem;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid var(--border-color);
       }
       td.count {
         text-align: right;
         font-variant-numeric: tabular-nums;
       }
       .muted {
-        color: #888;
+        color: var(--muted-text);
       }
       .err {
-        color: #c0392b;
-      }
-      button {
-        margin-top: 1rem;
-        padding: 0.4rem 0.8rem;
+        color: var(--error-color);
       }
     </style>
   </head>
   <body>
     <h1>Tickets by status</h1>
     <div id="status" class="muted">Connecting…</div>
-    <table id="table" hidden>
+    <table id="table" class="card" hidden style="padding: 0.5rem 1rem;">
       <thead>
         <tr><th>Status</th><th>Count</th></tr>
       </thead>
       <tbody id="rows"></tbody>
     </table>
-    <button id="refresh" hidden>Refresh</button>
+    <button id="refresh" class="btn" hidden style="margin-top: 1rem;">Refresh</button>
 
     <script>
       // The host hands the SDK its bridge port a moment after load and signals

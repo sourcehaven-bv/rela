@@ -94,6 +94,16 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   reserved `/_apps/<id>/_rela.js`; apps include `<script src="_rela.js">`. The
   app cannot shadow `_rela.js` or serve any `_`-prefixed entry from its files.
   No server-side HTML rewriting of the app's index.
+- **Optional styling is served at the reserved `/_apps/<id>/_rela.css`**
+  (`appCSSSource()` = theme tokens + the atomic `.btn`/`.input`/`.card`). The
+  tokens are embedded from `apps_tokens.css`, a **byte-identical copy** of
+  `frontend/src/styles/tokens.css` (the SPA's source of truth) —
+  `TestAppTokensCSSInSyncWithFrontend` fails on drift; re-copy, don't hand-edit.
+  Keep `_rela.css` to tokens + *atomic, pure-presentation* controls; component-
+  shaped classes (tables, selects, modals) stay out (they'd become an
+  unmaintainable frozen contract). Theme follows the host: the SDK toggles
+  `dark` on the app's `<html>` from the `rela:theme`/handshake messages, using
+  the same `:root.dark` selector as the SPA.
 - **No app-specific ACL.** An app inherits the user's permissions: every
   `/api/v1/*` call runs under the user's session (reads → `readGate`, writes →
   `entitymanager`). Do **not** add an `OpRunApp`/`AppSubject` — it would break

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
+import { useUIStore } from '@/stores'
 import { dispatchBridgeRequest, type BridgeRequest } from '@/bridge/relaBridge'
 
 const HANDSHAKE_TYPE = 'rela:port'
 const HELLO_TYPE = 'rela:hello'
+const THEME_TYPE = 'rela:theme'
 
 const route = useRoute()
+const uiStore = useUIStore()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 
@@ -25,6 +28,8 @@ const appSrc = computed(() => (appId.value ? `/api/v1/_apps/${encodeURIComponent
 // which resets this for a genuinely new app.
 let hostPort: MessagePort | null = null
 let handshakeDone = false
+// The handshaked iframe window, kept so we can push live theme updates to it.
+let appWindow: Window | null = null
 
 function teardownPort() {
   if (hostPort) {
@@ -32,6 +37,7 @@ function teardownPort() {
     hostPort.close()
     hostPort = null
   }
+  appWindow = null
 }
 
 // Iframe-initiated handshake. The app's SDK posts `rela:hello`; we verify the
@@ -57,6 +63,7 @@ function onHostMessage(ev: MessageEvent) {
     hostPort?.postMessage(res)
   }
   hostPort.start()
+  appWindow = ev.source as Window
   // Reply to the EXACT window that sent the verified hello (ev.source, already
   // checked === our iframe). targetOrigin is '*' because the sandboxed iframe's
   // origin is the opaque "null", which Chrome does NOT match against the literal
@@ -64,14 +71,25 @@ function onHostMessage(ev: MessageEvent) {
   // works. This is safe: the port goes to the one pinned ev.source window, not
   // broadcast, and we hand out at most one port per app (handshakeDone). The
   // SDK additionally only accepts a port whose ev.source === window.parent.
-  ;(ev.source as Window).postMessage({ type: HANDSHAKE_TYPE }, '*', [channel.port2])
+  // The reply carries the current theme so an app linking _rela.css renders in
+  // the right mode immediately.
+  appWindow.postMessage({ type: HANDSHAKE_TYPE, dark: uiStore.isDark }, '*', [channel.port2])
 }
 
 // Reset the once-only handshake when switching to a different app (the iframe
 // remounts via :key, so a fresh handshake is correct for the new app).
 watch(appId, () => {
   handshakeDone = false
+  appWindow = null
 })
+
+// Push live theme changes to the running app so _rela.css follows the host.
+watch(
+  () => uiStore.isDark,
+  (dark) => {
+    appWindow?.postMessage({ type: THEME_TYPE, dark }, '*')
+  },
+)
 
 window.addEventListener('message', onHostMessage)
 

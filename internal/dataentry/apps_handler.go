@@ -99,10 +99,15 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", appCSP(appBaseURL(r, id)))
 	h.Set("X-Content-Type-Options", "nosniff")
 
-	// Reserved SDK endpoint — served from the binary, not the app's files.
+	// Reserved endpoints — served from the binary, not the app's files.
 	if entry == appSDKEntry {
 		h.Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write([]byte(appSDKSource()))
+		return
+	}
+	if entry == appCSSEntry {
+		h.Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = w.Write([]byte(appCSSSource()))
 		return
 	}
 

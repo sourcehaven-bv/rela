@@ -37,6 +37,11 @@ const appIndexFile = "index.html"
 // starting with "_" are not served from the app's own files).
 const appSDKEntry = "_rela.js"
 
+// appCSSEntry is the reserved per-app path that serves rela's optional theme
+// tokens + base controls. Apps opt in with <link rel="stylesheet"
+// href="_rela.css">. Reserved like _rela.js (underscore-prefixed).
+const appCSSEntry = "_rela.css"
+
 // maxAppFileBytes caps the size of any single served app file. Generous for a
 // single-page app's assets while bounding memory pressure from a pathological
 // file.
