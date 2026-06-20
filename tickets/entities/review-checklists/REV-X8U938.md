@@ -9,8 +9,8 @@ status: done
 
 ## Automated Checks
 
-- [x] All tests pass — `go test -race -tags postgres ./internal/store/pgstore/` → ok (live Postgres); all three build tags compile
-- [x] Lint clean — my files 0 new issues; `just arch-lint` clean
+- [x] All tests pass — `go test -race -tags postgres ./internal/store/pgstore/` → ok (live Postgres); CI Postgres Backend + Test green on #1010
+- [x] Lint clean — my files 0 new issues; `just arch-lint` clean; CI Lint + Architecture green
 - [x] Coverage maintained — DB-gated tests cover delete/rename tombstones, manifest, catch-up recovery, seq indexes
 
 ## Code Review
@@ -33,7 +33,8 @@ tombstoned. Fixed + regression-tested (TestRenameTombstonesOldIdentities).
 **Acceptance Status:** all PASS — delete/relation/cascade/rename tombstones,
 manifest since-cursor, seq indexes exist, and the headline missed-NOTIFY delete
 recovery (TestCatchUpRecoversMissedDelete). pgstore conformance still passes;
-default build no pgx, postgres build no bleve.
+default build no pgx, postgres build no bleve. CI Postgres Backend job ran these
+in CI and passed.
 
 ## Documentation (enhancements only)
 
@@ -49,8 +50,9 @@ default build no pgx, postgres build no bleve.
 
 ## Pull Request
 
-- [ ] Run `/pr` — create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` — PR #1010 opened, auto-merge (squash) enabled, reviewer @tschmits
+- [x] All CI checks pass — Postgres Backend, Test, Architecture, Fuzz, Lint, Rela Tickets all green on #1010
+- [x] PR URL documented below
 
-**PR:** <!-- pending push -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1010 — auto-merge enabled
+(squash), reviewer @tschmits, merges on green CI + approval.
