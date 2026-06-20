@@ -20,11 +20,16 @@ import (
 //
 // The assumption this overlap encodes: NO single write transaction holds a seq
 // for longer than `catchUpOverlap` later writes take to commit. rela's writes
-// are short single-row operations, so 100 is generous. The assumption breaks
-// only if someone batches many writes in ONE long transaction (e.g. a bulk
-// import) — then a low seq could commit after >100 higher seqs and be skipped.
-// That is the precise trigger for the exact (xid8 + pg_snapshot_xmin) upgrade
-// documented in the package; it is not built because rela has no such path today.
+// are mostly short, but a few are NOT single-row: a cascade delete writes one
+// tombstone per cascaded relation, and a rename re-keys + tombstones the entity
+// and every incident relation — each consuming a fresh `nextval('rela_seq')`, so
+// one such transaction burns a CONTIGUOUS BLOCK of seqs that all commit at once.
+// That is still bounded by an entity's relation count (tens, not thousands), so
+// 100 stays generous. The assumption breaks only if someone batches many writes
+// in ONE long transaction (e.g. a bulk import) — then a low seq could commit
+// after >100 higher seqs and be skipped. That is the precise trigger for the
+// exact (xid8 + pg_snapshot_xmin) upgrade documented in the package; it is not
+// built because rela has no such path today.
 const catchUpOverlap = 100
 
 // defaultCatchUpInterval is the production safety-net poll period.
@@ -207,33 +212,42 @@ func (l *listener) handleNotification(n *pgconn.Notification) (needCatchUp bool)
 // is safe if rare).
 func (l *listener) primeWatermark(ctx context.Context) int64 {
 	var maxSeq *int64
-	// MUST cover exactly the same tables as catchUp (entities + relations). If
-	// it included attachments — which consume rela_seq but emit no events — the
-	// watermark could prime ABOVE the highest entity/relation seq and silently
-	// eat the catchUpOverlap budget, skipping a late-committing entity/relation
+	// MUST cover exactly the same tables as catchUp (entities + relations +
+	// deletions). If it included attachments — which consume rela_seq but emit
+	// no events — the watermark could prime ABOVE the highest event-bearing seq
+	// and silently eat the catchUpOverlap budget, skipping a late-committing
 	// row. Keep these two queries' table sets identical.
 	const q = `SELECT max(seq) FROM (
-		SELECT seq FROM entities UNION ALL SELECT seq FROM relations) t`
+		SELECT seq FROM entities
+		UNION ALL SELECT seq FROM relations
+		UNION ALL SELECT seq FROM deletions) t`
 	if err := l.store.db.QueryRow(ctx, q).Scan(&maxSeq); err != nil || maxSeq == nil {
 		return 0
 	}
 	return max(*maxSeq-catchUpOverlap, 0)
 }
 
-// catchUp emits store.Events for every row with seq > watermark across the three
-// tables, in seq order, and returns the new watermark held an overlap below the
-// highest seq seen. Idempotent: re-emitting an already-seen change is harmless
-// because consumers re-snapshot by id. Errors are logged and the watermark is
-// left unchanged (the next catch-up retries).
+// catchUp emits store.Events for every row with seq > watermark across the
+// live tables AND the deletions tombstones, in seq order, and returns the new
+// watermark held an overlap below the highest seq seen. Idempotent: re-emitting
+// an already-seen change is harmless because consumers re-snapshot by id (and a
+// re-emitted delete for an already-absent id is a no-op). Errors are logged and
+// the watermark is left unchanged (the next catch-up retries).
+//
+// Including the deletions table is what makes the durable catch-up path
+// delete-aware: before tombstones, a delete that missed its live NOTIFY was
+// lost forever, because a scan of live rows can't see a removed row.
 func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
-	// Table set MUST match primeWatermark (entities + relations). `typ` carries
-	// the entity type so catch-up events are structurally identical to the ones
-	// the NOTIFY path emits (relations have no separate type).
+	// Table set MUST match primeWatermark (entities + relations + deletions).
+	// `typ` carries the entity type so events are structurally identical to the
+	// NOTIFY path; `deleted` distinguishes a tombstone from a live row.
 	const q = `
-		SELECT kind, a, b, c, typ, seq FROM (
-			SELECT 'e' AS kind, id      AS a, ''       AS b, ''    AS c, type AS typ, seq FROM entities
+		SELECT kind, a, b, c, typ, deleted, seq FROM (
+			SELECT 'e' AS kind, id AS a, '' AS b, '' AS c, type AS typ, false AS deleted, seq FROM entities
 			UNION ALL
-			SELECT 'r',         from_id,      rel_type,       to_id,      '',          seq FROM relations
+			SELECT 'r', from_id, rel_type, to_id, '', false, seq FROM relations
+			UNION ALL
+			SELECT kind, id_a, id_b, id_c, typ, true, seq FROM deletions
 		) t
 		WHERE seq > $1
 		ORDER BY seq`
@@ -249,15 +263,16 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 	highest := watermark
 	for rows.Next() {
 		var kind, a, b, c, typ string
+		var deleted bool
 		var seq int64
-		if err := rows.Scan(&kind, &a, &b, &c, &typ, &seq); err != nil {
+		if err := rows.Scan(&kind, &a, &b, &c, &typ, &deleted, &seq); err != nil {
 			slog.Debug("pgstore listener: catch-up scan failed", "error", err)
 			return watermark
 		}
 		if seq > highest {
 			highest = seq
 		}
-		l.store.emit(catchUpEvent(kind, a, b, c, typ))
+		l.store.emit(catchUpEvent(kind, a, b, c, typ, deleted))
 	}
 	if err := rows.Err(); err != nil {
 		slog.Debug("pgstore listener: catch-up rows error", "error", err)
@@ -269,13 +284,21 @@ func (l *listener) catchUp(ctx context.Context, watermark int64) int64 {
 	return max(highest-catchUpOverlap, watermark)
 }
 
-// catchUpEvent builds a store.Event from a catch-up row. Catch-up can't
-// distinguish create vs update (the row just exists), so it reports an
-// Updated/Created-equivalent "this exists, re-snapshot it" event; consumers
-// treat any event as a re-snapshot trigger, so Updated is the faithful choice.
-func catchUpEvent(kind, a, b, c, typ string) store.Event {
+// catchUpEvent builds a store.Event from a catch-up row. For a live row,
+// catch-up can't distinguish create vs update (the row just exists), so it
+// reports an Updated "this exists, re-snapshot it" event; consumers treat any
+// event as a re-snapshot trigger, so Updated is the faithful choice. A tombstone
+// row (deleted) reports the corresponding Deleted event so consumers mirror the
+// removal.
+func catchUpEvent(kind, a, b, c, typ string, deleted bool) store.Event {
 	if kind == "r" {
+		if deleted {
+			return store.Event{Op: store.EventRelationDeleted, From: a, RelationType: b, To: c}
+		}
 		return store.Event{Op: store.EventRelationUpdated, From: a, RelationType: b, To: c}
+	}
+	if deleted {
+		return store.Event{Op: store.EventEntityDeleted, EntityType: typ, EntityID: a}
 	}
 	return store.Event{Op: store.EventEntityUpdated, EntityType: typ, EntityID: a}
 }

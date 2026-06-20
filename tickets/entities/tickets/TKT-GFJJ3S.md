@@ -5,7 +5,7 @@ title: 'Sync 2/5: pgstore deletion tombstones + seq indexes + manifest query'
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: in-progress
 ---
 
 Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN.
@@ -14,9 +14,9 @@ Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN.
 
 pgstore deletes are HARD deletes (`entity.go:324`, `relation.go:217`); the `seq
 > X` catch-up reads live rows only (`listener.go:232-239`) and `catchUpEvent`
-only emits Updated, never Deleted (`listener.go:276-281`). A seq-based manifest
-therefore CANNOT discover deletions. Also `seq` is UNINDEXED — `WHERE seq > X`
-is a seqscan+sort today.
+> only emits Updated, never Deleted (`listener.go:276-281`). A seq-based manifest
+> therefore CANNOT discover deletions. Also `seq`is UNINDEXED —`WHERE seq > X`
+> is a seqscan+sort today.
 
 ## Scope
 
