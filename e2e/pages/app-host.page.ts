@@ -10,6 +10,7 @@ export class AppHostPage extends BasePage {
   readonly featureCount: Locator;
   readonly linkButton: Locator;
   readonly linkResult: Locator;
+  readonly cspProbe: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -18,6 +19,7 @@ export class AppHostPage extends BasePage {
     this.featureCount = this.frame.locator('[data-testid="feature-count"]');
     this.linkButton = this.frame.locator('[data-testid="link-btn"]');
     this.linkResult = this.frame.locator('[data-testid="link-result"]');
+    this.cspProbe = this.frame.locator('[data-testid="csp-probe"]');
   }
 
   /** Navigate to an app and wait for its bridge read to complete. */

@@ -1,0 +1,9 @@
+---
+id: RR-NZVSZV
+type: review-response
+title: CSP enforcement only asserted as a string, not browser-verified; overstated 'nothing exfiltrates' comment
+finding: 'DOWNGRADED from significant. The reviewer''s core claim — ''a change from path-scoped to ''self'' would pass all unit tests and silently open exfil'' — is FALSE: TestAppCSP_PathScopedNoEgress (apps_test.go:45-46) already asserts each resource directive is path-scoped AND explicitly NOT ''self'', so that exact regression fails the unit suite today. Two real-but-minor residuals remain: (1) we assert the policy STRING but never drive a browser to confirm it''s actually ENFORCED (a malformed-but-not-''self'' policy, or a browser quirk, could slip past the string check) — a browser-level e2e that loads an app attempting <img/script src=/api/v1/tickets/x> and asserts it''s blocked would be genuine defense-in-depth; (2) the in-code claim ''connect-src none → bridge is the only path / nothing else exfiltrates'' (apps_handler.go:26, CLAUDE.md) is overstated — img-src allows data:/blob: (no cross-origin egress, but not ''nothing''); reword to ''no cross-origin egress''. NET: minor. The comment fix is worth doing now; the e2e is nice-to-have.'
+severity: minor
+resolution: 'Added a browser-level e2e (''the CSP actually blocks the app from reaching /api/ directly'', apps.spec.ts): the demo app''s own JS attempts fetch(''/api/v1/features/FEAT-001'') (connect-src ''none'') and an <img src=/api/...> (path-scoped img-src); a probe element reports ''blocked'' only if both fail. Passes in Chromium — proves the boundary is browser-enforced, not just a header string. Comment in apps_handler.go appCSP softened to ''no CROSS-ORIGIN egress'' (img-src data:/blob: noted as not a cross-origin channel). The earlier-claimed ''self''-regression gap was already covered by TestAppCSP_PathScopedNoEgress.'
+status: addressed
+---

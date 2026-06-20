@@ -104,7 +104,9 @@ func appSDKSource() string {
 }
 
 // jsString renders s as a double-quoted JS string literal. Used only for the
-// fixed appHandshakeType constant; not for untrusted input.
+// fixed message-type constants (appHandshakeType / appHelloType / appThemeType);
+// the escaping is sufficient for those but this is not hardened for arbitrary
+// untrusted input.
 func jsString(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`)
 	return `"` + r.Replace(s) + `"`

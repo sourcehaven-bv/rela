@@ -3,6 +3,7 @@ package dataentry
 import (
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -22,9 +23,11 @@ import (
 //   - Resource directives are scoped to the app's own absolute subpath, NOT
 //     'self': 'self' would include /api/, letting `<img src="/api/v1/tickets/x">`
 //     pull data. Scoping to the app's path confines resource loads to the app.
-//   - connect-src 'none' blocks the app's own fetch/XHR/WebSocket — so the only
-//     way to the API is the host MessageChannel bridge (a message post, not a
-//     network connection, so it is unaffected).
+//   - connect-src 'none' blocks the app's own fetch/XHR/WebSocket — so there is
+//     no CROSS-ORIGIN egress and the only way to the API is the host
+//     MessageChannel bridge (a message post, not a network connection, so it is
+//     unaffected). (img-src still permits data:/blob: for inline images; those
+//     are not a cross-origin channel.)
 //   - form-action 'none' + the iframe sandbox (no allow-top-navigation) block
 //     form-POST and navigation exfiltration.
 func appCSP(base string) string {
@@ -43,15 +46,29 @@ func appCSP(base string) string {
 	}, "; ")
 }
 
+// hostUnsafeForCSP matches any character not allowed in a hostname[:port] /
+// bracketed IPv6 literal. Go's HTTP server accepts a few CSP-significant
+// characters in the Host header (',  '  *  ;), and the host is spliced into the
+// app's CSP source. A normal browser never emits those (they can't appear in a
+// real DNS name), so this is defense-in-depth, not a known browser-exploitable
+// hole — but it makes "the CSP is the boundary" airtight regardless of how the
+// host string was produced.
+var hostUnsafeForCSP = regexp.MustCompile(`[^a-zA-Z0-9.:\[\]-]`)
+
 // appBaseURL builds the absolute app base prefix (scheme://host/api/v1/_apps/<id>/)
 // from the request, for use in the path-scoped CSP. Scheme follows TLS / the
-// X-Forwarded-Proto hint from a trusted proxy; host is the request Host.
-func appBaseURL(r *http.Request, id string) string {
+// X-Forwarded-Proto hint from a trusted proxy; host is the request Host. Returns
+// ok=false if the Host contains characters that aren't valid in a host (and
+// could otherwise inject CSP tokens) — the caller rejects the request.
+func appBaseURL(r *http.Request, id string) (string, bool) {
+	if r.Host == "" || hostUnsafeForCSP.MatchString(r.Host) {
+		return "", false
+	}
 	scheme := "http"
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + "/api/v1/_apps/" + id + "/"
+	return scheme + "://" + r.Host + "/api/v1/_apps/" + id + "/", true
 }
 
 // handleV1App serves a custom app's files for embedding in a sandboxed iframe.
@@ -95,8 +112,16 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	base, ok := appBaseURL(r, id)
+	if !ok {
+		// Host header isn't a clean host[:port] — refuse rather than splice an
+		// unsafe value into the CSP. A normal browser never triggers this.
+		writeV1Error(w, r, http.StatusBadRequest, "bad_host", "Invalid Host header", "")
+		return
+	}
+
 	h := w.Header()
-	h.Set("Content-Security-Policy", appCSP(appBaseURL(r, id)))
+	h.Set("Content-Security-Policy", appCSP(base))
 	h.Set("X-Content-Type-Options", "nosniff")
 
 	// Reserved endpoints — served from the binary, not the app's files.

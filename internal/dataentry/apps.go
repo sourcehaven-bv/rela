@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"os"
 	"path"
 	"sort"
@@ -167,11 +166,40 @@ func openAppEntry(projectRoot, id, entry string) ([]byte, error) {
 	return b, nil
 }
 
-// appEntryContentType returns the Content-Type for an app entry by extension.
-// A correct type matters for CSP: a .js served as text/plain won't run under
-// script-src, and nosniff blocks the mismatch.
+// appContentTypes maps the file extensions apps actually use to fixed
+// Content-Types. We use an explicit map rather than mime.TypeByExtension so the
+// type is deterministic regardless of the deploy box's OS MIME registry (which
+// can both omit and, worse, override entries) — a correct type is load-bearing:
+// nosniff means a .js served as the wrong type won't run under script-src.
+var appContentTypes = map[string]string{
+	".html":  "text/html; charset=utf-8",
+	".htm":   "text/html; charset=utf-8",
+	".js":    "text/javascript; charset=utf-8",
+	".mjs":   "text/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".json":  "application/json",
+	".svg":   "image/svg+xml",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".gif":   "image/gif",
+	".webp":  "image/webp",
+	".ico":   "image/x-icon",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
+	".ttf":   "font/ttf",
+	".otf":   "font/otf",
+	".wasm":  "application/wasm",
+	".txt":   "text/plain; charset=utf-8",
+	".map":   "application/json",
+}
+
+// appEntryContentType returns the Content-Type for an app entry by extension,
+// from a fixed allow-map (deterministic across deploys). Unknown extensions get
+// application/octet-stream — the browser won't execute or render them, which is
+// the safe default under nosniff.
 func appEntryContentType(entry string) string {
-	if ct := mime.TypeByExtension(path.Ext(entry)); ct != "" {
+	if ct, ok := appContentTypes[strings.ToLower(path.Ext(entry))]; ok {
 		return ct
 	}
 	return "application/octet-stream"

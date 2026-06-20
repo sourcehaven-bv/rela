@@ -62,14 +62,51 @@ func TestAppCSP_PathScopedNoEgress(t *testing.T) {
 func TestAppBaseURL(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "http://example.test:8080/api/v1/_apps/dash/", http.NoBody)
 	req.Host = "example.test:8080"
-	got := appBaseURL(req, "dash")
-	if got != "http://example.test:8080/api/v1/_apps/dash/" {
-		t.Errorf("appBaseURL = %q", got)
+	got, ok := appBaseURL(req, "dash")
+	if !ok || got != "http://example.test:8080/api/v1/_apps/dash/" {
+		t.Errorf("appBaseURL = (%q, %v)", got, ok)
+	}
+	// IPv6 host with brackets is allowed.
+	req.Host = "[::1]:8080"
+	if _, ok := appBaseURL(req, "dash"); !ok {
+		t.Errorf("bracketed IPv6 host should be accepted")
 	}
 	// X-Forwarded-Proto from a trusted proxy upgrades the scheme.
+	req.Host = "example.test:8080"
 	req.Header.Set("X-Forwarded-Proto", "https")
-	if got := appBaseURL(req, "dash"); !strings.HasPrefix(got, "https://") {
-		t.Errorf("expected https scheme via X-Forwarded-Proto, got %q", got)
+	if got, ok := appBaseURL(req, "dash"); !ok || !strings.HasPrefix(got, "https://") {
+		t.Errorf("expected https scheme via X-Forwarded-Proto, got (%q, %v)", got, ok)
+	}
+}
+
+func TestAppBaseURL_RejectsCSPUnsafeHost(t *testing.T) {
+	// Go's HTTP server accepts these chars in the Host header; they're
+	// CSP-significant and must not reach the policy. A real browser never emits
+	// them — this is defense-in-depth.
+	req, _ := http.NewRequest(http.MethodGet, "http://x/api/v1/_apps/dash/", http.NoBody)
+	for _, bad := range []string{"a,b", "a'b", "a*b", "a;b", "a b", ""} {
+		req.Host = bad
+		if _, ok := appBaseURL(req, "dash"); ok {
+			t.Errorf("appBaseURL accepted unsafe host %q", bad)
+		}
+	}
+}
+
+func TestAppEntryContentType(t *testing.T) {
+	cases := map[string]string{
+		"app.js":    "text/javascript; charset=utf-8",
+		"a.MJS":     "text/javascript; charset=utf-8", // case-insensitive
+		"s.css":     "text/css; charset=utf-8",
+		"i.svg":     "image/svg+xml",
+		"f.woff2":   "font/woff2",
+		"d.json":    "application/json",
+		"x.unknown": "application/octet-stream", // safe fallback
+		"noext":     "application/octet-stream",
+	}
+	for entry, want := range cases {
+		if got := appEntryContentType(entry); got != want {
+			t.Errorf("appEntryContentType(%q) = %q, want %q", entry, got, want)
+		}
 	}
 }
 

@@ -964,7 +964,24 @@ const E2E_DEMO_APP_HTML = `<!doctype html>
     <div data-testid="feature-count"></div>
     <button data-testid="link-btn" type="button">Link</button>
     <div data-testid="link-result"></div>
+    <!-- CSP enforcement probe: the app's OWN JS tries to reach /api/ directly;
+         the path-scoped CSP (connect-src 'none' + scoped img-src) must block it.
+         Result lands in [data-testid=csp-probe]: 'blocked' if the boundary holds. -->
+    <div data-testid="csp-probe">pending</div>
     <script>
+      var cspEl = document.querySelector('[data-testid=csp-probe]');
+      (function probeCSP() {
+        // 1) connect-src 'none' must reject a direct fetch to the API.
+        fetch('/api/v1/features/FEAT-001')
+          .then(function () { cspEl.textContent = 'LEAK: fetch reached /api/'; })
+          .catch(function () {
+            // 2) img-src is path-scoped to the app, so an /api/ image must fail.
+            var img = new Image();
+            img.onload = function () { cspEl.textContent = 'LEAK: img loaded /api/'; };
+            img.onerror = function () { cspEl.textContent = 'blocked'; };
+            img.src = '/api/v1/features/FEAT-001';
+          });
+      })();
       function ready(fn) {
         var done = false;
         function go() { if (!done) { done = true; fn(); } }

@@ -13,6 +13,17 @@ test.describe('Custom apps (sandboxed-iframe bridge)', () => {
     await app.expectFeatureCount(features.meta.total);
   });
 
+  test('the CSP actually blocks the app from reaching /api/ directly', async ({ appPage }) => {
+    // The boundary is the path-scoped CSP, not origin isolation. This drives a
+    // real browser: the app's own JS tries fetch('/api/...') (connect-src 'none')
+    // and an <img src=/api/...> (path-scoped img-src). Both must be blocked —
+    // asserting the header *string* (done in unit tests) isn't the same as the
+    // browser enforcing it. Guards against a future regression to 'self'.
+    const app = new AppHostPage(appPage);
+    await app.open('e2e-demo');
+    await expect(app.cspProbe).toHaveText('blocked');
+  });
+
   test('iframe is sandboxed without allow-same-origin', async ({ appPage }) => {
     const app = new AppHostPage(appPage);
     await app.open('e2e-demo');
