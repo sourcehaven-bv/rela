@@ -2287,6 +2287,14 @@ can already do**.
 
 ### Authoring
 
+The quickest start is the scaffold command, which creates a working,
+bridge-wired starter app you can edit:
+
+```bash
+rela apps new my-dashboard
+# → apps/my-dashboard/index.html  (open /app/my-dashboard)
+```
+
 An app is a **folder** under the project's `apps/` directory (alongside
 `actions/`, `scripts/`, `templates/`) containing an `index.html`. There is no
 separate config:

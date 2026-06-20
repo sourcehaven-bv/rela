@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/html/atom"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // appsDir is the project directory holding custom apps. Each app is a
@@ -26,7 +27,7 @@ import (
 //
 // An app is live iff apps/<id>/index.html exists and <id> is a valid app id.
 // Unpublish by renaming the folder or removing its index.html.
-const appsDir = "apps"
+const appsDir = project.AppsDir
 
 // appIndexFile is the entry document for an app directory.
 const appIndexFile = "index.html"

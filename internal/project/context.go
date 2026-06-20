@@ -15,6 +15,10 @@ const (
 	TemplatesDir         = "templates"
 	EntityTemplatesDir   = "entities"
 	RelationTemplatesDir = "relations"
+	// AppsDir holds custom data-entry apps (apps/<id>/index.html). Like
+	// templates/, it lives on the filesystem in every storage backend and is
+	// not modeled into Context (loaded traversal-resistant where needed).
+	AppsDir = "apps"
 )
 
 // Context holds the paths and state for a rela project
