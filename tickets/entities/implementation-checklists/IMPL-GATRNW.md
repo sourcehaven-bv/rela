@@ -2,7 +2,7 @@
 id: IMPL-GATRNW
 type: implementation-checklist
 title: 'Implementation: Sync 4/5: server sync HTTP API (manifest + conditional push) on data-entry'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
