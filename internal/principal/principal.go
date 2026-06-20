@@ -43,6 +43,9 @@ const (
 	ToolDataEntry = "data-entry"
 	ToolScheduler = "scheduler"
 	ToolDesktop   = "desktop"
+	// ToolSync attributes writes applied by the sync API (FEAT-NJ9FEN) so the
+	// audit log distinguishes a synced write from a direct data-entry edit.
+	ToolSync = "sync"
 )
 
 // principalKey is the unexported context.WithValue key so no other
