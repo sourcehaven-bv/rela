@@ -9,8 +9,8 @@ status: done
 
 ## Automated Checks
 
-- [x] All tests pass — `go test -race ./internal/dataentry/` ok; pgstore postgres suite ok; all 3 build tags compile
-- [x] Lint clean — my files 0 new issues; `just arch-lint` clean
+- [x] All tests pass — `go test -race ./internal/dataentry/` ok; pgstore postgres suite ok; all 3 build tags compile; CI Test/Postgres green on the combined PR
+- [x] Lint clean — my files 0 new issues; `just arch-lint` clean; CI Lint + Architecture green
 - [x] Coverage maintained — sync_test.go covers manifest/push/delete/auth/attribution; dep gates (no pgx default, no bleve pgstore) hold
 
 ## Code Review
@@ -49,8 +49,10 @@ cursor → full manifest.
 
 ## Pull Request
 
-- [ ] Run `/pr`
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` — PR #1013 (stacked on sync-pg-tombstones) opened and merged into that branch; reaches develop via the combined PR #1010. Reviewer @tschmits.
+- [x] All CI checks pass — Architecture, Cross-Compile, and the code suites green on #1010 (combined)
+- [x] PR URL documented below
 
-**PR:** <!-- pending push -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1013 (merged into
+sync-pg-tombstones) → reaches develop via
+https://github.com/sourcehaven-bv/rela/pull/1010.
