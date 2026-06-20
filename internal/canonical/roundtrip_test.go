@@ -154,7 +154,8 @@ func TestBodyConvergence(t *testing.T) {
 	bodies := []string{
 		"",
 		"# Title\n\nA paragraph.\n",
-		"0) \n\n0", // FormatMarkdown is non-idempotent here
+		"0) \n\n0", // FormatMarkdown leaves then strips a leading blank line
+		"**\n*",    // goldmark re-parses its own output ("** *" -> "---")
 		"- a\n\n- b\n",
 		"```\ncode\n```\n",
 		"a very long line of prose that the formatter will wrap somewhere near the eighty column mark when it normalizes the body into canonical form for hashing",
@@ -176,7 +177,7 @@ func TestBodyConvergence(t *testing.T) {
 // once-formatted (fs) must hash identically, regardless of FormatMarkdown's
 // idempotency.
 func FuzzBodyConvergence(f *testing.F) {
-	for _, s := range []string{"", "# h\n\ntext\n", "0) \n\n0", "- a\n- b\n", "```\nx\n```\n"} {
+	for _, s := range []string{"", "# h\n\ntext\n", "0) \n\n0", "**\n*", "- a\n- b\n", "```\nx\n```\n"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, body string) {

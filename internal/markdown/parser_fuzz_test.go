@@ -167,3 +167,27 @@ func trimContent(s string) string {
 	}
 	return s
 }
+
+// FuzzFormatMarkdownIdempotent guards the formatter's idempotency contract:
+// FormatMarkdown(FormatMarkdown(x)) == FormatMarkdown(x). FormatMarkdownWithWidth
+// iterates a single goldmark pass to a fixed point precisely so this holds (a
+// single pass is not idempotent — goldmark can re-parse its own output, e.g.
+// "**\n*" -> "** *" -> "---"). The canonical content hash relies on this so a
+// body stored raw (pgstore) and stored once-formatted (fsstore) converge.
+//
+// Run with: go test -fuzz=FuzzFormatMarkdownIdempotent -fuzztime=30s ./internal/markdown/
+func FuzzFormatMarkdownIdempotent(f *testing.F) {
+	for _, s := range []string{
+		"", "# H\n\ntext\n", "- a\n- b\n", "1. one\n2. two\n", "```\ncode\n```\n",
+		"> quote\n", "0) \n\n0", "**\n*", "|\n|", "\n\n\nx\n\n\n", "<!-- c -->\n",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, body string) {
+		once := FormatMarkdown(body)
+		twice := FormatMarkdown(once)
+		if once != twice {
+			t.Fatalf("FormatMarkdown not idempotent:\n once=%q\n twice=%q", once, twice)
+		}
+	})
+}
