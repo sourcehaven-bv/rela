@@ -328,10 +328,47 @@ jobs:
       - name: Run pgstore conformance + fuzz seeds (race) against PostgreSQL
         run: go test -race -tags postgres ./internal/store/pgstore/...
 
+  # Cross-compile every (GOOS, build-tag) combination GoReleaser ships so a
+  # platform-specific compile break (e.g. a unix-only syscall used without a
+  # build-tagged fallback) fails here at PR time instead of silently at
+  # release time, where it leaves an empty GitHub release. The default-runner
+  # builds in `postgres` only exercise linux; this job adds darwin + windows.
+  # Keep the goos/tag matrix in sync with .goreleaser.yaml's builds.
+  cross-compile:
+    name: Cross-Compile (${{ matrix.goos }}/${{ matrix.tags || 'default' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        tags: ["", "postgres"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      # CGO off matches the GoReleaser builds for rela / rela-server; this is a
+      # pure cross-compile, so no per-OS C toolchain is needed.
+      - name: Build rela + rela-server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+          BUILD_TAGS: ${{ matrix.tags }}
+        run: |
+          set -euo pipefail
+          flags=""
+          [ -n "$BUILD_TAGS" ] && flags="-tags $BUILD_TAGS"
+          echo "Building GOOS=$GOOS ${flags:-(default)}"
+          go build $flags ./cmd/rela ./cmd/rela-server
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, postgres, frontend, e2e]
+    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, postgres, cross-compile, frontend, e2e]
     steps:
       - uses: actions/checkout@v6
 

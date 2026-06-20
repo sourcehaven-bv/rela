@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -22,7 +21,9 @@ import (
 // rotated state. Tested with -race (AC9).
 //
 // Security:
-//   - Files opened with O_APPEND|O_CREATE|O_WRONLY|O_NOFOLLOW and mode [fileMode].
+//   - Files opened with O_APPEND|O_CREATE|O_WRONLY|[oNoFollow] and mode
+//     [fileMode]. O_NOFOLLOW is unavailable on Windows, where [oNoFollow]
+//     is zero; the directory symlink check still applies on all platforms.
 //   - The audit directory is Lstat'd before MkdirAll; if it is a symlink,
 //     the backend logs slog.Error and skips the write. Subsequent records
 //     retry after [retryAfter] — a transient ENOSPC / perms blip should
@@ -143,7 +144,7 @@ func (f *Filesystem) rotateLocked(today string) error {
 	path := filepath.Join(f.dir, today+".jsonl")
 	file, err := os.OpenFile(
 		path,
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY|oNoFollow,
 		fileMode,
 	)
 	if err != nil {
