@@ -2,7 +2,7 @@
 id: IMPL-8EII4U
 type: implementation-checklist
 title: 'Implementation: Sync 2/5: pgstore deletion tombstones + seq indexes + manifest query'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

@@ -5,7 +5,7 @@ title: 'Sync 2/5: pgstore deletion tombstones + seq indexes + manifest query'
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN.
