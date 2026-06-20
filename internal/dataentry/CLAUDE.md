@@ -77,6 +77,14 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   store apps in the entity store — filesystem in every backend, like
   `actions/`/`templates/`. The scan + per-entry reads are per-request (no
   watcher wiring); fine for a handful of apps.
+- **Apps MUST declare `<meta name="rela-app:bridge-version" content="N">`.**
+  `currentBridgeVersion` (apps.go) is the contract this server serves;
+  `validateBridgeVersion` rejects a missing/unparseable version and one NEWER
+  than the server (scanApps drops it from the listing; handleV1App 422s the
+  index serve). This is the forward-compat seam: on a breaking bridge change,
+  bump `currentBridgeVersion` and add a per-version path (e.g. a version-matched
+  `_rela.js`) keyed on the app's declared version — don't break old apps. Older
+  (<= current) versions stay allowed.
 - **The app loads same-origin from `/api/v1/_apps/<id>/`** (iframe `src=`, not
   `srcdoc`) so its sibling files resolve. It is therefore same-origin with the
   API — **the path-scoped CSP header is the whole boundary**, not origin-`null`.

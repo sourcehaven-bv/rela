@@ -43,10 +43,11 @@ func TestScaffoldApp_CreatesWiredUpApp(t *testing.T) {
 	}
 	body := string(html)
 	for _, want := range []string{
-		`<script src="_rela.js">`, // bridge SDK wired
-		`href="_rela.css"`,        // theme opt-in
-		`name="rela-app:label"`,   // metadata stub
-		`rela.list(`,              // a working bridge call
+		`name="rela-app:bridge-version" content="1"`, // required version (server rejects without it)
+		`<script src="_rela.js">`,                    // bridge SDK wired
+		`href="_rela.css"`,                           // theme opt-in
+		`name="rela-app:label"`,                      // metadata stub
+		`rela.list(`,                                 // a working bridge call
 		`window.addEventListener('rela:ready'`,
 	} {
 		if !strings.Contains(body, want) {

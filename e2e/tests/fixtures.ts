@@ -956,6 +956,7 @@ navigation:
 const E2E_DEMO_APP_HTML = `<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /><title>E2E Demo</title>
+    <meta name="rela-app:bridge-version" content="1">
     <meta name="rela-app:label" content="E2E Demo">
     <meta name="rela-app:description" content="Drives the rela bridge from a sandboxed iframe for e2e tests">
     <script src="_rela.js"></script></head>

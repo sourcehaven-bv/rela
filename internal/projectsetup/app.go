@@ -61,6 +61,9 @@ func starterAppHTML(id string) string {
   <head>
     <meta charset="utf-8" />
     <title>` + id + `</title>
+    <!-- Required: the bridge contract this app targets. The server refuses to
+         serve an app that omits this or asks for a newer bridge than it has. -->
+    <meta name="rela-app:bridge-version" content="1" />
     <!-- Sidebar label + description (optional). -->
     <meta name="rela-app:label" content="` + id + `" />
     <meta name="rela-app:description" content="A custom rela app." />

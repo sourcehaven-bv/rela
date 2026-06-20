@@ -2307,11 +2307,13 @@ apps/ticket-counter/
 ```
 
 The **id** is the folder name and must match `^[a-z0-9_-]{1,64}$`. A folder is
-a live app iff it contains `index.html`. The app self-describes via optional
-`<meta>` tags in `index.html`'s `<head>`:
+a live app iff it contains `index.html`. The app declares itself via `<meta>`
+tags in `index.html`'s `<head>`:
 
 ```html
 <head>
+  <!-- REQUIRED: which bridge contract this app targets -->
+  <meta name="rela-app:bridge-version" content="1">
   <meta name="rela-app:label" content="Ticket Counter">
   <meta name="rela-app:title" content="Ticket Counter">
   <meta name="rela-app:description" content="Counts tickets by status">
@@ -2320,9 +2322,19 @@ a live app iff it contains `index.html`. The app self-describes via optional
 </head>
 ```
 
-`label` (falling back to `title`, then the id) is the sidebar entry; the rest
-are cosmetic. **The app must include `<script src="_rela.js"></script>`** to
-get the `rela.*` bridge — rela serves it at the app's own `_rela.js` path.
+`label` (falling back to `title`, then the id) is the sidebar entry; `title`
+and `description` are cosmetic. **The app must include `<script
+src="_rela.js"></script>`** to get the `rela.*` bridge — rela serves it at the
+app's own `_rela.js` path.
+
+**Bridge version (required).** `rela-app:bridge-version` declares the version of
+the bridge/SDK contract your app was written against (currently `1`). The
+server refuses to serve an app that omits it or asks for a *newer* bridge than
+the server provides (a `422` with a clear message, and the app won't appear in
+the sidebar) — so a breaking bridge change in a future rela can't silently make
+an old app call methods that no longer exist. When the bridge gains a breaking
+change the version bumps and rela keeps serving older-versioned apps against a
+compatible SDK.
 
 The app and its files are served from `/api/v1/_apps/<id>/`, so reference
 sibling assets with **relative** URLs (`<script src="app.js">`, `<img
@@ -2343,6 +2355,9 @@ linking the served stylesheet:
 </head>
 ```
 
+(`_rela.css` is a relative URL — it resolves against the app's own base,
+`/api/v1/_apps/<id>/`, same as your other sibling assets.)
+
 `_rela.css` provides two things:
 
 - **Theme tokens** — CSS custom properties for colors (`--text-color`,
@@ -2356,8 +2371,9 @@ linking the served stylesheet:
   using the tokens.
 
 **Dark mode follows the host automatically** — when the user switches the data-
-entry theme, rela toggles the same `dark` class on your app, and the tokens
-flip. No work needed beyond linking `_rela.css` and using `var(--…)` for your
+entry theme, rela toggles the same `dark` class on your app's `<html>` element
+(`document.documentElement`, matching the SPA's own `:root.dark`), and the
+tokens flip. No work needed beyond linking `_rela.css` and using `var(--…)` for your
 own colors. Opting in is entirely optional; an app that wants full control of
 its look simply doesn't link it.
 
@@ -2395,7 +2411,10 @@ Minimal app (`apps/hello/index.html`):
 ```html
 <!doctype html>
 <html>
-  <head><script src="_rela.js"></script></head>
+  <head>
+    <meta name="rela-app:bridge-version" content="1">
+    <script src="_rela.js"></script>
+  </head>
   <body>
     <div id="out">loading…</div>
     <script>

@@ -152,6 +152,18 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The index document declares the bridge contract it was written against
+	// (<meta name="rela-app:bridge-version">). Refuse to serve an app that
+	// omits it or asks for a newer bridge than we provide — fail loudly here
+	// rather than let the app load and call methods that don't exist.
+	if entry == appIndexFile {
+		if reason := validateBridgeVersion(parseAppMeta(body).BridgeVersion); reason != "" {
+			slog.Warn("refusing app with invalid bridge version", "app", id, "reason", reason)
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "incompatible_app", reason, "")
+			return
+		}
+	}
+
 	h.Set("Content-Type", appEntryContentType(entry))
 	_, _ = w.Write(body)
 }

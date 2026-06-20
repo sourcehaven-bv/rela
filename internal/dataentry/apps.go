@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	nethtml "golang.org/x/net/html"
@@ -48,16 +50,28 @@ const appCSSEntry = "_rela.css"
 const maxAppFileBytes = 4 * 1024 * 1024
 
 // appMetaPrefix is the prefix for the <meta name="..."> tags an app uses to
-// describe itself (title/label/description) in its index.html. Cosmetic only.
+// describe itself in its index.html.
 const appMetaPrefix = "rela-app:"
 
-// appInfo is the parsed, client-facing description of an app. ID is the folder
-// name; the rest comes from <meta name="rela-app:*"> tags in index.html.
+// currentBridgeVersion is the bridge/SDK contract version this server serves.
+// Every app MUST declare the contract it was written against via
+// <meta name="rela-app:bridge-version" content="N">. The server rejects an app
+// that asks for a NEWER bridge than it provides (clear error instead of an app
+// silently calling methods that don't exist). When the bridge gets a breaking
+// change, bump this and add a compatibility path keyed on the app's declared
+// version (e.g. serve a version-matched _rela.js). Until then there is one
+// version; the field exists so future-us has the seam.
+const currentBridgeVersion = 1
+
+// appInfo is the parsed description of an app. ID is the folder name; the rest
+// comes from <meta name="rela-app:*"> tags in index.html. BridgeVersion is the
+// declared rela-app:bridge-version (0 if absent/unparseable — which is invalid).
 type appInfo struct {
-	ID          string
-	Title       string
-	Label       string
-	Description string
+	ID            string
+	Title         string
+	Label         string
+	Description   string
+	BridgeVersion int
 }
 
 // scanApps lists the live apps under {projectRoot}/apps: every subdirectory
@@ -99,6 +113,12 @@ func scanApps(projectRoot string) ([]appInfo, error) {
 		}
 		info := parseAppMeta(index)
 		info.ID = id
+		// An app with a missing/incompatible bridge version isn't listed (it
+		// also 422s on serve); it's not usable, so keep it out of the sidebar.
+		if reason := validateBridgeVersion(info.BridgeVersion); reason != "" {
+			slog.Warn("skipping app with invalid bridge version", "app", id, "version", info.BridgeVersion, "reason", reason)
+			continue
+		}
 		apps = append(apps, info)
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
@@ -206,8 +226,9 @@ func appEntryContentType(entry string) string {
 }
 
 // parseAppMeta extracts an app's self-description from <meta name="rela-app:*">
-// tags in index.html's <head>. All fields are optional; the sidebar falls back
-// to label→title→id. Parse errors yield an empty appInfo (best-effort).
+// tags in index.html's <head>. title/label/description are optional;
+// bridge-version is required and validated separately (validateBridgeVersion).
+// Parse errors yield a zero appInfo (BridgeVersion 0 → invalid).
 func parseAppMeta(htmlBytes []byte) appInfo {
 	var info appInfo
 	doc, err := nethtml.Parse(bytes.NewReader(htmlBytes))
@@ -241,9 +262,32 @@ func parseAppMeta(htmlBytes []byte) appInfo {
 			info.Label = content
 		case "description":
 			info.Description = content
+		case "bridge-version":
+			// Non-integer leaves BridgeVersion 0, which validateBridgeVersion
+			// rejects (same as absent).
+			if n, err := strconv.Atoi(strings.TrimSpace(content)); err == nil {
+				info.BridgeVersion = n
+			}
 		}
 	}
 	return info
+}
+
+// validateBridgeVersion checks an app's declared bridge-version against what this
+// server provides. Apps must declare a version (>= 1); a missing/unparseable one
+// is 0 → rejected. An app asking for a NEWER bridge than the server provides is
+// rejected (it would call methods the server's SDK doesn't have). Older
+// versions are allowed (forward-compatible; future bumps add a per-version
+// compatibility path). Returns a user-facing reason string, or "" if OK.
+func validateBridgeVersion(v int) string {
+	switch {
+	case v <= 0:
+		return "app is missing a valid <meta name=\"rela-app:bridge-version\" content=\"N\"> (required)"
+	case v > currentBridgeVersion:
+		return fmt.Sprintf("app requires bridge version %d but this server provides %d (upgrade rela)", v, currentBridgeVersion)
+	default:
+		return ""
+	}
 }
 
 // findFirstElementByAtom returns the first element node with the given atom in a

@@ -143,20 +143,27 @@ func TestAppCSSSource(t *testing.T) {
 func TestParseAppMeta(t *testing.T) {
 	t.Run("reads rela-app meta tags", func(t *testing.T) {
 		html := `<html><head>
+			<meta name="rela-app:bridge-version" content="1">
 			<meta name="rela-app:title" content="My App">
 			<meta name="rela-app:label" content="App">
 			<meta name="rela-app:description" content="does things">
 			<meta name="other" content="ignored">
 		</head><body>x</body></html>`
 		got := parseAppMeta([]byte(html))
-		if got.Title != "My App" || got.Label != "App" || got.Description != "does things" {
+		if got.Title != "My App" || got.Label != "App" || got.Description != "does things" || got.BridgeVersion != 1 {
 			t.Errorf("parseAppMeta = %+v", got)
 		}
 	})
-	t.Run("absent meta → empty fields", func(t *testing.T) {
+	t.Run("absent meta → empty fields, BridgeVersion 0", func(t *testing.T) {
 		got := parseAppMeta([]byte("<html><head></head><body>x</body></html>"))
-		if got.Title != "" || got.Label != "" || got.Description != "" {
-			t.Errorf("expected empty, got %+v", got)
+		if got.Title != "" || got.Label != "" || got.Description != "" || got.BridgeVersion != 0 {
+			t.Errorf("expected zero, got %+v", got)
+		}
+	})
+	t.Run("non-integer bridge-version → 0 (invalid)", func(t *testing.T) {
+		got := parseAppMeta([]byte(`<html><head><meta name="rela-app:bridge-version" content="abc"></head></html>`))
+		if got.BridgeVersion != 0 {
+			t.Errorf("expected 0 for non-integer, got %d", got.BridgeVersion)
 		}
 	})
 }
@@ -182,11 +189,19 @@ func writeApp(t *testing.T, root, id string, entries map[string]string) {
 func TestScanApps(t *testing.T) {
 	root := t.TempDir()
 	writeApp(t, root, "dash", map[string]string{
-		"index.html": `<html><head><meta name="rela-app:label" content="Dashboard"></head><body>x</body></html>`,
+		"index.html": `<html><head><meta name="rela-app:bridge-version" content="1"><meta name="rela-app:label" content="Dashboard"></head><body>x</body></html>`,
 		"app.js":     `console.log('hi')`,
 	})
 	writeApp(t, root, "counter", map[string]string{
+		"index.html": `<html><head><meta name="rela-app:bridge-version" content="1"></head><body>x</body></html>`,
+	})
+	// Not listed: index.html without a bridge-version meta (required).
+	writeApp(t, root, "noversion", map[string]string{
 		"index.html": `<html><head></head><body>x</body></html>`,
+	})
+	// Not listed: bridge version newer than the server supports.
+	writeApp(t, root, "future", map[string]string{
+		"index.html": `<html><head><meta name="rela-app:bridge-version" content="999"></head><body>x</body></html>`,
 	})
 	// Not an app: directory without index.html.
 	if err := os.MkdirAll(filepath.Join(root, appsDir, "noindex"), 0o755); err != nil {
@@ -211,7 +226,13 @@ func TestScanApps(t *testing.T) {
 		got[a.ID] = a
 	}
 	if len(got) != 2 {
-		t.Fatalf("expected 2 live apps, got %d: %v", len(got), got)
+		t.Fatalf("expected 2 live apps (dash, counter), got %d: %v", len(got), got)
+	}
+	if _, ok := got["noversion"]; ok {
+		t.Errorf("app missing bridge-version must not be listed")
+	}
+	if _, ok := got["future"]; ok {
+		t.Errorf("app with too-new bridge-version must not be listed")
 	}
 	if got["dash"].Label != "Dashboard" {
 		t.Errorf("dash label = %q, want Dashboard", got["dash"].Label)
@@ -283,6 +304,7 @@ func TestHandleV1App(t *testing.T) {
 	root := t.TempDir()
 	writeApp(t, root, "demo", map[string]string{
 		"index.html": `<!doctype html><html><head><title>Demo</title>` +
+			`<meta name="rela-app:bridge-version" content="1">` +
 			`<script src="_rela.js"></script></head><body>hi</body></html>`,
 		"app.js":    `console.log('app')`,
 		"style.css": `body{color:red}`,
@@ -397,4 +419,40 @@ func TestHandleV1App(t *testing.T) {
 			t.Errorf("status = %d, want 405", w.Code)
 		}
 	})
+
+	t.Run("missing bridge-version → 422", func(t *testing.T) {
+		writeApp(t, root, "noversion", map[string]string{
+			"index.html": `<html><head><title>x</title></head><body>hi</body></html>`,
+		})
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/noversion/")
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("status = %d, want 422", w.Code)
+		}
+	})
+
+	t.Run("too-new bridge-version → 422", func(t *testing.T) {
+		writeApp(t, root, "future", map[string]string{
+			"index.html": `<html><head><meta name="rela-app:bridge-version" content="999"></head><body>hi</body></html>`,
+		})
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/future/")
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("status = %d, want 422", w.Code)
+		}
+	})
+}
+
+func TestValidateBridgeVersion(t *testing.T) {
+	if reason := validateBridgeVersion(currentBridgeVersion); reason != "" {
+		t.Errorf("current version should be valid, got %q", reason)
+	}
+	if validateBridgeVersion(0) == "" {
+		t.Error("missing/zero version must be rejected")
+	}
+	if validateBridgeVersion(currentBridgeVersion+1) == "" {
+		t.Error("too-new version must be rejected")
+	}
+	// Older-than-current is allowed (forward compatibility) once we're past v1.
+	if currentBridgeVersion > 1 && validateBridgeVersion(1) != "" {
+		t.Error("older (but supported) version should be allowed")
+	}
 }
