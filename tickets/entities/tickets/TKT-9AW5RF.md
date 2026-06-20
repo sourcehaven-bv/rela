@@ -5,8 +5,9 @@ title: 'Custom apps: sandboxed-HTML extensions served in the data-entry SPA via 
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
+
 Add a per-project "apps" mechanism to the data-entry web app: user-authored
 single-file HTML+JS applications served in a locked-down sandboxed iframe inside
 the Vue SPA, talking to the existing ACL-gated REST API through a
