@@ -5,7 +5,7 @@ title: 'Sync 4/5: server sync HTTP API (manifest + conditional push) on data-ent
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: in-progress
 ---
 
 Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN. Addresses design-review RR-JDHDJS (sig).

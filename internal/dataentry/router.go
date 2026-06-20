@@ -83,6 +83,9 @@ func (a *App) NewRouter() http.Handler {
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
 
+	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
+	a.registerSyncRoutes(inner)
+
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))

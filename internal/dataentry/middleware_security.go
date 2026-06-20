@@ -149,6 +149,14 @@ func (s *security) requireSameOrigin(next http.Handler) http.Handler {
 			return
 		}
 
+		// A provably non-browser request (no cookie, no origin) on a
+		// non-browser-exempt path (the sync API) skips the same-origin check —
+		// it cannot be a CSRF, which always carries a cookie. See isCSRFExempt.
+		if isCSRFExempt(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		origin, ok := requestOrigin(r)
 		if !ok {
 			s.reject(w, r, "origin_missing")
@@ -198,6 +206,24 @@ var sensitivePathPrefixes = []string{
 	"/api/", // covers /api/v1/* and all sub-paths including SSE
 }
 
+// nonBrowserExemptPrefixes are sensitive paths whose same-origin (CSRF) check is
+// relaxed for requests that are provably NOT browser-credentialed — see
+// [isCSRFExempt]. The Host check always still runs.
+//
+// The sync API (FEAT-NJ9FEN) is a machine-to-machine client (the rela CLI). A
+// non-browser client legitimately sends no Origin and would otherwise be
+// rejected as `origin_missing`. We must NOT blanket-exempt the path: the app has
+// no application-layer auth (identity is the proxy-set X-Forwarded-User), so if
+// the fronting OAuth proxy authenticates the browser by SESSION COOKIE, a
+// malicious page could cross-origin fetch() /api/sync/ with credentials and ride
+// the victim's session — textbook CSRF. The Host check does not stop that (the
+// attacker hits the real hostname). So the exemption is conditioned on the
+// request carrying NO cookie and NO browser origin (see isCSRFExempt), which a
+// CSRF request always carries and a CLI never does.
+var nonBrowserExemptPrefixes = []string{
+	"/api/sync/",
+}
+
 func isSensitivePath(path string) bool {
 	for _, p := range sensitivePathPrefixes {
 		if strings.HasPrefix(path, p) {
@@ -205,6 +231,33 @@ func isSensitivePath(path string) bool {
 		}
 	}
 	return false
+}
+
+// isCSRFExempt reports whether a sensitive-path request may skip the same-origin
+// check because it is provably not a browser-credentialed request: it targets a
+// non-browser-exempt prefix AND carries no Cookie AND no Origin/Referer. A
+// cross-origin browser fetch with credentials always sends a Cookie (and an
+// Origin), so this admits the header-authenticated CLI without opening a CSRF
+// hole. A request that carries a cookie or a browser origin is NOT exempt and
+// must pass the normal same-origin check.
+func isCSRFExempt(r *http.Request) bool {
+	exemptPath := false
+	for _, p := range nonBrowserExemptPrefixes {
+		if strings.HasPrefix(r.URL.Path, p) {
+			exemptPath = true
+			break
+		}
+	}
+	if !exemptPath {
+		return false
+	}
+	if len(r.Cookies()) > 0 {
+		return false // a credentialed browser request — keep CSRF protection
+	}
+	if _, hasOrigin := requestOrigin(r); hasOrigin {
+		return false // a browser sent an Origin/Referer — not a bare CLI request
+	}
+	return true
 }
 
 // requestOrigin returns the request's effective origin, normalised to

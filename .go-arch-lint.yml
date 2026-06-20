@@ -232,6 +232,7 @@ deps:
       - acl
       - affordances
       - audit
+      - canonical
       - config
       - conflict
       - dataentryconfig
@@ -251,6 +252,7 @@ deps:
       - state
       - storage
       - store
+      - sync
       - templating
       - tracer
       - validator
