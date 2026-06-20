@@ -1,0 +1,9 @@
+---
+id: RR-G92SKT
+type: review-response
+title: Body convergence depends on a duplicated formatter that can drift
+finding: 'writeBody (canonical.go:121-125) normalizes via markdown.FormatMarkdown. But fsstore does NOT use that function — it has its own copy fsstore.formatMarkdown (fsstore/markdown.go:190-212) plus its own wrapParagraphs/isSpecialLine/defaultLineWidth. Byte-identical today, but two independent copies with no test/lint asserting parity. If someone tweaks fsstore wrapping and not the markdown package, every synced body hash diverges. Also: pgstore stores e.Content VERBATIM (entity.go:225, no reflow on write); canonical bridges this by re-reflowing on read, which works ONLY if FormatMarkdown is perfectly idempotent for every storable body. TestHashEntity_BodyIdempotent checks ONE hand-picked string — idempotency across arbitrary markdown (tables, nested lists, reference links, HTML blocks, hard breaks) is a strong claim needing a fuzz test. FIX: fsstore should call markdown.FormatMarkdown (dedupe), AND add an idempotency fuzz target (markdown pkg already has parser_fuzz_test.go).'
+severity: significant
+resolution: 'Two parts: (1) Deduped the formatter — fsstore.formatMarkdown now delegates to markdown.FormatMarkdown (removed fsstore''s private wrapParagraphs/isSpecialLine/orderedListPattern/defaultLineWidth copies + their imports), with a doc comment forbidding reintroduction; all store/entitymanager tests still pass. (2) FUZZING PROVED FormatMarkdown is NOT idempotent (''0) \n\n0'' -> ''\n0\n'' -> ''0\n''), which would break body convergence. Fixed by canonicalBody() reducing the body to a FORMATTING FIXED POINT (reformat until stable, bounded) so fs''s once-formatted body and pg''s raw body always converge. Regression TestBodyConvergence + FuzzBodyConvergence (246k execs clean) assert it.'
+status: addressed
+---

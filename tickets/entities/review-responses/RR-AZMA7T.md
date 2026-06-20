@@ -1,0 +1,9 @@
+---
+id: RR-AZMA7T
+type: review-response
+title: Automations/cascades fire on apply — risk of sync loops and double side-effects
+finding: 'The plan correctly insists writes go through entitymanager (for ACL/validation/audit), but doesn''t account for the side-effect this drags in: CreateEntity/UpdateEntity run automation.Process + cascade (manager.go:45-63, audit row written BEFORE automation/cascade at manager.go:360-364). This means applying a PULLED change locally can TRIGGER AUTOMATIONS that mutate other entities (e.g. a status transition auto-creating a checklist, like this very ticket''s has-planning) — which then show up as local changes to push back, potentially ping-ponging. Two concrete problems: (1) sync loop / amplification — an applied change spawns derived changes that the next sync round pushes, which spawn more. (2) double execution — an automation that already ran on the origin side runs AGAIN on apply, duplicating side-effects (or relying on if_exists:skip idempotence that may not hold for all actions). The plan needs a decision: does apply run automations or suppress them? If suppressed, how (a context flag / an apply mode on the new upsert method)? If not suppressed, how are derived changes prevented from echoing? This interacts with the canonical hash (derived changes alter content -> hash -> look dirty).'
+severity: significant
+resolution: 'Plan updated (Approach §5): apply runs in a suppress-automation/cascade mode (context flag or apply-mode arg on the new ApplyEntity method). Validation + ACL + audit still run; only automation/cascade are suppressed, since the origin already ran them and their derived changes sync as their own records — preventing sync loops and double side-effects. Test added asserting no derived writes occur on apply (e.g. a status-change pull does not auto-create a checklist locally).'
+status: addressed
+---
