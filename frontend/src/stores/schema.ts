@@ -14,6 +14,7 @@ import type {
   DashboardConfig,
   NavigationEntry,
   AppConfig,
+  AppEntry,
   DocumentConfig,
   ActionConfig,
 } from '@/types'
@@ -28,6 +29,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const views = ref<Map<string, ViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
+  const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
   const dashboard = ref<DashboardConfig | undefined>(undefined)
   const navigation = ref<NavigationEntry[]>([])
@@ -122,6 +124,7 @@ export const useSchemaStore = defineStore('schema', () => {
       views.value = new Map(Object.entries(configData.views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
+      apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
       dashboard.value = configData.dashboard
       navigation.value = configData.navigation || []
@@ -165,6 +168,7 @@ export const useSchemaStore = defineStore('schema', () => {
     views,
     kanbans,
     documents,
+    apps,
     actions,
     dashboard,
     navigation,

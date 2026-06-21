@@ -203,7 +203,18 @@ type V1Config struct {
 	Actions     map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation  []dataentryconfig.NavigationEntry           `json:"navigation"`
 	Documents   map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
+	Apps        map[string]V1App                            `json:"apps,omitempty"`
 	Palette     *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+}
+
+// V1App is the client-facing view of a custom app. It deliberately omits the
+// on-disk File path and the csp_origins allow-list — the SPA only needs enough
+// to render a sidebar entry and route to /app/{id}; the HTML is fetched from
+// GET /api/v1/_apps/{id}.
+type V1App struct {
+	Title       string `json:"title,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // V1AppConfig is the JSON representation of the app config.
@@ -267,6 +278,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
 	mux.HandleFunc("/api/v1/_action/", a.handleV1Action)
+	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -1746,6 +1758,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Actions:     s.Cfg.Actions,
 		Navigation:  s.Cfg.Navigation,
 		Documents:   s.Cfg.Documents,
+		Apps:        appsToV1(a.scanAppsOrLog()),
 		Palette:     s.Palette,
 	}
 

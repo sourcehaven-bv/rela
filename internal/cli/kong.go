@@ -53,6 +53,7 @@ type CLI struct {
 	// Subcommands.
 	Version    VersionCmd    `cmd:"" help:"Print version information."`
 	Init       InitCmd       `cmd:"" help:"Initialize a new rela project."`
+	Apps       AppsCmd       `cmd:"" help:"Manage custom data-entry apps."`
 	Migrate    MigrateCmd    `cmd:"" help:"Migrate project files to current schema."`
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`

@@ -1427,6 +1427,21 @@ func TestValidateActions_ValidSet(t *testing.T) {
 	}
 }
 
+func TestValidAppID(t *testing.T) {
+	valid := []string{"dash", "ticket-counter", "a", "a_b-c", strings.Repeat("a", 64)}
+	for _, id := range valid {
+		if !ValidAppID(id) {
+			t.Errorf("ValidAppID(%q) = false, want true", id)
+		}
+	}
+	invalid := []string{"", "Dash", "has space", "has.dot", "has/slash", "..", strings.Repeat("a", 65)}
+	for _, id := range invalid {
+		if ValidAppID(id) {
+			t.Errorf("ValidAppID(%q) = true, want false", id)
+		}
+	}
+}
+
 func TestValidateActions_InvalidID(t *testing.T) {
 	meta := testMetamodel()
 	tests := []string{"Today_Note", "today note", "today/note", "today..note", "x" + strings.Repeat("y", 64)}

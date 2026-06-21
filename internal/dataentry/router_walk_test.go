@@ -73,6 +73,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_templates/ticket", 0},
 		{http.MethodGet, "/api/v1/_views/ticket_detail?id=TKT-001", 0},
 		{http.MethodPost, "/api/v1/_action/ticket/TKT-001/transition", 0},
+		{http.MethodGet, "/api/v1/_apps/some-app/", 0},
 
 		// Dynamic entity routes via the /api/v1/ catch-all
 		{http.MethodGet, "/api/v1/tickets/", http.StatusOK},
@@ -83,7 +84,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 	for _, tc := range routes {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			app := newHandlerTestApp(t)
-			w := doRequest(t, app, tc.method, tc.path, nil)
+			w := doRequest(t, app, tc.method, tc.path)
 
 			if isStdlibNotFound(w.Code, w.Body.String()) {
 				t.Fatalf("answered by the mux's stdlib 404 — route is not registered")

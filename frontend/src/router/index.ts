@@ -74,6 +74,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/DocumentView.vue'),
     props: true,
   },
+  {
+    path: '/app/:id',
+    name: 'app',
+    component: () => import('@/views/AppHostView.vue'),
+    props: true,
+  },
 ]
 
 const router = createRouter({

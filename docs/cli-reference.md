@@ -56,6 +56,23 @@ Creates:
 
 ---
 
+### rela apps new
+
+Scaffold a new custom data-entry app (see the data-entry guide's "Custom apps"
+section).
+
+```bash
+rela apps new my-dashboard
+```
+
+Creates `apps/<id>/index.html` — a working starter that links the bridge SDK
+(`_rela.js`) and the optional theme (`_rela.css`), reads data via
+`rela.list(...)`, and renders a result. Edit it, then open `/app/<id>` in the
+data-entry server. The `<id>` must match `^[a-z0-9_-]{1,64}$` and becomes the
+folder name and route; it errors if the app already exists.
+
+---
+
 ### rela create
 
 Create a new entity.
