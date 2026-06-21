@@ -256,12 +256,25 @@ func isSensitivePath(path string) bool {
 }
 
 // isCSRFExempt reports whether a sensitive-path request may skip the same-origin
-// check because it is provably not a browser-credentialed request: it targets a
-// non-browser-exempt prefix AND carries no Cookie AND no Origin/Referer. A
-// cross-origin browser fetch with credentials always sends a Cookie (and an
-// Origin), so this admits the header-authenticated CLI without opening a CSRF
-// hole. A request that carries a cookie or a browser origin is NOT exempt and
-// must pass the normal same-origin check.
+// check because it is provably NOT a browser-driven request — only then is CSRF
+// (which is a browser-only threat) inapplicable.
+//
+// The primary signal is the Fetch Metadata header Sec-Fetch-Site, the standard,
+// browser-controlled CSRF defense (https://web.dev/articles/fetch-metadata).
+// Every modern browser sends it on every request and JavaScript CANNOT set or
+// override it — so its PRESENCE means a real browser made this request, and the
+// exemption must not apply (the request falls through to the normal same-origin
+// check, which correctly allows same-origin and rejects cross-site). A
+// non-browser client (the rela sync CLI, curl, server-side HTTP) never sends it.
+//
+// Cookie and Origin/Referer are kept as defense-in-depth for the (rare,
+// pre-2020) browser that predates Fetch Metadata: such a browser still sends a
+// Cookie when credentialed and an Origin on cross-origin requests, so a request
+// carrying either is treated as browser-driven and is NOT exempt.
+//
+// Net: a request is exempt only on a non-browser-exempt path AND with no
+// Sec-Fetch-Site AND no Cookie AND no Origin/Referer — a shape no browser
+// produces but the header-authenticated CLI always does.
 func isCSRFExempt(r *http.Request) bool {
 	exemptPath := false
 	for _, p := range nonBrowserExemptPrefixes {
@@ -273,8 +286,11 @@ func isCSRFExempt(r *http.Request) bool {
 	if !exemptPath {
 		return false
 	}
+	if r.Header.Get("Sec-Fetch-Site") != "" {
+		return false // a real browser (the header is browser-set, JS cannot forge it)
+	}
 	if len(r.Cookies()) > 0 {
-		return false // a credentialed browser request — keep CSRF protection
+		return false // credentialed request — pre-Fetch-Metadata browser fallback
 	}
 	if _, hasOrigin := requestOrigin(r); hasOrigin {
 		return false // a browser sent an Origin/Referer — not a bare CLI request
