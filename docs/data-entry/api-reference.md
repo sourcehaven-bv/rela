@@ -571,3 +571,35 @@ the parent `entry` (`V1Entity`).
 - **Inline dry-run warning display.** The dry-run returns soft
   `warnings`, but the create form does not yet render them per-field;
   they still surface on the commit response.
+
+---
+
+## Data-entry API: GET /api/v1/_apps/{id}/{path}
+
+Serves a custom app's files for embedding in a sandboxed iframe. See the
+"Custom apps" section of `docs/data-entry.md` for the authoring model and the
+`rela.*` bridge surface.
+
+```http
+GET /api/v1/_apps/ticket-counter/            → the app's index.html
+GET /api/v1/_apps/ticket-counter/app.js      → a sibling file from apps/ticket-counter/
+GET /api/v1/_apps/ticket-counter/_rela.js    → the bridge SDK (reserved path)
+```
+
+- `{id}` must match `^[a-z0-9_-]{1,64}$` (else `400`).
+- An app is the folder `apps/{id}/` containing `index.html` (folder-discovered,
+  no config registry). A bare `/_apps/{id}` (no trailing slash) `301`-redirects
+  to `/_apps/{id}/` so relative asset URLs resolve. An unknown app, or an entry
+  that doesn't exist / escapes the app directory, returns `404`.
+- `{path}` is resolved within `apps/{id}/` traversal-resistant (`..`,
+  absolute, symlinks rejected). Content-Type is inferred from the extension.
+  Reserved: `_rela.js` is served from the server (the bridge SDK), and the app
+  cannot shadow it or serve any other `_`-prefixed entry.
+- Every response carries a **path-scoped CSP header** — resource directives
+  scoped to `/api/v1/_apps/{id}/` (not `'self'`), `connect-src 'none'`,
+  `form-action 'none'`, `frame-ancestors 'self'` — plus
+  `X-Content-Type-Options: nosniff`. This (not origin isolation) is what
+  confines the app to its own files + the `MessageChannel` bridge.
+
+There is **no new ACL verb** for apps: an app inherits the logged-in user's
+permissions, so its reads/writes are gated exactly as the SPA's own.

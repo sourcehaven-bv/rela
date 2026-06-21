@@ -224,7 +224,29 @@ var nonBrowserExemptPrefixes = []string{
 	"/api/sync/",
 }
 
+// insensitivePathPrefixes carves exceptions OUT of the sensitive prefixes above.
+//
+// Custom-app files (`/api/v1/_apps/<id>/...`) must NOT be same-origin gated:
+// they load into a sandboxed iframe via `src=` and as sub-resources (the app's
+// own js/css/images, and the reserved _rela.js SDK), all of which the browser
+// fetches with NO Origin (top-level iframe navigation) or a stripped/`null`
+// one — requireSameOrigin would 403 them as `origin_missing` and the app would
+// never load. This is safe: app files carry no project data (they ARE the app's
+// own static assets — an attacker fetching them learns only the app's source,
+// which is project config, not user data), and each response carries the
+// locking path-scoped CSP. The actual data surface (`/api/v1/*` proper) stays
+// gated, and the app's iframe cannot reach it (CSP connect-src 'none' → only
+// the same-origin host page's MessageChannel bridge talks to the API).
+var insensitivePathPrefixes = []string{
+	"/api/v1/_apps/",
+}
+
 func isSensitivePath(path string) bool {
+	for _, p := range insensitivePathPrefixes {
+		if strings.HasPrefix(path, p) {
+			return false
+		}
+	}
 	for _, p := range sensitivePathPrefixes {
 		if strings.HasPrefix(path, p) {
 			return true

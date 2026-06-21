@@ -19,6 +19,14 @@ export interface Config {
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   documents?: Record<string, DocumentConfig>
+  apps?: Record<string, AppEntry>
+}
+
+/** A custom app surfaced in the SPA (HTML fetched from /api/v1/_apps/{id}). */
+export interface AppEntry {
+  title?: string
+  label?: string
+  description?: string
 }
 
 export interface ActionConfig {

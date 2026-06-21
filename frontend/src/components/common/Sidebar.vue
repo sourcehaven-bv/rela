@@ -23,6 +23,15 @@ const sidebarGroups = ref<SidebarGroup[]>([])
 const sidebarAppName = ref('')
 
 const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
+
+// Custom apps surfaced as sidebar links. The label falls back to title, then
+// the id, so an app with no metadata still gets a usable entry.
+const appLinks = computed(() =>
+  Array.from(schemaStore.apps.entries()).map(([id, app]) => ({
+    id,
+    label: app.label || app.title || id,
+  })),
+)
 // Logo lives on the schema store so SettingsView can update it after
 // upload/remove without a sidebar refetch.
 const logoUrl = computed(() => schemaStore.logoUrl)
@@ -213,6 +222,21 @@ async function handleAction(item: SidebarItem, ev?: Event) {
           </template>
         </template>
       </template>
+
+      <!-- Custom apps (sandboxed-iframe extensions). Routes to /app/:id. -->
+      <div v-if="appLinks.length" class="nav-section">
+        <div class="nav-section-title">Apps</div>
+        <RouterLink
+          v-for="app in appLinks"
+          :key="app.id"
+          :to="`/app/${app.id}`"
+          class="nav-item"
+          :class="{ active: isActive(`/app/${app.id}`) }"
+        >
+          <span class="nav-icon">🧩</span>
+          <span class="nav-label">{{ app.label }}</span>
+        </RouterLink>
+      </div>
     </nav>
 
     <!-- Mobile-only footer: git status, settings, theme toggle -->

@@ -2,7 +2,7 @@ package dataentry
 
 import (
 	"context"
-	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -245,12 +245,9 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 // helper; existing handler-level tests migrate opportunistically when
 // touched. TestRouterWalk_AllAPIRoutesReachHandlers covers route
 // registration itself.
-func doRequest(t *testing.T, app *App, method, path string, body io.Reader) *httptest.ResponseRecorder {
+func doRequest(t *testing.T, app *App, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
-	r := httptest.NewRequest(method, path, body)
-	if body != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
+	r := httptest.NewRequest(method, path, http.NoBody)
 	w := httptest.NewRecorder()
 	app.NewRouter().ServeHTTP(w, r)
 	return w
