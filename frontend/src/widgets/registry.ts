@@ -8,6 +8,7 @@ import DateWidget from './DateWidget.vue'
 import SelectWidget from './SelectWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
+import FileWidget from './FileWidget.vue'
 
 // defaultWidgetFor reproduces FieldRenderer's historical dispatch order
 // exactly (RR-0Z1P6). Order matters: `list` wins over `values`, which
@@ -20,6 +21,7 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'date') return 'date'
   if (propertyDef?.type === 'integer') return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
+  if (propertyDef?.type === 'file') return 'file'
   return 'text'
 }
 
@@ -97,7 +99,7 @@ export function defineWidgetRegistry(): WidgetRegistry {
 
 function buildDefaultRegistry(): WidgetRegistry {
   const r = defineWidgetRegistry()
-  r.register('text', { component: TextWidget, supportedPropertyTypes: ['string', 'file'] })
+  r.register('text', { component: TextWidget, supportedPropertyTypes: ['string'] })
   r.register('textarea', { component: TextareaWidget, supportedPropertyTypes: ['string'] })
   r.register('number', { component: NumberWidget, supportedPropertyTypes: ['integer'] })
   r.register('checkbox', { component: CheckboxWidget, supportedPropertyTypes: ['boolean'] })
@@ -108,6 +110,7 @@ function buildDefaultRegistry(): WidgetRegistry {
     supportedPropertyTypes: ['enum', 'string'],
   })
   r.register('rrule', { component: RruleWidget, supportedPropertyTypes: ['rrule'] })
+  r.register('file', { component: FileWidget, supportedPropertyTypes: ['file'] })
   return r
 }
 

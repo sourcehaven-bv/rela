@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // maxAttachmentBytes mirrors the unexported pgstore constant; kept in sync by
@@ -32,10 +33,9 @@ func TestAttachFileSizeCap(t *testing.T) {
 	// Over the limit: rejected, without the store buffering the whole thing.
 	over := io.MultiReader(bytes.NewReader(atLimit), strings.NewReader("y"))
 	err := s.AttachFile(ctx, "E-1", "blob2", "too-big.bin", over)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "limit")
+	require.ErrorIs(t, err, store.ErrAttachmentTooLarge)
 
 	// The over-limit attachment was not stored.
-	_, err = s.ReadAttachment(ctx, "E-1", "blob2")
+	_, err = s.ReadAttachment(ctx, "E-1", "blob2", "too-big.bin")
 	require.Error(t, err)
 }

@@ -234,6 +234,7 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      - attachment
       - audit
       - config
       - conflict

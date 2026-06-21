@@ -56,6 +56,18 @@ type V1Entity struct {
 	// per-entity GET responses. Same pointer / closed-world semantics
 	// as FieldAffordances.
 	RelationAffordances *map[string]V1RelationAffordance `json:"_relations,omitempty"`
+	// Attachments maps a `file`-type property name to the LIST of files
+	// currently attached to it (a property may hold several when its
+	// metamodel `max` > 1). The value is always an array — even a
+	// single-attachment property reports a 1-element list — matching how
+	// rela's `list:` properties and `_relations` are always arrays. Only
+	// properties that actually carry a file appear. Same pointer /
+	// closed-world semantics as FieldAffordances: present (possibly empty)
+	// on every per-entity response (GET, PATCH, POST create, clone — the
+	// ones that run serializeEntityForWire), nil on list rows and other
+	// non-per-entity shapes. The SPA's file widget reads this to render the
+	// download links / previews instead of the raw stored path string(s).
+	Attachments *map[string][]V1Attachment `json:"_attachments,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
@@ -81,6 +93,21 @@ type V1RelationAffordance struct {
 	Creatable *bool                        `json:"creatable,omitempty"`
 	Removable *bool                        `json:"removable,omitempty"`
 	Fields    map[string]V1FieldAffordance `json:"fields,omitempty"`
+}
+
+// V1Attachment describes one file attached to a `file`-type property, as
+// surfaced on a per-entity GET response. ID is the file's identifier
+// within the property (its normalized file name) — used to build the
+// per-file download/delete URL. Href is the download URL for the bytes (an
+// ACL-gated endpoint that inherits the owning entity's read permission).
+// ContentType is inferred from the filename — the store does not persist
+// it on every backend.
+type V1Attachment struct {
+	ID          string `json:"id"`
+	FileName    string `json:"filename"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType"`
+	Href        string `json:"href"`
 }
 
 // V1InaccessibleField describes a property that is known to exist but
@@ -133,6 +160,10 @@ type V1PropertyDef struct {
 	Values      []string `json:"values,omitempty"`
 	Description string   `json:"description,omitempty"`
 	List        bool     `json:"list,omitempty"`
+	// Max is the attachment cap for a `file` property (default 1). The SPA's
+	// file widget reads it to switch between replace-mode and multi-file
+	// add-mode. Omitted unless set above 1.
+	Max int `json:"max,omitempty"`
 }
 
 func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) V1PropertyDef {
@@ -142,6 +173,7 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 		Default:     propDef.Default,
 		Description: propDef.Description,
 		List:        propDef.List,
+		Max:         propDef.Max,
 	}
 	if ct, ok := meta.Types[propDef.Type]; ok {
 		pd.Values = ct.Values
@@ -334,20 +366,27 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case 4:
-		// /{plural}/{id}/relations/{relType} or /{plural}/{id}/_actions/{action}
+		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
+		// or /{plural}/{id}/_attachments/{property}
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelationType(w, r, typeName, parts[1], parts[3])
 		case "_actions":
 			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
+		case "_attachments":
+			a.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case 5:
-		// /{plural}/{id}/relations/{relType}/{targetId}
-		if parts[2] == "relations" {
+		// /{plural}/{id}/relations/{relType}/{targetId} or
+		// /{plural}/{id}/_attachments/{property}/{fileName}
+		switch parts[2] {
+		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
-		} else {
+		case "_attachments":
+			a.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
+		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	default:
@@ -803,6 +842,14 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 // clone, relations CRUD) handles the deny branch the same way — a
 // future divergence in error code, body shape, or ETag suppression
 // would otherwise be a per-handler oracle leak (RR-NGMI).
+// entityNotFoundTitle is the title for EVERY read-path 404 — the ACL
+// deny path (gateReadOrNotFound), a genuinely missing entity, and a
+// missing attachment all share it so a denied read is byte-identical to
+// a nonexistent one (the RR-NGMI indistinguishability invariant). Any
+// handler that 404s on the read path MUST use this const, not a fresh
+// literal, or the bodies drift and existence leaks.
+const entityNotFoundTitle = "Entity not found"
+
 func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
 	ok, err := readGateFromContext(r.Context()).PermitsRead(r.Context(), typeName, entityID)
 	if err != nil {
@@ -810,7 +857,7 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 		return false
 	}
 	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return false
 	}
 	return true
@@ -830,7 +877,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	entity, found := a.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
@@ -1700,15 +1747,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 			et.IDPrefixes = prefixes
 		}
 		for propName, propDef := range def.Properties {
-			pd := V1PropertyDef{
-				Type:     propDef.Type,
-				Required: propDef.Required,
-				Default:  propDef.Default,
-			}
-			if ct, ok := s.Meta.Types[propDef.Type]; ok {
-				pd.Values = ct.Values
-			}
-			et.Properties[propName] = pd
+			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
 		}
 		writeV1JSON(w, http.StatusOK, et)
 

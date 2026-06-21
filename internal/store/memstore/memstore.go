@@ -472,7 +472,7 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 		}
 		delete(m.attachments, key)
 		a.entityID = newID
-		reKey[newID+"/"+a.property] = a
+		reKey[attachmentKey(newID, a.property, a.fileName)] = a
 	}
 	for k, v := range reKey {
 		m.attachments[k] = v
@@ -661,12 +661,23 @@ func (m *MemStore) DeleteRelation(_ context.Context, from, relType, to string) e
 
 // --- Attachments ---
 
+// attachmentKey is the per-file index key: (entityID, property, fileName).
+func attachmentKey(entityID, property, fileName string) string {
+	return entityID + "/" + property + "/" + fileName
+}
+
 func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := validateProperty(property); err != nil {
 		return err
 	}
+	if err := store.ValidateFileName(fileName); err != nil {
+		return err
+	}
 
-	data, err := io.ReadAll(r)
+	// Backstop size guard (shared with fsstore): reject oversize bytes so
+	// the in-memory backend is never unbounded. The API layer also caps
+	// at ingress.
+	data, err := io.ReadAll(storeutil.LimitAttachmentReader(r))
 	if err != nil {
 		return err
 	}
@@ -678,8 +689,10 @@ func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName st
 		return store.ErrNotFound
 	}
 
-	key := entityID + "/" + property
-	m.attachments[key] = &attachment{
+	// Append: key by (entityID, property, fileName). A same-name re-attach
+	// replaces only that one file; sibling files on the property are
+	// untouched. Cap/suffix policy lives in the write path, not here.
+	m.attachments[attachmentKey(entityID, property, fileName)] = &attachment{
 		entityID: entityID,
 		property: property,
 		fileName: fileName,
@@ -688,23 +701,22 @@ func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName st
 	return nil
 }
 
-func (m *MemStore) ReadAttachment(_ context.Context, entityID, property string) (io.ReadCloser, error) {
+func (m *MemStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := entityID + "/" + property
-	a, ok := m.attachments[key]
+	a, ok := m.attachments[attachmentKey(entityID, property, fileName)]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(a.data)), nil
 }
 
-func (m *MemStore) DeleteAttachment(_ context.Context, entityID, property string) error {
+func (m *MemStore) DeleteAttachment(_ context.Context, entityID, property, fileName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := entityID + "/" + property
+	key := attachmentKey(entityID, property, fileName)
 	if _, ok := m.attachments[key]; !ok {
 		return store.ErrNotFound
 	}

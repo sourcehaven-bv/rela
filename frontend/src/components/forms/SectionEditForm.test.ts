@@ -13,7 +13,7 @@ import { nextTick } from 'vue'
 import { useEntitiesStore } from '@/stores/entities'
 import SectionEditForm, { type SectionEditField } from './SectionEditForm.vue'
 import { ApiError } from '@/api/errors'
-import type { Entity, PropertyDef } from '@/types'
+import type { Entity, PropertyDef, AttachmentInfo } from '@/types'
 
 const TEXT_DEF: PropertyDef = { type: 'string' } as PropertyDef
 const ENUM_DEF: PropertyDef = { type: 'enum', values: ['open', 'closed'] } as PropertyDef
@@ -31,6 +31,7 @@ function mountForm(opts: {
   initialValues?: Record<string, unknown>
   entityType?: string
   entityId?: string
+  attachments?: Record<string, AttachmentInfo[]>
   onPropertyApplied?: Mock
   onError?: Mock
   onVerdictFlip?: Mock
@@ -44,6 +45,7 @@ function mountForm(opts: {
       entityId: opts.entityId ?? 'TKT-001',
       initialValues: opts.initialValues ?? { title: 'Original', status: 'open' },
       fields: opts.fields ?? makeFields(),
+      attachments: opts.attachments,
       onPropertyApplied,
       onError,
       onVerdictFlip,
@@ -250,5 +252,36 @@ describe('SectionEditForm', () => {
     const errorPill = wrapper.find('.field-error')
     expect(errorPill.exists()).toBe(true)
     expect(errorPill.text()).toBe('invalid value')
+  })
+
+  // Regression: the inline-edit display path must forward _attachments to
+  // the file widget. Previously SectionEditForm dropped the attachment, so
+  // a `file` property on a writable entity showed no preview even though
+  // the entity GET / view payload carried _attachments.
+  it('forwards attachment metadata to the file widget for a file property', () => {
+    const FILE_DEF: PropertyDef = { type: 'file' } as PropertyDef
+    const fields: SectionEditField[] = [
+      { property: 'photo', label: 'Photo', kind: 'schema', propertyDef: FILE_DEF, verdict: { writable: true } },
+    ]
+    const att: AttachmentInfo = {
+      id: 'shot.png',
+      filename: 'shot.png',
+      size: 2048,
+      contentType: 'image/png',
+      href: '/api/v1/tickets/TKT-001/_attachments/photo/shot.png',
+    }
+    makeStoreMock()
+    const { wrapper } = mountForm({
+      fields,
+      initialValues: { photo: 'attachments/TKT-001/photo/shot.png' },
+      attachments: { photo: [att] },
+    })
+    const widget = wrapper.findComponent({ name: 'FileWidget' })
+    expect(widget.exists()).toBe(true)
+    expect(widget.props('attachments')).toEqual([att])
+    expect(widget.props('entityType')).toBe('ticket')
+    expect(widget.props('entityId')).toBe('TKT-001')
+    // The preview renders from the forwarded metadata.
+    expect(wrapper.find('img.file-preview').exists()).toBe(true)
   })
 })

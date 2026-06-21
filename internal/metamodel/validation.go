@@ -339,18 +339,12 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 		}
 
 	case PropertyTypeFile:
-		// File-type properties hold a string path (repo-relative)
-		// pointing at a blob in the attachment store. Structural
-		// validation is just "it's a string"; content-level checks
-		// (file exists, hash matches) are the attachment store's
-		// concern.
-		if _, ok := val.(string); !ok {
-			return &ValidationError{
-				Type:     ValidationErrorInvalidType,
-				Property: propName,
-				Message:  "Must be a string (attachment path)",
-			}
-		}
+		// File-type properties hold attachment path string(s) pointing at
+		// blobs in the attachment store. With the default cap (1) the value
+		// is a single string; with max > 1 it is a list of strings.
+		// Structural validation is just "string(s)"; content-level checks
+		// (file exists, hash matches) are the attachment store's concern.
+		return validateFileValue(propName, propDef, val)
 
 	default:
 		// Custom type (enum defined in types section)
@@ -370,6 +364,53 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 // validateCustomTypeValue validates a value against a custom type's allowed values and regex validations.
 // Supports both single string values and []string (multi-select).
 // Returns an error combining all validation failures.
+// validateFileValue checks a `file`-type property value. The value may be
+// a single string path or a list of string paths regardless of the cap
+// (a 1-element list is tolerated even at FileMax()==1, consistent with
+// rela's permissive-storage philosophy); the list length must not exceed
+// the cap. Content-level checks (the blob exists, hash matches) are the
+// attachment store's concern, not this.
+func validateFileValue(propName string, propDef *PropertyDef, val interface{}) *ValidationError {
+	maxCount := propDef.FileMax()
+
+	// Coerce to a list of paths regardless of scalar/list shape so the
+	// count check and item-type check share one path.
+	var paths []string
+	switch v := val.(type) {
+	case string:
+		paths = []string{v}
+	case []string:
+		paths = v
+	case []interface{}:
+		for i, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidType,
+					Property: propName,
+					Message:  fmt.Sprintf("item[%d]: must be a string (attachment path)", i),
+				}
+			}
+			paths = append(paths, s)
+		}
+	default:
+		return &ValidationError{
+			Type:     ValidationErrorInvalidType,
+			Property: propName,
+			Message:  "Must be a string or list of strings (attachment path)",
+		}
+	}
+
+	if len(paths) > maxCount {
+		return &ValidationError{
+			Type:     ValidationErrorInvalidValue,
+			Property: propName,
+			Message:  fmt.Sprintf("at most %d attachment(s) allowed, got %d", maxCount, len(paths)),
+		}
+	}
+	return nil
+}
+
 func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
 	hasEnumValues := len(customType.Values) > 0
 	hasValidations := len(customType.Validations) > 0

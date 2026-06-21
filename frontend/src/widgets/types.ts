@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { PropertyDef } from '@/types'
+import type { PropertyDef, AttachmentInfo } from '@/types'
 
 // PropertyType mirrors PropertyDef['type'] from the metamodel schema.
 // Kept as a named alias so widget entries can declare which property
@@ -46,6 +46,20 @@ export interface WidgetProps<T = unknown> {
   optionVerdicts?: Record<string, boolean>
   // Allowed status transitions keyed by current value (select only).
   transitions?: Record<string, string[]>
+  // Attachment metadata for a `file`-type property, sourced from the
+  // entity's `_attachments` map. The LIST of files currently on the
+  // property (a property may hold several when `max` > 1); empty/absent
+  // when none. The file widget renders download links / previews from it.
+  // Ignored by non-file widgets.
+  attachments?: AttachmentInfo[]
+  // The property's attachment cap (metamodel `max`, default 1). Drives the
+  // file widget's mode: replace at 1, add-up-to-max above.
+  max?: number
+  // Owning entity identity, supplied to the file widget so it can build
+  // the upload/delete URL in edit mode. Optional — present only on the
+  // file-property edit path; other widgets ignore it.
+  entityType?: string
+  entityId?: string
 }
 
 // WidgetRoutingHint is a lightweight description used by the view-side

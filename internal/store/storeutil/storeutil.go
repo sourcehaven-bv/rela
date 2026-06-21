@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -199,4 +200,13 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 		}
 	}
 	return true
+}
+
+// LimitAttachmentReader wraps r so reads fail with
+// store.ErrAttachmentTooLarge once they exceed store.MaxAttachmentBytes.
+// This is the shared backstop guard every store backend applies to
+// AttachFile, so no backend is ever unbounded regardless of caller.
+// Thin alias over store.CapAttachmentReader at the backstop cap.
+func LimitAttachmentReader(r io.Reader) io.Reader {
+	return store.CapAttachmentReader(r, store.MaxAttachmentBytes)
 }

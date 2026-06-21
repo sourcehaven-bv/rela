@@ -79,6 +79,11 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/tickets/", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/relations", 0},
+		// Attachment download route. Probe with POST so the handler answers
+		// 405 (a JSON error) rather than a 404 — a GET against the fixture
+		// (no attachment seeded) would emit a handler http.NotFound that the
+		// oracle cannot distinguish from an unregistered route.
+		{http.MethodPost, "/api/v1/tickets/TKT-001/_attachments/screenshot", 0},
 	}
 
 	for _, tc := range routes {
