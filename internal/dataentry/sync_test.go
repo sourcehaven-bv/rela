@@ -103,6 +103,12 @@ func TestSync_SameOriginExemption(t *testing.T) {
 // request (one carrying a Cookie, or a cross-origin Origin), or a malicious page
 // could ride a victim's proxy session. Such a request must be rejected like any
 // other cross-origin write.
+//
+// This heuristic exists because a header-trust proxy (oauth2-proxy, Authelia,
+// Vouch, …) normalizes both its cookie-session browser and the Bearer-token CLI
+// into the same X-Forwarded-User, so the app cannot tell them apart from what the
+// proxy forwards — see the nonBrowserExemptPrefixes doc for why it's load-bearing
+// and when it retires (FEAT-ESLP / proxy Cookie-stripping).
 func TestSync_CSRFExemptionRequiresNoCookie(t *testing.T) {
 	app := newHandlerTestApp(t)
 	sec, err := newSecurity(SecurityConfig{BindAddress: "127.0.0.1:8080"})

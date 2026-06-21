@@ -220,6 +220,26 @@ var sensitivePathPrefixes = []string{
 // attacker hits the real hostname). So the exemption is conditioned on the
 // request carrying NO cookie and NO browser origin (see isCSRFExempt), which a
 // CSRF request always carries and a CLI never does.
+//
+// WHY THE HEURISTIC IS NEEDED AT ALL — and when it retires.
+// The deployment model fronts rela with an identity-aware reverse proxy that
+// serves BOTH auth modes on this same path: a browser bearing the proxy's
+// session COOKIE, and the CLI bearing `Authorization: Bearer`. Header-trust
+// proxies like oauth2-proxy (the documented default — see
+// .ignored/sync-entra-oauth2proxy-notes.md), Authelia, Vouch, or a Traefik
+// ForwardAuth all NORMALIZE both into the same X-Forwarded-User and forward no
+// reliable "this was bearer vs cookie" signal, so the app cannot distinguish CLI
+// from browser by what the proxy sets — it must infer it from the
+// browser-attached signals in isCSRFExempt. The heuristic is therefore a direct
+// consequence of the trust-the-forwarded-header model, not of any one proxy.
+// It becomes removable when EITHER the operator strips inbound Cookie on this
+// location at the proxy (structurally cookie-proof), OR rela validates a signed
+// proxy assertion / Bearer token itself and REQUIRES it here, rejecting
+// cookie-only requests (CSRF-immune by construction) — the FEAT-ESLP track. The
+// latter is also what a signed-assertion proxy (Pomerium, Ory Oathkeeper,
+// authentik) enables: rela verifies the identity instead of inferring it. Until
+// one of those lands, this exemption + isCSRFExempt is load-bearing; do not
+// remove it.
 var nonBrowserExemptPrefixes = []string{
 	"/api/sync/",
 }
