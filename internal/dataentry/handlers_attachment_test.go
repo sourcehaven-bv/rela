@@ -251,11 +251,13 @@ func TestAttachment_DeceptiveExtensionServesTypeFromName(t *testing.T) {
 	}
 }
 
-// TestAttachment_SvgIsSandboxed pins that an SVG (which can carry inline
-// script) is served with the sandbox CSP and inline disposition. The
-// sandbox (no allow-scripts) is what makes `inline` safe for SVG/HTML
-// content in the app origin; if this header is ever dropped the endpoint
-// becomes a stored-XSS vector.
+// TestAttachment_SvgIsSandboxed pins the download-hardening headers for an SVG
+// (which can carry inline script): the sandbox CSP, nosniff, AND
+// `Content-Disposition: attachment` (force-download, never inline render).
+// Defense in depth — the upload allowlist normally blocks SVG, but a file
+// seeded out-of-band (or under a pre-allowlist policy) must still never
+// execute as stored XSS in the app origin. Dropping any of these reopens the
+// vector.
 func TestAttachment_SvgIsSandboxed(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
@@ -273,8 +275,8 @@ func TestAttachment_SvgIsSandboxed(t *testing.T) {
 	if !strings.Contains(csp, "sandbox") || !strings.Contains(csp, "default-src 'none'") {
 		t.Errorf("CSP = %q, want sandbox + default-src 'none'", csp)
 	}
-	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "inline;") {
-		t.Errorf("Content-Disposition = %q, want inline", cd)
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Errorf("Content-Disposition = %q, want attachment (force-download)", cd)
 	}
 }
 

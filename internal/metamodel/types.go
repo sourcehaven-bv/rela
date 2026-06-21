@@ -21,6 +21,10 @@ type Metamodel struct {
 	Validations []ValidationRule       `yaml:"validations,omitempty"`
 	Automations []AutomationDef        `yaml:"automations,omitempty"`
 
+	// Attachments holds the global attachment safety floor (MIME allowlist,
+	// scan policy) applied to every `file` property unless overridden.
+	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
+
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
@@ -199,6 +203,34 @@ type PropertyDef struct {
 	// switches from replace-mode to multi-file add-mode. Only meaningful
 	// for `type: file`.
 	Max int `yaml:"max,omitempty"`
+
+	// Accept narrows the MIME allowlist for this `file` property to these
+	// sniffed MIME types (e.g. ["application/pdf"]). Empty means inherit the
+	// global allowlist. Only meaningful for `type: file`.
+	Accept []string `yaml:"accept,omitempty"`
+
+	// Scan overrides the global virus-scan policy for this `file` property.
+	// ScanUnset (the zero value) means inherit the global policy. Only
+	// meaningful for `type: file`.
+	Scan ScanPolicy `yaml:"scan,omitempty"`
+
+	// ScanCmd is the external scan command (array args) run when the effective
+	// scan policy is `required`. Empty inherits the global scan command. Only
+	// meaningful for `type: file`. See [AttachmentsConfig.ScanCmd].
+	ScanCmd []string `yaml:"scan_cmd,omitempty"`
+
+	// Transform is the ordered list of byte transforms (each an external
+	// command) applied to this `file` property's uploads. Only meaningful for
+	// `type: file`.
+	Transform []TransformStep `yaml:"transform,omitempty"`
+}
+
+// TransformStep is one entry in a `transform:` pipeline — an external command
+// (array args) that rewrites the attachment bytes (e.g. metadata strip,
+// resize, CDR). The command receives templated {in}/{out} paths owned by the
+// runner; see the attachment-security guide for vetted recipes.
+type TransformStep struct {
+	Cmd []string `yaml:"cmd"`
 }
 
 // FileMax returns the effective attachment cap for a file property:

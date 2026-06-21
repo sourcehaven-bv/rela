@@ -139,6 +139,9 @@ func newCLIServicesFromAppbuild(svc *appbuild.Services) (*cliServices, error) {
 		Store:         svc.Store(),
 		Meta:          svc.Meta(),
 		EntityManager: svc.EntityManager(),
+		// Native MIME allowlist on the CLI attach path too (runner nil →
+		// no external scan/transform until the cmd: harness is wired).
+		Processor: attachment.NewPolicyProcessor(svc.Meta(), nil),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("attachment service: %w", err)

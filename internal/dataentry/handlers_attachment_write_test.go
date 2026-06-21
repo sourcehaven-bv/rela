@@ -81,6 +81,27 @@ func bobCtx() context.Context {
 	return principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 }
 
+// TestAttachmentUpload_MIMERejected pins that the native MIME allowlist rejects
+// a disallowed type at upload with 422 (not 500) and does not persist anything.
+// The `screenshot` property accepts text/plain, so SVG content (which sniffs as
+// XML/HTML and carries script) is rejected — the stored-XSS defense at ingress.
+func TestAttachmentUpload_MIMERejected(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	d := writeACL(t, app)
+	app.acl = d
+
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "evil.svg", svg)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("disallowed upload: got %d, want 422; body=%s", rec.Code, rec.Body)
+	}
+	// Nothing persisted.
+	if e := mustGet(t, app, "TKT-001"); e.GetString("screenshot") != "" {
+		t.Errorf("rejected upload must not stamp the property; got %q", e.GetString("screenshot"))
+	}
+}
+
 // TestAttachmentUpload_RoundTrips pins AC1: an authorized upload persists
 // the bytes (readable back via GET) and stamps the property; the response
 // carries the new _attachments entry.
@@ -90,20 +111,20 @@ func TestAttachmentUpload_RoundTrips(t *testing.T) {
 	d := writeACL(t, app)
 	app.acl = d
 
-	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "shot.png", []byte("PNGDATA"))
+	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "shot.txt", []byte("PNGDATA"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("upload: got %d, want 200; body=%s", rec.Code, rec.Body)
 	}
 
 	// Bytes readable via GET.
-	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "shot.png")
+	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "shot.txt")
 	if get.Code != http.StatusOK || get.Body.String() != "PNGDATA" {
 		t.Fatalf("GET after upload: got %d body=%q, want 200 \"PNGDATA\"", get.Code, get.Body)
 	}
 
 	// Property stamped on the entity.
 	e := mustGet(t, app, "TKT-001")
-	if got := e.GetString("screenshot"); got != "attachments/TKT-001/screenshot/shot.png" {
+	if got := e.GetString("screenshot"); got != "attachments/TKT-001/screenshot/shot.txt" {
 		t.Errorf("property = %q, want the stamped attachment path", got)
 	}
 }
@@ -116,10 +137,10 @@ func TestAttachmentUpload_Replaces(t *testing.T) {
 	d := writeACL(t, app)
 	app.acl = d
 
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.png", []byte("first"))
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "b.png", []byte("second"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt", []byte("first"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "b.txt", []byte("second"))
 
-	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "b.png")
+	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "b.txt")
 	if get.Body.String() != "second" {
 		t.Errorf("after replace, body = %q, want \"second\"", get.Body)
 	}
@@ -132,14 +153,14 @@ func TestAttachmentDelete_RemovesBytesAndProperty(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	d := writeACL(t, app)
 	app.acl = d
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.png", []byte("data"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt", []byte("data"))
 
-	del := deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.png")
+	del := deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt")
 	if del.Code != http.StatusNoContent {
 		t.Fatalf("delete: got %d, want 204; body=%s", del.Code, del.Body)
 	}
 
-	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "a.png")
+	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "a.txt")
 	if get.Code != http.StatusNotFound {
 		t.Errorf("GET after delete: got %d, want 404", get.Code)
 	}
@@ -159,7 +180,7 @@ func TestAttachmentWrite_DeniedBeforeBytes(t *testing.T) {
 
 	// bob can't read ticket → upload 404s at the read gate (no existence
 	// leak, no bytes).
-	rec := putAttachmentAs(bobCtx(), t, app, d, "TKT-001", "screenshot", "x.png", []byte("data"))
+	rec := putAttachmentAs(bobCtx(), t, app, d, "TKT-001", "screenshot", "x.txt", []byte("data"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bob (no read) upload: got %d, want 404", rec.Code)
 	}
@@ -172,14 +193,14 @@ func TestAttachmentWrite_DeniedBeforeBytes(t *testing.T) {
 	}, app.store)
 	app.acl = d2
 	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolDataEntry})
-	rec = putAttachmentAs(carol, t, app, d2, "TKT-001", "screenshot", "x.png", []byte("data"))
+	rec = putAttachmentAs(carol, t, app, d2, "TKT-001", "screenshot", "x.txt", []byte("data"))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("carol (read, no write) upload: got %d, want 403; body=%s", rec.Code, rec.Body)
 	}
 
 	// No bytes were written by either denied attempt.
 	app.acl = d
-	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "x.png")
+	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "x.txt")
 	if get.Code != http.StatusNotFound {
 		t.Errorf("a denied upload must not write bytes; GET got %d, want 404", get.Code)
 	}
@@ -217,7 +238,7 @@ func TestAttachmentUpload_MissingFieldOrBadProperty(t *testing.T) {
 	// Wrong form field name → 400.
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	fw, _ := mw.CreateFormFile("notfile", "x.png")
+	fw, _ := mw.CreateFormFile("notfile", "x.txt")
 	_, _ = fw.Write([]byte("data"))
 	_ = mw.Close()
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/tickets/TKT-001/_attachments/screenshot", &buf)
@@ -230,7 +251,7 @@ func TestAttachmentUpload_MissingFieldOrBadProperty(t *testing.T) {
 	}
 
 	// Non-file property → 404 (no oracle).
-	rec = putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "title", "x.png", []byte("data"))
+	rec = putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "title", "x.txt", []byte("data"))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("upload to non-file property: got %d, want 404", rec.Code)
 	}
@@ -286,7 +307,7 @@ func TestAttachmentUpload_ReplaceOversizeKeepsExisting(t *testing.T) {
 	app.acl = d
 
 	// Upload a valid file, then attempt an oversize replace (cap tightened).
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "ok.png", []byte("good"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "ok.txt", []byte("good"))
 	app.State().Cfg.App.MaxAttachmentBytes = 4
 	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "huge.bin", []byte("waytoobig"))
 	if rec.Code != http.StatusRequestEntityTooLarge {
@@ -294,7 +315,7 @@ func TestAttachmentUpload_ReplaceOversizeKeepsExisting(t *testing.T) {
 	}
 
 	// The original must still be downloadable.
-	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "ok.png")
+	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "screenshot", "ok.txt")
 	if get.Code != http.StatusOK || get.Body.String() != "good" {
 		t.Errorf("failed replace destroyed the original: GET got %d body=%q, want 200 \"good\"", get.Code, get.Body)
 	}
@@ -322,7 +343,7 @@ func TestAttachmentUpload_MultiAppendsUpToMax(t *testing.T) {
 	d := writeACL(t, app)
 	app.acl = d
 
-	for _, name := range []string{"a.pdf", "b.pdf", "c.pdf"} {
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
 		rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", name, []byte(name))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("upload %s: got %d, want 200; body=%s", name, rec.Code, rec.Body)
@@ -333,7 +354,7 @@ func TestAttachmentUpload_MultiAppendsUpToMax(t *testing.T) {
 	}
 
 	// 4th over the cap → 409.
-	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "d.pdf", []byte("d"))
+	rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "d.txt", []byte("d"))
 	if rec.Code != http.StatusConflict {
 		t.Errorf("upload past max: got %d, want 409; body=%s", rec.Code, rec.Body)
 	}
@@ -357,16 +378,16 @@ func TestAttachmentUpload_MultiAutoSuffix(t *testing.T) {
 	d := writeACL(t, app)
 	app.acl = d
 
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "report.pdf", []byte("one"))
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "report.pdf", []byte("two"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "report.txt", []byte("one"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "report.txt", []byte("two"))
 
 	got := attachmentsFor(t, app, "TKT-001", "docs")
 	if len(got) != 2 {
 		t.Fatalf("duplicate name should auto-suffix into 2 files; got %d: %+v", len(got), got)
 	}
 	names := map[string]bool{got[0].FileName: true, got[1].FileName: true}
-	if !names["report.pdf"] || !names["report (1).pdf"] {
-		t.Errorf("expected report.pdf + report (1).pdf; got %v", names)
+	if !names["report.txt"] || !names["report (1).txt"] {
+		t.Errorf("expected report.txt + report (1).txt; got %v", names)
 	}
 }
 
@@ -378,20 +399,20 @@ func TestAttachmentDelete_MultiLeavesSiblings(t *testing.T) {
 	d := writeACL(t, app)
 	app.acl = d
 
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "a.pdf", []byte("a"))
-	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "b.pdf", []byte("b"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "a.txt", []byte("a"))
+	putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "b.txt", []byte("b"))
 
-	del := deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "a.pdf")
+	del := deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "docs", "a.txt")
 	if del.Code != http.StatusNoContent {
 		t.Fatalf("delete one of many: got %d, want 204", del.Code)
 	}
 
 	got := attachmentsFor(t, app, "TKT-001", "docs")
-	if len(got) != 1 || got[0].FileName != "b.pdf" {
+	if len(got) != 1 || got[0].FileName != "b.txt" {
 		t.Errorf("after deleting a.pdf, expected only b.pdf; got %+v", got)
 	}
 	// b.pdf still downloads.
-	g := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "docs", "b.pdf")
+	g := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "docs", "b.txt")
 	if g.Code != http.StatusOK || g.Body.String() != "b" {
 		t.Errorf("sibling b.pdf must survive; GET got %d body=%q", g.Code, g.Body)
 	}
