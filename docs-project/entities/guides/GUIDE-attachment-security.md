@@ -1,4 +1,12 @@
-# Attachment security: scanning, MIME allowlist & transforms
+---
+id: GUIDE-attachment-security
+type: guide
+title: "Attachment Security: Scanning, MIME Allowlist & Transforms"
+status: published
+order: 14
+audience: intermediate
+summary: "Virus scanning, a sniffed MIME allowlist, and byte transforms for uploaded attachments"
+---
 
 rela inspects every uploaded attachment on the write path before it is stored.
 Two layers do the work:
@@ -55,7 +63,7 @@ entities:
         scan: off
 ```
 
-### MIME allowlist (`allow`, `accept`)
+## MIME allowlist (`allow`, `accept`)
 
 The allowlist is checked against the **sniffed** content type
 (`http.DetectContentType` on the file's magic bytes), never the client-supplied
@@ -73,7 +81,7 @@ implies one type but whose bytes sniff as an incompatible one (the classic
   floor.
 - Per-property `accept: [application/pdf]` narrows a single field further.
 
-### Scanning (`scan_cmd`, `scan: off`)
+## Scanning (`scan_cmd`, `scan: off`)
 
 **Configuring a `scan_cmd` is what turns scanning on** — there is no separate
 "required" toggle. If a scan command is configured for a `file` property
@@ -91,18 +99,22 @@ A property's own `scan_cmd` overrides the global one. To silence the startup
 warning without scanning, either set a global `scan_cmd` or mark each file
 property `scan: off`.
 
-`scan_cmd` is an **array** of command arguments — never a shell string, so a
+A scan command is a **verdict gate**: rela ignores its output and reads only its
+**exit code** — `0` means clean, any non-zero means "not clean" and the upload
+is rejected. `scan_cmd` is an **array** of arguments — never a shell string, so a
 filename or byte sequence can never inject a shell command. Use the `{in}`
-placeholder for the file; rela substitutes a path to a temp file it owns. A
-non-zero exit code means "not clean" and rejects the upload.
+placeholder for the file; rela substitutes a path to a temp file it owns.
 
-### Transforms (`transform`)
+## Transforms (`transform`)
 
-`transform` is an ordered list of commands that rewrite the bytes. Each step is
-`{cmd: [...]}`. Use `{in}` for the input file and `{out}` for the output file
-rela should read back; if a command writes to stdout instead, omit `{out}`.
-Transforms are **opt-in per field** — they mutate bytes, so rela never applies
-one unless you ask.
+`transform` is an ordered list of commands that **rewrite the bytes**. Each step
+is `{cmd: [...]}`. Use `{in}` for the input file and `{out}` for the output file
+rela should read back; if a command writes to stdout instead, omit `{out}`. The
+command's output becomes the stored bytes. Transforms are **opt-in per field** —
+they mutate bytes, so rela never applies one unless you ask.
+
+(Note the asymmetry with scanning: a **scan** is a gate judged by exit code; a
+**transform** is a filter whose output replaces the stream.)
 
 ## Safe-invocation guarantees
 

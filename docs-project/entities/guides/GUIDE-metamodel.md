@@ -522,7 +522,7 @@ placeholders rela substitutes with temp paths it owns; each runs under a
 timeout and output-size cap. **Configuring a `scan_cmd` enables scanning**
 (fail-closed: rejects on a hit **or** when the scanner can't run); a property
 can opt out with `scan: off`. See the dedicated
-[attachment-security guide](../../../docs/data-entry/attachment-security.md)
+[Attachment Security guide](attachment-security.md)
 for the full configuration and vetted command recipes (ClamAV, vips, exiftool,
 qpdf, ImageMagick).
 

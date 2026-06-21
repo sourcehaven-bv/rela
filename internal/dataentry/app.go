@@ -564,7 +564,7 @@ func NewApp(
 	if meta.HasUnconfiguredScan() {
 		slog.Warn("attachments: no virus scanner configured for file properties; "+
 			"set attachments.scan_cmd to enable scanning, or `scan: off` on the property to silence this",
-			"docs", "docs/data-entry/attachment-security.md")
+			"docs", "docs/attachment-security.md")
 	}
 
 	return app, nil
