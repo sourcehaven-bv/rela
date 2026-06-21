@@ -24,6 +24,7 @@ components:
 
   # CLI layer
   cli:              { in: internal/cli }
+  clisync:          { in: internal/cli/sync }
 
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
@@ -196,6 +197,7 @@ deps:
       - autocascade
       - automation
       - bleveindex
+      - clisync
       - config
       - dataentryconfig
       - entitymanager
@@ -229,6 +231,14 @@ deps:
       - glamour
       - huh
       - tablewriter
+
+  clisync:
+    mayDependOn:
+      - canonical
+      - entity
+      - entitymanager
+      - storage
+      - store
 
   # Web / UI layer
   dataentry:

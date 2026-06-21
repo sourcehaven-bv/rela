@@ -5,7 +5,7 @@ title: 'Sync 5/5: rela CLI sync client — index, topo-ordered diff, push/pull, 
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: review
 ---
 
 Sub-ticket of TKT-WE01O5 / FEAT-NJ9FEN. Addresses design-review RR-YHGJHG
