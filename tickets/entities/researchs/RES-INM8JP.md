@@ -2,8 +2,23 @@
 id: RES-INM8JP
 type: research
 title: Research
-summary: 'cmd:-only attachment processing: one generic external-command processor (array args, templated I/O, timeout, cap, present-probe) covers scan/strip/resize/CDR via doc recipes — no native clamd/EXIF/resize code. MIME allowlist + sniffing + download hardening stay native (pure-Go input validation). Phased 0 (seam) -> 1 (cmd: harness + MIME validation) -> 2 (recipes + config + Lua policy). Mirrors rela''s auth-via-proxy house style.'
+summary: 'cmd:-only attachment processing: one generic external-command processor covers scan/strip/resize/CDR via doc recipes. Scanning is enabled by configuring a scan_cmd (no separate `required` toggle; per-field `scan: off` opt-out). MIME allowlist + sniffing + download hardening stay native. Phased 0 (seam) -> 1 (native validation + unconfigured-scan warning) -> 2 (cmd: harness + recipes). Mirrors rela''s auth-via-proxy house style.'
 status: done
+---
+
+## AMENDMENT (2026-06-21, post-implementation): scan is command-driven, not a `required` toggle
+
+The `scan` tri-state below (`unset` / `off` / `required`) was simplified during
+implementation. **Configuring a `scan_cmd` is what enables scanning** — there is
+no separate `required` value (if you wire a scanner, you want it used). `scan`
+survives only as a per-property **opt-out**: `scan: off` skips scanning on that
+field despite a global `scan_cmd`. The startup warning fires when a `file`
+property has **no scan command configured** (and no `scan: off`). Net: one knob
+(`scan_cmd` presence) + an off-switch, removing the "set a command but forgot to
+require it → silent no-scan" footgun. The rest of the design (cmd:-only, native
+MIME validation, phasing) is unchanged. See
+`docs/data-entry/attachment-security.md` for the final config surface.
+
 ---
 
 ## Problem
@@ -17,196 +32,84 @@ and no declarative way to say "scan everything, thumbnail this one field."
 ## Context
 
 The single chokepoint is `Service.WriteAttachment` — both the CLI (`Attach`) and
-the data-entry HTTP upload handler flow through it. The critical line is:
+the data-entry HTTP upload handler flow through it. `r io.Reader` is the raw
+stream; a processing step wrapping `r` before `AttachFile` covers both scan and
+transform. Constraints: 8 cross-compile targets incl. Windows + no-CGO
+discipline → rules out libclamav / libvips / imagemagick as linked deps.
 
-```go
-if err := s.deps.Store.AttachFile(ctx, e.ID, propName, fileName, r); err != nil {
-```
-
-`r io.Reader` is the raw stream. Inserting a processing step that wraps `r`
-before `AttachFile` covers both scan (read bytes → verdict → maybe reject) and
-transform (consume `r` → produce `r'`). Existing guards already present: 64 MiB
-cap (`MaxAttachmentBytes` + `CapAttachmentReader`), `NormalizeFileName` /
-`ValidateFileName` / suffix-on-collision, ACL-gated writes, download served via
-handler (not static path). Constraints: **8 cross-compile targets incl.
-Windows** and a **no-CGO discipline** (postgres build-tag rules in CLAUDE.md) —
-rules out libclamav / libvips / imagemagick as linked deps.
-
-User decisions captured (2026-06-21):
-- Synchronous processing is fine ("files are small-ish, sync + progress indicator").
-- Config: **both global and per-field**.
-
-## FINAL DIRECTION — `cmd:`-only processing (supersedes the native-first survey below)
+## FINAL DIRECTION — `cmd:`-only processing
 
 **Processing is one generic external-command (`cmd:`) processor. rela ships NO
-native scanners or transformers** (no clamd client, no hand-rolled EXIF
-stripper, no native resize). Input *validation* that needs no external tool
-(MIME allowlist, content sniffing, download hardening) stays native and in-core.
+native scanners or transformers.** Input *validation* that needs no external
+tool (MIME allowlist, content sniffing, download hardening) stays native and
+in-core.
 
-**Why `cmd:`-only (user reasoning, 2026-06-21):**
-- **`cmd:` is wanted regardless** — it's the only way to cover the long tail
-(HEIC/RAW/CDR/video/commercial-AV/DLP). Once it exists it *already* does virus
-scanning, EXIF strip, resize — **everything**. Every native processor is then
-pure additive maintenance: a second code path doing a subset of what `cmd:`
-already covers.
-- **The native benefits don't carry their weight here.** Performance (no per-upload
-exec) is not a primary concern for small sync uploads. "Works once you point at
-the daemon" is marginal vs. copying a doc snippet.
-- **Native *narrows* choice.** Baking in clamd assumes everyone wants clamd; a Windows
-operator wanting Defender, or a shop with a commercial AV, is *better* served by
-`cmd:`. clamav itself is just a `cmd:` recipe (`clamdscan --stream -`).
-- **Architectural fit / house style.** rela already **outsources auth to the
-proxy/headers** rather than building it in. "Push integration to a
-well-understood external boundary, keep the core small" is the established
-pattern. `cmd:` is the attachment-processing analogue of "auth is the proxy's
-job." Native processors would violate exactly that principle.
+**Why `cmd:`-only (user reasoning):** `cmd:` is wanted regardless (long-tail
+coverage); once it exists it does scan/strip/resize/CDR — every native processor
+is additive maintenance for a subset. Native *narrows* tool choice (clamd-only
+vs Defender/commercial AV). Mirrors rela's house style of **outsourcing auth to
+the proxy**: push integration to a well-understood external boundary, keep the
+core small.
 
-**Consequences accepted:**
-- Scan and EXIF-strip become **opt-in via a `cmd:` recipe** — nothing scans/strips
-out-of-box until the operator wires a command. This makes the **unset-scan
-startup warning** (below) the primary nudge.
-- MIME allowlist + sniffing + download hardening **stay native, default-on** (they're
-pure-Go input validation, not tool-driving — the "outsource it" logic doesn't
-apply). This keeps the SVG-XSS / polyglot defense on by default with zero
-operator setup.
+## Decisions (final)
 
-## Decisions (final, 2026-06-21)
+### Native, in-core (input validation)
+- **MIME allowlist** — `default-safe` preset, validated against the **sniffed** type
+(not the header), rejecting SVG/HTML/executables and sniff↔extension mismatches
+(polyglot / `.jpg.php`). Per-field `accept:` narrows. Default-on.
+- **Download hardening** — `Content-Disposition: attachment` + `nosniff` + CSP
+sandbox, always.
+- **Unconfigured-scan startup warning** — warn once when a `file` property has no
+scan command and no `scan: off`. Never blocks startup/uploads.
 
-### Native, in-core (input validation — no external tool)
-| Control | Default | Override | Phase |
-|---|---|---|---|
-| **MIME allowlist** | `default-safe` preset, **sniffed** + extension-mismatch reject | per-field `accept:`, global extend | 1 |
-| **Download hardening** | `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` always | — | 1 |
-| **Unset-scan startup warning** | warn if ≥1 `file` prop and `scan` neither `required` nor explicit `off` | explicit `off`/`required` silence | 1 |
-
-- **`default-safe` allowlist:** allow png/jpeg/gif/webp, pdf, plain text, office docs
-(docx/xlsx/pptx/odt…), zip, csv. Block `image/svg+xml`, `text/html`,
-`application/xhtml+xml`, executables/scripts. Validated against the **sniffed**
-type, sniff↔extension mismatch rejected (polyglot / `.jpg.php` defense).
-- **Unset-scan warning:** config model must distinguish "unset" from "explicit off"
-(tri-state / `*ScanPolicy`, not a bare bool). Warning is the only signal — never
-blocks startup or uploads.
-
-### `cmd:` processors (everything that drives an external tool)
-| Concern | How |
-|---|---|
-| **Virus scan** | `scan: [cmd: [clamdscan, --stream, ...]]` (or any AV) — fail-closed: reject on non-zero/FOUND **and** when the command can't run, when the field requires it |
-| **EXIF/metadata strip** | `transform: [cmd: [vips/exiftool/...]]` per field |
-| **Resize / thumbnail** | `transform: [cmd: [vips, thumbnail, ...]]` per field |
-| **CDR (PDF/office disarm)** | `transform: [cmd: [qpdf/ghostscript, ...]]` per field |
-
-- **One mechanism, recipes in docs.** rela ships the `cmd:` processor; the vetted,
-sandboxed *recipes* (clamav, vips, imagemagick, exiftool, qpdf, ghostscript,
-ffmpeg, Windows Defender, internal DLP) ship in the docs. Knowledge ships;
-binary-driving code does not. No curated named-processor registry (maintenance
-trap: per-tool flag drift, false abstraction, still needs a generic hatch → two
-mechanisms).
-- **`cmd:` safe-invocation discipline (load-bearing — the line between "extensible" and
-"RCE via upload"):** **array args, never a shell string** (no `sh -c` → no
-injection); **templated `{in}`/`{out}`**, rela owns the temp paths (operator
-never builds a path from the filename); **timeout + output-size cap** enforced
-by rela; **present-probe + startup warn** if a referenced binary is absent
-(never crash); docs banner: "you are running a third-party parser on untrusted
-input — pin versions, sandbox."
-- **Lua = policy, not transport.** The planned Lua write-veto hook (TKT-40PZ15) is the
-optional *conditional-policy* layer ("scan required only for the `legal` type",
-"pick recipe by principal/quota") that selects/gates `cmd:` processors. It does
-not move bytes.
+### `cmd:` processing (external tools)
+- **Scanning is enabled by configuring `scan_cmd`** (global or per-property);
+presence = intent, always **fail-closed** (reject on a hit or when the scanner
+can't run). `scan: off` per-property opts out of a global command. No `required`
+toggle. (See AMENDMENT above — simplified from the original tri-state.)
+- **Transforms** — `transform: [{cmd: [...]}]` per field, ordered (strip, resize,
+CDR). Opt-in.
+- **One mechanism, recipes in docs** — rela ships the `cmd:` processor; vetted
+sandboxed recipes (clamav, vips, exiftool, qpdf, ghostscript, ffmpeg, Defender)
+ship in `docs/data-entry/attachment-security.md`. No curated named-processor
+registry.
+- **Safe-invocation discipline (load-bearing):** array args (no shell → no
+injection), templated `{in}`/`{out}` temp paths rela owns, timeout + output-size
+cap, present-probe + startup warn.
+- **Lua = policy, not transport** — TKT-40PZ15 (deferred) selects/gates `cmd:`
+processors conditionally; it does not move bytes.
 
 ### Cross-cutting
-- **Existing files:** write-time gates do not retroactively quarantine already-stored
-attachments. Documented; a "rescan/restrip existing" tool is a later idea.
+- Existing files are not retroactively processed (write-time gates). A rescan tool
+is a later idea.
 
-## Config surface
+## Phasing (as built)
 
-```yaml
-# metamodel top-level — native input-validation floor
-attachments:
-  allow: default-safe          # named preset | explicit sniffed-mime list (native)
-  scan: off                    # off (default; warns if unset) | required (cmd: recipe must be wired)
-
-# per-property — all processing via cmd: recipes (see docs)
-evidence_photo:
-  type: file
-  max: 5
-  transform:
-    - cmd: [vips, thumbnail, "{in}", "{out}", "2048"]   # array args, templated I/O
-signed_contract:
-  type: file
-  scan: required               # this field must pass its scan recipe
-  accept: [application/pdf]     # native allowlist narrowing
-  scan_cmd: [clamdscan, --no-summary, --stream, "{in}"]   # recipe (or inherit a global default)
-```
-
-## Phasing (final)
-
-- **Phase 0 — the seam.** `attachment.Processor` consumer-side interface, no-op default,
-**conditional buffering** (buffer ≤64 MiB only when a processor is registered;
-otherwise keep today's zero-copy stream). Benchmark memory-vs-temp-file here.
-- **Phase 1 — native input validation + the warning.** `default-safe` sniffed MIME
-allowlist with extension-mismatch reject; download hardening headers; unset-scan
-startup warning; tri-state scan config plumbing. **No external tools yet** —
-pure-Go, default-on, addresses SVG-XSS immediately. Highest-leverage, cheapest
-controls.
-- **Phase 2 — the `cmd:` processor harness.** Generic external-command processor: array
-args, templated `{in}`/`{out}`, timeout, output-size cap, present-probe +
-startup warn; wire `scan: [cmd:]` (fail-closed on `required`) and `transform:
-[cmd:]` into the declarative config. **Ship the doc recipes** (clamav scan,
-vips/exiftool strip, vips resize, qpdf CDR, Defender, ffmpeg). This is where
-scan + strip + resize + CDR all actually become usable — via recipes, not native
-code.
-- **Phase 3 — Lua policy hook (deferred).** TKT-40PZ15 repurposed: conditional selection
-/gating of `cmd:` processors by entity type / principal / quota / time. Policy
-only; the heavy lifting stays in the `cmd:` harness.
-
-**Dropped from earlier drafts:** native clamd INSTREAM client, hand-rolled
-JPEG/PNG metadata stripper, native stdlib resize. All are subsets of `cmd:` and
-were net-added maintenance for benefits (perf, zero-binary) the user
-de-prioritized.
+- **Phase 0 — seam.** `attachment.Processor` interface, no-op default, conditional
+buffering (zero-copy when no processor; ≤64 MiB buffer otherwise). [TKT-YGLHDL]
+- **Phase 1 — native validation.** `default-safe` sniffed allowlist +
+extension-mismatch reject; download hardening; `scan` config (off opt-out) +
+unconfigured-scan startup warning. Pure-Go, default-on. [TKT-4T06HY]
+- **Phase 2 — `cmd:` harness.** Generic external-command processor (array args,
+templated I/O, timeout, cap, present-probe); `scan_cmd` (presence-enabled,
+fail-closed) + `transform: [cmd:]`; doc recipes. [TKT-VT7Z43]
+- **Phase 3 (deferred)** — Lua conditional-policy hook. [TKT-40PZ15]
 
 ## Recommendation
 
-**`cmd:`-only processing + native input validation, phased 0→1→2 with Lua policy
-deferred (3).** One processing mechanism (recipes are prose, not Go), arbitrary
-long-tail coverage, no per-tool code to maintain, and consistent with rela's
-auth-via-proxy house style. Real risks: (1) **buffering regression** in Phase 0
-— keep the no-processor path zero-copy and benchmark; (2) **`cmd:`
-safe-invocation** — array-args / templated-I/O / timeout / cap / probe is the
-security crux; (3) **weaker out-of-box posture for scan/strip** — mitigated by
-the native allowlist+hardening (default-on) and the unset-scan startup warning.
-
----
-
-## Survey record (Q1–Q4) — informed the above; native conclusions SUPERSEDED by the cmd:-only direction
-
-### Q1 — ClamAV API. clamd has a stable `INSTREAM` socket protocol (`zINSTREAM\0`,
-4-byte big-endian length-prefixed chunks, zero-length terminator; `stream: OK` /
-`stream: <Sig> FOUND`; ≤ `StreamMaxLength`). A native Go client is ~80 lines, no
-dependency. *Superseded:* we drive clamav via a `cmd: [clamdscan, --stream]`
-recipe instead of a native client — clamav is not privileged over other tools.
-
-### Q2 — Lua for clamd: wrong layer (binary I/O through gopher-lua is painful). Confirmed:
-Lua is **policy**, not transport.
-
-### Q3 — EXIF strip library survey. Lossless strip = drop JPEG APP1/APP13/APP14 + PNG
-ancillary chunks. `scottleedavis/go-exif-remove` wraps the **unmaintained
-`dsoprea` stack** (active fork: `superseriousbusiness/go-jpeg-image-structure`).
-Hand-rolling was tractable. *Superseded:* strip is now an `exiftool`/`vips`
-`cmd:` recipe — no in-tree stripper to maintain.
-
-### Q4 — OWASP File Upload Cheat Sheet (still governs the NATIVE validation layer):
-allowlist + **sniff, don't trust the header** + reject sniff/extension mismatch;
-size limit (✅ 64 MiB); store outside webroot / serve via handler (✅); download
-hardening (`Content-Disposition: attachment`, `nosniff`); SVG/HTML are the
-stored-XSS sharp edge → blocked by the default allowlist. Filename-as-key is a
-deliberate deviation from "rename to UUID" (mitigated by
-Normalize/Validate/suffix; document it).
+`cmd:`-only processing + native input validation, phased 0→1→2 with Lua
+deferred. One processing mechanism (recipes are prose, not Go), arbitrary
+long-tail coverage, no per-tool code, consistent with auth-via-proxy. Key risk:
+`cmd:` safe-invocation (array-args / timeout / cap / probe) is what stands
+between "extensible" and "RCE via upload."
 
 ### Sources
 
-- ClamAV `clamd(8)` — INSTREAM protocol (linux.die.net / Debian manpages)
-- OWASP File Upload Cheat Sheet — cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
-- Lossless EXIF strip = drop JPEG APP1/APP13/APP14 + PNG ancillary chunks; `scottleedavis/go-exif-remove` wraps the unmaintained `dsoprea` stack
+- ClamAV `clamd(8)` — INSTREAM protocol (clamav is now a `cmd:` recipe, not native)
+- OWASP File Upload Cheat Sheet — governs the native validation layer
+- Lossless EXIF strip = drop JPEG APP1/APP13/APP14 + PNG ancillary chunks
+(`scottleedavis/go-exif-remove` wraps the unmaintained `dsoprea` stack) — now an
+`exiftool`/`vips` `cmd:` recipe
 
 Related: [[metamodel-types]] [[data-entry-server]] [[lua-scripting]] — feeds
 FEAT-870YCY (Attachments as a first-class product feature).

@@ -70,18 +70,6 @@ func (p *PolicyProcessor) Process(
 	return out, info, nil
 }
 
-// scanCommand resolves the scan command for a property: its own when set,
-// otherwise the global command.
-func (p *PolicyProcessor) scanCommand(prop metamodel.PropertyDef) []string {
-	if len(prop.ScanCmd) > 0 {
-		return prop.ScanCmd
-	}
-	if p.meta != nil && p.meta.Attachments != nil {
-		return p.meta.Attachments.ScanCmd
-	}
-	return nil
-}
-
 // transformCommands returns the ordered transform commands for a property.
 func (p *PolicyProcessor) transformCommands(prop metamodel.PropertyDef) [][]string {
 	cmds := make([][]string, 0, len(prop.Transform))

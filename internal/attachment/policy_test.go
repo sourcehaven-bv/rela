@@ -45,26 +45,27 @@ func TestPolicy_MIMEOnlyWhenNoRunner(t *testing.T) {
 	}
 }
 
-func TestPolicy_ScanRequiredButNoCommandFailsClosed(t *testing.T) {
-	m := policyMeta(
-		metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Scan: metamodel.ScanRequired},
-		nil,
-	)
-	// Runner present but no scan_cmd configured → fail closed.
+func TestPolicy_NoScanCommandSkipsScanning(t *testing.T) {
+	// No scan_cmd anywhere → no scan; bytes pass through (with a runner present).
+	m := policyMeta(metamodel.PropertyDef{Type: metamodel.PropertyTypeFile}, nil)
 	r := newRunner(t)
-	_, err := runPolicy(t, m, r, pngBytes)
-	if !errors.Is(err, ErrRejected) {
-		t.Errorf("scan required with no command must fail closed; got %v", err)
+	out, err := runPolicy(t, m, r, pngBytes)
+	if err != nil {
+		t.Fatalf("no scan command should not scan: %v", err)
+	}
+	if out != string(pngBytes) {
+		t.Error("bytes should pass through unchanged")
 	}
 }
 
-func TestPolicy_ScanRequiredRejectsOnPositive(t *testing.T) {
+func TestPolicy_ScanCommandRejectsOnPositive(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fixtures")
 	}
+	// A configured scan command IS the intent to scan, fail-closed.
 	m := policyMeta(
 		metamodel.PropertyDef{
-			Type: metamodel.PropertyTypeFile, Scan: metamodel.ScanRequired,
+			Type:    metamodel.PropertyTypeFile,
 			ScanCmd: []string{"false"}, // always "infected"
 		},
 		nil,
@@ -76,13 +77,13 @@ func TestPolicy_ScanRequiredRejectsOnPositive(t *testing.T) {
 	}
 }
 
-func TestPolicy_ScanRequiredCleanPasses(t *testing.T) {
+func TestPolicy_ScanCommandCleanPasses(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fixtures")
 	}
 	m := policyMeta(
 		metamodel.PropertyDef{
-			Type: metamodel.PropertyTypeFile, Scan: metamodel.ScanRequired,
+			Type:    metamodel.PropertyTypeFile,
 			ScanCmd: []string{"true"}, // always clean
 		},
 		nil,
@@ -94,6 +95,25 @@ func TestPolicy_ScanRequiredCleanPasses(t *testing.T) {
 	}
 	if out != string(pngBytes) {
 		t.Error("clean scan must leave bytes unchanged")
+	}
+}
+
+func TestPolicy_ScanOffSkipsGlobalCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fixtures")
+	}
+	// Global scan_cmd `false` would reject, but the property opts out → passes.
+	m := policyMeta(
+		metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Scan: metamodel.ScanOff},
+		&metamodel.AttachmentsConfig{ScanCmd: []string{"false"}},
+	)
+	r := newRunner(t)
+	out, err := runPolicy(t, m, r, pngBytes)
+	if err != nil {
+		t.Fatalf("scan: off must skip the global scanner: %v", err)
+	}
+	if out != string(pngBytes) {
+		t.Error("opted-out property bytes should pass through")
 	}
 }
 
@@ -124,16 +144,15 @@ func TestPolicy_GlobalScanInheritedByProperty(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fixtures")
 	}
-	// Global required + global scan_cmd `false`; property sets neither → inherits
-	// and rejects.
+	// Global scan_cmd `false`; property sets no command → inherits and rejects.
 	m := policyMeta(
 		metamodel.PropertyDef{Type: metamodel.PropertyTypeFile},
-		&metamodel.AttachmentsConfig{Scan: metamodel.ScanRequired, ScanCmd: []string{"false"}},
+		&metamodel.AttachmentsConfig{ScanCmd: []string{"false"}},
 	)
 	r := newRunner(t)
 	_, err := runPolicy(t, m, r, pngBytes)
 	if !errors.Is(err, ErrRejected) {
-		t.Errorf("property should inherit global required scan; got %v", err)
+		t.Errorf("property should inherit the global scan command; got %v", err)
 	}
 }
 
@@ -145,7 +164,7 @@ func TestPolicy_ScanRunsBeforeTransform(t *testing.T) {
 	// the rejection (a transform error would have a different message).
 	m := policyMeta(
 		metamodel.PropertyDef{
-			Type: metamodel.PropertyTypeFile, Scan: metamodel.ScanRequired,
+			Type:      metamodel.PropertyTypeFile,
 			ScanCmd:   []string{"false"},
 			Transform: []metamodel.TransformStep{{Cmd: []string{"cat"}}},
 		},

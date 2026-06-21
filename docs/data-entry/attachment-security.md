@@ -31,25 +31,28 @@ overrides.
 # Global safety floor — applies to every `file` property unless overridden.
 attachments:
   allow: default-safe        # MIME allowlist preset, or an explicit list
-  scan: required             # off (default) | required
-  scan_cmd: [clamdscan, --no-summary, --stream, "{in}"]
+  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]   # configuring this enables scanning
 
 entities:
   report:
     properties:
-      # Inherits the global scan + allowlist.
+      # Inherits the global scan command + allowlist.
       evidence:
         type: file
         max: 5
         transform:
           - cmd: [vips, thumbnail, "{in}", "{out}[Q=85,strip]", "2048"]
 
-      # A signed PDF: must be clean, must stay byte-for-byte (no transform),
-      # and only PDFs are accepted on this field.
+      # A signed PDF: scanned (inherits the global command), kept byte-for-byte
+      # (no transform), and only PDFs are accepted on this field.
       signed_contract:
         type: file
-        scan: required
         accept: [application/pdf]
+
+      # An internally-generated, already-trusted export: opt out of scanning.
+      nightly_export:
+        type: file
+        scan: off
 ```
 
 ### MIME allowlist (`allow`, `accept`)
@@ -70,15 +73,23 @@ implies one type but whose bytes sniff as an incompatible one (the classic
   floor.
 - Per-property `accept: [application/pdf]` narrows a single field further.
 
-### Scan policy (`scan`, `scan_cmd`)
+### Scanning (`scan_cmd`, `scan: off`)
 
-`scan` is a tri-state:
+**Configuring a `scan_cmd` is what turns scanning on** — there is no separate
+"required" toggle. If a scan command is configured for a `file` property
+(globally via `attachments.scan_cmd`, or on the property itself), every upload
+to it is scanned, **fail-closed**: the upload is rejected if the scanner reports
+a hit **or** if the scanner cannot run (missing binary, timeout, daemon down).
 
-| value      | behavior |
-| ---------- | -------- |
-| _(unset)_  | No scanning. rela logs a one-time startup warning so the omission is a conscious choice, not an accident. |
-| `off`      | No scanning. Silences the warning. |
-| `required` | The `scan_cmd` runs on every upload. **Fail-closed:** the upload is rejected if the scanner reports a hit **or** if the scanner cannot run (missing binary, timeout, daemon down). |
+| config | behavior |
+| ------ | -------- |
+| `scan_cmd` set (global or per-property) | Scan every upload, fail-closed. |
+| no `scan_cmd` anywhere | No scanning. rela logs a one-time startup warning so the omission is a conscious choice, not an accident. |
+| property `scan: off` | Skip scanning on that one property, even when a global `scan_cmd` exists. Silences the warning for it. |
+
+A property's own `scan_cmd` overrides the global one. To silence the startup
+warning without scanning, either set a global `scan_cmd` or mark each file
+property `scan: off`.
 
 `scan_cmd` is an **array** of command arguments — never a shell string, so a
 filename or byte sequence can never inject a shell command. Use the `{in}`
@@ -116,13 +127,14 @@ Run the ClamAV daemon (`clamd`) and scan over its stream interface:
 
 ```yaml
 attachments:
-  scan: required
   scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
 ```
 
-`clamdscan` exits non-zero when a signature matches, which rela maps to a
-rejected upload. `--fdpass` hands the file descriptor to the daemon (fast, no
-copy); use `--stream` instead if `clamd` runs on another host.
+Configuring the command enables scanning for every file property (those that
+don't opt out with `scan: off`). `clamdscan` exits non-zero when a signature
+matches, which rela maps to a rejected upload. `--fdpass` hands the file
+descriptor to the daemon (fast, no copy); use `--stream` instead if `clamd`
+runs on another host.
 
 On Windows, point `scan_cmd` at your AV's CLI scanner (e.g. a Microsoft
 Defender `MpCmdRun.exe -Scan -ScanType 3 -File {in}` invocation that exits
@@ -195,7 +207,7 @@ contract:
   re-strip attachments already stored. (A bulk rescan tool may come later.)
 - **Synchronous.** Processing runs during the upload request, so the browser's
   progress bar covers it. Keep `scan_cmd`/transforms fast for large files.
-- **`required` is fail-closed.** If you mark a field `scan: required`, uploads
-  to it stop working when the scanner is down — that is the intended safety
-  behavior. Use `off` (explicitly) where availability matters more than the
-  guarantee.
+- **Scanning is fail-closed.** Once a `scan_cmd` is configured, uploads to that
+  property stop working when the scanner is down — that is the intended safety
+  behavior. Set `scan: off` on a property where availability matters more than
+  the guarantee.

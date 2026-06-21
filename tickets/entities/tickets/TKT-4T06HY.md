@@ -16,33 +16,34 @@ they are default-on with zero operator setup. Builds on the Phase 0 seam
 ## Scope (all native, no external tools)
 
 ### MIME allowlist (sniffed)
-- `default-safe` named preset: allow png/jpeg/gif/webp, pdf, plain text, office docs
-(docx/xlsx/pptx/odt…), zip, csv. Block `image/svg+xml`, `text/html`,
-`application/xhtml+xml`, executables/scripts.
-- **Validate against the sniffed type** (`http.DetectContentType` / magic bytes), not
-the client header. **Reject sniff↔extension mismatch** (polyglot / `.jpg.php`).
+- `default-safe` named preset: allow png/jpeg/gif/webp, pdf, plain text, office docs,
+zip, csv. Block `image/svg+xml`, `text/html`, `application/xhtml+xml`,
+executables/scripts.
+- Validate against the **sniffed** type (`http.DetectContentType` / magic bytes),
+not the client header. **Reject sniff↔extension mismatch** (polyglot /
+`.jpg.php`).
 - Per-field `accept: [...]` narrows; global config can extend the preset.
 
 ### Download hardening
 - Download handler always sets `Content-Disposition: attachment` and
-`X-Content-Type-Options: nosniff` (force-download, no inline render) — closes
-the SVG/HTML stored-XSS vector for anything that slips the allowlist.
+`X-Content-Type-Options: nosniff` (force-download, no inline render).
 
-### Scan config plumbing + unset-scan startup warning
-- Add the tri-state `scan` config (`off | required`, distinguishing **unset** from
-explicit `off` — `*ScanPolicy` / tri-state, not a bare bool), global +
-per-field. The *enforcement* (running a scan command) lands in Phase 2; this
-ticket lands the config model and the warning.
-- **Unset-scan startup warning:** if ≥1 `file` property exists and `scan` is neither
-`required` nor an **explicit** `off`, emit one startup warning linking the
-attachment-security docs. Explicit `off`/`required` silence it. Warning only —
-never blocks startup or uploads.
+### Scan config plumbing + unconfigured-scan startup warning
+- `scan` config exists only as a per-property **opt-out** (`scan: off`).
+**Scanning is enabled by configuring a `scan_cmd`** (Phase 2 runs it); there is
+no `required` value — wiring a scanner is the intent to use it.
+- **Unconfigured-scan startup warning:** if ≥1 `file` property has no scan command
+(no global `attachments.scan_cmd`, no property `scan_cmd`) and no `scan: off`,
+emit one startup warning linking the attachment-security docs. Configuring a
+command or `scan: off` silences it. Warning only — never blocks startup or
+uploads.
 
 ## Acceptance
 
 - Allowlist rejects SVG/HTML/exe and sniff/extension mismatches; accepts the safe set.
-- Download responses carry the hardening headers (handler test).
-- Unset scan emits exactly one warning; explicit `off`/`required` are silent.
+- Download responses carry the hardening headers.
+- Unconfigured scan emits exactly one warning; a configured command or `scan: off`
+is silent.
 - Pure-Go; no new external dependency; cross-compile unaffected; race clean.
 
 ## Out of scope

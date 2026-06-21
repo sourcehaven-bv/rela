@@ -686,7 +686,7 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 	if len(propDef.Accept) > 0 {
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "accept", propDef.Type))
 	}
-	if propDef.Scan != ScanUnset {
+	if propDef.Scan != ScanDefault {
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan", propDef.Type))
 	}
 	if len(propDef.ScanCmd) > 0 || len(propDef.Transform) > 0 {

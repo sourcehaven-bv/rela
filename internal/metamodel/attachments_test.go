@@ -13,8 +13,9 @@ func TestScanPolicy_UnmarshalYAML(t *testing.T) {
 	}{
 		{"off", ScanOff},
 		{"OFF", ScanOff},
-		{"required", ScanRequired},
-		{"Required", ScanRequired},
+		{"required", ScanDefault}, // forgiven, no-op
+		{"on", ScanDefault},
+		{"", ScanDefault},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -29,33 +30,23 @@ func TestScanPolicy_UnmarshalYAML(t *testing.T) {
 	}
 }
 
-func TestScanPolicy_AbsentIsUnset(t *testing.T) {
-	// A struct whose scan field is omitted must leave the zero value (unset),
-	// which is what distinguishes it from an explicit off.
-	var cfg AttachmentsConfig
-	if err := yaml.Unmarshal([]byte("allow: [image/png]\n"), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Scan != ScanUnset {
-		t.Errorf("absent scan = %v, want unset", cfg.Scan)
-	}
-}
-
 func TestScanPolicy_InvalidValueErrors(t *testing.T) {
 	var s ScanPolicy
 	if err := yaml.Unmarshal([]byte("maybe"), &s); err == nil {
-		t.Error("expected error for invalid scan policy")
+		t.Error("expected error for invalid scan value")
 	}
 }
 
-func fileMeta(global, propScan ScanPolicy, hasFileProp bool) *Metamodel {
+// fileMetaCmd builds a metamodel with one file property, an optional global
+// scan command, and an optional per-property scan command / opt-out.
+func fileMetaCmd(globalCmd, propCmd []string, propScan ScanPolicy, hasFileProp bool) *Metamodel {
 	m := &Metamodel{Entities: map[string]EntityDef{}}
-	if global != ScanUnset {
-		m.Attachments = &AttachmentsConfig{Scan: global}
+	if len(globalCmd) > 0 {
+		m.Attachments = &AttachmentsConfig{ScanCmd: globalCmd}
 	}
 	props := map[string]PropertyDef{}
 	if hasFileProp {
-		props["doc"] = PropertyDef{Type: PropertyTypeFile, Scan: propScan}
+		props["doc"] = PropertyDef{Type: PropertyTypeFile, ScanCmd: propCmd, Scan: propScan}
 	} else {
 		props["name"] = PropertyDef{Type: PropertyTypeString}
 	}
@@ -63,39 +54,61 @@ func fileMeta(global, propScan ScanPolicy, hasFileProp bool) *Metamodel {
 	return m
 }
 
-func TestHasUnsetScanPolicy(t *testing.T) {
+func TestScanCommandFor(t *testing.T) {
+	global := []string{"clamdscan", "{in}"}
+	propLevel := []string{"myscan", "{in}"}
 	cases := []struct {
-		name        string
-		global      ScanPolicy
-		propScan    ScanPolicy
-		hasFileProp bool
-		want        bool
+		name      string
+		globalCmd []string
+		propCmd   []string
+		propScan  ScanPolicy
+		wantCmd   []string
 	}{
-		{"file prop, nothing set → warn", ScanUnset, ScanUnset, true, true},
-		{"global required → silent", ScanRequired, ScanUnset, true, false},
-		{"global off → silent", ScanOff, ScanUnset, true, false},
-		{"per-prop off → silent", ScanUnset, ScanOff, true, false},
-		{"per-prop required → silent", ScanUnset, ScanRequired, true, false},
-		{"no file prop → silent", ScanUnset, ScanUnset, false, false},
+		{"global only → inherited", global, nil, ScanDefault, global},
+		{"property command wins", global, propLevel, ScanDefault, propLevel},
+		{"property opt-out beats global", global, nil, ScanOff, nil},
+		{"no command anywhere → none", nil, nil, ScanDefault, nil},
+		{"property command only", nil, propLevel, ScanDefault, propLevel},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := fileMeta(tc.global, tc.propScan, tc.hasFileProp)
-			if got := m.HasUnsetScanPolicy(); got != tc.want {
-				t.Errorf("HasUnsetScanPolicy = %v, want %v", got, tc.want)
+			m := fileMetaCmd(tc.globalCmd, tc.propCmd, tc.propScan, true)
+			prop := m.Entities["thing"].Properties["doc"]
+			got := m.ScanCommandFor(prop)
+			if len(got) != len(tc.wantCmd) {
+				t.Fatalf("ScanCommandFor = %v, want %v", got, tc.wantCmd)
+			}
+			for i := range got {
+				if got[i] != tc.wantCmd[i] {
+					t.Errorf("ScanCommandFor[%d] = %q, want %q", i, got[i], tc.wantCmd[i])
+				}
 			}
 		})
 	}
 }
 
-func TestEffectiveScanPolicy(t *testing.T) {
-	m := &Metamodel{Attachments: &AttachmentsConfig{Scan: ScanRequired}}
-	// Property unset → inherit global.
-	if got := m.EffectiveScanPolicy(PropertyDef{Type: PropertyTypeFile}); got != ScanRequired {
-		t.Errorf("inherit global = %v, want required", got)
+func TestHasUnconfiguredScan(t *testing.T) {
+	cmd := []string{"clamdscan", "{in}"}
+	cases := []struct {
+		name        string
+		globalCmd   []string
+		propCmd     []string
+		propScan    ScanPolicy
+		hasFileProp bool
+		want        bool
+	}{
+		{"file prop, no command → warn", nil, nil, ScanDefault, true, true},
+		{"global command → silent", cmd, nil, ScanDefault, true, false},
+		{"property command → silent", nil, cmd, ScanDefault, true, false},
+		{"explicit off → silent", nil, nil, ScanOff, true, false},
+		{"no file prop → silent", nil, nil, ScanDefault, false, false},
 	}
-	// Property override wins.
-	if got := m.EffectiveScanPolicy(PropertyDef{Type: PropertyTypeFile, Scan: ScanOff}); got != ScanOff {
-		t.Errorf("override = %v, want off", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := fileMetaCmd(tc.globalCmd, tc.propCmd, tc.propScan, tc.hasFileProp)
+			if got := m.HasUnconfiguredScan(); got != tc.want {
+				t.Errorf("HasUnconfiguredScan = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

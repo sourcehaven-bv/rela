@@ -5,66 +5,60 @@ import (
 	"strings"
 )
 
-// ScanPolicy is the tri-state virus-scan policy for attachments. It is a
-// tri-state — not a bool — precisely so the loader can tell "the operator never
-// said anything about scanning" (ScanUnset) from "the operator deliberately
-// turned it off" (ScanOff). The first triggers the unset-scan startup warning;
-// the second silences it. See [Metamodel.HasUnsetScanPolicy].
+// ScanPolicy is the per-scope virus-scan switch for attachments. Scanning is
+// driven by the *presence of a scan command*: if a `scan_cmd` is configured
+// (globally or on the property) the upload is scanned, fail-closed. There is no
+// separate "required" level — configuring a scanner is the intent to use it.
+//
+// ScanPolicy exists only as an OPT-OUT: a property may set `scan: off` to skip
+// scanning despite a global `scan_cmd`. The zero value (ScanDefault) means
+// "scan when a command is configured."
 type ScanPolicy int
 
 const (
-	// ScanUnset means no scan policy was specified (the zero value). Treated as
-	// off for enforcement, but surfaces the startup warning when file
-	// properties exist.
-	ScanUnset ScanPolicy = iota
-	// ScanOff disables scanning explicitly (silences the warning).
+	// ScanDefault (the zero value) means scan iff a scan command is configured
+	// for this scope. No explicit policy was set.
+	ScanDefault ScanPolicy = iota
+	// ScanOff disables scanning for this property, even when a global scan
+	// command exists.
 	ScanOff
-	// ScanRequired enforces a clean scan: the upload is rejected on a positive
-	// result and, fail-closed, when the scan cannot run.
-	ScanRequired
 )
 
 // String renders the policy for diagnostics.
 func (s ScanPolicy) String() string {
-	switch s {
-	case ScanOff:
+	if s == ScanOff {
 		return "off"
-	case ScanRequired:
-		return "required"
-	default:
-		return "unset"
 	}
+	return "default"
 }
 
-// UnmarshalYAML accepts the string forms `off` / `required` (case-insensitive).
-// An absent key leaves the field at ScanUnset (the zero value), which is the
-// whole point of the tri-state.
+// UnmarshalYAML accepts the string `off` (case-insensitive). `required`/`on`
+// are accepted as no-ops for forgiveness (scanning is already implied by
+// configuring a command), mapping to ScanDefault. An absent key leaves
+// ScanDefault.
 func (s *ScanPolicy) UnmarshalYAML(unmarshal func(any) error) error {
 	var raw string
 	if err := unmarshal(&raw); err != nil {
 		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "unset":
-		*s = ScanUnset
+	case "", "default", "on", "required", "true", "yes":
+		*s = ScanDefault
 	case "off", "false", "no":
 		*s = ScanOff
-	case "required", "on", "true", "yes":
-		*s = ScanRequired
 	default:
-		return fmt.Errorf("invalid scan policy %q (want \"off\" or \"required\")", raw)
+		return fmt.Errorf("invalid scan value %q (want \"off\")", raw)
 	}
 	return nil
 }
 
-// MarshalYAML renders the policy back to its string form, omitting the unset
-// zero value so round-tripping a metamodel does not invent an explicit `off`.
+// MarshalYAML renders only the explicit `off`; the default is omitted so
+// round-tripping a metamodel does not invent a key.
 func (s ScanPolicy) MarshalYAML() (any, error) {
-	if s == ScanUnset {
-		// yaml.v3 treats a nil node as "omit"; the nil error is intentional.
-		return nil, nil //nolint:nilnil // (nil,nil) is the documented yaml omit signal
+	if s == ScanOff {
+		return "off", nil
 	}
-	return s.String(), nil
+	return nil, nil //nolint:nilnil // (nil,nil) is the documented yaml omit signal
 }
 
 // AttachmentsConfig is the top-level `attachments:` block: the global safety
@@ -75,38 +69,45 @@ type AttachmentsConfig struct {
 	// types. Empty means the built-in default-safe preset.
 	Allow []string `yaml:"allow,omitempty"`
 
-	// Scan is the global virus-scan policy, overridable per property.
-	Scan ScanPolicy `yaml:"scan,omitempty"`
-
-	// ScanCmd is the global external scan command (array args), used when a
-	// `file` property requires scanning but defines no `scan_cmd` of its own.
+	// ScanCmd is the global external scan command (array args). Its presence
+	// enables scanning for every `file` property that does not opt out with
+	// `scan: off`.
 	ScanCmd []string `yaml:"scan_cmd,omitempty"`
 }
 
-// EffectiveScanPolicy resolves the scan policy for a file property: the
-// property's own policy when set (not unset), otherwise the global one.
-func (m *Metamodel) EffectiveScanPolicy(prop PropertyDef) ScanPolicy {
-	if prop.Scan != ScanUnset {
-		return prop.Scan
+// ScanCommandFor resolves the scan command that should run for a file property,
+// or nil when the property is not scanned. Scanning runs when a command is
+// configured (property-level wins over global) and the property has not opted
+// out with `scan: off`.
+func (m *Metamodel) ScanCommandFor(prop PropertyDef) []string {
+	if prop.Scan == ScanOff {
+		return nil
 	}
-	if m.Attachments != nil {
-		return m.Attachments.Scan
+	if len(prop.ScanCmd) > 0 {
+		return prop.ScanCmd
 	}
-	return ScanUnset
+	if m.Attachments != nil && len(m.Attachments.ScanCmd) > 0 {
+		return m.Attachments.ScanCmd
+	}
+	return nil
 }
 
-// HasUnsetScanPolicy reports whether the metamodel declares at least one
-// `file`-type property while leaving the scan policy unset at both the global
-// and that-property level — i.e. the operator never made a conscious choice.
-// The composition root uses this to emit a single startup warning.
-func (m *Metamodel) HasUnsetScanPolicy() bool {
-	globalSet := m.Attachments != nil && m.Attachments.Scan != ScanUnset
+// HasUnconfiguredScan reports whether the metamodel declares at least one
+// `file`-type property while no scan command is configured for it (no global
+// command, no property command) and it has not explicitly opted out with
+// `scan: off`. The composition root uses this to emit a single startup warning
+// nudging the operator to wire a scanner or explicitly disable scanning.
+func (m *Metamodel) HasUnconfiguredScan() bool {
+	globalCmd := m.Attachments != nil && len(m.Attachments.ScanCmd) > 0
 	for _, def := range m.Entities {
 		for _, prop := range def.Properties {
 			if prop.Type != PropertyTypeFile {
 				continue
 			}
-			if !globalSet && prop.Scan == ScanUnset {
+			if prop.Scan == ScanOff {
+				continue // explicitly opted out — a conscious choice
+			}
+			if len(prop.ScanCmd) == 0 && !globalCmd {
 				return true
 			}
 		}

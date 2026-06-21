@@ -38,15 +38,12 @@ func (p *PolicyProcessor) applyCommands(
 	}
 
 	// Scan first — a reject here stops the write before any transform cost.
-	if policy := p.meta.EffectiveScanPolicy(prop); policy == metamodel.ScanRequired {
-		if scanCmd := p.scanCommand(prop); len(scanCmd) > 0 {
-			if err := p.runner.Scan(ctx, scanCmd, data); err != nil {
-				return nil, ProcessInfo{}, err
-			}
-		} else {
-			// `scan: required` but no command configured — fail closed.
-			return nil, ProcessInfo{}, Rejectedf(
-				"scan required for property %q but no scan command is configured", pc.Property)
+	// Scanning runs iff a command is configured for this property (and it has
+	// not opted out with `scan: off`); the command's presence IS the intent to
+	// scan, so it is always fail-closed.
+	if scanCmd := p.meta.ScanCommandFor(prop); len(scanCmd) > 0 {
+		if err := p.runner.Scan(ctx, scanCmd, data); err != nil {
+			return nil, ProcessInfo{}, err
 		}
 	}
 

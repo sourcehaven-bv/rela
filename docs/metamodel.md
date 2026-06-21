@@ -466,8 +466,8 @@ entities:
 | `list: true`     | Allow multiple values (multi-select for enum types)  |
 | `max`            | For `file` properties: max attachments (default 1)   |
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`) |
-| `scan`           | For `file` properties: virus-scan policy (`off` / `required`) |
-| `scan_cmd`       | For `file` properties: the scan command (array args) when `scan: required` |
+| `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
+| `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd` |
 | `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` |
 
 ### File attachments and `max`
@@ -500,8 +500,7 @@ overrides:
 ```yaml
 attachments:
   allow: default-safe                       # MIME allowlist preset (or a list)
-  scan: required                            # off (default) | required
-  scan_cmd: [clamdscan, --no-summary, "{in}"]
+  scan_cmd: [clamdscan, --no-summary, "{in}"]   # configuring this enables scanning
 
 entities:
   report:
@@ -514,8 +513,9 @@ entities:
 
 Commands use array args (no shell — no injection) with `{in}`/`{out}`
 placeholders rela substitutes with temp paths it owns; each runs under a
-timeout and output-size cap. `scan: required` is fail-closed (rejects on a hit
-**or** when the scanner can't run). See the dedicated
+timeout and output-size cap. **Configuring a `scan_cmd` enables scanning**
+(fail-closed: rejects on a hit **or** when the scanner can't run); a property
+can opt out with `scan: off`. See the dedicated
 [attachment-security guide](../../../docs/data-entry/attachment-security.md)
 for the full configuration and vetted command recipes (ClamAV, vips, exiftool,
 qpdf, ImageMagick).

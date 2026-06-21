@@ -558,12 +558,12 @@ func NewApp(
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the
-	// metamodel has file properties but never sets `scan` (neither `required`
-	// nor an explicit `off`), warn once. Explicit off/required silence this.
-	// The warning never blocks startup or uploads (work-by-default).
-	if meta.HasUnsetScanPolicy() {
-		slog.Warn("attachments: virus scanning is not configured for file properties; "+
-			"set attachments.scan to `required` (with a scan_cmd) or `off` to silence this",
+	// metamodel has file properties with no scan command configured (and no
+	// explicit `scan: off`), warn once. Configuring a scan_cmd or setting
+	// `scan: off` silences this. The warning never blocks startup or uploads.
+	if meta.HasUnconfiguredScan() {
+		slog.Warn("attachments: no virus scanner configured for file properties; "+
+			"set attachments.scan_cmd to enable scanning, or `scan: off` on the property to silence this",
 			"docs", "docs/data-entry/attachment-security.md")
 	}
 
