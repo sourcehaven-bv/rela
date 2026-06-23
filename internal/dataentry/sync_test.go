@@ -103,6 +103,12 @@ func TestSync_SameOriginExemption(t *testing.T) {
 // request (one carrying a Cookie, or a cross-origin Origin), or a malicious page
 // could ride a victim's proxy session. Such a request must be rejected like any
 // other cross-origin write.
+//
+// This heuristic exists because a header-trust proxy (oauth2-proxy, Authelia,
+// Vouch, …) normalizes both its cookie-session browser and the Bearer-token CLI
+// into the same X-Forwarded-User, so the app cannot tell them apart from what the
+// proxy forwards — see the nonBrowserExemptPrefixes doc for why it's load-bearing
+// and when it retires (FEAT-ESLP / proxy Cookie-stripping).
 func TestSync_CSRFExemptionRequiresNoCookie(t *testing.T) {
 	app := newHandlerTestApp(t)
 	sec, err := newSecurity(SecurityConfig{BindAddress: "127.0.0.1:8080"})
@@ -137,6 +143,26 @@ func TestSync_CSRFExemptionRequiresNoCookie(t *testing.T) {
 	})
 	if withOrigin.Code != http.StatusForbidden {
 		t.Errorf("cross-origin /api/sync write: got %d, want 403", withOrigin.Code)
+	}
+
+	// A request carrying Sec-Fetch-Site (a real browser — JS cannot forge it)
+	// must NOT be exempt, even with no cookie. This is the JS-fetch vector: a
+	// page's fetch() always carries Sec-Fetch-Site, so the cross-site value is
+	// rejected by same-origin. The header is the primary, official signal.
+	crossSiteFetch := doReq(func(r *http.Request) {
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+	})
+	if crossSiteFetch.Code != http.StatusForbidden {
+		t.Errorf("Sec-Fetch-Site:cross-site /api/sync write: got %d, want 403 (browser must not be exempt)", crossSiteFetch.Code)
+	}
+	// Even a same-origin browser fetch carries Sec-Fetch-Site; it must fall
+	// through to same-origin (which, with no allowed Origin set on it, is also
+	// rejected) rather than be CSRF-exempted.
+	sameOriginFetch := doReq(func(r *http.Request) {
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+	})
+	if sameOriginFetch.Code != http.StatusForbidden {
+		t.Errorf("Sec-Fetch-Site present must defeat the exemption: got %d, want 403", sameOriginFetch.Code)
 	}
 }
 

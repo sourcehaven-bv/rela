@@ -220,6 +220,26 @@ var sensitivePathPrefixes = []string{
 // attacker hits the real hostname). So the exemption is conditioned on the
 // request carrying NO cookie and NO browser origin (see isCSRFExempt), which a
 // CSRF request always carries and a CLI never does.
+//
+// WHY THE HEURISTIC IS NEEDED AT ALL — and when it retires.
+// The deployment model fronts rela with an identity-aware reverse proxy that
+// serves BOTH auth modes on this same path: a browser bearing the proxy's
+// session COOKIE, and the CLI bearing `Authorization: Bearer`. Header-trust
+// proxies like oauth2-proxy (the documented default — see
+// .ignored/sync-entra-oauth2proxy-notes.md), Authelia, Vouch, or a Traefik
+// ForwardAuth all NORMALIZE both into the same X-Forwarded-User and forward no
+// reliable "this was bearer vs cookie" signal, so the app cannot distinguish CLI
+// from browser by what the proxy sets — it must infer it from the
+// browser-attached signals in isCSRFExempt. The heuristic is therefore a direct
+// consequence of the trust-the-forwarded-header model, not of any one proxy.
+// It becomes removable when EITHER the operator strips inbound Cookie on this
+// location at the proxy (structurally cookie-proof), OR rela validates a signed
+// proxy assertion / Bearer token itself and REQUIRES it here, rejecting
+// cookie-only requests (CSRF-immune by construction) — the FEAT-ESLP track. The
+// latter is also what a signed-assertion proxy (Pomerium, Ory Oathkeeper,
+// authentik) enables: rela verifies the identity instead of inferring it. Until
+// one of those lands, this exemption + isCSRFExempt is load-bearing; do not
+// remove it.
 var nonBrowserExemptPrefixes = []string{
 	"/api/sync/",
 }
@@ -256,12 +276,25 @@ func isSensitivePath(path string) bool {
 }
 
 // isCSRFExempt reports whether a sensitive-path request may skip the same-origin
-// check because it is provably not a browser-credentialed request: it targets a
-// non-browser-exempt prefix AND carries no Cookie AND no Origin/Referer. A
-// cross-origin browser fetch with credentials always sends a Cookie (and an
-// Origin), so this admits the header-authenticated CLI without opening a CSRF
-// hole. A request that carries a cookie or a browser origin is NOT exempt and
-// must pass the normal same-origin check.
+// check because it is provably NOT a browser-driven request — only then is CSRF
+// (which is a browser-only threat) inapplicable.
+//
+// The primary signal is the Fetch Metadata header Sec-Fetch-Site, the standard,
+// browser-controlled CSRF defense (https://web.dev/articles/fetch-metadata).
+// Every modern browser sends it on every request and JavaScript CANNOT set or
+// override it — so its PRESENCE means a real browser made this request, and the
+// exemption must not apply (the request falls through to the normal same-origin
+// check, which correctly allows same-origin and rejects cross-site). A
+// non-browser client (the rela sync CLI, curl, server-side HTTP) never sends it.
+//
+// Cookie and Origin/Referer are kept as defense-in-depth for the (rare,
+// pre-2020) browser that predates Fetch Metadata: such a browser still sends a
+// Cookie when credentialed and an Origin on cross-origin requests, so a request
+// carrying either is treated as browser-driven and is NOT exempt.
+//
+// Net: a request is exempt only on a non-browser-exempt path AND with no
+// Sec-Fetch-Site AND no Cookie AND no Origin/Referer — a shape no browser
+// produces but the header-authenticated CLI always does.
 func isCSRFExempt(r *http.Request) bool {
 	exemptPath := false
 	for _, p := range nonBrowserExemptPrefixes {
@@ -273,8 +306,11 @@ func isCSRFExempt(r *http.Request) bool {
 	if !exemptPath {
 		return false
 	}
+	if r.Header.Get("Sec-Fetch-Site") != "" {
+		return false // a real browser (the header is browser-set, JS cannot forge it)
+	}
 	if len(r.Cookies()) > 0 {
-		return false // a credentialed browser request — keep CSRF protection
+		return false // credentialed request — pre-Fetch-Metadata browser fallback
 	}
 	if _, hasOrigin := requestOrigin(r); hasOrigin {
 		return false // a browser sent an Origin/Referer — not a bare CLI request
