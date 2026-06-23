@@ -37,6 +37,17 @@ func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest s
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 			return
 		}
+		// ACL read gate: the sync GET reads via store directly, so it must
+		// apply the same read authorization every other read path does
+		// (RR IB-review #1). A denied read 404s indistinguishably from a
+		// missing one — same body as the err branch above.
+		if ok, err := a.permitsSyncReadEntity(r.Context(), e.Type, e.ID); err != nil {
+			writeGateError(w, r, err)
+			return
+		} else if !ok {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+			return
+		}
 		w.Header().Set("ETag", canonical.HashEntity(*e))
 		writeV1JSON(w, http.StatusOK, syncEntityBody{
 			ID: e.ID, Type: e.Type, Properties: e.Properties, Content: e.Content,
@@ -44,6 +55,15 @@ func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest s
 	case "relations":
 		rel, ok := a.fetchRelation(w, r, rest)
 		if !ok {
+			return
+		}
+		// A relation's read visibility follows its source entity, exactly
+		// as handleV1EntityRelations gates /relations (api_v1.go).
+		if ok, err := a.permitsSyncReadRelation(r.Context(), rel.From); err != nil {
+			writeGateError(w, r, err)
+			return
+		} else if !ok {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", "Relation not found", "")
 			return
 		}
 		w.Header().Set("ETag", canonical.HashRelation(*rel))
@@ -204,6 +224,29 @@ func deletePreconditionOK(ifMatch, currentHash string) bool {
 }
 
 // --- helpers ---
+
+// permitsSyncReadEntity is the read-ACL probe for a sync entity read. It mirrors
+// the per-entity gate every other read path uses (gateReadOrNotFound in
+// api_v1.go): the answer is "policy permits reading this (type, id)", evaluated
+// against the request principal's read scope. The nop gate (no ACL configured)
+// permits everything, preserving pre-ACL behavior.
+func (a *App) permitsSyncReadEntity(ctx context.Context, entityType, entityID string) (bool, error) {
+	return readGateFromContext(ctx).PermitsRead(ctx, entityType, entityID)
+}
+
+// permitsSyncReadRelation is the read-ACL probe for a sync relation read. A
+// relation carries no type of its own; its visibility follows the source
+// (From) entity, exactly as handleV1EntityRelations gates /relations. The
+// source entity's type is resolved from the store; if it cannot be loaded
+// (e.g. the source was deleted) the type is left empty, the same fallback the
+// relation write gate uses (authorizeConflictResolve), and the gate decides.
+func (a *App) permitsSyncReadRelation(ctx context.Context, from string) (bool, error) {
+	var fromType string
+	if e, err := a.store.GetEntity(ctx, from); err == nil {
+		fromType = e.Type
+	}
+	return readGateFromContext(ctx).PermitsRead(ctx, fromType, from)
+}
 
 // fetchRelation parses the relation key from rest, loads it, and writes a 4xx if
 // the key is invalid or the relation is absent. Returns (rel, true) on success.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"context"
@@ -397,6 +398,140 @@ func TestSync_ManifestSerialization(t *testing.T) {
 	_ = json.Unmarshal(w2.Body.Bytes(), &resp2)
 	if len(resp2.Changes) != 0 {
 		t.Errorf("expected no changes past cursor, got %d", len(resp2.Changes))
+	}
+}
+
+// syncGetAs drives handleSyncGet directly under the given principal's ACL
+// read scope (mirroring getEntityAs — bypasses the router so the gate is
+// attached explicitly via gateCtxFor).
+func syncGetAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
+	kind, rest string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/"+kind+"/"+rest, http.NoBody)
+	req = req.WithContext(gateCtxFor(ctx, t, d))
+	rec := httptest.NewRecorder()
+	app.handleSyncGet(rec, req, kind, rest)
+	return rec
+}
+
+// TestSync_GetEntity_ACLDenied pins the IB-review #1 fix: the sync entity GET
+// applies the same read-ACL gate as every other read path. A principal without
+// read on a type 404s (indistinguishable from not-found), and never receives
+// the body or ETag of an entity it may not read.
+func TestSync_GetEntity_ACLDenied(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F1"}})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+	ctx := aliceCtx()
+
+	// Allowed type → 200 with body + ETag.
+	if rec := syncGetAs(ctx, t, app, d, "entities", "TKT-001"); rec.Code != http.StatusOK {
+		t.Fatalf("GET allowed entity: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+
+	// Denied type → 404, no ETag, no body leak.
+	rec := syncGetAs(ctx, t, app, d, "entities", "FEAT-001")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET denied entity: got %d, want 404; body=%s", rec.Code, rec.Body)
+	}
+	if etag := rec.Header().Get("ETag"); etag != "" {
+		t.Errorf("denied read leaked ETag %q", etag)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "F1") {
+		t.Errorf("denied read leaked entity body: %s", body)
+	}
+}
+
+// TestSync_GetRelation_ACLDenied pins that a sync relation read follows the
+// source entity's read visibility: a principal who cannot read the From entity's
+// type cannot read the relation.
+func TestSync_GetRelation_ACLDenied(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	seedEntity(app, &entity.Entity{ID: "CMP-1", Type: "component", Properties: map[string]any{"name": "Core"}})
+	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "belongs_to", To: "CMP-1"})
+
+	// alice may read components but NOT tickets — so the belongs_to relation
+	// (sourced on a ticket) must be invisible to her.
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"component"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	rec := syncGetAs(aliceCtx(), t, app, d, "relations", "TKT-001/belongs_to/CMP-1")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET denied relation: got %d, want 404; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestSync_Manifest_ACLFiltered pins that the manifest drops rows the principal
+// cannot read while still advancing the cursor past them (so a client never
+// loops re-fetching hidden rows). Entity rows gate on their own type; the
+// relation row gates on its source entity.
+func TestSync_Manifest_ACLFiltered(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "F1"}})
+	seedEntity(app, &entity.Entity{ID: "CMP-1", Type: "component", Properties: map[string]any{"name": "Core"}})
+
+	app.store = manifestStore{Store: app.store, entries: []synctypes.ManifestEntry{
+		{Kind: "e", IDA: "TKT-1", Typ: "ticket", Deleted: false, Seq: 5},
+		{Kind: "e", IDA: "FEAT-1", Typ: "feature", Deleted: false, Seq: 6},  // hidden from alice
+		{Kind: "e", IDA: "TKT-2", Typ: "ticket", Deleted: true, Seq: 7},     // ticket tombstone — visible
+		{Kind: "r", IDA: "FEAT-1", IDB: "needs", IDC: "CMP-1", Seq: 8},      // sourced on feature — hidden
+		{Kind: "r", IDA: "TKT-1", IDB: "belongs_to", IDC: "CMP-1", Seq: 9},  // sourced on ticket — visible
+	}}
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/manifest?cursor=4", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleSyncManifest(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manifest: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp syncManifestResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Only the ticket entity, the ticket tombstone, and the ticket-sourced
+	// relation survive — the feature entity and feature-sourced relation drop.
+	gotIDs := map[string]bool{}
+	for _, c := range resp.Changes {
+		gotIDs[c.ID] = true
+	}
+	if len(resp.Changes) != 3 {
+		t.Fatalf("changes = %d, want 3 (%v)", len(resp.Changes), gotIDs)
+	}
+	for _, want := range []string{"TKT-1", "TKT-2", "TKT-1/belongs_to/CMP-1"} {
+		if !gotIDs[want] {
+			t.Errorf("expected visible change %q missing; got %v", want, gotIDs)
+		}
+	}
+	for _, hidden := range []string{"FEAT-1", "FEAT-1/needs/CMP-1"} {
+		if gotIDs[hidden] {
+			t.Errorf("hidden change %q leaked into manifest", hidden)
+		}
+	}
+	// Cursor still advances to the highest seq (9), INCLUDING the dropped
+	// rows, so the client doesn't re-poll the hidden tail forever.
+	if resp.Cursor != "9" {
+		t.Errorf("cursor = %q, want 9 (highest seq over all rows, visible or not)", resp.Cursor)
 	}
 }
 

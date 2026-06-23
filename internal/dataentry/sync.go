@@ -115,21 +115,89 @@ func (a *App) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := syncManifestResponse{Changes: make([]syncManifestChange, 0, len(entries)), Cursor: formatCursor(cursor)}
+	// ACL read gate (RR IB-review #1): the manifest reads entities/relations
+	// (and their tombstones) straight from the store, so it must be filtered to
+	// the principal's read scope just like every other read path — otherwise
+	// any authenticated client learns the full id/relation set, including rows
+	// it has no right to read. Denied rows are dropped from Changes; the cursor
+	// still advances past them (so the client doesn't re-fetch the same hidden
+	// rows forever) — the highest seq is taken over ALL entries, visible or not.
+	visible, err := a.filterVisibleManifest(r.Context(), entries)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
+
+	resp := syncManifestResponse{Changes: make([]syncManifestChange, 0, len(visible)), Cursor: formatCursor(cursor)}
 	highest := cursor
 	for _, e := range entries {
+		if e.Seq > highest {
+			highest = e.Seq
+		}
+	}
+	for _, e := range visible {
 		resp.Changes = append(resp.Changes, syncManifestChange{
 			Kind:    e.Kind,
 			ID:      manifestKey(e),
 			Typ:     e.Typ,
 			Deleted: e.Deleted,
 		})
-		if e.Seq > highest {
-			highest = e.Seq
-		}
 	}
 	resp.Cursor = formatCursor(highest)
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// filterVisibleManifest drops every manifest entry the request principal may
+// not read, preserving order. Reads are gated by entity type:
+//
+//   - An entity entry (Kind "e") gates on its own (Typ, IDA). Entity tombstones
+//     carry Typ from the deletions table, so they gate the same way.
+//   - A relation entry (Kind "r") has no type of its own; it gates on its source
+//     (From = IDA) entity, mirroring handleV1EntityRelations. The source's type
+//     is resolved from the store (empty if the source is gone — the same
+//     fallback the relation write gate uses).
+//
+// Probes are batched per type via PermitsReadMany so the whole manifest costs
+// one MatchingIDs roundtrip per distinct type, not one per row.
+func (a *App) filterVisibleManifest(ctx context.Context, entries []synctypes.ManifestEntry) ([]synctypes.ManifestEntry, error) {
+	gate := readGateFromContext(ctx)
+
+	// Resolve the gating (type, id) for each entry, collecting ids per type.
+	type gateKey struct{ typ, id string }
+	keys := make([]gateKey, len(entries))
+	idsByType := map[string][]string{}
+	for i, e := range entries {
+		typ := e.Typ
+		id := e.IDA
+		if e.Kind == "r" {
+			// A relation gates on its source entity (IDA = From).
+			if src, err := a.store.GetEntity(ctx, e.IDA); err == nil {
+				typ = src.Type
+			} else {
+				typ = ""
+			}
+		}
+		keys[i] = gateKey{typ: typ, id: id}
+		idsByType[typ] = append(idsByType[typ], id)
+	}
+
+	// One batched permission probe per distinct type.
+	permByType := make(map[string]map[string]bool, len(idsByType))
+	for typ, ids := range idsByType {
+		perm, err := gate.PermitsReadMany(ctx, typ, ids)
+		if err != nil {
+			return nil, err
+		}
+		permByType[typ] = perm
+	}
+
+	visible := make([]synctypes.ManifestEntry, 0, len(entries))
+	for i, e := range entries {
+		if permByType[keys[i].typ][keys[i].id] {
+			visible = append(visible, e)
+		}
+	}
+	return visible, nil
 }
 
 // handleSyncRecord dispatches /api/sync/<kind>/<id...> by method:
