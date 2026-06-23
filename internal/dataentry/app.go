@@ -98,6 +98,12 @@ const userPaletteFile = "palette.yaml"
 // via writeMu. writeMu excludes concurrent mutations but does NOT block
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
+//
+// TODO(TKT-N0IKN9): App is a god-object (226 methods). Decompose toward the
+// 40-method load line — extract the API/serialization/relation services into
+// their own types. Ratchet this number DOWN as methods move out; never up.
+//
+//plimsoll:max-methods=226
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS

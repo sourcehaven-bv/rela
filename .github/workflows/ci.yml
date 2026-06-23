@@ -119,6 +119,24 @@ jobs:
       - name: Check architecture
         run: go-arch-lint check
 
+  plimsoll:
+    name: God-object lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Install plimsoll
+        # Keep in sync with plimsoll_version in the justfile.
+        run: go install github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@v0.1.0
+
+      - name: Check type load lines
+        run: plimsoll ./...
+
   lint-markdown:
     name: Lint Markdown
     runs-on: ubuntu-latest
@@ -368,7 +386,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, vulncheck, lint, arch-lint, lint-markdown, fuzz, postgres, cross-compile, frontend, e2e]
+    needs: [test, vulncheck, lint, arch-lint, plimsoll, lint-markdown, fuzz, postgres, cross-compile, frontend, e2e]
     steps:
       - uses: actions/checkout@v7
 

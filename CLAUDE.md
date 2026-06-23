@@ -235,6 +235,16 @@ enforcement — unit tests run plain (`npm run test:run`).
 golangci-lint with project rules. Test files exempt from `dupl`, `funlen`,
 magic numbers. Cobra `cmd`/`args` unused parameters allowed. Line length: 120.
 
+**God-object load lines** (`just plimsoll`, CI job "God-object lint"). The
+[plimsoll](https://github.com/sourcehaven-bv/plimsoll) linter caps a type's
+method count (40) and a struct's exported-field count (20) — the metric that
+tracks a type accreting into a god-object (`App`, `Runtime`, `FSStore` got there
+because nothing stopped them). A new type over the line fails CI. Existing
+offenders are grandfathered with a `//plimsoll:max-methods=N` directive at the
+declaration site, pinned to the current count so they can't grow; ratchet those
+down as you decompose (TKT-N0IKN9). Prefer splitting the type over raising the
+number.
+
 ## Security
 
 `govulncheck` runs on every PR touching `go.mod` / `go.sum` (the `vulncheck`

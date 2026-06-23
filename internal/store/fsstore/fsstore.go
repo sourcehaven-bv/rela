@@ -94,6 +94,11 @@ type attachMeta struct {
 }
 
 // FSStore is a filesystem-backed store implementation.
+//
+// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (84 methods).
+// Decompose; ratchet this number down as responsibilities move out.
+//
+//plimsoll:max-methods=84
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the

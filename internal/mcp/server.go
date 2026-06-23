@@ -110,6 +110,11 @@ type Watcher interface {
 }
 
 // Server wraps the MCP server with rela-specific state.
+//
+// TODO(TKT-N0IKN9): Server is over the 40-method load line (47 methods).
+// Decompose; ratchet this number down as handlers move out.
+//
+//plimsoll:max-methods=47
 type Server struct {
 	mcp       *server.MCPServer
 	deps      Deps
