@@ -21,7 +21,7 @@ describe('defaultWidgetFor', () => {
   it.each<[string, PropertyDef | undefined, string]>([
     ['undefined propertyDef', undefined, 'text'],
     ['plain string', { type: 'string' }, 'text'],
-    ['file', { type: 'file' }, 'text'],
+    ['file', { type: 'file' }, 'file'],
     ['boolean', { type: 'boolean' }, 'checkbox'],
     ['date', { type: 'date' }, 'date'],
     ['integer', { type: 'integer' }, 'number'],

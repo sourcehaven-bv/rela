@@ -338,8 +338,13 @@ rela attach <entity-id> <file>... [flags]
 ```
 
 Each file is stored at `attachments/<entity-id>/<property>/<filename>`.
-Each file-type property holds at most one attachment; re-running `attach`
-replaces the existing file.
+A file-type property holds one attachment by default; set `max` above 1 on
+the property (see the metamodel reference) to allow several.
+
+> **Note:** for a single-attachment property (`max: 1`), re-running `attach`
+> **replaces** the existing file. For a multi-attachment property (`max > 1`),
+> `attach` **appends** up to the cap, auto-suffixing a duplicate name
+> (`report.pdf` → `report (1).pdf`) and erroring when full.
 
 **Arguments:**
 
@@ -389,26 +394,34 @@ rela attachments DEC-007
 
 ### rela detach
 
-Remove the attachment from an entity property.
+Remove an attachment from an entity property.
 
 ```bash
-rela detach <entity-id> <property>
+rela detach <entity-id> <property> [--file <name>]
 ```
 
-Clears the property on the entity and deletes the underlying file from the
-attachment store. Each file-type property holds at most one attachment, so no
-further disambiguation is needed.
+Deletes the underlying file from the attachment store and re-stamps the
+property. When the property holds a single attachment, `--file` may be
+omitted. When it holds several (a `file` property with `max > 1`), pass
+`--file` to select which one — `rela attachments <entity-id>` lists the
+names.
 
 **Arguments:**
 
 - `entity-id` - Entity ID
 - `property` - Property name containing the attachment
 
+**Flags:**
+
+| Flag           | Description                                            |
+| -------------- | ----------------------------------------------------- |
+| `-f, --file`   | File name to detach (required when more than one)     |
+
 **Examples:**
 
 ```bash
 rela detach BUG-042 screenshot
-rela detach DEC-007 supporting-docs
+rela detach DEC-007 supporting-docs --file spec.pdf
 ```
 
 ---

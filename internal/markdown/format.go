@@ -16,6 +16,12 @@ var orderedListPattern = regexp.MustCompile(`^\d+\.\s`)
 // DefaultLineWidth is the default line width for paragraph wrapping.
 const DefaultLineWidth = 80
 
+// maxFormatPasses bounds the fixed-point iteration in
+// [FormatMarkdownWithWidth]. Convergence is fast in practice (≤2 passes across
+// the fuzz corpus); the bound is a backstop against a pathological input that
+// never settles, in which case the last pass is still returned deterministically.
+const maxFormatPasses = 8
+
 // FormatMarkdown normalizes markdown content using consistent formatting rules:
 // - ATX-style headings (#)
 // - Consistent list markers
@@ -23,18 +29,42 @@ const DefaultLineWidth = 80
 // - Consistent code fence style
 // - Paragraph text wrapped at 80 characters
 //
+// The result is idempotent: FormatMarkdown(FormatMarkdown(x)) == FormatMarkdown(x).
 // Returns the formatted content, or the original content if formatting fails.
 func FormatMarkdown(content string) string {
 	return FormatMarkdownWithWidth(content, DefaultLineWidth)
 }
 
-// FormatMarkdownWithWidth normalizes markdown content with a specific line width.
+// FormatMarkdownWithWidth normalizes markdown content with a specific line
+// width, iterating to a formatting fixed point so the result is idempotent.
+//
+// A single goldmark round-trip is NOT idempotent for every input — goldmark can
+// re-parse its own output into a different document (e.g. "**\n*" renders to
+// "** *", which on the next pass parses as a thematic break "---"). Callers that
+// re-normalize already-formatted content rely on idempotency: the canonical
+// content hash (internal/canonical) re-formats both fsstore's reflowed body and
+// pgstore's raw body, and they must converge in one call. Iterating here makes
+// that hold for every caller rather than pushing the loop onto each one.
 func FormatMarkdownWithWidth(content string, lineWidth int) string {
 	if content == "" {
 		return ""
 	}
+	result := content
+	for range maxFormatPasses {
+		next := formatOnce(result, lineWidth)
+		if next == result {
+			break
+		}
+		result = next
+	}
+	return result
+}
 
-	// Trim trailing whitespace but preserve structure
+// formatOnce applies one pass of markdown normalization (goldmark render +
+// paragraph wrap + blank-line trim). It is not necessarily idempotent on its
+// own; [FormatMarkdownWithWidth] iterates it to a fixed point.
+func formatOnce(content string, lineWidth int) string {
+	// Trim trailing whitespace but preserve structure.
 	content = strings.TrimRight(content, " \t")
 
 	r := markdown.NewRenderer(
@@ -46,19 +76,16 @@ func FormatMarkdownWithWidth(content string, lineWidth int) string {
 
 	var buf bytes.Buffer
 	if err := md.Convert([]byte(content), &buf); err != nil {
-		// If formatting fails, return original content
+		// If formatting fails, return original content.
 		return content
 	}
 
-	result := buf.String()
+	result := wrapParagraphs(buf.String(), lineWidth)
 
-	// Post-process: wrap paragraphs at line width
-	result = wrapParagraphs(result, lineWidth)
-
-	// Ensure single trailing newline
-	result = strings.TrimRight(result, "\n") + "\n"
-
-	return result
+	// Normalize surrounding blank lines to a single trailing newline. Trimming
+	// the leading newline (not just the trailing) is part of what lets the
+	// iteration converge: goldmark can emit a leading blank line for some inputs.
+	return strings.Trim(result, "\n") + "\n"
 }
 
 // wrapParagraphs wraps paragraph text while preserving code blocks, lists, headings, etc.

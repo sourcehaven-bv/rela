@@ -3,8 +3,11 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -12,6 +15,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // translateVerb maps a wire-format verb to the [acl.WriteRequest] that
@@ -625,7 +629,13 @@ func (a *App) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity
 // is consistent: `_fields: {}` under the nop resolver, sparse entries
 // under any other.
 func (a *App) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1FieldAffordance {
-	v := a.fieldResolver.FieldVerdicts(ctx, e)
+	return computeFieldAffordancesFrom(a.fieldResolver.FieldVerdicts(ctx, e))
+}
+
+// computeFieldAffordancesFrom is computeFieldAffordances given an
+// already-resolved verdict set, so callers that need the verdicts for more
+// than one thing (e.g. _fields + _attachments) resolve them once.
+func computeFieldAffordancesFrom(v FieldVerdicts) map[string]V1FieldAffordance {
 	out := make(map[string]V1FieldAffordance)
 
 	// writable=false entries
@@ -822,10 +832,68 @@ func (a *App) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, re
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
 // and includes get [App.stripHiddenProperties] only.
 func (a *App) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
-	fields := a.computeFieldAffordances(ctx, e)
+	verdicts := a.fieldResolver.FieldVerdicts(ctx, e)
+	fields := computeFieldAffordancesFrom(verdicts)
 	relations := a.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
+	// Pass the same verdicts so a policy-hidden `file` property's attachments
+	// are omitted from `_attachments` — otherwise the hidden-field boundary
+	// the rest of the response maintains would leak the file's metadata and a
+	// working download href.
+	attachments := a.computeAttachments(ctx, e, result.Self, verdicts)
+	result.Attachments = &attachments
+}
+
+// computeAttachments returns the per-property attachment metadata for an
+// entity, keyed by `file`-type property name. Only properties that carry
+// a file appear; an empty map means "no attachments". Rides every
+// per-entity V1Entity response (GET, PATCH, POST, clone) alongside
+// `_fields` / `_relations`, never on list rows — same closed-world shape.
+//
+// selfHref is the entity's `_self` link (`/api/v1/{plural}/{id}`); each
+// file's download href is that plus `/_attachments/{property}/{fileName}`.
+// `_self` is always set by entityToV1 before this runs, so the
+// empty-selfHref guard is pure defense — when it can't build a valid href
+// it omits the entry rather than emit a broken relative link.
+//
+// The value per property is a LIST: a property may hold several files, and
+// even a single file is reported as a 1-element list (always-array wire
+// shape).
+func (a *App) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]V1Attachment {
+	out := make(map[string][]V1Attachment)
+	if selfHref == "" {
+		return out
+	}
+	infos, err := a.store.ListAttachments(ctx, e.ID)
+	if err != nil {
+		// Treat a list failure as "no attachments" rather than failing the
+		// whole entity response — the bytes endpoint still gates and serves
+		// correctly; this map is only a UI hint. But a real backend fault
+		// (not just a missing entity) is logged so operators aren't blind to
+		// an outage that silently empties every entity's _attachments.
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("dataentry: list attachments for serialization failed",
+				"err", err, "entity", e.ID)
+		}
+		return out
+	}
+	for _, info := range infos {
+		// A property hidden from this viewer by field-visibility policy must
+		// not leak its files (metadata or a working download href) — mirror
+		// the hidden-field boundary the rest of the response maintains.
+		if !verdicts.IsVisible(info.Property) {
+			continue
+		}
+		out[info.Property] = append(out[info.Property], V1Attachment{
+			ID:          info.FileName,
+			FileName:    info.FileName,
+			Size:        info.Size,
+			ContentType: contentTypeForFilename(info.FileName),
+			Href:        selfHref + "/_attachments/" + info.Property + "/" + url.PathEscape(info.FileName),
+		})
+	}
+	return out
 }
 
 // serializeEntityForWire is the single entry-point every handler that

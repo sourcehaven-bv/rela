@@ -14,7 +14,7 @@
 
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
 import type { Component } from 'vue'
-import type { FieldAffordance, PropertyDef, Entity } from '@/types'
+import type { FieldAffordance, PropertyDef, Entity, AttachmentInfo } from '@/types'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import { defaultRegistry } from '@/widgets/registry'
 import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
@@ -40,12 +40,19 @@ const props = defineProps<{
   entityId: string
   initialValues: Record<string, unknown>
   fields: SectionEditField[]
+  // Per-`file`-property attachment LISTS for the entity, so the file
+  // widget can show the current files and drive upload/remove on the
+  // inline-edit path. Keyed by property name.
+  attachments?: Record<string, AttachmentInfo[]>
   // Owner identity captured at construction and forwarded to every
   // callback so the host can reject stale responses arriving after
   // a :key-driven remount targeted a different entity (RR-FB2A).
   onPropertyApplied: (prop: string, value: unknown, owner: { type: string; id: string }) => void
   onError: (msg: string, info?: AutoSaveErrorInfo) => void
   onVerdictFlip?: (prop: string, label: string) => void
+  // Called after the file widget uploads/removes an attachment so the
+  // host can refresh the entity (property value + _attachments changed).
+  onAttachmentChanged?: () => void
 }>()
 
 // Owner identity is frozen for the instance's lifetime. When the host
@@ -209,7 +216,12 @@ defineExpose({
               :property-name="row.field.property"
               :property-def="row.field.kind === 'schema' ? row.field.propertyDef : undefined"
               :option-verdicts="row.optionVerdicts"
+              :attachments="props.attachments?.[row.field.property]"
+              :max="row.field.kind === 'schema' ? row.field.propertyDef?.max : undefined"
+              :entity-type="entityType"
+              :entity-id="entityId"
               @update:model-value="(v: unknown) => onFieldUpdate(row.field, v)"
+              @attachment-changed="onAttachmentChanged?.()"
             />
           </FieldShell>
           <component
@@ -219,6 +231,8 @@ defineExpose({
             :model-value="formData[row.field.property]"
             :property-name="row.field.property"
             :property-def="row.field.kind === 'schema' ? row.field.propertyDef : undefined"
+            :attachments="props.attachments?.[row.field.property]"
+            :max="row.field.kind === 'schema' ? row.field.propertyDef?.max : undefined"
           />
         </dd>
       </div>

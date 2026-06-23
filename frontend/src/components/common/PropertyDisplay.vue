@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { Component } from 'vue'
 import InaccessibleField from './InaccessibleField.vue'
 import { defaultRegistry } from '@/widgets/registry'
-import type { EntityType, PropertyDef } from '@/types'
+import type { AttachmentInfo, EntityType, PropertyDef } from '@/types'
 
 export interface PropertyItem {
   name: string
@@ -19,6 +19,11 @@ export interface PropertyItem {
   isLongText?: boolean
   inaccessible?: boolean // Property exists but value is unreadable (e.g. encrypted)
   inaccessibleReason?: string // Reason marker (e.g. "git-crypt") shown in tooltip
+  // Attachment LIST for a `file`-type property, supplied by callers from
+  // the entity's `_attachments` map, plus the property's `max`. Forwarded
+  // to the file widget.
+  attachments?: AttachmentInfo[]
+  max?: number
 }
 
 const props = defineProps<{
@@ -91,6 +96,8 @@ function isLong(prop: PropertyItem): boolean {
           :mode="'display'"
           :property-def="row.propertyDef"
           :property-name="row.propertyName"
+          :attachments="row.prop.attachments"
+          :max="row.prop.max"
         />
       </dd>
     </div>

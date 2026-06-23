@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 )
 
 // AttachCmd attaches one or more files to an entity property.
@@ -32,6 +34,10 @@ func (c *AttachCmd) Run(ctx context.Context, svc *cliServices) error {
 			}
 			result, err := svc.AttachFile(ctx, c.EntityID, absPath, c.Property)
 			if err != nil {
+				if errors.Is(err, attachment.ErrAtCapacity) {
+					return fmt.Errorf("cannot attach %q: property is full — detach a file first (rela attachments %s)",
+						match, c.EntityID)
+				}
 				return fmt.Errorf("failed to attach %q: %w", match, err)
 			}
 			out.WriteSuccess("Attached %s → %s", filepath.Base(match), result.Path)

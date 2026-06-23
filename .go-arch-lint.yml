@@ -235,6 +235,7 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      - attachment
       - audit
       - canonical
       - config

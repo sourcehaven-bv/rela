@@ -202,8 +202,8 @@ func FuzzDifferential(f *testing.F) {
 				err2 := fss.AttachFile(bg, "E-1", "diagram", "pic.png", strings.NewReader(data))
 				assertSameError(t, err1, err2, "AttachFile")
 				if err1 == nil {
-					rc1, e1 := mem.ReadAttachment(bg, "E-1", "diagram")
-					rc2, e2 := fss.ReadAttachment(bg, "E-1", "diagram")
+					rc1, e1 := mem.ReadAttachment(bg, "E-1", "diagram", "pic.png")
+					rc2, e2 := fss.ReadAttachment(bg, "E-1", "diagram", "pic.png")
 					assertSameError(t, e1, e2, "ReadAttachment")
 					if e1 == nil {
 						d1, _ := io.ReadAll(rc1)

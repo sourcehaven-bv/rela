@@ -1,0 +1,9 @@
+---
+id: RR-ZR1FYI
+type: review-response
+title: Three ListAttachments per upload under writeMu; minors (schema test, CLI msg, concurrent-cap, stale comment)
+finding: '(#4) WriteAttachment lists for the cap check, stampProperty lists again, then serializeEntityForWire->computeAttachments lists a third time — 3 pgstore round-trips while a.writeMu is held. Fix: pass `existing` into stampProperty (it knows the new name + replace/append) to drop one. (#5) the _schema/{type} single-type endpoint now shares toV1PropertyDef (also emits Description/List/Max) but TestV1SchemaTypesSpecific only asserts Label — add a max/field assertion so the two schema endpoints can''t drift. (#6) CLI Attach/Detach surface ErrAtCapacity as a raw error — map to a friendlier ''remove one first'' message. (#7) cap enforcement assumes serialized writers per entity/property (HTTP via writeMu; concurrent CLI could overshoot) — note it in WriteAttachment''s doc. Nits: stale ''attachmentFileName returns...'' comment above contentTypeForFilename; migration 0003 ''idempotent'' wording (DROP CONSTRAINT not re-runnable — idempotency is the runner''s).'
+severity: minor
+resolution: '(#4) WriteAttachment now computes the post-write file set from the `existing` it already listed (via new pure stampPropertyNames) instead of re-listing in stampProperty — one fewer ListAttachments per upload. (#5) added max/field assertions to TestV1SchemaTypesSpecific (docs.max==3, screenshot.max==0) so the two schema endpoints can''t drift. (#6) CLI attach maps ErrAtCapacity to a friendly ''property is full — detach a file first'' message. (#7) documented the serialized-writer cap assumption in WriteAttachment''s doc. Nits: removed the stale attachmentFileName comment; reworded migration 0003 ''idempotent'' to ''applied exactly once by the runner''.'
+status: addressed
+---

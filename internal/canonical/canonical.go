@@ -118,34 +118,17 @@ func (w *writer) field(key, value string) {
 	w.str(value)
 }
 
-// body writes the markdown body after normalizing it to a formatting fixed
-// point, so fsstore's reflowed body and pgstore's raw content converge.
+// body writes the markdown body after normalizing it through the shared
+// formatter, so fsstore's reflowed body and pgstore's raw content converge.
+//
+// This relies on [markdown.FormatMarkdown] being idempotent — fsstore stores
+// FormatMarkdown(raw) and pgstore stores raw, so the hash re-formats both and
+// they must land on identical bytes. FormatMarkdown guarantees that (it
+// iterates to a fixed point internally); markdown's FuzzFormatMarkdownIdempotent
+// and TestBodyConvergence here guard it.
 func (w *writer) body(content string) {
 	w.str("body")
-	w.str(canonicalBody(content))
-}
-
-// canonicalBody reduces a markdown body to a formatting fixed point.
-//
-// fsstore stores FormatMarkdown(raw); pgstore stores raw. Re-running
-// FormatMarkdown on read is supposed to converge them, but FormatMarkdown is
-// not idempotent for every input (e.g. "0) \n\n0" formats to "\n0\n" then to
-// "0\n"), so a single pass can leave fs one step ahead of pg. Iterating to a
-// fixed point makes the result independent of how many passes either side has
-// already applied. Convergence is fast (≤2 steps observed); the bound is a
-// safety net against a pathological non-converging input — if hit, the
-// last value is still deterministic for a given input.
-func canonicalBody(content string) string {
-	const maxPasses = 8
-	s := markdown.FormatMarkdown(content)
-	for range maxPasses {
-		next := markdown.FormatMarkdown(s)
-		if next == s {
-			return s
-		}
-		s = next
-	}
-	return s
+	w.str(markdown.FormatMarkdown(content))
 }
 
 // properties writes every property in sorted-key order. The count is written

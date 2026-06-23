@@ -116,6 +116,10 @@ func (s *cliServices) AttachFile(ctx context.Context, entityID, filePath, proper
 	return s.attachment.Attach(ctx, entityID, filePath, property)
 }
 
+func (s *cliServices) DetachFile(ctx context.Context, entityID, property, fileName string) error {
+	return s.attachment.Detach(ctx, entityID, property, fileName)
+}
+
 func (s *cliServices) ListAttachments(ctx context.Context, entityID string) ([]attachment.Info, error) {
 	return s.attachment.List(ctx, entityID)
 }
