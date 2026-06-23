@@ -65,6 +65,7 @@ components:
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
+  sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
@@ -236,6 +237,7 @@ deps:
       - affordances
       - attachment
       - audit
+      - canonical
       - config
       - conflict
       - dataentryconfig
@@ -255,6 +257,7 @@ deps:
       - state
       - storage
       - store
+      - sync
       - templating
       - tracer
       - validator
@@ -573,6 +576,7 @@ deps:
       - search
       - store
       - storeutil
+      - sync
     canUse:
       - pgx
   storeutil:
