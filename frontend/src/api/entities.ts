@@ -32,7 +32,7 @@ export function _resetEntityPluralsForTest(): void {
   pluralRegistry.clear()
 }
 
-function getPlural(type: string): string {
+export function getPlural(type: string): string {
   const plural = pluralRegistry.get(type)
   if (!plural) {
     // Fail fast instead of fabricating a URL (`category` → `/categorys`

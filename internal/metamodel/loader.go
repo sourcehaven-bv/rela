@@ -660,6 +660,17 @@ func validatePropertyDefs(
 			errs = append(errs, fmt.Sprintf(
 				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
 		}
+
+		// `max` only applies to file properties and must be >= 1 when set.
+		if propDef.Max < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
+		}
+		if propDef.Max != 0 && propDef.Type != PropertyTypeFile {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q sets 'max' but is type %q; 'max' only applies to type \"file\"",
+				schemaName, propName, propDef.Type))
+		}
 	}
 
 	return errs

@@ -46,8 +46,17 @@ func TestV1SchemaEndpoint(t *testing.T) {
 		t.Errorf("expected 2 entity types, got %d", len(schema.Entities))
 	}
 
-	if _, ok := schema.Entities["ticket"]; !ok {
-		t.Error("expected 'ticket' entity type in schema")
+	ticket, ok := schema.Entities["ticket"]
+	if !ok {
+		t.Fatal("expected 'ticket' entity type in schema")
+	}
+	// The `docs` file property has max:3 — the schema must surface it so the
+	// SPA's file widget knows to use multi-file (add) mode, not replace mode.
+	if got := ticket.Properties["docs"].Max; got != 3 {
+		t.Errorf("docs.max = %d, want 3 (multi-file widget depends on this)", got)
+	}
+	if got := ticket.Properties["screenshot"].Max; got != 0 {
+		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
 	}
 }
 
@@ -2171,6 +2180,15 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 	if entityType.Label != "Ticket" {
 		t.Errorf("expected label 'Ticket', got %q", entityType.Label)
 	}
+	// This endpoint shares toV1PropertyDef with /_schema, so it must surface
+	// the same fields — in particular `max` for file properties (the multi-
+	// file widget depends on it) so the two schema endpoints can't drift.
+	if got := entityType.Properties["docs"].Max; got != 3 {
+		t.Errorf("docs.max = %d, want 3 (file widget multi-file mode)", got)
+	}
+	if got := entityType.Properties["screenshot"].Max; got != 0 {
+		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
+	}
 }
 
 func TestV1GetEntityIncludeIncoming(t *testing.T) {
@@ -2656,13 +2674,15 @@ func newTestAppV1(t *testing.T) *App {
 				Label:    "Ticket",
 				IDPrefix: "TKT-",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: "string", Required: true},
-					"status": {Type: "string"},
+					"title":      {Type: "string", Required: true},
+					"status":     {Type: "string"},
+					"screenshot": {Type: "file"},
+					"docs":       {Type: "file", Max: 3},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
 				// the same code paths the runtime hits.
-				PropertyOrder: []string{"title", "status"},
+				PropertyOrder: []string{"title", "status", "screenshot", "docs"},
 			},
 			"feature": {
 				Label:    "Feature",

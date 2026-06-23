@@ -435,6 +435,8 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
       propertyDef: def,
       inaccessible: field.inaccessible ?? false,
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
+      attachments: field.property ? entry.value?._attachments?.[field.property] : undefined,
+      max: def?.max,
     }
   })
 }
@@ -811,10 +813,12 @@ watch(
             :entity-type="entry.type"
             :entity-id="entry.id"
             :initial-values="entry.properties"
+            :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
             :on-property-applied="handlePropertyApplied"
             :on-error="handleSectionEditError"
             :on-verdict-flip="handleVerdictFlip"
+            :on-attachment-changed="loadView"
           />
           <PropertyDisplay
             v-else-if="section.display === 'properties'"

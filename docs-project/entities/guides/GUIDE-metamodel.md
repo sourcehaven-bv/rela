@@ -458,7 +458,7 @@ entities:
 | `integer`  | Whole number                            | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `boolean`  | True or false                           | `=`, `!=`                           |
 | `enum`     | Inline enum with `values`               | `=`, `!=`                           |
-| `file`     | File attachment (stored in `.rela/attachments/`) | N/A                          |
+| `file`     | File attachment (stored under `attachments/`)    | N/A                          |
 | `<custom>` | Reference to a type defined in `types:` | `=`, `!=`                           |
 
 ### Property Options
@@ -470,6 +470,25 @@ entities:
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)   |
 | `description`    | Documentation for the property                       |
 | `list: true`     | Allow multiple values (multi-select for enum types)  |
+| `max`            | For `file` properties: max attachments (default 1)   |
+
+### File attachments and `max`
+
+A `file` property holds an attachment. By default it holds **one** file
+(`max` unset or `1`): uploading a new file replaces the existing one. Set
+`max` above 1 to allow several files on the same property:
+
+```yaml
+supporting_docs:
+  type: file
+  max: 5            # up to 5 files on this property
+```
+
+With `max > 1` the property value is a **list** of attachment paths, the
+data-entry UI shows a multi-file picker (add up to `max`, remove
+individually), and uploading a file whose name already exists auto-suffixes
+it (`report.pdf` → `report (1).pdf`). `max` must be `>= 1` and only applies
+to `file` properties.
 
 ### Date Formats
 

@@ -1,11 +1,38 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import TextWidget from './TextWidget.vue'
 import TextareaWidget from './TextareaWidget.vue'
 import NumberWidget from './NumberWidget.vue'
 import CheckboxWidget from './CheckboxWidget.vue'
 import DateWidget from './DateWidget.vue'
 import SelectWidget from './SelectWidget.vue'
+import FileWidget from './FileWidget.vue'
+
+import type { AttachmentInfo } from '@/types'
+
+// Mock the attachment API. vi.mock is hoisted, so the mock fns and the
+// MockAttachmentError class are defined via vi.hoisted to be available
+// at hoist time. MockAttachmentError mirrors the real AttachmentError
+// (carries an HTTP status) so the widget's `instanceof` branch fires.
+const { mockUpload, mockDelete, MockAttachmentError } = vi.hoisted(() => {
+  class MockAttachmentError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.status = status
+    }
+  }
+  return {
+    mockUpload: vi.fn().mockResolvedValue({}),
+    mockDelete: vi.fn().mockResolvedValue(undefined),
+    MockAttachmentError,
+  }
+})
+vi.mock('@/api/attachments', () => ({
+  uploadAttachment: mockUpload,
+  deleteAttachment: mockDelete,
+  AttachmentError: MockAttachmentError,
+}))
 
 describe('TextWidget', () => {
   it('renders the value and emits update:modelValue on input', async () => {
@@ -280,5 +307,166 @@ describe('SelectWidget (display)', () => {
     expect(w.findComponent({ name: 'Badge' }).props('value')).toBe('open')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('[SelectWidget]'))
     warn.mockRestore()
+  })
+})
+
+describe('FileWidget', () => {
+  const att: AttachmentInfo = {
+    id: 'shot.png',
+    filename: 'shot.png',
+    size: 2048,
+    contentType: 'image/png',
+    href: '/api/v1/tickets/TKT-1/_attachments/screenshot/shot.png',
+  }
+
+  it('renders an image preview and a download link for an image attachment', () => {
+    const w = mount(FileWidget, {
+      props: { modelValue: '', mode: 'display' as const, propertyName: 'screenshot', attachments: [att] },
+    })
+    const img = w.find('img.file-preview')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toBe(att.href)
+    const link = w.find('a.file-name')
+    expect(link.attributes('href')).toBe(att.href)
+    expect(link.attributes('download')).toBe('shot.png')
+    expect(w.text()).toContain('shot.png')
+    expect(w.text()).toContain('2.0 KB')
+  })
+
+  it('renders a download link without preview for a non-image attachment', () => {
+    const pdf: AttachmentInfo = { id: 'doc.pdf', filename: 'doc.pdf', size: 500, contentType: 'application/pdf', href: '/h' }
+    const w = mount(FileWidget, {
+      props: { modelValue: '', mode: 'display' as const, propertyName: 'doc', attachments: [pdf] },
+    })
+    expect(w.find('img.file-preview').exists()).toBe(false)
+    expect(w.find('a.file-name').attributes('href')).toBe('/h')
+    expect(w.text()).toContain('doc.pdf')
+    expect(w.text()).toContain('500 B')
+  })
+
+  it('renders all files of a multi-attachment property', () => {
+    const a: AttachmentInfo = { id: 'a.pdf', filename: 'a.pdf', size: 1, contentType: 'application/pdf', href: '/a' }
+    const b: AttachmentInfo = { id: 'b.pdf', filename: 'b.pdf', size: 2, contentType: 'application/pdf', href: '/b' }
+    const w = mount(FileWidget, {
+      props: { modelValue: '', mode: 'display' as const, propertyName: 'docs', attachments: [a, b], max: 3 },
+    })
+    expect(w.findAll('.file-item')).toHaveLength(2)
+    expect(w.text()).toContain('a.pdf')
+    expect(w.text()).toContain('b.pdf')
+  })
+
+  it('shows an empty-state when there are no files in display mode', () => {
+    const w = mount(FileWidget, {
+      props: { modelValue: '', mode: 'display' as const, propertyName: 'p' },
+    })
+    expect(w.text()).toContain('No file attached')
+  })
+
+  it('shows a note (no upload control) in edit mode without entity context', () => {
+    const w = mount(FileWidget, {
+      props: { modelValue: '', mode: 'edit' as const, propertyName: 'screenshot', attachments: [att] },
+    })
+    expect(w.find('.file-dropzone').exists()).toBe(false)
+    expect(w.find('.file-edit-note').exists()).toBe(true)
+    expect(w.text()).toContain('shot.png')
+  })
+
+  it('shows a Replace control for a single-cap property in edit mode', () => {
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'screenshot',
+        attachments: [att], max: 1, entityType: 'ticket', entityId: 'TKT-1',
+      },
+    })
+    expect(w.find('.file-dropzone').exists()).toBe(true)
+    expect(w.text()).toContain('Replace file')
+  })
+
+  it('hides the add control at capacity for a multi-cap property', () => {
+    const a: AttachmentInfo = { id: 'a.pdf', filename: 'a.pdf', size: 1, contentType: 'application/pdf', href: '/a' }
+    const b: AttachmentInfo = { id: 'b.pdf', filename: 'b.pdf', size: 2, contentType: 'application/pdf', href: '/b' }
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'docs',
+        attachments: [a, b], max: 2, entityType: 'ticket', entityId: 'TKT-1',
+      },
+    })
+    expect(w.find('.file-dropzone').exists()).toBe(false)
+    expect(w.find('.file-edit-note').text()).toContain('Maximum of 2')
+  })
+
+  it('shows the add control with room for a multi-cap property', () => {
+    const a: AttachmentInfo = { id: 'a.pdf', filename: 'a.pdf', size: 1, contentType: 'application/pdf', href: '/a' }
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'docs',
+        attachments: [a], max: 3, entityType: 'ticket', entityId: 'TKT-1',
+      },
+    })
+    expect(w.find('.file-dropzone').exists()).toBe(true)
+    expect(w.text()).toContain('Add a file')
+    expect(w.text()).toContain('1 / 3')
+  })
+
+  it('shows a permission note in edit mode when disabled (ACL)', () => {
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'screenshot',
+        entityType: 'ticket', entityId: 'TKT-1', disabled: true,
+      },
+    })
+    expect(w.find('.file-dropzone').exists()).toBe(false)
+    expect(w.find('.file-edit-note').text()).toContain('not permitted')
+  })
+})
+
+describe('FileWidget upload', () => {
+  it('uploads a chosen file and emits attachment-changed', async () => {
+    const file = new File(['data'], 'pic.png', { type: 'image/png' })
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'screenshot',
+        entityType: 'ticket', entityId: 'TKT-1', max: 1,
+      },
+    })
+    const input = w.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(mockUpload).toHaveBeenCalledWith('ticket', 'TKT-1', 'screenshot', file, expect.any(Function))
+    expect(w.emitted('attachment-changed')).toBeTruthy()
+  })
+
+  it('shows an error message and does not emit when upload is rejected', async () => {
+    mockUpload.mockRejectedValueOnce(new MockAttachmentError('File is too large.', 413))
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'screenshot',
+        entityType: 'ticket', entityId: 'TKT-1', max: 1,
+      },
+    })
+    const input = w.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [new File(['x'], 'big.bin')] })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(w.find('.file-error').text()).toContain('too large')
+    expect(w.emitted('attachment-changed')).toBeFalsy()
+  })
+
+  it('removes a file and emits attachment-changed', async () => {
+    const w = mount(FileWidget, {
+      props: {
+        modelValue: '', mode: 'edit' as const, propertyName: 'screenshot',
+        attachments: [{ id: 'shot.png', filename: 'shot.png', size: 1, contentType: 'image/png', href: '/h' }],
+        max: 1, entityType: 'ticket', entityId: 'TKT-1',
+      },
+    })
+    await w.find('.file-remove').trigger('click')
+    await flushPromises()
+    // Deletes via the server-provided per-file href (single escaper).
+    expect(mockDelete).toHaveBeenCalledWith('/h')
+    expect(w.emitted('attachment-changed')).toBeTruthy()
   })
 })

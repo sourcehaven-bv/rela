@@ -32,7 +32,7 @@ func TestStatusFreshSchema(t *testing.T) {
 	current, target, err := pgstore.Status(ctx, pool)
 	require.NoError(t, err)
 	require.Equal(t, 0, current, "un-migrated schema is version 0")
-	require.Equal(t, 2, target, "binary embeds migrations through 0002")
+	require.Equal(t, 3, target, "binary embeds migrations through 0003")
 }
 
 // TestStatusAfterMigrate verifies Status reports current==target once Migrate

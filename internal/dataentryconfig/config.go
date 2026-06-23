@@ -109,6 +109,12 @@ type Action struct {
 type AppConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	// MaxAttachmentBytes optionally overrides the product-wide default
+	// per-attachment upload cap (see dataentry.DefaultMaxAttachmentBytes).
+	// Zero or unset means use the default. Set this lower for
+	// semi-untrusted deployments. The store backends also enforce their
+	// own backstop guard independent of this value.
+	MaxAttachmentBytes int64 `yaml:"max_attachment_bytes,omitempty" json:"max_attachment_bytes,omitempty"`
 }
 
 // Form defines a create/edit form for an entity type.

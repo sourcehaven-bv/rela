@@ -21,8 +21,22 @@ import (
 // If an attachment already exists at this (entityID, property) under a
 // different filename, the old file is removed first (1:1 ownership per
 // property).
+// attachTempPrefix marks an in-progress attachment temp file. A real
+// stored attachment name can never start with a dot (store.NormalizeFileName
+// trims leading dots), so this prefix is collision-proof; the index loader
+// skips files carrying it.
+const attachTempPrefix = ".rela-attach-tmp-"
+
+// attachmentKey is the per-file index key: (entityID, property, fileName).
+func attachmentKey(entityID, property, fileName string) string {
+	return entityID + "/" + property + "/" + fileName
+}
+
 func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := storeutil.ValidateProperty(property); err != nil {
+		return err
+	}
+	if err := store.ValidateFileName(fileName); err != nil {
 		return err
 	}
 
@@ -38,14 +52,33 @@ func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName str
 		return err
 	}
 
-	key := entityID + "/" + property
-	if old, exists := s.attachments[key]; exists && old.fileName != fileName {
-		_ = s.rooted.Remove(path.Join(dirKey, old.fileName))
-	}
-
+	key := attachmentKey(entityID, property, fileName)
 	fileKey := path.Join(dirKey, fileName)
-	n, err := s.writeAttachment(fileKey, r)
+
+	// Append: each (entityID, property, fileName) is its own slot. A
+	// same-name re-attach replaces only that one file; sibling files on the
+	// property are untouched. Cap/suffix policy lives in the write path.
+	//
+	// Write to a temp file first, then swap, so a failed write (e.g. the
+	// backstop size guard tripping) never destroys an existing same-named
+	// file — the old bytes and index entry stay intact until the new bytes
+	// are fully written.
+	//
+	// The temp name carries a leading-dot prefix (attachTempPrefix). A stored
+	// attachment name can never start with a dot — store.NormalizeFileName
+	// trims leading dots — so this marker can never collide with a real
+	// upload, and the index loader skips it by that prefix. (A plain ".new"
+	// suffix would clash with a legitimate upload literally named "x.new".)
+	tmpKey := path.Join(dirKey, attachTempPrefix+fileName)
+	// Backstop size guard: cap reads at MaxAttachmentBytes so no caller can
+	// write an unbounded attachment (the API layer also caps at ingress).
+	n, err := s.writeAttachment(tmpKey, storeutil.LimitAttachmentReader(r))
 	if err != nil {
+		_ = s.rooted.Remove(tmpKey) // remove the failed partial; old file intact
+		return err
+	}
+	if err := s.rooted.Rename(tmpKey, fileKey); err != nil {
+		_ = s.rooted.Remove(tmpKey)
 		return err
 	}
 
@@ -87,10 +120,9 @@ func (s *FSStore) writeAttachment(key string, r io.Reader) (int64, error) {
 
 // ReadAttachment returns a streaming reader over the attachment's
 // bytes. Callers MUST Close the returned reader.
-func (s *FSStore) ReadAttachment(_ context.Context, entityID, property string) (io.ReadCloser, error) {
+func (s *FSStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	s.mu.RLock()
-	key := entityID + "/" + property
-	a, ok := s.attachments[key]
+	a, ok := s.attachments[attachmentKey(entityID, property, fileName)]
 	s.mu.RUnlock()
 
 	if !ok {
@@ -101,11 +133,11 @@ func (s *FSStore) ReadAttachment(_ context.Context, entityID, property string) (
 	return s.rooted.Open(fileKey)
 }
 
-func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property string) error {
+func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property, fileName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := entityID + "/" + property
+	key := attachmentKey(entityID, property, fileName)
 	a, ok := s.attachments[key]
 	if !ok {
 		return store.ErrNotFound
@@ -226,7 +258,7 @@ func (s *FSStore) renameAttachmentDir(oldID, newID string) error {
 		}
 		delete(s.attachments, key)
 		a.entityID = newID
-		reKey[newID+"/"+a.property] = a
+		reKey[attachmentKey(newID, a.property, a.fileName)] = a
 	}
 	for k, v := range reKey {
 		s.attachments[k] = v

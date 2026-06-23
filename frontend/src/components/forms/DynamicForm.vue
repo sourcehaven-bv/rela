@@ -16,6 +16,7 @@ import type {
   ModernRelationsField,
   FieldAffordance,
   RelationAffordance,
+  AttachmentInfo,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -68,6 +69,9 @@ const fieldAffordances = ref<Record<string, FieldAffordance>>({})
 // Same for relation affordances. Drives RelationCards' +Add / x button
 // visibility and meta-field disable.
 const relationAffordances = ref<Record<string, RelationAffordance>>({})
+// Per-`file`-property attachment metadata from the loaded entity, passed
+// to the file widget so it can show the current file + drive upload/remove.
+const attachments = ref<Record<string, AttachmentInfo[]>>({})
 // TKT-3I5U: in create mode the form models a staged `++new++` entity
 // and re-derives affordances from the server's dry-run (no persist) as
 // the user types. `stagedVisibleProps` holds the property keys the
@@ -243,13 +247,14 @@ function getTypeFromId(entityId: string): string | undefined {
 }
 
 // Methods
-async function loadEntity() {
+async function loadEntity(force = false) {
   if (!props.entityId || !formConfig.value) return
 
   try {
     const entity = await entitiesStore.fetchEntity(
       formConfig.value.entity,
-      props.entityId
+      props.entityId,
+      force
     )
     // Route-guard: if the server says this entity is not updatable,
     // render an inline "not editable" message instead of the form.
@@ -265,6 +270,7 @@ async function loadEntity() {
     // can treat absence as "default everything".
     fieldAffordances.value = entity._fields ?? {}
     relationAffordances.value = entity._relations ?? {}
+    attachments.value = entity._attachments ?? {}
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
@@ -273,6 +279,14 @@ async function loadEntity() {
     uiStore.error('Failed to load entity')
     console.error(err)
   }
+}
+
+// onAttachmentChanged fires after a file widget uploads or removes an
+// attachment (already persisted server-side via the attachment endpoint).
+// Reload the entity so the stamped property value and _attachments
+// refresh. Cache-bust the entity first so the SSE-less refetch is fresh.
+async function onAttachmentChanged() {
+  await loadEntity(true)
 }
 
 // Read return_to from the query eagerly — needed in both create and
@@ -1095,7 +1109,12 @@ onBeforeRouteLeave(async () => {
                   :error="errors[field.property]"
                   :readonly="isFieldReadonly(field)"
                   :option-verdicts="optionVerdictsFor(field)"
+                  :entity-type="formConfig.entity"
+                  :entity-id="entityId"
+                  :attachments="attachments[field.property]"
+                  :max="getPropertyDef(field.property)?.max"
                   @update="updateField(field.property!, $event)"
+                  @attachment-changed="onAttachmentChanged"
                 />
                 <RelationCards
                   v-else-if="field.relation && field.widget === 'cards' && entityId"
@@ -1133,7 +1152,12 @@ onBeforeRouteLeave(async () => {
               :error="errors[field.property]"
               :readonly="isFieldReadonly(field)"
               :option-verdicts="optionVerdictsFor(field)"
+              :entity-type="formConfig.entity"
+              :entity-id="entityId"
+              :attachments="attachments[field.property]"
+              :max="getPropertyDef(field.property)?.max"
               @update="updateField(field.property!, $event)"
+              @attachment-changed="onAttachmentChanged"
             />
             <RelationCards
               v-else-if="field.relation && field.widget === 'cards' && entityId"

@@ -261,28 +261,39 @@ func (s *FSStore) loadAttachmentsIndex() {
 			if !propEntry.IsDir() {
 				continue
 			}
-			prop := propEntry.Name()
-			fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
-			if err != nil {
-				continue
-			}
-			for _, fileEntry := range fileEntries {
-				if fileEntry.IsDir() {
-					continue
-				}
-				info, err := fileEntry.Info()
-				if err != nil {
-					continue
-				}
-				key := entityID + "/" + prop
-				s.attachments[key] = attachMeta{
-					entityID: entityID,
-					property: prop,
-					fileName: fileEntry.Name(),
-					size:     info.Size(),
-				}
-				break // one file per property
-			}
+			s.loadPropertyAttachments(entityID, propEntry.Name())
+		}
+	}
+}
+
+// loadPropertyAttachments indexes every attachment file under one
+// entity/property directory. A property may hold multiple files; each is
+// keyed by (entityID, property, fileName). Leftover temp files from an
+// interrupted write (attachTempPrefix) are skipped — that marker can't
+// collide with a real attachment name (which never starts with a dot).
+// Must be called with s.mu held.
+func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
+	fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
+	if err != nil {
+		return
+	}
+	for _, fileEntry := range fileEntries {
+		if fileEntry.IsDir() {
+			continue
+		}
+		name := fileEntry.Name()
+		if strings.HasPrefix(name, attachTempPrefix) {
+			continue
+		}
+		info, err := fileEntry.Info()
+		if err != nil {
+			continue
+		}
+		s.attachments[attachmentKey(entityID, prop, name)] = attachMeta{
+			entityID: entityID,
+			property: prop,
+			fileName: name,
+			size:     info.Size(),
 		}
 	}
 }

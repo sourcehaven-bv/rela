@@ -106,7 +106,7 @@ func FuzzAttachmentKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		rc, err := s.ReadAttachment(bg, entityID, prop)
+		rc, err := s.ReadAttachment(bg, entityID, prop, "f.txt")
 		require.NoError(t, err)
 		rc.Close()
 	})
