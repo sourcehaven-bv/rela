@@ -85,6 +85,7 @@ type CLI struct {
 	Script      ScriptCmd      `cmd:"" help:"Execute a Lua script against the graph."`
 	Scheduler   SchedulerCmd   `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber    RenumberCmd    `cmd:"" help:"Renumber managed order properties on orderable relations."`
+	Sync        SyncCmd        `cmd:"" help:"Sync local changes with a remote rela-server."`
 }
 
 // VersionCmd needs no services.
@@ -188,7 +189,8 @@ func requiresProject(cmd string) bool {
 	case "show", "list", "trace", "graph", "export", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
-		"rename", "analyze", "attach", "attachments", "gc", "renumber":
+		"rename", "analyze", "attach", "attachments", "gc", "renumber",
+		"sync":
 		return true
 	}
 	return false

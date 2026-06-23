@@ -482,26 +482,56 @@ rela unlink DEC-001 addresses REQ-001
 
 ### rela sync
 
-Rebuild the graph from markdown files.
+Two-way sync between a local project (fsstore) and a remote rela-server backed
+by PostgreSQL. `push` sends locally-changed records to the server; `pull` brings
+remote changes into the local project. Conflicts are surfaced for manual
+resolution — no automatic merge. See [Sync](sync.md) for the full design.
 
 ```bash
-rela sync [flags]
+rela sync push [--remote <url>] [--token <token>] [--force <id>]
+rela sync pull [--remote <url>] [--token <token>] [--force <id>]
 ```
 
 **Flags:**
 
-| Flag      | Description        |
-| --------- | ------------------ |
-| `--force` | Force full rebuild |
+| Flag       | Description                                                          |
+| ---------- | ------------------------------------------------------------------- |
+| `--remote` | Remote rela-server base URL (proxy-fronted). Env: `RELA_REMOTE`.    |
+| `--token`  | Bearer token for the OAuth proxy. Prefer env `RELA_SYNC_TOKEN`.      |
+| `--force`  | Resolve one record id: push = local wins, pull = remote wins.       |
 
-Use after manually editing markdown files to update the cache.
+The sync state (a per-record content-hash index and an opaque server cursor)
+lives in `.rela/sync-state.json`. Dirty detection is local: a record whose
+canonical hash differs from the index is pushed; the index advances only past
+confirmed-applied records, so an interrupted run resumes on re-run.
+
+**Conflicts.** A record changed on both ends halts with a clear report and is
+NOT applied. Resolve it explicitly:
+
+- `rela sync push --force <id>` — overwrite the remote with the local copy.
+- `rela sync pull --force <id>` — overwrite the local copy with the remote.
+
+**Authentication.** In production rela-server sits behind an OAuth proxy and has
+no native auth — the CLI authenticates to the *proxy* by presenting a JWT bearer
+(`Authorization: Bearer $RELA_SYNC_TOKEN`). The token is read from the env/flag
+and never logged. On loopback/dev with no proxy, sync works without a token. See
+[Sync](sync.md) for the proxy configuration.
 
 **Examples:**
 
 ```bash
-rela sync
-rela sync --force
+export RELA_REMOTE=https://rela.example.com
+export RELA_SYNC_TOKEN=$(my-idp-get-token)
+
+rela sync push                 # send local changes
+rela sync pull                 # bring in remote changes
+rela sync push --force TKT-42  # resolve TKT-42: local wins
+rela sync pull --force TKT-42  # resolve TKT-42: remote wins
 ```
+
+> Note: sync requires the remote to run the PostgreSQL backend. Against a
+> non-postgres server the manifest endpoint returns 501 and `pull` reports that
+> the server does not support sync.
 
 ---
 
