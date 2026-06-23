@@ -2,7 +2,6 @@ package entitymanager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -114,38 +113,34 @@ func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bo
 		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 
-	incoming := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionIncoming)
-	outgoing := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionOutgoing)
+	incoming, err := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionIncoming)
+	if err != nil {
+		return fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionOutgoing)
+	if err != nil {
+		return fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	}
 	if (len(incoming)+len(outgoing)) > 0 && !cascade {
 		return ErrHasRelations
 	}
 
+	// Delegate to the store's cascade (single lock, fail-secure on a
+	// relation-file error) and audit exactly what it reports deleting, the
+	// same way Manager.DeleteEntity does. A real error surfaces instead of
+	// being swallowed, so a replacement never leaves orphaned relations
+	// behind a deleted entity (issue #888).
+	res, delErr := h.deps.Store.DeleteEntity(ctx, id, cascade)
+	if delErr != nil {
+		return fmt.Errorf("delete entity: %w", delErr)
+	}
+
 	cascadeCtx := ctx
-	if cascade && (len(incoming)+len(outgoing)) > 0 {
+	if cascade && len(res.DeletedRelations) > 0 {
 		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
 	}
-
-	for _, rel := range incoming {
-		if delErr := h.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
-			!errors.Is(delErr, store.ErrNotFound) {
-
-			continue
-		}
+	for _, rel := range res.DeletedRelations {
 		h.recordCascade(cascadeCtx, audit.OpDeleteRelation, relationSubject(rel), "deleted")
-	}
-	for _, rel := range outgoing {
-		if delErr := h.deps.Store.DeleteRelation(ctx, rel.From, rel.Type, rel.To); delErr != nil &&
-			!errors.Is(delErr, store.ErrNotFound) {
-
-			continue
-		}
-		h.recordCascade(cascadeCtx, audit.OpDeleteRelation, relationSubject(rel), "deleted")
-	}
-
-	if _, delErr := h.deps.Store.DeleteEntity(ctx, id, false); delErr != nil &&
-		!errors.Is(delErr, store.ErrNotFound) {
-
-		return fmt.Errorf("delete entity: %w", delErr)
 	}
 	h.recordCascade(ctx, audit.OpDeleteEntity, entitySubject(current), "deleted")
 	return nil

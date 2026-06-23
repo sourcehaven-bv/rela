@@ -3,6 +3,7 @@ package appbuild_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -36,7 +37,10 @@ func TestDiscover_ACLPresent_LoadsDeclarative(t *testing.T) {
 	writeMetamodel(t, root)
 	writePolicy(t, root, `roles:
   admin:
-    write: ["*"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+    read: ["*"]
 assignments:
   jeroen: admin
 `)
@@ -77,7 +81,10 @@ func TestWithACL_OverridesLoadedPolicy(t *testing.T) {
 	writeMetamodel(t, root)
 	writePolicy(t, root, `roles:
   admin:
-    write: ["*"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+    read: ["*"]
 assignments:
   jeroen: admin
 `)
@@ -93,22 +100,23 @@ assignments:
 	}
 }
 
-// Malformed acl.yaml → warning + NopACL fallback (never blocks
-// server startup). Operator sees the error in logs and fixes the
-// file.
-func TestDiscover_MalformedACL_FallsBackToNop(t *testing.T) {
+// Malformed acl.yaml → boot fails loud (RR-72OJ). A parse-error
+// fallback to NopACL would silently invert the operator's intent
+// (writing a policy means "enforce something"); booting allow-all
+// on a typo is a security regression. Operator sees the error
+// immediately, fixes the file, retries.
+func TestDiscover_MalformedACL_FailsBoot(t *testing.T) {
 	root := t.TempDir()
 	writeMetamodel(t, root)
-	writePolicy(t, root, "roles:\n  admin:\n    write: [not-closed\n")
+	writePolicy(t, root, "roles:\n  admin:\n    create: [not-closed\n")
 
 	svc, err := appbuildOnDisk(t, root)
-	if err != nil {
-		t.Fatalf("appbuild.New: %v", err)
+	if err == nil {
+		svc.Close()
+		t.Fatalf("appbuild.New: expected error on malformed acl.yaml, got nil")
 	}
-	defer svc.Close()
-
-	if _, ok := svc.ACL().(acl.NopACL); !ok {
-		t.Errorf("svc.ACL() is %T, want acl.NopACL (malformed yaml should fall back)", svc.ACL())
+	if !strings.Contains(err.Error(), "acl.yaml") {
+		t.Errorf("error should mention acl.yaml so the operator can find the file; got %q", err.Error())
 	}
 }
 
@@ -158,5 +166,10 @@ func appbuildOnDiskWithOpts(t *testing.T, root string, opts ...appbuild.Option) 
 	// Use audit.Nop so tests don't write JSONL files into the temp
 	// directory and pollute the next run.
 	_ = app.FSFactory{} // silence the import; required for the package boundary check
-	return appbuild.New(fs, paths, script.NewEngine(), audit.Nop{}, opts...)
+	return appbuild.New(appbuild.Config{
+		FS:           fs,
+		Paths:        paths,
+		ScriptEngine: script.NewEngine(),
+		Audit:        audit.Nop{},
+	}, opts...)
 }

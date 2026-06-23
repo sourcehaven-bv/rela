@@ -8,6 +8,7 @@ import (
 )
 
 func TestMidpointOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		a, b      float64
@@ -28,6 +29,7 @@ func TestMidpointOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			v, ok := MidpointOrder(tt.a, tt.b)
 			if ok != tt.wantOK {
 				t.Fatalf("ok = %v, want %v (value=%v)", ok, tt.wantOK, v)
@@ -43,6 +45,7 @@ func TestMidpointOrder(t *testing.T) {
 }
 
 func TestAppendOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		existing []float64
@@ -58,6 +61,7 @@ func TestAppendOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := AppendOrder(tt.existing); got != tt.want {
 				t.Errorf("AppendOrder(%v) = %v, want %v", tt.existing, got, tt.want)
 			}
@@ -66,6 +70,7 @@ func TestAppendOrder(t *testing.T) {
 }
 
 func TestPrependOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		existing []float64
@@ -79,6 +84,7 @@ func TestPrependOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := PrependOrder(tt.existing); got != tt.want {
 				t.Errorf("PrependOrder(%v) = %v, want %v", tt.existing, got, tt.want)
 			}
@@ -87,6 +93,7 @@ func TestPrependOrder(t *testing.T) {
 }
 
 func TestNeedsRenumber(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		sorted []float64
@@ -102,6 +109,7 @@ func TestNeedsRenumber(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := NeedsRenumber(tt.sorted); got != tt.want {
 				t.Errorf("NeedsRenumber(%v) = %v, want %v", tt.sorted, got, tt.want)
 			}
@@ -113,6 +121,7 @@ func TestNeedsRenumber(t *testing.T) {
 // scenario where every insert lands at the same position. After enough
 // inserts, MidpointOrder must report collapse so the caller can renumber.
 func TestMidpoint_RepeatedInsertsTriggerCollapse(t *testing.T) {
+	t.Parallel()
 	low, high := 1.0, 2.0
 	const maxIters = 1000
 	for range maxIters {
@@ -128,6 +137,7 @@ func TestMidpoint_RepeatedInsertsTriggerCollapse(t *testing.T) {
 }
 
 func TestSortRelations_StableMissingLast(t *testing.T) {
+	t.Parallel()
 	mkRel := func(id string, order interface{}) entity.Relation {
 		props := map[string]interface{}{}
 		if order != nil {
@@ -189,6 +199,7 @@ func TestSortRelations_StableMissingLast(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := SortRelations(tt.in, "_order_out")
 			gotIDs := make([]string, len(got))
 			for i, r := range got {
@@ -202,6 +213,7 @@ func TestSortRelations_StableMissingLast(t *testing.T) {
 }
 
 func TestSortRelations_EmptyPropertyName(t *testing.T) {
+	t.Parallel()
 	in := []entity.Relation{
 		{To: "a", Properties: map[string]interface{}{"_order_out": 3.0}},
 		{To: "b", Properties: map[string]interface{}{"_order_out": 1.0}},

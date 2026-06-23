@@ -1,5 +1,5 @@
 import type { PropertyDef } from '@/types'
-import type { WidgetEntry, WidgetRegistry } from './types'
+import type { WidgetEntry, WidgetRegistry, WidgetRoutingHint, WidgetHintKind } from './types'
 import TextWidget from './TextWidget.vue'
 import TextareaWidget from './TextareaWidget.vue'
 import NumberWidget from './NumberWidget.vue'
@@ -8,6 +8,7 @@ import DateWidget from './DateWidget.vue'
 import SelectWidget from './SelectWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
+import FileWidget from './FileWidget.vue'
 
 // defaultWidgetFor reproduces FieldRenderer's historical dispatch order
 // exactly (RR-0Z1P6). Order matters: `list` wins over `values`, which
@@ -20,7 +21,22 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'date') return 'date'
   if (propertyDef?.type === 'integer') return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
+  if (propertyDef?.type === 'file') return 'file'
   return 'text'
+}
+
+// hintKindToWidgetName maps a WidgetRoutingHint kind to the registered
+// widget name. View-side callers use this via resolveFromHint instead of
+// inventing a synthetic PropertyDef (RR-UD2B).
+const hintKindToWidgetName: Record<WidgetHintKind, string> = {
+  text: 'text',
+  'text-list': 'multi-select',
+  enum: 'select',
+  'enum-list': 'multi-select',
+  boolean: 'checkbox',
+  date: 'date',
+  integer: 'number',
+  rrule: 'rrule',
 }
 
 export function defineWidgetRegistry(): WidgetRegistry {
@@ -69,12 +85,21 @@ export function defineWidgetRegistry(): WidgetRegistry {
 
       return entry.component
     },
+
+    resolveFromHint(hint: WidgetRoutingHint) {
+      const name = hintKindToWidgetName[hint.kind]
+      const entry = entries.get(name) ?? entries.get('text')
+      if (!entry) {
+        throw new Error('[widget-registry] no widget could be resolved (text widget missing)')
+      }
+      return entry.component
+    },
   }
 }
 
 function buildDefaultRegistry(): WidgetRegistry {
   const r = defineWidgetRegistry()
-  r.register('text', { component: TextWidget, supportedPropertyTypes: ['string', 'file'] })
+  r.register('text', { component: TextWidget, supportedPropertyTypes: ['string'] })
   r.register('textarea', { component: TextareaWidget, supportedPropertyTypes: ['string'] })
   r.register('number', { component: NumberWidget, supportedPropertyTypes: ['integer'] })
   r.register('checkbox', { component: CheckboxWidget, supportedPropertyTypes: ['boolean'] })
@@ -85,6 +110,7 @@ function buildDefaultRegistry(): WidgetRegistry {
     supportedPropertyTypes: ['enum', 'string'],
   })
   r.register('rrule', { component: RruleWidget, supportedPropertyTypes: ['rrule'] })
+  r.register('file', { component: FileWidget, supportedPropertyTypes: ['file'] })
   return r
 }
 

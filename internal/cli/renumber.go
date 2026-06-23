@@ -56,14 +56,15 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *cliServices) error {
 		return nil
 	}
 
+	// Write through entitymanager.Manager (not the store directly) so every
+	// renumber emits an audit record and passes ACL, like all other write
+	// paths. A merge-style RelationOptions carrying only the order property is
+	// enough — Manager preserves the relation's other properties and content.
+	// See issue #886.
+	em := svc.EntityManager()
 	for _, p := range plan {
-		props := make(map[string]interface{}, len(p.rel.Properties)+1)
-		for k, v := range p.rel.Properties {
-			props[k] = v
-		}
-		props[p.prop] = p.newVal
-		data := store.RelationData{Properties: props, Content: p.rel.Content}
-		if _, err := st.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, data); err != nil {
+		opts := entity.RelationOptions{Properties: map[string]interface{}{p.prop: p.newVal}}
+		if _, err := em.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, opts); err != nil {
 			return fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
 		}
 	}

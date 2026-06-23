@@ -64,3 +64,62 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
 - **Adding a write affordance** requires (a) a backend `translateVerb` entry
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
+
+## Custom apps (`apps/<id>/` + `_apps/{id}/...` + the bridge)
+
+User-authored apps served in a sandboxed iframe. An app is a **folder**
+`apps/<id>/` with an `index.html` (plus sibling assets). Rules for new code:
+
+- **Apps are folder-discovered on disk**, served per-entry via `os.OpenRoot`
+  (see `apps.go`). No `apps:` config — `scanApps` lists `apps/<dir>/` that have
+  an `index.html`; id = folder name; metadata from `<meta name="rela-app:*">` in
+  index.html. Unpublish by renaming the folder or removing index.html. Never
+  store apps in the entity store — filesystem in every backend, like
+  `actions/`/`templates/`. The scan + per-entry reads are per-request (no
+  watcher wiring); fine for a handful of apps.
+- **Apps MUST declare `<meta name="rela-app:bridge-version" content="N">`.**
+  `currentBridgeVersion` (apps.go) is the contract this server serves;
+  `validateBridgeVersion` rejects a missing/unparseable version and one NEWER
+  than the server (scanApps drops it from the listing; handleV1App 422s the
+  index serve). This is the forward-compat seam: on a breaking bridge change,
+  bump `currentBridgeVersion` and add a per-version path (e.g. a version-matched
+  `_rela.js`) keyed on the app's declared version — don't break old apps. Older
+  (<= current) versions stay allowed.
+- **The app loads same-origin from `/api/v1/_apps/<id>/`** (iframe `src=`, not
+  `srcdoc`) so its sibling files resolve. It is therefore same-origin with the
+  API — **the path-scoped CSP header is the whole boundary**, not origin-`null`.
+- **The CSP is a path-scoped HEADER, not a `<meta>`** (`appCSP(base)` in
+  `apps_handler.go`). Every resource directive is scoped to the app's own
+  subpath (`script-src /api/v1/_apps/<id>/ …`), NOT `'self'` (which would
+  include `/api/`, letting `<img src=/api/v1/tickets/x>` exfiltrate).
+  `connect-src 'none'` blocks the app's own fetch/XHR/WS, so the
+  `MessageChannel` bridge (not a network request) is the only path to the API.
+  `form-action 'none'` + sandbox block form/nav exfil. CSP correctness is now
+  the entire security boundary — keep the path-scoping exact and tested. Do NOT
+  reintroduce a `<meta>` CSP or add an author-controlled egress allow-list
+  (self-defeating).
+- **The bridge SDK is served, not injected.** `appSDKSource()` is served at the
+  reserved `/_apps/<id>/_rela.js`; apps include `<script src="_rela.js">`. The
+  app cannot shadow `_rela.js` or serve any `_`-prefixed entry from its files.
+  No server-side HTML rewriting of the app's index.
+- **Optional styling is served at the reserved `/_apps/<id>/_rela.css`**
+  (`appCSSSource()` = theme tokens + the atomic `.btn`/`.input`/`.card`). The
+  tokens are embedded from `apps_tokens.css`, a **byte-identical copy** of
+  `frontend/src/styles/tokens.css` (the SPA's source of truth) —
+  `TestAppTokensCSSInSyncWithFrontend` fails on drift; re-copy, don't hand-edit.
+  Keep `_rela.css` to tokens + *atomic, pure-presentation* controls; component-
+  shaped classes (tables, selects, modals) stay out (they'd become an
+  unmaintainable frozen contract). Theme follows the host: the SDK toggles
+  `dark` on the app's `<html>` from the `rela:theme`/handshake messages, using
+  the same `:root.dark` selector as the SPA.
+- **No app-specific ACL.** An app inherits the user's permissions: every
+  `/api/v1/*` call runs under the user's session (reads → `readGate`, writes →
+  `entitymanager`). Do **not** add an `OpRunApp`/`AppSubject` — it would break
+  `--read-only` mode (`ReadOnlyACL` denies all `WriteRequest`s) and panic on the
+  sealed-`Subject` switch. The app *is* the user. (The bridge is the seam where
+  a future per-app *restriction* — e.g. read-only — would be enforced.)
+- **The host bridge is a closed method allow-list, never a URL proxy.**
+  `frontend/src/bridge/relaBridge.ts` maps each allowed method to one existing
+  api-client call. Adding a capability = adding a named method, never a generic
+  "fetch this path". Keep `appSDKMethods` (Go, in `apps_sdk.go`) in sync with
+  `BRIDGE_METHODS` (the dispatcher).

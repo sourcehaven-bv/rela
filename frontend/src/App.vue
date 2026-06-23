@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSchemaStore, useUIStore } from '@/stores'
+import { getErrorMessage } from '@/api'
 import {
   useKeyboardShortcuts,
   shortcutsModalOpen,
@@ -67,7 +68,7 @@ onMounted(async () => {
   try {
     await schemaStore.load()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load application'
+    error.value = getErrorMessage(err, 'Failed to load application')
     uiStore.error(error.value)
   } finally {
     loading.value = false
@@ -174,56 +175,9 @@ watch(
 </template>
 
 <style>
-/* Default theme.
-   Light: cream paper bg, deep harbor-navy sidebar, blue accent, warm peach highlights.
-   Dark:  same harbor-navy as the dominant surface, cream-tinted text, lifted accent. */
-:root {
-  --sidebar-bg: #164155;
-  --sidebar-text: #f3f2ef;
-  --accent-color: #4772fb;
-  --bg-color: #f3f2ef;
-  --text-color: #191919;
-  --border-color: #e0ddd5;
-  --success-color: #06ce90;
-  --error-color: #e5484d;
-  --warning-color: #f4aa83;
-  --info-color: #4772fb;
-  --card-bg: #ffffff;
-  --input-bg: #ffffff;
-  --hover-bg: #ebe9e4;
-  --muted-text: #6b7280;
-  --badge-blue: #4772fb;
-  --badge-purple: #8b5cf6;
-  --badge-green: #06ce90;
-  --badge-gray: #6b7280;
-  --badge-red: #e5484d;
-  --badge-orange: #f4aa83;
-  --badge-yellow: #f9d975;
-}
-
-:root.dark {
-  --sidebar-bg: #091821;
-  --sidebar-text: #ece9e0;
-  --accent-color: #6f93ff;
-  --bg-color: #0f1f28;
-  --text-color: #ece9e0;
-  --border-color: #264454;
-  --success-color: #34d39c;
-  --error-color: #f87171;
-  --warning-color: #f9d975;
-  --info-color: #6f93ff;
-  --card-bg: #162a35;
-  --input-bg: #1b3140;
-  --hover-bg: #1f3848;
-  --muted-text: #8fa4b0;
-  --badge-blue: #6f93ff;
-  --badge-purple: #c4b5fd;
-  --badge-green: #34d39c;
-  --badge-gray: #8fa4b0;
-  --badge-red: #f87171;
-  --badge-orange: #f4aa83;
-  --badge-yellow: #f9d975;
-}
+/* Theme tokens (:root / :root.dark) live in src/styles/tokens.css, imported
+   from main.ts — they are a shared source so custom apps can serve the same
+   values. See tokens.css. */
 
 * {
   box-sizing: border-box;

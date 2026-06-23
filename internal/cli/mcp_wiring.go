@@ -1,30 +1,13 @@
 package cli
 
 import (
-	"context"
-	"fmt"
-	"io"
 	"log/slog"
-	"path/filepath"
-	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/autocascade"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
-	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
-	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/search"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/templating"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
-	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
 // mcpServices owns the per-project services the MCP process needs and
@@ -33,105 +16,38 @@ import (
 // receives a flattened [mcp.Deps] via [mcpServices.Deps] — it never
 // holds a reference to this struct, so `internal/mcp` does not depend
 // on this wiring code.
+//
+// The service stack (store, search, metamodel, entitymanager,
+// automation, audit, validator, lua deps) is built by [appbuild] — the
+// single composition root shared with rela-server and rela-desktop — so
+// the MCP wiring is not a second composition root. Only the watcher
+// adapter is MCP-specific (appbuild deliberately has no watcher story).
 type mcpServices struct {
-	paths        *project.Context
-	meta         *metamodel.Metamodel
-	store        store.Store
-	searchCloser io.Closer
-	tracer       tracer.Tracer
-	searcher     search.Searcher
-	validator    validator.Validator
-	manager      *entitymanager.Manager
-	cfg          config.Loader
-	scriptEngine *script.Engine
-	watcher      relamcp.Watcher
-
-	closeOnce sync.Once
+	svc     *appbuild.Services
+	watcher relamcp.Watcher
 }
 
-// newMCPServices discovers the project at startDir, opens its store
-// with the search backend pre-wired as an [store.EntityObserver],
-// constructs the focused services MCP needs, and returns a bundle
-// whose [mcpServices.Deps] builds the [mcp.Deps] handed to the server.
+// newMCPServices discovers the project at startDir, builds the focused
+// services via [appbuild.Discover], and returns a bundle whose
+// [mcpServices.Deps] builds the [mcp.Deps] handed to the server.
+//
+// MCP is wired with [acl.NopACL] (allow-all) on purpose: it is a local
+// stdio transport, so anyone who can launch `rela mcp` already has
+// filesystem write access to the entity files and can edit them
+// directly, bypassing any gate. The filesystem is the trust boundary
+// here, not the tool surface — policy enforcement on MCP would defend
+// nothing. Access control that matters belongs on the deployed HTTP API,
+// which serves callers who do not have direct file access. WithACL makes
+// this an explicit, justified opt-out rather than a silent default.
 func newMCPServices(startDir string) (*mcpServices, error) {
-	fs := storage.NewSafeFS(storage.NewOsFS())
-	paths, discErr := project.Discover(startDir, fs)
-	if discErr != nil {
-		return nil, discErr
+	svc, err := appbuild.Discover(startDir, script.NewEngine(), appbuild.WithACL(acl.NopACL{}))
+	if err != nil {
+		return nil, err
 	}
-	mm, _, metaErr := metamodel.NewFSLoader(fs, paths.MetamodelPath).Load(context.Background())
-	if metaErr != nil {
-		return nil, fmt.Errorf("load metamodel: %w", metaErr)
-	}
-
-	// Build the search backend BEFORE opening the store so it can be
-	// installed as a synchronous observer at open time (TKT-Q1JT
-	// pattern). The FS build supplies an in-memory bleve index; a
-	// future Postgres build returns nil because Postgres indexes
-	// inside the store itself.
-	searchBackend := newMCPSearchObserver()
-	st, openErr := openMCPStore(fs, paths, mm, asMCPObserver(searchBackend))
-	if openErr != nil {
-		return nil, fmt.Errorf("open store: %w", openErr)
-	}
-
-	searcher, searchCloser, searchErr := buildMCPSearcher(context.Background(), st, searchBackend)
-	if searchErr != nil {
-		return nil, fmt.Errorf("build searcher: %w", searchErr)
-	}
-
-	svc := &mcpServices{
-		paths:        paths,
-		meta:         mm,
-		store:        st,
-		searchCloser: searchCloser,
-		tracer:       tracer.New(st),
-		searcher:     searcher,
-		cfg:          config.NewFSLoader(fs, paths.Root),
-		scriptEngine: script.NewEngine(),
-	}
-	svc.validator = validator.New(st, mm, svc.luaReadDeps())
-
-	// Build the Manager. Wire autocascade if metamodel declares
-	// automations; the ScriptRunner takes only the static lua.ReadDeps
-	// (per-cascade Mutator is supplied via Request.Mutator inside
-	// Manager.runWriteCascade — Manager satisfies autocascade.Mutator).
-	var autoEngine *automation.Engine
-	var cascadeRunner *autocascade.Runner
-	if len(mm.Automations) > 0 {
-		autoEngine = automation.NewEngineFromMetamodel(mm.Automations)
-		r, rerr := autocascade.New(autocascade.Deps{Engine: autoEngine})
-		if rerr != nil {
-			return nil, fmt.Errorf("build autocascade runner: %w", rerr)
-		}
-		cascadeRunner = r
-	}
-	auditSink, auditErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
-	if auditErr != nil {
-		return nil, fmt.Errorf("build audit sink: %w", auditErr)
-	}
-
-	mgr, mgrErr := entitymanager.New(entitymanager.Deps{
-		Store:        st,
-		Meta:         mm,
-		Templater:    templating.NewFSTemplater(fs, paths),
-		Audit:        auditSink,
-		ACL:          acl.NopACL{},
-		Automations:  autoEngine,
-		Cascade:      cascadeRunner,
-		ScriptRunner: script.NewLuaScriptRunner(svc.scriptEngine, svc.luaReadDeps()),
-	})
-	if mgrErr != nil {
-		return nil, fmt.Errorf("build entitymanager: %w", mgrErr)
-	}
-	svc.manager = mgr
-
-	// Watcher: hand-off to fsstore's own watcher via type assertion.
-	// MCP today has no ExtraDirs / ExtraFiles use case, so the
-	// adapter is minimal.
-	svc.watcher = &mcpWatcher{store: st}
-
-	return svc, nil
+	return &mcpServices{
+		svc:     svc,
+		watcher: &mcpWatcher{store: svc.Store()},
+	}, nil
 }
 
 // Deps flattens the per-project services into the focused [mcp.Deps]
@@ -139,59 +55,29 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 // value holds domain types only, so the server has no path back to
 // this struct or to any composition-root aggregate.
 func (s *mcpServices) Deps() relamcp.Deps {
-	var root string
-	if s.paths != nil {
-		root = s.paths.Root
-	}
 	return relamcp.Deps{
-		Store:         s.store,
-		Meta:          s.meta,
-		Tracer:        s.tracer,
-		Searcher:      s.searcher,
-		Validator:     s.validator,
-		EntityManager: s.manager,
-		Config:        s.cfg,
-		LuaWriteDeps:  lua.WriteDeps{ReadDeps: s.luaReadDeps(), EntityManager: s.manager},
-		LuaCache:      s.scriptEngine.LuaCache(),
+		Store:         s.svc.Store(),
+		Meta:          s.svc.Meta(),
+		Tracer:        s.svc.Tracer(),
+		Searcher:      s.svc.Searcher(),
+		Validator:     s.svc.Validator(),
+		EntityManager: s.svc.EntityManager(),
+		Config:        s.svc.Config(),
+		LuaWriteDeps:  s.svc.LuaWriteDeps(),
+		LuaCache:      s.svc.ScriptEngine().LuaCache(),
 		Watcher:       s.watcher,
-		ProjectRoot:   root,
+		ProjectRoot:   s.svc.Paths().Root,
 	}
 }
 
-func (s *mcpServices) luaReadDeps() lua.ReadDeps {
-	var root string
-	if s.paths != nil {
-		root = s.paths.Root
-	}
-	return lua.ReadDeps{
-		Store:       s.store,
-		Tracer:      s.tracer,
-		Searcher:    s.searcher,
-		Meta:        s.meta,
-		ProjectRoot: root,
-	}
-}
-
-// Close releases the search backend and store. Store close before
-// search close so no observer callbacks land on a closed index.
-//
-// Safe to call repeatedly and from multiple goroutines (defer +
-// signal-driven shutdown): the close sequence runs exactly once via
-// sync.Once. Mirrors appbuild.Services.Close semantics.
+// Close stops the watcher and releases the underlying services (store
+// then search backend, in that order). Safe to call repeatedly — both
+// the watcher and [appbuild.Services.Close] are idempotent.
 func (s *mcpServices) Close() error {
-	s.closeOnce.Do(func() {
-		if s.watcher != nil {
-			s.watcher.Stop()
-		}
-		if lc, ok := s.store.(store.Lifecycle); ok {
-			_ = lc.Close()
-		}
-		if s.searchCloser != nil {
-			_ = s.searchCloser.Close()
-			s.searchCloser = nil
-		}
-	})
-	return nil
+	if s.watcher != nil {
+		s.watcher.Stop()
+	}
+	return s.svc.Close()
 }
 
 // --- Watcher adapter ---
@@ -241,9 +127,3 @@ func (w *mcpWatcher) Stop() {
 
 func (w *mcpWatcher) Pause()  {}
 func (w *mcpWatcher) Resume() {}
-
-// mcpNoopCloser is returned by the build-tagged buildMCPSearcher when
-// no closable resource is held (the error-Searcher case).
-type mcpNoopCloser struct{}
-
-func (mcpNoopCloser) Close() error { return nil }

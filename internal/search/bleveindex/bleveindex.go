@@ -152,6 +152,22 @@ func (idx *Index) EntityDelete(id string) error {
 	return idx.bumpLastModified(time.Now())
 }
 
+// EntityRenamed atomically deletes the old document and indexes the
+// renamed entity under its new ID. Uses a single Bleve batch so a
+// crash mid-rename cannot leave the index with both the old and new
+// keys present.
+func (idx *Index) EntityRenamed(oldID string, renamed *entity.Entity) error {
+	batch := idx.index.NewBatch()
+	batch.Delete(oldID)
+	if err := batch.Index(renamed.ID, entityToDoc(renamed)); err != nil {
+		return fmt.Errorf("bleveindex: rename %s→%s: index new: %w", oldID, renamed.ID, err)
+	}
+	if err := idx.index.Batch(batch); err != nil {
+		return fmt.Errorf("bleveindex: rename %s→%s: commit batch: %w", oldID, renamed.ID, err)
+	}
+	return idx.bumpLastModified(renamed.UpdatedAt)
+}
+
 // LastModified returns the latest mtime observed by this index. Persistent
 // indexes restore this across restarts so consumers can skip reindexing
 // when the store's LastModified hasn't advanced.

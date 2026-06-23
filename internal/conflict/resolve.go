@@ -132,28 +132,31 @@ func resolveRelation(cf *ConflictedFile, resolution *Resolution) *entity.Relatio
 	return resolved
 }
 
+// ValidateResolved checks a resolved entity against the metamodel.
+// Relations carry no metamodel validation on this path. A nil entity
+// or metamodel validates trivially.
+func ValidateResolved(e *entity.Entity, meta *metamodel.Metamodel) error {
+	if e == nil || meta == nil {
+		return nil
+	}
+	if errs := meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+		return fmt.Errorf("validation failed: %w", errs[0])
+	}
+	return nil
+}
+
 // ResolveAndWrite resolves a conflict and writes the result to disk.
+// Callers that need to gate the write (e.g. on an ACL decision) should
+// compose [Resolve], [ValidateResolved], and [WriteResolved] instead.
 func ResolveAndWrite(cf *ConflictedFile, resolution *Resolution, meta *metamodel.Metamodel) error {
 	e, relation, err := Resolve(cf, resolution)
 	if err != nil {
 		return err
 	}
-
-	if e != nil {
-		// Validate entity before writing
-		if meta != nil {
-			if errs := meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
-				return fmt.Errorf("validation failed: %w", errs[0])
-			}
-		}
-		return writeEntityFile(cf.Path, e)
+	if err := ValidateResolved(e, meta); err != nil {
+		return err
 	}
-
-	if relation != nil {
-		return writeRelationFile(cf.Path, relation)
-	}
-
-	return errors.New("nothing to write")
+	return WriteResolved(cf.Path, e, relation)
 }
 
 // AcceptOurs resolves a conflict by accepting all values from "ours" (HEAD).

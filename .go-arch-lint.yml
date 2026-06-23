@@ -64,6 +64,8 @@ components:
   metamodel:        { in: internal/metamodel }
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
+  canonical:        { in: internal/canonical }
+  frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
   search:           { in: internal/search }
@@ -72,6 +74,8 @@ components:
   store:            { in: internal/store }
   fsstore:          { in: internal/store/fsstore }
   memstore:         { in: internal/store/memstore }
+  graphquerynaive:  { in: internal/store/graphquerynaive }
+  pgstore:          { in: internal/store/pgstore }
   storeutil:        { in: internal/store/storeutil }
 
   # Project bootstrap utilities
@@ -122,11 +126,16 @@ vendors:
       - github.com/olekukonko/tablewriter/**
   color:       { in: github.com/fatih/color }
   fsnotify:    { in: github.com/fsnotify/fsnotify }
+  pgx:         { in: github.com/jackc/pgx/** }
   singleflight: { in: golang.org/x/sync/singleflight }
   http2:
     in:
       - golang.org/x/net/http2
       - golang.org/x/net/http2/**
+  nethtml:
+    in:
+      - golang.org/x/net/html
+      - golang.org/x/net/html/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -197,6 +206,7 @@ deps:
       - memstore
       - metamodel
       - output
+      - pgstore
       - principal
       - project
       - projectsetup
@@ -224,6 +234,7 @@ deps:
     mayDependOn:
       - acl
       - affordances
+      - attachment
       - audit
       - config
       - conflict
@@ -250,6 +261,7 @@ deps:
     canUse:
       - goldmark
       - gogit
+      - nethtml
       - singleflight
   dataentryconfig:
     mayDependOn:
@@ -317,6 +329,7 @@ deps:
       - lua
       - memstore
       - metamodel
+      - pgstore
       - project
       - script
       - search
@@ -375,7 +388,9 @@ deps:
       - store
   acl:
     mayDependOn:
+      - entity
       - principal
+      - store
   affordances:
     mayDependOn:
       - acl
@@ -471,8 +486,14 @@ deps:
     mayDependOn:
       - storage
   markdown:
+    mayDependOn:
+      - frontmatter
     canUse:
       - goldmark
+  canonical:
+    mayDependOn:
+      - entity
+      - markdown
   filter:
     mayDependOn:
       - metamodel
@@ -482,6 +503,7 @@ deps:
       - ai
       - filter
       - metamodel
+      - principal
       - search
       - secrets
       - store
@@ -507,6 +529,7 @@ deps:
       - autocascade
       - lua
       - metamodel
+      - principal
       - project
   search:
     mayDependOn:
@@ -529,15 +552,29 @@ deps:
   fsstore:
     mayDependOn:
       - cache
+      - frontmatter
+      - graphquerynaive
+      - markdown
       - storage
       - store
       - storeutil
-    canUse:
-      - goldmark
   memstore:
     mayDependOn:
+      - graphquerynaive
       - store
       - storeutil
+  graphquerynaive:
+    mayDependOn:
+      - entity
+      - store
+  pgstore:
+    mayDependOn:
+      - graphquerynaive
+      - search
+      - store
+      - storeutil
+    canUse:
+      - pgx
   storeutil:
     mayDependOn:
       - store

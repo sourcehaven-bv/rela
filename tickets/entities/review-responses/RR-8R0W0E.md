@@ -1,0 +1,9 @@
+---
+id: RR-8R0W0E
+type: review-response
+title: Meta-CSP injection defeated by app HTML with a <head substring before the real head (verified bypass)
+finding: 'indexCaseInsensitiveOpenTag (apps.go:118) finds the first ''<head''-looking token via strings.Index with no awareness of comments/scripts/attributes. VERIFIED exploit: input ''<!-- <head> --><html><head>...'' injects the <meta> at offset 11 — INSIDE the comment (''<!-- <head>[META] -->''), so the CSP meta is commented out and never applies; the real <head> gets no injected policy. This is a full CSP bypass on the srcdoc path, where the injected <meta> is the ONLY in-document control (the HTTP header is stripped by srcdoc, as documented). Same flaw in injectAppSdk (appSdk.ts:94) for the SDK <script> placement. The ''injected FIRST so app can only further-restrict'' comment (apps.go:100) is false when our meta lands in a comment. Mitigating: sandbox without allow-same-origin + default no egress limit blast radius, but img-src data:/blob: is always open and one csp_origin makes an exfil channel. FIX: use golang.org/x/net/html to tokenize and find the real <head> insertion point (or reject docs without a locatable head); same on the client SDK injector. Verified with a standalone repro.'
+severity: critical
+resolution: 'Replaced the string-munging indexCaseInsensitiveOpenTag with a real tokenizer. Server: injectCSPMeta now uses golang.org/x/net/html to Parse → findFirstElementByAtom(head) → InsertBefore(meta, head.FirstChild) → Render; returns an error and the handler fails closed (500) if parse/render fails. Client: injectAppSdk now uses DOMParser + head.insertBefore instead of a regex. Added TestInjectCSPMeta_CommentBypass (Go) and a matching appSdk.test.ts case asserting the comment-embedded ''<head'' no longer strands the meta/script in the comment. Verified the original repro now lands the meta inside the real <head>.'
+status: addressed
+---

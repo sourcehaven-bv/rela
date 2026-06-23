@@ -117,7 +117,7 @@ Domain and storage:
 | ------------------------ | --------------------------------------------------------- |
 | `internal/entity`        | Domain types: `Entity`, `Relation` (no storage metadata)  |
 | `internal/metamodel`     | Schema: entity types, relations, properties, validation   |
-| `internal/store`         | Storage abstraction — CRUD + events, `fsstore`/`memstore` |
+| `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore` |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
@@ -145,12 +145,75 @@ Subsystems (see each package's doc comment for details):
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 
+### Storage backends & build tags
+
+The storage + search backend is chosen at compile time by Go build tags.
+The composition root has one `New` recipe per scenario over shared
+`prepare()`/`assemble()` helpers — see `internal/appbuild/appbuild_{fs,memory,postgres}.go`
+and the matching `internal/cli/mcp_wiring_{fs,memory,postgres}.go`:
+
+| Build tag        | Store      | Search                | Binaries                          |
+| ---------------- | ---------- | --------------------- | --------------------------------- |
+| _(none, default)_| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
+| `memorybackend`  | `memstore` | `LinearSearch`        | (tests / experiments; no bleve)   |
+| `postgres`       | `pgstore`  | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
+
+Rules when touching this:
+
+- **The `postgres` build must not link bleve; the default build must not
+  link pgx.** CI asserts both via `go list -deps` (the `postgres` job in
+  `ci.yml`). Keep backend-specific imports inside the tagged recipe files.
+- **`pgstore.New(db DBTX)` takes an injected pgx pool**, not a DSN. The
+  postgres recipe builds one pool, runs `pgstore.Migrate`, and shares it
+  between the store and the in-DB search backend. appbuild owns/closes the
+  pool; `store.Close()` only tears down the watcher.
+- **Build-agnostic wiring lives in `prepare`/`assemble`, never in a recipe.**
+  A recipe may choose and order backend steps; if logic would be copy-pasted
+  between recipes, it belongs in a shared helper. This is what keeps the three
+  recipes from drifting (and where future per-backend audit/ACL variation goes).
+- **The metamodel is always read from disk**, even in the postgres build —
+  `metamodel.yaml`, `templates/`, `.rela/` stay on the filesystem; PostgreSQL
+  backs entities/relations/attachments/search only. A postgres deployment
+  still needs a `--project` dir.
+- **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
+  cross-process writes via PostgreSQL `LISTEN/NOTIFY`: each committed write does
+  `pg_notify(<schema-scoped channel>, '<origin>:<kind>:<op>:<id>')` inside its
+  transaction (so the 5 single-statement writes are wrapped in a tx); a listener
+  goroutine (own connection, started in `Open`, stopped in `Close`) turns remote
+  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. A
+  per-store random `originID` in the payload filters self-echoes (the listener
+  skips its own writes — local writes are already emitted in-process). NOTIFY is
+  best-effort, so a `seq > watermark` catch-up (overlap window + idempotent
+  re-snapshot; runs on connect/reconnect/safety-ticker, NOT per notification)
+  recovers anything missed. The channel is schema-scoped (`rela_changed_<schema>`)
+  because LISTEN is database-global — all processes of one deployment share a
+  schema/channel. If the listener can't connect, the store degrades with a
+  warning (local events still work). Exact ordering (xid8 + `pg_snapshot_xmin`)
+  is the documented upgrade, not built. The data-entry SSE feed consumes this
+  via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
+  in-process single-writer by nature.
+- DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
+  `--database-url` flag, so the credential never lands in `ps`/shell history.
+  `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
+  `db` commands read the env directly. Don't add a DSN flag.
+- **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
+  `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
+  (concurrent-start safe; forward-only). Auto-applied on first store open;
+  also runnable explicitly via the postgres-build `rela db migrate` / `rela db
+  status` commands (`pgstore.Status` is the read-only version check). `rela db`
+  errors clearly in non-postgres builds.
+- A new `store.Store` implementation must pass `internal/store/storetest`
+  (`RunAll` + the fuzz functions). pgstore's suite is DB-gated on
+  `RELA_TEST_DATABASE_URL` (skips when unset). Run it with `just test-postgres`.
+
 ## Tests
 
 - Prefer table-driven tests with `t.Run(tc.name, ...)` subtests.
 - Use `t.Helper()` on assertion helpers.
 - `internal/store/storetest` provides the store conformance harness — any
-  new `store.Store` implementation must pass it.
+  new `store.Store` implementation must pass it. Likewise any new
+  `search.VisibleSearcher` implementation must pass
+  `storetest.RunVisibleSearchTests` (the ACL-scoped search contract).
 - Race detector is on in CI; don't add `//go:build !race` tags.
 
 ## Coverage
@@ -158,8 +221,8 @@ Other packages under `internal/` are self-descriptive — ls the tree.
 Go: `go-test-coverage` enforces **package floor thresholds** (no ratchet);
 minimums live in `.testcoverage.yml`. Coverage within the floor is free to
 move up or down — floors exist to catch "new untested package added" and
-"core package silently lost its tests." Frontend uses a separate per-file
-ratchet at 100%.
+"core package silently lost its tests." The frontend has no coverage
+enforcement — unit tests run plain (`npm run test:run`).
 
 - Run locally: `just coverage-check`, `just coverage-html`.
 - When a floor fails, add tests — don't lower the threshold without a reason.

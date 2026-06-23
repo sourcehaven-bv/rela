@@ -490,6 +490,46 @@ func TestValidatePropertyValue_File(t *testing.T) {
 	}
 }
 
+func TestValidatePropertyValue_FileMax(t *testing.T) {
+	meta := &Metamodel{}
+
+	t.Run("default cap is 1; list rejected when over", func(t *testing.T) {
+		single := &PropertyDef{Type: PropertyTypeFile}
+		if single.FileMax() != 1 {
+			t.Fatalf("FileMax default = %d, want 1", single.FileMax())
+		}
+		// A single string is fine.
+		if err := meta.ValidatePropertyValue("doc", single, "attachments/X/doc/a.pdf"); err != nil {
+			t.Errorf("single path rejected: %v", err)
+		}
+		// Two files in a max:1 property is too many.
+		if err := meta.ValidatePropertyValue("doc", single, []string{"a.pdf", "b.pdf"}); err == nil {
+			t.Error("2 files in a max:1 property should be rejected")
+		}
+	})
+
+	t.Run("max:3 accepts up to 3, rejects 4", func(t *testing.T) {
+		multi := &PropertyDef{Type: PropertyTypeFile, Max: 3}
+		if multi.FileMax() != 3 {
+			t.Fatalf("FileMax = %d, want 3", multi.FileMax())
+		}
+		if err := meta.ValidatePropertyValue("docs", multi, []string{"a", "b", "c"}); err != nil {
+			t.Errorf("3 files in a max:3 property rejected: %v", err)
+		}
+		if err := meta.ValidatePropertyValue("docs", multi, []string{"a", "b", "c", "d"}); err == nil {
+			t.Error("4 files in a max:3 property should be rejected")
+		}
+		// []interface{} of strings (form/JSON shape) also accepted.
+		if err := meta.ValidatePropertyValue("docs", multi, []interface{}{"a", "b"}); err != nil {
+			t.Errorf("[]interface{} of strings rejected: %v", err)
+		}
+		// Non-string item rejected.
+		if err := meta.ValidatePropertyValue("docs", multi, []interface{}{"a", 7}); err == nil {
+			t.Error("non-string list item should be rejected")
+		}
+	})
+}
+
 func TestValidatePropertyValue_Enum(t *testing.T) {
 	meta := &Metamodel{}
 	propDef := &PropertyDef{
@@ -1068,5 +1108,34 @@ func TestValidationError_IsSoft(t *testing.T) {
 				t.Errorf("(%s).IsSoft() = %v, want %v", tc.typ, got, tc.soft)
 			}
 		})
+	}
+}
+
+func TestValidateIDPrefix(t *testing.T) {
+	valid := []string{"TKT-", "TKT", "tkt-", "MY-TYPE-", "a_b-", "A1-", "_x-"}
+	for _, p := range valid {
+		if err := ValidateIDPrefix(p); err != nil {
+			t.Errorf("ValidateIDPrefix(%q) = %v, want nil", p, err)
+		}
+	}
+
+	invalid := []struct {
+		prefix string
+		why    string
+	}{
+		{"--", "double dash collapses to a dash-only base (BUG-RHFHTH repro)"},
+		{"-", "dash-only"},
+		{"A--B-", "embedded double dash"},
+		{"TKT--", "trailing double dash"},
+		{"a/b-", "path separator"},
+		{`a\b-`, "backslash"},
+		{"a b-", "space"},
+		{"héllo-", "non-ASCII"},
+		{"x\x00-", "control character"},
+	}
+	for _, tc := range invalid {
+		if err := ValidateIDPrefix(tc.prefix); err == nil {
+			t.Errorf("ValidateIDPrefix(%q) = nil, want error (%s)", tc.prefix, tc.why)
+		}
 	}
 }

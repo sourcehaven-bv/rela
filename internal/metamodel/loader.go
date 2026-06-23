@@ -272,6 +272,11 @@ func validateEntityStructure(m *Metamodel) error {
 		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {
 			return &ConflictingIDPrefixError{EntityType: name}
 		}
+		for _, prefix := range def.GetIDPrefixes() {
+			if err := ValidateIDPrefix(prefix); err != nil {
+				return &InvalidIDPrefixError{EntityType: name, Prefix: prefix, Reason: err.Error()}
+			}
+		}
 
 		m.aliasMap[strings.ToLower(name)] = name
 		for _, alias := range def.Aliases {
@@ -453,6 +458,18 @@ func validateRelationReferences(m *Metamodel) []string {
 	relNames := sortedKeys(m.Relations)
 	for _, name := range relNames {
 		rel := m.Relations[name]
+		// A relation with no 'from' or no 'to' types is meaningless: no
+		// entity can ever be a valid source/target, so any cardinality
+		// constraint on it is a silent no-op. Reject at load (likely a
+		// typo or an omitted field) rather than letting it pass quietly.
+		if len(rel.From) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: must declare at least one 'from' entity type", name))
+		}
+		if len(rel.To) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: must declare at least one 'to' entity type", name))
+		}
 		for _, fromType := range rel.From {
 			if _, ok := m.Entities[fromType]; !ok {
 				errs = append(errs, fmt.Sprintf(
@@ -642,6 +659,17 @@ func validatePropertyDefs(
 		if propDef.Type == PropertyTypeEnum && len(propDef.Values) == 0 {
 			errs = append(errs, fmt.Sprintf(
 				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
+		}
+
+		// `max` only applies to file properties and must be >= 1 when set.
+		if propDef.Max < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
+		}
+		if propDef.Max != 0 && propDef.Type != PropertyTypeFile {
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q sets 'max' but is type %q; 'max' only applies to type \"file\"",
+				schemaName, propName, propDef.Type))
 		}
 	}
 

@@ -109,12 +109,19 @@ type App struct {
 	store         store.Store
 	entityManager entitymanager.EntityManager
 	searcher      search.Searcher
-	tracer        tracer.Tracer
-	validator     validator.Validator
-	templater     templating.Templater
-	cfgLoader     config.Loader
-	kv            state.KV
-	acl           acl.ACL
+	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
+	// executeQuery routes free-text searches through it so /_search
+	// and the _position search scope only ever see hits the request
+	// principal may read. Per-backend wiring: search.NewVisible over
+	// the regular searcher on fs/memory builds, pgstore-native on the
+	// postgres build.
+	visibleSearcher search.VisibleSearcher
+	tracer          tracer.Tracer
+	validator       validator.Validator
+	templater       templating.Templater
+	cfgLoader       config.Loader
+	kv              state.KV
+	acl             acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -146,6 +153,10 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
+	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
+	// StartWatching; nil when watching is not active.
+	stopStoreWatch func()
+
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares
 	// (only sensible in unit tests where no HTTP layer is exercised).
@@ -157,6 +168,16 @@ type App struct {
 	// cmd/rela-server chains an env resolver + a header resolver
 	// here when --principal-header is set.
 	principalResolver PrincipalResolver
+
+	// principalHeader is the name of the HTTP header that carries the
+	// principal identity (the --principal-header flag value), or ""
+	// when no header is configured. Used by noCacheMiddleware to emit
+	// `Vary: <header>` on /api/ responses — under ACL those responses
+	// are per-principal, and a shared cache keyed only on the URL
+	// would serve principal A's filtered list to principal B
+	// (TKT-VMD8 AC10, RR-VDTW). Set via SetPrincipalHeader before
+	// NewRouter.
+	principalHeader string
 
 	// fieldResolver decides per-entity field, option, and
 	// relation-meta affordances surfaced as `_fields` / `_relations`
@@ -180,10 +201,17 @@ type App struct {
 // own lifecycle managed by the store and is stopped during store
 // close, not here — asymmetric on purpose: dataentry doesn't own the
 // store, only its config subscription.
+// StopWatching is lifecycle-only and must be called from a single goroutine
+// (it is the StartWatching counterpart). The stop fields are not synchronized;
+// concurrent Start/Stop is not supported.
 func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
+	}
+	if a.stopStoreWatch != nil {
+		a.stopStoreWatch()
+		a.stopStoreWatch = nil
 	}
 }
 
@@ -259,6 +287,14 @@ func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 	a.principalResolver = r
 }
 
+// SetPrincipalHeader records the name of the HTTP header that carries
+// the principal identity so API responses can declare `Vary` on it.
+// Call alongside [App.SetPrincipalResolver] (before [App.NewRouter])
+// when wiring a [HeaderPrincipalResolver]; leave unset otherwise.
+func (a *App) SetPrincipalHeader(name string) {
+	a.principalHeader = name
+}
+
 // NewApp creates and initializes an App. Callers pass in the
 // primitives (fs, paths, meta, store) plus the services that depend
 // on workspace assembly: entityManager (the production write path)
@@ -277,6 +313,7 @@ func NewApp(
 	st store.Store,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
+	visibleSearcher search.VisibleSearcher,
 	aclImpl acl.ACL,
 	fieldResolver FieldVerdictResolver,
 	auditSink audit.Audit,
@@ -297,6 +334,9 @@ func NewApp(
 	}
 	if searcher == nil {
 		return nil, errors.New("dataentry.NewApp: searcher is required")
+	}
+	if visibleSearcher == nil {
+		return nil, errors.New("dataentry.NewApp: visibleSearcher is required (wire appbuild's Services.VisibleSearcher)")
 	}
 	if aclImpl == nil {
 		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
@@ -383,21 +423,22 @@ func NewApp(
 
 	scriptEngine := script.NewEngine()
 	app := &App{
-		fs:            fs,
-		paths:         paths,
-		store:         st,
-		entityManager: em,
-		searcher:      searcher,
-		tracer:        trc,
-		validator:     val,
-		templater:     templater,
-		cfgLoader:     cfgLoader,
-		kv:            kv,
-		acl:           aclImpl,
-		broker:        newEventBroker(),
-		scriptEngine:  scriptEngine,
-		fieldResolver: fieldResolver,
-		auditSink:     auditSink,
+		fs:              fs,
+		paths:           paths,
+		store:           st,
+		entityManager:   em,
+		searcher:        searcher,
+		visibleSearcher: visibleSearcher,
+		tracer:          trc,
+		validator:       val,
+		templater:       templater,
+		cfgLoader:       cfgLoader,
+		kv:              kv,
+		acl:             aclImpl,
+		broker:          newEventBroker(),
+		scriptEngine:    scriptEngine,
+		fieldResolver:   fieldResolver,
+		auditSink:       auditSink,
 	}
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).

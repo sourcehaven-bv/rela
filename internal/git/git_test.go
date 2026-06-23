@@ -9,10 +9,21 @@ import (
 	"testing"
 )
 
+// requireGit skips the test when no git binary is on PATH — these
+// tests shell out to the real git, and failing instead of skipping
+// turns a missing tool into a false test failure.
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not found in PATH")
+	}
+}
+
 // setupTestRepo creates a temporary git repository for testing.
 // Uses t.TempDir() for automatic cleanup.
 func setupTestRepo(t *testing.T) string {
 	t.Helper()
+	requireGit(t)
 
 	dir := t.TempDir()
 
@@ -58,6 +69,7 @@ func setupTestRepo(t *testing.T) string {
 //nolint:unparam // remoteDir is returned for potential future use
 func setupTestRepoWithRemote(t *testing.T) (localDir, remoteDir string) {
 	t.Helper()
+	requireGit(t)
 
 	// Create "remote" (bare repo)
 	remoteDir = t.TempDir()

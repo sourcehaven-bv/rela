@@ -43,13 +43,76 @@ builds:
     flags:
       - -trimpath
 
+  # PostgreSQL-backed variants. Selected by the `postgres` build tag: the
+  # store and search index live in PostgreSQL (no bleve, no on-disk markdown
+  # store). Shipped under -postgres binary + archive names so they never
+  # collide with the default filesystem binaries on PATH.
+  - id: rela-postgres
+    main: ./cmd/rela
+    binary: rela-postgres
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/Sourcehaven-BV/rela/internal/cli.Version={{.Version}}
+    flags:
+      - -trimpath
+      - -tags=postgres
+
+  - id: rela-server-postgres
+    main: ./cmd/rela-server
+    binary: rela-server-postgres
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+      - -tags=postgres
+
 archives:
+  # Default (filesystem) binaries: rela + rela-server bundled together,
+  # keeping the historical archive name so existing download URLs/scripts
+  # keep working.
   - id: default
-    format: tar.gz
+    ids:
+      - rela
+      - rela-server
+    formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+  # PostgreSQL binaries in their own -postgres archive so a user can't
+  # accidentally extract both variants onto the same PATH.
+  - id: postgres
+    ids:
+      - rela-postgres
+      - rela-server-postgres
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}-postgres_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     files:
       - LICENSE*
       - README*

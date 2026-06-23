@@ -10,9 +10,18 @@ import (
 type Engine struct {
 	automations []Automation
 	vars        TemplateVars
+	// meta is the active metamodel, used to evaluate `when:` and
+	// `validate:` comparisons against the property's declared type
+	// (so `count>9` compares numerically, not lexicographically).
+	// Optional: nil falls back to string-only matching, preserving the
+	// pre-metamodel behavior for engines constructed via [NewEngine].
+	meta *metamodel.Metamodel
 }
 
 // NewEngine creates an automation engine with the given automations.
+// The engine has no metamodel, so `when:`/`validate:` comparisons fall
+// back to string matching; use [Engine.SetMetamodel] (or
+// [NewEngineFromMetamodel]) to get type-aware comparison.
 func NewEngine(automations []Automation) *Engine {
 	return &Engine{
 		automations: automations,
@@ -20,13 +29,24 @@ func NewEngine(automations []Automation) *Engine {
 	}
 }
 
-// NewEngineFromMetamodel creates an automation engine from metamodel definitions.
-func NewEngineFromMetamodel(defs []metamodel.AutomationDef) *Engine {
+// NewEngineFromMetamodel creates an automation engine from metamodel
+// definitions, wiring the metamodel itself so `when:`/`validate:`
+// comparisons evaluate against each property's declared type.
+func NewEngineFromMetamodel(meta *metamodel.Metamodel, defs []metamodel.AutomationDef) *Engine {
 	automations := make([]Automation, len(defs))
 	for i, def := range defs {
 		automations[i] = convertFromMetamodel(def)
 	}
-	return NewEngine(automations)
+	e := NewEngine(automations)
+	e.meta = meta
+	return e
+}
+
+// SetMetamodel wires the metamodel used for type-aware `when:`/
+// `validate:` comparison. Optional; without it the engine compares as
+// strings.
+func (e *Engine) SetMetamodel(meta *metamodel.Metamodel) {
+	e.meta = meta
 }
 
 // convertFromMetamodel converts a metamodel AutomationDef to the internal Automation type.
@@ -64,10 +84,11 @@ func convertFromMetamodel(def metamodel.AutomationDef) Automation {
 
 	for i, a := range def.Do {
 		action := Action{
-			Set:     a.Set,
-			Value:   a.Value,
-			Lua:     a.Lua,
-			LuaFile: a.LuaFile,
+			Set:            a.Set,
+			Value:          a.Value,
+			Lua:            a.Lua,
+			LuaFile:        a.LuaFile,
+			AllowACLBypass: a.AllowACLBypass,
 		}
 		if a.CreateRelation != nil {
 			action.CreateRelation = &CreateRelationAction{
@@ -221,8 +242,7 @@ func (e *Engine) matchesWhenConditions(trigger Trigger, entity *entity.Entity) b
 	}
 
 	for _, f := range trigger.When {
-		val := entity.Properties[f.Property]
-		if !matchSimple(val, f) {
+		if !e.matchProperty(entity, f) {
 			return false
 		}
 	}
@@ -288,6 +308,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
 			Code:           code,
 			AutomationName: automationName,
+			AllowACLBypass: action.AllowACLBypass,
 		})
 	}
 
@@ -297,6 +318,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 		result.LuaToExecute = append(result.LuaToExecute, LuaToExecute{
 			FilePath:       action.LuaFile,
 			AutomationName: automationName,
+			AllowACLBypass: action.AllowACLBypass,
 		})
 	}
 }
@@ -314,9 +336,7 @@ func (e *Engine) evaluateValidation(validation Validation, event Event, result *
 		return
 	}
 
-	// Use simple value matching (works without full metamodel context)
-	val := event.Entity.Properties[f.Property]
-	if !matchSimple(val, f) {
+	if !e.matchProperty(event.Entity, f) {
 		msg := e.interpolate(validation.Message, event)
 		if validation.GetSeverity() == "error" {
 			result.Errors = append(result.Errors, msg)
@@ -324,6 +344,52 @@ func (e *Engine) evaluateValidation(validation Validation, event Event, result *
 			result.Warnings = append(result.Warnings, msg)
 		}
 	}
+}
+
+// matchProperty evaluates a filter against an entity property. When the
+// engine has a metamodel and the property is declared, it uses the
+// type-aware [filter.Match] so ordered comparisons respect the
+// property's type (`count>9` is numeric, `due<2025-02-01` is a date).
+// Without a metamodel, or for an undeclared property, it falls back to
+// the string-only [matchSimple] — preserving the pre-metamodel
+// behavior and tolerating ad-hoc/unknown properties rather than
+// rejecting them.
+func (e *Engine) matchProperty(ent *entity.Entity, f *filter.Filter) bool {
+	if matched, handled := e.matchTyped(ent, f); handled {
+		return matched
+	}
+	var val interface{}
+	if ent != nil {
+		val = ent.Properties[f.Property]
+	}
+	return matchSimple(val, f)
+}
+
+// matchTyped attempts a type-aware comparison via the metamodel.
+// handled is false when there is no metamodel, no entity, or the
+// property isn't declared — in which case the caller falls back to
+// string matching.
+func (e *Engine) matchTyped(ent *entity.Entity, f *filter.Filter) (matched, handled bool) {
+	if e.meta == nil || ent == nil {
+		return false, false
+	}
+	def, ok := e.meta.GetEntityDef(ent.Type)
+	if !ok {
+		return false, false
+	}
+	propDef, ok := def.Properties[f.Property]
+	if !ok {
+		return false, false
+	}
+	rec := filter.Record{ID: ent.ID, Type: ent.Type, Properties: ent.Properties}
+	m, err := filter.Match(rec, f, &propDef, e.meta)
+	if err != nil {
+		// A type/parse error (e.g. a non-numeric value on a numeric
+		// property) means the comparison can't hold — treat as no
+		// match, same as the type-aware view path.
+		return false, true
+	}
+	return m, true
 }
 
 // matchSimple does simple value matching without metamodel context.

@@ -1,0 +1,83 @@
+name: Tag Release
+
+# Manually-triggered release cutter. Computes the next v<minor> tag from the
+# latest existing tag and pushes it from the chosen branch (default: develop).
+# Pushing the tag triggers the Release workflow, which builds artifacts and
+# creates the GitHub release. This exists so nobody hand-creates a release
+# object in the UI before the tag — the mistake that left v0.8 / v0.12 as
+# empty, published-looking releases with zero assets. See docs/releasing.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to tag"
+        required: true
+        default: develop
+      dry_run:
+        description: "Compute the next tag but do not push it"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Push next release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Tags follow v0.<minor> (v0.1 .. v0.12). Find the highest existing one
+      # and increment the minor. Kept deliberately simple to match the scheme;
+      # revisit if the project moves to semver with patch/major components.
+      - name: Compute next tag
+        id: next
+        run: |
+          set -euo pipefail
+          latest="$(git tag --list 'v0.*' --sort=-version:refname | head -n1)"
+          if [ -z "$latest" ]; then
+            echo "No existing v0.* tag found; refusing to guess." >&2
+            exit 1
+          fi
+          minor="${latest#v0.}"
+          if ! [[ "$minor" =~ ^[0-9]+$ ]]; then
+            echo "Latest tag '$latest' is not v0.<int>; cannot auto-bump." >&2
+            exit 1
+          fi
+          next="v0.$((minor + 1))"
+          echo "latest=$latest"  >> "$GITHUB_OUTPUT"
+          echo "next=$next"      >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $latest -> next: $next"
+
+      - name: Refuse if tag already exists
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            echo "Tag $NEXT already exists; aborting." >&2
+            exit 1
+          fi
+
+      - name: Push tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
+        run: |
+          set -euo pipefail
+          git tag "$NEXT"
+          git push origin "$NEXT"
+          echo "Pushed $NEXT — the Release workflow will build and publish it."
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run }}
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
+        run: |
+          echo "Dry run: would have pushed $NEXT (not pushed)."

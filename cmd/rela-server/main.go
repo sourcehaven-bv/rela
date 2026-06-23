@@ -71,11 +71,25 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
+	// Note: there is no --database-url flag. The postgres build reads the DSN
+	// from $RELA_DATABASE_URL only, so the credential never lands in process
+	// listings or shell history. See appbuild.Config.DatabaseURL.
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
 	}
 	return f
+}
+
+// discoverOptions maps server flags to appbuild options. --read-only injects a
+// read-only ACL. The postgres DSN is not an option here — it is read from
+// $RELA_DATABASE_URL by appbuild.Discover (env-only, never a flag).
+func discoverOptions(f *serverFlags) []appbuild.Option {
+	var opts []appbuild.Option
+	if f.readOnly {
+		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
+	}
+	return opts
 }
 
 // coverage-ignore: main function - entry point
@@ -94,11 +108,7 @@ func main() {
 		slog.Error("invalid project dir", "error", err)
 		os.Exit(1)
 	}
-	var discoverOpts []appbuild.Option
-	if f.readOnly {
-		discoverOpts = append(discoverOpts, appbuild.WithACL(acl.ReadOnlyACL{}))
-	}
-	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOpts...)
+	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOptions(f)...)
 	if err != nil {
 		slog.Error("failed to initialize project services", "error", err)
 		os.Exit(1)
@@ -117,7 +127,7 @@ func main() {
 
 	app, err := dataentry.NewApp(
 		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
-		svc.EntityManager(), svc.Searcher(), svc.ACL(),
+		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
 	)
@@ -159,6 +169,9 @@ func main() {
 		dataentry.EnvPrincipalResolver(),
 		dataentry.HeaderPrincipalResolver(f.principalHeader),
 	))
+	// Vary on the identity header: under ACL, API responses are
+	// per-principal (TKT-VMD8). No-op when the flag is empty.
+	app.SetPrincipalHeader(f.principalHeader)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

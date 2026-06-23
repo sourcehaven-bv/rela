@@ -304,10 +304,18 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 		deletedRelations = append(deletedRelations, r)
 	}
 
-	// Delete relation files first, then entity file.
+	// Delete relation files first, then the entity file. A real removal
+	// error (not "already gone") aborts before the entity file is touched
+	// and before the in-memory index is mutated, so the entity is never
+	// removed while one of its relations could not be — fail-secure, no
+	// orphaned-from entity (BUG-C20T / issue #888). Not transactional: a
+	// relation file removed before a later failure stays removed, but the
+	// whole op runs under s.mu and the index is updated only on success.
 	for _, rm := range related {
 		key := s.relationFileKey(rm.From, rm.Type, rm.To)
-		_ = s.rooted.Remove(key)
+		if err := s.rooted.Remove(key); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("delete relation file %s--%s--%s: %w", rm.From, rm.Type, rm.To, err)
+		}
 		s.echoes.Forget(s.absPath(key))
 	}
 	key := s.entityFileKey(meta.Type, id)
@@ -437,8 +445,7 @@ func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.R
 	s.entityOrder = storeutil.SortedRemove(s.entityOrder, oldID)
 	s.entities[newID] = entityMeta{ID: newID, Type: meta.Type}
 	s.entityOrder = storeutil.SortedInsert(s.entityOrder, newID)
-	s.notifyDelete(oldID)
-	s.notifyPut(renamed)
+	s.notifyRenamed(oldID, renamed)
 
 	// Update relation index.
 	for _, rm := range toUpdate {

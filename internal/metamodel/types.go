@@ -182,6 +182,22 @@ type PropertyDef struct {
 	Description string   `yaml:"description,omitempty"` // Documentation for the property
 	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
 	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	// Max caps how many attachments a `file`-type property may hold.
+	// Zero/unset means 1 (the default, single-attachment). When > 1 the
+	// property holds a list of attachment paths and the data-entry UI
+	// switches from replace-mode to multi-file add-mode. Only meaningful
+	// for `type: file`.
+	Max int `yaml:"max,omitempty"`
+}
+
+// FileMax returns the effective attachment cap for a file property:
+// Max when set (>0), otherwise 1. Callers should use this rather than
+// reading Max directly so the unset-means-one default lives in one place.
+func (p PropertyDef) FileMax() int {
+	if p.Max > 0 {
+		return p.Max
+	}
+	return 1
 }
 
 // Built-in property types
@@ -441,6 +457,13 @@ type AutomationAction struct {
 	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
 	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
+
+	// AllowACLBypass unlocks rela.bypass_acl in this Lua action (TKT-D8T148).
+	// Operator-only (lives in metamodel.yaml). When true, the script may call
+	// rela.bypass_acl(fn) to obtain a closure-scoped elevated write handle
+	// whose writes skip the ACL deny (still audited, real principal preserved).
+	// Ignored for non-Lua actions.
+	AllowACLBypass bool `yaml:"allow_acl_bypass,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

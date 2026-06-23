@@ -117,16 +117,26 @@ func TestPersistence_AttachmentsSurviveReopen(t *testing.T) {
 	s1 := openStore(t, fs)
 	require.NoError(t, s1.CreateEntity(ctx, entity.New("DOC-1", "document")))
 	require.NoError(t, s1.AttachFile(ctx, "DOC-1", "diagram", "arch.png", bytes.NewReader([]byte("PNG-DATA"))))
+	// A file literally named "*.new" must survive the reopen — the index
+	// loader must not mistake it for an interrupted-write temp file
+	// (RR-BN2MDO).
+	require.NoError(t, s1.AttachFile(ctx, "DOC-1", "diagram", "notes.new", bytes.NewReader([]byte("NEW-DATA"))))
 	require.NoError(t, s1.Close())
 
 	s2 := openStore(t, fs)
 	defer s2.Close()
 
-	rc, err := s2.ReadAttachment(ctx, "DOC-1", "diagram")
+	rc, err := s2.ReadAttachment(ctx, "DOC-1", "diagram", "arch.png")
 	require.NoError(t, err)
 	data, _ := io.ReadAll(rc)
 	rc.Close()
 	assert.Equal(t, "PNG-DATA", string(data))
+
+	rcNew, err := s2.ReadAttachment(ctx, "DOC-1", "diagram", "notes.new")
+	require.NoError(t, err, `a "*.new"-named attachment must survive a store reopen`)
+	dataNew, _ := io.ReadAll(rcNew)
+	rcNew.Close()
+	assert.Equal(t, "NEW-DATA", string(dataNew))
 }
 
 func TestPersistence_PropertyCacheSurvivesReopen(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 )
 
 func TestCheckContentRule(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -82,6 +83,7 @@ func TestCheckContentRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CheckContentRule(tt.content, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)
@@ -91,6 +93,7 @@ func TestCheckContentRule(t *testing.T) {
 }
 
 func TestCheckChecklistRule(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		items []markdown.ChecklistItem
@@ -165,6 +168,7 @@ func TestCheckChecklistRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CheckChecklistRule(tt.items, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckChecklistRule() = %v, want %v", got, tt.want)
@@ -174,6 +178,7 @@ func TestCheckChecklistRule(t *testing.T) {
 }
 
 func TestCheckContentRuleWithChecklist(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -235,6 +240,7 @@ func TestCheckContentRuleWithChecklist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CheckContentRule(tt.content, tt.rule)
 			if got != tt.want {
 				t.Errorf("CheckContentRule() = %v, want %v", got, tt.want)

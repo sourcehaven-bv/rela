@@ -2276,6 +2276,189 @@ Editing `data-entry.yaml` to change a document's `script:` or `command:`
 takes effect on the next request; open document panels pick up the new
 renderer on their next reload.
 
+## Custom apps
+
+Custom **apps** let you extend the data-entry web app with your own HTML+JS
+applications — dashboards, specialized forms, domain mini-tools — without
+forking the SPA or writing Go. An app runs inside a locked-down sandboxed
+iframe and talks to the existing REST API through a host-managed
+`MessageChannel` bridge, so **an app can only ever do what the logged-in user
+can already do**.
+
+### Authoring
+
+The quickest start is the scaffold command, which creates a working,
+bridge-wired starter app you can edit:
+
+```bash
+rela apps new my-dashboard
+# → apps/my-dashboard/index.html  (open /app/my-dashboard)
+```
+
+An app is a **folder** under the project's `apps/` directory (alongside
+`actions/`, `scripts/`, `templates/`) containing an `index.html`. There is no
+separate config:
+
+```text
+apps/ticket-counter/
+  index.html          →  /app/ticket-counter   (id = folder name)
+  app.js              (any sibling files: js, css, images, fonts…)
+  style.css
+```
+
+The **id** is the folder name and must match `^[a-z0-9_-]{1,64}$`. A folder is
+a live app iff it contains `index.html`. The app declares itself via `<meta>`
+tags in `index.html`'s `<head>`:
+
+```html
+<head>
+  <!-- REQUIRED: which bridge contract this app targets -->
+  <meta name="rela-app:bridge-version" content="1">
+  <meta name="rela-app:label" content="Ticket Counter">
+  <meta name="rela-app:title" content="Ticket Counter">
+  <meta name="rela-app:description" content="Counts tickets by status">
+  <!-- the bridge SDK (window.rela); served at the app's own path -->
+  <script src="_rela.js"></script>
+</head>
+```
+
+`label` (falling back to `title`, then the id) is the sidebar entry; `title`
+and `description` are cosmetic. **The app must include `<script
+src="_rela.js"></script>`** to get the `rela.*` bridge — rela serves it at the
+app's own `_rela.js` path.
+
+**Bridge version (required).** `rela-app:bridge-version` declares the version of
+the bridge/SDK contract your app was written against (currently `1`). The
+server refuses to serve an app that omits it or asks for a *newer* bridge than
+the server provides (a `422` with a clear message, and the app won't appear in
+the sidebar) — so a breaking bridge change in a future rela can't silently make
+an old app call methods that no longer exist. When the bridge gains a breaking
+change the version bumps and rela keeps serving older-versioned apps against a
+compatible SDK.
+
+The app and its files are served from `/api/v1/_apps/<id>/`, so reference
+sibling assets with **relative** URLs (`<script src="app.js">`, `<img
+src="logo.png">`).
+
+**Publish / unpublish.** A folder with an `index.html` is live. To take an app
+offline without deleting it, rename the folder (e.g. `ticket-counter` →
+`_ticket-counter`, which fails the id rule) or remove its `index.html`.
+
+### Matching rela's look (optional `_rela.css`)
+
+To render consistently with the rest of the app, opt into rela's styling by
+linking the served stylesheet:
+
+```html
+<head>
+  <link rel="stylesheet" href="_rela.css">
+</head>
+```
+
+(`_rela.css` is a relative URL — it resolves against the app's own base,
+`/api/v1/_apps/<id>/`, same as your other sibling assets.)
+
+`_rela.css` provides two things:
+
+- **Theme tokens** — CSS custom properties for colors (`--text-color`,
+  `--bg-color`, `--card-bg`, `--border-color`, `--accent-color`,
+  `--error/success/warning/info-color`, the `--badge-*` set), surfaces, and
+  borders. Use them in your own CSS (`color: var(--text-color)`) so the app
+  matches the host palette.
+- **Base controls** — three atomic classes: `.btn` / `.btn-primary` (buttons),
+  `.input` (text inputs), `.card` (a bordered surface). These are deliberately
+  minimal; build anything more structural (tables, selects, modals) yourself
+  using the tokens.
+
+**Dark mode follows the host automatically** — when the user switches the data-
+entry theme, rela toggles the same `dark` class on your app's `<html>` element
+(`document.documentElement`, matching the SPA's own `:root.dark`), and the
+tokens flip. No work needed beyond linking `_rela.css` and using `var(--…)` for your
+own colors. Opting in is entirely optional; an app that wants full control of
+its look simply doesn't link it.
+
+### The `rela` bridge
+
+Inside the iframe, a `rela` object (from `_rela.js`) gives the app a
+promise-based, closed set of methods that forward to the REST API over the
+`MessageChannel`:
+
+| Method | REST operation |
+|---|---|
+| `rela.schema()` / `rela.config()` | metamodel + data-entry config |
+| `rela.list({type, params})` | list entities of a type |
+| `rela.get({type, id, params})` | fetch one entity |
+| `rela.search({query, type})` | full-text search |
+| `rela.analyze()` | run the analysis checks |
+| `rela.templates({type})` | entity templates |
+| `rela.position({id, scope})` | prev/next within an ordered set |
+| `rela.create({type, entity})` | create an entity |
+| `rela.update({type, id, patch, etag})` | update an entity |
+| `rela.delete({type, id})` | delete an entity |
+| `rela.relationCreate({type, id, relation, targetId, meta?, direction?})` | link entities |
+| `rela.relationUpdate({type, id, relation, targetId, meta, direction?})` | edit a relation's properties |
+| `rela.relationDelete({type, id, relation, targetId, direction?})` | unlink entities |
+| `rela.action({actionId, entityId?, entityType?})` | run a registered Lua action |
+
+This is a **closed set** — an app cannot ask the host to fetch an arbitrary
+URL. Reads are scoped to the user's read permissions; writes go through the
+normal write path (re-authorized and audited). A denied call rejects with an
+error the app can catch. The SDK signals readiness with a one-time
+`rela:ready` event; calls made before then are queued.
+
+Minimal app (`apps/hello/index.html`):
+
+```html
+<!doctype html>
+<html>
+  <head>
+    <meta name="rela-app:bridge-version" content="1">
+    <script src="_rela.js"></script>
+  </head>
+  <body>
+    <div id="out">loading…</div>
+    <script>
+      window.addEventListener('rela:ready', async () => {
+        const res = await rela.list({ type: 'ticket', params: { per_page: 200 } });
+        document.getElementById('out').textContent = res.data.length + ' tickets';
+      });
+    </script>
+  </body>
+</html>
+```
+
+### Security model
+
+Apps run untrusted code, so the data-entry server and SPA lock them down:
+
+- **Sandboxed iframe** — `sandbox="allow-scripts allow-forms"`, never
+  `allow-same-origin`. No `localStorage`/parent-DOM access. The app loads from
+  its own served path (`/api/v1/_apps/<id>/`) so its files resolve, which makes
+  it same-origin with the API — so its confinement is the CSP, not the origin.
+- **Path-scoped Content-Security-Policy (header)** — every resource directive
+  is scoped to the app's **own** absolute subpath (e.g. `script-src
+  https://host/api/v1/_apps/<id>/`), **not** `'self'` (which would include
+  `/api/`, letting `<img src="/api/v1/tickets/x">` pull data). `connect-src
+  'none'` means the app's own JS cannot `fetch`/`XHR`/WebSocket anything — so it
+  **cannot reach `/api/` directly**. `form-action 'none'` + the sandbox block
+  form/navigation exfil.
+- **Bridge-only data path** — with `connect-src 'none'`, the only route to the
+  API is the `MessageChannel` bridge (a message post, not a network request,
+  so CSP doesn't block it). The bridge exposes only the closed method set above
+  and is the per-app capability chokepoint.
+- **No app-specific permissions (yet)** — an app is a UI shell. Its reads and
+  writes are gated exactly like the SPA's own, so it can do nothing the user
+  couldn't already do. (The bridge is where a future per-app restriction —
+  e.g. read-only — would be enforced.)
+
+**Trust level.** The sandbox protects the *browser* — it does **not** limit
+what an app can do to your *data*. Because an app runs as the logged-in user,
+its code can perform any create/update/delete/link the user can, and can invoke
+any registered Lua action via `rela.action`. Treat an app folder with the
+**same review rigor as a `scripts/` Lua action**: it is code, not content. Apps
+live as files in `apps/`, versioned in git, and should go through the same
+review as any other code.
+
 ## Best Practices
 
 1. **Start with navigation** - Decide which entity types users will work with most, and create

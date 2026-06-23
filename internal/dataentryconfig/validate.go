@@ -915,6 +915,17 @@ func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
 	return errs
 }
 
+// appIDRegex defines the allowed format for app IDs — same shape as action IDs.
+// The ID is used as the URL path segment for GET /api/v1/_apps/{id}, so it must
+// be filesystem- and URL-safe.
+var appIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// ValidAppID reports whether id is a syntactically valid app ID. Apps are
+// discovered by scanning apps/*.html; the id is the filename stem and is used as
+// the URL path segment for GET /api/v1/_apps/{id}, so it must be filesystem- and
+// URL-safe. Exported so the scanner and the request handler share one rule.
+func ValidAppID(id string) bool { return appIDRegex.MatchString(id) }
+
 // validateCommands validates command definitions.
 // actionIDRegex defines the allowed format for action IDs.
 // Lowercase letters, digits, hyphens, underscores, 1-64 characters.

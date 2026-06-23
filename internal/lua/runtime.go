@@ -17,6 +17,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -80,6 +83,15 @@ type Runtime struct {
 	cache         cacheStore        // nil means rela.cache.* is not registered
 	scriptPath    string            // set by RunFile; empty for RunString/inline
 
+	// principal is the identity this runtime runs as, exposed read-only as
+	// rela.principal (TKT-5U6NRR). Set by [WithPrincipal] from the caller's
+	// resolved principal; the zero value renders as {user:"", tool:""} which
+	// the binding maps to the documented unknown fallback. The runtime does
+	// NOT read it from the context itself — keeping principal resolution at
+	// the caller avoids a context-flow the linter (contextcheck) would flag
+	// and keeps the lua package free of ctx-identity plumbing.
+	principal principal.Principal
+
 	// errorFrames holds typed stack frames captured by the PCall message
 	// handler on the most recent failed run. Read via ErrorFrames() after
 	// PCall returns an error. Reset before every PCall.
@@ -128,6 +140,17 @@ func WithTimeout(d time.Duration) Option {
 func WithContext(ctx context.Context) Option {
 	return func(r *Runtime) {
 		r.parentCtx = ctx
+	}
+}
+
+// WithPrincipal sets the identity exposed read-only to scripts as
+// rela.principal (TKT-5U6NRR). The caller resolves the principal (e.g.
+// principal.From(ctx)) ONCE and passes the value here, so the lua package
+// never reaches into the context for identity. Omitting this option leaves
+// rela.principal as the unknown fallback.
+func WithPrincipal(p principal.Principal) Option {
+	return func(r *Runtime) {
+		r.principal = p
 	}
 }
 
@@ -623,6 +646,12 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	r.registerReadBindings(rela)
 	if allowWrites {
 		r.registerWriteBindings(rela)
+		// rela.bypass_acl is registered ONLY when an elevated handle was wired
+		// (an allow_acl_bypass automation action — TKT-D8T148). Absent it, the
+		// binding does not exist and a script cannot elevate.
+		if r.deps.ElevatedManager != nil {
+			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(r.luaBypassACL))
+		}
 	}
 	r.registerContextBindings(rela)
 
@@ -687,6 +716,26 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "write_file", r.L.NewFunction(r.luaWriteFile))
 }
 
+// freezeTable returns a read-only proxy over data: reads fall through to the
+// backing table via __index, while any assignment raises a Lua error via
+// __newindex. The backing table holds the actual key/values and is not exposed
+// directly, so even existing keys cannot be reassigned. Used for rela.principal
+// (TKT-5U6NRR) to make its read-only contract enforced rather than conventional.
+func freezeTable(ls *lua.LState, data *lua.LTable) *lua.LTable {
+	proxy := ls.NewTable()
+	mt := ls.NewTable()
+	ls.SetField(mt, "__index", data)
+	ls.SetField(mt, "__newindex", ls.NewFunction(func(s *lua.LState) int {
+		s.RaiseError("attempt to modify a read-only table")
+		return 0
+	}))
+	// __metatable hides the metatable from getmetatable() and blocks
+	// setmetatable() from swapping it out to bypass the guard.
+	ls.SetField(mt, "__metatable", lua.LString("read-only"))
+	ls.SetMetatable(proxy, mt)
+	return proxy
+}
+
 // registerContextBindings installs per-runtime context tables: args, params,
 // secrets. Present on both reader and writer runtimes.
 func (r *Runtime) registerContextBindings(rela *lua.LTable) {
@@ -706,6 +755,38 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		r.L.SetField(secretsTable, k, lua.LString(v))
 	}
 	r.L.SetField(rela, "secrets", secretsTable)
+
+	// Principal table: the identity on whose behalf this runtime executes,
+	// supplied by the caller via [WithPrincipal] (TKT-5U6NRR). Write-path
+	// automations use this to attribute relations to the acting user — e.g.
+	// stamping a `created-by` edge from the request principal (X-Rela-User) at
+	// submit time, which the client cannot forge. When WithPrincipal was not
+	// passed (CLI, unstamped contexts), the zero Principal renders as the
+	// documented {user="unknown", tool="unknown"} fallback so scripts can
+	// always read the field safely.
+	//
+	// READ-ONLY by design (PLAN-XKMJ AC13 spoofing defense). This field only
+	// *reads* the identity; it is NOT a write/attribution hook. Audit
+	// attribution always derives from callerCtx() inside the write bindings,
+	// never from this table — so even a script that mutates a local copy
+	// cannot forge who a write is recorded as. To make the read-only contract
+	// enforced rather than conventional, the table is frozen: assigning to it
+	// raises a Lua error. (`rela.audit*` / `with_principal` / `with_triggered_by`
+	// remain absent — those WOULD be rewrite vectors.)
+	// "unknown" mirrors the fallback principal.From returns for an unstamped
+	// context, so a script reads the same value whether identity was absent or
+	// simply not passed via WithPrincipal.
+	pUser, pTool := r.principal.User, r.principal.Tool
+	if pUser == "" {
+		pUser = "unknown"
+	}
+	if pTool == "" {
+		pTool = "unknown"
+	}
+	principalTable := r.L.NewTable()
+	r.L.SetField(principalTable, "user", lua.LString(pUser))
+	r.L.SetField(principalTable, "tool", lua.LString(pTool))
+	r.L.SetField(rela, "principal", freezeTable(r.L, principalTable))
 
 	// rela.cache.{get,set,memoize} when a cache is wired. The binding
 	// itself guards against inline/eval contexts (empty scriptPath) by
@@ -1154,12 +1235,29 @@ func luaValueToGo(lv lua.LValue) interface{} {
 	return luaValueToGoSeen(lv, make(map[*lua.LTable]bool))
 }
 
+// luaNumberToGo converts a Lua number to the most faithful Go type.
+// gopher-lua has a single float64-backed number type, but a value that
+// is integral and fits in int64 round-trips better as an int64 — an
+// entity ID, a ticket number, or epoch-nanos would otherwise lose its
+// integer type (and re-serialize in exponential / trailing-.0 form). The
+// reverse direction (GoToLuaValue) already preserves int/int64, so this
+// closes the lossy leg. Non-integral or out-of-int64-range values stay
+// float64. (Integers beyond 2^53 can't be held by the float64 LNumber in
+// the first place, so this is type-faithful up to that ceiling.)
+func luaNumberToGo(n lua.LNumber) interface{} {
+	f := float64(n)
+	if f == math.Trunc(f) && f >= math.MinInt64 && f <= math.MaxInt64 {
+		return int64(f)
+	}
+	return f
+}
+
 func luaValueToGoSeen(lv lua.LValue, seen map[*lua.LTable]bool) interface{} {
 	switch v := lv.(type) {
 	case lua.LBool:
 		return bool(v)
 	case lua.LNumber:
-		return float64(v)
+		return luaNumberToGo(v)
 	case lua.LString:
 		return string(v)
 	case *lua.LTable:
@@ -1401,6 +1499,108 @@ func WarningsToTable(ls *lua.LState, warnings []entity.Warning) lua.LValue {
 	return tbl
 }
 
+// luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
+// a single argument `admin`: a write handle whose mutations skip the ACL deny,
+// backed by the elevated Mutator wired into WriteDeps. Elevation is therefore
+// an OBJECT CAPABILITY scoped to the closure — the gated rela.* bindings are
+// never elevated; only writes made through `admin` bypass ACL.
+//
+// After fn returns (or raises), `admin` is INVALIDATED: its methods raise. A
+// script that squirrels `admin` into a global and calls it later gets a dead
+// handle, so the lexical scope is enforced, not merely conventional (mirrors
+// the frozen rela.principal). fn's return value(s) propagate to the caller; a
+// raise inside fn propagates too (a failed elevated write must surface).
+func (r *Runtime) luaBypassACL(ls *lua.LState) int {
+	fn := ls.CheckFunction(1)
+	if r.deps.ElevatedManager == nil {
+		// Defensive: the binding is only registered when ElevatedManager is
+		// set, but fail loud rather than silently no-op if that ever drifts.
+		ls.RaiseError("rela.bypass_acl: no elevated write handle is available")
+		return 0
+	}
+
+	// live gates every admin.* call; set false after fn returns so a captured
+	// handle is dead outside the closure's dynamic extent.
+	live := true
+	admin := r.newElevatedHandle(ls, r.deps.ElevatedManager, &live)
+
+	// Invalidate on every exit path (normal return or Lua error). pcall keeps
+	// the runtime alive so we can flip `live` before re-raising.
+	defer func() { live = false }()
+
+	ls.Push(fn)
+	ls.Push(admin)
+	// Protected call so we can guarantee invalidation even when fn raises,
+	// then re-surface the error to the caller.
+	if err := ls.PCall(1, lua.MultRet, nil); err != nil {
+		live = false
+		ls.RaiseError("rela.bypass_acl: %s", err.Error())
+		return 0
+	}
+	// Return whatever fn returned (already on the stack after PCall).
+	return ls.GetTop() - 1
+}
+
+// newElevatedHandle builds the `admin` table passed to a rela.bypass_acl
+// closure. Its methods route to the elevated Mutator `em` and check `*live`
+// first, so they raise once the closure has returned. No reads, no principal,
+// no nested bypass.
+//
+// v1 surface: create_relation, delete_relation, delete_entity — the
+// link/unlink + remove operations the system-invariant use cases (e.g.
+// authorship stamping via created-by) need. create_entity / update_entity are a
+// deliberate follow-up: they marshal a full entity table and aren't required by
+// the motivating case; gating elevated *entity* creation is a larger surface
+// best added with its own tests.
+func (r *Runtime) newElevatedHandle(ls *lua.LState, em Mutator, live *bool) *lua.LTable {
+	t := ls.NewTable()
+	guard := func(name string) bool {
+		if !*live {
+			ls.RaiseError("rela.bypass_acl: handle %q used outside its closure (invalidated)", name)
+			return false
+		}
+		return true
+	}
+	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
+		if !guard("create_relation") {
+			return 0
+		}
+		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
+		if _, err := em.CreateRelation(r.callerCtx(), from, relType, to, entity.RelationOptions{}); err != nil {
+			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
+			return 0
+		}
+		s.Push(lua.LTrue)
+		return 1
+	}))
+	ls.SetField(t, "delete_relation", ls.NewFunction(func(s *lua.LState) int {
+		if !guard("delete_relation") {
+			return 0
+		}
+		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
+		if err := em.DeleteRelation(r.callerCtx(), from, relType, to); err != nil {
+			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
+			return 0
+		}
+		s.Push(lua.LTrue)
+		return 1
+	}))
+	ls.SetField(t, "delete_entity", ls.NewFunction(func(s *lua.LState) int {
+		if !guard("delete_entity") {
+			return 0
+		}
+		id := s.CheckString(1)
+		cascade := s.OptBool(2, false)
+		if _, err := em.DeleteEntity(r.callerCtx(), id, cascade); err != nil {
+			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
+			return 0
+		}
+		s.Push(lua.LTrue)
+		return 1
+	}))
+	return t
+}
+
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean
 func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
@@ -1631,45 +1831,41 @@ func (r *Runtime) luaSortEntities(ls *lua.LState) int {
 	return 1
 }
 
-// sortEntries sorts entity entries by their property value using bubble sort.
+// sortEntries sorts entity entries by their property value. Stable so
+// entries with equal sort keys keep their input order.
 func sortEntries(entries []sortableEntry, descending bool) {
-	for i := range len(entries) - 1 {
-		for j := range len(entries) - i - 1 {
-			if shouldSwapEntries(entries[j].prop, entries[j+1].prop, descending) {
-				entries[j], entries[j+1] = entries[j+1], entries[j]
-			}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if descending {
+			return entryLess(entries[j].prop, entries[i].prop)
 		}
-	}
+		return entryLess(entries[i].prop, entries[j].prop)
+	})
 }
 
-// shouldSwapEntries returns true if entries should be swapped for the desired order.
-func shouldSwapEntries(a, b lua.LValue, descending bool) bool {
+// entryLess reports whether a sorts before b. Two numeric values compare
+// numerically; otherwise both compare as strings.
+func entryLess(a, b lua.LValue) bool {
 	aStr, aNum, aIsNum := luaValueToSortable(a)
 	bStr, bNum, bIsNum := luaValueToSortable(b)
-
-	var aLess bool
 	if aIsNum && bIsNum {
-		aLess = aNum < bNum
-	} else {
-		aLess = aStr < bStr
+		return aNum < bNum
 	}
-
-	if descending {
-		return aLess // swap if a < b (we want larger first)
-	}
-	return !aLess && (aStr != bStr || aNum != bNum) // swap if a > b
+	return aStr < bStr
 }
 
-// luaValueToSortable converts a Lua value to sortable string and number representations.
+// luaValueToSortable converts a Lua value to sortable string and number
+// representations. A string is treated as numeric only when it parses
+// *entirely* as a number — strconv.ParseFloat over the trimmed value —
+// so "1.2.0" or "3 blind mice" sort lexicographically rather than being
+// silently reduced to their numeric prefix (1 and 3), which the old
+// fmt.Sscanf("%f") accepted.
 func luaValueToSortable(v lua.LValue) (str string, num float64, isNum bool) {
 	switch val := v.(type) {
 	case lua.LNumber:
 		return "", float64(val), true
 	case lua.LString:
 		s := string(val)
-		// Try to parse as number for numeric sorting
-		var n float64
-		if _, err := fmt.Sscanf(s, "%f", &n); err == nil {
+		if n, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
 			return s, n, true
 		}
 		return s, 0, false

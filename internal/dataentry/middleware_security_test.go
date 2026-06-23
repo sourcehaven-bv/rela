@@ -88,6 +88,35 @@ func TestRequireSameOrigin_AllowsExemptPath(t *testing.T) {
 	}
 }
 
+func TestIsSensitivePath_AppsCarveOut(t *testing.T) {
+	// App files (/api/v1/_apps/<id>/...) are exempt from the same-origin gate so
+	// origin-less iframe sub-resource loads work. The carve-out must be exact:
+	// it must NOT widen to a sibling path that merely shares the prefix.
+	exempt := []string{
+		"/api/v1/_apps/dash/",
+		"/api/v1/_apps/dash/app.js",
+		"/api/v1/_apps/dash/_rela.js",
+	}
+	for _, p := range exempt {
+		if isSensitivePath(p) {
+			t.Errorf("%q should be exempt (non-sensitive)", p)
+		}
+	}
+	// These must STAY gated — the carve-out is "/api/v1/_apps/" with a trailing
+	// slash, so "/api/v1/_appsX" and the real data surface are unaffected.
+	gated := []string{
+		"/api/v1/_appsX/evil",   // prefix lookalike, no slash
+		"/api/v1/_apps",         // the bare path (301-redirects anyway)
+		"/api/v1/tickets/TKT-1", // the real data surface
+		"/api/v1/_search",
+	}
+	for _, p := range gated {
+		if !isSensitivePath(p) {
+			t.Errorf("%q must stay same-origin gated", p)
+		}
+	}
+}
+
 func TestRequireSameOrigin_RejectsCrossOriginOnSensitivePath(t *testing.T) {
 	s := newTestSecurity(t)
 	h := s.requireSameOrigin(okHandler())

@@ -26,12 +26,16 @@ func TestTranslateVerb_Roundtrip(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.verb, func(t *testing.T) {
-			req := translateVerb(c.verb, "ticket")
+			req := translateVerb(c.verb, "ticket", "TKT-001")
 			if req.Op != c.op {
 				t.Errorf("Op = %q, want %q", req.Op, c.op)
 			}
-			if req.EntityType != "ticket" {
-				t.Errorf("EntityType = %q, want %q", req.EntityType, "ticket")
+			s, ok := req.Subject.(acl.EntitySubject)
+			if !ok {
+				t.Errorf("Subject = %T, want acl.EntitySubject", req.Subject)
+			}
+			if s.Type != "ticket" || s.ID != "TKT-001" {
+				t.Errorf("Subject = %+v, want {Type:ticket, ID:TKT-001}", s)
 			}
 		})
 	}
@@ -49,7 +53,7 @@ func TestTranslateVerb_UnknownPanics(t *testing.T) {
 			t.Error("expected panic on unknown verb; got none")
 		}
 	}()
-	translateVerb("transition:done", "ticket")
+	translateVerb("transition:done", "ticket", "")
 }
 
 // AC1: read-only principal sees all per-item verbs as false.
@@ -101,15 +105,19 @@ func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 // WriteRequest carries no entity ID.)
 func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	app := newTestAppV1(t)
-	app.acl = acl.NewDeclarative(&acl.Policy{
+	d, err := acl.NewDeclarative(&acl.Policy{
 		UserEntityType: "person",
 		Roles: map[string]acl.RoleDef{
-			"ticket-writer": {Write: []string{"ticket"}},
+			"ticket-writer": {Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}},
 		},
 		Assignments: map[string]string{
 			"test-user": "ticket-writer",
 		},
-	})
+	}, acl.NullGraph{}, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	app.acl = d
 
 	// Declarative looks up the principal by Principal.User against
 	// Assignments. Stamp a matching User on ctx.

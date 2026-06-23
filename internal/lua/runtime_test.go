@@ -255,6 +255,7 @@ func (s *mockSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[sea
 }
 
 func TestRunFile_BasicOutput(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -283,6 +284,7 @@ func TestRunFile_BasicOutput(t *testing.T) {
 }
 
 func TestRunFile_Args(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -310,6 +312,7 @@ func TestRunFile_Args(t *testing.T) {
 }
 
 func TestGetEntity(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -357,6 +360,7 @@ rela.output({
 }
 
 func TestGetEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -391,6 +395,7 @@ end
 }
 
 func TestListEntities(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -421,6 +426,7 @@ rela.output({count = #tickets})
 }
 
 func TestListEntities_WithFilter(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -451,6 +457,7 @@ rela.output({count = #tickets})
 }
 
 func TestGetRelations(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -508,6 +515,7 @@ rela.output({
 }
 
 func TestWriteFile(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -535,6 +543,7 @@ func TestWriteFile(t *testing.T) {
 }
 
 func TestScriptError_Syntax(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -554,6 +563,7 @@ func TestScriptError_Syntax(t *testing.T) {
 }
 
 func TestScriptError_Runtime(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -573,6 +583,7 @@ func TestScriptError_Runtime(t *testing.T) {
 }
 
 func TestWriteFile_PathTraversal(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -599,6 +610,7 @@ func TestWriteFile_PathTraversal(t *testing.T) {
 }
 
 func TestWriteFile_AbsolutePathOutside(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -615,6 +627,7 @@ func TestWriteFile_AbsolutePathOutside(t *testing.T) {
 }
 
 func TestWriteFile_InOutputDir(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -642,6 +655,7 @@ func TestWriteFile_InOutputDir(t *testing.T) {
 }
 
 func TestListEntities_EmptyType(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -661,6 +675,7 @@ func TestListEntities_EmptyType(t *testing.T) {
 }
 
 func TestListEntities_InvalidFilter(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -680,6 +695,7 @@ func TestListEntities_InvalidFilter(t *testing.T) {
 }
 
 func TestGetRelations_NoFilters(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -711,6 +727,7 @@ rela.output({count = #rels})
 }
 
 func TestTraceFrom_NonExistent(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -746,6 +763,7 @@ end
 }
 
 func TestSearch(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -778,6 +796,7 @@ rela.output({count = #results})
 }
 
 func TestSearch_EmptyQuery(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -797,6 +816,7 @@ func TestSearch_EmptyQuery(t *testing.T) {
 }
 
 func TestCreateEntity(t *testing.T) {
+	t.Parallel()
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
@@ -838,6 +858,7 @@ rela.output({
 }
 
 func TestCreateEntity_EmptyType(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -857,6 +878,7 @@ func TestCreateEntity_EmptyType(t *testing.T) {
 }
 
 func TestUpdateEntity(t *testing.T) {
+	t.Parallel()
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
@@ -897,6 +919,7 @@ rela.output({
 }
 
 func TestUpdateEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -919,6 +942,7 @@ func TestUpdateEntity_NotFound(t *testing.T) {
 }
 
 func TestDeleteEntity(t *testing.T) {
+	t.Parallel()
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
@@ -955,6 +979,7 @@ rela.output({success = success})
 }
 
 func TestDeleteEntity_NotFound(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -974,6 +999,7 @@ func TestDeleteEntity_NotFound(t *testing.T) {
 }
 
 func TestCreateRelation(t *testing.T) {
+	t.Parallel()
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
@@ -1020,6 +1046,7 @@ rela.output({
 }
 
 func TestCreateRelation_MissingArgs(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1039,6 +1066,7 @@ func TestCreateRelation_MissingArgs(t *testing.T) {
 }
 
 func TestDeleteRelation(t *testing.T) {
+	t.Parallel()
 	ws, root := newMockWorkspace(t), t.TempDir()
 	var buf bytes.Buffer
 
@@ -1069,6 +1097,7 @@ rela.output({success = success})
 }
 
 func TestFindPath(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1107,6 +1136,7 @@ end
 }
 
 func TestFindPath_NoPath(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1141,6 +1171,7 @@ end
 }
 
 func TestFindPath_MissingArgs(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1160,6 +1191,7 @@ func TestFindPath_MissingArgs(t *testing.T) {
 }
 
 func TestTraceFrom(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1199,6 +1231,7 @@ rela.output({
 }
 
 func TestTraceTo(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1240,6 +1273,7 @@ rela.output({
 // TestSandbox_DangerousLibrariesUnavailable verifies that dangerous Lua libraries
 // (io, os, debug) are not available in the sandboxed runtime.
 func TestSandbox_DangerousLibrariesUnavailable(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 
 	tests := []struct {
@@ -1253,6 +1287,7 @@ func TestSandbox_DangerousLibrariesUnavailable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			r := NewWriter(ws.services("/tmp"), &buf)
 			defer r.Close()
@@ -1269,6 +1304,7 @@ func TestSandbox_DangerousLibrariesUnavailable(t *testing.T) {
 // TestSandbox_DangerousFunctionsRemoved verifies that dangerous base functions
 // are removed from the sandbox.
 func TestSandbox_DangerousFunctionsRemoved(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 
 	dangerousFuncs := []string{
@@ -1286,6 +1322,7 @@ func TestSandbox_DangerousFunctionsRemoved(t *testing.T) {
 
 	for _, fn := range dangerousFuncs {
 		t.Run(fn, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			r := NewWriter(ws.services("/tmp"), &buf)
 			defer r.Close()
@@ -1301,6 +1338,7 @@ func TestSandbox_DangerousFunctionsRemoved(t *testing.T) {
 
 // TestSandbox_SafeLibrariesAvailable verifies that safe Lua libraries are available.
 func TestSandbox_SafeLibrariesAvailable(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 
 	tests := []struct {
@@ -1323,6 +1361,7 @@ func TestSandbox_SafeLibrariesAvailable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			r := NewWriter(ws.services("/tmp"), &buf)
 			defer r.Close()
@@ -1337,6 +1376,7 @@ func TestSandbox_SafeLibrariesAvailable(t *testing.T) {
 
 // TestWriteFile_NestedDirectories verifies that write_file creates nested directories in output/.
 func TestWriteFile_NestedDirectories(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1365,6 +1405,7 @@ func TestWriteFile_NestedDirectories(t *testing.T) {
 
 // TestSetArgs verifies that SetArgs correctly sets script arguments.
 func TestSetArgs(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1390,6 +1431,7 @@ func TestSetArgs(t *testing.T) {
 }
 
 func TestSortEntities_ByStringProperty(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1423,6 +1465,7 @@ rela.output(result)
 }
 
 func TestSortEntities_ByNumericProperty(t *testing.T) {
+	t.Parallel()
 	// Create workspace with entities that have numeric-like order property
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -1477,6 +1520,7 @@ rela.output(result)
 }
 
 func TestSortEntities_Descending(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1509,6 +1553,7 @@ rela.output(result)
 }
 
 func TestSortEntities_EmptyProperty(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1526,6 +1571,7 @@ func TestSortEntities_EmptyProperty(t *testing.T) {
 }
 
 func TestEntityProp(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1562,6 +1608,7 @@ rela.output({
 }
 
 func TestEntityProp_EmptyStringUsesDefault(t *testing.T) {
+	t.Parallel()
 	// Create entity with empty string property
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -1611,6 +1658,7 @@ rela.output({
 }
 
 func TestWriteFile_EnsureNewline(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1637,6 +1685,7 @@ func TestWriteFile_EnsureNewline(t *testing.T) {
 }
 
 func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1663,6 +1712,7 @@ func TestWriteFile_EnsureNewline_AlreadyHasNewline(t *testing.T) {
 }
 
 func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1689,6 +1739,7 @@ func TestWriteFile_EnsureNewline_EmptyContent(t *testing.T) {
 }
 
 func TestEntityStripPrefix(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1715,6 +1766,7 @@ rela.output({slug = e:strip_prefix()})
 }
 
 func TestEntityStripPrefix_NoHyphen(t *testing.T) {
+	t.Parallel()
 	// Create entity with ID that has no hyphen
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -1753,6 +1805,7 @@ rela.output({slug = e:strip_prefix()})
 }
 
 func TestMdLink(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1777,6 +1830,7 @@ func TestMdLink(t *testing.T) {
 }
 
 func TestMdRef(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1801,6 +1855,7 @@ func TestMdRef(t *testing.T) {
 }
 
 func TestMdTable(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1834,6 +1889,7 @@ rela.output({table = tbl})
 }
 
 func TestMdEntityTable_PropertyColumns(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1873,6 +1929,7 @@ rela.output({table = tbl})
 }
 
 func TestMdEntityTable_FunctionColumn(t *testing.T) {
+	t.Parallel()
 	ws := testWorkspace(t)
 	var buf bytes.Buffer
 
@@ -1906,6 +1963,7 @@ rela.output({table = tbl})
 }
 
 func TestMdEntityTable_DefaultValue(t *testing.T) {
+	t.Parallel()
 	// Create entity with missing property
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -1960,6 +2018,7 @@ rela.output({table = tbl})
 // Tests for shebang handling
 
 func TestStripShebang(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -1977,6 +2036,7 @@ func TestStripShebang(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := stripShebang(tt.input)
 			if got != tt.expected {
 				t.Errorf("stripShebang(%q) = %q, want %q", tt.input, got, tt.expected)
@@ -1986,9 +2046,11 @@ func TestStripShebang(t *testing.T) {
 }
 
 func TestShebangExecution(t *testing.T) {
+	t.Parallel()
 	script := "#!/usr/bin/env rela script\nrela.output({status = 'ok'})"
 
 	t.Run("RunString", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2008,6 +2070,7 @@ func TestShebangExecution(t *testing.T) {
 	})
 
 	t.Run("RunFile", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2033,7 +2096,9 @@ func TestShebangExecution(t *testing.T) {
 }
 
 func TestRunFile_Errors(t *testing.T) {
+	t.Parallel()
 	t.Run("line numbers preserved with shebang", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2056,6 +2121,7 @@ func TestRunFile_Errors(t *testing.T) {
 	})
 
 	t.Run("includes filename", func(t *testing.T) {
+		t.Parallel()
 		ws := testWorkspace(t)
 		var buf bytes.Buffer
 		r := NewWriter(ws.services("/tmp"), &buf)
@@ -2078,6 +2144,7 @@ func TestRunFile_Errors(t *testing.T) {
 }
 
 func TestWithParams(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2104,6 +2171,7 @@ func TestWithParams(t *testing.T) {
 }
 
 func TestWithParams_Empty(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2131,6 +2199,7 @@ func TestWithParams_Empty(t *testing.T) {
 }
 
 func TestRunActionString_ReturnTable(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2156,6 +2225,7 @@ func TestRunActionString_ReturnTable(t *testing.T) {
 }
 
 func TestRunActionString_NoReturn(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2170,6 +2240,7 @@ func TestRunActionString_NoReturn(t *testing.T) {
 }
 
 func TestRunActionString_Error(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2187,6 +2258,7 @@ func TestRunActionString_Error(t *testing.T) {
 }
 
 func TestActionMode_OutputIsWarning(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2212,6 +2284,7 @@ func TestActionMode_OutputIsWarning(t *testing.T) {
 // parent context passed via WithContext interrupts an in-flight Lua busy loop,
 // rather than waiting for the internal timeout to fire.
 func TestWithContext_CancellationInterruptsBusyLoop(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2392,6 +2465,7 @@ func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
 // ctx. luaSearch invokes two collaborator methods (Search + GetEntity),
 // so per-call recording is necessary to catch a regression at either site.
 func TestReadBindings_UseCallerContext(t *testing.T) {
+	t.Parallel()
 	const ticketID, featureID = "TKT-001", "FEAT-001"
 	const searchTerm = "Test" // matches the "Test Ticket" / "Test Feature" seeds
 
@@ -2410,6 +2484,7 @@ func TestReadBindings_UseCallerContext(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ws := newMockWorkspace(t)
 			// Sanity: confirm the seeds the scripts depend on really exist.
 			// Stops silent test no-ops if a future refactor renames seeds.
@@ -2455,6 +2530,7 @@ func TestReadBindings_UseCallerContext(t *testing.T) {
 // regression to the bug this ticket fixes — would also have to break
 // this test to land.
 func TestReadBindings_FallbackWhenNoParentContext(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	rec := &ctxRecorder{}
 	deps := spiedDeps(ws.services(t.TempDir()), rec)
@@ -2480,6 +2556,7 @@ func TestReadBindings_FallbackWhenNoParentContext(t *testing.T) {
 // TestWithContext_NoTimeoutStillCancels verifies that even with the internal
 // timeout disabled, a cancelled parent context interrupts execution.
 func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2507,6 +2584,7 @@ func TestWithContext_NoTimeoutStillCancels(t *testing.T) {
 }
 
 func TestWithSecrets(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2533,6 +2611,7 @@ func TestWithSecrets(t *testing.T) {
 }
 
 func TestWithSecrets_Empty(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2573,6 +2652,7 @@ func (m *mockWorkspace) readDeps(projectRoot string) ReadDeps {
 // This replaces the old runtime-level nil-check ("entity manager not
 // available"). Structural safety: validation rules cannot mutate, period.
 func TestReaderRuntime_MutationBindingsAbsent(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2604,6 +2684,7 @@ func TestReaderRuntime_MutationBindingsAbsent(t *testing.T) {
 // validation rule author would encounter if they accidentally called a
 // mutation.
 func TestReaderRuntime_MutationCallIsLuaNilCall(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2630,6 +2711,7 @@ func TestReaderRuntime_MutationCallIsLuaNilCall(t *testing.T) {
 // bindings would be registered and nil-deref on first call — fail loud at
 // construction instead.
 func TestNewWriter_PanicsOnNilEntityManager(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -2648,6 +2730,7 @@ func TestNewWriter_PanicsOnNilEntityManager(t *testing.T) {
 // TestWriterRuntime_MutationBindingsPresent is the positive counterpart:
 // a writer runtime has all mutation bindings registered as functions.
 func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2678,6 +2761,7 @@ func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
 // We use print() to readback because rela.output is intentionally silenced
 // in document mode (see TestDocumentMode_OutputIsWarning).
 func TestDocumentMode_ContextInjection(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2707,6 +2791,7 @@ print(rela.document.entry_id)`
 // action mode (so that CLI/scheduler/MCP keep their native os.Stdout);
 // rela.output routes to the captured buffer in vanilla mode.
 func TestDocumentMode_AbsentInOtherContexts(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2739,6 +2824,7 @@ func TestDocumentMode_AbsentInOtherContexts(t *testing.T) {
 // Captured stdout in document mode is the rendered markdown, so stray
 // JSON would land inline in the rendered document. Mirrors AC5.
 func TestDocumentMode_OutputIsWarning(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	var buf bytes.Buffer
 
@@ -2766,6 +2852,7 @@ func TestDocumentMode_OutputIsWarning(t *testing.T) {
 // returned (not converted to a Go map), so callers can branch on
 // LTable vs LNil and walk the table directly.
 func TestRunValidationString_ReturnsLTable(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
 	defer r.Close()
@@ -2789,6 +2876,7 @@ func TestRunValidationString_ReturnsLTable(t *testing.T) {
 // doesn't return anything yields LNil (not Go nil) so callers can
 // type-switch uniformly.
 func TestRunValidationString_NoReturnIsNil(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
 	defer r.Close()
@@ -2807,6 +2895,7 @@ func TestRunValidationString_NoReturnIsNil(t *testing.T) {
 // frame Path — which is what the validation surface relies on for
 // envelope-path/source-slice resolution.
 func TestRunValidationString_RuntimeErrorCapturesFrames(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
 	defer r.Close()
@@ -2833,6 +2922,7 @@ func TestRunValidationString_RuntimeErrorCapturesFrames(t *testing.T) {
 // will be empty (nothing ran) and the error is the gopher-lua
 // compile error.
 func TestRunValidationString_CompileErrorReturnsError(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
 	defer r.Close()
@@ -2851,6 +2941,7 @@ func TestRunValidationString_CompileErrorReturnsError(t *testing.T) {
 // flow through applyTimeout the same way as RunString / RunActionString:
 // a busy loop is cancelled by the deadline rather than running forever.
 func TestRunValidationString_HonorsTimeout(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -2878,6 +2969,7 @@ func TestRunValidationString_HonorsTimeout(t *testing.T) {
 // entities) does not accumulate orphaned LValues toward gopher-lua's
 // ~256-slot stack ceiling.
 func TestRunValidationString_ErrorPathDoesNotLeakStack(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
 	defer r.Close()
@@ -2900,6 +2992,7 @@ func TestRunValidationString_ErrorPathDoesNotLeakStack(t *testing.T) {
 // CLI surface (where shebangs are common) still parses correctly when
 // dropped into a validation rule.
 func TestRunValidationString_StripsShebang(t *testing.T) {
+	t.Parallel()
 	ws := newMockWorkspace(t)
 	r := NewReader(ws.services("/tmp").ReadDeps, io.Discard)
 	defer r.Close()

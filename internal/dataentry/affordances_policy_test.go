@@ -29,7 +29,12 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	resolver, err := affordances.New(&policy, app.Meta(), storeRelationLookup{st: app.store})
+	declarative, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store), app.store)
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	resolver, err := affordances.New(app.Meta(),
+		storeRelationLookup{st: app.store}, declarative)
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
@@ -216,7 +221,7 @@ func TestPolicyResolver_NoAffordanceBlocks_PermissiveWire(t *testing.T) {
 	// policy run through affordances.New yields empty verdicts.
 	const aclYAML = `
 roles:
-  admin: { write: ["*"] }
+  admin: { create: ["*"], update: ["*"], delete: ["*"] }
 assignments:
   alice: admin
 `

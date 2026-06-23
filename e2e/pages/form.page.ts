@@ -293,6 +293,20 @@ export class FormPage extends BasePage {
     await this.page.keyboard.type(text);
   }
 
+  /** Computed `font-family` of the bold toolbar button's `::before` pseudo
+   *  element. Used by markdown-editor.spec.ts to assert that the bundled
+   *  Font Awesome stylesheet actually applied (TKT-ZDRS) — EasyMDE renders
+   *  its icons via FA glyph classes, so a non-FA family means the bundle
+   *  failed to land. Returns null if the button isn't in the DOM (the
+   *  caller asserts that separately, so failure messages stay diagnostic).
+   *  Implemented via `evaluate` rather than a Locator because computed-style
+   *  on a pseudo-element isn't exposed through Playwright's selector API. */
+  async getBoldToolbarIconFontFamily(): Promise<string | null> {
+    return this.markdownToolbar.locator('.fa-bold').first().evaluate(
+      (el) => window.getComputedStyle(el, '::before').fontFamily,
+    ).catch(() => null);
+  }
+
   // --- Entity-reference picker (TKT-I5NO) ---
 
   /** Toolbar button that opens the EntityPickerModal. Located by its

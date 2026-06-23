@@ -527,11 +527,41 @@ fields, omit hidden fields, and filter enum options, then commits only
 the visible + writable keys; the server fills hidden / read-only
 defaults itself (downstream of the gate).
 
+### View-section row entities (TKT-IHC7D)
+
+Cards/list view sections (`display: properties | list | content | cards`)
+serve as a per-entity surface from the user's POV: each row is the
+inline-edit target of the next interaction. Their row entities
+(`V1ViewEntity`) carry **typed `_props`** (the entity's property values,
+typed not display-stringified) and **per-row `_fields`** with the same
+sparse semantics as `V1Entity._fields`:
+
+```json
+{
+  "id": "TKT-001",
+  "title": "Add login",
+  "type": "ticket",
+  "fields": [{"property": "status", "label": "Status", "values": ["open"]}],
+  "_props": {"status": "open", "title": "Add login"},
+  "_fields": {"status": {"writable": false}}
+}
+```
+
+`_props` and `_fields` are hidden-property-stripped at the source: a
+property hidden by the metamodel + ACL never appears in either map. The
+two maps may diverge in one direction only — `_fields` can carry a key
+absent from `_props` when the property has no stored value but a
+non-default verdict (e.g. `writable: false` on an unset field). Table
+sections (`display: table`) and the entry-source section keep their
+existing shape; the entry section's properties + affordances ride on
+the parent `entry` (`V1Entity`).
+
 ### Out of scope (this ticket)
 
 - **List-query affordances.** `_fields` and `_relations` ride only on
-  per-entity GET and the dry-run create; list / collection responses
-  keep their existing shape.
+  per-entity GET, the dry-run create, and view-section row entities;
+  list / collection responses (`GET /entities/<type>`) keep their
+  existing shape.
 - **Per-link verdicts** (different verdicts for different links of the
   same relation type). Deferred — requires per-link state-dependent
   gates.
@@ -541,3 +571,163 @@ defaults itself (downstream of the gate).
 - **Inline dry-run warning display.** The dry-run returns soft
   `warnings`, but the create form does not yet render them per-field;
   they still surface on the commit response.
+
+---
+
+## Data-entry API: GET /api/v1/_apps/{id}/{path}
+
+Serves a custom app's files for embedding in a sandboxed iframe. See the
+"Custom apps" section of `docs/data-entry.md` for the authoring model and the
+`rela.*` bridge surface.
+
+```http
+GET /api/v1/_apps/ticket-counter/            → the app's index.html
+GET /api/v1/_apps/ticket-counter/app.js      → a sibling file from apps/ticket-counter/
+GET /api/v1/_apps/ticket-counter/_rela.js    → the bridge SDK (reserved path)
+```
+
+- `{id}` must match `^[a-z0-9_-]{1,64}$` (else `400`).
+- An app is the folder `apps/{id}/` containing `index.html` (folder-discovered,
+  no config registry). A bare `/_apps/{id}` (no trailing slash) `301`-redirects
+  to `/_apps/{id}/` so relative asset URLs resolve. An unknown app, or an entry
+  that doesn't exist / escapes the app directory, returns `404`.
+- `{path}` is resolved within `apps/{id}/` traversal-resistant (`..`,
+  absolute, symlinks rejected). Content-Type is inferred from the extension.
+  Reserved: `_rela.js` is served from the server (the bridge SDK), and the app
+  cannot shadow it or serve any other `_`-prefixed entry.
+- Every response carries a **path-scoped CSP header** — resource directives
+  scoped to `/api/v1/_apps/{id}/` (not `'self'`), `connect-src 'none'`,
+  `form-action 'none'`, `frame-ancestors 'self'` — plus
+  `X-Content-Type-Options: nosniff`. This (not origin isolation) is what
+  confines the app to its own files + the `MessageChannel` bridge.
+
+There is **no new ACL verb** for apps: an app inherits the logged-in user's
+permissions, so its reads/writes are gated exactly as the SPA's own.
+
+---
+
+## Attachments (`_attachments`)
+
+A `file`-type property holds a binary attachment (image, PDF, …). The
+bytes are stored by the backend keyed to `(entity id, property)`; the
+property value in `properties` is the stored path string, which clients
+should treat as opaque — use `_attachments` and the download endpoint
+instead.
+
+A `file` property can hold one attachment (the default) or several, when
+its metamodel `max` is set above 1 (see `docs/metamodel.md`).
+
+### Metadata on per-entity GET
+
+Per-entity responses carry an `_attachments` map keyed by property name.
+The value is **always a list** — even a single-attachment property reports
+a one-element array, matching how `list:` properties and `_relations` are
+always arrays. Only `file` properties that actually carry a file appear.
+Same closed-world / pointer semantics as `_fields` / `_relations`: present
+(possibly empty) on every per-entity response (GET, PATCH, POST create,
+clone), absent on list rows.
+
+```json
+{
+  "id": "TKT-001",
+  "type": "ticket",
+  "properties": {
+    "screenshot": "attachments/TKT-001/screenshot/shot.png",
+    "docs": [
+      "attachments/TKT-001/docs/a.pdf",
+      "attachments/TKT-001/docs/b.pdf"
+    ]
+  },
+  "_attachments": {
+    "screenshot": [
+      { "id": "shot.png", "filename": "shot.png", "size": 20480,
+        "contentType": "image/png",
+        "href": "/api/v1/tickets/TKT-001/_attachments/screenshot/shot.png" }
+    ],
+    "docs": [
+      { "id": "a.pdf", "filename": "a.pdf", "size": 1024,
+        "contentType": "application/pdf",
+        "href": "/api/v1/tickets/TKT-001/_attachments/docs/a.pdf" },
+      { "id": "b.pdf", "filename": "b.pdf", "size": 2048,
+        "contentType": "application/pdf",
+        "href": "/api/v1/tickets/TKT-001/_attachments/docs/b.pdf" }
+    ]
+  }
+}
+```
+
+`id` is the file's identifier within the property (its normalized file
+name) — used to build the per-file download/delete URL. `contentType` is
+inferred from the filename extension (the store does not persist it on
+every backend). `size` is in bytes. The `properties` value is a scalar
+path for a single-cap property and a list of paths for a multi-cap one;
+treat both as opaque and use `_attachments` instead.
+
+### Download endpoint
+
+Clients fetch the bytes via the `href` from each `_attachments` entry —
+treat it as opaque. The URL shape below documents what the server emits;
+do **not** hand-build it from the property path string or `(id, property,
+fileName)`.
+
+```text
+GET <_attachments[property][i].href>
+  == GET /api/v1/{plural}/{id}/_attachments/{property}/{fileName}
+```
+
+Streams one attachment's bytes. **Access inherits the owning entity's read
+permission** — a caller who cannot read the entity gets `404` (never
+`403`, and byte-identical to a genuinely missing attachment, so existence
+is not leaked). The bytes resolve from `(id, property, fileName)` only; no
+caller-supplied path reaches the filesystem (the store rejects separators
+in the file name), so there is no path-traversal surface and a renamed
+entity resolves by its current id.
+
+Response headers: `Content-Type` (inferred from the filename),
+`Content-Disposition: inline; filename="…"` (sanitized), plus
+`X-Content-Type-Options: nosniff` and a `Content-Security-Policy: sandbox`
+so user-supplied bytes (e.g. an SVG/HTML payload) cannot execute as stored
+XSS in the app origin.
+
+### Upload endpoint
+
+```text
+PUT  /api/v1/{plural}/{id}/_attachments/{property}
+POST /api/v1/{plural}/{id}/_attachments/{property}
+```
+
+`multipart/form-data` with a single `file` field. The response is the
+updated entity (its `_attachments` reflects the new file). Behavior depends
+on the property's `max`:
+
+- **`max == 1`** (default): the upload **replaces** the existing file.
+- **`max > 1`**: the upload **appends**, up to `max`. A file whose
+  (normalized) name already exists is **auto-suffixed** (`report.pdf` →
+  `report (1).pdf`) so it never overwrites a sibling. Uploading past the cap
+  returns `409 attachment_limit`.
+
+**Access inherits the owning entity's `update` permission** — an
+attachment write mutates the entity, so it is authorized as an `update`,
+re-checked server-side **before any bytes are written** (a deny never
+orphans a file). A caller who cannot read the entity gets the same uniform
+`404` as the read path; a caller who can read but not update gets `403`.
+
+Size limits: the request is capped at ingress (`413 attachment_too_large`,
+`application/problem+json`) by a default of 64 MiB, overridable per
+deployment via the data-entry config key `app.max_attachment_bytes`. Every
+store backend also enforces `store.MaxAttachmentBytes` as a backstop, so no
+storage path is ever unbounded. Other failures: `400` for a malformed
+multipart body or a missing `file` field; `422` for a validation failure
+when persisting the property.
+
+### Delete endpoint
+
+```text
+DELETE /api/v1/{plural}/{id}/_attachments/{property}/{fileName}
+```
+
+Removes one file and re-stamps the property from the remaining files;
+returns `204`. Idempotent (deleting a missing file still re-stamps and
+succeeds). Same `update`-permission inheritance as upload. The bytes are
+removed, then the property is persisted, so a persist failure leaves
+orphaned bytes rather than a property pointing at a missing file.

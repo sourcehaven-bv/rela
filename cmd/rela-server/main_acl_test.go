@@ -20,8 +20,8 @@ func TestShouldWarnNoACL(t *testing.T) {
 		{"nop + read-only → silent (read-only is the stronger guarantee)", acl.NopACL{}, true, false},
 		{"read-only ACL + no flag → silent (ReadOnlyACL is not NopACL)", acl.ReadOnlyACL{}, false, false},
 		{"read-only ACL + flag → silent (both belt and suspenders)", acl.ReadOnlyACL{}, true, false},
-		{"declarative ACL + no flag → silent (operator already configured policy)", acl.NewDeclarative(&acl.Policy{}), false, false},
-		{"declarative ACL + flag → silent (flag wins, no need to nag)", acl.NewDeclarative(&acl.Policy{}), true, false},
+		{"declarative ACL + no flag → silent (operator already configured policy)", mustDeclarative(t), false, false},
+		{"declarative ACL + flag → silent (flag wins, no need to nag)", mustDeclarative(t), true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -31,4 +31,13 @@ func TestShouldWarnNoACL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustDeclarative(t *testing.T) acl.ACL {
+	t.Helper()
+	d, err := acl.NewDeclarative(&acl.Policy{}, acl.NullGraph{}, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	return d
 }

@@ -3,6 +3,7 @@ package attachment_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,9 @@ entities:
         type: string
       spec:
         type: file
+      gallery:
+        type: file
+        max: 3
 `
 
 // attachmentFixture is the bundle setupAttachmentService returns so
@@ -229,3 +233,76 @@ func TestService_New_RejectsNilDeps(t *testing.T) {
 // in New so the subsequent Meta / EntityManager nil-checks can be
 // exercised. Never invoked.
 type storeStub struct{ store.Store }
+
+// failingReader yields some bytes then errors, to force AttachFile to fail
+// AFTER a prior attachment exists — exercising the data-loss ordering.
+type failingReader struct{ n int }
+
+func (f *failingReader) Read(p []byte) (int, error) {
+	if f.n > 0 {
+		f.n--
+		p[0] = 'x'
+		return 1, nil
+	}
+	return 0, errors.New("simulated mid-stream read error")
+}
+
+// TestService_ReplaceFailureKeepsExisting pins RR-N96YV0: at max==1, if the
+// new AttachFile fails, the existing attachment must survive (attach-first,
+// then delete-old ordering — not delete-then-attach).
+func TestService_ReplaceFailureKeepsExisting(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	require := func(err error, msg string) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", msg, err)
+		}
+	}
+	require(f.st.CreateEntity(ctx, e), "create entity")
+
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile} // max:1
+	// Attach a valid original.
+	_, err := f.svc.WriteAttachment(ctx, e, def, "spec", "ok.pdf", strings.NewReader("original"))
+	require(err, "initial attach")
+
+	// Replace with a different name whose reader fails mid-stream.
+	_, err = f.svc.WriteAttachment(ctx, e, def, "spec", "new.pdf", &failingReader{n: 2})
+	if err == nil {
+		t.Fatal("expected the failing replace to error")
+	}
+
+	// The original must still be present and readable.
+	rc, readErr := f.st.ReadAttachment(ctx, "T-1", "spec", "ok.pdf")
+	if readErr != nil {
+		t.Fatalf("original attachment was destroyed by a failed replace: %v", readErr)
+	}
+	data, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(data) != "original" {
+		t.Errorf("original bytes = %q, want %q", data, "original")
+	}
+}
+
+// TestService_MultiAppendAndCap pins append-up-to-max + auto-suffix + the
+// ErrAtCapacity sentinel on a max:3 property.
+func TestService_MultiAppendAndCap(t *testing.T) {
+	f := setupAttachmentService(t)
+	ctx := context.Background()
+	e := entity.New("T-1", "ticket")
+	if err := f.st.CreateEntity(ctx, e); err != nil {
+		t.Fatalf("create entity: %v", err)
+	}
+	def := metamodel.PropertyDef{Type: metamodel.PropertyTypeFile, Max: 3}
+
+	for _, n := range []string{"a.pdf", "b.pdf", "c.pdf"} {
+		if _, err := f.svc.WriteAttachment(ctx, e, def, "gallery", n, strings.NewReader(n)); err != nil {
+			t.Fatalf("append %s: %v", n, err)
+		}
+	}
+	// Duplicate name auto-suffixes (this would exceed 3 → at-capacity first).
+	if _, err := f.svc.WriteAttachment(ctx, e, def, "gallery", "d.pdf", strings.NewReader("d")); !errors.Is(err, attachment.ErrAtCapacity) {
+		t.Errorf("4th append: err = %v, want ErrAtCapacity", err)
+	}
+}

@@ -9,13 +9,38 @@ import type {
   RelationEntry,
   ModernRelationsField,
 } from '@/types'
-import { useSchemaStore } from '@/stores/schema'
 import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
-function getPlural(type: string): string {
-  const schema = useSchemaStore()
-  const entityType = schema.entityTypes.get(type)
-  return entityType?.plural ?? type + 's'
+// Type → URL-path-segment (plural) registry. The API layer is a pure HTTP
+// boundary; it must not import a Pinia store (the producer/consumer
+// inversion the project's CLAUDE.md warns against, BUG-style B1a). The
+// schema store calls registerEntityPlurals() once on load with the
+// metamodel's plurals, before any view fires an entity request.
+const pluralRegistry = new Map<string, string>()
+
+export function registerEntityPlurals(plurals: Map<string, string>): void {
+  pluralRegistry.clear()
+  for (const [type, plural] of plurals) pluralRegistry.set(type, plural)
+}
+
+// For tests that exercise the API layer without the schema store.
+export function _setEntityPluralForTest(type: string, plural: string): void {
+  pluralRegistry.set(type, plural)
+}
+
+export function _resetEntityPluralsForTest(): void {
+  pluralRegistry.clear()
+}
+
+export function getPlural(type: string): string {
+  const plural = pluralRegistry.get(type)
+  if (!plural) {
+    // Fail fast instead of fabricating a URL (`category` → `/categorys`
+    // would 404 confusingly). An unknown type here means the schema
+    // wasn't loaded or the caller passed a typo.
+    throw new Error(`unknown entity type "${type}" — no registered plural`)
+  }
+  return plural
 }
 
 export async function listEntities(
@@ -109,6 +134,56 @@ export async function searchEntities(
     params.type = type
   }
   return api.get<ListResponse<Entity>>('/_search', params, signal)
+}
+
+/**
+ * ScopeDescriptor encodes the query that defines an ordered result set the
+ * user is navigating — a typed list or a search result today. It is sent to
+ * `/_position` as a single URL-encoded JSON `scope` param. `filters` uses the
+ * same flat bracket-format keys as filterStateToApiParams ("filter[status]")
+ * so the wire format has one source of truth. See backend internal/dataentry/
+ * scope.go and issue #844.
+ */
+export interface ScopeDescriptor {
+  source: 'list' | 'search'
+  // Required for a list scope (single-type). Optional for a search scope,
+  // where it narrows a possibly-mixed-type result to one type; omit it to
+  // navigate across all matched types. The backend enforces this per-source.
+  type?: string
+  filters?: Record<string, string>
+  sort?: string
+  // Required for a search scope; optional free-text filter within a list scope.
+  q?: string
+}
+
+/** A neighbouring entity in a scope. `type` is needed to build the target's
+ * detail route, since a search scope can span entity types. */
+export interface PositionRef {
+  id: string
+  type: string
+}
+
+/** EntityPosition mirrors the backend V1Position payload. */
+export interface EntityPosition {
+  prev: PositionRef | null
+  next: PositionRef | null
+  current: number
+  total: number
+}
+
+/**
+ * Resolve an entity's position within a scope. The server runs the same
+ * filter/sort pipeline as the list endpoint and returns only {prev, next,
+ * current, total} — no entity bodies — so navigation is correct at any set
+ * size. Replaces the old per_page=1000 fetch-and-scan that silently truncated
+ * past the pagination cap (#844).
+ */
+export async function getEntityPosition(
+  id: string,
+  scope: ScopeDescriptor,
+  signal?: AbortSignal,
+): Promise<EntityPosition> {
+  return api.get<EntityPosition>('/_position', { id, scope: JSON.stringify(scope) }, signal)
 }
 
 export async function analyze(): Promise<AnalyzeResult> {

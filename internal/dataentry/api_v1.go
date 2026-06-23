@@ -13,7 +13,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -21,6 +24,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -52,6 +56,18 @@ type V1Entity struct {
 	// per-entity GET responses. Same pointer / closed-world semantics
 	// as FieldAffordances.
 	RelationAffordances *map[string]V1RelationAffordance `json:"_relations,omitempty"`
+	// Attachments maps a `file`-type property name to the LIST of files
+	// currently attached to it (a property may hold several when its
+	// metamodel `max` > 1). The value is always an array — even a
+	// single-attachment property reports a 1-element list — matching how
+	// rela's `list:` properties and `_relations` are always arrays. Only
+	// properties that actually carry a file appear. Same pointer /
+	// closed-world semantics as FieldAffordances: present (possibly empty)
+	// on every per-entity response (GET, PATCH, POST create, clone — the
+	// ones that run serializeEntityForWire), nil on list rows and other
+	// non-per-entity shapes. The SPA's file widget reads this to render the
+	// download links / previews instead of the raw stored path string(s).
+	Attachments *map[string][]V1Attachment `json:"_attachments,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
@@ -77,6 +93,21 @@ type V1RelationAffordance struct {
 	Creatable *bool                        `json:"creatable,omitempty"`
 	Removable *bool                        `json:"removable,omitempty"`
 	Fields    map[string]V1FieldAffordance `json:"fields,omitempty"`
+}
+
+// V1Attachment describes one file attached to a `file`-type property, as
+// surfaced on a per-entity GET response. ID is the file's identifier
+// within the property (its normalized file name) — used to build the
+// per-file download/delete URL. Href is the download URL for the bytes (an
+// ACL-gated endpoint that inherits the owning entity's read permission).
+// ContentType is inferred from the filename — the store does not persist
+// it on every backend.
+type V1Attachment struct {
+	ID          string `json:"id"`
+	FileName    string `json:"filename"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType"`
+	Href        string `json:"href"`
 }
 
 // V1InaccessibleField describes a property that is known to exist but
@@ -129,6 +160,10 @@ type V1PropertyDef struct {
 	Values      []string `json:"values,omitempty"`
 	Description string   `json:"description,omitempty"`
 	List        bool     `json:"list,omitempty"`
+	// Max is the attachment cap for a `file` property (default 1). The SPA's
+	// file widget reads it to switch between replace-mode and multi-file
+	// add-mode. Omitted unless set above 1.
+	Max int `json:"max,omitempty"`
 }
 
 func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) V1PropertyDef {
@@ -138,6 +173,7 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 		Default:     propDef.Default,
 		Description: propDef.Description,
 		List:        propDef.List,
+		Max:         propDef.Max,
 	}
 	if ct, ok := meta.Types[propDef.Type]; ok {
 		pd.Values = ct.Values
@@ -199,7 +235,18 @@ type V1Config struct {
 	Actions     map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation  []dataentryconfig.NavigationEntry           `json:"navigation"`
 	Documents   map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
+	Apps        map[string]V1App                            `json:"apps,omitempty"`
 	Palette     *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+}
+
+// V1App is the client-facing view of a custom app. It deliberately omits the
+// on-disk File path and the csp_origins allow-list — the SPA only needs enough
+// to render a sidebar entry and route to /app/{id}; the HTML is fetched from
+// GET /api/v1/_apps/{id}.
+type V1App struct {
+	Title       string `json:"title,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // V1AppConfig is the JSON representation of the app config.
@@ -235,12 +282,16 @@ type V1ErrorSource struct {
 // registerAPIV1Routes registers all /api/v1/ routes.
 // Note: /api/v1/_events is registered separately in NewRouter as it needs to be
 // outside the reload-lock middleware (SSE long-lived connection).
+//
+// When adding a route, add a probe to the route table in
+// router_walk_test.go so registration stays covered.
 func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	// System endpoints (underscore prefix)
 	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
+	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
 	mux.HandleFunc("/api/v1/_git/status", a.handleGitStatus)
 	mux.HandleFunc("/api/v1/_git/sync", a.handleGitSync)
@@ -259,6 +310,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
 	mux.HandleFunc("/api/v1/_action/", a.handleV1Action)
+	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
@@ -314,20 +366,27 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case 4:
-		// /{plural}/{id}/relations/{relType} or /{plural}/{id}/_actions/{action}
+		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
+		// or /{plural}/{id}/_attachments/{property}
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelationType(w, r, typeName, parts[1], parts[3])
 		case "_actions":
 			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
+		case "_attachments":
+			a.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case 5:
-		// /{plural}/{id}/relations/{relType}/{targetId}
-		if parts[2] == "relations" {
+		// /{plural}/{id}/relations/{relType}/{targetId} or
+		// /{plural}/{id}/_attachments/{property}/{fileName}
+		switch parts[2] {
+		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
-		} else {
+		case "_attachments":
+			a.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
+		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	default:
@@ -359,20 +418,79 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 	}
 }
 
-func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
-	entities := listFromStoreByTypes(r.Context(), a.Services(), []string{typeName})
+// errACLListQuery wraps a store.GraphQuery failure during ACL list
+// filtering so call sites can route it through writeGateError (500
+// acl_query_failed / 504 / silent-on-cancel) instead of mislabeling
+// it as a free-text search failure.
+var errACLListQuery = errors.New("acl list query failed")
 
-	query := r.URL.Query()
+// errListLoad wraps a store iterator failure while loading the
+// unfiltered (AllowAll) list. Surfaced as 500 list_load_failed at the
+// call sites: before TKT-VMD8 a mid-stream error silently truncated
+// the result, which under ACL would make the AllowAll and Query paths
+// observably asymmetric (truncated-200 vs 500) for the same backend
+// fault — and a truncated list with authoritative-looking pagination
+// is worse than an error either way.
+var errListLoad = errors.New("list load failed")
+
+// scopedSortedEntities runs the shared list pipeline — ACL read scope,
+// load, free-text intersection (?q=), structured filters (filter[...]),
+// then the configured sort — and returns the fully ordered result set
+// *before* pagination. Both handleV1ListEntities and
+// handleV1EntityPosition call this, so a list and its scope navigator
+// are guaranteed to observe identical ordering (under ACL both operate
+// on the same visible subset — hidden entities don't occupy ordinals).
+//
+// ACL ordering contract (TKT-VMD8, RR-X56H + RR-3IO2): the read-scope
+// verdict resolves FIRST. DenyAll returns before the search backend,
+// filters, or sort run — a denied principal must not be able to probe
+// backend latency through ?q=. A composed Query loads the visible
+// subset via store.GraphQuery; search/filter/sort then operate on that
+// filtered slice only (search-after-ACL). AllowAll keeps the pre-ACL
+// load path byte-identical.
+//
+// Errors: free-text search failures surface verbatim (HTTP 500
+// search_failed at the call site); ACL query failures are wrapped in
+// errACLListQuery so call sites map them via writeGateError. Everything
+// else degrades to an empty/whole set as the list endpoint always did.
+func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error) {
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+
+	var entities []*entityPkg.Entity
+	switch {
+	case rqr.DenyAll:
+		return []*entityPkg.Entity{}, nil
+	case rqr.AllowAll:
+		// Inline iteration rather than listFromStoreByTypes: that
+		// helper swallows iterator errors into a partial slice, and
+		// the list pipeline must fail loud on both verdict paths.
+		for e, err := range a.Services().Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", errListLoad, err)
+			}
+			entities = append(entities, e)
+		}
+	case rqr.Query == nil:
+		// Defensive: a zero ReadQueryResult would otherwise alias
+		// AllowAll. Fail loud instead of silently widening the list.
+		return nil, fmt.Errorf("%w: zero ReadQueryResult for type %q", errACLListQuery, typeName)
+	default:
+		for e, err := range a.Services().Store.GraphQuery(ctx, *rqr.Query) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+			}
+			entities = append(entities, e)
+		}
+	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
 	// present. Bleve scores are discarded — the list's configured sort wins
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
-	searchResult, err := a.freeTextIDsForType(r.Context(), query.Get("q"), typeName)
+	searchResult, err := a.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
-		return
+		return nil, err
 	}
 	if searchResult.HasFilter {
 		filtered := entities[:0]
@@ -384,11 +502,28 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		entities = filtered
 	}
 
-	// Apply filters
 	entities = a.applyV1Filters(entities, query, typeName)
-
-	// Apply sorting
 	entities = a.applyV1Sorting(entities, query)
+	return entities, nil
+}
+
+// queryGet returns the first value for key from a raw query map, or "".
+// url.Values.Get over a plain map[string][]string without allocating.
+func queryGet(query map[string][]string, key string) string {
+	if vals, ok := query[key]; ok && len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
+}
+
+func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
+	query := r.URL.Query()
+
+	entities, err := a.scopedSortedEntities(r.Context(), typeName, query)
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return
+	}
 
 	// Pagination
 	total := len(entities)
@@ -565,8 +700,9 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// Set Location header
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, created.ID))
 
-	// Broadcast entity creation event
-	a.broker.broadcastEntityEvent("created", typeName, created.ID)
+	// SSE broadcast is driven by the store-event bridge (see
+	// App.startStoreEventBridge), not inline here — so a create by ANY process
+	// reaches all connected browsers and a local create isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusCreated, result)
 }
@@ -695,10 +831,53 @@ func (a *App) handleV1SingleEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 }
 
+// gateReadOrNotFound runs the per-entity ACL read gate (PermitsRead)
+// and writes the right response on deny: 404 with the same body shape
+// as not-found (indistinguishable-from-not-found invariant) when the
+// principal cannot read, or the relevant 5xx via writeGateError on
+// store/timeout failure. Returns true if the handler should continue
+// (gate allowed), false if a response was already written.
+//
+// Centralizing this means every read chokepoint (GET, PATCH, DELETE,
+// clone, relations CRUD) handles the deny branch the same way — a
+// future divergence in error code, body shape, or ETag suppression
+// would otherwise be a per-handler oracle leak (RR-NGMI).
+// entityNotFoundTitle is the title for EVERY read-path 404 — the ACL
+// deny path (gateReadOrNotFound), a genuinely missing entity, and a
+// missing attachment all share it so a denied read is byte-identical to
+// a nonexistent one (the RR-NGMI indistinguishability invariant). Any
+// handler that 404s on the read path MUST use this const, not a fresh
+// literal, or the bodies drift and existence leaks.
+const entityNotFoundTitle = "Entity not found"
+
+func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
+	ok, err := readGateFromContext(r.Context()).PermitsRead(r.Context(), typeName, entityID)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return false
+	}
+	return true
+}
+
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
-	entity, found := a.getEntity(r.Context(), entityID)
+	ctx := r.Context()
+
+	// ACL gate (TKT-VQGN). Runs BEFORE getEntity so a hidden id and a
+	// nonexistent id spend the same MatchingIDs roundtrip — otherwise
+	// the timing difference (in-memory lookup ~1µs vs. DB roundtrip
+	// ~1ms) is an id-enumeration side channel that defeats the
+	// indistinguishable-404-body invariant (RR-NGMI).
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
+
+	entity, found := a.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
@@ -707,15 +886,15 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializeEntityForWire(r.Context(), entity, plural, includeRelations)
+	result := a.serializeEntityForWire(ctx, entity, plural, includeRelations)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
-		result.Included = a.resolveV1Includes(r.Context(), entity, includes)
+		result.Included = a.resolveV1Includes(ctx, entity, includes)
 	}
 
-	// ETag for caching
-	etag := a.computeEntityETag(r.Context(), entity)
+	// ETag for caching (visible-only path; deny-path above emits no ETag).
+	etag := a.computeEntityETag(ctx, entity)
 	w.Header().Set("ETag", etag)
 
 	// Check If-None-Match
@@ -727,12 +906,73 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	writeV1JSON(w, http.StatusOK, result)
 }
 
+// writeListPipelineError maps a scopedSortedEntities / resolveScope
+// error to the right HTTP shape: ACL query failures route through
+// writeGateError, store-load failures surface as list_load_failed,
+// and anything else is the free-text search failure the pipeline
+// always surfaced. Shared by the list and _position handlers so the
+// two consumers of the pipeline can't drift.
+//
+// All branches log the raw error server-side and keep it out of the
+// response body (RR-372L / IB-review PR939 #1): a store or search
+// backend error string can name tables, columns, or index paths.
+func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, errACLListQuery):
+		writeGateError(w, r, err)
+	case errors.Is(err, errListLoad):
+		slog.Warn("dataentry: list load failed",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusInternalServerError, "list_load_failed",
+			"Loading entities failed", "check server logs")
+	default:
+		slog.Warn("dataentry: list free-text search failed",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		writeV1Error(w, r, http.StatusInternalServerError, "search_failed",
+			"Free-text search failed", "check server logs")
+	}
+}
+
+// writeGateError maps a readGate.PermitsRead / PermitsReadMany error
+// to the right HTTP shape: client-disconnect emits nothing,
+// deadline-exceeded is 504, everything else is 500 with the
+// acl_query_failed code (RR-89XK). Centralized so every gate call
+// site handles the error shape the same way.
+//
+// The raw error is logged server-side and never echoed in the
+// response body (same RR-372L rationale as attachACLRequest): a
+// backend error string can carry table/column names or other
+// internals an API client has no business seeing.
+func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	slog.Warn("acl: read-gate query failed",
+		"err", err, "path", r.URL.Path, "method", r.Method)
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeV1Error(w, r, http.StatusGatewayTimeout, "acl_query_timeout",
+			"ACL read-permission check timed out", "check server logs")
+		return
+	}
+	writeV1Error(w, r, http.StatusInternalServerError, "acl_query_failed",
+		"ACL read-permission check failed", "check server logs")
+}
+
 func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
 	s := a.State()
+
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
+	// before body parse / If-Match / IsLocked so the only observable
+	// for "this id exists but you can't see it" is the same 404 as
+	// "this id doesn't exist" (RR-FGUZ). A 400 / 412 / 422 here would
+	// be an existence oracle.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
 
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
@@ -876,11 +1116,11 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	newETag := a.computeEntityETag(r.Context(), entity)
 	w.Header().Set("ETag", newETag)
 
-	// Broadcast entity update event when the entity itself changed.
-	// Relation-only changes don't fire an entity:updated event today.
-	if entityChanged {
-		a.broker.broadcastEntityEvent("updated", typeName, entityID)
-	}
+	// SSE broadcast is driven by the store-event bridge: an entity update only
+	// fires EventEntityUpdated when the store's entity row actually changed,
+	// which matches the prior "if entityChanged" gate (relation-only edits emit
+	// no entity event). So a remote update reaches all browsers and a local one
+	// isn't double-broadcast.
 
 	writeV1JSON(w, http.StatusOK, result)
 }
@@ -922,6 +1162,13 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) AND
+	// before AuthorizeWrite (RR-3532 — so a hidden target 404s, not
+	// 403-with-rule_id).
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
+
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
@@ -936,8 +1183,9 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	// Broadcast entity deletion event
-	a.broker.broadcastEntityEvent("deleted", typeName, entityID)
+	// SSE broadcast is driven by the store-event bridge (see
+	// App.startStoreEventBridge); a delete by any process reaches all browsers,
+	// and a local delete isn't double-broadcast.
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -945,6 +1193,15 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 // --- Relation Handlers ---
 
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
+	// ACL gate (TKT-VQGN CRIT-2): /relations on a hidden entity 404s
+	// indistinguishably. Without the gate the endpoint confirms
+	// existence (200 vs 404) AND leaks the full neighbor-id set —
+	// closing one channel via /include filter while leaving this open
+	// would defeat the per-entity-response invariant.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
+
 	s := a.State()
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
@@ -1062,6 +1319,11 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 }
 
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1EntityRelations.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
+
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
@@ -1117,6 +1379,13 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
+
+	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ
+	// applied to relation writes) and BEFORE the affordance check —
+	// otherwise a 400/403 confirms the entity exists.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
 
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
@@ -1184,6 +1453,11 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
+
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
 
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
@@ -1261,6 +1535,11 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 
+	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
+
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
@@ -1313,6 +1592,14 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 	defer a.writeMu.Unlock()
 
 	s := a.State()
+
+	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) so
+	// a clone from a hidden source 404s with the same shape and
+	// timing as a clone from a nonexistent source.
+	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+		return
+	}
+
 	entity, found := a.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
@@ -1460,15 +1747,7 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 			et.IDPrefixes = prefixes
 		}
 		for propName, propDef := range def.Properties {
-			pd := V1PropertyDef{
-				Type:     propDef.Type,
-				Required: propDef.Required,
-				Default:  propDef.Default,
-			}
-			if ct, ok := s.Meta.Types[propDef.Type]; ok {
-				pd.Values = ct.Values
-			}
-			et.Properties[propName] = pd
+			et.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
 		}
 		writeV1JSON(w, http.StatusOK, et)
 
@@ -1518,6 +1797,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Actions:     s.Cfg.Actions,
 		Navigation:  s.Cfg.Navigation,
 		Documents:   s.Cfg.Documents,
+		Apps:        appsToV1(a.scanAppsOrLog()),
 		Palette:     s.Palette,
 	}
 
@@ -1536,7 +1816,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entities := a.executeQuery(r.Context(), query)
+	// executeQuery is read-gated (TKT-BA8BSX): only entities the
+	// request principal may read come back, and gate/load/search
+	// failures surface instead of silently truncating.
+	entities, err := a.executeQuery(r.Context(), query)
+	if err != nil {
+		writeListPipelineError(w, r, err)
+		return
+	}
 
 	// Apply type filter if provided
 	if typeFilter := r.URL.Query().Get("type"); typeFilter != "" {
@@ -1554,6 +1841,11 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
+		// includeRelations stays false on search results: the read gate
+		// covers root entities only, and a relation map would expose
+		// {ID, Title} of related entities this principal may not read.
+		// Flipping this requires per-target gating first (RR-QO01XY) —
+		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
 		data = append(data, a.serializeRelatedEntityForWire(r.Context(), e, plural, false))
 	}
 
@@ -1577,11 +1869,18 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 
 	analysisResult := a.runAnalysis(r.Context())
 
+	// ACL gate (TKT-QU7REX): runAnalysis walks the WHOLE graph, so every issue
+	// carries an entityId/entityType/title that would leak existence + title to
+	// a principal who cannot read that entity. Filter each issue through the
+	// per-entity read gate (batched by type, fail-closed) BEFORE building the
+	// response, and recompute the Errors/Warnings/ByCheck counts so the
+	// aggregates can't leak the count of hidden issues either. Issues with no
+	// entityId (graph-level checks) name no entity and pass through.
+	visible := a.visibleAnalysisIssues(r.Context(), analysisResult.Sections)
+
 	result := APIAnalysisResult{
-		Errors:   analysisResult.ErrorCount,
-		Warnings: analysisResult.WarningCount,
-		Issues:   make([]APIIssue, 0),
-		ByCheck:  make(map[string]int),
+		Issues:  make([]APIIssue, 0, len(visible)),
+		ByCheck: make(map[string]int),
 	}
 
 	// Loopback gate: same policy as action / document surfaces.
@@ -1589,26 +1888,95 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 	// issues (no source slice, no stack, no captured output).
 	fullDetail := a.allowFullScriptDetail(r)
 
-	for _, section := range analysisResult.Sections {
-		for _, issue := range section.Issues {
-			api := APIIssue{
-				EntityID:   issue.EntityID,
-				EntityType: issue.EntityType,
-				Title:      issue.Title,
-				Message:    issue.Message,
-				Severity:   issue.Severity,
-				CheckType:  section.Name,
-			}
-			if issue.ScriptError != nil {
-				env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
-				api.ScriptError = &env
-			}
-			result.Issues = append(result.Issues, api)
-			result.ByCheck[section.Name]++
+	for _, vi := range visible {
+		issue, section := vi.issue, vi.section
+		api := APIIssue{
+			EntityID:   issue.EntityID,
+			EntityType: issue.EntityType,
+			Title:      issue.Title,
+			Message:    issue.Message,
+			Severity:   issue.Severity,
+			CheckType:  section,
+		}
+		if issue.ScriptError != nil {
+			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
+			api.ScriptError = &env
+		}
+		result.Issues = append(result.Issues, api)
+		result.ByCheck[section]++
+		switch issue.Severity {
+		case "error":
+			result.Errors++
+		case "warning":
+			result.Warnings++
 		}
 	}
 
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// visibleIssue pairs an analysis issue with its section name, carried
+// through the ACL filter so the wire builder keeps the issue→check
+// association without re-walking sections.
+type visibleIssue struct {
+	issue   AnalysisIssue
+	section string
+}
+
+// visibleAnalysisIssues filters analysis issues through the per-entity read
+// gate (TKT-QU7REX). Issues are batched by entity type and resolved with one
+// PermitsReadMany call per type (mirroring filterVisibleIncludes), so the cost
+// is O(distinct-types) not O(issues). An issue with an empty EntityID names no
+// entity (graph-level checks like ID gaps) and is always kept. On a gate error
+// for a type, that type's issues are dropped fail-closed and logged, matching
+// the include path — under-reporting is safer than leaking a denied entity.
+func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSection) []visibleIssue {
+	gate := readGateFromContext(ctx)
+
+	// Collect entity ids to check, grouped by type.
+	idsByType := make(map[string]map[string]struct{})
+	for _, section := range sections {
+		for _, issue := range section.Issues {
+			if issue.EntityID == "" || issue.EntityType == "" {
+				continue
+			}
+			if idsByType[issue.EntityType] == nil {
+				idsByType[issue.EntityType] = make(map[string]struct{})
+			}
+			idsByType[issue.EntityType][issue.EntityID] = struct{}{}
+		}
+	}
+
+	// Resolve visibility once per type.
+	allowed := make(map[string]map[string]bool, len(idsByType))
+	for typeName, idset := range idsByType {
+		ids := make([]string, 0, len(idset))
+		for id := range idset {
+			ids = append(ids, id)
+		}
+		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		if err != nil {
+			slog.Warn("dataentry: visibleAnalysisIssues: PermitsReadMany failed; dropping type",
+				"type", typeName, "issues", len(ids), "err", err)
+			allowed[typeName] = map[string]bool{} // fail-closed: nothing of this type visible
+			continue
+		}
+		allowed[typeName] = perm
+	}
+
+	// Build the filtered, order-preserving result.
+	var out []visibleIssue
+	for _, section := range sections {
+		for _, issue := range section.Issues {
+			if issue.EntityID != "" && issue.EntityType != "" {
+				if !allowed[issue.EntityType][issue.EntityID] {
+					continue // hidden entity → drop the issue
+				}
+			}
+			out = append(out, visibleIssue{issue: issue, section: section.Name})
+		}
+	}
+	return out
 }
 
 // --- Helper Functions ---
@@ -1653,65 +2021,125 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	s := a.State()
 	included := make(map[string]V1Entity)
 
-	// Support include=* to include all related entities
+	// Collect candidate target entities first; filter via the ACL
+	// gate per-type (batched), then serialize the survivors. The
+	// two-phase shape exists to satisfy RR-M84L (the include channel
+	// must respect the per-entity visibility rule) AND RR-FRK1 (a
+	// hub entity with 50 neighbors must not cost 50 GraphCount
+	// round-trips).
+	var candidates []*entityPkg.Entity
+	// nestedFor maps target.ID → the remaining nested-include
+	// expression (e.g. "implements.requires" → "requires" stored
+	// against the implements target). Recurses after the visibility
+	// filter so hidden neighbors don't trigger hidden nested probes.
+	nestedFor := make(map[string]string)
+
 	if includes == "*" {
-		// Include all outgoing relations
 		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			target, found := a.getEntity(ctx, edge.To)
-			if !found {
-				continue
+			if target, found := a.getEntity(ctx, edge.To); found {
+				candidates = append(candidates, target)
 			}
-			entityDef := s.Meta.Entities[target.Type]
-			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
 		}
-		// Include all incoming relations
 		for _, edge := range a.incomingRelations(ctx, entity.ID) {
-			source, found := a.getEntity(ctx, edge.From)
-			if !found {
-				continue
+			if source, found := a.getEntity(ctx, edge.From); found {
+				candidates = append(candidates, source)
 			}
-			entityDef := s.Meta.Entities[source.Type]
-			plural := entityDef.GetPlural(source.Type)
-			included[source.ID] = a.serializeRelatedEntityForWire(ctx, source, plural, false)
 		}
-		return included
-	}
-
-	parts := strings.Split(includes, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		// Handle nested includes like "implements.requires"
-		relParts := strings.SplitN(part, ".", 2)
-		relType := relParts[0]
-
-		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			if edge.Type != relType {
+	} else {
+		for _, part := range strings.Split(includes, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
 				continue
 			}
-			target, found := a.getEntity(ctx, edge.To)
-			if !found {
-				continue
-			}
-			entityDef := s.Meta.Entities[target.Type]
-			plural := entityDef.GetPlural(target.Type)
-			included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
-
-			// Handle nested includes
-			if len(relParts) > 1 {
-				nested := a.resolveV1Includes(ctx, target, relParts[1])
-				for k, v := range nested {
-					included[k] = v
+			relParts := strings.SplitN(part, ".", 2)
+			relType := relParts[0]
+			for _, edge := range a.outgoingRelations(ctx, entity.ID) {
+				if edge.Type != relType {
+					continue
+				}
+				target, found := a.getEntity(ctx, edge.To)
+				if !found {
+					continue
+				}
+				candidates = append(candidates, target)
+				if len(relParts) > 1 {
+					nestedFor[target.ID] = relParts[1]
 				}
 			}
 		}
 	}
 
+	visible := a.filterVisibleIncludes(ctx, candidates)
+	for _, target := range visible {
+		entityDef := s.Meta.Entities[target.Type]
+		plural := entityDef.GetPlural(target.Type)
+		included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
+
+		if nested, ok := nestedFor[target.ID]; ok {
+			for k, v := range a.resolveV1Includes(ctx, target, nested) {
+				included[k] = v
+			}
+		}
+	}
 	return included
+}
+
+// filterVisibleIncludes drops any candidate the principal cannot read,
+// batched by entity type. For each distinct type ONE gate call
+// (PermitsReadMany over every candidate of that type) — turning a
+// worst case of O(N) per-id probes into O(distinct-types). RR-FRK1.
+//
+// On gate error: drop the whole type's candidates (fail-closed) and
+// log loud so operators see the underlying failure rather than just
+// "the include block is empty." The include channel is a "best
+// effort" affordance; the explicit GET / list endpoints are the
+// authoritative read surface.
+func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg.Entity) []*entityPkg.Entity {
+	if len(candidates) == 0 {
+		return nil
+	}
+	gate := readGateFromContext(ctx)
+	byType := make(map[string][]*entityPkg.Entity)
+	for _, c := range candidates {
+		byType[c.Type] = append(byType[c.Type], c)
+	}
+	allowed := make(map[string]bool, len(candidates))
+	for typeName, group := range byType {
+		ids := make([]string, 0, len(group))
+		for _, c := range group {
+			ids = append(ids, c.ID)
+		}
+		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		if err != nil {
+			// Fail-closed on gate error (RR-7TIU): drop the whole
+			// type's candidates rather than surface a partial subset
+			// the policy may actually deny. Log loud so operators see
+			// the underlying failure (SIG-3 from the cranky review:
+			// silent drops surface as "missing includes" support
+			// tickets with no signal on the cause).
+			slog.Warn("dataentry: filterVisibleIncludes: PermitsReadMany failed; dropping type",
+				"type", typeName,
+				"candidates", len(ids),
+				"err", err)
+			continue
+		}
+		for id, ok := range perm {
+			if ok {
+				allowed[id] = true
+			}
+		}
+	}
+	// Preserve original candidate order so the response is stable.
+	// Allocate a fresh slice (RR-I2SI) — aliasing candidates' storage
+	// works today but is a non-obvious invariant that a future
+	// refactor retaining `candidates` would silently corrupt.
+	out := make([]*entityPkg.Entity, 0, len(candidates))
+	for _, c := range candidates {
+		if allowed[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
@@ -2116,6 +2544,14 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ACL gate (TKT-6N9O1Y): the side panel reveals the entry entity and its
+	// traversal neighbors. Gate the entry read BEFORE getEntity/executeSidePanel
+	// so a principal who cannot read it gets a 404 indistinguishable from a
+	// missing id, and the traversal never runs for a denied caller.
+	if !a.gateReadOrNotFound(w, r, form.EntityType, entityID) {
+		return
+	}
+
 	// Get the entry entity
 	entry, found := a.getEntity(r.Context(), entityID)
 	if !found {
@@ -2232,21 +2668,8 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := a.State()
-	svc := a.Services()
-
-	// Build entity type counts as a fallback for items without filters.
-	typeCounts := make(map[string]int)
-	for _, entityType := range s.Meta.EntityTypes() {
-		n, err := svc.Store.CountEntities(r.Context(), store.EntityQuery{Type: entityType})
-		if err != nil {
-			typeCounts[entityType] = 0
-			continue
-		}
-		typeCounts[entityType] = n
-	}
 
 	counts := sidebarCounts{
-		typeCounts:  typeCounts,
 		filterCache: make(map[string]int),
 		app:         a,
 	}
@@ -2288,10 +2711,14 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 }
 
 // sidebarCounts caches sidebar entity counts, applying list- or kanban-
-// level filters when present. Unfiltered views fall back to the
-// type-level total.
+// level filters when present. Every count flows through the ACL read
+// scope (TKT-VMD8) — one code path regardless of NopACL vs. Declarative
+// (RR-2O27), so the sidebar can never disagree with the list it links
+// to. filterCache is a within-request memo keyed by list/kanban id; it
+// is safe precisely because a sidebarCounts value lives for one request
+// (one principal) — a longer-lived cache would alias counts across
+// principals (RR-BZ4M).
 type sidebarCounts struct {
-	typeCounts  map[string]int
 	filterCache map[string]int // key: "list:<id>" or "kanban:<id>"
 	app         *App
 }
@@ -2321,13 +2748,55 @@ func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban
 }
 
 // countWithFilters returns the count of entities of the given type that
-// pass the supplied filters. When filters is empty, the precomputed
-// type total is returned directly.
+// are visible to the requesting principal AND pass the supplied config
+// filters. Ordering is ACL → config filter → count (TKT-VMD8 AC7).
+//
+// Without config filters the count comes straight from GraphCount —
+// identical cost to the old Store.CountEntities for the AllowAll case.
+// With config filters the visible entities are loaded and filtered
+// in-memory; performance scales with the visible-set size (RR-REQW —
+// for visible sets >10k prefer pre-filtering via entity_type in nav
+// config, or file the follow-up that pushes filters into GraphQuery).
+//
+// Backend errors degrade to 0 with a warning — parity with the old
+// CountEntities error path: a broken sidebar count must not take the
+// whole sidebar down, and the list endpoint surfaces the real error.
+//
+// ReadQuery (one member-of walk reuse via the request-scoped
+// acl.Request) and the GraphQuery/GraphCount run once per nav item —
+// two lists over the same type recompute rather than share. Accepted:
+// filterCache keys on list/kanban id, not (type, filters); a
+// (type, filters)-keyed memo is the obvious upgrade if sidebar
+// latency ever warrants it.
 func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig) int {
-	if len(filters) == 0 {
-		return c.typeCounts[entityType]
+	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
+	if rqr.DenyAll {
+		return 0
 	}
-	entities := listFromStoreByTypes(ctx, c.app.Services(), []string{entityType})
+	q := store.GraphQuery{EntityType: entityType}
+	if rqr.Query != nil {
+		q = *rqr.Query
+	}
+
+	if len(filters) == 0 {
+		matched, _, err := c.app.Services().Store.GraphCount(ctx, q)
+		if err != nil {
+			slog.Warn("sidebar: GraphCount failed; count degraded to 0",
+				"entity_type", entityType, "error", err)
+			return 0
+		}
+		return matched
+	}
+
+	var entities []*entityPkg.Entity
+	for e, err := range c.app.Services().Store.GraphQuery(ctx, q) {
+		if err != nil {
+			slog.Warn("sidebar: GraphQuery failed; count degraded to 0",
+				"entity_type", entityType, "error", err)
+			return 0
+		}
+		entities = append(entities, e)
+	}
 	return len(applyFilters(entities, filters))
 }
 
@@ -2463,9 +2932,12 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get conflict details
-	ctx := a.paths
-	absPath := filepath.Join(ctx.Root, path)
+	// Get conflict details. The path is caller-supplied — contain it to
+	// the project root before any filesystem access.
+	absPath, ok := a.resolveConflictPath(w, r, path)
+	if !ok {
+		return
+	}
 
 	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
 	if err != nil {
@@ -2511,10 +2983,19 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := a.paths
-	absPath := filepath.Join(ctx.Root, req.Path)
+	// The path is caller-supplied — contain it to the project root
+	// before any filesystem access.
+	absPath, ok := a.resolveConflictPath(w, r, req.Path)
+	if !ok {
+		return
+	}
 
-	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+
+	st := a.State()
+
+	cf, err := conflict.ParseConflictedFile(absPath, st.Meta)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
 		return
@@ -2543,14 +3024,121 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 		resolution.ContentChoice = conflict.SideOurs
 	}
 
-	if err := conflict.ResolveAndWrite(cf, resolution, a.State().Meta); err != nil {
+	// Resolve first so the ACL gate evaluates the actual write target
+	// (entity vs relation, post-choice identity), then authorize, then
+	// write. The write is file-level marker removal and cannot route
+	// through entitymanager — the store can't parse a file that still
+	// contains conflict markers — so this handler re-authorizes and
+	// audits explicitly. The store's file watcher picks the change up
+	// as an external edit, keeping index/SSE consumers in sync.
+	resolvedEntity, resolvedRelation, err := conflict.Resolve(cf, resolution)
+	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
 		return
 	}
+	if !a.authorizeConflictResolve(r.Context(), w, resolvedEntity, resolvedRelation) {
+		return
+	}
+	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
+		return
+	}
+	if err := conflict.WriteResolved(absPath, resolvedEntity, resolvedRelation); err != nil {
+		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
+		return
+	}
+	a.recordConflictResolveAudit(r.Context(), req.Path, resolvedEntity, resolvedRelation)
 
 	writeV1JSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"path":    req.Path,
+	})
+}
+
+// resolveConflictPath contains the caller-supplied conflict-file path
+// to the project root. On failure it writes the error response (404
+// when the path is inside the project but missing, 403 when it escapes
+// the root) and returns ok=false.
+func (a *App) resolveConflictPath(w http.ResponseWriter, r *http.Request, p string) (string, bool) {
+	resolved, err := containedProjectPath(a.paths.Root, p)
+	switch {
+	case errors.Is(err, errPathNotFound):
+		writeV1Error(w, r, http.StatusNotFound, "conflict_not_found", "Conflicted file not found", "")
+		return "", false
+	case err != nil:
+		writeV1Error(w, r, http.StatusForbidden, "path_outside_project", "Path is outside the project root", "")
+		return "", false
+	}
+	return resolved, true
+}
+
+// conflictAuditSubject derives the audit subject for a resolved
+// conflict write. Exactly one of e / rel is non-nil ([conflict.Resolve]
+// errors otherwise).
+func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.Subject {
+	if rel != nil {
+		return &audit.Subject{
+			Kind:         "relation",
+			RelationType: rel.Type,
+			FromID:       rel.From,
+			ToID:         rel.To,
+		}
+	}
+	return &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID}
+}
+
+// authorizeConflictResolve re-authorizes the write a conflict
+// resolution performs. Conflict resolution bypasses entitymanager, so
+// the gate the manager would normally apply lives here: entity files
+// gate like an entity update; relation files gate like a relation
+// update (source-entity type, mirroring entitymanager.UpdateRelation —
+// type left empty when the source entity can't be loaded, the same
+// fallback the manager uses). A deny records a `denied-write` audit
+// row and writes the standard 403 body; returns true when the write
+// may proceed.
+func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation) bool {
+	var aclReq acl.WriteRequest
+	if rel != nil {
+		var fromType string
+		if fromEntity, ok := a.getEntity(ctx, rel.From); ok {
+			fromType = fromEntity.Type
+		}
+		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
+	} else {
+		aclReq = translateVerb("update", e.Type, e.ID)
+	}
+	decision := a.acl.AuthorizeWrite(ctx, aclReq)
+	if decision.Allow {
+		return true
+	}
+	a.auditSink.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpDeniedWrite,
+		Subject:     conflictAuditSubject(e, rel),
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=conflict-resolve)",
+			decision.Reason, decision.RuleKind, decision.RuleID),
+	})
+	writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
+	return false
+}
+
+// recordConflictResolveAudit emits the audit row for a successful
+// conflict resolution — the direct-file-write counterpart of the
+// records entitymanager emits for manager-routed writes.
+func (a *App) recordConflictResolveAudit(ctx context.Context, relPath string, e *entityPkg.Entity, rel *entityPkg.Relation) {
+	op := audit.OpUpdateEntity
+	if rel != nil {
+		op = audit.OpUpdateRelation
+	}
+	a.auditSink.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          op,
+		Subject:     conflictAuditSubject(e, rel),
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary:     "resolved git conflict in " + relPath,
 	})
 }
 
@@ -2607,6 +3195,17 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("entity %q not found", entityID), "")
 		return
 	}
+
+	// ACL gate (TKT-C0R07J): document rendering serves entity-derived content
+	// (HTML + EntityIDs) and may run a Lua script that reads related entities.
+	// Gate on the document's declared entity_type BEFORE the type-mismatch
+	// branch (so a denied principal gets a uniform 404, not a 400 oracle) and
+	// BEFORE any rendering runs — a denied caller must never trigger the
+	// (possibly Lua) renderer.
+	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+		return
+	}
+
 	if ent.Type != docCfg.EntityType {
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			fmt.Sprintf("document %q is for entity_type %q, but %q is a %q",
@@ -2831,14 +3430,61 @@ type V1ViewSection struct {
 }
 
 // V1ViewEntity represents an entity in a view section.
+//
+// Props and FieldAffordances (TKT-IHC7D) carry the typed property
+// values and per-cell writability verdict that inline-edit hosts on
+// cards/list view sections consume. Both are hidden-property-stripped
+// — the consumer can assume:
+//
+//   - `keys(Props) ∩ hidden(e) == ∅` (hidden properties never leak via
+//     this surface)
+//   - `keys(FieldAffordances) ∩ hidden(e) == ∅` (same for the verdict)
+//   - `FieldAffordances` may have keys absent from `Props` when the
+//     property has no stored value but a non-default verdict (e.g.
+//     `writable: false` on an unset field)
+//
+// The pointer-to-map idiom on `FieldAffordances` mirrors
+// `V1Entity.FieldAffordances`: `nil` means "absent on the wire"
+// (table rows / non-cards paths), `&{}` means "evaluated, no
+// deviations" (closed-world signal matching `_actions`).
+//
+// `Props` is a plain map with `omitempty`: presence/absence is
+// sufficient, no closed-world semantic is needed.
 type V1ViewEntity struct {
-	ID         string           `json:"id"`
-	Title      string           `json:"title"`
-	Type       string           `json:"type"`
-	EditFormID string           `json:"editFormId,omitempty"`
-	Fields     []V1SectionField `json:"fields,omitempty"`
-	Content    string           `json:"content,omitempty"`
-	HasContent bool             `json:"hasContent"`
+	ID               string                        `json:"id"`
+	Title            string                        `json:"title"`
+	Type             string                        `json:"type"`
+	EditFormID       string                        `json:"editFormId,omitempty"`
+	Fields           []V1SectionField              `json:"fields,omitempty"`
+	Content          string                        `json:"content,omitempty"`
+	HasContent       bool                          `json:"hasContent"`
+	Props            map[string]any                `json:"_props,omitempty"`
+	FieldAffordances *map[string]V1FieldAffordance `json:"_fields,omitempty"`
+}
+
+// sectionEntityToV1 lifts a section's row entity (template-side data)
+// onto the wire shape. Centralizes the `V1ViewEntity` construction so
+// the typed `_props` and per-row `_fields` (TKT-IHC7D) stay consistent
+// across both the top-level entities path and the (currently dormant)
+// grouped-card entities path.
+func sectionEntityToV1(e SectionEntityData) V1ViewEntity {
+	v1Ent := V1ViewEntity{
+		ID:         e.ID,
+		Title:      e.Title,
+		Type:       e.Type,
+		EditFormID: e.EditFormID,
+		Content:    e.Content,
+		HasContent: e.HasContent,
+		Props:      e.Props,
+	}
+	for _, f := range e.Fields {
+		v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
+	}
+	if e.FieldVerdicts != nil {
+		fa := e.FieldVerdicts
+		v1Ent.FieldAffordances = &fa
+	}
+	return v1Ent
 }
 
 // V1ViewColumn represents a column definition.
@@ -2933,6 +3579,15 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ACL gate (TKT-BNX2PN): _views is an entity-read chokepoint just like
+	// GET /{plural}/{id} — it serves _title, properties, and content body via
+	// executeView + serializeEntityForWire. Gate BEFORE executeView so a hidden
+	// id is indistinguishable from a missing one (404, no oracle) and the view
+	// pipeline never runs for a denied principal.
+	if !a.gateReadOrNotFound(w, r, entityType, entityID) {
+		return
+	}
+
 	viewCfg, ok := findViewByEntityType(s.Cfg.Views, entityType)
 	if !ok {
 		viewCfg, ok = buildDefaultViewConfig(s.Meta, entityType)
@@ -2982,18 +3637,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert entities
 		for _, e := range sec.Entities {
-			v1Ent := V1ViewEntity{
-				ID:         e.ID,
-				Title:      e.Title,
-				Type:       e.Type,
-				EditFormID: e.EditFormID,
-				Content:    e.Content,
-				HasContent: e.HasContent,
-			}
-			for _, f := range e.Fields {
-				v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
-			}
-			v1Sec.Entities = append(v1Sec.Entities, v1Ent)
+			v1Sec.Entities = append(v1Sec.Entities, sectionEntityToV1(e))
 		}
 
 		// Convert columns
@@ -3038,18 +3682,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 				v1Grp.Rows = append(v1Grp.Rows, v1Row)
 			}
 			for _, e := range grp.Entities {
-				v1Ent := V1ViewEntity{
-					ID:         e.ID,
-					Title:      e.Title,
-					Type:       e.Type,
-					EditFormID: e.EditFormID,
-					Content:    e.Content,
-					HasContent: e.HasContent,
-				}
-				for _, f := range e.Fields {
-					v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
-				}
-				v1Grp.Entities = append(v1Grp.Entities, v1Ent)
+				v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
 			}
 			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
 		}

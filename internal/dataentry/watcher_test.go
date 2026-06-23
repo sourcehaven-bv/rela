@@ -161,8 +161,8 @@ func TestEventBrokerBroadcast(t *testing.T) {
 
 	select {
 	case msg := <-ch1:
-		if msg.Type != "refresh" {
-			t.Errorf("ch1: expected 'refresh', got %q", msg.Type)
+		if msg.Name != "refresh" {
+			t.Errorf("ch1: expected 'refresh', got %q", msg.Name)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("ch1: timed out waiting for broadcast")
@@ -170,8 +170,8 @@ func TestEventBrokerBroadcast(t *testing.T) {
 
 	select {
 	case msg := <-ch2:
-		if msg.Type != "refresh" {
-			t.Errorf("ch2: expected 'refresh', got %q", msg.Type)
+		if msg.Name != "refresh" {
+			t.Errorf("ch2: expected 'refresh', got %q", msg.Name)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("ch2: timed out waiting for broadcast")
@@ -198,7 +198,7 @@ func TestEventBrokerBroadcastSkipsSlowClient(t *testing.T) {
 	// Channel should be empty now (fifth was dropped)
 	select {
 	case extra := <-ch:
-		t.Errorf("expected no more messages, got %q", extra.Type)
+		t.Errorf("expected no more messages, got %q", extra.Name)
 	default:
 		// expected
 	}
@@ -309,14 +309,40 @@ func TestReloadBadConfigKeepsPrevious(t *testing.T) {
 // --- handleSSE tests ---
 
 // flusherRecorder wraps httptest.ResponseRecorder to implement http.Flusher.
+// Each Flush is signaled on the flushes channel so tests can wait for the
+// SSE handler to reach a known point (subscribed + keepalive written, event
+// written) instead of sleeping.
 type flusherRecorder struct {
 	*httptest.ResponseRecorder
-	flushed int
+	flushes chan struct{}
+}
+
+func newFlusherRecorder() *flusherRecorder {
+	return &flusherRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		flushes:          make(chan struct{}, 16),
+	}
 }
 
 func (f *flusherRecorder) Flush() {
-	f.flushed++
 	f.ResponseRecorder.Flush()
+	if f.flushes == nil {
+		return
+	}
+	select {
+	case f.flushes <- struct{}{}:
+	default: // a full buffer already signals "flushed"; never block the handler
+	}
+}
+
+// awaitFlush blocks until the handler's next Flush call.
+func (f *flusherRecorder) awaitFlush(t *testing.T) {
+	t.Helper()
+	select {
+	case <-f.flushes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for SSE flush")
+	}
 }
 
 func TestHandleSSEHeaders(t *testing.T) {
@@ -324,7 +350,7 @@ func TestHandleSSEHeaders(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r := httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody).WithContext(ctx)
-	w := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := newFlusherRecorder()
 
 	// Run handler in goroutine since it blocks until context is cancelled
 	done := make(chan struct{})
@@ -333,8 +359,8 @@ func TestHandleSSEHeaders(t *testing.T) {
 		close(done)
 	}()
 
-	// Give handler time to write headers and initial keepalive
-	time.Sleep(50 * time.Millisecond)
+	// The first flush means headers and the initial keepalive are written.
+	w.awaitFlush(t)
 	cancel()
 	<-done
 
@@ -364,7 +390,7 @@ func TestHandleSSEReceivesEvent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r := httptest.NewRequest(http.MethodGet, "/api/events", http.NoBody).WithContext(ctx)
-	w := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := newFlusherRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -372,14 +398,15 @@ func TestHandleSSEReceivesEvent(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for handler to subscribe
-	time.Sleep(50 * time.Millisecond)
+	// The keepalive flush happens after the handler subscribes, so the
+	// broadcast below is guaranteed to reach its channel.
+	w.awaitFlush(t)
 
 	// Broadcast an event
 	app.broker.broadcast("refresh")
 
-	// Wait for event to be written
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the event to be written
+	w.awaitFlush(t)
 	cancel()
 	<-done
 

@@ -2,6 +2,8 @@ package dataentry
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -12,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -124,6 +127,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.store = svc.Store()
 	app.entityManager = svc.EntityManager()
 	app.searcher = svc.Searcher()
+	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
 	app.validator = svc.Validator()
 	app.templater = svc.Templater()
@@ -137,6 +141,23 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	if app.scriptEngine != nil {
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
 	}
+}
+
+// rebindVisibleSearcher re-derives the generic visible-search wrapper
+// over the app's CURRENT searcher+store pair. Tests that inject a fake
+// via `app.searcher = ...` and exercise an executeQuery consumer
+// (/_search, _position search scope) must call this afterwards —
+// executeQuery routes through app.visibleSearcher (TKT-BA8BSX), which
+// otherwise still wraps the searcher from construction time. Tests
+// that only hit the list pipeline (?q= on list endpoints) don't need
+// it: that path reads app.searcher directly.
+func rebindVisibleSearcher(t *testing.T, app *App) {
+	t.Helper()
+	v, err := search.NewVisible(app.searcher, app.store)
+	if err != nil {
+		t.Fatalf("rebindVisibleSearcher: %v", err)
+	}
+	app.visibleSearcher = v
 }
 
 // reseedStore copies every entity and relation from src into dst.
@@ -215,6 +236,23 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 	return app
 }
 
+// doRequest drives a request through the production router
+// (app.NewRouter().ServeHTTP), so mux registration, URL-pattern
+// parsing, and middleware ordering are exercised — unlike calling
+// app.handleV1* methods directly with pre-parsed route params.
+//
+// Convention (TKT-TLQ94B): new endpoint tests should go through this
+// helper; existing handler-level tests migrate opportunistically when
+// touched. TestRouterWalk_AllAPIRoutesReachHandlers covers route
+// registration itself.
+func doRequest(t *testing.T, app *App, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, path, http.NoBody)
+	w := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(w, r)
+	return w
+}
+
 // newHandlerTestApp builds an App for handler tests.
 func newHandlerTestApp(t *testing.T) *App {
 	t.Helper()
@@ -260,7 +298,11 @@ func newHandlerTestApp(t *testing.T) *App {
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 	seedFromFixture(svc.Store(), g)
 
-	app := &App{}
+	// fieldResolver must be set explicitly because this fixture bypasses
+	// NewApp (which rejects a nil resolver). Without it, any handler that
+	// serializes entities for the wire panics — caught by the router walk
+	// test driving _search through the full router (TKT-TLQ94B).
+	app := &App{fieldResolver: NopFieldVerdictResolver{}}
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)
@@ -268,11 +310,18 @@ func newHandlerTestApp(t *testing.T) *App {
 		t.Fatalf("NewRootedFS: %v", err)
 	}
 	app.kv = state.NewFSKV(kvRoot)
+	// Populate the snapshot fields handlers deref unconditionally — the
+	// router walk test hits every route, including _openapi.json, which
+	// panics on a nil OpenAPIGen. UserPalette stays nil on purpose: the
+	// theme tests use its nil-ness as the "nothing saved yet" signal.
 	app.state.Store(&AppState{
-		Cfg:         cfg,
-		Meta:        meta,
-		StyleMap:    styleMap,
-		StyledTypes: styledTypes,
+		Cfg:          cfg,
+		Meta:         meta,
+		StyleMap:     styleMap,
+		StyledTypes:  styledTypes,
+		UserDefaults: &UserDefaults{},
+		Palette:      ResolvePalette(cfg.Palette, nil),
+		OpenAPIGen:   openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
 	})
 	return app
 }

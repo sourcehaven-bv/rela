@@ -3,8 +3,11 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -12,6 +15,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // translateVerb maps a wire-format verb to the [acl.WriteRequest] that
@@ -25,21 +29,43 @@ import (
 // that pass verbs in are [perItemVerbs] and [perCollectionVerbs] in
 // this file. Adding a new verb requires an entry here plus an
 // [acl.Op] constant.
-func translateVerb(verb, entityType string) acl.WriteRequest {
+//
+// entityID is the entity being acted on; empty for per-collection
+// verbs (e.g. "create" against a type, no instance yet). It populates
+// [acl.EntitySubject.ID] so the v1 ACL can evaluate entity-aware
+// local-role grants (e.g. "alice can edit TKT-042 because she's
+// assigned to it").
+func translateVerb(verb, entityType, entityID string) acl.WriteRequest {
+	subject := acl.EntitySubject{Type: entityType, ID: entityID}
 	switch verb {
 	case "create":
-		return acl.WriteRequest{Op: acl.OpCreate, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpCreate, Subject: subject}
 	case "update":
-		return acl.WriteRequest{Op: acl.OpUpdate, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpUpdate, Subject: subject}
 	case "delete":
-		return acl.WriteRequest{Op: acl.OpDelete, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpDelete, Subject: subject}
 	case "rename":
-		return acl.WriteRequest{Op: acl.OpRename, EntityType: entityType}
+		return acl.WriteRequest{Op: acl.OpRename, Subject: subject}
 	}
 	// Unreachable for the closed verb set above. A panic here would
 	// signal a bug in a future commit — better than silently returning
 	// a zero WriteRequest that maps every verb to OpCreate.
 	panic("dataentry.translateVerb: unknown verb: " + verb)
+}
+
+// translateRelationWrite maps a relation write to the [acl.WriteRequest]
+// that authorizes it, mirroring how entitymanager gates relation
+// updates: Op=update with a [acl.RelationSubject] evaluated against the
+// source entity's type. It lives here so the lint_test
+// single-construction-site invariant covers relation writes too; the
+// only caller today is the conflict-resolve handler, whose write is
+// file-level and cannot route through entitymanager.
+func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
+	return acl.WriteRequest{Op: acl.OpUpdate, Subject: acl.RelationSubject{
+		Type:     relType,
+		FromType: fromType,
+		FromID:   fromID,
+	}}
 }
 
 // perItemVerbs are the verbs computed per entity instance.
@@ -58,7 +84,7 @@ var perCollectionVerbs = []string{"create"}
 func (a *App) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	for _, v := range perItemVerbs {
-		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, e.Type)).Allow
+		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID)).Allow
 	}
 	return out
 }
@@ -68,7 +94,7 @@ func (a *App) computeActions(ctx context.Context, e *entityPkg.Entity) map[strin
 func (a *App) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
 	for _, v := range perCollectionVerbs {
-		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, entityType)).Allow
+		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, entityType, "")).Allow
 	}
 	return out
 }
@@ -603,7 +629,13 @@ func (a *App) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity
 // is consistent: `_fields: {}` under the nop resolver, sparse entries
 // under any other.
 func (a *App) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1FieldAffordance {
-	v := a.fieldResolver.FieldVerdicts(ctx, e)
+	return computeFieldAffordancesFrom(a.fieldResolver.FieldVerdicts(ctx, e))
+}
+
+// computeFieldAffordancesFrom is computeFieldAffordances given an
+// already-resolved verdict set, so callers that need the verdicts for more
+// than one thing (e.g. _fields + _attachments) resolve them once.
+func computeFieldAffordancesFrom(v FieldVerdicts) map[string]V1FieldAffordance {
 	out := make(map[string]V1FieldAffordance)
 
 	// writable=false entries
@@ -741,6 +773,29 @@ func (a *App) computeRelationAffordances(ctx context.Context, e *entityPkg.Entit
 	return out
 }
 
+// copyVisibleProperties returns a fresh map of the entity's properties
+// with hidden names filtered out, ready to ship on a per-row wire
+// surface (cards/list rows in V1ViewEntity._props). Shallow copy: each
+// value points at the same underlying object as e.Properties[k], which
+// is fine because the response is JSON-marshaled before the caller can
+// alias anything (TKT-IHC7D).
+//
+// Mirrors stripHiddenProperties's hidden-property contract but returns
+// a new map instead of mutating an existing V1Entity — the per-row
+// case never goes through V1Entity, so the in-place strip pattern
+// doesn't fit.
+func (a *App) copyVisibleProperties(ctx context.Context, e *entityPkg.Entity) map[string]any {
+	hidden := a.hiddenProperties(ctx, e)
+	out := make(map[string]any, len(e.Properties))
+	for k, v := range e.Properties {
+		if _, h := hidden[k]; h {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // stripHiddenProperties removes hidden field names from result.Properties
 // in-place. Centralizes the "hidden = omitted from wire" invariant so
 // every entity-returning response (GET, PATCH, POST, clone, action,
@@ -777,10 +832,68 @@ func (a *App) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, re
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
 // and includes get [App.stripHiddenProperties] only.
 func (a *App) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
-	fields := a.computeFieldAffordances(ctx, e)
+	verdicts := a.fieldResolver.FieldVerdicts(ctx, e)
+	fields := computeFieldAffordancesFrom(verdicts)
 	relations := a.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
+	// Pass the same verdicts so a policy-hidden `file` property's attachments
+	// are omitted from `_attachments` — otherwise the hidden-field boundary
+	// the rest of the response maintains would leak the file's metadata and a
+	// working download href.
+	attachments := a.computeAttachments(ctx, e, result.Self, verdicts)
+	result.Attachments = &attachments
+}
+
+// computeAttachments returns the per-property attachment metadata for an
+// entity, keyed by `file`-type property name. Only properties that carry
+// a file appear; an empty map means "no attachments". Rides every
+// per-entity V1Entity response (GET, PATCH, POST, clone) alongside
+// `_fields` / `_relations`, never on list rows — same closed-world shape.
+//
+// selfHref is the entity's `_self` link (`/api/v1/{plural}/{id}`); each
+// file's download href is that plus `/_attachments/{property}/{fileName}`.
+// `_self` is always set by entityToV1 before this runs, so the
+// empty-selfHref guard is pure defense — when it can't build a valid href
+// it omits the entry rather than emit a broken relative link.
+//
+// The value per property is a LIST: a property may hold several files, and
+// even a single file is reported as a 1-element list (always-array wire
+// shape).
+func (a *App) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]V1Attachment {
+	out := make(map[string][]V1Attachment)
+	if selfHref == "" {
+		return out
+	}
+	infos, err := a.store.ListAttachments(ctx, e.ID)
+	if err != nil {
+		// Treat a list failure as "no attachments" rather than failing the
+		// whole entity response — the bytes endpoint still gates and serves
+		// correctly; this map is only a UI hint. But a real backend fault
+		// (not just a missing entity) is logged so operators aren't blind to
+		// an outage that silently empties every entity's _attachments.
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("dataentry: list attachments for serialization failed",
+				"err", err, "entity", e.ID)
+		}
+		return out
+	}
+	for _, info := range infos {
+		// A property hidden from this viewer by field-visibility policy must
+		// not leak its files (metadata or a working download href) — mirror
+		// the hidden-field boundary the rest of the response maintains.
+		if !verdicts.IsVisible(info.Property) {
+			continue
+		}
+		out[info.Property] = append(out[info.Property], V1Attachment{
+			ID:          info.FileName,
+			FileName:    info.FileName,
+			Size:        info.Size,
+			ContentType: contentTypeForFilename(info.FileName),
+			Href:        selfHref + "/_attachments/" + info.Property + "/" + url.PathEscape(info.FileName),
+		})
+	}
+	return out
 }
 
 // serializeEntityForWire is the single entry-point every handler that

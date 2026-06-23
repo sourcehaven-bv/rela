@@ -2,11 +2,44 @@ package metamodel
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// validIDPrefixBase matches a prefix after trimming one trailing dash:
+// the character set entity IDs allow. Dashes are permitted here — the
+// dash-run constraints (no "--", no trailing dash on the base) are
+// checked separately below so the non-dash case gets a more targeted
+// error message.
+var validIDPrefixBase = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ValidateIDPrefix rejects id_prefix values whose generated IDs would
+// fail entity ID validation (BUG-RHFHTH). Generated short/sequential
+// IDs have the shape <base>-<suffix>, where base is the prefix with
+// one trailing dash trimmed — so the base must be non-empty, contain
+// only [A-Za-z0-9_-], and neither contain nor end in a dash run that
+// would re-create the forbidden "--" sequence (reserved as the
+// relation key separator). Enforced at metamodel load;
+// entity.GenerateShortID assumes a load-validated prefix.
+func ValidateIDPrefix(prefix string) error {
+	base := strings.TrimSuffix(prefix, "-")
+	if base == "" {
+		return fmt.Errorf("id_prefix %q has no characters besides %q", prefix, "-")
+	}
+	if !validIDPrefixBase.MatchString(base) {
+		return fmt.Errorf(
+			"id_prefix %q contains characters not allowed in entity IDs (allowed: A-Z a-z 0-9 _ -)", prefix)
+	}
+	if strings.Contains(base, "--") || strings.HasSuffix(base, "-") {
+		return fmt.Errorf(
+			"id_prefix %q would generate IDs with consecutive dashes (\"--\" is the relation key separator)",
+			prefix)
+	}
+	return nil
+}
 
 // ValidationErrorType indicates the kind of validation error.
 type ValidationErrorType string
@@ -212,8 +245,20 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 
 	case PropertyTypeInteger:
 		switch v := val.(type) {
-		case int, int64, float64:
-			// OK - YAML may parse integers as these types
+		case int, int64:
+			// OK
+		case float64:
+			// YAML parses bare integers (count: 3) as int, but a value
+			// with a fractional part (count: 3.5) arrives as float64.
+			// Accept only when it is integral — silently truncating 3.5
+			// to 3 would corrupt the value on a hand-edit typo.
+			if v != math.Trunc(v) {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid integer %v (must not have a fractional part)", v),
+				}
+			}
 		case string:
 			if _, err := strconv.Atoi(v); err != nil {
 				return &ValidationError{
@@ -294,18 +339,12 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 		}
 
 	case PropertyTypeFile:
-		// File-type properties hold a string path (repo-relative)
-		// pointing at a blob in the attachment store. Structural
-		// validation is just "it's a string"; content-level checks
-		// (file exists, hash matches) are the attachment store's
-		// concern.
-		if _, ok := val.(string); !ok {
-			return &ValidationError{
-				Type:     ValidationErrorInvalidType,
-				Property: propName,
-				Message:  "Must be a string (attachment path)",
-			}
-		}
+		// File-type properties hold attachment path string(s) pointing at
+		// blobs in the attachment store. With the default cap (1) the value
+		// is a single string; with max > 1 it is a list of strings.
+		// Structural validation is just "string(s)"; content-level checks
+		// (file exists, hash matches) are the attachment store's concern.
+		return validateFileValue(propName, propDef, val)
 
 	default:
 		// Custom type (enum defined in types section)
@@ -325,6 +364,53 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 // validateCustomTypeValue validates a value against a custom type's allowed values and regex validations.
 // Supports both single string values and []string (multi-select).
 // Returns an error combining all validation failures.
+// validateFileValue checks a `file`-type property value. The value may be
+// a single string path or a list of string paths regardless of the cap
+// (a 1-element list is tolerated even at FileMax()==1, consistent with
+// rela's permissive-storage philosophy); the list length must not exceed
+// the cap. Content-level checks (the blob exists, hash matches) are the
+// attachment store's concern, not this.
+func validateFileValue(propName string, propDef *PropertyDef, val interface{}) *ValidationError {
+	maxCount := propDef.FileMax()
+
+	// Coerce to a list of paths regardless of scalar/list shape so the
+	// count check and item-type check share one path.
+	var paths []string
+	switch v := val.(type) {
+	case string:
+		paths = []string{v}
+	case []string:
+		paths = v
+	case []interface{}:
+		for i, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return &ValidationError{
+					Type:     ValidationErrorInvalidType,
+					Property: propName,
+					Message:  fmt.Sprintf("item[%d]: must be a string (attachment path)", i),
+				}
+			}
+			paths = append(paths, s)
+		}
+	default:
+		return &ValidationError{
+			Type:     ValidationErrorInvalidType,
+			Property: propName,
+			Message:  "Must be a string or list of strings (attachment path)",
+		}
+	}
+
+	if len(paths) > maxCount {
+		return &ValidationError{
+			Type:     ValidationErrorInvalidValue,
+			Property: propName,
+			Message:  fmt.Sprintf("at most %d attachment(s) allowed, got %d", maxCount, len(paths)),
+		}
+	}
+	return nil
+}
+
 func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
 	hasEnumValues := len(customType.Values) > 0
 	hasValidations := len(customType.Validations) > 0
@@ -510,7 +596,10 @@ func ParseDateValue(s string, propDef *PropertyDef) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("parsing time %q: cannot parse with format %q or common fallbacks", s, format)
 }
 
-// ParseIntegerValue parses an integer from various input types
+// ParseIntegerValue parses an integer from various input types. A
+// float64 is accepted only when it has no fractional part — truncating
+// 3.5 to 3 would silently corrupt the value (matching the integer
+// property-validation rule).
 func ParseIntegerValue(val interface{}) (int, error) {
 	switch v := val.(type) {
 	case int:
@@ -518,6 +607,9 @@ func ParseIntegerValue(val interface{}) (int, error) {
 	case int64:
 		return int(v), nil
 	case float64:
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("invalid integer %v (must not have a fractional part)", v)
+		}
 		return int(v), nil
 	case string:
 		return strconv.Atoi(v)

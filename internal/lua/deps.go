@@ -51,4 +51,11 @@ type Mutator interface {
 type WriteDeps struct {
 	ReadDeps
 	EntityManager Mutator
+
+	// ElevatedManager, when non-nil, is a write handle whose mutations skip
+	// the ACL deny (TKT-D8T148). It is set ONLY for an allow_acl_bypass
+	// automation action; its presence is what makes the runtime register
+	// rela.bypass_acl(fn). Nil on every other runtime, so rela.bypass_acl is
+	// absent and a script cannot elevate.
+	ElevatedManager Mutator
 }

@@ -26,6 +26,9 @@ export interface PropertyDef {
   description?: string
   format?: string
   list?: boolean
+  // For `file` properties: maximum attachments (default 1). Above 1 the
+  // property holds several files and the widget switches to add-mode.
+  max?: number
 }
 
 export interface RelationType {

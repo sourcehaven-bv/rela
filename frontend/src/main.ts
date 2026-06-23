@@ -1,7 +1,9 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { PiniaColada } from '@pinia/colada'
 import App from './App.vue'
 import router from './router'
+import './styles/tokens.css'
 import '@fontsource/open-sans/400.css'
 import '@fontsource/open-sans/500.css'
 import '@fontsource/open-sans/600.css'
@@ -99,6 +101,7 @@ window.addEventListener('error', (ev) => {
 })
 
 app.use(createPinia())
+app.use(PiniaColada)
 app.use(router)
 
 app.mount('#app')

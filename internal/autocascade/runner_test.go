@@ -18,6 +18,7 @@ import (
 // --- New / construction tests ---
 
 func TestNew_RejectsNilEngine(t *testing.T) {
+	t.Parallel()
 	if _, err := autocascade.New(autocascade.Deps{Engine: nil}); err == nil {
 		t.Fatal("expected error for nil Engine, got nil")
 	}
@@ -151,6 +152,7 @@ func emptyRequest(trigger *entity.Entity) autocascade.Request {
 // --- AC5 tests ---
 
 func TestRunnerEmptyResult(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t, nil)
 	trigger := entity.New("REQ-001", "requirement")
 
@@ -172,6 +174,7 @@ func TestRunnerEmptyResult(t *testing.T) {
 // TestRunnerDepthLimit pins the depth-limit warning wording.
 // The format string lived in workspace.go:1082–1086 before the move.
 func TestRunnerDepthLimit(t *testing.T) {
+	t.Parallel()
 	auto := automation.Automation{
 		Name: "chain-recursion",
 		On: automation.Trigger{
@@ -219,6 +222,7 @@ func TestRunnerDepthLimit(t *testing.T) {
 // TestRunnerIfExistsSkip — existing target found, IfExistsSkip: no
 // CreateEntity.
 func TestRunnerIfExistsSkip(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t, nil)
 	existing := entity.New("EXISTING-1", "checklist")
 	host := &stubHost{t: t, existingTarget: existing}
@@ -258,6 +262,7 @@ func TestRunnerIfExistsSkip(t *testing.T) {
 // TestRunnerIfExistsError — existing target found, IfExistsError:
 // error recorded, no create.
 func TestRunnerIfExistsError(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t, nil)
 	existing := entity.New("EXISTING-1", "checklist")
 	host := &stubHost{t: t, existingTarget: existing}
@@ -290,6 +295,7 @@ func TestRunnerIfExistsError(t *testing.T) {
 // TestRunnerEntityCreateError — CreateEntity returns error:
 // recorded, cascade continues.
 func TestRunnerEntityCreateError(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t, nil)
 	host := &stubHost{t: t, createErr: errors.New("simulated create failure"), store: memstore.New()}
 
@@ -320,6 +326,7 @@ func TestRunnerEntityCreateError(t *testing.T) {
 // TestRunnerRelationCreateError — WriteRelation returns error: recorded,
 // cascade continues.
 func TestRunnerRelationCreateError(t *testing.T) {
+	t.Parallel()
 	meta, err := metamodel.Parse([]byte(`version: "1.0"
 entities:
   requirement:
@@ -383,6 +390,7 @@ relations:
 
 // TestRunnerActionOrder pins per-iteration action order: Lua → relations → entities.
 func TestRunnerActionOrder(t *testing.T) {
+	t.Parallel()
 	meta, err := metamodel.Parse([]byte(`version: "1.0"
 entities:
   requirement:
@@ -472,6 +480,7 @@ relations:
 // Path patching) is the adapter's responsibility and is tested at
 // the workspace layer.
 func TestRunnerScriptError(t *testing.T) {
+	t.Parallel()
 	scripts := &failingScriptRunner{err: errors.New("boom from runner")}
 	r := newRunner(t, nil)
 
@@ -500,6 +509,7 @@ func TestRunnerScriptError(t *testing.T) {
 // TestRunnerMissingScriptRunner — a Result with scripted actions but
 // no Request.Scripts records an error per action and continues.
 func TestRunnerMissingScriptRunner(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t, nil)
 
 	trigger := entity.New("REQ-001", "requirement")

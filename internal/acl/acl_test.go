@@ -9,6 +9,7 @@ import (
 
 // AC1.1: ForbiddenError satisfies errors.Is(err, ErrForbidden).
 func TestForbiddenError_IsErrForbidden(t *testing.T) {
+	t.Parallel()
 	err := &acl.ForbiddenError{Decision: acl.Decision{
 		Allow:    false,
 		RuleKind: "role-grant",
@@ -23,6 +24,7 @@ func TestForbiddenError_IsErrForbidden(t *testing.T) {
 
 // ForbiddenError.Error includes rule context so logs are debuggable.
 func TestForbiddenError_ErrorString(t *testing.T) {
+	t.Parallel()
 	err := &acl.ForbiddenError{Decision: acl.Decision{
 		RuleKind: "role-grant",
 		RuleID:   "viewer",
@@ -41,6 +43,7 @@ func TestForbiddenError_ErrorString(t *testing.T) {
 // errors.As unwraps to *ForbiddenError so HTTP handlers can read the
 // Decision for structured 403 bodies.
 func TestForbiddenError_AsExposesDecision(t *testing.T) {
+	t.Parallel()
 	original := &acl.ForbiddenError{Decision: acl.Decision{
 		RuleKind: "read-only",
 		RuleID:   "read-only-acl",

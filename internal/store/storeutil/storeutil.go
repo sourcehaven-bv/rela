@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -38,6 +39,34 @@ func ValidateID(id string) error {
 	for i := range len(id) {
 		if id[i] < 0x20 || id[i] == 0x7f {
 			return fmt.Errorf("store: ID %q contains control character", id)
+		}
+	}
+	return nil
+}
+
+// ValidateRelationType rejects relation types that would cause
+// relation-key collisions or storage hazards. The rules mirror
+// [ValidateID]: relation types are embedded in the same
+// from--type--to key format (so `--` collides), become path segments
+// in fsstore relation filenames (so separators nest directories), and
+// appear in the pgstore change-feed payload whose field separator is
+// a control character (internal/store/pgstore/feed.go already
+// documents that assumption). Previously each backend hand-rolled a
+// subset of these checks inline; the shared rule is also the validity
+// oracle for the storetest fuzz harness (TKT-PCLGGL).
+func ValidateRelationType(relType string) error {
+	if relType == "" {
+		return errors.New("store: empty relation type")
+	}
+	if strings.Contains(relType, "--") {
+		return fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	}
+	if strings.ContainsAny(relType, "/\\") {
+		return fmt.Errorf("store: relation type %q contains path separator", relType)
+	}
+	for i := range len(relType) {
+		if relType[i] < 0x20 || relType[i] == 0x7f {
+			return fmt.Errorf("store: relation type %q contains control character", relType)
 		}
 	}
 	return nil
@@ -171,4 +200,13 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 		}
 	}
 	return true
+}
+
+// LimitAttachmentReader wraps r so reads fail with
+// store.ErrAttachmentTooLarge once they exceed store.MaxAttachmentBytes.
+// This is the shared backstop guard every store backend applies to
+// AttachFile, so no backend is ever unbounded regardless of caller.
+// Thin alias over store.CapAttachmentReader at the backstop cap.
+func LimitAttachmentReader(r io.Reader) io.Reader {
+	return store.CapAttachmentReader(r, store.MaxAttachmentBytes)
 }

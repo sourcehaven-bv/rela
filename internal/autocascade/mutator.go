@@ -31,3 +31,19 @@ type Mutator interface {
 	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, from, relType, to string) error
 }
+
+// ElevatedProvider is an OPTIONAL capability a Mutator may expose
+// (TKT-D8T148): it hands back a second Mutator whose writes skip the ACL deny,
+// for an `allow_acl_bypass` automation action that calls `rela.bypass_acl(...)`.
+// The script runner type-asserts the per-cascade Mutator to this interface and
+// uses Elevated() ONLY when the action is allow_acl_bypass; the elevated handle
+// is scoped to the bypass closure and invalidated after it returns.
+//
+// Kept separate from Mutator so the elevated capability is opt-in and a
+// Mutator implementation without it (e.g. a test double) simply doesn't grant
+// bypass — there is no way to elevate a Mutator that doesn't choose to offer it.
+type ElevatedProvider interface {
+	// Elevated returns a Mutator whose writes bypass the ACL deny. The
+	// returned handle must NOT propagate elevation into nested cascades.
+	Elevated() Mutator
+}
