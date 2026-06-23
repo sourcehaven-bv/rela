@@ -484,10 +484,10 @@ func TestSync_Manifest_ACLFiltered(t *testing.T) {
 
 	app.store = manifestStore{Store: app.store, entries: []synctypes.ManifestEntry{
 		{Kind: "e", IDA: "TKT-1", Typ: "ticket", Deleted: false, Seq: 5},
-		{Kind: "e", IDA: "FEAT-1", Typ: "feature", Deleted: false, Seq: 6},  // hidden from alice
-		{Kind: "e", IDA: "TKT-2", Typ: "ticket", Deleted: true, Seq: 7},     // ticket tombstone — visible
-		{Kind: "r", IDA: "FEAT-1", IDB: "needs", IDC: "CMP-1", Seq: 8},      // sourced on feature — hidden
-		{Kind: "r", IDA: "TKT-1", IDB: "belongs_to", IDC: "CMP-1", Seq: 9},  // sourced on ticket — visible
+		{Kind: "e", IDA: "FEAT-1", Typ: "feature", Deleted: false, Seq: 6}, // hidden from alice
+		{Kind: "e", IDA: "TKT-2", Typ: "ticket", Deleted: true, Seq: 7},    // ticket tombstone — visible
+		{Kind: "r", IDA: "FEAT-1", IDB: "needs", IDC: "CMP-1", Seq: 8},     // sourced on feature — hidden
+		{Kind: "r", IDA: "TKT-1", IDB: "belongs_to", IDC: "CMP-1", Seq: 9}, // sourced on ticket — visible
 	}}
 
 	d := mustNewACL(t, &acl.Policy{

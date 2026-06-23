@@ -2,7 +2,7 @@
 id: TKT-37TYZ2
 type: ticket
 title: 'Sync read paths bypass read ACL (IB-review #1)'
-kind: bug
+kind: enhancement
 priority: high
 effort: s
 status: done
