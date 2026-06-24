@@ -8,9 +8,26 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
+
+// analyzeService runs the read-only graph-analysis checks (orphans,
+// duplicates, gaps, cardinality, properties, validations). Extracted from App
+// (TKT-N26KLB M5.1): it depends only on the stable read services, and each
+// method takes the per-request metamodel snapshot explicitly (capture-once,
+// per the project's snapshot rule) rather than reaching back into App.
+//
+// The whole-graph scans are intentionally ungated; visibility is applied to
+// the resulting issues at the HTTP boundary (see visibleAnalysisIssues).
+type analyzeService struct {
+	store     store.Store
+	tracer    tracer.Tracer
+	validator validator.Validator
+}
 
 // AnalysisIssue represents a single validation issue, optionally linked to an entity.
 type AnalysisIssue struct {
@@ -67,14 +84,14 @@ type AnalysisResult struct {
 }
 
 // runAnalysis executes all analysis checks and returns a combined result.
-func (a *App) runAnalysis(ctx context.Context) AnalysisResult {
+func (svc analyzeService) runAnalysis(ctx context.Context, meta *metamodel.Metamodel) AnalysisResult {
 	sections := []AnalysisSection{
-		a.analyzeProperties(ctx),
-		a.analyzeCardinality(ctx),
-		a.analyzeValidations(ctx),
-		a.analyzeOrphans(ctx),
-		a.analyzeDuplicates(ctx),
-		a.analyzeGaps(ctx),
+		svc.analyzeProperties(ctx, meta),
+		svc.analyzeCardinality(ctx, meta),
+		svc.analyzeValidations(ctx, meta),
+		svc.analyzeOrphans(ctx, meta),
+		svc.analyzeDuplicates(ctx, meta),
+		svc.analyzeGaps(ctx, meta),
 	}
 
 	var errors, warnings int
@@ -92,23 +109,22 @@ func (a *App) runAnalysis(ctx context.Context) AnalysisResult {
 
 // analysisIssueCounts returns just the total error and warning counts
 // without building the full issue details. Used by the dashboard.
-func (a *App) analysisIssueCounts(ctx context.Context) (errors, warnings int) {
-	result := a.runAnalysis(ctx)
+func (svc analyzeService) analysisIssueCounts(ctx context.Context, meta *metamodel.Metamodel) (errors, warnings int) {
+	result := svc.runAnalysis(ctx, meta)
 	return result.ErrorCount, result.WarningCount
 }
 
 // analyzeOrphans finds entities with no connections.
-func (a *App) analyzeOrphans(ctx context.Context) AnalysisSection {
-	s := a.State()
+func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Orphans",
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	orphanIDs, _ := a.tracer.FindOrphans(ctx)
+	orphanIDs, _ := svc.tracer.FindOrphans(ctx)
 
 	var orphans []*entity.Entity
-	st := a.store
+	st := svc.store
 	for _, id := range orphanIDs {
 		if e, err := st.GetEntity(ctx, id); err == nil {
 			orphans = append(orphans, e)
@@ -120,7 +136,7 @@ func (a *App) analyzeOrphans(ctx context.Context) AnalysisSection {
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
-			Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+			Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 			Message:    "No relations",
 			Severity:   "warning",
 		})
@@ -130,19 +146,18 @@ func (a *App) analyzeOrphans(ctx context.Context) AnalysisSection {
 }
 
 // analyzeDuplicates finds entities with identical normalized titles.
-func (a *App) analyzeDuplicates(ctx context.Context) AnalysisSection {
-	s := a.State()
+func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Duplicates",
 		Description: "Entities with identical titles",
 	}
 
 	titleGroups := make(map[string][]*entity.Entity)
-	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
-		title := normalizeTitle(s.Meta.DisplayTitle(e.ID, e.Type, e.Properties))
+		title := normalizeTitle(meta.DisplayTitle(e.ID, e.Type, e.Properties))
 		if title != "" {
 			titleGroups[title] = append(titleGroups[title], e)
 		}
@@ -168,7 +183,7 @@ func (a *App) analyzeDuplicates(ctx context.Context) AnalysisSection {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
 				Severity:   "warning",
 			})
@@ -179,8 +194,7 @@ func (a *App) analyzeDuplicates(ctx context.Context) AnalysisSection {
 }
 
 // analyzeGaps finds gaps in ID sequences for auto-numbered entity types.
-func (a *App) analyzeGaps(ctx context.Context) AnalysisSection {
-	s := a.State()
+func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "ID Gaps",
 		Description: "Missing numbers in auto-generated ID sequences",
@@ -190,7 +204,7 @@ func (a *App) analyzeGaps(ctx context.Context) AnalysisSection {
 	// in a single pass over the metamodel.
 	manualPrefixes := make(map[string]bool)
 	typeByPrefix := make(map[string]string)
-	for typeName, entityDef := range s.Meta.Entities {
+	for typeName, entityDef := range meta.Entities {
 		for _, idPrefix := range entityDef.GetIDPrefixes() {
 			trimmed := strings.TrimSuffix(idPrefix, "-")
 			if entityDef.IsManualID() {
@@ -203,7 +217,7 @@ func (a *App) analyzeGaps(ctx context.Context) AnalysisSection {
 
 	// Group IDs by prefix
 	prefixGroups := make(map[string][]int)
-	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -254,18 +268,17 @@ func (a *App) analyzeGaps(ctx context.Context) AnalysisSection {
 }
 
 // analyzeCardinality checks relation cardinality constraints.
-func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
-	s := a.State()
+func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Cardinality",
 		Description: "Relation cardinality constraint violations",
 	}
 
-	st := a.store
+	st := svc.store
 
 	// Sort relation names for deterministic output
-	relNames := make([]string, 0, len(s.Meta.Relations))
-	for name := range s.Meta.Relations {
+	relNames := make([]string, 0, len(meta.Relations))
+	for name := range meta.Relations {
 		relNames = append(relNames, name)
 	}
 	natsort.Strings(relNames)
@@ -292,7 +305,7 @@ func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 	}
 
 	for _, relName := range relNames {
-		relDef := s.Meta.Relations[relName]
+		relDef := meta.Relations[relName]
 
 		// Check min_outgoing
 		if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
@@ -303,7 +316,7 @@ func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -321,7 +334,7 @@ func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -343,7 +356,7 @@ func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -365,7 +378,7 @@ func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -379,15 +392,14 @@ func (a *App) analyzeCardinality(ctx context.Context) AnalysisSection {
 }
 
 // analyzeProperties validates all entity properties against the metamodel.
-func (a *App) analyzeProperties(ctx context.Context) AnalysisSection {
-	s := a.State()
+func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Properties",
 		Description: "Property validation errors (required fields, invalid values, ID patterns)",
 	}
 
 	entities := make([]*entity.Entity, 0)
-	for e, err := range a.store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.store.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -396,12 +408,12 @@ func (a *App) analyzeProperties(ctx context.Context) AnalysisSection {
 	sortStoreEntitiesByID(entities)
 
 	for _, e := range entities {
-		errs := s.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
 		for _, err := range errs {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 				Message:    err.Error(),
 				Severity:   "error",
 			})
@@ -418,17 +430,16 @@ func (a *App) analyzeProperties(ctx context.Context) AnalysisSection {
 // (lua_file: missing, traversal-rejected) appear as error issues
 // alongside per-entity violations. Without this, broken Lua rules
 // would vanish silently from the data-entry analyze view.
-func (a *App) analyzeValidations(ctx context.Context) AnalysisSection {
-	s := a.State()
+func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Validations",
 		Description: "Custom validation rules defined in the metamodel",
 	}
 
-	st := a.store
-	validator := a.validator
+	st := svc.store
+	validator := svc.validator
 
-	for _, rule := range s.Meta.Validations {
+	for _, rule := range meta.Validations {
 		full, err := validator.CheckRuleFull(ctx, rule)
 		if err != nil {
 			continue
@@ -442,7 +453,7 @@ func (a *App) analyzeValidations(ctx context.Context) AnalysisSection {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 				Message:    rule.Description,
 				Severity:   severity,
 			})

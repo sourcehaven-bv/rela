@@ -99,11 +99,11 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (209 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object (201 methods). Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up.
 //
-//plimsoll:max-methods=209
+//plimsoll:max-methods=201
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -130,10 +130,14 @@ type App struct {
 	visibleReader visibleReader
 	tracer        tracer.Tracer
 	validator     validator.Validator
-	templater     templating.Templater
-	cfgLoader     config.Loader
-	kv            state.KV
-	acl           acl.ACL
+	// analyze runs the read-only graph-analysis checks. Extracted from App
+	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
+	// the metamodel snapshot per call.
+	analyze   analyzeService
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -444,6 +448,7 @@ func NewApp(
 		visibleReader:   newVisibleReader(st),
 		tracer:          trc,
 		validator:       val,
+		analyze:         analyzeService{store: st, tracer: trc, validator: val},
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,

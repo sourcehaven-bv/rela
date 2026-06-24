@@ -1869,7 +1869,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analysisResult := a.runAnalysis(r.Context())
+	analysisResult := a.analyze.runAnalysis(r.Context(), a.State().Meta)
 
 	// ACL gate (TKT-QU7REX): runAnalysis walks the WHOLE graph, so every issue
 	// carries an entityId/entityType/title that would leak existence + title to
