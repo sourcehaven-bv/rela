@@ -132,7 +132,7 @@ jobs:
 
       - name: Install plimsoll
         # Keep in sync with plimsoll_version in the justfile.
-        run: go install github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@v0.1.0
+        run: go install github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@v0.2.0
 
       - name: Check type load lines
         run: plimsoll ./...
