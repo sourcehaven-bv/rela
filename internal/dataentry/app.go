@@ -122,12 +122,18 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
-	tracer          tracer.Tracer
-	validator       validator.Validator
-	templater       templating.Templater
-	cfgLoader       config.Loader
-	kv              state.KV
-	acl             acl.ACL
+	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
+	// entity-read analog of visibleSearcher. Read handlers gate single-GET
+	// and include-filtering through it so the read gate is applied
+	// structurally rather than by per-call-site convention. Wraps the same
+	// `store` handle; the gate is resolved per-request from the context.
+	visibleReader visibleReader
+	tracer        tracer.Tracer
+	validator     validator.Validator
+	templater     templating.Templater
+	cfgLoader     config.Loader
+	kv            state.KV
+	acl           acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -435,6 +441,7 @@ func NewApp(
 		entityManager:   em,
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,
+		visibleReader:   newVisibleReader(st),
 		tracer:          trc,
 		validator:       val,
 		templater:       templater,

@@ -866,16 +866,18 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
-	// ACL gate (TKT-VQGN). Runs BEFORE getEntity so a hidden id and a
-	// nonexistent id spend the same MatchingIDs roundtrip — otherwise
-	// the timing difference (in-memory lookup ~1µs vs. DB roundtrip
-	// ~1ms) is an id-enumeration side channel that defeats the
-	// indistinguishable-404-body invariant (RR-NGMI).
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	// ACL gate (TKT-VQGN). visibleReader.getVisible applies PermitsRead
+	// BEFORE the store read so a hidden id and a nonexistent id spend the
+	// same MatchingIDs roundtrip — otherwise the timing difference
+	// (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an id-enumeration
+	// side channel that defeats the indistinguishable-404-body invariant
+	// (RR-NGMI). A gate error surfaces via writeGateError; a deny is
+	// returned as (nil,false,nil), indistinguishable from a real miss.
+	entity, found, err := a.visibleReader.getVisible(ctx, typeName, entityID)
+	if err != nil {
+		writeGateError(w, r, err)
 		return
 	}
-
-	entity, found := a.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -2095,51 +2097,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 // effort" affordance; the explicit GET / list endpoints are the
 // authoritative read surface.
 func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg.Entity) []*entityPkg.Entity {
-	if len(candidates) == 0 {
-		return nil
-	}
-	gate := readGateFromContext(ctx)
-	byType := make(map[string][]*entityPkg.Entity)
-	for _, c := range candidates {
-		byType[c.Type] = append(byType[c.Type], c)
-	}
-	allowed := make(map[string]bool, len(candidates))
-	for typeName, group := range byType {
-		ids := make([]string, 0, len(group))
-		for _, c := range group {
-			ids = append(ids, c.ID)
-		}
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			// Fail-closed on gate error (RR-7TIU): drop the whole
-			// type's candidates rather than surface a partial subset
-			// the policy may actually deny. Log loud so operators see
-			// the underlying failure (SIG-3 from the cranky review:
-			// silent drops surface as "missing includes" support
-			// tickets with no signal on the cause).
-			slog.Warn("dataentry: filterVisibleIncludes: PermitsReadMany failed; dropping type",
-				"type", typeName,
-				"candidates", len(ids),
-				"err", err)
-			continue
-		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
-		}
-	}
-	// Preserve original candidate order so the response is stable.
-	// Allocate a fresh slice (RR-I2SI) — aliasing candidates' storage
-	// works today but is a non-obvious invariant that a future
-	// refactor retaining `candidates` would silently corrupt.
-	out := make([]*entityPkg.Entity, 0, len(candidates))
-	for _, c := range candidates {
-		if allowed[c.ID] {
-			out = append(out, c)
-		}
-	}
-	return out
+	return a.visibleReader.filterVisible(ctx, candidates)
 }
 
 func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
