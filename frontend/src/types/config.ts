@@ -42,6 +42,14 @@ export interface ActionConfig {
 export interface AppConfig {
   name: string
   description?: string
+  /**
+   * Base URL of the configured PlantUML rendering server, or absent/empty
+   * when PlantUML rendering is disabled. A non-empty value is the on switch
+   * for ```plantuml diagram rendering (see renderPlantUMLDiagrams). The key
+   * is snake_case to match the server's JSON tag verbatim — there is no
+   * client-side casing transform.
+   */
+  plantuml_server_url?: string
 }
 
 export interface FormConfig {

@@ -6,7 +6,7 @@ import { useScriptErrorStore } from '@/stores/scriptError'
 import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
-import { renderMermaidDiagrams } from '@/utils/markdown'
+import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import type { DocumentConfig } from '@/types'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import DOMPurify from 'dompurify'
@@ -45,6 +45,7 @@ watch(sanitizedContent, async () => {
   await nextTick()
   if (docBody.value) {
     await renderMermaidDiagrams(docBody.value)
+    renderPlantUMLDiagrams(docBody.value, schemaStore.app?.plantuml_server_url)
   }
 })
 

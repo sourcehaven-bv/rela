@@ -366,8 +366,8 @@ func simpleMarkdownToHTML(md string) template.HTML {
 	// Post-process: add md-table class to tables
 	result = strings.ReplaceAll(result, "<table>", `<table class="md-table">`)
 
-	// Post-process: convert mermaid code blocks
-	result = htmlutil.ConvertMermaidBlocks(result)
+	// Post-process: convert diagram code blocks (mermaid, plantuml)
+	result = htmlutil.ConvertDiagramBlocks(result)
 
 	// Post-process: add checkbox indices for interactive toggling
 	result = addCheckboxIndices(result)

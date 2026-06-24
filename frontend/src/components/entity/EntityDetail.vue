@@ -20,6 +20,7 @@ import { isAnyModalOpen } from '@/composables/modalStack'
 import {
   renderMarkdown,
   renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
   getCheckboxStats,
   type EntityRefResolver,
 } from '@/utils/markdown'
@@ -166,6 +167,7 @@ watch(
   async () => {
     if (contentRef.value) {
       await renderMermaidDiagrams(contentRef.value)
+      renderPlantUMLDiagrams(contentRef.value, schemaStore.app?.plantuml_server_url)
     }
   },
   { flush: 'post' },

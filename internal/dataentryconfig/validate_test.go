@@ -1776,3 +1776,40 @@ views:
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestValidateApp_PlantUMLServerURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string // substring; "" means valid
+	}{
+		{name: "empty is valid (disabled)", url: "", wantErr: ""},
+		{name: "https is valid", url: "https://plantuml.example.com", wantErr: ""},
+		{name: "http is valid", url: "http://localhost:8080", wantErr: ""},
+		{name: "https with path is valid", url: "https://example.com/plantuml", wantErr: ""},
+		{name: "javascript scheme rejected", url: "javascript:alert(1)", wantErr: "scheme must be http or https"},
+		{name: "data scheme rejected", url: "data:text/html,x", wantErr: "scheme must be http or https"},
+		{name: "protocol-relative rejected", url: "//evil.example", wantErr: "scheme must be http or https"},
+		{name: "bare host rejected", url: "evil.example/x", wantErr: "scheme must be http or https"},
+		{name: "scheme without host rejected", url: "https://", wantErr: "must include a host"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{App: AppConfig{PlantUMLServerURL: tt.url}}
+			errs := validateApp(cfg)
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validateApp(%q) = %v, want no errors", tt.url, errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatalf("validateApp(%q) = no errors, want error containing %q", tt.url, tt.wantErr)
+			}
+			if !strings.Contains(errs[0], tt.wantErr) {
+				t.Errorf("validateApp(%q) = %q, want substring %q", tt.url, errs[0], tt.wantErr)
+			}
+		})
+	}
+}
