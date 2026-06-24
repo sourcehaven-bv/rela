@@ -131,6 +131,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
 	app.validator = svc.Validator()
+	app.analyze = analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
