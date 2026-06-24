@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -142,6 +143,14 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// configs will need to seed scripts on disk).
 	if app.scriptEngine != nil {
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
+	}
+	app.affordances = affordanceService{
+		acl:                func() acl.ACL { return app.acl },
+		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
+		store:              svc.Store(),
+		meta:               func() *metamodel.Metamodel { return app.State().Meta },
+		getEntity:          app.getEntity,
+		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 }
 
