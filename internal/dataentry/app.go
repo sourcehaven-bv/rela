@@ -99,11 +99,11 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (201 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object (187 methods). Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up.
 //
-//plimsoll:max-methods=201
+//plimsoll:max-methods=187
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -133,11 +133,15 @@ type App struct {
 	// analyze runs the read-only graph-analysis checks. Extracted from App
 	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
 	// the metamodel snapshot per call.
-	analyze   analyzeService
-	templater templating.Templater
-	cfgLoader config.Loader
-	kv        state.KV
-	acl       acl.ACL
+	analyze analyzeService
+	// affordances computes the _actions/field/relation affordance maps and runs
+	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
+	// shares the same acl.ACL as the write path (contract-test invariant).
+	affordances affordanceService
+	templater   templating.Templater
+	cfgLoader   config.Loader
+	kv          state.KV
+	acl         acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -462,6 +466,19 @@ func NewApp(
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps)
+
+	// affordanceService shares the App's acl/fieldResolver/store and takes the
+	// metamodel per-request via app.State(). The two relation-graph reads are
+	// App methods, so it's wired after the struct literal. It MUST share the
+	// same acl instance as the write path (contract-test invariant).
+	app.affordances = affordanceService{
+		acl:                func() acl.ACL { return app.acl },
+		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
+		store:              st,
+		meta:               func() *metamodel.Metamodel { return app.State().Meta },
+		getEntity:          app.getEntity,
+		currentEdgesByPeer: app.currentEdgesByPeer,
+	}
 
 	userDefaults := app.loadUserDefaults()
 	userPalette, paletteErr := app.loadUserPalette()

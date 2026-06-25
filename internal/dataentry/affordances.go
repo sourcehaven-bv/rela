@@ -68,6 +68,44 @@ func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
 	}}
 }
 
+// affordanceService computes the read-time affordance maps (_actions,
+// per-field/relation verdicts) and runs the write-time affordance validation
+// that gates field and relation writes. Extracted from App (TKT-N26KLB M5.2):
+// it is the shared write-authorization seam every data-entry write funnels
+// through.
+//
+// It holds the ACL and the field-verdict resolver, plus a per-request
+// metamodel accessor (meta) — the metamodel can change on reload, so it MUST
+// be fetched per call, never captured. The two relation-graph reads it needs
+// (getEntity, currentEdgesByPeer) are injected as callbacks rather than pulling
+// the relation plumbing in.
+//
+// IMPORTANT — two invariants this type must preserve:
+//   - It shares the SAME acl.ACL instance as the write path
+//     (entitymanager). affordances_contract_test.go pins the
+//     "_actions[v]==false ⇒ 403 on the write" contract against that shared
+//     instance; a divergent ACL here silently breaks it.
+//   - acl.WriteRequest is constructed ONLY via the package-level translateVerb
+//     / translateRelationWrite in this file (affordances.go); lint_test.go
+//     greps this exact filename. Do not methodize those constructors or move
+//     them to another file.
+type affordanceService struct {
+	// acl and resolver are per-call accessors (not captured values): both can be
+	// swapped on App after construction (tests do `app.acl = …` /
+	// `app.fieldResolver = …`), so a captured copy would go stale. Reading acl
+	// live from App is also what structurally guarantees the affordance service
+	// uses the SAME acl as the write path — the contract-test invariant.
+	acl      func() acl.ACL
+	resolver func() FieldVerdictResolver
+	store    store.Store
+	meta     func() *metamodel.Metamodel
+	// getEntity resolves an entity by ID for relation-source attribution.
+	getEntity func(ctx context.Context, id string) (*entityPkg.Entity, bool)
+	// currentEdgesByPeer returns the current edges of entityID for a relation
+	// type/direction, keyed by peer ID. Used to diff desired-vs-current edges.
+	currentEdgesByPeer func(ctx context.Context, entityID, canonical string, incoming bool) map[string]*entityPkg.Relation
+}
+
 // perItemVerbs are the verbs computed per entity instance.
 var perItemVerbs = []string{"update", "delete", "rename"}
 
@@ -81,20 +119,20 @@ var perCollectionVerbs = []string{"create"}
 // callers) get the same `{verb: bool}` shape evaluated against
 // whatever Principal is on ctx, defaulting to `principal.From`'s
 // "unknown" sentinel.
-func (a *App) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
+func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	for _, v := range perItemVerbs {
-		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID)).Allow
+		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID)).Allow
 	}
 	return out
 }
 
 // computeCollectionActions returns the collection-scope verb verdict
 // map for an entity type — currently just `create`.
-func (a *App) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
+func (svc affordanceService) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
 	for _, v := range perCollectionVerbs {
-		out[v] = a.acl.AuthorizeWrite(ctx, translateVerb(v, entityType, "")).Allow
+		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "")).Allow
 	}
 	return out
 }
@@ -241,12 +279,12 @@ func (d AffordanceDenialError) Error() string {
 // Values are required only for the enum-filter check; pass the
 // requested value for each key in setValues. Unknown values default
 // to allowed (an option entry of `nil` means "no override").
-func (a *App) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKeys map[string]interface{}, unsetKeys []string) *AffordanceDenialError {
+func (svc affordanceService) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKeys map[string]interface{}, unsetKeys []string) *AffordanceDenialError {
 	if e == nil {
 		return nil
 	}
-	v := a.fieldResolver.FieldVerdicts(ctx, e)
-	declared := declaredProperties(a.State().Meta, e.Type)
+	v := svc.resolver().FieldVerdicts(ctx, e)
+	declared := declaredProperties(svc.meta(), e.Type)
 
 	check := func(key string, value interface{}, present bool) *AffordanceDenialError {
 		// Unknown field (not in metamodel, not in resolver overrides) →
@@ -453,13 +491,13 @@ const (
 //
 // Returns the path entity when the peer can't be found locally (404
 // upstream — should not happen in practice; safe-fail).
-func (a *App) relationSourceEntity(
+func (svc affordanceService) relationSourceEntity(
 	ctx context.Context, pathEntity *entityPkg.Entity, peerID, direction string,
 ) *entityPkg.Entity {
 	if direction != string(DirectionIncoming) {
 		return pathEntity
 	}
-	peer, ok := a.getEntity(ctx, peerID)
+	peer, ok := svc.getEntity(ctx, peerID)
 	if !ok {
 		return pathEntity
 	}
@@ -471,11 +509,11 @@ func (a *App) relationSourceEntity(
 // `relType` is the canonical relation type; `op` selects between
 // create / remove. The verdict is per-relation-type uniform —
 // per-link affordances are predicate territory.
-func (a *App) validateRelationOp(ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp) *AffordanceDenialError {
+func (svc affordanceService) validateRelationOp(ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp) *AffordanceDenialError {
 	if e == nil {
 		return nil
 	}
-	v := a.fieldResolver.RelationVerdicts(ctx, e)
+	v := svc.resolver().RelationVerdicts(ctx, e)
 	rv, ok := v.Types[relType]
 	if !ok {
 		return nil // default-permissive
@@ -512,14 +550,14 @@ func (a *App) validateRelationOp(ctx context.Context, e *entityPkg.Entity, relTy
 // Called from the unified PATCH handler before
 // [App.applyRelationsModern]. Returns nil when every relation
 // operation is permitted.
-func (a *App) validateRelationsModernAffordances(
+func (svc affordanceService) validateRelationsModernAffordances(
 	ctx context.Context, entityID string, e *entityPkg.Entity,
 	desired map[string]V1RelationsUpdate,
 ) *AffordanceDenialError {
 	if e == nil || len(desired) == 0 {
 		return nil
 	}
-	meta := a.State().Meta
+	meta := svc.meta()
 	for bodyKey, upd := range desired {
 		if !upd.DataPresent {
 			continue
@@ -533,7 +571,7 @@ func (a *App) validateRelationsModernAffordances(
 		for _, ref := range upd.Data {
 			desiredByID[ref.ID] = ref
 		}
-		current := a.currentEdgesByPeer(ctx, entityID, canonical, incoming)
+		current := svc.currentEdgesByPeer(ctx, entityID, canonical, incoming)
 
 		// For incoming-direction body keys the SOURCE of every edge is
 		// the peer entity, not the path entity. Verdicts are evaluated
@@ -546,18 +584,18 @@ func (a *App) validateRelationsModernAffordances(
 
 		// Adds: any desired edge whose peer isn't currently linked.
 		for _, ref := range upd.Data {
-			source := a.relationSourceEntity(ctx, e, ref.ID, direction)
+			source := svc.relationSourceEntity(ctx, e, ref.ID, direction)
 			if _, exists := current[ref.ID]; exists {
 				// Upsert path: not a create, but the meta may change.
-				if denial := a.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+				if denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
 					return denial
 				}
 				continue
 			}
-			if denial := a.validateRelationOp(ctx, source, canonical, RelationOpCreate); denial != nil {
+			if denial := svc.validateRelationOp(ctx, source, canonical, RelationOpCreate); denial != nil {
 				return denial
 			}
-			if denial := a.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+			if denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
 				return denial
 			}
 		}
@@ -567,8 +605,8 @@ func (a *App) validateRelationsModernAffordances(
 			if _, kept := desiredByID[peerID]; kept {
 				continue
 			}
-			source := a.relationSourceEntity(ctx, e, peerID, direction)
-			if denial := a.validateRelationOp(ctx, source, canonical, RelationOpRemove); denial != nil {
+			source := svc.relationSourceEntity(ctx, e, peerID, direction)
+			if denial := svc.validateRelationOp(ctx, source, canonical, RelationOpRemove); denial != nil {
 				return denial
 			}
 		}
@@ -586,11 +624,11 @@ func (a *App) validateRelationsModernAffordances(
 // rejected here — they're a separate concern handled by the existing
 // relation validation. The affordance check focuses on rejecting
 // keys explicitly marked non-writable.
-func (a *App) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]interface{}, metaUnset []string) *AffordanceDenialError {
+func (svc affordanceService) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]interface{}, metaUnset []string) *AffordanceDenialError {
 	if e == nil {
 		return nil
 	}
-	v := a.fieldResolver.RelationVerdicts(ctx, e)
+	v := svc.resolver().RelationVerdicts(ctx, e)
 	rv, ok := v.Types[relType]
 	if !ok || rv.Fields == nil {
 		return nil
@@ -628,8 +666,8 @@ func (a *App) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity
 // Empty input verdicts yield an empty (non-nil) map so the wire shape
 // is consistent: `_fields: {}` under the nop resolver, sparse entries
 // under any other.
-func (a *App) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1FieldAffordance {
-	return computeFieldAffordancesFrom(a.fieldResolver.FieldVerdicts(ctx, e))
+func (svc affordanceService) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1FieldAffordance {
+	return computeFieldAffordancesFrom(svc.resolver().FieldVerdicts(ctx, e))
 }
 
 // computeFieldAffordancesFrom is computeFieldAffordances given an
@@ -716,8 +754,8 @@ func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 // hiddenProperties returns the set of property names that should be
 // stripped from V1Entity.Properties before serialization. Caller uses
 // this to enforce the omit-on-hidden invariant.
-func (a *App) hiddenProperties(ctx context.Context, e *entityPkg.Entity) map[string]struct{} {
-	v := a.fieldResolver.FieldVerdicts(ctx, e)
+func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.Entity) map[string]struct{} {
+	v := svc.resolver().FieldVerdicts(ctx, e)
 	if len(v.Visible) == 0 {
 		return nil
 	}
@@ -735,8 +773,8 @@ func (a *App) hiddenProperties(ctx context.Context, e *entityPkg.Entity) map[str
 // (creatable=false, removable=false, or any meta-field writable=false)
 // appear in the map. Default-permissive types are absent — the SPA's
 // "no entry = default" path handles them.
-func (a *App) computeRelationAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1RelationAffordance {
-	v := a.fieldResolver.RelationVerdicts(ctx, e)
+func (svc affordanceService) computeRelationAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1RelationAffordance {
+	v := svc.resolver().RelationVerdicts(ctx, e)
 	out := make(map[string]V1RelationAffordance)
 	for relType, rv := range v.Types {
 		var entry V1RelationAffordance
@@ -784,8 +822,8 @@ func (a *App) computeRelationAffordances(ctx context.Context, e *entityPkg.Entit
 // a new map instead of mutating an existing V1Entity — the per-row
 // case never goes through V1Entity, so the in-place strip pattern
 // doesn't fit.
-func (a *App) copyVisibleProperties(ctx context.Context, e *entityPkg.Entity) map[string]any {
-	hidden := a.hiddenProperties(ctx, e)
+func (svc affordanceService) copyVisibleProperties(ctx context.Context, e *entityPkg.Entity) map[string]any {
+	hidden := svc.hiddenProperties(ctx, e)
 	out := make(map[string]any, len(e.Properties))
 	for k, v := range e.Properties {
 		if _, h := hidden[k]; h {
@@ -804,15 +842,15 @@ func (a *App) copyVisibleProperties(ctx context.Context, e *entityPkg.Entity) ma
 // Also rewrites `_title` to the entity ID when the entity-type's
 // display property is hidden — otherwise the display title would leak
 // the hidden value through the wire's secondary channel.
-func (a *App) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
-	hidden := a.hiddenProperties(ctx, e)
+func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
+	hidden := svc.hiddenProperties(ctx, e)
 	for name := range hidden {
 		delete(result.Properties, name)
 	}
 	if len(hidden) == 0 {
 		return
 	}
-	def, ok := a.State().Meta.Entities[e.Type]
+	def, ok := svc.meta().Entities[e.Type]
 	if !ok {
 		return
 	}
@@ -831,17 +869,17 @@ func (a *App) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, re
 // `_relations` wire maps onto result. Called by paths that return a
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
 // and includes get [App.stripHiddenProperties] only.
-func (a *App) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
-	verdicts := a.fieldResolver.FieldVerdicts(ctx, e)
+func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
+	verdicts := svc.resolver().FieldVerdicts(ctx, e)
 	fields := computeFieldAffordancesFrom(verdicts)
-	relations := a.computeRelationAffordances(ctx, e)
+	relations := svc.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
 	// Pass the same verdicts so a policy-hidden `file` property's attachments
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
 	// working download href.
-	attachments := a.computeAttachments(ctx, e, result.Self, verdicts)
+	attachments := svc.computeAttachments(ctx, e, result.Self, verdicts)
 	result.Attachments = &attachments
 }
 
@@ -860,12 +898,12 @@ func (a *App) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, 
 // The value per property is a LIST: a property may hold several files, and
 // even a single file is reported as a 1-element list (always-array wire
 // shape).
-func (a *App) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]V1Attachment {
+func (svc affordanceService) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]V1Attachment {
 	out := make(map[string][]V1Attachment)
 	if selfHref == "" {
 		return out
 	}
-	infos, err := a.store.ListAttachments(ctx, e.ID)
+	infos, err := svc.store.ListAttachments(ctx, e.ID)
 	if err != nil {
 		// Treat a list failure as "no attachments" rather than failing the
 		// whole entity response — the bytes endpoint still gates and serves
@@ -903,8 +941,8 @@ func (a *App) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfH
 // list rows or under `included` (no affordance maps, but still strip).
 func (a *App) serializeEntityForWire(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
 	result := a.entityToV1(ctx, e, plural, includeRelations)
-	a.stripHiddenProperties(ctx, e, &result)
-	a.attachEntityAffordances(ctx, e, &result)
+	a.affordances.stripHiddenProperties(ctx, e, &result)
+	a.affordances.attachEntityAffordances(ctx, e, &result)
 	return result
 }
 
@@ -917,6 +955,6 @@ func (a *App) serializeEntityForWire(ctx context.Context, e *entityPkg.Entity, p
 // of which response shape they ride in."
 func (a *App) serializeRelatedEntityForWire(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
 	result := a.entityToV1(ctx, e, plural, includeRelations)
-	a.stripHiddenProperties(ctx, e, &result)
+	a.affordances.stripHiddenProperties(ctx, e, &result)
 	return result
 }

@@ -565,7 +565,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			PerPage: perPage,
 			HasMore: end < total,
 		},
-		Actions: a.computeCollectionActions(r.Context(), typeName),
+		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
 	}
 
 	// Add Link header for pagination (RFC 5988)
@@ -642,7 +642,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// grants apply at create. Collection-level create authorization is
 	// enforced separately inside CreateEntity (acl.OpCreate).
 	candidate := &entityPkg.Entity{Type: typeName, Properties: req.Properties}
-	if denial := a.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
+	if denial := a.affordances.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, candidate, *denial)
 		return
 	}
@@ -1026,12 +1026,12 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// what the resolver would have surfaced on GET. Runs before any
 	// other validation so the failure mode is identical regardless of
 	// what else the PATCH body would have triggered.
-	if denial := a.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
+	if denial := a.affordances.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
 		a.denyAffordance(r.Context(), w, entity, *denial)
 		return
 	}
 	if req.Relations.Modern != nil {
-		if denial := a.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
+		if denial := a.affordances.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
 			a.denyAffordance(r.Context(), w, entity, *denial)
 			return
 		}
@@ -1414,14 +1414,14 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	// Affordance gates: creatable + meta-writable, evaluated against
 	// the SOURCE of the new edge (not necessarily the path entity —
 	// for incoming-direction creates the path entity is the target).
-	source := a.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
+	source := a.affordances.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
 	// Audit subject is the source of the new edge, matching the
 	// entity whose policy gated the write.
-	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
+	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
-	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1480,8 +1480,8 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	// the edge (the path entity for outgoing; the peer for incoming).
 	// The edge already exists (PATCH is meta-only), so the create /
 	// remove gates don't apply.
-	source := a.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
-	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
+	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1553,8 +1553,8 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	// incoming). Per-relation-type uniform — a removable=false
 	// verdict applies to every link of this type.
 	direction := r.URL.Query().Get("direction")
-	source := a.relationSourceEntity(r.Context(), entity, targetID, direction)
-	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
+	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, direction)
+	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1992,7 +1992,7 @@ func (a *App) entityToV1(ctx context.Context, e *entityPkg.Entity, plural string
 		Properties: make(map[string]interface{}),
 		Content:    e.Content,
 		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
-		Actions:    a.computeActions(ctx, e),
+		Actions:    a.affordances.computeActions(ctx, e),
 	}
 
 	for k, v := range e.Properties {
