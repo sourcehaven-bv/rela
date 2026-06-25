@@ -136,6 +136,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
+	app.userState = userStateStore{kv: svc.State()}
 	app.acl = svc.ACL()
 	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents

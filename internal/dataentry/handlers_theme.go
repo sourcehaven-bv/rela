@@ -122,7 +122,7 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 	var saveErr error
 	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.saveUserLogo(ctx, bytes, ext); err != nil {
+		if err := a.userState.saveUserLogo(ctx, bytes, ext); err != nil {
 			// On failure the snapshot copy is left untouched and
 			// mutateState republishes a bytewise-identical pointer.
 			// Cheap (one struct copy) and keeps the path simple — do
@@ -153,7 +153,7 @@ func (a *App) handleAPIDeleteThemeLogo(w http.ResponseWriter, r *http.Request) {
 	var deleteErr error
 	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.deleteUserLogo(ctx); err != nil {
+		if err := a.userState.deleteUserLogo(ctx); err != nil {
 			deleteErr = err
 			return
 		}

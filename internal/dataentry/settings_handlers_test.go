@@ -84,7 +84,7 @@ func TestWriteJSON(t *testing.T) {
 func TestLoadUserPalette(t *testing.T) {
 	t.Run("missing file returns nil with no error", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		p, err := app.loadUserPalette()
+		p, err := app.userState.loadUserPalette()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -103,7 +103,7 @@ func TestLoadUserPalette(t *testing.T) {
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		p, perr := app.loadUserPalette()
+		p, perr := app.userState.loadUserPalette()
 		if perr == nil {
 			t.Fatal("expected error for legacy `dark: auto`, got nil")
 		}
@@ -121,7 +121,7 @@ func TestLoadUserPalette(t *testing.T) {
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		p, perr := app.loadUserPalette()
+		p, perr := app.userState.loadUserPalette()
 		if perr != nil {
 			t.Fatalf("unexpected error: %v", perr)
 		}
