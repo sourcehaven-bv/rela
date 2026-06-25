@@ -97,11 +97,11 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (172 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object (167 methods). Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up.
 //
-//plimsoll:max-methods=172
+//plimsoll:max-methods=167
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -126,8 +126,12 @@ type App struct {
 	// structurally rather than by per-call-site convention. Wraps the same
 	// `store` handle; the gate is resolved per-request from the context.
 	visibleReader visibleReader
-	tracer        tracer.Tracer
-	validator     validator.Validator
+	// reader is the ungated entity/relation read seam over the store. Extracted
+	// from App (TKT-N26KLB); a single-dep leaf shared by read/write/affordance
+	// paths. ACL scoping lives in visibleReader, not here.
+	reader    entityReader
+	tracer    tracer.Tracer
+	validator validator.Validator
 	// analyze runs the read-only graph-analysis checks. Extracted from App
 	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
 	// the metamodel snapshot per call.
@@ -455,6 +459,7 @@ func NewApp(
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,
 		visibleReader:   newVisibleReader(st),
+		reader:          entityReader{store: st},
 		tracer:          trc,
 		validator:       val,
 		analyze:         analyzeService{store: st, tracer: trc, validator: val},
@@ -482,7 +487,7 @@ func NewApp(
 		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
 		store:              st,
 		meta:               func() *metamodel.Metamodel { return app.State().Meta },
-		getEntity:          app.getEntity,
+		getEntity:          app.reader.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 

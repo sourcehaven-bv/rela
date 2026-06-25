@@ -189,7 +189,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	seedAttachment(t, app, "TKT-001", "shot.png", []byte("bytes"))
 
-	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
 	if result.Attachments == nil {
 		t.Fatalf("_attachments map must be present on per-entity GET")
 	}
@@ -219,7 +219,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 // mustGet loads an entity or fails the test.
 func mustGet(t *testing.T, app *App, id string) *entity.Entity {
 	t.Helper()
-	e, ok := app.getEntity(context.Background(), id)
+	e, ok := app.reader.getEntity(context.Background(), id)
 	if !ok {
 		t.Fatalf("getEntity(%s) not found", id)
 	}
@@ -313,7 +313,7 @@ func TestAttachment_MetadataOnMutationResponse(t *testing.T) {
 	// serializeEntityForWire is the shared per-entity serializer for GET,
 	// PATCH, POST create, and clone. If it carries _attachments, every one
 	// of those responses does.
-	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
 	if result.Attachments == nil {
 		t.Fatalf("_attachments must be present on every per-entity response, including mutations")
 	}
@@ -336,7 +336,7 @@ func TestAttachment_HiddenPropertyNotLeaked(t *testing.T) {
 	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"screenshot": false}}}
 
 	// _attachments omits the hidden property entirely.
-	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
 	if result.Attachments != nil {
 		if _, present := (*result.Attachments)["screenshot"]; present {
 			t.Errorf("hidden property leaked into _attachments: %+v", *result.Attachments)

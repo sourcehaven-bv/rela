@@ -546,7 +546,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	data := make([]V1Entity, 0, len(entities))
 	included := make(map[string]V1Entity)
 	for _, e := range entities {
-		v1Entity := a.serializer.forWireRelated(r.Context(), e, a.outgoingRelations(r.Context(), e.ID), a.Meta(), plural)
+		v1Entity := a.serializer.forWireRelated(r.Context(), e, a.reader.outgoingRelations(r.Context(), e.ID), a.Meta(), plural)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -687,7 +687,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializer.forWire(r.Context(), created, a.outgoingRelations(r.Context(), created.ID), a.Meta(), plural)
+	result := a.serializer.forWire(r.Context(), created, a.reader.outgoingRelations(r.Context(), created.ID), a.Meta(), plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -887,7 +887,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializer.forWire(ctx, entity, a.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
+	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -975,7 +975,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1110,7 +1110,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializer.forWire(r.Context(), entity, a.outgoingRelations(r.Context(), entity.ID), a.Meta(), plural)
+	result := a.serializer.forWire(r.Context(), entity, a.reader.outgoingRelations(r.Context(), entity.ID), a.Meta(), plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -1170,7 +1170,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1204,14 +1204,14 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	s := a.State()
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	outgoing := a.outgoingRelations(r.Context(), entityID)
-	incoming := a.incomingRelations(r.Context(), entityID)
+	outgoing := a.reader.outgoingRelations(r.Context(), entityID)
+	incoming := a.reader.incomingRelations(r.Context(), entityID)
 
 	relations := make(map[string][]map[string]interface{})
 
@@ -1222,7 +1222,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	for _, edge := range outgoing {
 		rel := map[string]interface{}{
 			"id":        edge.To,
-			"type":      a.peerType(r.Context(), edge.To),
+			"type":      a.reader.entityType(r.Context(), edge.To),
 			"direction": "outgoing",
 		}
 		if len(edge.Properties) > 0 {
@@ -1247,7 +1247,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		rel := map[string]interface{}{
 			"id":        edge.From,
-			"type":      a.peerType(r.Context(), edge.From),
+			"type":      a.reader.entityType(r.Context(), edge.From),
 			"direction": "incoming",
 		}
 		if len(edge.Properties) > 0 {
@@ -1325,7 +1325,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1335,9 +1335,9 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.incomingRelations(r.Context(), entityID)
+		edges = a.reader.incomingRelations(r.Context(), entityID)
 	} else {
-		edges = a.outgoingRelations(r.Context(), entityID)
+		edges = a.reader.outgoingRelations(r.Context(), entityID)
 	}
 
 	relations := make([]map[string]interface{}, 0, len(edges))
@@ -1352,7 +1352,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 		rel := map[string]interface{}{
 			"id":   peerID,
-			"type": a.peerType(r.Context(), peerID),
+			"type": a.reader.entityType(r.Context(), peerID),
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
@@ -1388,7 +1388,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1460,7 +1460,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1541,7 +1541,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1601,7 +1601,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -2000,13 +2000,13 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	nestedFor := make(map[string]string)
 
 	if includes == "*" {
-		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			if target, found := a.getEntity(ctx, edge.To); found {
+		for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
+			if target, found := a.reader.getEntity(ctx, edge.To); found {
 				candidates = append(candidates, target)
 			}
 		}
-		for _, edge := range a.incomingRelations(ctx, entity.ID) {
-			if source, found := a.getEntity(ctx, edge.From); found {
+		for _, edge := range a.reader.incomingRelations(ctx, entity.ID) {
+			if source, found := a.reader.getEntity(ctx, edge.From); found {
 				candidates = append(candidates, source)
 			}
 		}
@@ -2018,11 +2018,11 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 			relParts := strings.SplitN(part, ".", 2)
 			relType := relParts[0]
-			for _, edge := range a.outgoingRelations(ctx, entity.ID) {
+			for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
 				if edge.Type != relType {
 					continue
 				}
-				target, found := a.getEntity(ctx, edge.To)
+				target, found := a.reader.getEntity(ctx, edge.To)
 				if !found {
 					continue
 				}
@@ -2316,7 +2316,7 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 	// Fold outgoing relations into the hash so PATCHes that only change
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
-	edges := a.outgoingRelations(ctx, e.ID)
+	edges := a.reader.outgoingRelations(ctx, e.ID)
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)
@@ -2480,7 +2480,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the entry entity
-	entry, found := a.getEntity(r.Context(), entityID)
+	entry, found := a.reader.getEntity(r.Context(), entityID)
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return
@@ -3027,7 +3027,7 @@ func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWrite
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		var fromType string
-		if fromEntity, ok := a.getEntity(ctx, rel.From); ok {
+		if fromEntity, ok := a.reader.getEntity(ctx, rel.From); ok {
 			fromType = fromEntity.Type
 		}
 		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
@@ -3541,7 +3541,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	plural := entityDef.GetPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
-		Entry:    a.serializer.forWire(r.Context(), result.Entry, a.outgoingRelations(r.Context(), result.Entry.ID), a.Meta(), plural),
+		Entry:    a.serializer.forWire(r.Context(), result.Entry, a.reader.outgoingRelations(r.Context(), result.Entry.ID), a.Meta(), plural),
 		Sections: make([]V1ViewSection, 0, len(sections)),
 	}
 

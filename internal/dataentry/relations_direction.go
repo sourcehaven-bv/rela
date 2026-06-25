@@ -168,9 +168,9 @@ func (a *App) currentEdgesByPeer(
 	current := map[string]*entity.Relation{}
 	var edges []*entity.Relation
 	if incoming {
-		edges = a.incomingRelations(ctx, entityID)
+		edges = a.reader.incomingRelations(ctx, entityID)
 	} else {
-		edges = a.outgoingRelations(ctx, entityID)
+		edges = a.reader.outgoingRelations(ctx, entityID)
 	}
 	for _, edge := range edges {
 		if edge.Type != canonical {
