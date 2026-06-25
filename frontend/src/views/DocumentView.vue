@@ -7,7 +7,7 @@ import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { useBackTarget } from '@/composables/useBackTarget'
-import { renderMermaidDiagrams } from '@/utils/markdown'
+import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
 import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
@@ -43,6 +43,7 @@ watch(sanitizedContent, async () => {
   await nextTick()
   if (docBody.value) {
     await renderMermaidDiagrams(docBody.value)
+    renderPlantUMLDiagrams(docBody.value, schemaStore.app?.plantuml_server_url)
   }
 })
 

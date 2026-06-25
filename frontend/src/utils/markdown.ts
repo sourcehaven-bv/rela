@@ -241,3 +241,128 @@ export async function renderMermaidDiagrams(container: HTMLElement): Promise<voi
     )
   }
 }
+
+/**
+ * Encode PlantUML source for a server `~h` (hex) request.
+ *
+ * PlantUML servers accept three transfer encodings; we use the hex form
+ * (`~h<hex>`) because it needs no deflate/compression library — the diagram
+ * source's UTF-8 bytes are simply lowercased-hex encoded. URLs are longer than
+ * the deflate form but require zero extra frontend dependencies and stay well
+ * within typical URL limits for hand-authored diagrams.
+ */
+export function encodePlantUMLHex(source: string): string {
+  const bytes = new TextEncoder().encode(source)
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  return `~h${hex}`
+}
+
+/**
+ * Build the diagram URL for a PlantUML server and encoded source, or null when
+ * the configured base URL is unsafe to use as an <img src>.
+ *
+ * The server URL is validated server-side at config load (see
+ * dataentryconfig.validateApp), but we re-check the scheme here as defense in
+ * depth: this value becomes a live `img.src` with no CSP backstop on the SPA,
+ * so a non-http(s) scheme that somehow reaches the client must never be
+ * emitted. Joins without doubling the slash regardless of a trailing slash on
+ * the base URL.
+ */
+function plantUMLImageURL(serverURL: string, source: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(serverURL)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  const base = serverURL.replace(/\/+$/, '')
+  return `${base}/svg/${encodePlantUMLHex(source)}`
+}
+
+/**
+ * Render PlantUML diagrams by replacing fenced ```plantuml blocks with an
+ * <img> pointed at the configured PlantUML server. Mirrors
+ * renderMermaidDiagrams: call it after the markdown HTML is mounted, and it
+ * handles the same two source forms —
+ * - `<pre><code class="language-plantuml">…</code></pre>` (marked.js, client
+ *   render of entity/section content), and
+ * - `<pre class="plantuml">…</pre>` (rela-server documents, goldmark +
+ *   htmlutil.ConvertPlantUMLBlocks).
+ *
+ * `serverURL` is the operator-configured `app.plantuml_server_url`. When it is
+ * empty/undefined the function is a no-op: blocks are left as plain code, no
+ * diagram source leaves the browser, and no network request is made. Presence
+ * of the URL is therefore the on/off switch for the whole feature.
+ *
+ * Unlike mermaid, rendering happens on the server behind `serverURL`, so this
+ * pass only constructs the <img> element; the browser fetches the SVG lazily.
+ *
+ * Returns the number of blocks replaced (0 when disabled or none found).
+ */
+export function renderPlantUMLDiagrams(
+  container: HTMLElement,
+  serverURL: string | undefined | null,
+): number {
+  if (!serverURL) return 0
+
+  type Target = { pre: Element; source: string }
+  const targets: Target[] = []
+
+  // Form 1: marked.js-style fenced blocks.
+  for (const codeBlock of container.querySelectorAll('pre > code.language-plantuml')) {
+    const pre = codeBlock.parentElement
+    if (pre) targets.push({ pre, source: codeBlock.textContent || '' })
+  }
+
+  // Form 2: rela-server's pre-rewritten blocks. The `code` child can never be
+  // present here (goldmark emits Form 1, the server rewrite produces a bare
+  // <pre class="plantuml">, and the two don't co-occur), but the guard keeps
+  // Form 2 from re-wrapping a node Form 1 already claimed if that invariant
+  // ever changes.
+  for (const pre of container.querySelectorAll('pre.plantuml')) {
+    if (pre.querySelector('code.language-plantuml')) continue
+    targets.push({ pre, source: pre.textContent || '' })
+  }
+
+  let rendered = 0
+  for (const { pre, source } of targets) {
+    const trimmed = source.trim()
+    if (!trimmed) continue
+    const url = plantUMLImageURL(serverURL, trimmed)
+    if (!url) continue // unsafe server URL — leave the block as plain code.
+
+    const img = document.createElement('img')
+    img.className = 'plantuml-diagram'
+    img.loading = 'lazy'
+    img.alt = 'PlantUML diagram'
+    // Stateless render request: never leak the rela page URL to the server.
+    img.referrerPolicy = 'no-referrer'
+    // On any load failure (server down, 414 from an oversized hex URL,
+    // non-image response) restore a readable code block instead of leaving a
+    // broken-image glyph with the source gone. Mirrors renderMermaidDiagrams'
+    // "leave the source on error" resilience.
+    img.addEventListener('error', () => {
+      const fallback = document.createElement('pre')
+      const code = document.createElement('code')
+      code.className = 'language-plantuml'
+      code.textContent = trimmed
+      fallback.appendChild(code)
+      img.closest('.plantuml-diagram-wrapper')?.replaceWith(fallback)
+    })
+    // Layout shifts when the (lazy) image actually loads; signal scroll-settle
+    // listeners the same way mermaid does after its SVG injection.
+    img.addEventListener('load', () => {
+      container.dispatchEvent(new CustomEvent('rela:plantuml-rendered', { bubbles: true }))
+    })
+    img.src = url
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'plantuml-diagram-wrapper'
+    wrapper.appendChild(img)
+    pre.replaceWith(wrapper)
+    rendered++
+  }
+
+  return rendered
+}

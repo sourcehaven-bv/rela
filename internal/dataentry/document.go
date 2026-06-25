@@ -352,8 +352,9 @@ func markdownToHTML(markdown string) (string, error) {
 
 	result := buf.String()
 
-	// Post-process: convert mermaid code blocks to mermaid-ready pre elements.
-	result = htmlutil.ConvertMermaidBlocks(result)
+	// Post-process: convert diagram code blocks (mermaid, plantuml) to the
+	// pre elements the SPA upgrades client-side.
+	result = htmlutil.ConvertDiagramBlocks(result)
 
 	return result, nil
 }

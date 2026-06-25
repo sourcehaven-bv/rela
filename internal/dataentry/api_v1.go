@@ -253,6 +253,10 @@ type V1App struct {
 type V1AppConfig struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// PlantUMLServerURL is the configured PlantUML server base URL, or empty
+	// when PlantUML rendering is disabled. The SPA treats a non-empty value as
+	// the on switch for ```plantuml diagram rendering.
+	PlantUMLServerURL string `json:"plantuml_server_url,omitempty"`
 }
 
 // V1Error is an RFC 7807 Problem Details response.
@@ -1784,8 +1788,9 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 
 	config := V1Config{
 		App: V1AppConfig{
-			Name:        s.Cfg.App.Name,
-			Description: s.Cfg.App.Description,
+			Name:              s.Cfg.App.Name,
+			Description:       s.Cfg.App.Description,
+			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 		},
 		Styles:      s.StyleMap,
 		Forms:       forms,

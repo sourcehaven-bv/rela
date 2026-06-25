@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -122,6 +123,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
+	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
@@ -1079,6 +1081,28 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 
 // validateDocuments validates document configurations.
 //
+// validateApp validates app-level settings. PlantUMLServerURL, when set,
+// must be an absolute http/https URL with a host: the SPA feeds it straight
+// into an <img src>, so a malformed or non-http scheme (e.g. javascript:,
+// data:, protocol-relative //host, or a bare host) is rejected at load time
+// rather than reaching a user's browser. Empty is valid (PlantUML disabled).
+func validateApp(cfg *Config) []string {
+	var errs []string
+	if raw := cfg.App.PlantUMLServerURL; raw != "" {
+		u, err := url.Parse(raw)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Sprintf("app.plantuml_server_url: not a valid URL: %v", err))
+		case u.Scheme != "http" && u.Scheme != "https":
+			errs = append(errs, fmt.Sprintf(
+				"app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme))
+		case u.Host == "":
+			errs = append(errs, "app.plantuml_server_url: must include a host")
+		}
+	}
+	return errs
+}
+
 // Invariant: every document must have entity_type set, and exactly one of
 // {command, script} must be non-empty. entity_type is enforced at the HTTP
 // handler layer to reject cross-type render requests; the mutual exclusion
