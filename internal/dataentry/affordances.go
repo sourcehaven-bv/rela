@@ -933,28 +933,3 @@ func (svc affordanceService) computeAttachments(ctx context.Context, e *entityPk
 	}
 	return out
 }
-
-// serializeEntityForWire is the single entry-point every handler that
-// returns a per-entity V1Entity should use. It calls entityToV1, strips
-// hidden properties, and attaches the affordance maps. Use
-// [App.serializeRelatedEntityForWire] for entities that appear as
-// list rows or under `included` (no affordance maps, but still strip).
-func (a *App) serializeEntityForWire(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
-	result := a.entityToV1(ctx, e, plural, includeRelations)
-	a.affordances.stripHiddenProperties(ctx, e, &result)
-	a.affordances.attachEntityAffordances(ctx, e, &result)
-	return result
-}
-
-// serializeRelatedEntityForWire renders an entity that is NOT the
-// per-entity response root — used for list rows, `?include=*` peers,
-// and the search-result include map. Strips hidden properties but
-// omits the `_fields` / `_relations` maps (they ride on per-entity
-// responses only). Hidden-field stripping still applies because the
-// wire contract is "hidden values never reach the client, regardless
-// of which response shape they ride in."
-func (a *App) serializeRelatedEntityForWire(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
-	result := a.entityToV1(ctx, e, plural, includeRelations)
-	a.affordances.stripHiddenProperties(ctx, e, &result)
-	return result
-}

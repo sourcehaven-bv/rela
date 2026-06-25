@@ -546,7 +546,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	data := make([]V1Entity, 0, len(entities))
 	included := make(map[string]V1Entity)
 	for _, e := range entities {
-		v1Entity := a.serializeRelatedEntityForWire(r.Context(), e, plural, true)
+		v1Entity := a.serializer.forWireRelated(r.Context(), e, a.outgoingRelations(r.Context(), e.ID), a.Meta(), plural)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -687,7 +687,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializeEntityForWire(r.Context(), created, plural, true)
+	result := a.serializer.forWire(r.Context(), created, a.outgoingRelations(r.Context(), created.ID), a.Meta(), plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -799,7 +799,7 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// value-dependent predicates (e.g. field B read-only when A == x)
 	// re-derive as the form changes. includeRelations=false: no edges
 	// exist for an unsaved entity.
-	result := a.serializeEntityForWire(r.Context(), candidate, plural, false)
+	result := a.serializer.forWire(r.Context(), candidate, nil, a.Meta(), plural)
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)
 	}
@@ -884,11 +884,10 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	}
 
 	query := r.URL.Query()
-	includeRelations := true
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializeEntityForWire(ctx, entity, plural, includeRelations)
+	result := a.serializer.forWire(ctx, entity, a.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -1111,7 +1110,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializeEntityForWire(r.Context(), entity, plural, true)
+	result := a.serializer.forWire(r.Context(), entity, a.outgoingRelations(r.Context(), entity.ID), a.Meta(), plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -1633,7 +1632,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 
 	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetPlural(typeName)
-	result := a.serializeEntityForWire(r.Context(), newEntity, plural, false)
+	result := a.serializer.forWire(r.Context(), newEntity, nil, a.Meta(), plural)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
 	writeV1JSON(w, http.StatusCreated, result)
@@ -1848,7 +1847,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializeRelatedEntityForWire(r.Context(), e, plural, false))
+		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, a.Meta(), plural))
 	}
 
 	resp := V1ListResponse{
@@ -1983,42 +1982,6 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 
 // --- Helper Functions ---
 
-func (a *App) entityToV1(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
-	s := a.State()
-	v1 := V1Entity{
-		ID:         e.ID,
-		Type:       e.Type,
-		Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
-		Properties: make(map[string]interface{}),
-		Content:    e.Content,
-		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
-		Actions:    a.affordances.computeActions(ctx, e),
-	}
-
-	for k, v := range e.Properties {
-		v1.Properties[k] = v
-	}
-
-	if e.IsLocked() {
-		v1.Inaccessible = make([]V1InaccessibleField, 0, len(e.Inaccessible))
-		for _, f := range e.Inaccessible {
-			v1.Inaccessible = append(v1.Inaccessible, V1InaccessibleField{
-				Name:   f.Name,
-				Reason: string(f.Reason),
-			})
-		}
-	}
-
-	if includeRelations {
-		v1.Relations = make(map[string][]string)
-		for _, edge := range a.outgoingRelations(ctx, e.ID) {
-			v1.Relations[edge.Type] = append(v1.Relations[edge.Type], edge.To)
-		}
-	}
-
-	return v1
-}
-
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]V1Entity {
 	s := a.State()
 	included := make(map[string]V1Entity)
@@ -2075,7 +2038,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
-		included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
+		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, a.Meta(), plural)
 
 		if nested, ok := nestedFor[target.ID]; ok {
 			for k, v := range a.resolveV1Includes(ctx, target, nested) {
@@ -3578,7 +3541,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	plural := entityDef.GetPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
-		Entry:    a.serializeEntityForWire(r.Context(), result.Entry, plural, true),
+		Entry:    a.serializer.forWire(r.Context(), result.Entry, a.outgoingRelations(r.Context(), result.Entry.ID), a.Meta(), plural),
 		Sections: make([]V1ViewSection, 0, len(sections)),
 	}
 
