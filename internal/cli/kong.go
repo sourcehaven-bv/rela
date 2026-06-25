@@ -44,11 +44,11 @@ var (
 
 // CLI is the kong-parsed root.
 //
-// TODO(TKT-N0IKN9): CLI has 37 exported fields (kong binds one per subcommand,
+// TODO(TKT-N0IKN9): CLI has 38 exported fields (kong binds one per subcommand,
 // so growth is structural here) — over the 20-field load line. Revisit grouping
 // subcommands into sub-structs; ratchet this number down if/when that lands.
 //
-//plimsoll:max-fields=37
+//plimsoll:max-fields=38
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
