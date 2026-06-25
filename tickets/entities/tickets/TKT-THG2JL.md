@@ -5,7 +5,7 @@ title: PlantUML diagram rendering in data-entry (remote server)
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Description

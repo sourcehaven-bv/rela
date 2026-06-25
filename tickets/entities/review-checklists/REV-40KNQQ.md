@@ -2,55 +2,57 @@
 id: REV-40KNQQ
 type: review-checklist
 title: 'Review: PlantUML diagram rendering in data-entry (remote server)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`) — Go htmlutil/dataentry/dataentryconfig + 62 frontend unit tests
+- [x] Lint clean (`just lint`) — frontend 0 errors; `go vet` clean; `just arch-lint` OK
+- [x] Coverage maintained (`just coverage-check`) — new code covered by added Go + frontend tests
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed — none remain critical (RR-F6XG58 downgraded to minor after analysis, addressed)
+- [x] All significant review-responses addressed — RR-CIAI73, RR-3OY8XW, RR-Q3U5YW all addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-F6XG58 (addressed), RR-CIAI73 (addressed), RR-3OY8XW
+(addressed), RR-Q3U5YW (addressed), RR-V0X7FJ (addressed), RR-JTBTUU
+(addressed), RR-21O6D4 (deferred — proxy follow-up), RR-PT28IE (deferred —
+pipeline convergence)
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+- AC1 (URL set → diagram renders in entity body, sections, documents): PASS — `renderPlantUMLDiagrams` wired into EntityDetail/DocumentView/DocumentsPanel; unit tests assert `<img>` emitted for both source forms.
+- AC2 (URL empty/absent → plain code block, no network call): PASS — disabled/empty-string/unsafe-scheme no-op tests assert no `<img>` and the source block left intact.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: feature is config + render parity with mermaid; no user-facing docs written this PR — `app.plantuml_server_url` documented inline in config godoc)
+- [x] ~~User-facing documentation updated~~ (N/A: see above)
+- [x] ~~Docs-checklist marked as done~~ (N/A: no docs-checklist)
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** none (deferred — mermaid itself has no dedicated user doc;
+parity maintained)
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — all code/build/test/lint green; the Rela Tickets gate clears once this checklist + the ticket move to done
+- [x] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1034
