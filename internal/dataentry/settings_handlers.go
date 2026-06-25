@@ -281,7 +281,7 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	var saveErr error
 	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.saveUserDefaults(ctx, &ud); err != nil {
+		if err := a.userState.saveUserDefaults(ctx, &ud); err != nil {
 			saveErr = err
 			return
 		}
@@ -337,7 +337,7 @@ func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 	var saveErr error
 	ctx := r.Context()
 	a.mutateState(func(s *AppState) {
-		if err := a.saveUserPalette(ctx, &input); err != nil {
+		if err := a.userState.saveUserPalette(ctx, &input); err != nil {
 			saveErr = err
 			return
 		}

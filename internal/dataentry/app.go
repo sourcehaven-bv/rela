@@ -2,13 +2,11 @@ package dataentry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -99,11 +97,11 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (187 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object (178 methods). Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up.
 //
-//plimsoll:max-methods=187
+//plimsoll:max-methods=178
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -138,10 +136,13 @@ type App struct {
 	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
 	// shares the same acl.ACL as the write path (contract-test invariant).
 	affordances affordanceService
-	templater   templating.Templater
-	cfgLoader   config.Loader
-	kv          state.KV
-	acl         acl.ACL
+	// userState persists per-user UI state (logo, UI state, defaults, palette)
+	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
+	userState userStateStore
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -456,6 +457,7 @@ func NewApp(
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,
+		userState:       userStateStore{kv: kv},
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		scriptEngine:    scriptEngine,
@@ -480,8 +482,8 @@ func NewApp(
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 
-	userDefaults := app.loadUserDefaults()
-	userPalette, paletteErr := app.loadUserPalette()
+	userDefaults := app.userState.loadUserDefaults()
+	userPalette, paletteErr := app.userState.loadUserPalette()
 	if paletteErr != nil {
 		// Surface the error so users notice their palette is broken
 		// rather than silently falling back to defaults (which would
@@ -489,7 +491,7 @@ func NewApp(
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
 
-	logoBytes, logoExt, logoErr := app.loadUserLogo()
+	logoBytes, logoExt, logoErr := app.userState.loadUserLogo()
 	if logoErr != nil {
 		// Same policy as palette: surface read errors so a corrupt
 		// .rela/theme/ doesn't get silently overwritten on next save.
@@ -573,7 +575,7 @@ func (a *App) enrichNavEntry(ctx context.Context, nav NavigationEntry) NavItem {
 // navElements returns the navigation structure with groups and items resolved.
 // The activeList parameter is used to auto-expand the group containing the active item.
 func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
-	uiState := a.loadUIState(ctx)
+	uiState := a.userState.loadUIState(ctx)
 	cfgNav := a.State().Cfg.Navigation
 	elements := make([]NavElement, 0, len(cfgNav))
 	for _, nav := range cfgNav {
@@ -602,109 +604,7 @@ func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
 	return elements
 }
 
-// loadUIState reads .rela/ui-state.json and returns the persisted state.
-// Returns an empty UIState if the file doesn't exist or can't be parsed.
-func (a *App) loadUIState(ctx context.Context) UIState {
-	st := UIState{CollapsedGroups: make(map[string]bool)}
-	if a.kv == nil {
-		return st
-	}
-	data, err := a.kv.Get(ctx, uiStateFile)
-	if err != nil {
-		return st
-	}
-	if err := json.Unmarshal(data, &st); err != nil {
-		return UIState{CollapsedGroups: make(map[string]bool)}
-	}
-	if st.CollapsedGroups == nil {
-		st.CollapsedGroups = make(map[string]bool)
-	}
-	return st
-}
-
-// saveUIState writes the UI state to .rela/ui-state.json.
-func (a *App) saveUIState(st UIState) error {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return err
-	}
-	return a.kv.Put(context.Background(), uiStateFile, data)
-}
-
-// loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
-// Returns nil if the file doesn't exist or can't be parsed.
-func (a *App) loadUserDefaults() *UserDefaults {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := a.kv.Get(context.Background(), userDefaultsFile)
-	if err != nil {
-		return nil
-	}
-	var ud UserDefaults
-	if err := yaml.Unmarshal(data, &ud); err != nil {
-		return nil
-	}
-	return &ud
-}
-
-// saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
-func (a *App) saveUserDefaults(ctx context.Context, ud *UserDefaults) error {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := yaml.Marshal(ud)
-	if err != nil {
-		return err
-	}
-	return a.kv.Put(ctx, userDefaultsFile, data)
-}
-
 // coverage-ignore: requires running workspace, tested via e2e
-
-// loadUserPalette reads .rela/palette.yaml and returns the parsed
-// palette. Returns (nil, nil) when the file does not exist (clean
-// "no user palette" state — matches how ResolvePalette consumes a
-// nil user palette pointer; a sentinel error or three-return shape
-// would be more confusing for the only two callers). Returns a
-// non-nil error if the file exists but cannot be read or parsed —
-// callers MUST surface this instead of silently falling back to
-// defaults, otherwise a subsequent save would silently overwrite
-// the user's palette with framework defaults (RR-OA4A).
-//
-//nolint:nilnil // see comment above
-func (a *App) loadUserPalette() (*PaletteConfig, error) {
-	if a.kv == nil {
-		return nil, nil
-	}
-	data, err := a.kv.Get(context.Background(), userPaletteFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", userPaletteFile, err)
-	}
-	var p PaletteConfig
-	if err := yaml.Unmarshal(data, &p); err != nil {
-		return nil, fmt.Errorf("parse %s: %w (legacy `dark: auto` is no longer supported — remove the `dark` line or set it to `false` or an explicit object)", userPaletteFile, err)
-	}
-	return &p, nil
-}
-
-// saveUserPalette writes the user palette to .rela/palette.yaml.
-func (a *App) saveUserPalette(ctx context.Context, p *PaletteConfig) error {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := yaml.Marshal(p)
-	if err != nil {
-		return err
-	}
-	return a.kv.Put(ctx, userPaletteFile, data)
-}
 
 // firstNavTarget returns the first navigable item from the navigation config,
 // walking into groups as needed.
