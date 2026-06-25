@@ -32,7 +32,7 @@ func lockedTicket(inaccessibleFields ...string) *entity.Entity {
 func TestEntityToV1_PropagatesInaccessible(t *testing.T) {
 	app := newTestAppV1(t)
 	e := lockedTicket("title", "status")
-	v1 := app.entityToV1(t.Context(), e, "tickets", false)
+	v1 := app.serializer.toV1(t.Context(), e, nil, app.Meta(), "tickets")
 
 	if v1.ID != "TKT-LOCKED" {
 		t.Errorf("ID = %q, want TKT-LOCKED", v1.ID)
@@ -110,7 +110,7 @@ func TestEntityToV1_OmitsInaccessibleWhenEmpty(t *testing.T) {
 		},
 	}
 
-	v1 := app.entityToV1(t.Context(), e, "tickets", false)
+	v1 := app.serializer.toV1(t.Context(), e, nil, app.Meta(), "tickets")
 	if len(v1.Inaccessible) != 0 {
 		t.Errorf("Inaccessible non-empty for normal entity: %v", v1.Inaccessible)
 	}

@@ -220,7 +220,7 @@ func (a *App) handleV1PutAttachment(w http.ResponseWriter, r *http.Request, type
 		return
 	}
 
-	result := a.serializeEntityForWire(ctx, entity, plural, true)
+	result := a.serializer.forWire(ctx, entity, a.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 	writeV1JSON(w, http.StatusOK, result)
 }
 

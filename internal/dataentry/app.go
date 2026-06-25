@@ -97,11 +97,11 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (175 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object (172 methods). Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up.
 //
-//plimsoll:max-methods=175
+//plimsoll:max-methods=172
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -136,6 +136,10 @@ type App struct {
 	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
 	// shares the same acl.ACL as the write path (contract-test invariant).
 	affordances affordanceService
+	// serializer renders an entity into its V1Entity wire shape. Extracted from
+	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
+	// loaded outgoing relations, the serializer does no loading.
+	serializer entitySerializer
 	// userState persists per-user UI state (logo, UI state, defaults, palette)
 	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
 	userState userStateStore
@@ -481,6 +485,8 @@ func NewApp(
 		getEntity:          app.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
+
+	app.serializer = entitySerializer{affordances: app.affordances}
 
 	userDefaults := app.userState.loadUserDefaults()
 	userPalette, paletteErr := app.userState.loadUserPalette()

@@ -306,7 +306,7 @@ func TestAttachmentUpload_ReplaceOversizeKeepsExisting(t *testing.T) {
 //nolint:unparam // entityID is conceptually variable; tests use one fixture.
 func attachmentsFor(t *testing.T, app *App, entityID, property string) []V1Attachment {
 	t.Helper()
-	result := app.serializeEntityForWire(context.Background(), mustGet(t, app, entityID), "tickets", true)
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, entityID), app.outgoingRelations(context.Background(), entityID), app.Meta(), "tickets")
 	if result.Attachments == nil {
 		return nil
 	}

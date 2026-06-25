@@ -153,6 +153,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		getEntity:          app.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
+	app.serializer = entitySerializer{affordances: app.affordances}
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
