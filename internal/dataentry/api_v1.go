@@ -502,8 +502,8 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 		entities = filtered
 	}
 
-	entities = a.applyV1Filters(entities, query, typeName)
-	entities = a.applyV1Sorting(entities, query)
+	entities = applyV1Filters(entities, query, typeName)
+	entities = applyV1Sorting(entities, query)
 	return entities, nil
 }
 
@@ -569,7 +569,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	// Add Link header for pagination (RFC 5988)
-	a.addPaginationLinks(w, r, page, perPage, total, plural)
+	addPaginationLinks(w, r, page, perPage, total, plural)
 
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	w.Header().Set("X-Page", strconv.Itoa(page))
@@ -2100,7 +2100,9 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 	return a.visibleReader.filterVisible(ctx, candidates)
 }
 
-func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
+// applyV1Filters applies `filter[...]` query params to the entity slice. Pure
+// data transform — a free function, not App behavior (TKT-N26KLB M5.5).
+func applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
 	filtered := entities
 
 	for key, values := range query {
@@ -2225,7 +2227,9 @@ func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]st
 	return filtered
 }
 
-func (a *App) applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
+// applyV1Sorting applies `sort=` query params to the entity slice. Pure data
+// transform — a free function, not App behavior (TKT-N26KLB M5.5).
+func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
 	sortParam := ""
 	if vals, ok := query["sort"]; ok && len(vals) > 0 {
 		sortParam = vals[0]
@@ -2299,7 +2303,9 @@ func parseV1Pagination(query map[string][]string) (page, perPage int) {
 	return page, perPage
 }
 
-func (a *App) addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, total int, plural string) {
+// addPaginationLinks writes RFC 8288 Link headers for the collection page.
+// Pure data transform over its args — a free function (TKT-N26KLB M5.5).
+func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, total int, plural string) {
 	totalPages := (total + perPage - 1) / perPage
 	if totalPages == 0 {
 		totalPages = 1
