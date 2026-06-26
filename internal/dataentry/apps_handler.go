@@ -135,6 +135,16 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(appCSSSource()))
 		return
 	}
+	if entry == appEditorEntry {
+		h.Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(appEditorSource())
+		return
+	}
+	if entry == appEditorFontEntry {
+		h.Set("Content-Type", "font/woff2")
+		_, _ = w.Write(appEditorFontSource())
+		return
+	}
 
 	if entry == "" {
 		entry = appIndexFile

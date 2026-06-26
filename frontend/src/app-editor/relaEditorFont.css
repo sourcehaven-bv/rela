@@ -1,0 +1,12 @@
+/* Override Font Awesome's @font-face so the glyph webfont loads from the
+ * app's OWN base path (_rela-editor.woff2), which the app CSP's
+ * `font-src <base>` permits — no CSP widening, no dependency on the SPA's
+ * hash-named /assets/ font. Imported AFTER font-awesome.min.css so this
+ * @font-face wins. woff2 only (every browser that can run a custom app
+ * supports it). */
+@font-face {
+  font-family: 'FontAwesome';
+  src: url('_rela-editor.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}

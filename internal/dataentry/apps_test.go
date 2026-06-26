@@ -378,6 +378,71 @@ func TestHandleV1App(t *testing.T) {
 		}
 	})
 
+	t.Run("serves the reserved _rela-editor.js bundle", func(t *testing.T) {
+		if !editorBundleBuilt() {
+			t.Skip("editor bundle not built")
+		}
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela-editor.js")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		if w.Body.Len() == 0 {
+			t.Error("editor bundle is empty")
+		}
+		// The bundle defines the <rela-editor> custom element.
+		if !strings.Contains(w.Body.String(), "rela-editor") {
+			t.Errorf("editor bundle missing the custom element tag")
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+			t.Errorf("editor Content-Type = %q, want javascript", ct)
+		}
+		// Served from the app's own path → existing script-src <base> permits it.
+		csp := w.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "script-src ") || !strings.Contains(csp, "/api/v1/_apps/demo/") {
+			t.Errorf("script-src must path-scope the app (covers _rela-editor.js): %q", csp)
+		}
+	})
+
+	t.Run("serves the reserved _rela-editor.woff2 font", func(t *testing.T) {
+		if !editorBundleBuilt() {
+			t.Skip("editor bundle not built")
+		}
+		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela-editor.woff2")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+		if w.Body.Len() == 0 {
+			t.Error("editor font is empty")
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "font/woff2" {
+			t.Errorf("font Content-Type = %q, want font/woff2", ct)
+		}
+		// font-src <base> already permits the same-path font (no CSP widening).
+		csp := w.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "font-src ") || !strings.Contains(csp, "/api/v1/_apps/demo/") {
+			t.Errorf("font-src must path-scope the app (covers _rela-editor.woff2): %q", csp)
+		}
+	})
+
+	t.Run("an app cannot shadow _rela-editor.js / .woff2 with its own files", func(t *testing.T) {
+		if !editorBundleBuilt() {
+			t.Skip("editor bundle not built")
+		}
+		writeApp(t, root, "shadowed", map[string]string{
+			"index.html":         "<html></html>",
+			"_rela-editor.js":    "EVIL",
+			"_rela-editor.woff2": "EVIL",
+		})
+		js := doRequest(t, app, http.MethodGet, "/api/v1/_apps/shadowed/_rela-editor.js")
+		if js.Code != http.StatusOK || strings.Contains(js.Body.String(), "EVIL") {
+			t.Errorf("reserved _rela-editor.js must serve the real bundle: %.40s", js.Body.String())
+		}
+		font := doRequest(t, app, http.MethodGet, "/api/v1/_apps/shadowed/_rela-editor.woff2")
+		if font.Code != http.StatusOK || font.Body.String() == "EVIL" {
+			t.Errorf("reserved _rela-editor.woff2 must serve the real font, not the app file")
+		}
+	})
+
 	t.Run("bare /_apps/<id> redirects to trailing slash", func(t *testing.T) {
 		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo")
 		if w.Code != http.StatusMovedPermanently {
@@ -439,6 +504,32 @@ func TestHandleV1App(t *testing.T) {
 			t.Errorf("status = %d, want 422", w.Code)
 		}
 	})
+}
+
+// editorBundleBuilt reports whether the editor bundle has been built+embedded.
+// Like the SPA's static/v2, the editor dist is a gitignored build artifact, and
+// the CI `go test ./...` job runs WITHOUT building the frontend — so tests that
+// need the real bytes must skip when it's absent rather than fail. The
+// production/release build always runs the frontend build first.
+func editorBundleBuilt() bool { return len(appEditorSource()) > 0 }
+
+// TestAppEditorBundleEmbedded verifies the editor bundle + font, WHEN BUILT,
+// define the custom element and reference the same-path font. It skips on a
+// clean checkout where the frontend build hasn't run (see editorBundleBuilt).
+func TestAppEditorBundleEmbedded(t *testing.T) {
+	if !editorBundleBuilt() {
+		t.Skip("editor bundle not built (run: cd frontend && npx vite build --config vite.editor.config.ts)")
+	}
+	js := appEditorSource()
+	if !strings.Contains(string(js), "rela-editor") {
+		t.Error("editor bundle does not define the rela-editor custom element")
+	}
+	if !strings.Contains(string(js), appEditorFontEntry) {
+		t.Errorf("editor bundle must reference the reserved font path %q (its @font-face)", appEditorFontEntry)
+	}
+	if len(appEditorFontSource()) == 0 {
+		t.Fatal("editor woff2 font not embedded")
+	}
 }
 
 func TestValidateBridgeVersion(t *testing.T) {
