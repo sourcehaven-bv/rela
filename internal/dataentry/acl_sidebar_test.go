@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -89,7 +90,7 @@ func sidebarCountsByLabel(ctx context.Context, t *testing.T, app *App) map[strin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET _sidebar: %d %s", rec.Code, rec.Body)
 	}
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode sidebar: %v\nbody: %s", err, rec.Body)
 	}

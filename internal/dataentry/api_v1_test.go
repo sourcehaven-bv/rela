@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -37,7 +38,7 @@ func TestV1SchemaEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestV1ConfigEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var config V1Config
+	var config v1.Config
 	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
-	var config V1Config
+	var config v1.Config
 	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestV1ListEntities(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestV1GetEntity(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -302,7 +303,7 @@ func TestV1Filtering(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -433,7 +434,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -463,7 +464,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -485,7 +486,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -510,7 +511,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -530,7 +531,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -560,7 +561,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -618,7 +619,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -651,7 +652,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 	})
 }
 
-func responseIDs(r V1ListResponse) []string {
+func responseIDs(r v1.ListResponse) []string {
 	out := make([]string, 0, len(r.Data))
 	for _, e := range r.Data {
 		out = append(out, e.ID)
@@ -681,7 +682,7 @@ func TestV1Sorting(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -713,7 +714,7 @@ func TestV1Pagination(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -809,7 +810,7 @@ func TestV1SearchEmptyQuery(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -865,7 +866,7 @@ func TestV1SearchWithTypeFilter(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -961,7 +962,7 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1001,7 +1002,7 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1070,7 +1071,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1136,7 +1137,7 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1167,7 +1168,7 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=-title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1203,7 +1204,7 @@ func TestV1FilteringContains(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[title][contains]=Bug", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1245,7 +1246,7 @@ func TestV1FilteringIn(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][in]=open,in_progress", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1348,7 +1349,7 @@ func runListFilter(t *testing.T, app *App, query string) []string {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -1551,7 +1552,7 @@ func TestV1MultipleSort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1610,7 +1611,7 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1651,7 +1652,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1790,7 +1791,7 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1915,7 +1916,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1971,7 +1972,7 @@ func TestV1SidebarAppliesListFilters(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2028,7 +2029,7 @@ func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Sidebar(rec, req)
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2073,7 +2074,7 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2172,7 +2173,7 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entityType V1EntityType
+	var entityType v1.EntityType
 	if err := json.NewDecoder(rec.Body).Decode(&entityType); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2223,7 +2224,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2272,7 +2273,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=100&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2525,7 +2526,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2555,7 +2556,7 @@ func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -3024,7 +3025,7 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 	}
 
 	// The ticket was auto-assigned a short ID; read it from the response body.
-	var created V1Entity
+	var created v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode response: %v; body: %s", err, rec.Body.String())
 	}
@@ -3615,7 +3616,7 @@ func TestV1Schema_MultiPrefix(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3641,7 +3642,7 @@ func TestV1Schema_SinglePrefix_Compat(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3674,7 +3675,7 @@ func TestV1CreateEntity_PrefixOverride(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3690,7 +3691,7 @@ func TestV1CreateEntity_EmptyPrefixUsesFirst(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3745,7 +3746,7 @@ func TestV1CreateEntity_ManualAcceptsID(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3841,7 +3842,7 @@ func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3886,7 +3887,7 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3923,7 +3924,7 @@ func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
 
 // View responses must not carry add/link affordances. The view path is
 // strictly read-only; mutations live on the form/side-panel path. This guards
-// against re-introducing addInfo / linkInfo on V1ViewSection across every
+// against re-introducing addInfo / linkInfo on v1.ViewSection across every
 // shape that historically emitted them: outgoing/incoming traversals,
 // cards/list/table displays, and the variant where the target type has no
 // create-form configured (which previously emitted only linkInfo).
@@ -4091,7 +4092,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4158,7 +4159,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 
 	raw := rec.Body.String()
 
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4186,7 +4187,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	// Wire format: both keys must appear in the raw JSON as `{}` so
 	// the SPA distinguishes "anonymous fallback" (absent) from
 	// "evaluated with no deviations" (present-empty). Round-tripping
-	// V1Entity through omitempty proves this for pointer fields.
+	// v1.Entity through omitempty proves this for pointer fields.
 	if !strings.Contains(raw, `"_fields":{}`) {
 		t.Errorf("raw body should contain \"_fields\":{}; got: %s", raw)
 	}
@@ -4238,7 +4239,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4794,7 +4795,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
-		var v V1Entity
+		var v v1.Entity
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 		}
@@ -4818,7 +4819,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
 		body := rec.Body.String()
-		var v V1Entity
+		var v v1.Entity
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, body)
 		}
@@ -4842,7 +4843,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
-		var v V1Entity
+		var v v1.Entity
 		_ = json.Unmarshal(rec.Body.Bytes(), &v)
 		if v.FieldAffordances == nil || (*v.FieldAffordances)["status"].Options["done"] {
 			t.Errorf("_fields.status.options.done must be false; body=%s", rec.Body.String())
@@ -4896,7 +4897,7 @@ func TestHandleV1DryRunCreate_SoftWarnings(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 	}
-	var v V1Entity
+	var v v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
@@ -4930,7 +4931,7 @@ func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing
 	if code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 	}
-	var v V1Entity
+	var v v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}

@@ -140,7 +140,7 @@ type App struct {
 	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
 	// shares the same acl.ACL as the write path (contract-test invariant).
 	affordances affordanceService
-	// serializer renders an entity into its V1Entity wire shape. Extracted from
+	// serializer renders an entity into its v1.Entity wire shape. Extracted from
 	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
 	// loaded outgoing relations, the serializer does no loading.
 	serializer entitySerializer

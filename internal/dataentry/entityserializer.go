@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// entitySerializer renders an entity into its V1Entity wire shape. Extracted
+// entitySerializer renders an entity into its v1.Entity wire shape. Extracted
 // from App (TKT-N26KLB). It does NO loading and holds no snapshot — the caller
 // passes everything the transform needs as values: the entity, its already-
 // loaded outgoing relations (nil to omit the relations map), and the metamodel
@@ -20,11 +21,11 @@ type entitySerializer struct {
 	affordances affordanceService
 }
 
-// toV1 builds the base V1Entity. meta is the request's metamodel snapshot;
+// toV1 builds the base v1.Entity. meta is the request's metamodel snapshot;
 // outgoing is the entity's outgoing relations, already loaded by the caller
 // (nil omits the relations map — the former includeRelations=false shape).
-func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) V1Entity {
-	v1 := V1Entity{
+func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
+	out := v1.Entity{
 		ID:         e.ID,
 		Type:       e.Type,
 		Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
@@ -35,13 +36,13 @@ func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoin
 	}
 
 	for k, v := range e.Properties {
-		v1.Properties[k] = v
+		out.Properties[k] = v
 	}
 
 	if e.IsLocked() {
-		v1.Inaccessible = make([]V1InaccessibleField, 0, len(e.Inaccessible))
+		out.Inaccessible = make([]v1.InaccessibleField, 0, len(e.Inaccessible))
 		for _, f := range e.Inaccessible {
-			v1.Inaccessible = append(v1.Inaccessible, V1InaccessibleField{
+			out.Inaccessible = append(out.Inaccessible, v1.InaccessibleField{
 				Name:   f.Name,
 				Reason: string(f.Reason),
 			})
@@ -49,20 +50,20 @@ func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoin
 	}
 
 	if outgoing != nil {
-		v1.Relations = make(map[string][]string)
+		out.Relations = make(map[string][]string)
 		for _, edge := range outgoing {
-			v1.Relations[edge.Type] = append(v1.Relations[edge.Type], edge.To)
+			out.Relations[edge.Type] = append(out.Relations[edge.Type], edge.To)
 		}
 	}
 
-	return v1
+	return out
 }
 
 // forWire is the single entry-point every handler that returns a per-entity
-// V1Entity should use: toV1 + strip hidden properties + attach the affordance
+// v1.Entity should use: toV1 + strip hidden properties + attach the affordance
 // maps. Use forWireRelated for entities that appear as list rows or under
 // `included` (no affordance maps, but still strip).
-func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) V1Entity {
+func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
 	result := s.toV1(ctx, e, outgoing, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	s.affordances.attachEntityAffordances(ctx, e, &result)
@@ -74,7 +75,7 @@ func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outg
 // properties but omits the `_fields` / `_relations` maps (those ride on
 // per-entity responses only). Hidden-field stripping still applies: the wire
 // contract is "hidden values never reach the client, regardless of shape."
-func (s entitySerializer) forWireRelated(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) V1Entity {
+func (s entitySerializer) forWireRelated(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
 	result := s.toV1(ctx, e, outgoing, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	return result

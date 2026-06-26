@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -70,11 +71,11 @@ func TestACLGet_TypeLevelReadGrant(t *testing.T) {
 // own URL); other fields must match.
 //
 // Parsing + re-encoding (instead of string slicing — RR-QLQW) makes
-// the comparator robust against future V1Error field additions and
+// the comparator robust against future v1.Error field additions and
 // against JSON-encoder reordering quirks.
 func stripInstance(t *testing.T, s string) string {
 	t.Helper()
-	var v V1Error
+	var v v1.Error
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		t.Fatalf("stripInstance: invalid JSON %q: %v", s, err)
 	}

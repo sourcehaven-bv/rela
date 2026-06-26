@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
@@ -67,7 +68,7 @@ func TestHandleV1Action_Success(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var resp V1ActionResponse
+	var resp v1.ActionResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -256,7 +257,7 @@ func TestHandleV1Action_ParamsPassed(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var resp V1ActionResponse
+	var resp v1.ActionResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}

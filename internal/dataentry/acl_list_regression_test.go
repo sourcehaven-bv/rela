@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -29,7 +30,7 @@ func TestACLListRegression_NopACL_ListUnchanged(t *testing.T) {
 		t.Fatalf("NopACL list: got %d, want 200; body=%s", rec.Code, rec.Body)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v\nbody: %s", err, rec.Body)
 	}
@@ -68,7 +69,7 @@ func TestACLListRegression_NopACL_FreeTextStillWorks(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("NopACL list q=: got %d, want 200; body=%s", rec.Code, rec.Body)
 	}
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

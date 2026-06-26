@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
@@ -170,13 +171,13 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 
 // appsToV1 projects the scanned apps to the client-facing view. Returns nil for
 // an empty list so the JSON omits the "apps" key entirely.
-func appsToV1(apps []appInfo) map[string]V1App {
+func appsToV1(apps []appInfo) map[string]v1.App {
 	if len(apps) == 0 {
 		return nil
 	}
-	out := make(map[string]V1App, len(apps))
+	out := make(map[string]v1.App, len(apps))
 	for _, app := range apps {
-		out[app.ID] = V1App{
+		out[app.ID] = v1.App{
 			Title:       app.Title,
 			Label:       app.Label,
 			Description: app.Description,

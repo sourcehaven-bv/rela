@@ -40,7 +40,7 @@ func patchTicketJSON(t *testing.T, app *App, body string) (int, updateResponse) 
 }
 
 // patchTicketRaw returns the raw response body for assertions that
-// need to inspect non-V1Entity-shaped responses (e.g. 403 affordance
+// need to inspect non-v1.Entity-shaped responses (e.g. 403 affordance
 // denials).
 func patchTicketRaw(t *testing.T, app *App, body string) (code int, respBody string) {
 	t.Helper()

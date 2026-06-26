@@ -27,7 +27,7 @@ func lockedTicket(inaccessibleFields ...string) *entity.Entity {
 
 // TestEntityToV1_PropagatesInaccessible verifies that the wire-format
 // serialization carries [entity.Entity.Inaccessible] through to
-// [V1Entity.Inaccessible]. Encrypted entities loaded from fsstore have
+// [v1.Entity.Inaccessible]. Encrypted entities loaded from fsstore have
 // this field populated; the SPA branches on it to render lock indicators.
 func TestEntityToV1_PropagatesInaccessible(t *testing.T) {
 	app := newTestAppV1(t)

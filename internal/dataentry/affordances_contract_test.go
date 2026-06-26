@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -108,7 +109,7 @@ func fetchActions(t *testing.T, app *App, typeName, plural, id string) map[strin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s returned %d: %s", id, rec.Code, rec.Body.String())
 	}
-	var e V1Entity
+	var e v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&e); err != nil {
 		t.Fatalf("decode GET: %v", err)
 	}
