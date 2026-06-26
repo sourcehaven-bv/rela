@@ -417,6 +417,13 @@ func TestHandleV1App(t *testing.T) {
 		if ct := w.Header().Get("Content-Type"); ct != "font/woff2" {
 			t.Errorf("font Content-Type = %q, want font/woff2", ct)
 		}
+		// The app iframe is sandboxed (opaque/null origin), so the @font-face
+		// request is cross-origin and the browser blocks it without CORS. The
+		// font MUST send Access-Control-Allow-Origin or the toolbar renders as
+		// tofu boxes (verified in-browser, TKT-5F9V56).
+		if acao := w.Header().Get("Access-Control-Allow-Origin"); acao != "*" {
+			t.Errorf("font Access-Control-Allow-Origin = %q, want * (sandboxed iframe is null-origin)", acao)
+		}
 		// font-src <base> already permits the same-path font (no CSP widening).
 		csp := w.Header().Get("Content-Security-Policy")
 		if !strings.Contains(csp, "font-src ") || !strings.Contains(csp, "/api/v1/_apps/demo/") {
