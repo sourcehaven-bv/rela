@@ -127,6 +127,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.paths = paths
 	app.store = svc.Store()
 	app.visibleReader = newVisibleReader(svc.Store())
+	app.reader = entityReader{store: svc.Store()}
 	app.entityManager = svc.EntityManager()
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
@@ -150,7 +151,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
 		store:              svc.Store(),
 		meta:               func() *metamodel.Metamodel { return app.State().Meta },
-		getEntity:          app.getEntity,
+		getEntity:          app.reader.getEntity,
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}

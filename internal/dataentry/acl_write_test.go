@@ -73,7 +73,7 @@ func TestACLWrite_PatchOnHiddenIs404(t *testing.T) {
 // test models would obtain the ETag through a side channel).
 func computeETagForTest(t *testing.T, app *App, entityID string) string {
 	t.Helper()
-	e, found := app.getEntity(t.Context(), entityID)
+	e, found := app.reader.getEntity(t.Context(), entityID)
 	if !found {
 		t.Fatalf("computeETagForTest: %s not in store", entityID)
 	}
