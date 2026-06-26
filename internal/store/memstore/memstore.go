@@ -35,6 +35,13 @@ import (
 )
 
 // MemStore is an in-memory store implementation.
+//
+// TODO(TKT-N0IKN9): the exported surface (27) is the mandated store.Store
+// interface, which consumers depend on directly by design. This is a
+// required-interface exception, not accreted public API — it tracks the
+// interface size and ratchets only if store.Store itself is narrowed.
+//
+//plimsoll:max-exported-methods=27
 type MemStore struct {
 	mu            sync.RWMutex
 	entities      map[string]*entity.Entity   // ID -> entity

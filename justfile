@@ -197,6 +197,15 @@ arch-lint:
     @echo "Checking architecture boundaries..."
     go-arch-lint check
 
+# Check type load lines (god-object linter). Existing offenders are
+# grandfathered with //plimsoll:max-* directives at the declaration site;
+# ratchet those down over time (TKT-N0IKN9). Keep plimsoll_version in sync
+# with the install pin in .github/workflows/ci.yml.
+plimsoll_version := "v0.2.0"
+plimsoll:
+    @echo "Checking type load lines (god-object lint)..."
+    go run github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@{{plimsoll_version}} ./...
+
 # Run linter with auto-fix
 lint-fix:
     @echo "Running linter with auto-fix..."
@@ -231,7 +240,7 @@ vet:
 # ── CI & Checks ──
 
 # Run all checks (lint + arch-lint + lint-md + test)
-check: lint arch-lint lint-md test
+check: lint arch-lint plimsoll lint-md test
 
 # Generate docs from rela entities via mdcomp
 docs: build-cli

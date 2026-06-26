@@ -59,6 +59,10 @@ components:
 
   # Core domain
   entity:           { in: internal/entity }
+  # API wire contract — the v1 data-entry API vocabulary. A pure leaf:
+  # depends only on entity (+ dataentryconfig), NEVER on dataentry. Both the
+  # data-entry server and a future native bridge consume it.
+  apiwire:          { in: internal/apiwire/** }
   lua:              { in: internal/lua }
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
@@ -241,10 +245,21 @@ deps:
       - store
 
   # Web / UI layer
+  # apiwire is a leaf: it may use the domain types and the data-entry config
+  # types, but MUST NOT depend on dataentry (the contract can't depend on the
+  # server that serializes to it). No `dataentry` here is the whole point —
+  # arch-lint fails if anyone adds that import.
+  apiwire:
+    # entity/errors are commonComponents (importable by all), so only the
+    # data-entry config types need listing. Critically: NO `dataentry` — the
+    # contract must not depend on the server that serializes to it.
+    mayDependOn:
+      - dataentryconfig
   dataentry:
     mayDependOn:
       - acl
       - affordances
+      - apiwire
       - attachment
       - audit
       - canonical

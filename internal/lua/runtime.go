@@ -65,6 +65,11 @@ func stripShebang(code string) string {
 // write). A read-only runtime has no mutation bindings (create/update/delete
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
+//
+// TODO(TKT-N0IKN9): Runtime is a god-object (119 methods). Decompose toward the
+// 40-method load line; ratchet this number down as bindings move out.
+//
+//plimsoll:max-methods=119
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.

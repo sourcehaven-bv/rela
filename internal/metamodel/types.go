@@ -5,6 +5,12 @@ import (
 )
 
 // Metamodel represents the full metamodel configuration
+//
+// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
+// This is the schema accessor — wide read-API by nature — but a ratchet
+// candidate: group the type/relation/property lookups behind focused accessors.
+//
+//plimsoll:max-exported-methods=30
 type Metamodel struct {
 	Version     string                 `yaml:"version"`
 	Namespace   string                 `yaml:"namespace"`
@@ -124,6 +130,11 @@ type CustomType struct {
 }
 
 // EntityDef defines an entity type in the metamodel
+//
+// TODO(TKT-N0IKN9): 23 exported methods, over the 20 exported-method line.
+// Schema value type; ratchet candidate alongside Metamodel.
+//
+//plimsoll:max-exported-methods=23
 type EntityDef struct {
 	Label         string                 `yaml:"label"`
 	LabelPlural   string                 `yaml:"label_plural,omitempty"`

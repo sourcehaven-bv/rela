@@ -311,7 +311,7 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 		newStyleMap, newStyledTypes = buildStyleMap(newCfg, newMeta)
 		// On reload, keep the previous palette if the new file is
 		// broken — better to show stale colors than crash or wipe.
-		if up, err := a.loadUserPalette(); err != nil {
+		if up, err := a.userState.loadUserPalette(); err != nil {
 			slog.Warn("watcher: keeping previous user palette",
 				"file", userPaletteFile, "error", err)
 		} else {

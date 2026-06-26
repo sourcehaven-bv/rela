@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -506,8 +507,8 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 		entities = filtered
 	}
 
-	entities = a.applyV1Filters(entities, query, typeName)
-	entities = a.applyV1Sorting(entities, query)
+	entities = applyV1Filters(entities, query, typeName)
+	entities = applyV1Sorting(entities, query)
 	return entities, nil
 }
 
@@ -550,7 +551,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	data := make([]V1Entity, 0, len(entities))
 	included := make(map[string]V1Entity)
 	for _, e := range entities {
-		v1Entity := a.serializeRelatedEntityForWire(r.Context(), e, plural, true)
+		v1Entity := a.serializer.forWireRelated(r.Context(), e, a.reader.outgoingRelations(r.Context(), e.ID), a.Meta(), plural)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -569,11 +570,11 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			PerPage: perPage,
 			HasMore: end < total,
 		},
-		Actions: a.computeCollectionActions(r.Context(), typeName),
+		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
 	}
 
 	// Add Link header for pagination (RFC 5988)
-	a.addPaginationLinks(w, r, page, perPage, total, plural)
+	addPaginationLinks(w, r, page, perPage, total, plural)
 
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	w.Header().Set("X-Page", strconv.Itoa(page))
@@ -611,11 +612,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Prefix     string                 `json:"prefix,omitempty"`
 		Properties map[string]interface{} `json:"properties"`
 		Content    string                 `json:"content,omitempty"`
-		Relations  V1RelationsField       `json:"relations,omitempty"`
+		Relations  v1.RelationsField      `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var werr *wireError
+		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 			return
@@ -646,7 +647,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// grants apply at create. Collection-level create authorization is
 	// enforced separately inside CreateEntity (acl.OpCreate).
 	candidate := &entityPkg.Entity{Type: typeName, Properties: req.Properties}
-	if denial := a.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
+	if denial := a.affordances.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, candidate, *denial)
 		return
 	}
@@ -691,7 +692,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializeEntityForWire(r.Context(), created, plural, true)
+	result := a.serializer.forWire(r.Context(), created, a.reader.outgoingRelations(r.Context(), created.ID), a.Meta(), plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -803,7 +804,7 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// value-dependent predicates (e.g. field B read-only when A == x)
 	// re-derive as the form changes. includeRelations=false: no edges
 	// exist for an unsaved entity.
-	result := a.serializeEntityForWire(r.Context(), candidate, plural, false)
+	result := a.serializer.forWire(r.Context(), candidate, nil, a.Meta(), plural)
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)
 	}
@@ -870,27 +871,28 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
-	// ACL gate (TKT-VQGN). Runs BEFORE getEntity so a hidden id and a
-	// nonexistent id spend the same MatchingIDs roundtrip — otherwise
-	// the timing difference (in-memory lookup ~1µs vs. DB roundtrip
-	// ~1ms) is an id-enumeration side channel that defeats the
-	// indistinguishable-404-body invariant (RR-NGMI).
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	// ACL gate (TKT-VQGN). visibleReader.getVisible applies PermitsRead
+	// BEFORE the store read so a hidden id and a nonexistent id spend the
+	// same MatchingIDs roundtrip — otherwise the timing difference
+	// (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an id-enumeration
+	// side channel that defeats the indistinguishable-404-body invariant
+	// (RR-NGMI). A gate error surfaces via writeGateError; a deny is
+	// returned as (nil,false,nil), indistinguishable from a real miss.
+	entity, found, err := a.visibleReader.getVisible(ctx, typeName, entityID)
+	if err != nil {
+		writeGateError(w, r, err)
 		return
 	}
-
-	entity, found := a.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
 	query := r.URL.Query()
-	includeRelations := true
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializeEntityForWire(ctx, entity, plural, includeRelations)
+	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -978,7 +980,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1008,13 +1010,13 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Properties      map[string]interface{} `json:"properties,omitempty"`
 		PropertiesUnset []string               `json:"properties_unset,omitempty"`
 		Content         *string                `json:"content,omitempty"`
-		Relations       V1RelationsField       `json:"relations,omitempty"`
+		Relations       v1.RelationsField      `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// V1RelationsField's UnmarshalJSON returns *wireError for
+		// v1.RelationsField's UnmarshalJSON returns *v1.WireError for
 		// shape errors; surface them as 400 with the structured code.
-		var werr *wireError
+		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code,
 				werr.Detail, werr.Path)
@@ -1028,12 +1030,12 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// what the resolver would have surfaced on GET. Runs before any
 	// other validation so the failure mode is identical regardless of
 	// what else the PATCH body would have triggered.
-	if denial := a.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
+	if denial := a.affordances.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
 		a.denyAffordance(r.Context(), w, entity, *denial)
 		return
 	}
 	if req.Relations.Modern != nil {
-		if denial := a.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
+		if denial := a.affordances.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
 			a.denyAffordance(r.Context(), w, entity, *denial)
 			return
 		}
@@ -1113,7 +1115,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializeEntityForWire(r.Context(), entity, plural, true)
+	result := a.serializer.forWire(r.Context(), entity, a.reader.outgoingRelations(r.Context(), entity.ID), a.Meta(), plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -1130,10 +1132,10 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 }
 
 // writeRelationsValidationError maps a Phase A validation error from
-// the modern reconciler to the corresponding HTTP response. wireError
+// the modern reconciler to the corresponding HTTP response. v1.WireError
 // → 400 (caller bug); structuralError → 422 (storage can't represent).
 func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Request, err error) {
-	var werr *wireError
+	var werr *v1.WireError
 	if errors.As(err, &werr) {
 		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 		return
@@ -1173,7 +1175,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1207,14 +1209,14 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	s := a.State()
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	outgoing := a.outgoingRelations(r.Context(), entityID)
-	incoming := a.incomingRelations(r.Context(), entityID)
+	outgoing := a.reader.outgoingRelations(r.Context(), entityID)
+	incoming := a.reader.incomingRelations(r.Context(), entityID)
 
 	relations := make(map[string][]map[string]interface{})
 
@@ -1225,7 +1227,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	for _, edge := range outgoing {
 		rel := map[string]interface{}{
 			"id":        edge.To,
-			"type":      a.peerType(r.Context(), edge.To),
+			"type":      a.reader.entityType(r.Context(), edge.To),
 			"direction": "outgoing",
 		}
 		if len(edge.Properties) > 0 {
@@ -1250,7 +1252,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		rel := map[string]interface{}{
 			"id":        edge.From,
-			"type":      a.peerType(r.Context(), edge.From),
+			"type":      a.reader.entityType(r.Context(), edge.From),
 			"direction": "incoming",
 		}
 		if len(edge.Properties) > 0 {
@@ -1328,7 +1330,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1338,9 +1340,9 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.incomingRelations(r.Context(), entityID)
+		edges = a.reader.incomingRelations(r.Context(), entityID)
 	} else {
-		edges = a.outgoingRelations(r.Context(), entityID)
+		edges = a.reader.outgoingRelations(r.Context(), entityID)
 	}
 
 	relations := make([]map[string]interface{}, 0, len(edges))
@@ -1355,7 +1357,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 		rel := map[string]interface{}{
 			"id":   peerID,
-			"type": a.peerType(r.Context(), peerID),
+			"type": a.reader.entityType(r.Context(), peerID),
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
@@ -1391,7 +1393,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1416,14 +1418,14 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	// Affordance gates: creatable + meta-writable, evaluated against
 	// the SOURCE of the new edge (not necessarily the path entity —
 	// for incoming-direction creates the path entity is the target).
-	source := a.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
+	source := a.affordances.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
 	// Audit subject is the source of the new edge, matching the
 	// entity whose policy gated the write.
-	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
+	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
-	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1463,7 +1465,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1482,8 +1484,8 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	// the edge (the path entity for outgoing; the peer for incoming).
 	// The edge already exists (PATCH is meta-only), so the create /
 	// remove gates don't apply.
-	source := a.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
-	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
+	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1544,7 +1546,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1555,8 +1557,8 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	// incoming). Per-relation-type uniform — a removable=false
 	// verdict applies to every link of this type.
 	direction := r.URL.Query().Get("direction")
-	source := a.relationSourceEntity(r.Context(), entity, targetID, direction)
-	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
+	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, direction)
+	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1604,7 +1606,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1635,7 +1637,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 
 	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetPlural(typeName)
-	result := a.serializeEntityForWire(r.Context(), newEntity, plural, false)
+	result := a.serializer.forWire(r.Context(), newEntity, nil, a.Meta(), plural)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
 	writeV1JSON(w, http.StatusCreated, result)
@@ -1851,7 +1853,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializeRelatedEntityForWire(r.Context(), e, plural, false))
+		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, a.Meta(), plural))
 	}
 
 	resp := V1ListResponse{
@@ -1872,7 +1874,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analysisResult := a.runAnalysis(r.Context())
+	analysisResult := a.analyze.runAnalysis(r.Context(), a.State().Meta)
 
 	// ACL gate (TKT-QU7REX): runAnalysis walks the WHOLE graph, so every issue
 	// carries an entityId/entityType/title that would leak existence + title to
@@ -1986,42 +1988,6 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 
 // --- Helper Functions ---
 
-func (a *App) entityToV1(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
-	s := a.State()
-	v1 := V1Entity{
-		ID:         e.ID,
-		Type:       e.Type,
-		Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
-		Properties: make(map[string]interface{}),
-		Content:    e.Content,
-		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
-		Actions:    a.computeActions(ctx, e),
-	}
-
-	for k, v := range e.Properties {
-		v1.Properties[k] = v
-	}
-
-	if e.IsLocked() {
-		v1.Inaccessible = make([]V1InaccessibleField, 0, len(e.Inaccessible))
-		for _, f := range e.Inaccessible {
-			v1.Inaccessible = append(v1.Inaccessible, V1InaccessibleField{
-				Name:   f.Name,
-				Reason: string(f.Reason),
-			})
-		}
-	}
-
-	if includeRelations {
-		v1.Relations = make(map[string][]string)
-		for _, edge := range a.outgoingRelations(ctx, e.ID) {
-			v1.Relations[edge.Type] = append(v1.Relations[edge.Type], edge.To)
-		}
-	}
-
-	return v1
-}
-
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]V1Entity {
 	s := a.State()
 	included := make(map[string]V1Entity)
@@ -2040,13 +2006,13 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	nestedFor := make(map[string]string)
 
 	if includes == "*" {
-		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			if target, found := a.getEntity(ctx, edge.To); found {
+		for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
+			if target, found := a.reader.getEntity(ctx, edge.To); found {
 				candidates = append(candidates, target)
 			}
 		}
-		for _, edge := range a.incomingRelations(ctx, entity.ID) {
-			if source, found := a.getEntity(ctx, edge.From); found {
+		for _, edge := range a.reader.incomingRelations(ctx, entity.ID) {
+			if source, found := a.reader.getEntity(ctx, edge.From); found {
 				candidates = append(candidates, source)
 			}
 		}
@@ -2058,11 +2024,11 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 			relParts := strings.SplitN(part, ".", 2)
 			relType := relParts[0]
-			for _, edge := range a.outgoingRelations(ctx, entity.ID) {
+			for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
 				if edge.Type != relType {
 					continue
 				}
-				target, found := a.getEntity(ctx, edge.To)
+				target, found := a.reader.getEntity(ctx, edge.To)
 				if !found {
 					continue
 				}
@@ -2078,7 +2044,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
-		included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
+		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, a.Meta(), plural)
 
 		if nested, ok := nestedFor[target.ID]; ok {
 			for k, v := range a.resolveV1Includes(ctx, target, nested) {
@@ -2100,54 +2066,12 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 // effort" affordance; the explicit GET / list endpoints are the
 // authoritative read surface.
 func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg.Entity) []*entityPkg.Entity {
-	if len(candidates) == 0 {
-		return nil
-	}
-	gate := readGateFromContext(ctx)
-	byType := make(map[string][]*entityPkg.Entity)
-	for _, c := range candidates {
-		byType[c.Type] = append(byType[c.Type], c)
-	}
-	allowed := make(map[string]bool, len(candidates))
-	for typeName, group := range byType {
-		ids := make([]string, 0, len(group))
-		for _, c := range group {
-			ids = append(ids, c.ID)
-		}
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			// Fail-closed on gate error (RR-7TIU): drop the whole
-			// type's candidates rather than surface a partial subset
-			// the policy may actually deny. Log loud so operators see
-			// the underlying failure (SIG-3 from the cranky review:
-			// silent drops surface as "missing includes" support
-			// tickets with no signal on the cause).
-			slog.Warn("dataentry: filterVisibleIncludes: PermitsReadMany failed; dropping type",
-				"type", typeName,
-				"candidates", len(ids),
-				"err", err)
-			continue
-		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
-		}
-	}
-	// Preserve original candidate order so the response is stable.
-	// Allocate a fresh slice (RR-I2SI) — aliasing candidates' storage
-	// works today but is a non-obvious invariant that a future
-	// refactor retaining `candidates` would silently corrupt.
-	out := make([]*entityPkg.Entity, 0, len(candidates))
-	for _, c := range candidates {
-		if allowed[c.ID] {
-			out = append(out, c)
-		}
-	}
-	return out
+	return a.visibleReader.filterVisible(ctx, candidates)
 }
 
-func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
+// applyV1Filters applies `filter[...]` query params to the entity slice. Pure
+// data transform — a free function, not App behavior (TKT-N26KLB M5.5).
+func applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
 	filtered := entities
 
 	for key, values := range query {
@@ -2272,7 +2196,9 @@ func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]st
 	return filtered
 }
 
-func (a *App) applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
+// applyV1Sorting applies `sort=` query params to the entity slice. Pure data
+// transform — a free function, not App behavior (TKT-N26KLB M5.5).
+func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
 	sortParam := ""
 	if vals, ok := query["sort"]; ok && len(vals) > 0 {
 		sortParam = vals[0]
@@ -2346,7 +2272,9 @@ func parseV1Pagination(query map[string][]string) (page, perPage int) {
 	return page, perPage
 }
 
-func (a *App) addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, total int, plural string) {
+// addPaginationLinks writes RFC 8288 Link headers for the collection page.
+// Pure data transform over its args — a free function (TKT-N26KLB M5.5).
+func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, total int, plural string) {
 	totalPages := (total + perPage - 1) / perPage
 	if totalPages == 0 {
 		totalPages = 1
@@ -2394,7 +2322,7 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 	// Fold outgoing relations into the hash so PATCHes that only change
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
-	edges := a.outgoingRelations(ctx, e.ID)
+	edges := a.reader.outgoingRelations(ctx, e.ID)
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)
@@ -2558,7 +2486,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the entry entity
-	entry, found := a.getEntity(r.Context(), entityID)
+	entry, found := a.reader.getEntity(r.Context(), entityID)
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return
@@ -3105,7 +3033,7 @@ func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWrite
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		var fromType string
-		if fromEntity, ok := a.getEntity(ctx, rel.From); ok {
+		if fromEntity, ok := a.reader.getEntity(ctx, rel.From); ok {
 			fromType = fromEntity.Type
 		}
 		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
@@ -3619,7 +3547,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	plural := entityDef.GetPlural(result.Entry.Type)
 
 	resp := V1ViewResponse{
-		Entry:    a.serializeEntityForWire(r.Context(), result.Entry, plural, true),
+		Entry:    a.serializer.forWire(r.Context(), result.Entry, a.reader.outgoingRelations(r.Context(), result.Entry.ID), a.Meta(), plural),
 		Sections: make([]V1ViewSection, 0, len(sections)),
 	}
 

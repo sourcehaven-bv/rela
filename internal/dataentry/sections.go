@@ -165,8 +165,8 @@ func (a *App) buildSectionEntityData(ctx context.Context, e *entity.Entity, secF
 		Title:         s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Type:          e.Type,
 		EditFormID:    a.editFormForType(e.Type),
-		Props:         a.copyVisibleProperties(ctx, e),
-		FieldVerdicts: a.computeFieldAffordances(ctx, e),
+		Props:         a.affordances.copyVisibleProperties(ctx, e),
+		FieldVerdicts: a.affordances.computeFieldAffordances(ctx, e),
 	}
 	for _, f := range secFields {
 		values := propertyToStrings(e.Properties[f.Property])

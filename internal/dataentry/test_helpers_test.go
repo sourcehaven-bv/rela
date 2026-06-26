@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -125,14 +126,18 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.fs = fs
 	app.paths = paths
 	app.store = svc.Store()
+	app.visibleReader = newVisibleReader(svc.Store())
+	app.reader = entityReader{store: svc.Store()}
 	app.entityManager = svc.EntityManager()
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
 	app.validator = svc.Validator()
+	app.analyze = analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
+	app.userState = userStateStore{kv: svc.State()}
 	app.acl = svc.ACL()
 	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents
@@ -141,6 +146,15 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	if app.scriptEngine != nil {
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
 	}
+	app.affordances = affordanceService{
+		acl:                func() acl.ACL { return app.acl },
+		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
+		store:              svc.Store(),
+		meta:               func() *metamodel.Metamodel { return app.State().Meta },
+		getEntity:          app.reader.getEntity,
+		currentEdgesByPeer: app.currentEdgesByPeer,
+	}
+	app.serializer = entitySerializer{affordances: app.affordances}
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper

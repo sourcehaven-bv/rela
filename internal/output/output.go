@@ -41,6 +41,12 @@ const (
 )
 
 // Writer handles formatted output
+//
+// TODO(TKT-N0IKN9): 23 exported methods, over the 20 exported-method line.
+// Output formatter; ratchet candidate — the per-shape Print* methods could
+// move behind a narrower interface.
+//
+//plimsoll:max-exported-methods=23
 type Writer struct {
 	Format  Format
 	Out     io.Writer

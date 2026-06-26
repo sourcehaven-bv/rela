@@ -88,7 +88,7 @@ func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, type
 		return
 	}
 
-	entity, found := a.getEntity(ctx, entityID)
+	entity, found := a.reader.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -220,7 +220,7 @@ func (a *App) handleV1PutAttachment(w http.ResponseWriter, r *http.Request, type
 		return
 	}
 
-	result := a.serializeEntityForWire(ctx, entity, plural, true)
+	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 	writeV1JSON(w, http.StatusOK, result)
 }
 
@@ -321,7 +321,7 @@ func (a *App) attachmentWritePreflight(w http.ResponseWriter, r *http.Request, t
 		return nil, false
 	}
 
-	entity, found := a.getEntity(ctx, entityID)
+	entity, found := a.reader.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return nil, false
