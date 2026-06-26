@@ -132,7 +132,7 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 	}
 	if entry == appCSSEntry {
 		h.Set("Content-Type", "text/css; charset=utf-8")
-		_, _ = w.Write([]byte(appCSSSource()))
+		_, _ = w.Write([]byte(appCSSSource(a.State().Palette)))
 		return
 	}
 
