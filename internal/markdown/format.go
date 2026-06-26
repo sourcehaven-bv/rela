@@ -19,7 +19,7 @@ const DefaultLineWidth = 80
 // maxFormatPasses bounds the fixed-point iteration in
 // [FormatMarkdownWithWidth]. Convergence is fast in practice (≤2 passes across
 // the fuzz corpus); the bound is a backstop against a pathological input that
-// never settles, in which case the last pass is still returned deterministically.
+// never settles (see [FormatMarkdownWithWidth] for what happens then).
 const maxFormatPasses = 8
 
 // FormatMarkdown normalizes markdown content using consistent formatting rules:
@@ -36,15 +36,26 @@ func FormatMarkdown(content string) string {
 }
 
 // FormatMarkdownWithWidth normalizes markdown content with a specific line
-// width, iterating to a formatting fixed point so the result is idempotent.
+// width, iterating to a formatting fixed point so the result is idempotent:
+// FormatMarkdownWithWidth(FormatMarkdownWithWidth(x)) == FormatMarkdownWithWidth(x)
+// for every x.
 //
 // A single goldmark round-trip is NOT idempotent for every input — goldmark can
 // re-parse its own output into a different document (e.g. "**\n*" renders to
 // "** *", which on the next pass parses as a thematic break "---"). Callers that
 // re-normalize already-formatted content rely on idempotency: the canonical
 // content hash (internal/canonical) re-formats both fsstore's reflowed body and
-// pgstore's raw body, and they must converge in one call. Iterating here makes
-// that hold for every caller rather than pushing the loop onto each one.
+// pgstore's raw body, and they must converge to the SAME value in one call.
+//
+// One renderer misbehavior would otherwise defeat that: the goldmark-markdown
+// renderer pads the whitespace inside an inline code span by one space on each
+// pass for certain multi-line documents (a code span with internal trailing
+// spaces, near nested-backtick spans and reflowed prose), growing without bound
+// so no fixed point exists. [normalizeCodeSpanWhitespace] collapses that padding
+// back to a single space after each pass, removing the only dimension that grows
+// — which both restores convergence and makes every member of the orbit (the raw
+// body, a once-reflowed body, an N-times-reflowed body) map to one canonical
+// value, so the cross-backend hash matches.
 func FormatMarkdownWithWidth(content string, lineWidth int) string {
 	if content == "" {
 		return ""
@@ -60,12 +71,48 @@ func FormatMarkdownWithWidth(content string, lineWidth int) string {
 	return result
 }
 
+// codeSpanTrailingWS matches a run of two or more spaces immediately before a
+// backtick run. On a prose line, a backtick run is a code-span delimiter, and
+// 2+ spaces in front of it can only be the renderer's runaway padding before a
+// span's closing backticks (real prose never ends a run of words with 2+ spaces
+// then a backtick). It deliberately does NOT require an opening backtick on the
+// same line, so it also catches the case where paragraph wrapping pushed the
+// span's closing backticks onto a continuation line.
+var codeSpanTrailingWS = regexp.MustCompile(" {2,}(`+)")
+
+// normalizeCodeSpanWhitespace collapses 2+ spaces before a backtick run to a
+// single space, on one line of prose. The goldmark-markdown renderer adds one
+// such space per render pass for some inputs (its way of "protecting" a code
+// span whose content ends in whitespace), which otherwise grows unboundedly and
+// stops [FormatMarkdownWithWidth] from reaching a fixed point. Collapsing is
+// monotone, so it converges in one substitution; a single space is left intact
+// (CommonMark preserves it as literal content), so only the runaway padding is
+// removed.
+//
+// This MUST only be applied to prose lines, never to fenced-code-block content
+// (where backticks and trailing spaces are literal and must survive verbatim) —
+// [wrapParagraphs] calls it with that fence-awareness.
+func normalizeCodeSpanWhitespace(s string) string {
+	return codeSpanTrailingWS.ReplaceAllString(s, " $1")
+}
+
 // formatOnce applies one pass of markdown normalization (goldmark render +
 // paragraph wrap + blank-line trim). It is not necessarily idempotent on its
 // own; [FormatMarkdownWithWidth] iterates it to a fixed point.
-func formatOnce(content string, lineWidth int) string {
+func formatOnce(content string, lineWidth int) (result string) {
 	// Trim trailing whitespace but preserve structure.
 	content = strings.TrimRight(content, " \t")
+
+	// The goldmark-markdown renderer panics on some inputs (e.g. a bare
+	// link-reference-definition like "[x]:0" nil-derefs in Renderer.Render).
+	// A formatting pass must never crash the process — recover and fall back to
+	// the unformatted input, the same degrade as a Convert error. The named
+	// return lets the deferred recover substitute the fallback value.
+	defer func() {
+		if recover() != nil {
+			result = content
+		}
+	}()
 
 	r := markdown.NewRenderer(
 		markdown.WithHeadingStyle(markdown.HeadingStyleATX),
@@ -80,12 +127,12 @@ func formatOnce(content string, lineWidth int) string {
 		return content
 	}
 
-	result := wrapParagraphs(buf.String(), lineWidth)
+	wrapped := wrapParagraphs(buf.String(), lineWidth)
 
 	// Normalize surrounding blank lines to a single trailing newline. Trimming
 	// the leading newline (not just the trailing) is part of what lets the
 	// iteration converge: goldmark can emit a leading blank line for some inputs.
-	return strings.Trim(result, "\n") + "\n"
+	return strings.Trim(wrapped, "\n") + "\n"
 }
 
 // wrapParagraphs wraps paragraph text while preserving code blocks, lists, headings, etc.
@@ -108,7 +155,9 @@ func wrapParagraphs(content string, lineWidth int) string {
 			text = strings.TrimSpace(text)
 			if text != "" {
 				wrapped := wordwrap.WrapString(text, uint(lineWidth)) //nolint:gosec // lineWidth is validated positive
-				result = append(result, wrapped)
+				// Normalize any runaway inline-code-span padding the renderer
+				// introduced before wrapping (prose context — no fenced content here).
+				result = append(result, normalizeCodeSpanWhitespace(wrapped))
 			}
 			paragraphLines = paragraphLines[:0]
 		}
@@ -141,10 +190,14 @@ func wrapParagraphs(content string, lineWidth int) string {
 			continue
 		}
 
-		// Check for special lines that shouldn't be wrapped
+		// Check for special lines that shouldn't be wrapped (list items,
+		// headings, etc.). These still get inline-code-span whitespace normalized
+		// — this is where the renderer's runaway padding shows up (e.g. a list
+		// item ending in `` `code   ` ``). Fenced-block lines are already handled
+		// above, so this only touches prose.
 		if isSpecialLine(trimmed) {
 			flushParagraph()
-			result = append(result, line)
+			result = append(result, normalizeCodeSpanWhitespace(line))
 			continue
 		}
 
