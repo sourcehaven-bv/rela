@@ -64,6 +64,7 @@ vi.mock('easymde', () => ({ default: FakeEasyMDE }))
 vi.mock('easymde/dist/easymde.min.css?inline', () => ({ default: '' }))
 vi.mock('font-awesome/css/font-awesome.min.css?inline', () => ({ default: '' }))
 vi.mock('./relaEditorFont.css?inline', () => ({ default: '' }))
+vi.mock('./relaEditorTheme.css?inline', () => ({ default: '' }))
 
 // Import after mocks so customElements.define runs against the fake.
 await import('./relaEditor')

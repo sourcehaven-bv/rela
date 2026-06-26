@@ -1,0 +1,83 @@
+/* Re-skin EasyMDE's hardcoded light chrome with rela theme tokens so the
+ * <rela-editor> follows the host theme (light/dark) instead of EasyMDE's
+ * built-in white. Ported from the SPA's MarkdownEditor.vue token overrides,
+ * de-scoped (the element renders in light DOM, so these target EasyMDE's
+ * generated classes directly). The tokens themselves come from _rela.css,
+ * which the app links; this only maps them onto EasyMDE's elements.
+ *
+ * Injected AFTER easymde.min.css so these win the cascade. */
+
+.EasyMDEContainer {
+  width: 100%;
+}
+
+.EasyMDEContainer .CodeMirror {
+  border: 1px solid var(--border-color);
+  border-radius: 0 0 6px 6px;
+  font-family: monospace;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.EasyMDEContainer .CodeMirror-cursor {
+  border-left-color: var(--text-color);
+}
+
+.EasyMDEContainer .CodeMirror-selected {
+  background: var(--accent-color) !important;
+  opacity: 0.3;
+}
+
+.EasyMDEContainer .CodeMirror-focused {
+  border-color: var(--accent-color);
+}
+
+.editor-toolbar {
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--card-bg);
+}
+
+.editor-toolbar button {
+  color: var(--muted-text) !important;
+}
+
+.editor-toolbar button:hover {
+  background: var(--hover-bg);
+}
+
+.editor-toolbar button.active {
+  background: var(--border-color);
+}
+
+.editor-toolbar i.separator {
+  border-left-color: var(--border-color);
+  border-right-color: var(--border-color);
+}
+
+.editor-preview,
+.editor-preview-side {
+  padding: 16px;
+  background: var(--card-bg);
+  color: var(--text-color);
+}
+
+.editor-preview-side {
+  border: 1px solid var(--border-color);
+  border-left: none;
+}
+
+.CodeMirror-gutters {
+  background: var(--hover-bg);
+  border-right-color: var(--border-color);
+}
+
+.CodeMirror-linenumber {
+  color: var(--muted-text);
+}
+
+.EasyMDEContainer.fullscreen {
+  z-index: 9999 !important;
+}

@@ -26,6 +26,10 @@ import fontAwesomeCSS from 'font-awesome/css/font-awesome.min.css?inline'
 // path (_rela-editor.woff2), permitted by the app CSP's `font-src <base>`.
 // Injected AFTER fontAwesomeCSS so it wins.
 import fontOverrideCSS from './relaEditorFont.css?inline'
+// Theme override: re-skins EasyMDE's hardcoded light chrome with rela tokens so
+// the editor follows the host light/dark theme. Injected LAST so it wins over
+// EasyMDE's own CSS.
+import themeCSS from './relaEditorTheme.css?inline'
 
 const TAG = 'rela-editor'
 const STYLE_ID = 'rela-editor-styles'
@@ -37,7 +41,7 @@ function ensureStylesInjected(): void {
   if (document.getElementById(STYLE_ID)) return
   const style = document.createElement('style')
   style.id = STYLE_ID
-  style.textContent = [fontAwesomeCSS, fontOverrideCSS, easymdeCSS].join('\n')
+  style.textContent = [fontAwesomeCSS, fontOverrideCSS, easymdeCSS, themeCSS].join('\n')
   document.head.appendChild(style)
 }
 
