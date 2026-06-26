@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -552,7 +553,7 @@ func (svc affordanceService) validateRelationOp(ctx context.Context, e *entityPk
 // operation is permitted.
 func (svc affordanceService) validateRelationsModernAffordances(
 	ctx context.Context, entityID string, e *entityPkg.Entity,
-	desired map[string]V1RelationsUpdate,
+	desired map[string]v1.RelationsUpdate,
 ) *AffordanceDenialError {
 	if e == nil || len(desired) == 0 {
 		return nil
@@ -567,7 +568,7 @@ func (svc affordanceService) validateRelationsModernAffordances(
 			continue // structural error surfaces via the existing validator
 		}
 
-		desiredByID := make(map[string]V1ResourceIdentifier, len(upd.Data))
+		desiredByID := make(map[string]v1.ResourceIdentifier, len(upd.Data))
 		for _, ref := range upd.Data {
 			desiredByID[ref.ID] = ref
 		}

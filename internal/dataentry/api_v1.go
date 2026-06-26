@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -607,11 +608,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Prefix     string                 `json:"prefix,omitempty"`
 		Properties map[string]interface{} `json:"properties"`
 		Content    string                 `json:"content,omitempty"`
-		Relations  V1RelationsField       `json:"relations,omitempty"`
+		Relations  v1.RelationsField      `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var werr *wireError
+		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 			return
@@ -1005,13 +1006,13 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Properties      map[string]interface{} `json:"properties,omitempty"`
 		PropertiesUnset []string               `json:"properties_unset,omitempty"`
 		Content         *string                `json:"content,omitempty"`
-		Relations       V1RelationsField       `json:"relations,omitempty"`
+		Relations       v1.RelationsField      `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// V1RelationsField's UnmarshalJSON returns *wireError for
+		// v1.RelationsField's UnmarshalJSON returns *v1.WireError for
 		// shape errors; surface them as 400 with the structured code.
-		var werr *wireError
+		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code,
 				werr.Detail, werr.Path)
@@ -1127,10 +1128,10 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 }
 
 // writeRelationsValidationError maps a Phase A validation error from
-// the modern reconciler to the corresponding HTTP response. wireError
+// the modern reconciler to the corresponding HTTP response. v1.WireError
 // → 400 (caller bug); structuralError → 422 (storage can't represent).
 func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Request, err error) {
-	var werr *wireError
+	var werr *v1.WireError
 	if errors.As(err, &werr) {
 		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 		return

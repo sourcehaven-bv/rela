@@ -109,7 +109,7 @@ func TestOrderable_PatchRejectsNonFiniteOrder(t *testing.T) {
 			}
 			// The "overflows to infinity" case is rejected by Go's
 			// JSON decoder before our validateManagedOrderMeta runs
-			// (1e500 → field_invalid_type during V1ResourceIdentifier
+			// (1e500 → field_invalid_type during v1.ResourceIdentifier
 			// decode). The string and boolean cases reach our check.
 			// Either way the request must 400 — we accept both codes.
 			var problem struct {

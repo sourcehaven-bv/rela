@@ -1,4 +1,4 @@
-package dataentry
+package v1
 
 import (
 	"encoding/json"
@@ -12,14 +12,14 @@ func TestV1RelationsField_LegacyShape_Rejected(t *testing.T) {
 	// §9 wrapper. The first occurrence wins so the error path is
 	// deterministic.
 	body := `{"tagged": ["L-001", "L-002"]}`
-	var f V1RelationsField
+	var f RelationsField
 	err := json.Unmarshal([]byte(body), &f)
 	if err == nil {
 		t.Fatal("expected error for legacy shape")
 	}
-	var werr *wireError
+	var werr *WireError
 	if !errors.As(err, &werr) {
-		t.Fatalf("error is not *wireError: %v", err)
+		t.Fatalf("error is not *WireError: %v", err)
 	}
 	if werr.Code != "legacy_shape_unsupported" {
 		t.Errorf("code=%s, want legacy_shape_unsupported", werr.Code)
@@ -36,7 +36,7 @@ func TestV1RelationsField_ModernShape(t *testing.T) {
 			{"type": "label", "id": "L-002"}
 		]}
 	}`
-	var f V1RelationsField
+	var f RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestV1RelationsField_DataAbsent_ReturnsDataRequiredAtCallSite(t *testing.T)
 	// and the caller (handler) emits the 400. This test asserts the
 	// state propagated correctly.
 	body := `{"tagged": {}}`
-	var f V1RelationsField
+	var f RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal should not error at this layer: %v", err)
 	}
@@ -84,14 +84,14 @@ func TestV1RelationsField_DataAbsent_ReturnsDataRequiredAtCallSite(t *testing.T)
 
 func TestV1RelationsField_DataNull_Rejected(t *testing.T) {
 	body := `{"tagged": {"data": null}}`
-	var f V1RelationsField
+	var f RelationsField
 	err := json.Unmarshal([]byte(body), &f)
 	if err == nil {
 		t.Fatalf("expected error for data: null")
 	}
-	var werr *wireError
+	var werr *WireError
 	if !errors.As(err, &werr) {
-		t.Fatalf("error is not *wireError: %v", err)
+		t.Fatalf("error is not *WireError: %v", err)
 	}
 	if werr.Code != "data_required" {
 		t.Errorf("code=%s, want data_required", werr.Code)
@@ -100,14 +100,14 @@ func TestV1RelationsField_DataNull_Rejected(t *testing.T) {
 
 func TestV1RelationsField_DataNonArray_Rejected(t *testing.T) {
 	body := `{"tagged": {"data": "L-001"}}`
-	var f V1RelationsField
+	var f RelationsField
 	err := json.Unmarshal([]byte(body), &f)
 	if err == nil {
 		t.Fatalf("expected error for data: scalar")
 	}
-	var werr *wireError
+	var werr *WireError
 	if !errors.As(err, &werr) {
-		t.Fatalf("error is not *wireError: %v", err)
+		t.Fatalf("error is not *WireError: %v", err)
 	}
 	if werr.Code != "data_invalid_type" {
 		t.Errorf("code=%s, want data_invalid_type", werr.Code)
@@ -116,14 +116,14 @@ func TestV1RelationsField_DataNonArray_Rejected(t *testing.T) {
 
 func TestV1RelationsField_RelationValueNull_Rejected(t *testing.T) {
 	body := `{"tagged": null}`
-	var f V1RelationsField
+	var f RelationsField
 	err := json.Unmarshal([]byte(body), &f)
 	if err == nil {
 		t.Fatalf("expected error for null relation value")
 	}
-	var werr *wireError
+	var werr *WireError
 	if !errors.As(err, &werr) {
-		t.Fatalf("error is not *wireError: %v", err)
+		t.Fatalf("error is not *WireError: %v", err)
 	}
 	if werr.Code != "relation_value_null" {
 		t.Errorf("code=%s, want relation_value_null", werr.Code)
@@ -137,15 +137,15 @@ func TestV1RelationsField_RelationValueScalar_Rejected(t *testing.T) {
 		`{"tagged": true}`,
 	}
 	for _, body := range cases {
-		var f V1RelationsField
+		var f RelationsField
 		err := json.Unmarshal([]byte(body), &f)
 		if err == nil {
 			t.Errorf("body=%s: expected error", body)
 			continue
 		}
-		var werr *wireError
+		var werr *WireError
 		if !errors.As(err, &werr) {
-			t.Errorf("body=%s: error is not *wireError: %v", body, err)
+			t.Errorf("body=%s: error is not *WireError: %v", body, err)
 			continue
 		}
 		if werr.Code != "relation_value_invalid" {
@@ -156,14 +156,14 @@ func TestV1RelationsField_RelationValueScalar_Rejected(t *testing.T) {
 
 func TestV1RelationsField_UnknownSiblingKey_Rejected(t *testing.T) {
 	body := `{"tagged": {"datas": [{"type":"label","id":"L-001"}]}}`
-	var f V1RelationsField
+	var f RelationsField
 	err := json.Unmarshal([]byte(body), &f)
 	if err == nil {
 		t.Fatalf("expected error for unknown sibling key")
 	}
-	var werr *wireError
+	var werr *WireError
 	if !errors.As(err, &werr) {
-		t.Fatalf("error is not *wireError: %v", err)
+		t.Fatalf("error is not *WireError: %v", err)
 	}
 	if werr.Code != "unknown_field" {
 		t.Errorf("code=%s, want unknown_field", werr.Code)
@@ -179,15 +179,15 @@ func TestV1RelationsField_MissingTypeOrID_Rejected(t *testing.T) {
 		{`{"tagged": {"data": [{"type": "label"}]}}`, "id"},
 	}
 	for _, tc := range cases {
-		var f V1RelationsField
+		var f RelationsField
 		err := json.Unmarshal([]byte(tc.body), &f)
 		if err == nil {
 			t.Errorf("body=%s: expected error", tc.body)
 			continue
 		}
-		var werr *wireError
+		var werr *WireError
 		if !errors.As(err, &werr) {
-			t.Errorf("body=%s: error is not *wireError: %v", tc.body, err)
+			t.Errorf("body=%s: error is not *WireError: %v", tc.body, err)
 			continue
 		}
 		if werr.Code != "field_required" {
@@ -202,15 +202,15 @@ func TestV1RelationsField_NonStringInMetaUnset_Rejected(t *testing.T) {
 		`{"tagged": {"data": [{"type":"label","id":"L-001","meta_unset":["x", 5]}]}}`,
 	}
 	for _, body := range cases {
-		var f V1RelationsField
+		var f RelationsField
 		err := json.Unmarshal([]byte(body), &f)
 		if err == nil {
 			t.Errorf("body=%s: expected error", body)
 			continue
 		}
-		var werr *wireError
+		var werr *WireError
 		if !errors.As(err, &werr) {
-			t.Errorf("body=%s: error is not *wireError: %v", body, err)
+			t.Errorf("body=%s: error is not *WireError: %v", body, err)
 			continue
 		}
 		if werr.Code != "meta_unset_invalid" && werr.Code != "field_invalid_type" {
@@ -221,7 +221,7 @@ func TestV1RelationsField_NonStringInMetaUnset_Rejected(t *testing.T) {
 
 func TestV1RelationsField_MetaNull_TreatedAsAbsent(t *testing.T) {
 	body := `{"tagged": {"data": [{"type":"label","id":"L-001","meta":null}]}}`
-	var f V1RelationsField
+	var f RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestV1RelationsField_MetaNull_TreatedAsAbsent(t *testing.T) {
 
 func TestV1RelationsField_ContentNull_TreatedAsAbsent(t *testing.T) {
 	body := `{"tagged": {"data": [{"type":"label","id":"L-001","content":null}]}}`
-	var f V1RelationsField
+	var f RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestV1RelationsField_ContentNull_TreatedAsAbsent(t *testing.T) {
 
 func TestV1RelationsField_ContentEmptyString_PointerNotNil(t *testing.T) {
 	body := `{"tagged": {"data": [{"type":"label","id":"L-001","content":""}]}}`
-	var f V1RelationsField
+	var f RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestV1RelationsField_ContentEmptyString_PointerNotNil(t *testing.T) {
 
 func TestV1RelationsField_EmptyDataMeansRemoveAll(t *testing.T) {
 	body := `{"tagged": {"data": []}}`
-	var f V1RelationsField
+	var f RelationsField
 	if err := json.Unmarshal([]byte(body), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -272,11 +272,11 @@ func TestV1RelationsField_EmptyDataMeansRemoveAll(t *testing.T) {
 }
 
 func TestV1RelationsField_IsEmpty(t *testing.T) {
-	var f V1RelationsField
+	var f RelationsField
 	if !f.IsEmpty() {
 		t.Error("zero-value should be empty")
 	}
-	f.Modern = map[string]V1RelationsUpdate{"a": {Data: []V1ResourceIdentifier{{Type: "x", ID: "y"}}, DataPresent: true}}
+	f.Modern = map[string]RelationsUpdate{"a": {Data: []ResourceIdentifier{{Type: "x", ID: "y"}}, DataPresent: true}}
 	if f.IsEmpty() {
 		t.Error("modern populated should not be empty")
 	}
@@ -294,8 +294,8 @@ func TestJSONPointerEscape(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		if got := jsonPointerEscape(tc.in); got != tc.want {
-			t.Errorf("jsonPointerEscape(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := JSONPointerEscape(tc.in); got != tc.want {
+			t.Errorf("JSONPointerEscape(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -78,7 +79,7 @@ func edgeEndpoints(entityID, peerID string, incoming bool) (from, to string) {
 // are exempt: a symmetric self-loop is just a single edge regardless
 // of how it's named.
 func detectSelfLoopShapeConflict(
-	meta *metamodel.Metamodel, entityID string, desired map[string]V1RelationsUpdate,
+	meta *metamodel.Metamodel, entityID string, desired map[string]v1.RelationsUpdate,
 ) error {
 	// Group body keys by the canonical relation they resolve to,
 	// collecting whether they were submitted as canonical or inverse.
@@ -122,9 +123,9 @@ func detectSelfLoopShapeConflict(
 		// entity — that's the only collision surface.
 		conflictKeys := []string{u.canonicalKeys[0], u.inverseKeys[0]}
 		if pathEntityInBothSets(entityID, conflictKeys, desired) {
-			return &wireError{
+			return &v1.WireError{
 				Code: "shape_conflict",
-				Path: "/relations/" + jsonPointerEscape(conflictKeys[0]),
+				Path: "/relations/" + v1.JSONPointerEscape(conflictKeys[0]),
 				Detail: fmt.Sprintf(
 					"relation %q is referenced via both %q and its inverse %q with the path entity on both sides — "+
 						"the body refers to the same self-loop edge twice; remove one of the keys",
@@ -137,7 +138,7 @@ func detectSelfLoopShapeConflict(
 
 // pathEntityInBothSets returns true when entityID appears in the
 // desired-set of every body key in keys.
-func pathEntityInBothSets(entityID string, keys []string, desired map[string]V1RelationsUpdate) bool {
+func pathEntityInBothSets(entityID string, keys []string, desired map[string]v1.RelationsUpdate) bool {
 	for _, k := range keys {
 		upd, ok := desired[k]
 		if !ok {
