@@ -93,7 +93,13 @@ export default defineConfig({
   },
   build: {
     outDir: '../internal/dataentry/app_editor_dist',
-    emptyOutDir: true,
+    // Do NOT empty the dir: it contains the committed .gitkeep that keeps the
+    // Go glob-embed compiling on a clean checkout (the build artifacts
+    // themselves are gitignored). emptyOutDir:true would delete .gitkeep and
+    // leave the work tree dirty after `npm run build` (CI "work tree clean"
+    // gate). We only emit rela-editor.js + .woff2, which Vite overwrites in
+    // place, so emptying is unnecessary.
+    emptyOutDir: false,
     // Inline all CSS/assets into the single JS file so the served
     // _rela-editor.js is fully self-contained (no sibling chunks the app
     // would have to also fetch). The FA font is the one intentional
