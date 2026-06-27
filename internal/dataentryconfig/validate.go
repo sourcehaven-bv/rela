@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -122,6 +123,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateDashboard(cfg, meta)...)
 	errs = append(errs, validateCommands(cfg, meta)...)
 	errs = append(errs, validateActions(cfg, meta)...)
+	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
@@ -915,6 +917,17 @@ func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
 	return errs
 }
 
+// appIDRegex defines the allowed format for app IDs — same shape as action IDs.
+// The ID is used as the URL path segment for GET /api/v1/_apps/{id}, so it must
+// be filesystem- and URL-safe.
+var appIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// ValidAppID reports whether id is a syntactically valid app ID. Apps are
+// discovered by scanning apps/*.html; the id is the filename stem and is used as
+// the URL path segment for GET /api/v1/_apps/{id}, so it must be filesystem- and
+// URL-safe. Exported so the scanner and the request handler share one rule.
+func ValidAppID(id string) bool { return appIDRegex.MatchString(id) }
+
 // validateCommands validates command definitions.
 // actionIDRegex defines the allowed format for action IDs.
 // Lowercase letters, digits, hyphens, underscores, 1-64 characters.
@@ -1068,6 +1081,28 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 
 // validateDocuments validates document configurations.
 //
+// validateApp validates app-level settings. PlantUMLServerURL, when set,
+// must be an absolute http/https URL with a host: the SPA feeds it straight
+// into an <img src>, so a malformed or non-http scheme (e.g. javascript:,
+// data:, protocol-relative //host, or a bare host) is rejected at load time
+// rather than reaching a user's browser. Empty is valid (PlantUML disabled).
+func validateApp(cfg *Config) []string {
+	var errs []string
+	if raw := cfg.App.PlantUMLServerURL; raw != "" {
+		u, err := url.Parse(raw)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Sprintf("app.plantuml_server_url: not a valid URL: %v", err))
+		case u.Scheme != "http" && u.Scheme != "https":
+			errs = append(errs, fmt.Sprintf(
+				"app.plantuml_server_url: scheme must be http or https, got %q", u.Scheme))
+		case u.Host == "":
+			errs = append(errs, "app.plantuml_server_url: must include a host")
+		}
+	}
+	return errs
+}
+
 // Invariant: every document must have entity_type set, and exactly one of
 // {command, script} must be non-empty. entity_type is enforced at the HTTP
 // handler layer to reject cross-type render requests; the mutual exclusion

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCheck(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
@@ -66,6 +67,7 @@ func TestCheck(t *testing.T) {
 	svc := New(meta, lua.ReadDeps{})
 
 	t.Run("finds violations", func(t *testing.T) {
+		t.Parallel()
 		violations := svc.Check(context.Background(), entities, nil).Violations
 		if len(violations) != 1 {
 			t.Errorf("got %d violations, want 1", len(violations))
@@ -76,6 +78,7 @@ func TestCheck(t *testing.T) {
 	})
 
 	t.Run("scope filters violations", func(t *testing.T) {
+		t.Parallel()
 		// Only check TKT-001 (valid) and TKT-003 (not matching when)
 		scope := map[string]bool{"TKT-001": true, "TKT-003": true}
 		violations := svc.Check(context.Background(), entities, scope).Violations
@@ -85,6 +88,7 @@ func TestCheck(t *testing.T) {
 	})
 
 	t.Run("scope includes violation", func(t *testing.T) {
+		t.Parallel()
 		scope := map[string]bool{"TKT-002": true}
 		violations := svc.Check(context.Background(), entities, scope).Violations
 		if len(violations) != 1 {
@@ -94,6 +98,7 @@ func TestCheck(t *testing.T) {
 }
 
 func TestCheckWarnings(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"doc": {
@@ -135,6 +140,7 @@ func TestCheckWarnings(t *testing.T) {
 }
 
 func TestCountBySeverity(t *testing.T) {
+	t.Parallel()
 	violations := []Violation{
 		{Severity: "error"},
 		{Severity: "error"},
@@ -152,6 +158,7 @@ func TestCountBySeverity(t *testing.T) {
 }
 
 func TestRules(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Validations: []metamodel.ValidationRule{
 			{Name: "rule-1"},
@@ -168,6 +175,7 @@ func TestRules(t *testing.T) {
 }
 
 func TestNoRules(t *testing.T) {
+	t.Parallel()
 	meta := &metamodel.Metamodel{}
 
 	svc := New(meta, lua.ReadDeps{})
@@ -179,6 +187,7 @@ func TestNoRules(t *testing.T) {
 }
 
 func TestAllEntityTypes(t *testing.T) {
+	t.Parallel()
 	// Rule without entity_type applies to all entities
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{

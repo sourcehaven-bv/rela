@@ -12,10 +12,33 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // FuzzFactory returns a fresh store without needing *testing.T (for use inside f.Fuzz).
 type FuzzFactory func() store.Store
+
+// createEntityOrSkip applies the directional validity oracle for an
+// entity ID (TKT-PCLGGL): anything the shared storeutil.ValidateID
+// rejects MUST be rejected by the store; anything it accepts MAY still
+// be rejected by a stricter backend (fsstore rejects ':' for Windows
+// compat) — only an accepted write proceeds to round-trip assertions.
+// Returns true when the entity was created.
+//
+// Vacuity anchor: a backend that rejected every write would pass these
+// fuzz targets trivially, but the conformance suite (storetest.RunAll's
+// Entity tests) asserts plain creates succeed, and every backend runs
+// both. These fuzz targets only chase key-collision and round-trip
+// divergence; over-rejection fails loudly in the conformance suite.
+func createEntityOrSkip(t *testing.T, s store.Store, id string) bool {
+	t.Helper()
+	err := s.CreateEntity(context.Background(), entity.New(id, "t"))
+	if storeutil.ValidateID(id) != nil {
+		assert.Error(t, err)
+		return false
+	}
+	return err == nil
+}
 
 // FuzzRelationKeyCollision verifies that relation key construction never
 // causes collisions or round-trip failures.
@@ -31,24 +54,18 @@ func FuzzRelationKeyCollision(f *testing.F, factory FuzzFactory) {
 		s := factory()
 		bg := context.Background()
 
-		err1 := s.CreateEntity(bg, entity.New(from, "t"))
-		if from == "" || strings.Contains(from, "--") {
-			assert.Error(t, err1)
+		// Directional oracle — see createEntityOrSkip. The previous
+		// hand-modeled ""/"--" checks went stale when control-character
+		// rejection was added and produced false fuzz failures.
+		if !createEntityOrSkip(t, s, from) {
 			return
 		}
-		require.NoError(t, err1)
-
-		if from != to {
-			err2 := s.CreateEntity(bg, entity.New(to, "t"))
-			if to == "" || strings.Contains(to, "--") {
-				assert.Error(t, err2)
-				return
-			}
-			require.NoError(t, err2)
+		if from != to && !createEntityOrSkip(t, s, to) {
+			return
 		}
 
 		r, err := s.CreateRelation(bg, from, relType, to, nil)
-		if relType == "" || strings.Contains(relType, "--") {
+		if storeutil.ValidateRelationType(relType) != nil {
 			assert.Error(t, err)
 			return
 		}
@@ -75,15 +92,13 @@ func FuzzAttachmentKeyCollision(f *testing.F, factory FuzzFactory) {
 		s := factory()
 		bg := context.Background()
 
-		err := s.CreateEntity(bg, entity.New(entityID, "t"))
-		if entityID == "" || strings.Contains(entityID, "--") {
-			assert.Error(t, err)
+		// Directional oracle — see createEntityOrSkip.
+		if !createEntityOrSkip(t, s, entityID) {
 			return
 		}
-		require.NoError(t, err)
 
-		err = s.AttachFile(bg, entityID, prop, "f.txt", strings.NewReader("data"))
-		if prop == "" || strings.Contains(prop, "/") {
+		err := s.AttachFile(bg, entityID, prop, "f.txt", strings.NewReader("data"))
+		if storeutil.ValidateProperty(prop) != nil {
 			assert.Error(t, err)
 			return
 		}
@@ -91,7 +106,7 @@ func FuzzAttachmentKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		rc, err := s.ReadAttachment(bg, entityID, prop)
+		rc, err := s.ReadAttachment(bg, entityID, prop, "f.txt")
 		require.NoError(t, err)
 		rc.Close()
 	})

@@ -104,7 +104,7 @@ func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 		var saveErr error
 		ctx := r.Context()
 		a.mutateState(func(s *AppState) {
-			if err := a.saveUserLogo(ctx, pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
+			if err := a.userState.saveUserLogo(ctx, pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
 				saveErr = err
 				return
 			}

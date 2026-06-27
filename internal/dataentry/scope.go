@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -94,10 +95,22 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 // narrows to Type when one was supplied. Routing search through executeQuery
 // (not scopedSortedEntities) is what makes prev/next correct across mixed-type
 // search results: position is found within the exact set the user saw.
+//
+// Both branches end gated: the list pipeline resolves the read scope
+// internally, and executeQuery gates the search pipeline internally
+// since TKT-BA8BSX (it routes through search.VisibleSearcher; the
+// external readableSubset patch this branch used in the interim is
+// retired). Without the gate a denied principal reads hidden
+// cardinality from Total and harvests hidden {ID, Type} pairs from
+// prev/next — the exact leak shape TKT-VMD8 closes on the list path
+// (CRIT finding, TKT-VMD8 review).
 func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entityPkg.Entity, error) {
 	switch scope.Source {
 	case "search":
-		entities := a.executeQuery(ctx, scope.Q)
+		entities, err := a.executeQuery(ctx, scope.Q)
+		if err != nil {
+			return nil, err
+		}
 		if scope.Type != "" {
 			filtered := entities[:0]
 			for _, e := range entities {
@@ -137,25 +150,6 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	return q
 }
 
-// V1PositionRef identifies a neighboring entity in a scope. Type is included
-// because a scope (notably a search scope) can span entity types, so the SPA
-// must build the target's detail route from *its* type, not the current
-// entity's. ID alone would break cross-type prev/next.
-type V1PositionRef struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-}
-
-// V1Position is the scope-navigator payload: the neighbors plus the counter
-// the SPA needs, with no entity bodies shipped. current is 1-based; prev/next
-// are nil at the ends of the set.
-type V1Position struct {
-	Prev    *V1PositionRef `json:"prev"`
-	Next    *V1PositionRef `json:"next"`
-	Current int            `json:"current"`
-	Total   int            `json:"total"`
-}
-
 // handleV1EntityPosition resolves an entity's position within a scope. It
 // reproduces the scope's ordered set via resolveScope (the list pipeline for
 // source=list, the search pipeline for source=search) then locates the id,
@@ -189,7 +183,7 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 
 	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "search_failed", "Free-text search failed", err.Error())
+		writeListPipelineError(w, r, err)
 		return
 	}
 
@@ -205,12 +199,12 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pos := V1Position{Current: idx + 1, Total: len(entities)}
+	pos := v1.Position{Current: idx + 1, Total: len(entities)}
 	if idx > 0 {
-		pos.Prev = &V1PositionRef{ID: entities[idx-1].ID, Type: entities[idx-1].Type}
+		pos.Prev = &v1.PositionRef{ID: entities[idx-1].ID, Type: entities[idx-1].Type}
 	}
 	if idx < len(entities)-1 {
-		pos.Next = &V1PositionRef{ID: entities[idx+1].ID, Type: entities[idx+1].Type}
+		pos.Next = &v1.PositionRef{ID: entities[idx+1].ID, Type: entities[idx+1].Type}
 	}
 
 	writeV1JSON(w, http.StatusOK, pos)

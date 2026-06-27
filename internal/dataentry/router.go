@@ -3,10 +3,12 @@ package dataentry
 import (
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -40,6 +42,9 @@ func CheckEmbeddedSPA() error {
 
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
+//
+// When adding a route, add a probe to the route table in
+// router_walk_test.go so registration stays covered.
 func (a *App) NewRouter() http.Handler {
 	mux := http.NewServeMux()
 
@@ -78,6 +83,9 @@ func (a *App) NewRouter() http.Handler {
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
 
+	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
+	a.registerSyncRoutes(inner)
+
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))
@@ -98,8 +106,131 @@ func (a *App) NewRouter() http.Handler {
 	if resolver == nil {
 		resolver = defaultPrincipalResolver
 	}
+	// Wrap order (CRIT-1): attachACLRequest reads the principal from
+	// ctx, so stampAuditPrincipal MUST run first. In Go middleware the
+	// LAST wrap is the OUTERMOST — request flow descends from
+	// outermost-wrap to innermost-wrap. We therefore:
+	//   1) wrap attachACLRequest first (innermost of these two), then
+	//   2) wrap stampAuditPrincipal (outermost) so it runs first and
+	//      stamps before ACL reads.
+	// Reversed order silently fails every /api/ request with 500
+	// `acl_unstamped_principal` when ACL is configured, because the
+	// principal is still the unstamped default at the time
+	// ForPrincipal is called.
+	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
+		handler = attachACLRequest(handler, d)
+	}
 	handler = stampAuditPrincipal(handler, resolver)
 	return handler
+}
+
+// attachACLRequest opens an acl.Request for the principal stamped on
+// ctx (by stampAuditPrincipal above) and attaches it via both
+// [acl.WithRequest] and [withReadGate], so downstream affordance +
+// read-gate consumers reuse the one member-of walk per HTTP request
+// (RR-JJYW). Wired only when the ACL is a *acl.Declarative — NopACL /
+// ReadOnlyACL paths don't open Requests.
+//
+// **Scope (RR-T15E).** Only `/api/` requests pay the cost — and only
+// `/api/` requests fail loud on misconfiguration. The SPA shell at
+// `/` and static assets at `/static/` MUST stay reachable even when
+// ACL is configured and the principal stamper has a bug; otherwise a
+// misconfigured stamper renders the UI as a raw JSON 500 and locks
+// operators out of the very surface they need to recover from it.
+//
+// **Fail-loud (RR-875A).** Inside `/api/` an
+// [acl.ErrUnstampedPrincipal] returns 500 with a structured error
+// rather than silently proceeding with no Request attached. The
+// earlier silent fall-through turned ACL into fail-open under a
+// stamper misconfig.
+//
+// RR-8ZGO: respect a Request already attached by an upstream handler
+// (chiefly tests that wrap the handler with their own
+// acl.WithRequest). The middleware is at the outer edge of the
+// production chain so this guard rarely fires in production, but it
+// makes the test composition story safer.
+func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// RR-P2M7: include the bare `/api` path explicitly so a future
+		// endpoint mounted there doesn't silently bypass ACL.
+		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx := r.Context()
+		// RR-E703: if an upstream layer already stamped a Request, also
+		// attach the matching readGate before forwarding. Without this,
+		// every read becomes AllowAll for the upstream-only caller —
+		// silent fail-open.
+		if existing := acl.FromContext(ctx); existing != nil {
+			// SIG-2: verify the existing Request's principal matches
+			// the ctx principal. A mismatch is a wiring bug (an
+			// upstream layer attached a Request from a different
+			// identity); under that condition the gate would run
+			// against the wrong policy with no loud signal.
+			ctxPrin := principal.From(ctx)
+			if existing.Principal() != ctxPrin {
+				slog.Warn("acl: attachACLRequest: existing Request principal mismatch",
+					"path", r.URL.Path,
+					"method", r.Method,
+					"ctx_user", ctxPrin.User,
+					"ctx_tool", ctxPrin.Tool,
+					"req_user", existing.Principal().User,
+					"req_tool", existing.Principal().Tool)
+				writeV1Error(w, r, http.StatusInternalServerError,
+					"acl_principal_mismatch",
+					"Upstream ACL request principal does not match context principal",
+					"check server logs")
+				return
+			}
+			gate, gerr := newACLReadGate(existing)
+			if gerr != nil {
+				slog.Warn("acl: attachACLRequest: newACLReadGate failed (existing)",
+					"err", gerr, "path", r.URL.Path)
+				writeV1Error(w, r, http.StatusInternalServerError,
+					"acl_internal", "ACL gate construction failed", "check server logs")
+				return
+			}
+			ctx = withReadGate(ctx, gate)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		req, err := d.ForPrincipal(principal.From(ctx))
+		if err != nil {
+			// RR-372L: log the raw error server-side; never emit it
+			// in the response body. ForPrincipal's contract leaves
+			// room for future enhancements (LDAP errors, internal
+			// identifiers) that would otherwise become attacker-
+			// readable here.
+			p := principal.From(ctx)
+			slog.Warn("acl: attachACLRequest: ForPrincipal failed",
+				"err", err,
+				"path", r.URL.Path,
+				"method", r.Method,
+				"user", p.User,
+				"tool", p.Tool)
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_unstamped_principal",
+				"Principal could not be resolved under ACL",
+				"principal stamper produced an unstamped identity; check server logs")
+			return
+		}
+		gate, gerr := newACLReadGate(req)
+		if gerr != nil {
+			// Unreachable: ForPrincipal returned non-nil err above on
+			// any failure mode; req here is non-nil. Defense in depth
+			// — if a future change to ForPrincipal lets a nil through,
+			// fail-loud rather than silently fall-open.
+			slog.Warn("acl: attachACLRequest: newACLReadGate failed",
+				"err", gerr, "path", r.URL.Path)
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_internal", "ACL gate construction failed", "check server logs")
+			return
+		}
+		ctx = acl.WithRequest(ctx, req)
+		ctx = withReadGate(ctx, gate)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // PrincipalResolver maps an incoming HTTP request to the audit

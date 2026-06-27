@@ -97,6 +97,25 @@ export class EntityPage extends BasePage {
     await expect(this.page.getByRole('button', { name: /^Delete/ })).toHaveCount(0);
   }
 
+  /** Navigate away from the current detail page via an in-SPA router link
+   *  (NOT a full page load). The issue #997 crash fires during Vue's
+   *  client-side unmount of the EntityDetail subtree, which only happens on
+   *  a router-driven transition — a `page.goto()` reload tears down the whole
+   *  document and never exercises the unmount path. Clicks the sidebar
+   *  Dashboard link and waits for the route to settle. */
+  async navigateAwayViaRouter() {
+    await this.page.locator('a[href="/"]').first().click();
+    await this.page.waitForURL(/\/(dashboard)?$/);
+  }
+
+  /** Assert a `display: list` relation section rendered at least one row
+   *  with an inline-edit SectionEditForm mounted inside the list item.
+   *  This is the DOM shape that triggered the issue #997 unmount crash —
+   *  a guard so the regression test can't pass without exercising it. */
+  async expectListSectionRowMounted() {
+    await expect(this.page.locator('.entity-list .list-item .section-edit-form').first()).toBeVisible();
+  }
+
   async clickRelationLink(targetId: string) {
     // Detail screens render related entities as cards / list items with a
     // data-entity-id attribute on the row root and a clickable header
@@ -134,13 +153,39 @@ export class EntityPage extends BasePage {
   }
 
   async containsText(text: string): Promise<boolean> {
-    return this.page.getByText(text).first().isVisible();
+    // Inline-edit (TKT-IHC7B): properties may render as <input value="…">
+    // or <textarea>…</textarea>, neither of which produce text nodes
+    // matchable by getByText. Fall through to a form-control sweep so
+    // tests against property values work in both display and edit mode.
+    if (await this.page.getByText(text).first().isVisible().catch(() => false)) return true;
+    return this.matchesFormControlValue(this.page.locator('body'), text);
   }
 
   /** Check that a property value is rendered inside the entity-detail container
-   *  (scoped to avoid matching nav/sidebar elements). */
+   *  (scoped to avoid matching nav/sidebar elements). Matches either visible
+   *  text (display mode: Badge / span) or form-control values (inline-edit
+   *  mode: input / textarea / selected option) — see TKT-IHC7B. */
   async hasPropertyValue(value: string): Promise<boolean> {
-    return this.detailContainer.getByText(value, { exact: true }).first().isVisible();
+    if (await this.detailContainer.getByText(value, { exact: true }).first().isVisible().catch(() => false)) {
+      return true;
+    }
+    return this.matchesFormControlValue(this.detailContainer, value);
+  }
+
+  /** Internal: scan inputs / textareas / selected options under `scope` for
+   *  a control whose value === text. Returns true on first match. */
+  private async matchesFormControlValue(scope: Locator, text: string): Promise<boolean> {
+    const inputs = await scope.locator('input, textarea').all();
+    for (const ctrl of inputs) {
+      const v = await ctrl.inputValue().catch(() => '');
+      if (v === text) return true;
+    }
+    const selects = await scope.locator('select').all();
+    for (const sel of selects) {
+      const v = await sel.inputValue().catch(() => '');
+      if (v === text) return true;
+    }
+    return false;
   }
 
   /** True if the entity-detail body contains any blocking-relation text. */

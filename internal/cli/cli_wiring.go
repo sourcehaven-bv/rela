@@ -32,6 +32,13 @@ import (
 // reviewing them documents the same separation the previous bundle
 // interfaces enforced; the consumer of *cliServices is each kong
 // command's Run method.
+//
+// TODO(TKT-N0IKN9): 28 exported methods, over the 20 exported-method line.
+// This is the CLI service bundle each command binds to; the count tracks the
+// breadth of the CLI surface. Ratchet candidate — purpose-grouped sub-bundles
+// (read / write / analyze) would let each command bind only what it uses.
+//
+//plimsoll:max-exported-methods=28
 type cliServices struct {
 	svc        *appbuild.Services
 	attachment *attachment.Service
@@ -116,6 +123,10 @@ func (s *cliServices) AttachFile(ctx context.Context, entityID, filePath, proper
 	return s.attachment.Attach(ctx, entityID, filePath, property)
 }
 
+func (s *cliServices) DetachFile(ctx context.Context, entityID, property, fileName string) error {
+	return s.attachment.Detach(ctx, entityID, property, fileName)
+}
+
 func (s *cliServices) ListAttachments(ctx context.Context, entityID string) ([]attachment.Info, error) {
 	return s.attachment.List(ctx, entityID)
 }
@@ -128,6 +139,9 @@ func newCLIServicesFromAppbuild(svc *appbuild.Services) (*cliServices, error) {
 		Store:         svc.Store(),
 		Meta:          svc.Meta(),
 		EntityManager: svc.EntityManager(),
+		// Native MIME allowlist on the CLI attach path too (runner nil →
+		// no external scan/transform until the cmd: harness is wired).
+		Processor: attachment.NewPolicyProcessor(svc.Meta(), nil),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("attachment service: %w", err)

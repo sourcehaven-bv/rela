@@ -272,6 +272,11 @@ func validateEntityStructure(m *Metamodel) error {
 		if def.IDPrefix != "" && len(def.IDPrefixes) > 0 {
 			return &ConflictingIDPrefixError{EntityType: name}
 		}
+		for _, prefix := range def.GetIDPrefixes() {
+			if err := ValidateIDPrefix(prefix); err != nil {
+				return &InvalidIDPrefixError{EntityType: name, Prefix: prefix, Reason: err.Error()}
+			}
+		}
 
 		m.aliasMap[strings.ToLower(name)] = name
 		for _, alias := range def.Aliases {
@@ -453,6 +458,18 @@ func validateRelationReferences(m *Metamodel) []string {
 	relNames := sortedKeys(m.Relations)
 	for _, name := range relNames {
 		rel := m.Relations[name]
+		// A relation with no 'from' or no 'to' types is meaningless: no
+		// entity can ever be a valid source/target, so any cardinality
+		// constraint on it is a silent no-op. Reject at load (likely a
+		// typo or an omitted field) rather than letting it pass quietly.
+		if len(rel.From) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: must declare at least one 'from' entity type", name))
+		}
+		if len(rel.To) == 0 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: must declare at least one 'to' entity type", name))
+		}
 		for _, fromType := range rel.From {
 			if _, ok := m.Entities[fromType]; !ok {
 				errs = append(errs, fmt.Sprintf(
@@ -643,9 +660,44 @@ func validatePropertyDefs(
 			errs = append(errs, fmt.Sprintf(
 				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
 		}
+
+		errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	}
 
 	return errs
+}
+
+// validateFilePropertyOptions checks the attachment-only property options
+// (`max`, `accept`, `scan`, `scan_cmd`, `transform`): `max` must be >= 1, and
+// none of these may appear on a non-`file` property.
+func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDef) []string {
+	var errs []string
+	if propDef.Max < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
+	}
+	if propDef.Type == PropertyTypeFile {
+		return errs
+	}
+	// Below here the property is NOT a file: none of the attachment options apply.
+	if propDef.Max != 0 {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "max", propDef.Type))
+	}
+	if len(propDef.Accept) > 0 {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "accept", propDef.Type))
+	}
+	if propDef.Scan != ScanDefault {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan", propDef.Type))
+	}
+	if len(propDef.ScanCmd) > 0 || len(propDef.Transform) > 0 {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan_cmd/transform", propDef.Type))
+	}
+	return errs
+}
+
+func fileOnlyOptionErr(schemaName, propName, option, gotType string) string {
+	return fmt.Sprintf("%s: property %q sets %q but is type %q; only applies to type \"file\"",
+		schemaName, propName, option, gotType)
 }
 
 // isKnownPropertyType checks if a property type is valid (built-in, legacy, or custom).

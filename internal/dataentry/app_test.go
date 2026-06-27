@@ -711,7 +711,7 @@ func TestUIStateLoadSave(t *testing.T) {
 	bindRepoWithFS(app, fs, ctx)
 
 	t.Run("load returns defaults when file missing", func(t *testing.T) {
-		state := app.loadUIState(context.Background())
+		state := app.userState.loadUIState(context.Background())
 		if len(state.CollapsedGroups) != 0 {
 			t.Errorf("expected empty collapsed groups, got %v", state.CollapsedGroups)
 		}
@@ -719,10 +719,10 @@ func TestUIStateLoadSave(t *testing.T) {
 
 	t.Run("save and load round-trip", func(t *testing.T) {
 		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
-		if err := app.saveUIState(state); err != nil {
+		if err := app.userState.saveUIState(state); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
-		loaded := app.loadUIState(context.Background())
+		loaded := app.userState.loadUIState(context.Background())
 		if !loaded.CollapsedGroups["Tickets"] {
 			t.Error("expected Tickets to be collapsed after load")
 		}
@@ -742,7 +742,7 @@ func TestUIStateLoadSave(t *testing.T) {
 		}
 		// UIState says collapsed
 		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
-		if err := app2.saveUIState(state); err != nil {
+		if err := app2.userState.saveUIState(state); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
 		elements := app2.navElements(context.Background(), "")
@@ -757,11 +757,11 @@ func TestUIStateLoadSave(t *testing.T) {
 	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		app2.kv = nil
-		state := app2.loadUIState(context.Background())
+		state := app2.userState.loadUIState(context.Background())
 		if len(state.CollapsedGroups) != 0 {
 			t.Error("expected empty state")
 		}
-		if err := app2.saveUIState(state); err != nil {
+		if err := app2.userState.saveUIState(state); err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 	})
@@ -779,7 +779,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	bindRepoWithFS(app, fs, ctx)
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
-		ud := app.loadUserDefaults()
+		ud := app.userState.loadUserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
 		}
@@ -797,10 +797,10 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 				},
 			},
 		}
-		if err := app.saveUserDefaults(context.Background(), ud); err != nil {
+		if err := app.userState.saveUserDefaults(context.Background(), ud); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
-		loaded := app.loadUserDefaults()
+		loaded := app.userState.loadUserDefaults()
 		if loaded == nil {
 			t.Fatal("expected non-nil loaded defaults")
 		}
@@ -824,11 +824,11 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	t.Run("nil kv is safe", func(t *testing.T) {
 		app2, _ := testAppInstance()
 		app2.kv = nil
-		ud := app2.loadUserDefaults()
+		ud := app2.userState.loadUserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
 		}
-		if err := app2.saveUserDefaults(context.Background(), &UserDefaults{}); err != nil {
+		if err := app2.userState.saveUserDefaults(context.Background(), &UserDefaults{}); err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 	})

@@ -23,8 +23,7 @@ func newMdTestRuntime(t *testing.T) *Runtime {
 }
 
 func TestMdParse(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name     string
@@ -66,6 +65,9 @@ func TestMdParse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				result_len = #ast
@@ -87,8 +89,7 @@ func TestMdParse(t *testing.T) {
 }
 
 func TestMdRender(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name string
@@ -167,6 +168,9 @@ func TestMdRender(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			err := rt.RunString(tt.code)
 			require.NoError(t, err)
 
@@ -178,6 +182,7 @@ func TestMdRender(t *testing.T) {
 }
 
 func TestMdTaskListParse(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -216,8 +221,7 @@ func flattenItemInlines(t *testing.T, item *lua.LTable) string {
 }
 
 func TestMdTaskListRender(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name string
@@ -290,6 +294,9 @@ func TestMdTaskListRender(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			err := rt.RunString(tt.code)
 			require.NoError(t, err)
 
@@ -301,8 +308,7 @@ func TestMdTaskListRender(t *testing.T) {
 }
 
 func TestMdTaskListRoundTrip(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name  string
@@ -338,6 +344,9 @@ func TestMdTaskListRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				return rela.md.render(ast)
@@ -358,6 +367,7 @@ func TestMdTaskListRoundTrip(t *testing.T) {
 // always emits checkbox syntax for task=true items, so the rendered output
 // is well-defined even if not symmetrically re-parseable.
 func TestMdMixedListBehavior(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -391,8 +401,7 @@ func TestMdMixedListBehavior(t *testing.T) {
 // spans are preserved across all extracted-text contexts; emphasis and
 // links are dropped. This test exists to make policy changes visible.
 func TestMdInlineTextPolicy(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name    string
@@ -475,6 +484,9 @@ func TestMdInlineTextPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				result = %s
@@ -488,6 +500,7 @@ func TestMdInlineTextPolicy(t *testing.T) {
 // TestMdTaskListEmptyText covers parser-side handling of checkboxes with
 // no text after them.
 func TestMdTaskListEmptyText(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -515,6 +528,7 @@ func TestMdTaskListEmptyText(t *testing.T) {
 // TestMdTaskListNonStringText verifies the renderer coerces non-string
 // text values rather than silently producing empty output.
 func TestMdTaskListNonStringText(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -533,8 +547,7 @@ func TestMdTaskListNonStringText(t *testing.T) {
 // true qualifies as a task item — strings, numbers, tables, nil all fall
 // through to the plain rendering path.
 func TestMdTaskListNonBoolTaskValues(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name     string
@@ -550,6 +563,9 @@ func TestMdTaskListNonBoolTaskValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = {rela.md.list({
 					{%s, text="plain"},
@@ -568,6 +584,7 @@ func TestMdTaskListNonBoolTaskValues(t *testing.T) {
 // generic deep-copy walker. A future optimization that special-cased
 // non-heading nodes could silently break task lists; this test catches it.
 func TestMdTaskListSurvivesShiftHeaders(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -588,6 +605,7 @@ func TestMdTaskListSurvivesShiftHeaders(t *testing.T) {
 // of a multi-paragraph list item is captured (matches the goldmark task
 // list spec which requires the checkbox in the first text block).
 func TestMdTaskListMultiBlockItem(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -608,6 +626,7 @@ func TestMdTaskListMultiBlockItem(t *testing.T) {
 // at gaps depends on the table's internal structure; for an unordered
 // list this works because we iterate over the border range and skip nils.
 func TestMdRenderListSparseTable(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -627,8 +646,7 @@ func TestMdRenderListSparseTable(t *testing.T) {
 }
 
 func TestMdRoundTrip(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name  string
@@ -658,6 +676,9 @@ func TestMdRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				return rela.md.render(ast)
@@ -683,8 +704,7 @@ func TestMdRoundTrip(t *testing.T) {
 }
 
 func TestMdShiftHeaders(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name   string
@@ -726,6 +746,9 @@ func TestMdShiftHeaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				ast = rela.md.shift_headers(ast, %d)
@@ -741,8 +764,7 @@ func TestMdShiftHeaders(t *testing.T) {
 }
 
 func TestMdSetMinHeaderLevel(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name   string
@@ -772,6 +794,9 @@ func TestMdSetMinHeaderLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				ast = rela.md.set_min_header_level(ast, %d)
@@ -787,10 +812,12 @@ func TestMdSetMinHeaderLevel(t *testing.T) {
 }
 
 func TestMdHeaders(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("extracts all headers", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# One\n\ntext\n\n## Two\n\n### Three\n")
 			local headers = rela.md.headers(ast)
@@ -807,6 +834,9 @@ func TestMdHeaders(t *testing.T) {
 	})
 
 	t.Run("filters by level", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# H1\n\n## H2\n\n### H3\n")
 			local headers = rela.md.headers(ast, {min_level = 2, max_level = 2})
@@ -820,6 +850,9 @@ func TestMdHeaders(t *testing.T) {
 	})
 
 	t.Run("empty when no headers", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("Just text")
 			local headers = rela.md.headers(ast)
@@ -833,10 +866,12 @@ func TestMdHeaders(t *testing.T) {
 }
 
 func TestMdExtractSection(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("extracts matching section", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# Intro\n\ntext1\n\n## Overview\n\ntext2\n\n## Details\n\ntext3\n")
 			local section = rela.md.extract_section(ast, "Overview")
@@ -855,6 +890,9 @@ func TestMdExtractSection(t *testing.T) {
 	})
 
 	t.Run("returns nil when not found", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# Title\n\ntext\n")
 			local section = rela.md.extract_section(ast, "Missing")
@@ -867,6 +905,9 @@ func TestMdExtractSection(t *testing.T) {
 	})
 
 	t.Run("includes nested content", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("## Section\n\n### Subsection\n\ncontent\n\n## Next\n")
 			local section = rela.md.extract_section(ast, "Section")
@@ -884,10 +925,12 @@ func TestMdExtractSection(t *testing.T) {
 }
 
 func TestMdFirstParagraph(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("extracts first paragraph", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# Title\n\nFirst para.\n\nSecond para.\n")
 			return rela.md.first_paragraph(ast)
@@ -900,6 +943,9 @@ func TestMdFirstParagraph(t *testing.T) {
 	})
 
 	t.Run("returns nil when no paragraph", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# Only heading\n")
 			return rela.md.first_paragraph(ast) == nil
@@ -912,6 +958,7 @@ func TestMdFirstParagraph(t *testing.T) {
 }
 
 func TestMdConcat(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -930,10 +977,12 @@ func TestMdConcat(t *testing.T) {
 }
 
 func TestMdNodeConstructors(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("heading clamps level high", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local h = rela.md.heading(10, "Test")
 			return h.level
@@ -944,6 +993,9 @@ func TestMdNodeConstructors(t *testing.T) {
 	})
 
 	t.Run("heading clamps level low", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local h = rela.md.heading(0, "Test")
 			return h.level
@@ -954,6 +1006,9 @@ func TestMdNodeConstructors(t *testing.T) {
 	})
 
 	t.Run("code_block without language", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local cb = rela.md.code_block("x = 1")
 			local ast = {cb}
@@ -967,6 +1022,9 @@ func TestMdNodeConstructors(t *testing.T) {
 	})
 
 	t.Run("multiline blockquote", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local bq = rela.md.blockquote("line1\nline2")
 			local ast = {bq}
@@ -981,6 +1039,7 @@ func TestMdNodeConstructors(t *testing.T) {
 }
 
 func TestMdCodeBlockInContent(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1003,6 +1062,7 @@ func TestMdCodeBlockInContent(t *testing.T) {
 }
 
 func TestMdUnicodeContent(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 
@@ -1019,10 +1079,12 @@ func TestMdUnicodeContent(t *testing.T) {
 }
 
 func TestMdTableParse(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("simple table", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n| Bob | 25 |\n")
 			result_len = #ast
@@ -1051,6 +1113,9 @@ func TestMdTableParse(t *testing.T) {
 	})
 
 	t.Run("alignment markers", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |\n")
 			result_a1 = ast[1].alignments[1]
@@ -1065,6 +1130,9 @@ func TestMdTableParse(t *testing.T) {
 	})
 
 	t.Run("header only table", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Col |\n| --- |\n")
 			result_type = ast[1].type
@@ -1079,6 +1147,9 @@ func TestMdTableParse(t *testing.T) {
 	})
 
 	t.Run("mixed content with table", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# Title\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\nSome text.\n")
 			result_len = #ast
@@ -1095,6 +1166,9 @@ func TestMdTableParse(t *testing.T) {
 	})
 
 	t.Run("inline formatting in cells", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Header |\n| --- |\n| **bold** text |\n")
 			result_cell = rela.md.flatten(ast[1].rows[1][1])
@@ -1106,10 +1180,12 @@ func TestMdTableParse(t *testing.T) {
 }
 
 func TestMdTableRender(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("render simple table with padding", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n")
 			return rela.md.render(ast)
@@ -1124,6 +1200,9 @@ func TestMdTableRender(t *testing.T) {
 	})
 
 	t.Run("render with alignments and padding", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |\n")
 			return rela.md.render(ast)
@@ -1141,6 +1220,9 @@ func TestMdTableRender(t *testing.T) {
 	})
 
 	t.Run("render header only", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Col |\n| --- |\n")
 			return rela.md.render(ast)
@@ -1154,6 +1236,9 @@ func TestMdTableRender(t *testing.T) {
 	})
 
 	t.Run("render missing header gracefully", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local node = {type = "table", rows = {{"a", "b"}}}
 			local ast = {node}
@@ -1169,8 +1254,7 @@ func TestMdTableRender(t *testing.T) {
 }
 
 func TestMdTableRoundTrip(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name  string
@@ -1192,6 +1276,9 @@ func TestMdTableRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			code := fmt.Sprintf(`
 				local ast = rela.md.parse(%q)
 				return rela.md.render(ast)
@@ -1217,10 +1304,12 @@ func TestMdTableRoundTrip(t *testing.T) {
 }
 
 func TestMdTableRenderFormatting(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	t.Run("columns padded to widest cell", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| X | Y |\n| --- | --- |\n| short | longer value |\n")
 			return rela.md.render(ast)
@@ -1236,6 +1325,9 @@ func TestMdTableRenderFormatting(t *testing.T) {
 	})
 
 	t.Run("right-aligned numbers padded right", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Item | Price |\n| :--- | ---: |\n| Apple | 1 |\n| Banana Split | 1250 |\n")
 			return rela.md.render(ast)
@@ -1252,6 +1344,9 @@ func TestMdTableRenderFormatting(t *testing.T) {
 	})
 
 	t.Run("center-aligned cells centered", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Status |\n| :---: |\n| OK |\n| FAILED |\n")
 			return rela.md.render(ast)
@@ -1268,6 +1363,9 @@ func TestMdTableRenderFormatting(t *testing.T) {
 	})
 
 	t.Run("multi-byte characters aligned correctly", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("| Name | Price |\n| --- | ---: |\n| 日本語 | 100 |\n| Go | 2000 |\n")
 			return rela.md.render(ast)
@@ -1284,25 +1382,33 @@ func TestMdTableRenderFormatting(t *testing.T) {
 }
 
 func TestMdParseErrors(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	// Note: gopher-lua's CheckString coerces numbers to strings,
 	// so parse(123) becomes parse("123") - this is expected behavior.
 	// We test that nil arguments raise errors.
 	t.Run("parse with nil errors", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `rela.md.parse(nil)`
 		err := rt.RunString(code)
 		assert.Error(t, err)
 	})
 
 	t.Run("shift_headers with non-table errors", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `rela.md.shift_headers("not a table", 1)`
 		err := rt.RunString(code)
 		assert.Error(t, err)
 	})
 
 	t.Run("shift_headers with non-number errors", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `
 			local ast = rela.md.parse("# Test")
 			rela.md.shift_headers(ast, "not a number")
@@ -1312,6 +1418,9 @@ func TestMdParseErrors(t *testing.T) {
 	})
 
 	t.Run("render with non-table errors", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		code := `rela.md.render("not a table")`
 		err := rt.RunString(code)
 		assert.Error(t, err)
@@ -1319,6 +1428,7 @@ func TestMdParseErrors(t *testing.T) {
 }
 
 func TestMdIntegrationWithEntity(t *testing.T) {
+	t.Parallel()
 	// Use the full test workspace to test integration with entities
 	ws := testWorkspace(t)
 	var sb strings.Builder
@@ -1347,6 +1457,7 @@ func TestMdIntegrationWithEntity(t *testing.T) {
 // TestMdParseShape verifies that block nodes have `inlines` (not `text`)
 // after parse — AC1.
 func TestMdParseShape(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1365,8 +1476,7 @@ func TestMdParseShape(t *testing.T) {
 // TestMdInlineKindsRoundTrip covers AC4-AC8: link, image, raw HTML,
 // autolink, emphasis, strong, breaks all survive parse → render.
 func TestMdInlineKindsRoundTrip(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	tests := []struct {
 		name  string
@@ -1417,6 +1527,9 @@ func TestMdInlineKindsRoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			require.NoError(t, rt.RunString(fmt.Sprintf(
 				"return rela.md.render(rela.md.parse(%q))", tc.input)))
 			got := lua.LVAsString(rt.L.Get(-1))
@@ -1429,6 +1542,7 @@ func TestMdInlineKindsRoundTrip(t *testing.T) {
 // TestMdBlockquoteChildren — AC2: blockquote has a `children` array of
 // block nodes; nested list survives.
 func TestMdBlockquoteChildren(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1450,6 +1564,7 @@ func TestMdBlockquoteChildren(t *testing.T) {
 // TestMdListMultiBlockChildren — AC3: a list item with multiple
 // paragraphs gets a `children` array.
 func TestMdListMultiBlockChildren(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	src := "- first paragraph\n\n  second paragraph\n"
@@ -1468,6 +1583,7 @@ func TestMdListMultiBlockChildren(t *testing.T) {
 // TestMdTaskItemNoCheckboxInline — AC4: task items don't carry a
 // phantom checkbox inline.
 func TestMdTaskItemNoCheckboxInline(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1484,6 +1600,7 @@ func TestMdTaskItemNoCheckboxInline(t *testing.T) {
 // TestMdHeadersAndFirstParagraphFlatten — AC12: helper APIs that
 // returned `text` strings continue to do so via flatten() semantics.
 func TestMdHeadersAndFirstParagraphFlatten(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1501,6 +1618,7 @@ func TestMdHeadersAndFirstParagraphFlatten(t *testing.T) {
 
 // TestMdInlineConstructors — AC10.
 func TestMdInlineConstructors(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1521,6 +1639,7 @@ func TestMdInlineConstructors(t *testing.T) {
 
 // TestMdParagraphAutoWrap — AC9.
 func TestMdParagraphAutoWrap(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1537,8 +1656,7 @@ func TestMdParagraphAutoWrap(t *testing.T) {
 // corpus from tickets/entities/*.md (the markdown bodies of every
 // in-tree ticket entity).
 func TestMdCorpusRoundTrip(t *testing.T) {
-	rt := newMdTestRuntime(t)
-	defer rt.Close()
+	t.Parallel()
 
 	synthetic := []string{
 		"para with [link](http://x)\n",
@@ -1558,11 +1676,17 @@ func TestMdCorpusRoundTrip(t *testing.T) {
 	}
 	for i, src := range synthetic {
 		t.Run(fmt.Sprintf("synthetic-%d", i), func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
 			roundTripFixedPoint(t, rt, src)
 		})
 	}
 
 	t.Run("ticket-entities", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
 		corpusRoundTripFromDisk(t, rt, "../../tickets/entities")
 	})
 }
@@ -1734,6 +1858,7 @@ func resolveAndRender(t *testing.T, input string, refs map[string]string) string
 }
 
 func TestMdResolveRefs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -1810,6 +1935,7 @@ func TestMdResolveRefs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := resolveAndRender(t, tc.input, tc.refs)
 			if tc.want != "" {
 				assert.Equal(t, tc.want, got)
@@ -1822,6 +1948,7 @@ func TestMdResolveRefs(t *testing.T) {
 }
 
 func TestMdResolveRefs_PreExistingLinkUntouched(t *testing.T) {
+	t.Parallel()
 	// A pre-existing markdown link whose text is NOT a code span should
 	// not be re-linked even when its content matches a key in the map —
 	// the rule is "only code spans".
@@ -1832,6 +1959,7 @@ func TestMdResolveRefs_PreExistingLinkUntouched(t *testing.T) {
 }
 
 func TestMdResolveRefs_LinkContainingCodeSpan(t *testing.T) {
+	t.Parallel()
 	// A link whose inline text contains a code span — the code span
 	// inside the link gets rewritten; the surrounding link stays.
 	got := resolveAndRender(t,
@@ -1843,6 +1971,7 @@ func TestMdResolveRefs_LinkContainingCodeSpan(t *testing.T) {
 }
 
 func TestMdResolveRefs_DeepCopy(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1857,6 +1986,7 @@ func TestMdResolveRefs_DeepCopy(t *testing.T) {
 }
 
 func TestMdResolveRefs_EmptyMap(t *testing.T) {
+	t.Parallel()
 	rt := newMdTestRuntime(t)
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
@@ -1869,6 +1999,7 @@ func TestMdResolveRefs_EmptyMap(t *testing.T) {
 }
 
 func TestMdResolveRefs_NegativeInput(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		code string
@@ -1896,6 +2027,7 @@ func TestMdResolveRefs_NegativeInput(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			rt := newMdTestRuntime(t)
 			defer rt.Close()
 			err := rt.RunString(tc.code)
@@ -1906,7 +2038,9 @@ func TestMdResolveRefs_NegativeInput(t *testing.T) {
 }
 
 func TestMdEntityRefs(t *testing.T) {
+	t.Parallel()
 	t.Run("default style is title-slug", func(t *testing.T) {
+		t.Parallel()
 		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
 		defer rt.Close()
 		require.NoError(t, rt.RunString(`
@@ -1919,6 +2053,7 @@ func TestMdEntityRefs(t *testing.T) {
 	})
 
 	t.Run("style=id", func(t *testing.T) {
+		t.Parallel()
 		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
 		defer rt.Close()
 		require.NoError(t, rt.RunString(`
@@ -1930,6 +2065,7 @@ func TestMdEntityRefs(t *testing.T) {
 	})
 
 	t.Run("types restricts to the listed types", func(t *testing.T) {
+		t.Parallel()
 		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
 		defer rt.Close()
 		require.NoError(t, rt.RunString(`
@@ -1943,6 +2079,7 @@ func TestMdEntityRefs(t *testing.T) {
 	})
 
 	t.Run("unknown type errors", func(t *testing.T) {
+		t.Parallel()
 		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
 		defer rt.Close()
 		err := rt.RunString(`rela.md.entity_refs({types = {"unknown"}})`)
@@ -1951,6 +2088,7 @@ func TestMdEntityRefs(t *testing.T) {
 	})
 
 	t.Run("custom format callback", func(t *testing.T) {
+		t.Parallel()
 		rt := NewWriter(testWorkspace(t).services("/tmp"), &strings.Builder{})
 		defer rt.Close()
 		require.NoError(t, rt.RunString(`
@@ -1964,6 +2102,7 @@ func TestMdEntityRefs(t *testing.T) {
 	})
 
 	t.Run("nil deps produces a clean error, not a panic", func(t *testing.T) {
+		t.Parallel()
 		rt := newMdTestRuntime(t)
 		defer rt.Close()
 		err := rt.RunString(`return rela.md.entity_refs()`)
@@ -1973,6 +2112,7 @@ func TestMdEntityRefs(t *testing.T) {
 }
 
 func TestMdEntityRefs_TitleInjection(t *testing.T) {
+	t.Parallel()
 	mw := newMockWorkspace(t)
 	mw.seedEntity(&entity.Entity{
 		ID:         "TKT-EVIL",
@@ -1993,6 +2133,7 @@ func TestMdEntityRefs_TitleInjection(t *testing.T) {
 }
 
 func TestMdEntityRefs_UnicodeTitle(t *testing.T) {
+	t.Parallel()
 	mw := newMockWorkspace(t)
 	mw.seedEntity(&entity.Entity{
 		ID:         "TKT-EU",
@@ -2010,6 +2151,7 @@ func TestMdEntityRefs_UnicodeTitle(t *testing.T) {
 }
 
 func TestMdEntityRefs_IntegrationWithResolveRefs(t *testing.T) {
+	t.Parallel()
 	mw := testWorkspace(t)
 	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
 	defer rt.Close()
@@ -2023,6 +2165,7 @@ func TestMdEntityRefs_IntegrationWithResolveRefs(t *testing.T) {
 }
 
 func TestTitleSlug(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in, want string
 	}{
@@ -2041,6 +2184,7 @@ func TestTitleSlug(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
 			assert.Equal(t, tc.want, titleSlug(tc.in))
 		})
 	}

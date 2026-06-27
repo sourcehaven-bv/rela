@@ -36,6 +36,15 @@ const (
 	// attempted op (one of the Op* above). Forensic: denials answer
 	// "what did this user try to do that they weren't allowed to?"
 	OpDeniedWrite = "denied-write"
+
+	// OpACLBypass records a write that skipped the ACL deny because it ran
+	// through an elevated automation handle (rela.bypass_acl — TKT-D8T148).
+	// Subject names the target; Summary carries acl_bypass=true + the genuine
+	// write op. The Principal is the REAL triggering identity (not a system
+	// user) so "who caused this elevated write" stays answerable; TriggeredBy
+	// carries automation:<name>. Forensic: isolate every elevated write with
+	// `op == "acl-bypass"`.
+	OpACLBypass = "acl-bypass"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

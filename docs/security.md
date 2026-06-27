@@ -194,7 +194,7 @@ The policy lives at `acl.yaml` at the project root (alongside
 |---|---|---|
 | **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
 | **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
-| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are unaffected in v0; read filtering arrives with v1. |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered: per-entity GETs 404 like not-found for hidden entities, and lists / sidebar counts / pagination return only the visible subset (see `docs/acl-security.md`). |
 
 A startup warning fires when the server binds **beyond loopback**
 (`--bind` non-loopback) **without** `acl.yaml` AND **without**
@@ -208,26 +208,36 @@ user_entity_type: person   # which entity type represents a user
 
 roles:
   admin:
-    write: ["*"]           # wildcard: allow writes on every entity type
-    read: ["*"]
+    create: ["*"]          # per-verb grants: create / update / delete
+    update: ["*"]
+    delete: ["*"]
+    read:   ["*"]
     permissions:
       - delegate-admin
       - delegate-contributor
       - delegate-reviewer
 
   contributor:
-    write: [ticket, concept]
-    read: ["*"]
+    create: [ticket, concept]
+    update: [ticket, concept]
+    delete: [ticket, concept]
+    read:   ["*"]
     permissions:
       - delegate-reviewer
 
   reviewer:
-    write: [review-response]
-    read: ["*"]
+    create: [review-response]
+    update: [review-response]
+    delete: [review-response]
+    read:   ["*"]
+
+  submitter:               # may create tickets, sees only its OWN (via created-by)
+    create: [ticket]       # create implies NO read — see the invariant below
+    # no read here; read is conferred per-entity by a created-by role-relation
 
   everyone:                 # built-in role held implicitly by every principal
     read: ["*"]
-    # no `write` → unassigned principals can read but not write
+    # no create/update/delete → unassigned principals can read but not write
 
 assignments:
   jeroen: admin
@@ -255,6 +265,21 @@ role_relations:
   simply delete `acl.yaml` (which falls back to `NopACL`).
 - **Unknown top-level keys produce warnings, not errors.** Typos
   surface in the server log; the rest of the policy still loads.
+- **Per-verb mutation grants: `create` / `update` / `delete`.** Each lists the
+  entity types the role may create / update / delete (`"*"` for all). They are
+  separate because they have different read requirements.
+- **Update and Delete require covering read grants; Create does not.** A role
+  with `update: [ticket]` (or `delete: [ticket]`) but no `read: [ticket]` (or
+  `read: ["*"]`) is rejected at boot — you must be able to read a type to modify
+  or remove it. **Create is exempt:** a role may `create: [ticket]` with no
+  ticket read. It then reads back only what it authored, via a role-conferring
+  relation such as `created-by` (see `role_relations`). This is what lets a
+  "submitter" create tickets yet see only their own — with the normal Create
+  button still showing, since the affordance is driven by the `create` grant.
+  The check covers the `update:`/`delete:` lists only — affordance grants
+  (`fields:`,
+  `options:`, `relations:`) restrict surfaces within an authorized
+  write and never authorize writes by themselves.
 
 ### Delegate-X tamper resistance
 
@@ -272,6 +297,38 @@ This is the Plone pattern: granting role X requires permission
 delegate-X, so principals with access are distinct from principals
 who can hand out access. It prevents a contributor from making
 themselves admin by writing their own role-binding relation.
+
+### Hardening `member-of` (group membership writes)
+
+v1 confers group roles by walking `member-of` edges. By default
+`member-of` is a regular relation type — no `requires_permission`
+gate. Combined with a permissive write grant on `person`, this is a
+privilege-escalation foot-cannon: an attacker who can create
+entities of type `person` can also create their own
+`alice --member-of--> admins` edge and inherit whatever role
+`assignments: { admins: ... }` declared.
+
+**If you use groups, gate `member-of` writes:**
+
+```yaml
+role_relations:
+  member-of:
+    requires_permission: delegate-membership
+roles:
+  admin:
+    permissions: [delegate-membership]
+```
+
+Only principals holding `delegate-membership` (typically admins) can
+write a `member-of` edge. Everyone else gets a 403 with
+`rule_kind=delegate-permission`. The audit log records the deny
+with `op=denied-write`.
+
+The same pattern applies to any relation type listed in
+`role_relations` — `member-of` is called out because it's the
+relation TKT-SVXL added for group expansion and is easy to forget.
+The example policies in this repo's tests are intentionally minimal
+and would be wide-open if copy-pasted into a production deployment.
 
 ### Trust boundary
 
@@ -346,7 +403,10 @@ unconditionally.
 ```yaml
 roles:
   triager:
-    write: [ticket]            # per-type write grant (as before)
+    create: [ticket]           # per-verb grants
+    update: [ticket]
+    delete: [ticket]
+    read:   [ticket]
 
     # Per-field write grants. A role that declares `fields:` for a
     # type is closed-world for that type: only listed fields are
@@ -393,7 +453,7 @@ declare a block (e.g. no `fields:` key for `ticket`) leaves that
 dimension fully permissive for the type. A role that declares the key
 — even as an empty list (`fields: {ticket: []}`) or null
 (`fields: {ticket:}`) — makes it closed-world: anything not granted is
-denied. This mirrors how `write:` already works.
+denied. This mirrors how the type-level create/update/delete grants already work.
 
 **Cross-role union, monotonic.** When a principal holds several roles,
 a field/option/relation is allowed if *any* role grants it under a

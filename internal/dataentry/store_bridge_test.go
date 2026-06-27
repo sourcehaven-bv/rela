@@ -16,29 +16,33 @@ import (
 // cross-process pg path (a LISTEN/NOTIFY round-trip) and trivial for memstore.
 const sseWaitTimeout = 5 * time.Second
 
-// waitForSSE reads from the broker channel until it finds an event of the given
-// type, or fails after sseWaitTimeout. Returns the event.
-func waitForSSE(t *testing.T, ch <-chan sseEvent, eventType string) sseEvent {
+// waitForEntityChange reads from the broker channel until it finds an
+// entity-change event for the given type, or fails after sseWaitTimeout.
+// entityType varies across callers (incl. the postgres-tagged bridge
+// test, invisible to the default-build linter).
+//
+//nolint:unparam // entityType varies in the postgres-tagged caller
+func waitForEntityChange(t *testing.T, ch <-chan sseEvent, entityType string) sseEvent {
 	t.Helper()
 	deadline := time.After(sseWaitTimeout)
 	for {
 		select {
 		case ev := <-ch:
-			if ev.Type == eventType {
+			if ev.EntityType == entityType {
 				return ev
 			}
 		case <-deadline:
-			t.Fatalf("timed out waiting for SSE event %q", eventType)
+			t.Fatalf("timed out waiting for entity change %q", entityType)
 			return sseEvent{}
 		}
 	}
 }
 
 // TestStoreEventBridgeMapsEntityEvents verifies the store-event -> SSE bridge
-// broadcasts entity create/update/delete (and only those) to connected SSE
-// clients. Uses a memstore so the test is backend-agnostic and needs no DB —
-// the bridge consumes the standard store.Watcher, which every backend (incl.
-// pgstore's cross-process feed) delivers through.
+// surfaces entity create/update/delete as type-scoped change signals (no id,
+// no op — all three collapse to "type T changed", TKT-POT9GQ). Uses a memstore
+// so the test is backend-agnostic and needs no DB — the bridge consumes the
+// standard store.Watcher every backend delivers through.
 func TestStoreEventBridgeMapsEntityEvents(t *testing.T) {
 	st := memstore.New()
 	a := &App{store: st, broker: newEventBroker()}
@@ -50,27 +54,27 @@ func TestStoreEventBridgeMapsEntityEvents(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create -> entity:created
+	// Create, update, delete all surface as an entity change of the type,
+	// carrying no id.
 	require.NoError(t, st.CreateEntity(ctx, entity.New("TKT-1", "ticket")))
-	ev := waitForSSE(t, ch, "entity:created")
-	require.Contains(t, ev.Data, "TKT-1")
+	ev := waitForEntityChange(t, ch, "ticket")
+	require.Empty(t, ev.Data, "entity change must carry no pre-rendered data/id")
 
-	// Update -> entity:updated
 	upd := entity.New("TKT-1", "ticket")
 	upd.SetString("title", "changed")
 	require.NoError(t, st.UpdateEntity(ctx, upd))
-	waitForSSE(t, ch, "entity:updated")
+	waitForEntityChange(t, ch, "ticket")
 
-	// Delete -> entity:deleted
 	_, err := st.DeleteEntity(ctx, "TKT-1", false)
 	require.NoError(t, err)
-	waitForSSE(t, ch, "entity:deleted")
+	waitForEntityChange(t, ch, "ticket")
 }
 
-// TestStoreEventBridgeIgnoresRelations verifies relation events are NOT
-// broadcast to SSE (matching the prior inline-broadcast behavior — relations
-// are not part of the live feed).
-func TestStoreEventBridgeIgnoresRelations(t *testing.T) {
+// TestStoreEventBridgeRelationSignalsVerdictInvalidation verifies relation
+// writes produce a RelationChange marker (which clears cached per-connection
+// read verdicts, RR-K2WKEJ) but NEVER a wire-bound entity change — relations
+// are still not part of the browser live feed.
+func TestStoreEventBridgeRelationSignalsVerdictInvalidation(t *testing.T) {
 	st := memstore.New()
 	a := &App{store: st, broker: newEventBroker()}
 	a.startStoreEventBridge()
@@ -82,24 +86,29 @@ func TestStoreEventBridgeIgnoresRelations(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, st.CreateEntity(ctx, entity.New("A", "ticket")))
 	require.NoError(t, st.CreateEntity(ctx, entity.New("B", "ticket")))
-	// Drain the two entity:created events.
-	waitForSSE(t, ch, "entity:created")
-	waitForSSE(t, ch, "entity:created")
+	waitForEntityChange(t, ch, "ticket")
+	waitForEntityChange(t, ch, "ticket")
 
-	// A relation write must NOT produce any SSE broadcast.
 	_, err := st.CreateRelation(ctx, "A", "depends_on", "B", nil)
 	require.NoError(t, err)
 
-	select {
-	case ev := <-ch:
-		t.Fatalf("relation write produced an SSE broadcast (should be ignored): %+v", ev)
-	case <-time.After(500 * time.Millisecond):
-		// good — no broadcast for relations
+	// A relation write produces a RelationChange marker, never an
+	// EntityType wire frame.
+	deadline := time.After(sseWaitTimeout)
+	for {
+		select {
+		case ev := <-ch:
+			require.True(t, ev.RelationChange, "relation write must produce a RelationChange marker, got %+v", ev)
+			require.Empty(t, ev.EntityType, "relation change must not carry an entity type")
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for the relation-change marker")
+		}
 	}
 }
 
 // TestStoreEventBridgeLocalWriteSingleBroadcast guards the de-dup: a single
-// entity write produces exactly ONE SSE broadcast (the bridge is the sole
+// entity write produces exactly ONE broker event (the bridge is the sole
 // source now that the inline handler broadcasts were removed).
 func TestStoreEventBridgeLocalWriteSingleBroadcast(t *testing.T) {
 	st := memstore.New()
@@ -117,7 +126,7 @@ func TestStoreEventBridgeLocalWriteSingleBroadcast(t *testing.T) {
 	for {
 		select {
 		case ev := <-ch:
-			if ev.Type == "entity:created" {
+			if ev.EntityType == "ticket" {
 				count++
 			}
 		case <-deadline:

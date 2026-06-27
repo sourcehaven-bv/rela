@@ -4,7 +4,7 @@ import { useScriptErrorStore } from '@/stores/scriptError'
 import { updateEntity } from '@/api/entities'
 import { runAction } from '@/api/actions'
 import { isInputFocused } from '@/utils/dom'
-import { isScriptError } from '@/types/scriptError'
+import { getScriptError } from '@/api/errors'
 import { isAnyModalOpen } from './modalStack'
 import type { ActionConfig, Entity } from '@/types'
 
@@ -90,8 +90,8 @@ export function useListActions(options: UseListActionsOptions) {
     // below; viewing more than one error is a follow-up.
     const firstScriptError = results
       .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
-      .map((r) => r.reason)
-      .find(isScriptError)
+      .map((r) => getScriptError(r.reason))
+      .find((e) => e !== null)
     if (firstScriptError) {
       scriptErrorStore.show(firstScriptError, triggerEl ?? null)
     }

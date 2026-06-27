@@ -59,19 +59,28 @@ func orderableMetamodel(t *testing.T, mode string) *metamodel.Metamodel {
 
 func newOrderableManager(t *testing.T, mode string) (*entitymanager.Manager, store.Store) {
 	t.Helper()
+	mgr, st, _ := newOrderableManagerWithAudit(t, mode)
+	return mgr, st
+}
+
+// newOrderableManagerWithAudit is newOrderableManager with a capturing audit
+// sink so tests can assert which writes produced records (issue #886).
+func newOrderableManagerWithAudit(t *testing.T, mode string) (*entitymanager.Manager, store.Store, *audit.Memory) {
+	t.Helper()
 	st := memstore.New()
+	mem := audit.NewMemory()
 	deps := entitymanager.Deps{
 		Store:     st,
 		Meta:      orderableMetamodel(t, mode),
 		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
+		Audit:     mem,
 		ACL:       acl.NopACL{},
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
-	return mgr, st
+	return mgr, st, mem
 }
 
 func mkRecipe(t *testing.T, mgr *entitymanager.Manager, title string) *entity.Entity {
@@ -97,6 +106,7 @@ func mkStep(t *testing.T, mgr *entitymanager.Manager, title string) *entity.Enti
 }
 
 func TestCreateRelation_AssignsOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		mode           string
@@ -110,6 +120,7 @@ func TestCreateRelation_AssignsOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr, _ := newOrderableManager(t, tt.mode)
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "Soup")
@@ -158,6 +169,7 @@ func TestCreateRelation_AssignsOrder(t *testing.T) {
 }
 
 func TestCreateRelation_ExplicitOrderRespected(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newOrderableManager(t, "outgoing")
 	ctx := context.Background()
 	recipe := mkRecipe(t, mgr, "Stew")
@@ -178,6 +190,7 @@ func TestCreateRelation_ExplicitOrderRespected(t *testing.T) {
 // non-HTTP write paths must be overwritten with the auto-assigned next
 // ordinal so the on-disk relation always has a sortable value.
 func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value interface{}
@@ -190,6 +203,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr, _ := newOrderableManager(t, "outgoing")
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "X")
@@ -209,6 +223,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 }
 
 func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
+	t.Parallel()
 	mgr, st := newOrderableManager(t, "both")
 	ctx := context.Background()
 	recipe := mkRecipe(t, mgr, "X")
@@ -243,6 +258,7 @@ func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
 }
 
 func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value interface{}
@@ -255,6 +271,7 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			mgr, st := newOrderableManager(t, "outgoing")
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "X")
@@ -278,5 +295,55 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 				t.Errorf("_order_out should remain 1.0 after rejected update, got %v", got.Properties[metamodel.OrderPropertyOut])
 			}
 		})
+	}
+}
+
+// TestRenumber_EmitsAuditRecords pins issue #886: engine-triggered renumber
+// writes (maybeRenumberSide) must produce audit records, marked with a
+// renumber: triggered-by so they are distinguishable from the user-initiated
+// UpdateRelation that spawned them.
+func TestRenumber_EmitsAuditRecords(t *testing.T) {
+	t.Parallel()
+	mgr, _, mem := newOrderableManagerWithAudit(t, "outgoing")
+	ctx := context.Background()
+	recipe := mkRecipe(t, mgr, "X")
+	s1 := mkStep(t, mgr, "S1")
+	s2 := mkStep(t, mgr, "S2")
+	s3 := mkStep(t, mgr, "S3")
+
+	// Steps get dense orders 1, 2, 3.
+	for _, s := range []*entity.Entity{s1, s2, s3} {
+		if _, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", s.ID, entity.RelationOptions{}); err != nil {
+			t.Fatalf("create relation: %v", err)
+		}
+	}
+
+	// Collapse s3's order onto s2's (gap < threshold) -> triggers renumber of
+	// the outgoing side. The update itself is one audited write; the renumber
+	// writes are additional records.
+	before := len(mem.Records())
+	if _, err := mgr.UpdateRelation(ctx, recipe.ID, "has-step", s3.ID, entity.RelationOptions{
+		Properties: map[string]interface{}{metamodel.OrderPropertyOut: 2.0},
+	}); err != nil {
+		t.Fatalf("update relation: %v", err)
+	}
+
+	var update, renumber int
+	for _, r := range mem.Records()[before:] {
+		if r.Op != audit.OpUpdateRelation {
+			continue
+		}
+		if strings.HasPrefix(r.TriggeredBy, "renumber:") {
+			renumber++
+		} else {
+			update++
+		}
+	}
+
+	if update < 1 {
+		t.Errorf("want at least 1 user-initiated update-relation record, got %d", update)
+	}
+	if renumber < 1 {
+		t.Errorf("want at least 1 renumber audit record (issue #886), got %d", renumber)
 	}
 }

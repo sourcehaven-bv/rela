@@ -76,37 +76,8 @@ func FuzzParseDocument(f *testing.F) {
 	})
 }
 
-// FuzzSplitFrontmatter tests the frontmatter splitting logic
-func FuzzSplitFrontmatter(f *testing.F) {
-	seeds := []string{
-		"---\nkey: value\n---\nbody",
-		"",
-		"no frontmatter",
-		"---\n---\n",
-		"---\nunclosed",
-		"body\n---\nkey: value\n---\nmore body",
-	}
-
-	for _, seed := range seeds {
-		f.Add(seed)
-	}
-
-	f.Fuzz(func(t *testing.T, input string) {
-		// Should never panic
-		fm, body, err := splitFrontmatter(input)
-
-		if err != nil {
-			return
-		}
-
-		// Basic sanity: returned strings should not be longer than input
-		// (allowing for some overhead from joining)
-		if len(fm)+len(body) > len(input)+100 {
-			t.Errorf("output larger than input: fm=%d, body=%d, input=%d",
-				len(fm), len(body), len(input))
-		}
-	})
-}
+// The frontmatter-split fuzz test moved to internal/frontmatter
+// (FuzzSplit) along with the split implementation.
 
 // FuzzFormatDocument tests the document formatter
 func FuzzFormatDocument(f *testing.F) {
@@ -195,4 +166,28 @@ func trimContent(s string) string {
 		s = s[1:]
 	}
 	return s
+}
+
+// FuzzFormatMarkdownIdempotent guards the formatter's idempotency contract:
+// FormatMarkdown(FormatMarkdown(x)) == FormatMarkdown(x). FormatMarkdownWithWidth
+// iterates a single goldmark pass to a fixed point precisely so this holds (a
+// single pass is not idempotent — goldmark can re-parse its own output, e.g.
+// "**\n*" -> "** *" -> "---"). The canonical content hash relies on this so a
+// body stored raw (pgstore) and stored once-formatted (fsstore) converge.
+//
+// Run with: go test -fuzz=FuzzFormatMarkdownIdempotent -fuzztime=30s ./internal/markdown/
+func FuzzFormatMarkdownIdempotent(f *testing.F) {
+	for _, s := range []string{
+		"", "# H\n\ntext\n", "- a\n- b\n", "1. one\n2. two\n", "```\ncode\n```\n",
+		"> quote\n", "0) \n\n0", "**\n*", "|\n|", "\n\n\nx\n\n\n", "<!-- c -->\n",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, body string) {
+		once := FormatMarkdown(body)
+		twice := FormatMarkdown(once)
+		if once != twice {
+			t.Fatalf("FormatMarkdown not idempotent:\n once=%q\n twice=%q", once, twice)
+		}
+	})
 }

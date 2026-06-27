@@ -11,6 +11,13 @@ import (
 type ErrorFS struct {
 	FS        FS
 	WalkError error // Error to return from Walk
+
+	// RemoveError, when non-nil, is returned from Remove for paths that
+	// satisfy RemoveErrorOn (or for every path when RemoveErrorOn is nil).
+	// The underlying Remove is not attempted when the error fires, so the
+	// wrapped file stays in place — modeling an unremovable file.
+	RemoveError   error
+	RemoveErrorOn func(path string) bool
 }
 
 // NewErrorFS creates an ErrorFS wrapping the given FS.
@@ -27,6 +34,9 @@ func (e *ErrorFS) WriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 func (e *ErrorFS) Remove(path string) error {
+	if e.RemoveError != nil && (e.RemoveErrorOn == nil || e.RemoveErrorOn(path)) {
+		return e.RemoveError
+	}
 	return e.FS.Remove(path)
 }
 

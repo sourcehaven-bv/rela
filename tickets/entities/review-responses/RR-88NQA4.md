@@ -1,0 +1,9 @@
+---
+id: RR-88NQA4
+type: review-response
+title: 'cacheId parameters + leak-surface pins: N=128 bits, compute only in entityToV1 chokepoint, \x1f separator, whole-type delete-timing residual documented'
+finding: 'Bundle of confirmed-safe-with-conditions items from review. (1) Truncation N: pin 128 bits (22 base64url chars). Below 96 risks intra-principal collision mis-evictions AND offline preimage if the secret ever leaks. KAT test: cacheId≠trivial id encoding, depends on secret, differs per principal_id. (2) Compute cacheId ONLY inside entityToV1 (single post-gate chokepoint all list/get/search/include funnel through) — NEVER during candidate collection, or a hidden include-neighbor''s cacheId leaks before filterVisibleIncludes runs (api_v1.go:1944). Regression: hidden related entity contributes neither id nor cacheId. (3) Preimage framing: use \x1f separator (or length-prefix), not type+''/''+id — reuses pgstore/feed.go''s proven injective framing; ''/'' in an id could collide type+id pairs. (4) Residuals to DOCUMENT in GUIDE: Query-scoped readers get opaque delete frames (per-type deletion TIMING/RATE visible to any type-reader — acceptable vs GET-poll baseline except where activity-existence itself is secret); collusion out of scope; cacheId is server→client only, never a request param. (5) Anonymous principal collision harmless: under real ACL unstamped → 500 acl_unstamped_principal (no stream opened); under NopACL everyone reads everything anyway.'
+severity: significant
+reason: Moot under the final per-type design. cacheId scheme retired — no HMAC, no N, no entityToV1 chokepoint emission, no separator. The one durable item (per-type delete-timing residual) is folded into the final ticket's leak analysis + AC11 docs. Nothing on the wire but `{type}`.
+status: wont-fix
+---

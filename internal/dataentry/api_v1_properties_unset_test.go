@@ -40,7 +40,7 @@ func patchTicketJSON(t *testing.T, app *App, body string) (int, updateResponse) 
 }
 
 // patchTicketRaw returns the raw response body for assertions that
-// need to inspect non-V1Entity-shaped responses (e.g. 403 affordance
+// need to inspect non-v1.Entity-shaped responses (e.g. 403 affordance
 // denials).
 func patchTicketRaw(t *testing.T, app *App, body string) (code int, respBody string) {
 	t.Helper()
@@ -187,7 +187,7 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 		t.Error("status not removed")
 	}
 	// Relation written
-	edges := app.outgoingRelations(context.Background(), "TKT-001")
+	edges := app.reader.outgoingRelations(context.Background(), "TKT-001")
 	if len(edges) != 1 || edges[0].Type != "blocks" || edges[0].To != "FEAT-001" {
 		t.Errorf("expected one blocks→FEAT-001 edge, got %+v", edges)
 	}

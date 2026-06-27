@@ -5,6 +5,7 @@ import { defineComponent, ref } from 'vue'
 
 import type { ActionConfig, Entity } from '@/types'
 import type { ScriptError } from '@/types/scriptError'
+import { ApiError } from '@/api/errors'
 
 import { useListActions } from './useListActions'
 import { useScriptErrorStore } from '@/stores/scriptError'
@@ -23,6 +24,13 @@ function makeScriptError(overrides: Partial<ScriptError> = {}): ScriptError {
     lua: { message: 'boom', line: 1 },
     ...overrides,
   }
+}
+
+// In production runAction rejections pass through the shared client's
+// interceptor, which wraps the envelope in an ApiError (api/errors.ts) —
+// mock the shape a catch site actually receives.
+function wrapScriptError(envelope: ScriptError): ApiError {
+  return new ApiError(envelope.lua.message, { kind: 'script', scriptError: envelope, original: null })
 }
 
 interface HarnessOptions {
@@ -88,7 +96,7 @@ describe('useListActions — script error dispatch', () => {
     configureSchema(action)
 
     const err = makeScriptError({ correlation_id: 'first' })
-    vi.mocked(runAction).mockRejectedValueOnce(err).mockResolvedValueOnce(null)
+    vi.mocked(runAction).mockRejectedValueOnce(wrapScriptError(err)).mockResolvedValueOnce(null)
 
     const { wrapper } = mountHarness({
       selectedIds: new Set(['t1', 't2']),
@@ -119,7 +127,7 @@ describe('useListActions — script error dispatch', () => {
 
     const first = makeScriptError({ correlation_id: 'first' })
     const second = makeScriptError({ correlation_id: 'second' })
-    vi.mocked(runAction).mockRejectedValueOnce(first).mockRejectedValueOnce(second)
+    vi.mocked(runAction).mockRejectedValueOnce(wrapScriptError(first)).mockRejectedValueOnce(wrapScriptError(second))
 
     const { wrapper } = mountHarness({
       selectedIds: new Set(['t1', 't2']),
@@ -167,7 +175,7 @@ describe('useListActions — script error dispatch', () => {
     configureSchema(action)
 
     const err = makeScriptError()
-    vi.mocked(runAction).mockRejectedValueOnce(err)
+    vi.mocked(runAction).mockRejectedValueOnce(wrapScriptError(err))
 
     const trigger = document.createElement('button')
 

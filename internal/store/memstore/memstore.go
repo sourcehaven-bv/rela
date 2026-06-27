@@ -21,7 +21,6 @@ package memstore
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -36,6 +35,13 @@ import (
 )
 
 // MemStore is an in-memory store implementation.
+//
+// TODO(TKT-N0IKN9): the exported surface (27) is the mandated store.Store
+// interface, which consumers depend on directly by design. This is a
+// required-interface exception, not accreted public API — it tracks the
+// interface size and ratchets only if store.Store itself is narrowed.
+//
+//plimsoll:max-exported-methods=27
 type MemStore struct {
 	mu            sync.RWMutex
 	entities      map[string]*entity.Entity   // ID -> entity
@@ -114,6 +120,15 @@ func (m *MemStore) notifyPut(e *entity.Entity) {
 func (m *MemStore) notifyDelete(id string) {
 	for _, o := range m.observers {
 		_ = o.EntityDelete(id)
+	}
+}
+
+// notifyRenamed fans out a rename to all observers. The rename code
+// path emits this INSTEAD OF the EntityDelete(oldID)+EntityPut(renamed)
+// pair — see store.EntityObserver.EntityRenamed.
+func (m *MemStore) notifyRenamed(oldID string, renamed *entity.Entity) {
+	for _, o := range m.observers {
+		_ = o.EntityRenamed(oldID, renamed)
 	}
 }
 
@@ -425,8 +440,7 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 	delete(m.entities, oldID)
 	m.entityOrder = sortedRemove(m.entityOrder, oldID)
 	m.entityOrder = sortedInsert(m.entityOrder, newID)
-	m.notifyDelete(oldID)
-	m.notifyPut(renamed)
+	m.notifyRenamed(oldID, renamed)
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0
@@ -465,7 +479,7 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 		}
 		delete(m.attachments, key)
 		a.entityID = newID
-		reKey[newID+"/"+a.property] = a
+		reKey[attachmentKey(newID, a.property, a.fileName)] = a
 	}
 	for k, v := range reKey {
 		m.attachments[k] = v
@@ -562,16 +576,12 @@ func (m *MemStore) CreateRelation(
 			return nil, err
 		}
 	}
-	if strings.Contains(relType, "--") {
-		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	if err := storeutil.ValidateRelationType(relType); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if relType == "" {
-		return nil, errors.New("store: empty relation type")
-	}
 
 	r := entity.NewRelation(from, relType, to)
 	r.UpdatedAt = time.Now()
@@ -658,12 +668,23 @@ func (m *MemStore) DeleteRelation(_ context.Context, from, relType, to string) e
 
 // --- Attachments ---
 
+// attachmentKey is the per-file index key: (entityID, property, fileName).
+func attachmentKey(entityID, property, fileName string) string {
+	return entityID + "/" + property + "/" + fileName
+}
+
 func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := validateProperty(property); err != nil {
 		return err
 	}
+	if err := store.ValidateFileName(fileName); err != nil {
+		return err
+	}
 
-	data, err := io.ReadAll(r)
+	// Backstop size guard (shared with fsstore): reject oversize bytes so
+	// the in-memory backend is never unbounded. The API layer also caps
+	// at ingress.
+	data, err := io.ReadAll(storeutil.LimitAttachmentReader(r))
 	if err != nil {
 		return err
 	}
@@ -675,8 +696,10 @@ func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName st
 		return store.ErrNotFound
 	}
 
-	key := entityID + "/" + property
-	m.attachments[key] = &attachment{
+	// Append: key by (entityID, property, fileName). A same-name re-attach
+	// replaces only that one file; sibling files on the property are
+	// untouched. Cap/suffix policy lives in the write path, not here.
+	m.attachments[attachmentKey(entityID, property, fileName)] = &attachment{
 		entityID: entityID,
 		property: property,
 		fileName: fileName,
@@ -685,23 +708,22 @@ func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName st
 	return nil
 }
 
-func (m *MemStore) ReadAttachment(_ context.Context, entityID, property string) (io.ReadCloser, error) {
+func (m *MemStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := entityID + "/" + property
-	a, ok := m.attachments[key]
+	a, ok := m.attachments[attachmentKey(entityID, property, fileName)]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(a.data)), nil
 }
 
-func (m *MemStore) DeleteAttachment(_ context.Context, entityID, property string) error {
+func (m *MemStore) DeleteAttachment(_ context.Context, entityID, property, fileName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := entityID + "/" + property
+	key := attachmentKey(entityID, property, fileName)
 	if _, ok := m.attachments[key]; !ok {
 		return store.ErrNotFound
 	}

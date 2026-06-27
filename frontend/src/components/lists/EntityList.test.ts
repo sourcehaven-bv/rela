@@ -2,13 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { PiniaColada } from '@pinia/colada'
 import EntityList from './EntityList.vue'
 import ConfirmModal from '@/components/ui/ConfirmModal.vue'
 import { useSchemaStore } from '@/stores/schema'
-import { useEntitiesStore } from '@/stores/entities'
+import { useUIStore } from '@/stores/ui'
+import { _setEntityPluralForTest } from '@/api/entities'
 import { _resetModalStack } from '@/composables/modalStack'
 import { useConfirmHost, _resetConfirmForTest } from '@/composables/useConfirm'
-import type { Entity } from '@/types'
+import type { Entity, ListResponse } from '@/types'
+
+// EntityList fetches via the api layer (useQuery) and deletes via it
+// (useMutation), so mock the api functions, not the entities store.
+const listEntitiesMock = vi.fn()
+const deleteEntityMock = vi.fn()
+vi.mock('@/api', async (orig) => ({
+  ...(await orig<typeof import('@/api')>()),
+  listEntities: (...args: unknown[]) => listEntitiesMock(...args),
+  deleteEntity: (...args: unknown[]) => deleteEntityMock(...args),
+}))
 
 // Router stubs — EntityList reads both `useRouter` (for open/edit/create
 // navigation) and `useRoute` (for URL-filter sync). The delete flow uses a
@@ -60,17 +72,23 @@ describe('EntityList delete integration', () => {
     } as never)
   }
 
-  function seedEntities(entities: Entity[]) {
-    const entitiesStore = useEntitiesStore()
-    entitiesStore.fetchList = vi.fn().mockResolvedValue({
+  function seedEntities(entities: Entity[]): ListResponse<Entity> {
+    const response: ListResponse<Entity> = {
       data: entities,
       meta: { total: entities.length, page: 1, per_page: 25, has_more: false },
       included: {},
-    })
+    }
+    listEntitiesMock.mockResolvedValue(response)
+    return response
   }
 
+  let pinia: ReturnType<typeof createPinia>
   beforeEach(() => {
-    setActivePinia(createPinia())
+    pinia = createPinia()
+    setActivePinia(pinia)
+    _setEntityPluralForTest(entityType, 'tickets')
+    listEntitiesMock.mockReset()
+    deleteEntityMock.mockReset().mockResolvedValue(undefined)
     _resetModalStack()
     _resetConfirmForTest()
     routerPush.mockClear()
@@ -116,6 +134,7 @@ describe('EntityList delete integration', () => {
     const wrapper = mount(Host, {
       props: { listId },
       attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
     })
     await flushPromises()
     return wrapper
@@ -185,9 +204,6 @@ describe('EntityList delete integration', () => {
   it('Cancel button closes modal without deleting', async () => {
     const entities = [makeEntity('T-1')]
     const wrapper = await mountList(entities)
-    const entitiesStore = useEntitiesStore()
-    const removeSpy = vi.fn().mockResolvedValue(undefined)
-    entitiesStore.remove = removeSpy
 
     await wrapper.find('.delete-btn').trigger('click')
     await flushPromises()
@@ -196,18 +212,15 @@ describe('EntityList delete integration', () => {
     await flushPromises()
 
     expect(overlay()).toBeNull()
-    expect(removeSpy).not.toHaveBeenCalled()
+    expect(deleteEntityMock).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('Confirm button calls entitiesStore.remove with the pending entity', async () => {
+  it('Confirm button calls deleteEntity with the pending entity', async () => {
     const entities = [makeEntity('T-1'), makeEntity('T-2')]
     const wrapper = await mountList(entities)
-    const entitiesStore = useEntitiesStore()
-    const removeSpy = vi.fn().mockResolvedValue(undefined)
-    entitiesStore.remove = removeSpy
 
-    // Click delete on the SECOND row — the spy should receive that entity.
+    // Click delete on the SECOND row — the mutation should receive that entity.
     const deleteButtons = wrapper.findAll('.delete-btn')
     await deleteButtons[1].trigger('click')
     await flushPromises()
@@ -215,18 +228,41 @@ describe('EntityList delete integration', () => {
     modalButtons()[1].click()
     await flushPromises()
 
-    expect(removeSpy).toHaveBeenCalledTimes(1)
-    expect(removeSpy).toHaveBeenCalledWith(entities[1].type, entities[1].id)
+    expect(deleteEntityMock).toHaveBeenCalledTimes(1)
+    expect(deleteEntityMock).toHaveBeenCalledWith(entities[1].type, entities[1].id)
     wrapper.unmount()
   })
 
-  it('keeps modal open on error and clears busy state', async () => {
+  it('rolls back the row and toasts when delete fails (onError wiring)', async () => {
+    const entities = [makeEntity('T-1'), makeEntity('T-2')]
+    const wrapper = await mountList(entities)
+    deleteEntityMock.mockRejectedValue(new Error('boom'))
+    const uiStore = useUIStore()
+    const errorSpy = vi.spyOn(uiStore, 'error')
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    // Confirm deletion of the second row.
+    const deleteButtons = wrapper.findAll('.delete-btn')
+    await deleteButtons[1].trigger('click')
+    await flushPromises()
+    modalButtons()[1].click()
+    await flushPromises()
+
+    // After the mutation rejects, onError rolls the optimistic removal back
+    // (the row is present again) and toasts the failure. This fails if the
+    // onError handler is dropped — pinning the optimistic+rollback wiring.
+    expect(deleteEntityMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Title T-2')
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    errorSpy.mockRestore()
+    consoleSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('closes the confirm modal after a failed delete', async () => {
     const entities = [makeEntity('T-1')]
     const wrapper = await mountList(entities)
-    const entitiesStore = useEntitiesStore()
-    entitiesStore.remove = vi.fn().mockRejectedValue(new Error('boom'))
-    // The component logs the error via console.error; silence it in the test
-    // so the output stays clean.
+    deleteEntityMock.mockRejectedValue(new Error('boom'))
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await wrapper.find('.delete-btn').trigger('click')
@@ -235,10 +271,9 @@ describe('EntityList delete integration', () => {
     modalButtons()[1].click()
     await flushPromises()
 
-    // Modal stays open so the user can retry or cancel with context.
-    expect(overlay()).not.toBeNull()
-    // Confirm button is re-enabled after the failure.
-    expect(modalButtons()[1].disabled).toBe(false)
+    // The confirm modal closes (the mutation owns failure handling via
+    // rollback + toast, unlike the old withConfirmError stay-open path).
+    expect(deleteEntityMock).toHaveBeenCalledTimes(1)
     consoleSpy.mockRestore()
     wrapper.unmount()
   })
@@ -264,18 +299,20 @@ describe('EntityList search integration', () => {
   }
 
   function fakeFetchList() {
-    const entitiesStore = useEntitiesStore()
-    const fetchList = vi.fn().mockResolvedValue({
+    listEntitiesMock.mockReset().mockResolvedValue({
       data: [],
       meta: { total: 0, page: 1, per_page: 25, has_more: false },
       included: {},
     })
-    entitiesStore.fetchList = fetchList
-    return fetchList
+    return listEntitiesMock
   }
 
+  let pinia: ReturnType<typeof createPinia>
   beforeEach(() => {
-    setActivePinia(createPinia())
+    pinia = createPinia()
+    setActivePinia(pinia)
+    _setEntityPluralForTest(entityType, 'tickets')
+    deleteEntityMock.mockReset().mockResolvedValue(undefined)
     _resetModalStack()
     routerPush.mockClear()
     routerReplace.mockClear()
@@ -294,7 +331,7 @@ describe('EntityList search integration', () => {
     fakeFetchList()
     mockRoute.query = { q: 'foo' }
 
-    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body })
+    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body, global: { plugins: [pinia, PiniaColada] } })
     await flushPromises()
 
     const input = wrapper.find<HTMLInputElement>('.search-box input[type="search"]')
@@ -305,7 +342,7 @@ describe('EntityList search integration', () => {
   it('AC2: typing fires exactly one fetch after the debounce window', async () => {
     seedSchema()
     const fetchList = fakeFetchList()
-    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body })
+    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body, global: { plugins: [pinia, PiniaColada] } })
     await flushPromises()
 
     // Initial mount fetch already happened.
@@ -338,7 +375,7 @@ describe('EntityList search integration', () => {
     const fetchList = fakeFetchList()
     mockRoute.query = { q: 'foo' }
 
-    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body })
+    const wrapper = mount(EntityList, { props: { listId }, attachTo: document.body, global: { plugins: [pinia, PiniaColada] } })
     await flushPromises()
 
     // Sanity: initial fetch carries q=foo.

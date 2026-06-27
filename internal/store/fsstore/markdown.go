@@ -1,39 +1,29 @@
 package fsstore
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/mitchellh/go-wordwrap"
-	gmmarkdown "github.com/teekennedy/goldmark-markdown"
-	"github.com/yuin/goldmark"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
 
 // errConflictedFile is returned when a file has unresolved git conflict markers.
 var errConflictedFile = errors.New("file has unresolved git conflicts")
 
-const (
-	frontmatterDelimiter = "---"
-	defaultLineWidth     = 80
-)
+const frontmatterDelimiter = frontmatter.Delimiter
 
 // conflictMarkerStart is git's opening conflict marker. Detection
 // MUST be line-anchored — see [hasLineAnchoredConflict] and BUG-WN6D
 // for why a substring match false-positives on legitimate content
 // (markdown codespans or quoted prose mentioning the marker).
 var conflictMarkerStart = []byte("<<<<<<<")
-
-// orderedListPattern matches ordered list items (e.g., "1. ", "2. ").
-var orderedListPattern = regexp.MustCompile(`^\d+\.\s`)
 
 // hasLineAnchoredConflict reports whether `raw` contains the
 // conflict marker at column 0 of any line. Returns false for
@@ -87,10 +77,7 @@ func parseDocument(raw string) (*document, error) {
 		return nil, errConflictedFile
 	}
 
-	fm, body, err := splitFrontmatter(raw)
-	if err != nil {
-		return nil, err
-	}
+	fm, body := frontmatter.Split(raw)
 
 	var parsed map[string]interface{}
 	if fm != "" {
@@ -100,44 +87,6 @@ func parseDocument(raw string) (*document, error) {
 	}
 
 	return &document{frontmatter: parsed, content: body}, nil
-}
-
-func splitFrontmatter(content string) (frontmatter, body string, err error) {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	var lines []string
-	inFrontmatter := false
-	frontmatterEnded := false
-	var frontmatterLines []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if !inFrontmatter && !frontmatterEnded && strings.TrimSpace(line) == frontmatterDelimiter {
-			inFrontmatter = true
-			continue
-		}
-
-		if inFrontmatter && strings.TrimSpace(line) == frontmatterDelimiter {
-			inFrontmatter = false
-			frontmatterEnded = true
-			continue
-		}
-
-		if inFrontmatter {
-			frontmatterLines = append(frontmatterLines, line)
-		} else if frontmatterEnded || !inFrontmatter {
-			lines = append(lines, line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", "", err
-	}
-
-	frontmatter = strings.Join(frontmatterLines, "\n")
-	body = strings.TrimPrefix(strings.Join(lines, "\n"), "\n")
-
-	return frontmatter, body, nil
 }
 
 // --- document formatting ---
@@ -228,127 +177,14 @@ func valueToNode(val interface{}) (*yaml.Node, error) {
 
 // --- markdown content formatting ---
 
+// formatMarkdown normalizes an entity/relation body before it is written to
+// disk. It delegates to [markdown.FormatMarkdown] so there is a single
+// formatting implementation: the canonical content hash (internal/canonical)
+// re-runs the same normalization to converge fsstore's reflowed body with
+// pgstore's raw body, and that convergence breaks if fsstore reflows
+// differently. Do not reintroduce a private copy.
 func formatMarkdown(content string) string {
-	if content == "" {
-		return ""
-	}
-
-	content = strings.TrimRight(content, " \t")
-
-	r := gmmarkdown.NewRenderer(
-		gmmarkdown.WithHeadingStyle(gmmarkdown.HeadingStyleATX),
-		gmmarkdown.WithIndentStyle(gmmarkdown.IndentStyleSpaces),
-	)
-
-	md := goldmark.New(goldmark.WithRenderer(r))
-
-	var buf bytes.Buffer
-	if err := md.Convert([]byte(content), &buf); err != nil {
-		return content
-	}
-
-	result := wrapParagraphs(buf.String(), defaultLineWidth)
-	result = strings.TrimRight(result, "\n") + "\n"
-	return result
-}
-
-func wrapParagraphs(content string, lineWidth int) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-	paragraphLines := make([]string, 0, 10)
-	inCodeBlock := false
-	codeBlockMarker := ""
-
-	if lineWidth <= 0 {
-		lineWidth = defaultLineWidth
-	}
-
-	flushParagraph := func() {
-		if len(paragraphLines) > 0 {
-			text := strings.Join(paragraphLines, " ")
-			text = strings.TrimSpace(text)
-			if text != "" {
-				wrapped := wordwrap.WrapString(text, uint(lineWidth)) //nolint:gosec // lineWidth is validated positive
-				result = append(result, wrapped)
-			}
-			paragraphLines = paragraphLines[:0]
-		}
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			flushParagraph()
-			switch {
-			case !inCodeBlock:
-				inCodeBlock = true
-				codeBlockMarker = trimmed[:3]
-				result = append(result, line)
-			case strings.HasPrefix(trimmed, codeBlockMarker):
-				inCodeBlock = false
-				codeBlockMarker = ""
-				result = append(result, line)
-			default:
-				result = append(result, line)
-			}
-			continue
-		}
-
-		if inCodeBlock {
-			result = append(result, line)
-			continue
-		}
-
-		if isSpecialLine(trimmed) {
-			flushParagraph()
-			result = append(result, line)
-			continue
-		}
-
-		if trimmed == "" {
-			flushParagraph()
-			result = append(result, "")
-			continue
-		}
-
-		paragraphLines = append(paragraphLines, trimmed)
-	}
-
-	flushParagraph()
-
-	return strings.Join(result, "\n")
-}
-
-func isSpecialLine(line string) bool {
-	if line == "" {
-		return true
-	}
-	if strings.HasPrefix(line, "#") {
-		return true
-	}
-	if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "+ ") {
-		return true
-	}
-	if orderedListPattern.MatchString(line) {
-		return true
-	}
-	if strings.HasPrefix(line, ">") {
-		return true
-	}
-	if line == "---" || line == "***" || line == "___" {
-		return true
-	}
-	if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
-		return true
-	}
-	if strings.HasPrefix(line, "<!--") {
-		return true
-	}
-	if strings.HasPrefix(line, "|") {
-		return true
-	}
-	return false
+	return markdown.FormatMarkdown(content)
 }
 
 // --- entity I/O ---

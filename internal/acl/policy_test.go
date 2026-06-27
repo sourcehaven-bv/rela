@@ -13,6 +13,7 @@ import (
 
 // AC2.1: empty file decodes to a zero Policy.
 func TestLoadPolicy_Empty(t *testing.T) {
+	t.Parallel()
 	path := writeTempPolicy(t, "")
 	p, err := acl.LoadPolicy(path)
 	if err != nil {
@@ -29,19 +30,20 @@ func TestLoadPolicy_Empty(t *testing.T) {
 // AC2.1: a complete acl.yaml example round-trips into the typed shape
 // downstream code consumes.
 func TestLoadPolicy_FullExample(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 user_entity_type: person
 roles:
   admin:
-    write: ["*"]
+    create: ["*"]
     read: ["*"]
     permissions: [delegate-admin, delegate-contributor]
   contributor:
-    write: [ticket, concept]
+    create: [ticket, concept]
     read: ["*"]
     permissions: [delegate-reviewer]
   reviewer:
-    write: [review-response]
+    create: [review-response]
     read: ["*"]
   everyone:
     read: ["*"]
@@ -65,8 +67,8 @@ role_relations:
 	if len(p.Roles) != 4 {
 		t.Errorf("len(Roles) = %d, want 4", len(p.Roles))
 	}
-	if got := p.Roles["admin"].Write; len(got) != 1 || got[0] != "*" {
-		t.Errorf("admin.Write = %v, want [*]", got)
+	if got := p.Roles["admin"].Create; len(got) != 1 || got[0] != "*" {
+		t.Errorf("admin.Create = %v, want [*]", got)
 	}
 	if got := p.Roles["contributor"].Permissions; len(got) != 1 || got[0] != "delegate-reviewer" {
 		t.Errorf("contributor.Permissions = %v, want [delegate-reviewer]", got)
@@ -83,11 +85,15 @@ role_relations:
 // AC2.1: unknown top-level keys emit one slog.Warn per key and are
 // otherwise ignored — the loader returns the typed Policy with known
 // fields populated.
+// NOT parallel: swaps the process-global default slog logger
+// (TKT-VRZVXW — same class as t.Setenv; cannot run alongside
+// parallel siblings).
 func TestLoadPolicy_UnknownKey_LogsWarning(t *testing.T) {
 	const yaml = `
 roles:
   admin:
-    write: ["*"]
+    create: ["*"]
+    read: ["*"]
 unknown_top_level: oops
 also_unknown:
   nested: true
@@ -103,7 +109,7 @@ also_unknown:
 	if err != nil {
 		t.Fatalf("LoadPolicy: %v", err)
 	}
-	if p.Roles["admin"].Write[0] != "*" {
+	if p.Roles["admin"].Create[0] != "*" {
 		t.Errorf("known fields not populated: %+v", p)
 	}
 
@@ -118,6 +124,7 @@ also_unknown:
 // AC2.1: missing file returns an error wrapping os.ErrNotExist so
 // callers (appbuild in PR 3) can fall back to NopACL via errors.Is.
 func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
 	_, err := acl.LoadPolicy(missing)
 	if err == nil {
@@ -131,7 +138,8 @@ func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {
 // AC2.1: malformed YAML returns a wrapped parse error (not a panic,
 // not os.ErrNotExist).
 func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
-	path := writeTempPolicy(t, "roles:\n  admin:\n    write: [not-closed\n")
+	t.Parallel()
+	path := writeTempPolicy(t, "roles:\n  admin:\n    create: [not-closed\n")
 	_, err := acl.LoadPolicy(path)
 	if err == nil {
 		t.Fatal("LoadPolicy returned nil error for malformed YAML")
@@ -148,10 +156,12 @@ func TestLoadPolicy_MalformedYAML_ReturnsParseError(t *testing.T) {
 // consumes: per-field write/visibility, per-option, per-relation
 // with create/remove pointers and meta-field grants.
 func TestLoadPolicy_AffordanceGrants(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 roles:
   triager:
-    write: [ticket]
+    create: [ticket]
+    read: [ticket]
     fields:
       ticket:
         - field: status
@@ -233,10 +243,11 @@ roles:
 // so HasAffordanceGrants reports false and the entry point falls
 // through to the permissive Nop resolver.
 func TestPolicy_HasAffordanceGrants_NoneWhenWriteOnly(t *testing.T) {
+	t.Parallel()
 	const yaml = `
 roles:
   admin:
-    write: ["*"]
+    create: ["*"]
     read: ["*"]
 `
 	p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
@@ -261,6 +272,7 @@ roles:
 // a security decision, so present-either-way = opt-in is the
 // contract.
 func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		fieldsBlock string
@@ -284,7 +296,8 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			yaml := "roles:\n  triager:\n    write: [ticket]\n" + tc.fieldsBlock
+			t.Parallel()
+			yaml := "roles:\n  triager:\n    create: [ticket]\n    read: [ticket]\n" + tc.fieldsBlock
 			p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
 			if err != nil {
 				t.Fatalf("LoadPolicy: %v", err)
@@ -301,6 +314,7 @@ func TestLoadPolicy_AffordanceGrants_OptInIsKeyPresence(t *testing.T) {
 // Create/Remove *bool must distinguish explicit true, explicit
 // false, and unset across the YAML forms operators actually write.
 func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		createLine string
@@ -314,6 +328,7 @@ func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			yaml := "roles:\n  triager:\n    relations:\n      ticket:\n" +
 				"        - relation: implements\n" + tc.createLine
 			p, err := acl.LoadPolicy(writeTempPolicy(t, yaml))
@@ -330,6 +345,153 @@ func TestLoadPolicy_RelationGrant_CreateRemovePointers(t *testing.T) {
 			}
 			if !tc.wantNil && *create != tc.wantVal {
 				t.Errorf("*Create = %v, want %v", *create, tc.wantVal)
+			}
+		})
+	}
+}
+
+// RR-NIGK: a blank entry in inherit_roles_through is rejected at load.
+// A blank entry would otherwise reach StoreGraph with an empty
+// RelationQuery.Type meaning "all relations" — silently widening
+// containment to every relation type in the workspace.
+func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"empty string", "inherit_roles_through:\n  - \"\"\n"},
+		{"whitespace", "inherit_roles_through:\n  - \"  \"\n"},
+		{"empty among valid", "inherit_roles_through:\n  - belongs-to\n  - \"\"\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on blank inherit_roles_through entry; got nil")
+			}
+		})
+	}
+}
+
+// RR-NIGK / RR-ZB1V: a blank key in role_relations is rejected —
+// would otherwise gate every relation write on the delegate
+// permission, breaking writes the operator didn't mean to gate.
+// Covers both the empty-string and whitespace-only cases, mirroring
+// the inherit_roles_through test's coverage.
+func TestLoadPolicy_BlankRoleRelationsKey_Rejected(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"empty string", "role_relations:\n  \"\":\n    confers: contributor\n"},
+		{"whitespace", "role_relations:\n  \"  \":\n    confers: contributor\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTempPolicy(t, tc.yaml)
+			_, err := acl.LoadPolicy(path)
+			if err == nil {
+				t.Fatalf("LoadPolicy: expected error on blank role_relations key; got nil")
+			}
+		})
+	}
+}
+
+// TKT-4LQMWP (was TKT-VMD8 AC8 / RR-W2J6): a role granting UPDATE or DELETE on
+// a type it cannot read is rejected at load with a structured error naming the
+// role and type — you must read a type to modify or remove it. CREATE is EXEMPT:
+// a role may create a type it cannot read (it reads back only what it authored
+// via a role-conferring relation), so create-without-read loads fine.
+func TestLoadPolicy_WriteWithoutRead_Rejected(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+		// substrings the error must carry so the operator can find
+		// the offending role without reading source code.
+		wantInErr []string
+	}{
+		{
+			name:      "update without read rejected",
+			yaml:      "roles:\n  triager:\n    update: [ticket]\n",
+			wantErr:   true,
+			wantInErr: []string{"triager", "ticket", "read"},
+		},
+		{
+			name:      "delete without read rejected",
+			yaml:      "roles:\n  triager:\n    delete: [ticket]\n",
+			wantErr:   true,
+			wantInErr: []string{"triager", "ticket", "read"},
+		},
+		{
+			// CREATE is exempt — this is the TKT-4LQMWP submitter case.
+			name:    "create without read OK (create is exempt)",
+			yaml:    "roles:\n  submitter:\n    create: [ticket]\n",
+			wantErr: false,
+		},
+		{
+			name:      "wildcard update without wildcard read rejected",
+			yaml:      "roles:\n  admin:\n    update: [\"*\"]\n    read: [ticket]\n",
+			wantErr:   true,
+			wantInErr: []string{"admin", "read"},
+		},
+		{
+			name:    "update covered by exact read ok",
+			yaml:    "roles:\n  editor:\n    update: [ticket]\n    read: [ticket]\n",
+			wantErr: false,
+		},
+		{
+			name:    "update covered by wildcard read ok",
+			yaml:    "roles:\n  editor:\n    update: [ticket]\n    read: [\"*\"]\n",
+			wantErr: false,
+		},
+		{
+			name:    "full CUD covered by wildcard read ok",
+			yaml:    "roles:\n  admin:\n    create: [\"*\"]\n    update: [\"*\"]\n    delete: [\"*\"]\n    read: [\"*\"]\n",
+			wantErr: false,
+		},
+		{
+			name:    "read-only role ok",
+			yaml:    "roles:\n  viewer:\n    read: [ticket]\n",
+			wantErr: false,
+		},
+		{
+			name:    "empty role ok",
+			yaml:    "roles:\n  nobody: {}\n",
+			wantErr: false,
+		},
+		{
+			// Affordance grants restrict surfaces within a write the
+			// verb grant authorized; they never authorize by
+			// themselves, so they are intentionally outside the
+			// update/delete⊆read invariant (see Validate godoc).
+			name: "affordance-only role without read ok",
+			yaml: "roles:\n  shaper:\n    fields:\n      ticket:\n        - field: status\n" +
+				"    relations:\n      ticket:\n        - relation: implements\n          create: true\n",
+			wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := acl.LoadPolicy(writeTempPolicy(t, tc.yaml))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("LoadPolicy: expected write-without-read rejection; got nil")
+				}
+				for _, want := range tc.wantInErr {
+					if !contains(err.Error(), want) {
+						t.Errorf("error %q missing substring %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadPolicy: unexpected error: %v", err)
 			}
 		})
 	}

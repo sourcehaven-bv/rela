@@ -22,6 +22,7 @@
  * overlay, so the popup stays above EasyMDE's fullscreen layer (9999).
  */
 import { computed } from 'vue'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 import type {
   Phase,
   PrefixItem,
@@ -83,10 +84,7 @@ function isPrefixItem(item: RowItem): item is DisplayPrefix {
 }
 
 function entityLabel(e: DisplayEntity): string {
-  if (typeof e._title === 'string' && e._title !== '') return e._title
-  const t = e.properties?.title
-  if (typeof t === 'string' && t !== '') return t
-  return e.id
+  return entityDisplayTitle(e)
 }
 
 function hintText(phase: Phase, resolved: PrefixItem | null): string {

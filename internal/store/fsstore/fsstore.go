@@ -94,6 +94,18 @@ type attachMeta struct {
 }
 
 // FSStore is a filesystem-backed store implementation.
+//
+// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (84 methods).
+// Decompose; ratchet this number down as responsibilities move out.
+//
+// The exported surface (32) is mostly the mandated store.Store interface (~27
+// methods) plus the Formatter and watcher side-interfaces; consumers depend on
+// store.Store directly by design (see ./CLAUDE.md). Ratchet toward the
+// interface size as the non-interface public methods (FormatEntity/Relation,
+// Start/StopWatching) move to composed helpers.
+//
+//plimsoll:max-methods=84
+//plimsoll:max-exported-methods=32
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -261,28 +273,39 @@ func (s *FSStore) loadAttachmentsIndex() {
 			if !propEntry.IsDir() {
 				continue
 			}
-			prop := propEntry.Name()
-			fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
-			if err != nil {
-				continue
-			}
-			for _, fileEntry := range fileEntries {
-				if fileEntry.IsDir() {
-					continue
-				}
-				info, err := fileEntry.Info()
-				if err != nil {
-					continue
-				}
-				key := entityID + "/" + prop
-				s.attachments[key] = attachMeta{
-					entityID: entityID,
-					property: prop,
-					fileName: fileEntry.Name(),
-					size:     info.Size(),
-				}
-				break // one file per property
-			}
+			s.loadPropertyAttachments(entityID, propEntry.Name())
+		}
+	}
+}
+
+// loadPropertyAttachments indexes every attachment file under one
+// entity/property directory. A property may hold multiple files; each is
+// keyed by (entityID, property, fileName). Leftover temp files from an
+// interrupted write (attachTempPrefix) are skipped — that marker can't
+// collide with a real attachment name (which never starts with a dot).
+// Must be called with s.mu held.
+func (s *FSStore) loadPropertyAttachments(entityID, prop string) {
+	fileEntries, err := s.rooted.ReadDir(path.Join(s.attachKey, entityID, prop))
+	if err != nil {
+		return
+	}
+	for _, fileEntry := range fileEntries {
+		if fileEntry.IsDir() {
+			continue
+		}
+		name := fileEntry.Name()
+		if strings.HasPrefix(name, attachTempPrefix) {
+			continue
+		}
+		info, err := fileEntry.Info()
+		if err != nil {
+			continue
+		}
+		s.attachments[attachmentKey(entityID, prop, name)] = attachMeta{
+			entityID: entityID,
+			property: prop,
+			fileName: name,
+			size:     info.Size(),
 		}
 	}
 }
@@ -319,6 +342,15 @@ func (s *FSStore) notifyPut(e *entity.Entity) {
 func (s *FSStore) notifyDelete(id string) {
 	for _, o := range s.observers {
 		_ = o.EntityDelete(id)
+	}
+}
+
+// notifyRenamed fans out a rename to all observers. The rename code
+// path emits this INSTEAD OF the EntityDelete(oldID)+EntityPut(renamed)
+// pair — see store.EntityObserver.EntityRenamed.
+func (s *FSStore) notifyRenamed(oldID string, renamed *entity.Entity) {
+	for _, o := range s.observers {
+		_ = o.EntityRenamed(oldID, renamed)
 	}
 }
 

@@ -216,6 +216,12 @@ const (
 // Length is adaptive based on entityCount to minimize collision probability.
 // The function retries with progressively longer IDs if collisions occur.
 // The caps parameter controls suffix capitalization: "upper" or "lower".
+//
+// Precondition: prefix must satisfy metamodel.ValidateIDPrefix, which
+// metamodel.Parse enforces at load time (BUG-RHFHTH) — prefixes come
+// from id_prefix/id_prefixes, so every caller receives a validated
+// value. A pathological prefix (e.g. "--") would otherwise flow into
+// IDs that ValidateID rejects.
 func GenerateShortID(existingIDs []string, prefix string, entityCount int, caps string) string {
 	// Build a set for fast lookup
 	existing := make(map[string]struct{}, len(existingIDs))

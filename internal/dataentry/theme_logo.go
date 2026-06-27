@@ -1,12 +1,8 @@
 package dataentry
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"fmt"
-	"os"
 )
 
 // User-uploaded theme assets are stored under .rela/theme/. The bytes
@@ -89,88 +85,4 @@ func (s *AppState) LogoURL() *string {
 	}
 	u := logoURLForHash(s.UserLogoHash)
 	return &u
-}
-
-// loadUserLogo reads the persisted logo bytes and extension. Returns
-// (nil, "", nil) when no logo is set. A sidecar file present without
-// matching bytes (or vice versa) is treated as "no logo set" so a
-// half-written state during a crash doesn't trip up the boot path.
-//
-// Returns a non-nil error only when the kv layer reports an unexpected
-// failure (corrupt filesystem, permission denied) — callers should
-// surface those instead of silently masking them.
-//
-// Concurrency: NOT safe to call in parallel with saveUserLogo or
-// deleteUserLogo (the bytes/sidecar pair is read non-atomically). Boot
-// path calls this before publishing the App; future reload paths must
-// hold writeMu (i.e. invoke from inside mutateState).
-//
-//nolint:gocritic // unnamedResult: handler-style (bytes, ext, err) is clearer than naming for two callers
-func (a *App) loadUserLogo() ([]byte, string, error) {
-	if a.kv == nil {
-		return nil, "", nil
-	}
-	ctx := context.Background()
-
-	logoBytes, err := a.kv.Get(ctx, userLogoFile)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
-			return nil, "", nil
-		}
-		return nil, "", fmt.Errorf("read %s: %w", userLogoFile, err)
-	}
-
-	extBytes, err := a.kv.Get(ctx, userLogoExtFile)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
-			// Bytes present but sidecar missing — treat as not-set.
-			// The user can re-upload to recover; we don't proactively
-			// clean up so a future fix can recover the bytes.
-			return nil, "", nil
-		}
-		return nil, "", fmt.Errorf("read %s: %w", userLogoExtFile, err)
-	}
-
-	ext := string(extBytes)
-	if _, ok := allowedLogoExts[ext]; !ok {
-		// Sidecar contains an unknown extension — treat as not-set.
-		// Same reasoning as the missing-sidecar case.
-		return nil, "", nil
-	}
-
-	return logoBytes, ext, nil
-}
-
-// saveUserLogo persists the bytes and extension. Caller must hold
-// writeMu (i.e. invoke from inside mutateState) so the bytes/sidecar
-// pair cannot be observed half-written by a concurrent reload.
-func (a *App) saveUserLogo(ctx context.Context, bytes []byte, ext string) error {
-	if a.kv == nil {
-		return errors.New("kv not configured")
-	}
-	if _, ok := allowedLogoExts[ext]; !ok {
-		return fmt.Errorf("invalid logo extension %q", ext)
-	}
-	if err := a.kv.Put(ctx, userLogoFile, bytes); err != nil {
-		return fmt.Errorf("write %s: %w", userLogoFile, err)
-	}
-	if err := a.kv.Put(ctx, userLogoExtFile, []byte(ext)); err != nil {
-		return fmt.Errorf("write %s: %w", userLogoExtFile, err)
-	}
-	return nil
-}
-
-// deleteUserLogo removes both the bytes file and the sidecar. Idempotent;
-// missing files are not errors.
-func (a *App) deleteUserLogo(ctx context.Context) error {
-	if a.kv == nil {
-		return nil
-	}
-	if err := a.kv.Delete(ctx, userLogoFile); err != nil {
-		return fmt.Errorf("delete %s: %w", userLogoFile, err)
-	}
-	if err := a.kv.Delete(ctx, userLogoExtFile); err != nil {
-		return fmt.Errorf("delete %s: %w", userLogoExtFile, err)
-	}
-	return nil
 }

@@ -75,3 +75,16 @@ trade-offs (`/research` candidate; the approach isn't obvious).
 - Interaction with the in-DB search backend (does it need its own catch-up, or
 does it query live so it's always current?).
 - Connection budget: a dedicated long-lived LISTEN connection per process.
+
+## Post-merge follow-up (#909)
+
+After #898 merged, the pgstore listener tests were hardened so each proves a
+single delivery path in isolation rather than relying on a long timeout to mask
+the other:
+
+- A `notifyDisabled` test hook in the producer suppresses the live `pg_notify`,
+  so the catch-up test recovers a real write through the seq-watermark path
+  (was a hand-inserted row).
+- A non-positive `catchUpInterval` now disables the safety-net poll outright
+  (the listener blocks on the live notification alone), so the live-feed test
+  proves the notification path with no catch-up fallback.

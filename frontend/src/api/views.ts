@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity } from '@/types'
+import type { Entity, FieldAffordance } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -14,7 +14,20 @@ export interface ViewSectionField {
   inaccessible?: boolean
 }
 
-// Entity data for view sections
+// Entity data for view sections.
+//
+// `_props` and `_fields` (TKT-IHC7D) ship typed property values and a
+// per-cell writability verdict for inline-edit hosts on cards/list
+// view sections. Both are hidden-property-stripped; the consumer can
+// assume:
+//
+//  - `keys(_props) ∩ hidden(e) == ∅`
+//  - `keys(_fields) ∩ hidden(e) == ∅`
+//  - `_fields` may have keys absent from `_props` when the property
+//    has no stored value but a non-default verdict
+//
+// Both fields are absent on view sections that don't compute them
+// (entry section, table rows).
 export interface ViewEntity {
   id: string
   title: string
@@ -23,6 +36,8 @@ export interface ViewEntity {
   fields?: ViewSectionField[]
   content?: string
   hasContent: boolean
+  _props?: Record<string, unknown>
+  _fields?: Record<string, FieldAffordance>
 }
 
 // Table cell data

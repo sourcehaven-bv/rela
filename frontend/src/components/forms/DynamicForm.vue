@@ -5,6 +5,8 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { isFieldWritable, optionVerdictsFor as optionVerdictsForVerdict } from '@/utils/affordances'
+import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import type {
@@ -14,8 +16,9 @@ import type {
   ModernRelationsField,
   FieldAffordance,
   RelationAffordance,
+  AttachmentInfo,
 } from '@/types'
-import { getTemplates, createRelation, dryRunCreateEntity } from '@/api'
+import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
@@ -66,6 +69,9 @@ const fieldAffordances = ref<Record<string, FieldAffordance>>({})
 // Same for relation affordances. Drives RelationCards' +Add / x button
 // visibility and meta-field disable.
 const relationAffordances = ref<Record<string, RelationAffordance>>({})
+// Per-`file`-property attachment metadata from the loaded entity, passed
+// to the file widget so it can show the current file + drive upload/remove.
+const attachments = ref<Record<string, AttachmentInfo[]>>({})
 // TKT-3I5U: in create mode the form models a staged `++new++` entity
 // and re-derives affordances from the server's dry-run (no persist) as
 // the user types. `stagedVisibleProps` holds the property keys the
@@ -183,10 +189,9 @@ const fields = computed((): FormFieldOrRelation[] => {
 // is the strongest signal but the config can still set its own
 // readonly for static cases (e.g. ID display).
 function isFieldReadonly(field: FormFieldOrRelation): boolean {
-  if (field.readonly) return true
-  if (!field.property) return false
+  if (!field.property) return field.readonly === true
   const verdict = fieldAffordances.value[field.property]
-  return verdict?.writable === false
+  return !isFieldWritable(verdict, field.readonly)
 }
 
 // TKT-G7N5 option-verdict helper: pulls per-option allowed-map from
@@ -195,7 +200,7 @@ function isFieldReadonly(field: FormFieldOrRelation): boolean {
 // appear in the map.
 function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> | undefined {
   if (!field.property) return undefined
-  return fieldAffordances.value[field.property]?.options
+  return optionVerdictsForVerdict(fieldAffordances.value[field.property])
 }
 
 // TKT-3I5U: build the create-commit property map, sending ONLY visible
@@ -242,13 +247,14 @@ function getTypeFromId(entityId: string): string | undefined {
 }
 
 // Methods
-async function loadEntity() {
+async function loadEntity(force = false) {
   if (!props.entityId || !formConfig.value) return
 
   try {
     const entity = await entitiesStore.fetchEntity(
       formConfig.value.entity,
-      props.entityId
+      props.entityId,
+      force
     )
     // Route-guard: if the server says this entity is not updatable,
     // render an inline "not editable" message instead of the form.
@@ -264,6 +270,7 @@ async function loadEntity() {
     // can treat absence as "default everything".
     fieldAffordances.value = entity._fields ?? {}
     relationAffordances.value = entity._relations ?? {}
+    attachments.value = entity._attachments ?? {}
     originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
@@ -272,6 +279,14 @@ async function loadEntity() {
     uiStore.error('Failed to load entity')
     console.error(err)
   }
+}
+
+// onAttachmentChanged fires after a file widget uploads or removes an
+// attachment (already persisted server-side via the attachment endpoint).
+// Reload the entity so the stamped property value and _attachments
+// refresh. Cache-bust the entity first so the SSE-less refetch is fresh.
+async function onAttachmentChanged() {
+  await loadEntity(true)
 }
 
 // Read return_to from the query eagerly — needed in both create and
@@ -676,19 +691,16 @@ async function handleSubmit() {
     // not a user-facing failure; the user clicked away before the
     // save completed, which is their choice.
     if (isCancelledFetch(err)) return
-    if (err && typeof err === 'object' && 'errors' in err && Array.isArray((err as { errors: unknown }).errors)) {
-      const problemErrors = (err as { errors: Array<{ field?: string; message?: string; detail?: string }> }).errors
-      for (const e of problemErrors) {
+    const validationErrors = err instanceof ApiError ? err.validationErrors : []
+    if (validationErrors.length > 0) {
+      for (const e of validationErrors) {
         if (e.field) {
           errors.value[e.field] = e.message || e.detail || 'Invalid value'
         }
       }
       uiStore.error('Please fix the validation errors')
-    } else if (err && typeof err === 'object' && ('detail' in err || 'title' in err)) {
-      const problem = err as { detail?: string; title?: string }
-      uiStore.error(problem.detail || problem.title || 'Failed to save entity')
     } else {
-      uiStore.error('Failed to save entity')
+      uiStore.error(getErrorMessage(err, 'Failed to save entity'))
     }
     console.error(err)
   } finally {
@@ -725,12 +737,6 @@ function updateField(property: string, value: unknown) {
   }
 }
 
-function isClearedForType(value: unknown, def: PropertyDef | undefined): boolean {
-  if (def?.type === 'boolean') return false
-  if (Array.isArray(value)) return value.length === 0
-  return value === '' || value === null || value === undefined
-}
-
 function updateRelation(relation: string, value: string[]) {
   relations.value[relation] = value
   checkDirty()
@@ -755,6 +761,9 @@ const autoSave = computed(() => {
 })
 // Lazy holder so we construct the composable once per (entityId, formId).
 const _autoSaveInstance = ref<ReturnType<typeof useAutoSave> | null>(null)
+// Dirty-registry cleanup, assigned in onMounted (after awaits) and run
+// from the top-level onBeforeUnmount.
+let unregisterDirtyForm: (() => void) | null = null
 
 function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // Mirror handleSubmit's body assembly. Two sources of relation
@@ -932,11 +941,13 @@ onMounted(async () => {
     })
     // Register with the dirty registry so SSE-driven re-fetches in
     // other forms on the same entity preserve this form's dirty state.
-    const unregister = registerForm(
+    // The cleanup runs from the top-level onBeforeUnmount below —
+    // registering a lifecycle hook after an `await` has no active
+    // instance, so Vue would silently drop it and leak the registration.
+    unregisterDirtyForm = registerForm(
       props.entityId,
       (property) => _autoSaveInstance.value?.isDirty(property) ?? false,
     )
-    onBeforeUnmount(unregister)
   }
 
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
@@ -961,6 +972,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
+  unregisterDirtyForm?.()
+  unregisterDirtyForm = null
   // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
   // the component as gone so a response that has already arrived (but
   // is awaiting the microtask queue) doesn't write to dead refs
@@ -1096,7 +1109,12 @@ onBeforeRouteLeave(async () => {
                   :error="errors[field.property]"
                   :readonly="isFieldReadonly(field)"
                   :option-verdicts="optionVerdictsFor(field)"
+                  :entity-type="formConfig.entity"
+                  :entity-id="entityId"
+                  :attachments="attachments[field.property]"
+                  :max="getPropertyDef(field.property)?.max"
                   @update="updateField(field.property!, $event)"
+                  @attachment-changed="onAttachmentChanged"
                 />
                 <RelationCards
                   v-else-if="field.relation && field.widget === 'cards' && entityId"
@@ -1134,7 +1152,12 @@ onBeforeRouteLeave(async () => {
               :error="errors[field.property]"
               :readonly="isFieldReadonly(field)"
               :option-verdicts="optionVerdictsFor(field)"
+              :entity-type="formConfig.entity"
+              :entity-id="entityId"
+              :attachments="attachments[field.property]"
+              :max="getPropertyDef(field.property)?.max"
               @update="updateField(field.property!, $event)"
+              @attachment-changed="onAttachmentChanged"
             />
             <RelationCards
               v-else-if="field.relation && field.widget === 'cards' && entityId"

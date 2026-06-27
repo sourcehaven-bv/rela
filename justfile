@@ -2,7 +2,9 @@
 
 # Variables
 build_dir := "bin"
-golangci_lint_version := "v1.62.2"
+# Keep these in sync with .github/workflows/ci.yml (lint and arch-lint jobs).
+golangci_lint_version := "v2.11.4"
+go_arch_lint_version := "v1.15.0"
 go_packages := "$(go list ./... | grep -v /frontend/node_modules/)"
 
 # Default recipe
@@ -19,6 +21,13 @@ build-cli:
 # Build the data entry server (includes Vue frontend)
 build-server: build-frontend
     @echo "Building rela-server..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
+
+# Build rela-server embedding the E2E (development-mode) frontend, so
+# DEV-guarded test hooks are available to the E2E suite (issue #890).
+build-server-e2e: build-frontend-e2e
+    @echo "Building rela-server (E2E frontend)..."
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server ./cmd/rela-server
 
@@ -68,15 +77,17 @@ clean:
 
 # ── Test ──
 
-# Run tests with race detection
+# Run tests with race detection. -shuffle=on randomizes test order to
+# surface inter-test ordering dependencies; on failure the seed is
+# printed (reproduce with -shuffle=<seed>).
 test:
     @echo "Running tests..."
-    go test -race -cover {{go_packages}}
+    go test -race -cover -shuffle=on {{go_packages}}
 
 # Run tests with verbose output
 test-verbose:
     @echo "Running tests (verbose)..."
-    go test -race -cover -v {{go_packages}}
+    go test -race -cover -shuffle=on -v {{go_packages}}
 
 # Run the postgres-tagged tests against a real PostgreSQL.
 # Requires RELA_TEST_DATABASE_URL, e.g.:
@@ -104,24 +115,24 @@ e2e-install:
     cd e2e && npx playwright install chromium
 
 # Run E2E tests (tests data entry UI via rela-server)
-e2e: build-server
+e2e: build-server-e2e
     @echo "Running E2E tests..."
     cd e2e && npm test
 
 # Run E2E tests in headed mode (visible browser)
-e2e-headed: build-server
+e2e-headed: build-server-e2e
     @echo "Running E2E tests (headed)..."
     cd e2e && npm run test:headed
 
 # Run E2E tests with Playwright UI
-e2e-ui: build-server
+e2e-ui: build-server-e2e
     @echo "Running E2E tests with Playwright UI..."
     cd e2e && npm run test:ui
 
 # Run tests with coverage profile
 test-coverage:
     @echo "Running tests with coverage..."
-    go test -race -coverprofile=coverage.out -covermode=atomic {{go_packages}}
+    go test -race -shuffle=on -coverprofile=coverage.out -covermode=atomic {{go_packages}}
 
 # Generate and display coverage report
 coverage: test-coverage
@@ -146,12 +157,28 @@ fuzz:
     go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=30s ./internal/entity/
     go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=30s ./internal/entity/
 
+# Run the hot-path benchmarks (dry-run validation, affordance verdicts,
+# search, write-path validation, plus the pre-existing markdown-parse
+# benchmark in internal/lua). The pgstore graphquery benchmark is
+# DB-gated and postgres-tagged — run it via:
+#   go test -tags postgres -run='^$' -bench=. ./internal/store/pgstore/
+bench:
+    @echo "Running benchmarks..."
+    go test -run='^$$' -bench=. -benchmem ./internal/entitymanager/ ./internal/affordances/ ./internal/search/ ./internal/validation/ ./internal/lua/
+
 # Run quick fuzz tests (5 seconds each)
 fuzz-short:
     @echo "Running quick fuzz tests..."
     go test -run='^$$' -fuzz='^FuzzParseDocument$$' -fuzztime=5s ./internal/markdown/
     go test -run='^$$' -fuzz='^FuzzParseEntityID$$' -fuzztime=5s ./internal/entity/
     go test -run='^$$' -fuzz='^FuzzValidateID$$' -fuzztime=5s ./internal/entity/
+
+# Run EVERY fuzz target briefly (discovery-based; the weekly CI sweep
+# runs this with the default budget). KNOWN RED until BUG-RHFHTH is
+# fixed: FuzzGenerateShortID reliably finds the GenerateShortID
+# prefix-validation bug.
+fuzz-all fuzztime="25s":
+    FUZZTIME='{{fuzztime}}' scripts/fuzz-all.sh
 
 # ── Lint & Format ──
 
@@ -169,6 +196,15 @@ govulncheck:
 arch-lint:
     @echo "Checking architecture boundaries..."
     go-arch-lint check
+
+# Check type load lines (god-object linter). Existing offenders are
+# grandfathered with //plimsoll:max-* directives at the declaration site;
+# ratchet those down over time (TKT-N0IKN9). Keep plimsoll_version in sync
+# with the install pin in .github/workflows/ci.yml.
+plimsoll_version := "v0.2.0"
+plimsoll:
+    @echo "Checking type load lines (god-object lint)..."
+    go run github.com/sourcehaven-bv/plimsoll/cmd/plimsoll@{{plimsoll_version}} ./...
 
 # Run linter with auto-fix
 lint-fix:
@@ -204,7 +240,7 @@ vet:
 # ── CI & Checks ──
 
 # Run all checks (lint + arch-lint + lint-md + test)
-check: lint arch-lint lint-md test
+check: lint arch-lint plimsoll lint-md test
 
 # Generate docs from rela entities via mdcomp
 docs: build-cli
@@ -227,14 +263,14 @@ ci: check coverage-check build docs-check
 # Install development tools
 install-tools:
     @echo "Installing development tools..."
-    @echo "Installing golangci-lint {{golangci_lint_version}}..."
-    @curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin {{golangci_lint_version}}
+    @echo "Installing golangci-lint {{golangci_lint_version}} (same install path as CI)..."
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{golangci_lint_version}}
     @echo "Installing goimports..."
     go install golang.org/x/tools/cmd/goimports@latest
     @echo "Installing go-test-coverage..."
     go install github.com/vladopajic/go-test-coverage/v2@latest
-    @echo "Installing go-arch-lint..."
-    go install github.com/fe3dback/go-arch-lint@latest
+    @echo "Installing go-arch-lint {{go_arch_lint_version}}..."
+    go install github.com/fe3dback/go-arch-lint@{{go_arch_lint_version}}
     @echo "Done!"
 
 # Install git hooks
@@ -331,6 +367,13 @@ install-frontend:
 # Build Vue frontend for production
 build-frontend: install-frontend
     cd frontend && npm run build
+
+# Build Vue frontend in development mode for E2E. This bundle has
+# import.meta.env.DEV === true, so DEV-guarded test hooks (e.g. the
+# backtick-autocomplete delay knob, issue #890) compile in. Production
+# builds use `build-frontend`, which strips them.
+build-frontend-e2e: install-frontend
+    cd frontend && npm run build:e2e
 
 # Type-check Vue frontend
 typecheck-frontend:

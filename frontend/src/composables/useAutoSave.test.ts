@@ -9,6 +9,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { ref } from 'vue'
 import { useEntitiesStore } from '@/stores/entities'
 import { useAutoSave, type AutoSaveOptions, type AutoSaveWarning } from './useAutoSave'
+import { ApiError } from '@/api/errors'
 import type { Entity } from '@/types'
 
 interface Harness {
@@ -225,7 +226,9 @@ describe('useAutoSave', () => {
 
   it('422 on a property surfaces fieldError; other fields keep working', async () => {
     const h = makeHarness({ title: 'x' })
-    h.updateMock.mockRejectedValueOnce({ detail: 'invalid value', status: 422 })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('invalid value', { kind: 'http', status: 422, original: null })
+    )
     h.autoSave.scheduleFieldSave('title', 'bad')
     await vi.advanceTimersByTimeAsync(150)
     await vi.runOnlyPendingTimersAsync()
@@ -274,5 +277,236 @@ describe('useAutoSave', () => {
     expect(h.applyServerProperty).not.toHaveBeenCalledWith('title', 'server-changed')
     // Non-dirty new field applied.
     expect(h.applyServerProperty).toHaveBeenCalledWith('status', 'new')
+  })
+
+  // ---- TKT-IHC7A ----------------------------------------------------------
+
+  it('IHC7A AC1: fieldDebounceMs and contentDebounceMs fire independently', async () => {
+    const h = makeHarness(
+      { title: 'orig' },
+      { fieldDebounceMs: 800, contentDebounceMs: 100 },
+    )
+    h.autoSave.scheduleFieldSave('title', 'field-edit')
+    h.autoSave.scheduleContentSave('content-edit')
+    // Content fires first (100ms), field still pending.
+    await vi.advanceTimersByTimeAsync(150)
+    expect(h.updateMock).toHaveBeenCalledTimes(1)
+    expect(h.updateMock.mock.calls[0][2]).toEqual({ content: 'content-edit' })
+    // Field fires later (800ms total).
+    await vi.advanceTimersByTimeAsync(800)
+    expect(h.updateMock).toHaveBeenCalledTimes(2)
+    expect(h.updateMock.mock.calls[1][2]).toEqual({ properties: { title: 'field-edit' } })
+  })
+
+  it('IHC7A AC1: per-channel debounce overrides legacy debounceMs', async () => {
+    const h = makeHarness(
+      { title: 'orig' },
+      { debounceMs: 800, contentDebounceMs: 100 },
+    )
+    h.autoSave.scheduleFieldSave('title', 'A')
+    h.autoSave.scheduleContentSave('B')
+    // Only content fires at 150ms; field still bound to legacy 800ms.
+    await vi.advanceTimersByTimeAsync(150)
+    expect(h.updateMock).toHaveBeenCalledTimes(1)
+    expect(h.updateMock.mock.calls[0][2]).toEqual({ content: 'B' })
+  })
+
+  it('IHC7A AC2: initialServerSnapshot seeds the no-op baseline', async () => {
+    // Override the makeHarness default snapshot by passing
+    // initialServerSnapshot AND skipping the post-construct recordSnapshot.
+    const formData = ref<Record<string, unknown>>({ title: 'seeded' })
+    const contentRef = ref('')
+    const apply = vi.fn()
+    const seed = {
+      id: 'TKT-001', type: 'ticket',
+      properties: { title: 'seeded' },
+    } satisfies Partial<Entity>
+    const opts: AutoSaveOptions = {
+      getEntityType: () => 'ticket',
+      getEntityId: () => 'TKT-001',
+      debounceMs: 100,
+      dirtyWindowMs: 200,
+      formData,
+      contentRef,
+      inverseToCanonical: new Map(),
+      buildRelationsBody: () => null,
+      applyServerProperty: apply,
+      applyServerContent: vi.fn(),
+      onError: vi.fn(),
+      initialServerSnapshot: seed as Entity,
+    }
+    const store = useEntitiesStore()
+    const updateMock = vi.spyOn(store, 'update').mockResolvedValue({
+      id: 'TKT-001', type: 'ticket', properties: {},
+    } as Entity)
+    const auto = useAutoSave(opts)
+    // Same value as the seed — should be suppressed as a no-op.
+    auto.scheduleFieldSave('title', 'seeded')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(updateMock).not.toHaveBeenCalled()
+  })
+
+  it('IHC7A AC2: later recordServerSnapshot fully replaces the initial seed', async () => {
+    const formData = ref<Record<string, unknown>>({ title: 'seeded' })
+    const seed = {
+      id: 'TKT-001', type: 'ticket',
+      properties: { title: 'seeded', stale: 'gone-after-replace' },
+    } satisfies Partial<Entity>
+    const opts: AutoSaveOptions = {
+      getEntityType: () => 'ticket',
+      getEntityId: () => 'TKT-001',
+      debounceMs: 100,
+      formData,
+      contentRef: ref(''),
+      inverseToCanonical: new Map(),
+      buildRelationsBody: () => null,
+      applyServerProperty: vi.fn(),
+      applyServerContent: vi.fn(),
+      onError: vi.fn(),
+      initialServerSnapshot: seed as Entity,
+    }
+    const store = useEntitiesStore()
+    const updateMock = vi.spyOn(store, 'update').mockResolvedValue({
+      id: 'TKT-001', type: 'ticket', properties: {},
+    } as Entity)
+    const auto = useAutoSave(opts)
+    // Replace the seed entirely — `stale` is no longer the baseline.
+    auto.recordServerSnapshot({
+      id: 'TKT-001', type: 'ticket',
+      properties: { title: 'fresh' },
+    } as Entity)
+    // Writing 'gone-after-replace' to `stale` is NOT a no-op now that
+    // the key was cleared from lastSeenServer.
+    auto.scheduleFieldSave('stale', 'gone-after-replace')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(updateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('IHC7A AC3: disabled channels throw on schedule*', () => {
+    const formData = ref<Record<string, unknown>>({})
+    const opts: AutoSaveOptions = {
+      getEntityType: () => 'ticket',
+      getEntityId: () => 'TKT-001',
+      debounceMs: 100,
+      formData,
+      contentRef: ref(''),
+      inverseToCanonical: new Map(),
+      buildRelationsBody: () => null,
+      applyServerProperty: vi.fn(),
+      applyServerContent: vi.fn(),
+      onError: vi.fn(),
+      disablePropertyChannel: true,
+      disableRelationsChannel: true,
+    }
+    const auto = useAutoSave(opts)
+    expect(() => auto.scheduleFieldSave('title', 'x')).toThrow(/property channel is disabled/)
+    expect(() => auto.scheduleUnset('title')).toThrow(/property channel is disabled/)
+    expect(() => auto.scheduleRelationsChange()).toThrow(/relations channel is disabled/)
+    // Content channel is enabled here — must not throw.
+    expect(() => auto.scheduleContentSave('hi')).not.toThrow()
+  })
+
+  it('IHC7A AC3: mergeServerResponse skips apply* on disabled channels but updates baseline', async () => {
+    const apply = vi.fn()
+    const applyContent = vi.fn()
+    const opts: AutoSaveOptions = {
+      getEntityType: () => 'ticket',
+      getEntityId: () => 'TKT-001',
+      debounceMs: 100,
+      formData: ref<Record<string, unknown>>({}),
+      contentRef: ref(''),
+      inverseToCanonical: new Map(),
+      buildRelationsBody: () => null,
+      applyServerProperty: apply,
+      applyServerContent: applyContent,
+      onError: vi.fn(),
+      disablePropertyChannel: true,
+    }
+    const store = useEntitiesStore()
+    vi.spyOn(store, 'update').mockResolvedValue({
+      id: 'TKT-001', type: 'ticket', properties: {},
+    } as Entity)
+    const auto = useAutoSave(opts)
+    auto.mergeServerResponse({
+      id: 'TKT-001', type: 'ticket',
+      properties: { title: 'server-set' },
+      content: 'server-content',
+    } as Entity)
+    // Property apply must not have fired.
+    expect(apply).not.toHaveBeenCalled()
+    // Content apply must have fired (channel enabled).
+    expect(applyContent).toHaveBeenCalledWith('server-content')
+  })
+
+  it('IHC7A AC3: commitImmediately is a no-op on disabled channels', async () => {
+    const opts: AutoSaveOptions = {
+      getEntityType: () => 'ticket',
+      getEntityId: () => 'TKT-001',
+      debounceMs: 100,
+      formData: ref<Record<string, unknown>>({}),
+      contentRef: ref(''),
+      inverseToCanonical: new Map(),
+      buildRelationsBody: () => null,
+      applyServerProperty: vi.fn(),
+      applyServerContent: vi.fn(),
+      onError: vi.fn(),
+      disablePropertyChannel: true,
+      disableContentChannel: true,
+      disableRelationsChannel: true,
+    }
+    const store = useEntitiesStore()
+    const updateMock = vi.spyOn(store, 'update').mockResolvedValue({
+      id: 'TKT-001', type: 'ticket', properties: {},
+    } as Entity)
+    const auto = useAutoSave(opts)
+    const result = await auto.commitImmediately(1000)
+    expect(result.settled).toBe(true)
+    expect(updateMock).not.toHaveBeenCalled()
+  })
+
+  // ---- TKT-IHC7B: onError structured info ---------------------------------
+
+  it('IHC7B: onError receives { status, property, channel } on property-channel failure', async () => {
+    const h = makeHarness({ title: 'x' })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('forbidden', { kind: 'http', status: 403, original: null }),
+    )
+    h.autoSave.scheduleFieldSave('title', 'bad')
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.runOnlyPendingTimersAsync()
+    expect(h.onError).toHaveBeenCalledWith('forbidden', {
+      status: 403,
+      property: 'title',
+      channel: 'property',
+    })
+  })
+
+  it('IHC7B: onError carries channel:"content" on content-channel failure', async () => {
+    const h = makeHarness({})
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('too large', { kind: 'http', status: 413, original: null }),
+    )
+    h.autoSave.scheduleContentSave('big body')
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.runOnlyPendingTimersAsync()
+    expect(h.onError).toHaveBeenCalledWith('too large', {
+      status: 413,
+      channel: 'content',
+    })
+  })
+
+  it('IHC7B: onError carries channel:"relations" on relations-channel failure', async () => {
+    const h = makeHarness({})
+    h.buildRelationsBody.mockReturnValueOnce({ blocks: { data: [{ id: 'TKT-002', type: 'ticket' }] } })
+    h.updateMock.mockRejectedValueOnce(
+      new ApiError('cycle', { kind: 'http', status: 409, original: null }),
+    )
+    h.autoSave.scheduleRelationsChange()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.runOnlyPendingTimersAsync()
+    expect(h.onError).toHaveBeenCalledWith('cycle', {
+      status: 409,
+      channel: 'relations',
+    })
   })
 })

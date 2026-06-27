@@ -20,6 +20,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // scriptsDir is the directory where script files must be located.
@@ -177,7 +178,10 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 	newEntity, oldEntity *entity.Entity) error {
 	var output bytes.Buffer
 	runtime, err := NewWriterRuntime(deps, scriptPath, &output,
-		lua.WithCache(e.cache), lua.WithContext(ctx))
+		lua.WithCache(e.cache), lua.WithContext(ctx),
+		// Resolve identity here (the caller side) and pass it as a value, so
+		// the lua package never reads the principal from ctx (TKT-5U6NRR).
+		lua.WithPrincipal(principal.From(ctx)))
 	if err != nil {
 		return err
 	}

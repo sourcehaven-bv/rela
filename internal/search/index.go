@@ -28,6 +28,12 @@ func New(reader store.EntityReader, backend Backend) *Service {
 }
 
 func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
+	if err := ValidateFilters(q.Filters); err != nil {
+		return func(yield func(Hit, error) bool) {
+			yield(Hit{}, err)
+		}
+	}
+
 	if q.Text == "" {
 		return s.listAll(ctx, q)
 	}

@@ -4,6 +4,7 @@ bin/
 /rela-server
 /rela-desktop
 coverage.out
+fuzz-failures.txt
 coverage_test.out
 coverage.txt
 coverage.html
@@ -50,3 +51,7 @@ frontend/playwright-report/
 internal/dataentry/static/v2/
 prototypes/data-entry/remote.git/
 .claude/
+
+# Editor element build artifacts (TKT-5F9V56); rebuilt by npm run build
+internal/dataentry/app_editor_dist/*
+!internal/dataentry/app_editor_dist/.gitkeep

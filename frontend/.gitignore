@@ -1,0 +1,6 @@
+# vue-tsc -b output for vite.config.ts (tsconfig.node.json) — never commit.
+# Emit is redirected to node_modules/.cache/tsc-node; these entries are the
+# backstop in case the outDir is ever removed. (*.tsbuildinfo is ignored
+# repo-wide by the root .gitignore.)
+/vite.config.js
+/vite.config.d.ts

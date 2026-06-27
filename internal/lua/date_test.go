@@ -17,6 +17,7 @@ func newDateTestRuntime(t *testing.T) (*Runtime, *strings.Builder) {
 }
 
 func TestDateAdd(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		date   string
@@ -36,6 +37,7 @@ func TestDateAdd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -51,6 +53,7 @@ func TestDateAdd(t *testing.T) {
 }
 
 func TestDateAddError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		script string
@@ -63,6 +66,7 @@ func TestDateAddError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, _ := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -73,6 +77,7 @@ func TestDateAddError(t *testing.T) {
 }
 
 func TestDateWeekday(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		date string
 		want string
@@ -88,6 +93,7 @@ func TestDateWeekday(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -103,6 +109,7 @@ func TestDateWeekday(t *testing.T) {
 }
 
 func TestDateNextWeekday(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		date string
@@ -118,6 +125,7 @@ func TestDateNextWeekday(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -133,6 +141,7 @@ func TestDateNextWeekday(t *testing.T) {
 }
 
 func TestDateNextWeekdayError(t *testing.T) {
+	t.Parallel()
 	rt, _ := newDateTestRuntime(t)
 	defer rt.Close()
 
@@ -141,6 +150,7 @@ func TestDateNextWeekdayError(t *testing.T) {
 }
 
 func TestRruleNext(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		rrule string
@@ -187,6 +197,7 @@ func TestRruleNext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, buf := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -202,6 +213,7 @@ func TestRruleNext(t *testing.T) {
 }
 
 func TestRruleNextDefaultsToToday(t *testing.T) {
+	t.Parallel()
 	rt, buf := newDateTestRuntime(t)
 	defer rt.Close()
 
@@ -218,6 +230,7 @@ func TestRruleNextDefaultsToToday(t *testing.T) {
 }
 
 func TestRruleNextExhausted(t *testing.T) {
+	t.Parallel()
 	rt, buf := newDateTestRuntime(t)
 	defer rt.Close()
 
@@ -231,6 +244,7 @@ func TestRruleNextExhausted(t *testing.T) {
 }
 
 func TestRruleNextError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		script string
@@ -242,6 +256,7 @@ func TestRruleNextError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			rt, _ := newDateTestRuntime(t)
 			defer rt.Close()
 
@@ -252,6 +267,7 @@ func TestRruleNextError(t *testing.T) {
 }
 
 func TestParseOffset(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		years  int
@@ -269,6 +285,7 @@ func TestParseOffset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			y, m, d, err := parseOffset(tt.input)
 			require.NoError(t, err)
 			assert.Equal(t, tt.years, y)
@@ -279,9 +296,11 @@ func TestParseOffset(t *testing.T) {
 }
 
 func TestParseOffsetError(t *testing.T) {
+	t.Parallel()
 	tests := []string{"", "x", "abc", "3z", "d"}
 	for _, input := range tests {
 		t.Run(input, func(t *testing.T) {
+			t.Parallel()
 			_, _, _, err := parseOffset(input)
 			require.Error(t, err)
 		})

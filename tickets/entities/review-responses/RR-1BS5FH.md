@@ -1,0 +1,9 @@
+---
+id: RR-1BS5FH
+type: review-response
+title: 'Minor: storetest bad-name gaps, validateFileValue comment, dead branch, write-path error swallow, deleteHref'
+finding: '(#3) storetest RejectsBadFileName table omits backslash and NUL though ValidateFileName rejects them — add ''a\b.txt'' and ''a\x00b''. (#4) validateFileValue comment says max==1 must be a single string but the code also accepts a 1-element list — fix the comment. (#5) resolveUploadFileName''s name=='''' branch is unreachable (NormalizeFileName returns ''file'', never '''') — remove or justify (CLI omits it). (#7) attachmentFileNames swallows a real list error as empty slice on the WRITE path, so the capacity check can pass when full / replace-delete does nothing — prefer failing the op on the decision path. (#6) frontend encodeURIComponent vs backend url.PathEscape: emit a server deleteHref and have the client use it verbatim rather than reconstruct from att.id. Nit: comment SuffixOnCollision''s caller-cap termination guarantee.'
+severity: minor
+resolution: '(#3) storetest RejectsBadFileName now includes ''a\\b.txt'' and ''a\x00b''; added store-package unit tests TestValidateFileName/TestNormalizeFileName/TestSuffixOnCollision (store coverage 19.6%→95.7%). (#4) validateFileValue comment corrected to say a 1-element list is tolerated even at max==1. (#5) the dead name=='''' branch is gone with the handler-helper removal; the shared resolveAttachName documents that NormalizeFileName never returns ''''. (#7) attachmentFileNames now returns an error and the write path fails the op on a real list error (only ErrNotFound degrades to empty). (#6) backend keeps url.PathEscape for the href; the frontend now DELETEs the server-provided per-file href verbatim (deleteAttachment(href)) instead of reconstructing with encodeURIComponent — single escaper, verified live. Nit: added the SuffixOnCollision caller-cap termination comment.'
+status: addressed
+---

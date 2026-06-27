@@ -25,6 +25,7 @@
 import { ref, computed, type Ref } from 'vue'
 import type { Entity } from '@/types'
 import type { EntityPatch } from '@/api/entities'
+import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
 
 // Sentinel for "unset this property" pending entries. Distinct from
@@ -63,9 +64,39 @@ interface PendingEntry {
 export interface AutoSaveOptions {
   getEntityType: () => string
   getEntityId: () => string
+  // Legacy single debounce. When set, applies to whichever channels
+  // didn't get an explicit per-channel debounce. Defaults to 800.
   debounceMs?: number
+  // Per-channel debounce overrides. When omitted, fall back to
+  // debounceMs. EntityDetail's content-only instance uses 100ms here
+  // so checkbox toggles feel instant; DynamicForm leaves both unset
+  // and inherits the legacy 800ms.
+  fieldDebounceMs?: number
+  contentDebounceMs?: number
   dirtyWindowMs?: number
+  // Seed the lastSeenServer baseline up-front so the first edit can
+  // suppress no-op writes without waiting for a server round-trip.
+  // Equivalent to calling recordServerSnapshot(entity) immediately
+  // after construction. Any later recordServerSnapshot call fully
+  // replaces this seed.
+  initialServerSnapshot?: Entity
+  // Channel disable flags. When a channel is disabled:
+  //   * scheduleFieldSave/scheduleUnset/scheduleContentSave/scheduleRelationsChange
+  //     throws an AutoSaveChannelDisabledError on call.
+  //   * mergeServerResponse still updates lastSeenServer / lastSeenContent
+  //     for the disabled channel (so a future re-enable wouldn't lose
+  //     the baseline) but skips the apply* callback invocation.
+  //   * commitImmediately needs no special guard — disabled channels
+  //     never accrue pending state.
+  // Re-enabling a channel mid-instance-lifetime is explicitly not
+  // supported. Spin up a new instance.
+  disablePropertyChannel?: boolean
+  disableContentChannel?: boolean
+  disableRelationsChannel?: boolean
   // Read-only refs into the form state, used by mergeServerResponse.
+  // The composable never writes to these refs — it only inspects
+  // shape — so callers fabricating a computed ref (e.g. EntityDetail's
+  // content-only instance) is fine.
   formData: Ref<Record<string, unknown>>
   contentRef: Ref<string>
   // Direction mapping: inverse body key → canonical relation name.
@@ -75,21 +106,49 @@ export interface AutoSaveOptions {
   // Closure that returns the modern relations body to attach to the
   // next PATCH, or null/empty object when the relations Map is
   // pristine. Called once per fire that has `relationsDirty === true`.
+  // Callers that disable the relations channel may pass a no-op (() => null).
   buildRelationsBody: () => Record<string, { data: unknown[] }> | null
   // Apply callbacks invoked by mergeServerResponse and revertField.
   // The form decides whether to mutate formData; the composable does not.
+  // Callers that disable the corresponding channel may pass a no-op closure;
+  // these stay required at the type level so disabling is opt-in and
+  // explicit rather than load-bearing on undefined-checks.
   applyServerProperty: (property: string, value: unknown) => void
   applyServerContent: (content: string) => void
   // User-facing error surface (e.g., toast). Called once per save
-  // failure that isn't superseded by a newer edit.
-  onError: (msg: string) => void
+  // failure that isn't superseded by a newer edit. The structured
+  // `info` carries the HTTP status, the failing property (when
+  // applicable), and the channel that originated the failure so a
+  // host can dispatch on 401/403 distinctly from validation errors.
+  // The arg is optional so existing callers (`(msg) => uiStore.error(msg)`)
+  // ignore it silently. Set per call site inside the composable.
+  onError: (msg: string, info?: AutoSaveErrorInfo) => void
+}
+
+export interface AutoSaveErrorInfo {
+  status?: number
+  property?: string
+  channel?: 'property' | 'content' | 'relations'
+}
+
+export class AutoSaveChannelDisabledError extends Error {
+  constructor(channel: 'property' | 'content' | 'relations') {
+    super(`useAutoSave: ${channel} channel is disabled on this instance`)
+    this.name = 'AutoSaveChannelDisabledError'
+  }
 }
 
 type WidgetId = `${string}-outgoing` | `${string}-incoming`
 
 export function useAutoSave(opts: AutoSaveOptions) {
-  const debounceMs = opts.debounceMs ?? 800
+  const baseDebounceMs = opts.debounceMs ?? 800
+  const fieldDebounceMs = opts.fieldDebounceMs ?? baseDebounceMs
+  const contentDebounceMs = opts.contentDebounceMs ?? baseDebounceMs
+  const relationsDebounceMs = baseDebounceMs
   const dirtyWindowMs = opts.dirtyWindowMs ?? 1500
+  const propertyChannelEnabled = !opts.disablePropertyChannel
+  const contentChannelEnabled = !opts.disableContentChannel
+  const relationsChannelEnabled = !opts.disableRelationsChannel
   const entitiesStore = useEntitiesStore()
 
   const status = ref<SaveStatus>('idle')
@@ -192,31 +251,39 @@ export function useAutoSave(opts: AutoSaveOptions) {
     lastSeenContent = entity.content ?? ''
   }
 
+  if (opts.initialServerSnapshot) {
+    recordServerSnapshot(opts.initialServerSnapshot)
+  }
+
   function scheduleFieldSave(property: string, value: unknown) {
+    if (!propertyChannelEnabled) throw new AutoSaveChannelDisabledError('property')
     if (!(property in pending)) pendingCount.value++
     pending[property] = { value, enqueuedAt: Date.now() }
     if (timers[property]) clearTimeout(timers[property])
-    timers[property] = setTimeout(() => fireProperty(property), debounceMs)
+    timers[property] = setTimeout(() => fireProperty(property), fieldDebounceMs)
   }
 
   function scheduleUnset(property: string) {
+    if (!propertyChannelEnabled) throw new AutoSaveChannelDisabledError('property')
     if (!(property in pending)) pendingCount.value++
     pending[property] = { value: UNSET, enqueuedAt: Date.now() }
     if (timers[property]) clearTimeout(timers[property])
-    timers[property] = setTimeout(() => fireProperty(property), debounceMs)
+    timers[property] = setTimeout(() => fireProperty(property), fieldDebounceMs)
   }
 
   function scheduleContentSave(content: string) {
+    if (!contentChannelEnabled) throw new AutoSaveChannelDisabledError('content')
     if (pendingContent === null) pendingCount.value++
     pendingContent = { value: content, enqueuedAt: Date.now() }
     if (contentTimer) clearTimeout(contentTimer)
-    contentTimer = setTimeout(() => fireContent(), debounceMs)
+    contentTimer = setTimeout(() => fireContent(), contentDebounceMs)
   }
 
   function scheduleRelationsChange() {
+    if (!relationsChannelEnabled) throw new AutoSaveChannelDisabledError('relations')
     relationsDirty = true
     if (relationsTimer) clearTimeout(relationsTimer)
-    relationsTimer = setTimeout(() => fireRelations(), debounceMs)
+    relationsTimer = setTimeout(() => fireRelations(), relationsDebounceMs)
   }
 
   function fireProperty(property: string) {
@@ -265,13 +332,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
         }
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
+        const message = getErrorMessage(err, 'Save failed')
         const newer = pending[property]
         const isLatestIntent = !newer || newer.enqueuedAt <= enqueuedAt
         if (isLatestIntent) {
-          fieldErrors.value = { ...fieldErrors.value, [property]: info.message }
-          setStatus('error', info.message)
-          opts.onError(info.message)
+          fieldErrors.value = { ...fieldErrors.value, [property]: message }
+          setStatus('error', message)
+          opts.onError(message, { status: getErrorStatus(err), property, channel: 'property' })
         }
       } finally {
         inFlightCount.value--
@@ -312,11 +379,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
         contentError.value = null
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
+        const message = getErrorMessage(err, 'Save failed')
         if (pendingContent === null) {
-          contentError.value = info.message
-          setStatus('error', info.message)
-          opts.onError(info.message)
+          contentError.value = message
+          setStatus('error', message)
+          opts.onError(message, { status: getErrorStatus(err), channel: 'content' })
         }
       } finally {
         inFlightCount.value--
@@ -354,9 +421,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
         lastCommitAt['__relations__'] = Date.now()
         setStatus('saved')
       } catch (err: unknown) {
-        const info = parseError(err)
-        setStatus('error', info.message)
-        opts.onError(info.message)
+        const message = getErrorMessage(err, 'Save failed')
+        setStatus('error', message)
+        opts.onError(message, { status: getErrorStatus(err), channel: 'relations' })
       } finally {
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
@@ -419,28 +486,50 @@ export function useAutoSave(opts: AutoSaveOptions) {
   }
 
   function mergeServerResponse(entity: Entity) {
+    // Defence in depth: a disabled channel must not have any pending
+    // state. If it does, schedule* slipped past the throw guard or a
+    // previous call mutated this instance directly. Either way, fail
+    // loud — the disabled-channel invariant is load-bearing for the
+    // EntityDetail content-only instance.
+    if (!propertyChannelEnabled && (Object.keys(pending).length > 0 || Object.keys(timers).length > 0)) {
+      throw new Error('useAutoSave: property channel disabled but pending state observed')
+    }
+    if (!contentChannelEnabled && (pendingContent !== null || contentTimer !== null)) {
+      throw new Error('useAutoSave: content channel disabled but pending state observed')
+    }
+    if (!relationsChannelEnabled && (relationsDirty || relationsTimer !== null)) {
+      throw new Error('useAutoSave: relations channel disabled but pending state observed')
+    }
+
     if (entity.properties) {
       for (const [k, v] of Object.entries(entity.properties)) {
         // S5: always update lastSeenServer from server, regardless of dirty.
+        // Done even when the property channel is disabled so the
+        // baseline stays valid for any later re-init.
         lastSeenServer[k] = v
-        // Only mutate formData for non-dirty fields.
+        // Only mutate formData for non-dirty fields. Skip entirely
+        // when the property channel is disabled — the caller doesn't
+        // own a writable formData ref for properties in that case.
+        if (!propertyChannelEnabled) continue
         if (k in pending) continue
         if (k in timers) continue
         opts.applyServerProperty(k, v)
       }
       // Properties that disappeared from the server response (server-
       // side unset by automation): clear them locally too, but only
-      // when the field isn't dirty.
+      // when the field isn't dirty and the channel is enabled.
       for (const k of Object.keys(lastSeenServer)) {
         if (!(k in entity.properties) && !(k in pending) && !(k in timers)) {
-          opts.applyServerProperty(k, undefined)
+          if (propertyChannelEnabled) opts.applyServerProperty(k, undefined)
           delete lastSeenServer[k]
         }
       }
     }
     if (entity.content !== undefined && pendingContent === null && contentTimer === null) {
-      opts.applyServerContent(entity.content)
+      // Baseline always updates; apply callback skipped when the
+      // content channel is disabled.
       lastSeenContent = entity.content
+      if (contentChannelEnabled) opts.applyServerContent(entity.content)
     }
   }
 
@@ -508,8 +597,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       queueTail
         .then(() => resolve({ settled: true }))
         .catch((err: unknown) => {
-          const info = parseError(err)
-          resolve({ settled: true, error: info.message })
+          resolve({ settled: true, error: getErrorMessage(err, 'Save failed') })
         })
         .finally(() => clearTimeout(timer))
     })
@@ -540,6 +628,15 @@ export function useAutoSave(opts: AutoSaveOptions) {
   }
 }
 
+// Extract the HTTP status from a thrown error, when available. Returns
+// undefined for non-ApiError rejections (network errors, cancellations,
+// programming bugs) — callers should treat undefined as "unknown status,
+// not necessarily success." Used to populate AutoSaveErrorInfo.status
+// for the host's 401/403 dispatch.
+function getErrorStatus(err: unknown): number | undefined {
+  return err instanceof ApiError ? err.status : undefined
+}
+
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (a == null || b == null) return a === b
@@ -557,21 +654,4 @@ function deepEqual(a: unknown, b: unknown): boolean {
   if (ak.length !== bk.length) return false
   for (const k of ak) if (!deepEqual(ao[k], bo[k])) return false
   return true
-}
-
-interface ApiErr {
-  status?: number
-  title?: string
-  detail?: string
-  response?: { status?: number; data?: { status?: number; detail?: string; title?: string } }
-  message?: string
-}
-
-function parseError(err: unknown): { status: number; message: string } {
-  const e = err as ApiErr
-  const status = e?.status ?? e?.response?.status ?? e?.response?.data?.status ?? 0
-  const detail = e?.detail ?? e?.response?.data?.detail
-  const title = e?.title ?? e?.response?.data?.title
-  const message = detail || title || e?.message || 'Save failed'
-  return { status, message }
 }

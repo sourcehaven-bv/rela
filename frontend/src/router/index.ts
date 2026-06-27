@@ -74,6 +74,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/DocumentView.vue'),
     props: true,
   },
+  {
+    path: '/app/:id',
+    name: 'app',
+    component: () => import('@/views/AppHostView.vue'),
+    props: true,
+  },
 ]
 
 const router = createRouter({
@@ -161,6 +167,8 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
     mo.observe(container, { childList: true, subtree: true, characterData: true })
 
     container.addEventListener('rela:mermaid-rendered', reScroll)
+    // PlantUML <img>s shift layout when they (lazily) load; same re-settle.
+    container.addEventListener('rela:plantuml-rendered', reScroll)
     const deadline = window.setTimeout(cleanup, SETTLE_TIMEOUT_MS)
     const abortTick = window.setInterval(() => {
       if (abort()) cleanup()
@@ -172,6 +180,7 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
     function cleanup() {
       mo.disconnect()
       container.removeEventListener('rela:mermaid-rendered', reScroll)
+      container.removeEventListener('rela:plantuml-rendered', reScroll)
       window.clearTimeout(deadline)
       window.clearInterval(abortTick)
       window.removeEventListener('wheel', onUserScroll)

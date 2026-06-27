@@ -1,7 +1,6 @@
 package markdown
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -9,12 +8,14 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/frontmatter"
 )
 
 // ErrConflictedFile is returned when a file has unresolved git conflict markers.
 var ErrConflictedFile = errors.New("file has unresolved git conflicts")
 
-const frontmatterDelimiter = "---"
+const frontmatterDelimiter = frontmatter.Delimiter
 
 // conflictMarkerStart is the canonical opening-marker pattern Git
 // writes when a merge produces a conflict (`<<<<<<< <ref>`).
@@ -77,14 +78,11 @@ func ParseDocument(content string) (*Document, error) {
 		return nil, ErrConflictedFile
 	}
 
-	frontmatter, body, err := splitFrontmatter(content)
-	if err != nil {
-		return nil, err
-	}
+	fmBlock, body := frontmatter.Split(content)
 
 	var fm map[string]interface{}
-	if frontmatter != "" {
-		if err := yaml.Unmarshal([]byte(frontmatter), &fm); err != nil {
+	if fmBlock != "" {
+		if err := yaml.Unmarshal([]byte(fmBlock), &fm); err != nil {
 			return nil, fmt.Errorf("failed to parse frontmatter: %w", err)
 		}
 	}
@@ -93,45 +91,6 @@ func ParseDocument(content string) (*Document, error) {
 		Frontmatter: fm,
 		Content:     body,
 	}, nil
-}
-
-// splitFrontmatter separates YAML frontmatter from markdown content
-func splitFrontmatter(content string) (frontmatter, body string, err error) {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	var lines []string
-	inFrontmatter := false
-	frontmatterEnded := false
-	frontmatterLines := []string{}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if !inFrontmatter && !frontmatterEnded && strings.TrimSpace(line) == frontmatterDelimiter {
-			inFrontmatter = true
-			continue
-		}
-
-		if inFrontmatter && strings.TrimSpace(line) == frontmatterDelimiter {
-			inFrontmatter = false
-			frontmatterEnded = true
-			continue
-		}
-
-		if inFrontmatter {
-			frontmatterLines = append(frontmatterLines, line)
-		} else if frontmatterEnded || !inFrontmatter {
-			lines = append(lines, line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", "", err
-	}
-
-	frontmatter = strings.Join(frontmatterLines, "\n")
-	body = strings.TrimPrefix(strings.Join(lines, "\n"), "\n")
-
-	return frontmatter, body, nil
 }
 
 // FormatDocument formats a document back to markdown with YAML frontmatter.

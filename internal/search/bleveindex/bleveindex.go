@@ -27,7 +27,8 @@ var _ search.Backend = (*Index)(nil)
 
 // Field boost weights for search ranking.
 const (
-	boostID         = 5.0
+	boostIDExact    = 8.0
+	boostIDPrefix   = 6.0
 	boostPrimary    = 3.0
 	boostProperties = 2.0
 	boostContent    = 1.0
@@ -152,6 +153,22 @@ func (idx *Index) EntityDelete(id string) error {
 	return idx.bumpLastModified(time.Now())
 }
 
+// EntityRenamed atomically deletes the old document and indexes the
+// renamed entity under its new ID. Uses a single Bleve batch so a
+// crash mid-rename cannot leave the index with both the old and new
+// keys present.
+func (idx *Index) EntityRenamed(oldID string, renamed *entity.Entity) error {
+	batch := idx.index.NewBatch()
+	batch.Delete(oldID)
+	if err := batch.Index(renamed.ID, entityToDoc(renamed)); err != nil {
+		return fmt.Errorf("bleveindex: rename %s→%s: index new: %w", oldID, renamed.ID, err)
+	}
+	if err := idx.index.Batch(batch); err != nil {
+		return fmt.Errorf("bleveindex: rename %s→%s: commit batch: %w", oldID, renamed.ID, err)
+	}
+	return idx.bumpLastModified(renamed.UpdatedAt)
+}
+
 // LastModified returns the latest mtime observed by this index. Persistent
 // indexes restore this across restarts so consumers can skip reindexing
 // when the store's LastModified hasn't advanced.
@@ -181,12 +198,15 @@ func (idx *Index) bumpLastModified(t time.Time) error {
 	return idx.index.SetInternal(lastModifiedKey, data)
 }
 
-// boostedFields defines the fields to search with their boost weights.
+// boostedFields defines the text fields searched per word with their
+// boost weights. The keyword `id` field is intentionally absent: it is
+// case-sensitive and unanalyzed, so a lower-cased per-word fuzzy query
+// never matches it. ID matching is handled by the dedicated exact-term
+// and prefix queries in Search.
 var boostedFields = []struct {
 	field string
 	boost float64
 }{
-	{"id", boostID},
 	{"primary", boostPrimary},
 	{"properties", boostProperties},
 	{"content", boostContent},
@@ -200,13 +220,30 @@ func (idx *Index) Search(text string, limit int) ([]string, error) {
 		return nil, nil
 	}
 
-	queries := make([]query.Query, 0, len(words)+1)
+	queries := make([]query.Query, 0, len(words)+2)
 
-	// Exact ID match (keyword field) — boosted highest.
-	idQuery := bleve.NewTermQuery(text)
-	idQuery.SetField("id")
-	idQuery.SetBoost(boostID)
-	queries = append(queries, idQuery)
+	// The `id` field is keyword-analyzed (whole ID stored as one
+	// case-sensitive token), so ID matching is driven by these two
+	// queries rather than the per-word fuzzy pass — which tokenizes a
+	// dashed ID like `VAD-ACT-6P4X` into `vad`/`act`/`6p4x` and can't
+	// bridge a partial-ID query back to the original token.
+	idText := strings.TrimSpace(text)
+
+	// Exact ID match — boosted highest.
+	idExact := bleve.NewTermQuery(idText)
+	idExact.SetField("id")
+	idExact.SetBoost(boostIDExact)
+	queries = append(queries, idExact)
+
+	// Partial ID (prefix) match. Case-sensitive against the stored token,
+	// so feed the original-case text — IDs are upper-case and lower-casing
+	// here would match nothing. This is what makes typing `VAD-ACT-` in
+	// the entity-reference picker surface every `VAD-ACT-*` entity instead
+	// of title-scored noise.
+	idPrefix := bleve.NewPrefixQuery(idText)
+	idPrefix.SetField("id")
+	idPrefix.SetBoost(boostIDPrefix)
+	queries = append(queries, idPrefix)
 
 	for _, word := range words {
 		queries = append(queries, buildBoostedWordQuery(strings.ToLower(word)))

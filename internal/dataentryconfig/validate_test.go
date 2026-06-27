@@ -1427,6 +1427,21 @@ func TestValidateActions_ValidSet(t *testing.T) {
 	}
 }
 
+func TestValidAppID(t *testing.T) {
+	valid := []string{"dash", "ticket-counter", "a", "a_b-c", strings.Repeat("a", 64)}
+	for _, id := range valid {
+		if !ValidAppID(id) {
+			t.Errorf("ValidAppID(%q) = false, want true", id)
+		}
+	}
+	invalid := []string{"", "Dash", "has space", "has.dot", "has/slash", "..", strings.Repeat("a", 65)}
+	for _, id := range invalid {
+		if ValidAppID(id) {
+			t.Errorf("ValidAppID(%q) = true, want false", id)
+		}
+	}
+}
+
 func TestValidateActions_InvalidID(t *testing.T) {
 	meta := testMetamodel()
 	tests := []string{"Today_Note", "today note", "today/note", "today..note", "x" + strings.Repeat("y", 64)}
@@ -1759,5 +1774,42 @@ views:
 	err := ValidateConfig(yamlData, cfg, meta)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateApp_PlantUMLServerURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string // substring; "" means valid
+	}{
+		{name: "empty is valid (disabled)", url: "", wantErr: ""},
+		{name: "https is valid", url: "https://plantuml.example.com", wantErr: ""},
+		{name: "http is valid", url: "http://localhost:8080", wantErr: ""},
+		{name: "https with path is valid", url: "https://example.com/plantuml", wantErr: ""},
+		{name: "javascript scheme rejected", url: "javascript:alert(1)", wantErr: "scheme must be http or https"},
+		{name: "data scheme rejected", url: "data:text/html,x", wantErr: "scheme must be http or https"},
+		{name: "protocol-relative rejected", url: "//evil.example", wantErr: "scheme must be http or https"},
+		{name: "bare host rejected", url: "evil.example/x", wantErr: "scheme must be http or https"},
+		{name: "scheme without host rejected", url: "https://", wantErr: "must include a host"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{App: AppConfig{PlantUMLServerURL: tt.url}}
+			errs := validateApp(cfg)
+			if tt.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validateApp(%q) = %v, want no errors", tt.url, errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatalf("validateApp(%q) = no errors, want error containing %q", tt.url, tt.wantErr)
+			}
+			if !strings.Contains(errs[0], tt.wantErr) {
+				t.Errorf("validateApp(%q) = %q, want substring %q", tt.url, errs[0], tt.wantErr)
+			}
+		})
 	}
 }

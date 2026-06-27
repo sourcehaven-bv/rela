@@ -57,22 +57,29 @@ import (
 // constructor inputs — through structural typing, without adapters
 // at the wiring site.
 type Services struct {
-	fs            storage.FS
-	paths         *project.Context
-	meta          *metamodel.Metamodel
-	store         store.Store
-	searcher      search.Searcher
-	entityManager entitymanager.EntityManager
-	tracer        tracer.Tracer
-	validator     validator.Validator
-	templater     templating.Templater
-	cfgLoader     config.Loader
-	stateKV       state.KV
-	scriptEngine  *script.Engine
-	searchCloser  io.Closer
-	acl           acl.ACL
-	aclPolicy     *acl.Policy
-	audit         audit.Audit
+	fs       storage.FS
+	paths    *project.Context
+	meta     *metamodel.Metamodel
+	store    store.Store
+	searcher search.Searcher
+	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
+	// the generic search.NewVisible wrapper on the fs/memory builds,
+	// the pgstore-native implementation on the postgres build.
+	visibleSearcher search.VisibleSearcher
+	entityManager   entitymanager.EntityManager
+	tracer          tracer.Tracer
+	validator       validator.Validator
+	templater       templating.Templater
+	cfgLoader       config.Loader
+	stateKV         state.KV
+	scriptEngine    *script.Engine
+	searchCloser    io.Closer
+	acl             acl.ACL
+	// aclDeclarative is set when buildACL constructs a Declarative; nil
+	// for NopACL, ReadOnlyACL, or when Declarative construction fails.
+	aclDeclarative *acl.Declarative
+	aclPolicy      *acl.Policy
+	audit          audit.Audit
 
 	closeOnce sync.Once
 	closeErr  error
@@ -94,6 +101,11 @@ func (s *Services) Store() store.Store { return s.store }
 // the search backend failed to construct).
 func (s *Services) Searcher() search.Searcher { return s.searcher }
 
+// VisibleSearcher returns the ACL-scoped search seam. Per-backend: the
+// generic scope-filter wrapper on the fs/memory builds, the native
+// SQL-composed implementation on the postgres build.
+func (s *Services) VisibleSearcher() search.VisibleSearcher { return s.visibleSearcher }
+
 // EntityManager returns the production write path.
 func (s *Services) EntityManager() entitymanager.EntityManager { return s.entityManager }
 
@@ -110,6 +122,17 @@ func (s *Services) ACL() acl.ACL { return s.acl }
 // affordance resolver from the same policy the Manager authorizes
 // against, without re-reading the file.
 func (s *Services) ACLPolicy() *acl.Policy { return s.aclPolicy }
+
+// ACLDeclarative returns the concrete *acl.Declarative when the wired
+// ACL is one (the default when acl.yaml is present and parses); nil
+// when ACL is NopACL or a test injected something else via [WithACL].
+//
+// Exposed so the affordance resolver can be built with the same
+// Declarative the Manager uses — keeping the group expansion,
+// containment, and Source attribution consistent across write authz
+// and affordance verdicts. The field is set at construction time
+// alongside `acl`; no runtime type assertion at the accessor.
+func (s *Services) ACLDeclarative() *acl.Declarative { return s.aclDeclarative }
 
 // Audit returns the audit sink wired into entitymanager. Exposed so
 // dataentry handlers can emit `denied-write` rows for short-circuit
@@ -184,20 +207,37 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 // does not own a closable resource (the error-Searcher placeholder
 // has nothing to close).
 type Collaborators struct {
-	FS            storage.FS
-	Paths         *project.Context
-	Meta          *metamodel.Metamodel
-	Store         store.Store
-	Searcher      search.Searcher
-	EntityManager entitymanager.EntityManager
-	Tracer        tracer.Tracer
-	Validator     validator.Validator
-	Templater     templating.Templater
-	CfgLoader     config.Loader
-	StateKV       state.KV
-	ScriptEngine  *script.Engine
-	ACL           acl.ACL
-	Audit         audit.Audit
+	FS       storage.FS
+	Paths    *project.Context
+	Meta     *metamodel.Metamodel
+	Store    store.Store
+	Searcher search.Searcher
+	// VisibleSearcher may be nil: the constructor then derives the
+	// generic search.NewVisible(Searcher, Store) wrapper, which is the
+	// correct implementation for every in-process store. Only wire it
+	// explicitly to exercise a native implementation.
+	VisibleSearcher search.VisibleSearcher
+	EntityManager   entitymanager.EntityManager
+	Tracer          tracer.Tracer
+	Validator       validator.Validator
+	Templater       templating.Templater
+	CfgLoader       config.Loader
+	StateKV         state.KV
+	ScriptEngine    *script.Engine
+	ACL             acl.ACL
+	Audit           audit.Audit
+
+	// Declarative is the optional concrete *acl.Declarative the test
+	// is wiring. When non-nil, [Services.ACLDeclarative] returns it;
+	// the affordance resolver path then composes against the same
+	// resolver the write path uses (RR-FGJR). When nil — typical when
+	// ACL is [acl.NopACL] or [acl.ReadOnlyACL] —
+	// [Services.ACLDeclarative] returns nil and the dataentry
+	// resolver selector falls through to [NopFieldVerdictResolver].
+	//
+	// If you set Declarative, ACL must reference the same value
+	// (typically ACL == Declarative). The constructor enforces this.
+	Declarative *acl.Declarative
 
 	// SearchCloser may be nil — see type doc.
 	SearchCloser io.Closer
@@ -253,22 +293,40 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if c.Audit == nil {
 		return nil, errors.New("appbuild.NewFromCollaborators: Audit is required (use audit.Nop{} to opt out)")
 	}
+	if c.Declarative != nil && c.ACL != acl.ACL(c.Declarative) {
+		return nil, errors.New("appbuild.NewFromCollaborators: when Declarative is set, ACL must reference the same value")
+	}
+	var aclPolicy *acl.Policy
+	if c.Declarative != nil {
+		aclPolicy = c.Declarative.Policy()
+	}
+	visible := c.VisibleSearcher
+	if visible == nil {
+		v, err := search.NewVisible(c.Searcher, c.Store)
+		if err != nil {
+			return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
+		}
+		visible = v
+	}
 	return &Services{
-		fs:            c.FS,
-		paths:         c.Paths,
-		meta:          c.Meta,
-		store:         c.Store,
-		searcher:      c.Searcher,
-		entityManager: c.EntityManager,
-		tracer:        c.Tracer,
-		validator:     c.Validator,
-		templater:     c.Templater,
-		cfgLoader:     c.CfgLoader,
-		stateKV:       c.StateKV,
-		scriptEngine:  c.ScriptEngine,
-		searchCloser:  c.SearchCloser,
-		acl:           c.ACL,
-		audit:         c.Audit,
+		fs:              c.FS,
+		paths:           c.Paths,
+		meta:            c.Meta,
+		store:           c.Store,
+		searcher:        c.Searcher,
+		visibleSearcher: visible,
+		entityManager:   c.EntityManager,
+		tracer:          c.Tracer,
+		validator:       c.Validator,
+		templater:       c.Templater,
+		cfgLoader:       c.CfgLoader,
+		stateKV:         c.StateKV,
+		scriptEngine:    c.ScriptEngine,
+		searchCloser:    c.SearchCloser,
+		acl:             c.ACL,
+		aclDeclarative:  c.Declarative,
+		aclPolicy:       aclPolicy,
+		audit:           c.Audit,
 	}, nil
 }
 
@@ -279,7 +337,7 @@ func buildAutomation(meta *metamodel.Metamodel) (*automation.Engine, *autocascad
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
-	autoEngine := automation.NewEngineFromMetamodel(meta.Automations)
+	autoEngine := automation.NewEngineFromMetamodel(meta, meta.Automations)
 	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build autocascade runner: %w", err)
@@ -312,25 +370,68 @@ func WithACL(a acl.ACL) Option {
 	return func(o *options) { o.acl = a }
 }
 
-// loadACL reads `acl.yaml` from projectRoot and returns the
-// appropriate [acl.ACL] implementation plus, when one was parsed, the
-// underlying *acl.Policy (nil otherwise — the policy is retained so the
-// data-entry server can build a policy-backed affordance resolver from
-// the same source). Missing file → [acl.NopACL] (allow-all). Other
-// load errors are logged and downgraded to NopACL so a malformed
-// policy never bricks the server — the operator sees the error in logs
-// and can fix the file without restarting. Same "tolerate, warn"
-// philosophy the metamodel loader uses.
-func loadACL(projectRoot string) (acl.ACL, *acl.Policy) {
+// loadACLPolicy reads `acl.yaml` from projectRoot and returns the
+// parsed [*acl.Policy], or (nil, nil) when the file is genuinely
+// missing (in which case the caller falls back to NopACL — no policy
+// declared, no access control desired).
+//
+// A malformed acl.yaml returns a non-nil error: silently degrading to
+// NopACL on parse failure would invert the operator's intent and boot
+// the server allow-all on a typo. Per CLAUDE.md "Constructors reject
+// nil required fields ... never substitute a no-op silently."
+//
+// Separated from [buildACL] so the caller can open the store between
+// the two phases — v1's [acl.Declarative] needs a [acl.Graph] backed
+// by the store.
+func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 	policy, err := acl.LoadPolicy(filepath.Join(projectRoot, "acl.yaml"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return acl.NopACL{}, nil
+			// File genuinely absent → caller falls back to NopACL by
+			// intent. Returning (nil, nil) keeps the call site's
+			// "if aclPolicy != nil" check simple; a sentinel error
+			// would force every caller to errors.Is unnecessarily.
+			return nil, nil //nolint:nilnil // (nil, nil) = no policy intended; caller checks aclPolicy != nil
 		}
-		slog.Warn("appbuild: failed to load acl.yaml; falling back to NopACL", "error", err)
-		return acl.NopACL{}, nil
+		return nil, fmt.Errorf("appbuild: load acl.yaml: %w", err)
 	}
-	return acl.NewDeclarative(policy), policy
+	return policy, nil
+}
+
+// buildACL constructs the production ACL from a policy + a store. The
+// store backs the [acl.Graph] adapter the resolver needs for member-of
+// walks and ancestor probes. A nil policy yields [acl.NopACL]
+// (allow-all) — the absence of acl.yaml is taken as "no access control
+// intended," which is different from a malformed acl.yaml (handled in
+// [loadACLPolicy]).
+//
+// Returns both the [acl.ACL] interface (consumed by entitymanager) and
+// the concrete *acl.Declarative (consumed by the affordance resolver).
+// When the result is a Declarative, both returns reference the same
+// value — making the "write authz and affordance verdicts share one
+// resolver" invariant textual rather than implicit-via-type-assertion.
+// For NopACL the second return is nil.
+//
+// An error from [acl.NewDeclarative] is propagated, not downgraded:
+// the operator wrote a policy and the resolver couldn't accept it; the
+// server must fail to boot rather than silently allow-all.
+func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, error) {
+	if policy == nil {
+		return acl.NopACL{}, nil, nil
+	}
+	// `st` is passed twice: once via NewStoreGraph (the Graph
+	// adapter the resolver uses for member-of / ancestor walks), and
+	// once as the GraphQueryer (executes store.MatchingIDs for
+	// Request.PermitsRead / PermitsReadMany). The store.Store
+	// interface embeds both — RR-U06D. A future backend or
+	// store-wrapping decorator (audit, metrics) MUST forward
+	// GraphQueryer or this compiles while the read gate silently uses
+	// the wrong store.
+	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
+	}
+	return d, d, nil
 }
 
 // Config carries the inputs every build of [New] needs, plus
@@ -441,7 +542,15 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 	resolvedACL := o.acl
 	var aclPolicy *acl.Policy
 	if resolvedACL == nil {
-		resolvedACL, aclPolicy = loadACL(cfg.Paths.Root)
+		// Load the policy YAML up front; ACL construction is deferred
+		// to [assemble] because the v1 [acl.Declarative] needs a
+		// store-backed [acl.Graph] adapter and the store isn't open
+		// yet at this point in the build.
+		var err error
+		aclPolicy, err = loadACLPolicy(cfg.Paths.Root)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.MetamodelPath).Load(context.Background())
@@ -460,8 +569,47 @@ func prepare(cfg Config, opts []Option) (*buildBase, error) {
 // Keeping this shared is the invariant that prevents the three New
 // recipes from drifting: a recipe may CHOOSE and ORDER backend steps,
 // but build-agnostic wiring lives here and nowhere else.
-func assemble(base *buildBase, st store.Store, searcher search.Searcher, searchCloser io.Closer) (*Services, error) {
+//
+// visible may be nil: assemble then derives the generic
+// search.NewVisible(searcher, st) wrapper, the correct ACL-scoped
+// search implementation for every in-process store. The postgres
+// recipe passes its native implementation instead.
+func assemble(
+	base *buildBase, st store.Store, searcher search.Searcher,
+	visible search.VisibleSearcher, searchCloser io.Closer,
+) (*Services, error) {
 	cfg := base.cfg
+
+	if visible == nil {
+		v, err := search.NewVisible(searcher, st)
+		if err != nil {
+			return nil, fmt.Errorf("appbuild: derive VisibleSearcher: %w", err)
+		}
+		visible = v
+	}
+
+	// Now the store is open: build the Declarative ACL with a
+	// store-backed Graph. This is deferred from prepare because
+	// acl.Declarative needs the store. NopACL on missing policy; an
+	// error from the Declarative constructor is propagated (don't
+	// silently boot allow-all on a broken policy). If the caller
+	// injected an ACL via WithACL, base.acl is already set.
+	resolvedACL := base.acl
+	var aclDeclarative *acl.Declarative
+	if resolvedACL == nil {
+		var err error
+		resolvedACL, aclDeclarative, err = buildACL(base.aclPolicy, st)
+		if err != nil {
+			return nil, err
+		}
+	} else if d, ok := resolvedACL.(*acl.Declarative); ok {
+		// RR-36UL: when WithACL was passed a *acl.Declarative,
+		// surface it on aclDeclarative too so the affordance
+		// resolver path picks it up. Without this, a caller wiring
+		// WithACL(declarative) silently gets NopFieldVerdictResolver
+		// because Services.ACLDeclarative() returns nil.
+		aclDeclarative = d
+	}
 
 	autoEngine, cascadeRunner, err := buildAutomation(base.meta)
 	if err != nil {
@@ -488,7 +636,7 @@ func assemble(base *buildBase, st store.Store, searcher search.Searcher, searchC
 		Meta:         base.meta,
 		Templater:    templater,
 		Audit:        cfg.Audit,
-		ACL:          base.acl,
+		ACL:          resolvedACL,
 		Automations:  autoEngine,
 		Cascade:      cascadeRunner,
 		ScriptRunner: script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
@@ -504,22 +652,24 @@ func assemble(base *buildBase, st store.Store, searcher search.Searcher, searchC
 	}
 
 	return &Services{
-		fs:            cfg.FS,
-		paths:         cfg.Paths,
-		meta:          base.meta,
-		store:         st,
-		searcher:      searcher,
-		entityManager: mgr,
-		tracer:        tr,
-		validator:     val,
-		templater:     templater,
-		cfgLoader:     cfgLoader,
-		stateKV:       stateKV,
-		scriptEngine:  cfg.ScriptEngine,
-		searchCloser:  searchCloser,
-		acl:           base.acl,
-		aclPolicy:     base.aclPolicy,
-		audit:         cfg.Audit,
+		fs:              cfg.FS,
+		paths:           cfg.Paths,
+		meta:            base.meta,
+		store:           st,
+		searcher:        searcher,
+		visibleSearcher: visible,
+		entityManager:   mgr,
+		tracer:          tr,
+		validator:       val,
+		templater:       templater,
+		cfgLoader:       cfgLoader,
+		stateKV:         stateKV,
+		scriptEngine:    cfg.ScriptEngine,
+		searchCloser:    searchCloser,
+		acl:             resolvedACL,
+		aclDeclarative:  aclDeclarative,
+		aclPolicy:       base.aclPolicy,
+		audit:           cfg.Audit,
 	}, nil
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -37,7 +38,7 @@ func TestV1SchemaEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -46,8 +47,17 @@ func TestV1SchemaEndpoint(t *testing.T) {
 		t.Errorf("expected 2 entity types, got %d", len(schema.Entities))
 	}
 
-	if _, ok := schema.Entities["ticket"]; !ok {
-		t.Error("expected 'ticket' entity type in schema")
+	ticket, ok := schema.Entities["ticket"]
+	if !ok {
+		t.Fatal("expected 'ticket' entity type in schema")
+	}
+	// The `docs` file property has max:3 — the schema must surface it so the
+	// SPA's file widget knows to use multi-file (add) mode, not replace mode.
+	if got := ticket.Properties["docs"].Max; got != 3 {
+		t.Errorf("docs.max = %d, want 3 (multi-file widget depends on this)", got)
+	}
+	if got := ticket.Properties["screenshot"].Max; got != 0 {
+		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
 	}
 }
 
@@ -63,7 +73,7 @@ func TestV1ConfigEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var config V1Config
+	var config v1.Config
 	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -110,7 +120,7 @@ func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
-	var config V1Config
+	var config v1.Config
 	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -150,7 +160,7 @@ func TestV1ListEntities(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -194,7 +204,7 @@ func TestV1GetEntity(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -293,7 +303,7 @@ func TestV1Filtering(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -352,7 +362,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -424,7 +434,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -454,7 +464,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -476,7 +486,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -501,7 +511,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -521,7 +531,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -551,7 +561,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -609,7 +619,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -642,7 +652,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 	})
 }
 
-func responseIDs(r V1ListResponse) []string {
+func responseIDs(r v1.ListResponse) []string {
 	out := make([]string, 0, len(r.Data))
 	for _, e := range r.Data {
 		out = append(out, e.ID)
@@ -672,7 +682,7 @@ func TestV1Sorting(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -704,7 +714,7 @@ func TestV1Pagination(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -800,7 +810,7 @@ func TestV1SearchEmptyQuery(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -856,7 +866,7 @@ func TestV1SearchWithTypeFilter(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -952,7 +962,7 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -992,7 +1002,7 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1061,7 +1071,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1127,7 +1137,7 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1158,7 +1168,7 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=-title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1194,7 +1204,7 @@ func TestV1FilteringContains(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[title][contains]=Bug", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1236,7 +1246,7 @@ func TestV1FilteringIn(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][in]=open,in_progress", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1339,7 +1349,7 @@ func runListFilter(t *testing.T, app *App, query string) []string {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -1542,7 +1552,7 @@ func TestV1MultipleSort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1601,7 +1611,7 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1642,7 +1652,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1781,7 +1791,7 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1906,7 +1916,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1962,7 +1972,7 @@ func TestV1SidebarAppliesListFilters(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2019,7 +2029,7 @@ func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Sidebar(rec, req)
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2064,7 +2074,7 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2163,13 +2173,22 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entityType V1EntityType
+	var entityType v1.EntityType
 	if err := json.NewDecoder(rec.Body).Decode(&entityType); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
 	if entityType.Label != "Ticket" {
 		t.Errorf("expected label 'Ticket', got %q", entityType.Label)
+	}
+	// This endpoint shares toV1PropertyDef with /_schema, so it must surface
+	// the same fields — in particular `max` for file properties (the multi-
+	// file widget depends on it) so the two schema endpoints can't drift.
+	if got := entityType.Properties["docs"].Max; got != 3 {
+		t.Errorf("docs.max = %d, want 3 (file widget multi-file mode)", got)
+	}
+	if got := entityType.Properties["screenshot"].Max; got != 0 {
+		t.Errorf("screenshot.max = %d, want 0 (single-file, omitted)", got)
 	}
 }
 
@@ -2205,7 +2224,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2254,7 +2273,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=100&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2507,7 +2526,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2537,7 +2556,7 @@ func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2658,11 +2677,16 @@ func newTestAppV1(t *testing.T) *App {
 				Properties: map[string]metamodel.PropertyDef{
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string"},
+					// The mechanics tests upload arbitrary text content, so the
+					// fixture file properties accept text/plain; a dedicated
+					// test exercises the default-safe allowlist rejection path.
+					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
+					"docs":       {Type: "file", Max: 3, Accept: []string{"text/plain"}},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
 				// the same code paths the runtime hits.
-				PropertyOrder: []string{"title", "status"},
+				PropertyOrder: []string{"title", "status", "screenshot", "docs"},
 			},
 			"feature": {
 				Label:    "Feature",
@@ -2961,7 +2985,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 // edges for entityID, used to keep the relation-save tests concise.
 func implementsTargets(app *App, entityID string) map[string]bool {
 	out := map[string]bool{}
-	for _, r := range app.outgoingRelations(context.Background(), entityID) {
+	for _, r := range app.reader.outgoingRelations(context.Background(), entityID) {
 		if r.Type == "implements" {
 			out[r.To] = true
 		}
@@ -3004,7 +3028,7 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 	}
 
 	// The ticket was auto-assigned a short ID; read it from the response body.
-	var created V1Entity
+	var created v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode response: %v; body: %s", err, rec.Body.String())
 	}
@@ -3126,7 +3150,7 @@ func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
 
 	impls := map[string]bool{}
 	blocks := map[string]bool{}
-	for _, r := range app.outgoingRelations(context.Background(), "TKT-001") {
+	for _, r := range app.reader.outgoingRelations(context.Background(), "TKT-001") {
 		switch r.Type {
 		case "implements":
 			impls[r.To] = true
@@ -3162,7 +3186,7 @@ func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
 	}
 
 	types := map[string]bool{}
-	for _, r := range app.outgoingRelations(context.Background(), "TKT-001") {
+	for _, r := range app.reader.outgoingRelations(context.Background(), "TKT-001") {
 		types[r.Type+"->"+r.To] = true
 	}
 	if !types["implements->FEAT-001"] || !types["blocks->TKT-002"] || len(types) != 2 {
@@ -3190,7 +3214,7 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "unknown_relation_type") || !strings.Contains(rec.Body.String(), "bogus") {
 		t.Fatalf("detail missing structured reason/type, got: %s", rec.Body.String())
 	}
-	if len(app.outgoingRelations(context.Background(), "TKT-001")) != 0 {
+	if len(app.reader.outgoingRelations(context.Background(), "TKT-001")) != 0 {
 		t.Fatalf("no edges should have been written on a rejected type")
 	}
 }
@@ -3260,7 +3284,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
 
-	entityBefore, _ := app.getEntity(context.Background(), "TKT-001")
+	entityBefore, _ := app.reader.getEntity(context.Background(), "TKT-001")
 	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
@@ -3271,7 +3295,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
 
-	entityAfter, _ := app.getEntity(context.Background(), "TKT-001")
+	entityAfter, _ := app.reader.getEntity(context.Background(), "TKT-001")
 	// Entity fields (id/type/props/content) should be byte-identical.
 	if entityAfter.Content != entityBefore.Content ||
 		len(entityAfter.Properties) != len(entityBefore.Properties) {
@@ -3595,7 +3619,7 @@ func TestV1Schema_MultiPrefix(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3621,7 +3645,7 @@ func TestV1Schema_SinglePrefix_Compat(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3654,7 +3678,7 @@ func TestV1CreateEntity_PrefixOverride(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3670,7 +3694,7 @@ func TestV1CreateEntity_EmptyPrefixUsesFirst(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3725,7 +3749,7 @@ func TestV1CreateEntity_ManualAcceptsID(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3821,7 +3845,7 @@ func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3866,7 +3890,7 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3903,7 +3927,7 @@ func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
 
 // View responses must not carry add/link affordances. The view path is
 // strictly read-only; mutations live on the form/side-panel path. This guards
-// against re-introducing addInfo / linkInfo on V1ViewSection across every
+// against re-introducing addInfo / linkInfo on v1.ViewSection across every
 // shape that historically emitted them: outgoing/incoming traversals,
 // cards/list/table displays, and the variant where the target type has no
 // create-form configured (which previously emitted only linkInfo).
@@ -4071,7 +4095,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4112,11 +4136,11 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 
 // TKT-G7N5 wire-shape tests (AC1, AC2).
 
-// TestAppRouter_PerEntityGet_NoneProfile asserts AC1: under the nop
+// TestV1Affordance_PerEntityGet_NoneProfile asserts AC1: under the nop
 // resolver, per-entity GET responses contain `_fields: {}` and
 // `_relations: {}` (present-but-empty closed-world signal), and no
 // properties are omitted.
-func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
+func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	app := newTestAppV1(t)
 	app.fieldResolver = NopFieldVerdictResolver{}
 
@@ -4138,7 +4162,7 @@ func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
 
 	raw := rec.Body.String()
 
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4166,7 +4190,7 @@ func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
 	// Wire format: both keys must appear in the raw JSON as `{}` so
 	// the SPA distinguishes "anonymous fallback" (absent) from
 	// "evaluated with no deviations" (present-empty). Round-tripping
-	// V1Entity through omitempty proves this for pointer fields.
+	// v1.Entity through omitempty proves this for pointer fields.
 	if !strings.Contains(raw, `"_fields":{}`) {
 		t.Errorf("raw body should contain \"_fields\":{}; got: %s", raw)
 	}
@@ -4175,11 +4199,11 @@ func TestAppRouter_PerEntityGet_NoneProfile(t *testing.T) {
 	}
 }
 
-// TestAppRouter_PerEntityGet_DemoFixture asserts AC2: the demo
+// TestV1Affordance_PerEntityGet_DemoFixture asserts AC2: the demo
 // resolver populates the expected sparse fixture verdicts. Uses a
 // hand-rolled fixture resolver to keep the test independent of the
 // project's real metamodel (which doesn't have all the demo fields).
-func TestAppRouter_PerEntityGet_DemoFixture(t *testing.T) {
+func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	app := newTestAppV1(t)
 	falseVal := false
 
@@ -4218,7 +4242,7 @@ func TestAppRouter_PerEntityGet_DemoFixture(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4279,12 +4303,12 @@ func TestAppRouter_PerEntityGet_DemoFixture(t *testing.T) {
 	}
 }
 
-// TestAppRouter_PatchEcho_StripsHidden proves the C2 fix: PATCH
+// TestV1Affordance_PatchEcho_StripsHidden proves the C2 fix: PATCH
 // responses must run through the same strip-hidden invariant as GET.
 // Before the fix, the PATCH success response echoed the full entity
 // including hidden properties, so a stale client could observe the
 // hidden value via its own write response.
-func TestAppRouter_PatchEcho_StripsHidden(t *testing.T) {
+func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4313,11 +4337,11 @@ func TestAppRouter_PatchEcho_StripsHidden(t *testing.T) {
 	}
 }
 
-// TestAppRouter_Includes_StripHidden proves the C3 fix: ?include=*
+// TestV1Affordance_Includes_StripHidden proves the C3 fix: ?include=*
 // (and named includes) must strip hidden properties from related
 // entities. Before the fix, a related entity's hidden field could
 // leak through the `included` map.
-func TestAppRouter_Includes_StripHidden(t *testing.T) {
+func TestV1Affordance_Includes_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4353,11 +4377,11 @@ func TestAppRouter_Includes_StripHidden(t *testing.T) {
 	}
 }
 
-// TestAppRouter_CollectionList_StripHidden asserts that list rows
+// TestV1Affordance_CollectionList_StripHidden asserts that list rows
 // (which use serializeRelatedEntityForWire) strip hidden properties
 // too — the wire invariant holds regardless of which response shape
 // the entity rides in.
-func TestAppRouter_CollectionList_StripHidden(t *testing.T) {
+func TestV1Affordance_CollectionList_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4409,7 +4433,7 @@ func seedDemoTicketForPatch(t *testing.T) *App {
 
 // AC3: hidden + unknown fields produce structurally identical 403
 // responses (F8 side channel closure).
-func TestAppRouter_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
+func TestV1Affordance_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4447,7 +4471,7 @@ func TestAppRouter_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 }
 
 // AC4: read-only fields reject writes regardless of value.
-func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
+func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 	t.Run("different value", func(t *testing.T) {
 		app := seedDemoTicketForPatch(t)
 		code, body := patchTicketRaw(t, app, `{"properties":{"status":"closed"}}`)
@@ -4478,7 +4502,7 @@ func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
 			t.Fatalf("got %d, want 403; body=%s", code, body)
 		}
 		// Verify title was NOT updated.
-		e, _ := app.getEntity(context.Background(), "TKT-001")
+		e, _ := app.reader.getEntity(context.Background(), "TKT-001")
 		if e.Properties["title"] != "Original" {
 			t.Errorf("title must not be applied when status fails: got %v", e.Properties["title"])
 		}
@@ -4497,13 +4521,13 @@ func TestAppRouter_PatchReadOnlyField_Forbidden(t *testing.T) {
 	})
 }
 
-// TestAppRouter_AffordanceDenial_EmitsAudit proves the C5 fix: every
+// TestV1Affordance_AffordanceDenial_EmitsAudit proves the C5 fix: every
 // affordance-gate rejection produces a `denied-write` audit row
 // attributed to the request principal. The wire stream is uniform
 // with ACL denials (which the entitymanager emits the same op for),
 // so log readers see one stream for every denied write regardless of
 // whether the gate fired in the manager or in the dataentry handler.
-func TestAppRouter_AffordanceDenial_EmitsAudit(t *testing.T) {
+func TestV1Affordance_AffordanceDenial_EmitsAudit(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
 	app.fieldResolver = fakeResolver{
@@ -4546,7 +4570,7 @@ func TestAppRouter_AffordanceDenial_EmitsAudit(t *testing.T) {
 }
 
 // AC5: filtered enum options reject writes.
-func TestAppRouter_PatchFilteredOption_Forbidden(t *testing.T) {
+func TestV1Affordance_PatchFilteredOption_Forbidden(t *testing.T) {
 	app := seedDemoTicketForPatch(t)
 
 	t.Run("filtered value rejected", func(t *testing.T) {
@@ -4567,13 +4591,13 @@ func TestAppRouter_PatchFilteredOption_Forbidden(t *testing.T) {
 	})
 }
 
-// TestAppRouter_PatchFilteredListEnum_Forbidden proves the
+// TestV1Affordance_PatchFilteredListEnum_Forbidden proves the
 // list-typed enum option-filter now rejects rather than silently
 // allowing. Before this change, a `tags: [allowed, denied]` PATCH
 // would slip through because the validator only knew how to inspect
 // scalar string values. This is the security-soft-spot the cranky
 // reviewer flagged as S5.
-func TestAppRouter_PatchFilteredListEnum_Forbidden(t *testing.T) {
+func TestV1Affordance_PatchFilteredListEnum_Forbidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -4626,7 +4650,7 @@ func createTicketRaw(t *testing.T, app *App, body string) (code int, respBody st
 // CREATE, not just PATCH. Before the fix, POST went straight to
 // entityManager.CreateEntity, so a denied field could be smuggled in at
 // create time. The create gate must produce the same 403 + rule_id as
-// the PATCH gate (TestAppRouter_Patch* above).
+// the PATCH gate (TestV1Affordance_Patch* above).
 func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 	t.Run("hidden field rejected", func(t *testing.T) {
 		app := newTestAppV1(t)
@@ -4774,7 +4798,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
-		var v V1Entity
+		var v v1.Entity
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 		}
@@ -4798,7 +4822,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
 		body := rec.Body.String()
-		var v V1Entity
+		var v v1.Entity
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, body)
 		}
@@ -4822,7 +4846,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
-		var v V1Entity
+		var v v1.Entity
 		_ = json.Unmarshal(rec.Body.Bytes(), &v)
 		if v.FieldAffordances == nil || (*v.FieldAffordances)["status"].Options["done"] {
 			t.Errorf("_fields.status.options.done must be false; body=%s", rec.Body.String())
@@ -4876,7 +4900,7 @@ func TestHandleV1DryRunCreate_SoftWarnings(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 	}
-	var v V1Entity
+	var v v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
@@ -4910,7 +4934,7 @@ func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing
 	if code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 	}
-	var v V1Entity
+	var v v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
@@ -4985,7 +5009,7 @@ func seedTicketWithRelationVerdicts(t *testing.T, rv RelationVerdicts) *App {
 // AC6: per-relation POST is gated by creatable; per-relation DELETE
 // is gated by removable. Per-relation-type uniform: the 403 response
 // names the relation type but no link identifier (F5).
-func TestAppRouter_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
+func TestV1Affordance_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: false, Removable: true},
@@ -5007,7 +5031,7 @@ func TestAppRouter_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) {
 	}
 }
 
-func TestAppRouter_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
+func TestV1Affordance_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: true, Removable: false},
@@ -5029,7 +5053,7 @@ func TestAppRouter_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) {
 	}
 }
 
-func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
+func TestV1Affordance_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: true, Removable: true},
@@ -5044,7 +5068,7 @@ func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 	}
 }
 
-// TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource proves
+// TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource proves
 // the C4 fix: an incoming-direction POST creates an edge whose SOURCE
 // is the peer, not the path entity. The affordance verdict must be
 // evaluated against the source's type.
@@ -5057,7 +5081,7 @@ func TestAppRouter_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 //
 // Before the C4 fix this returned 201 (verdict evaluated against the
 // concept, which permitted it). After the fix it returns 403.
-func TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T) {
+func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
@@ -5093,7 +5117,7 @@ func TestAppRouter_PerRelationCreate_IncomingResolvesAgainstSource(t *testing.T)
 
 // AC6: unified PATCH path that ADDS or REMOVES relations is gated by
 // the same verdicts.
-func TestAppRouter_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.T) {
+func TestV1Affordance_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: false, Removable: true},
@@ -5109,7 +5133,7 @@ func TestAppRouter_UnifiedPatchAddRelation_ForbiddenWhenNotCreatable(t *testing.
 	}
 }
 
-func TestAppRouter_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testing.T) {
+func TestV1Affordance_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testing.T) {
 	app := seedTicketWithRelationVerdicts(t, RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {Creatable: true, Removable: false},
@@ -5131,7 +5155,7 @@ func TestAppRouter_UnifiedPatchRemoveRelation_ForbiddenWhenNotRemovable(t *testi
 // AC7: relation-meta gate. Same shape across the three meta-write
 // paths: POST creates with meta, PATCH /relations/<t>/<id> updates
 // meta, unified PATCH upserts meta.
-func TestAppRouter_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
+func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 	rv := RelationVerdicts{
 		Types: map[string]RelationVerdict{
 			"implements": {
@@ -5203,7 +5227,7 @@ func TestAppRouter_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 // new wire keys are per-entity only in v1). The collection-level
 // response retains its existing shape; per-entity affordances ride on
 // per-entity responses.
-func TestAppRouter_CollectionGet_NoFieldVerdicts(t *testing.T) {
+func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -364,8 +366,8 @@ func simpleMarkdownToHTML(md string) template.HTML {
 	// Post-process: add md-table class to tables
 	result = strings.ReplaceAll(result, "<table>", `<table class="md-table">`)
 
-	// Post-process: convert mermaid code blocks
-	result = htmlutil.ConvertMermaidBlocks(result)
+	// Post-process: convert diagram code blocks (mermaid, plantuml)
+	result = htmlutil.ConvertDiagramBlocks(result)
 
 	// Post-process: add checkbox indices for interactive toggling
 	result = addCheckboxIndices(result)
@@ -390,20 +392,59 @@ func addCheckboxIndices(s string) string {
 // It supports the same query syntax as the search page: type:, prop:, status:,
 // and free text. Free-text words use OR logic with fuzzy matching via Bleve;
 // results are ranked by score.
-func (a *App) executeQuery(ctx context.Context, query string) []*entity.Entity {
+// executeQuery runs the search-view pipeline under the ctx principal's
+// read scope (TKT-BA8BSX). Both consumers — handleV1Search and the
+// _position search scope (resolveScope) — inherit the gate from here,
+// so no future consumer can run an ungated search by accident.
+//
+// Ordering of the gate: the scope resolves FIRST, and an
+// all-effective-DenyAll scope returns before any backend work — a
+// denied principal must not be able to probe search-backend latency
+// (RR-X56H pattern, pinned with a recording searcher in
+// acl_search_test.go). The free-text branch then runs through
+// search.VisibleSearcher so hidden hits never have their bodies
+// loaded; the type-listing branch resolves the per-type verdict
+// against the store directly.
+//
+// The maxFreeTextSearchResults bound counts entities that survived
+// BOTH visibility and property filters (post-visibility truncation —
+// a pre-visibility cap starves restricted principals; a pre-filter
+// cap would starve filtered queries the same way).
+//
+// Errors: visibility-scope failures wrap errACLListQuery (mapped by
+// writeGateError: cancel-silent / 504 / 500 acl_query_failed with
+// constant detail), store-load failures wrap errListLoad, and plain
+// search-backend failures pass through (500 search_failed). The
+// pre-TKT-BA8BSX version swallowed both error classes into silently
+// truncated results.
+func (a *App) executeQuery(ctx context.Context, query string) ([]*entity.Entity, error) {
 	sq := searchparser.ParseQuery(query)
 	if sq.IsEmpty() {
-		return nil
+		return nil, nil
 	}
 
 	svc := a.Services()
+	typeNames := make([]string, 0, len(svc.Meta.Entities))
+	for name := range svc.Meta.Entities {
+		typeNames = append(typeNames, name)
+	}
+	slices.Sort(typeNames)
+	scope := readGateFromContext(ctx).SearchScope(ctx, typeNames)
+	if len(scope) == 0 {
+		return []*entity.Entity{}, nil
+	}
+
 	var candidates []*entity.Entity
+	var err error
 	if sq.HasFreeText() {
-		// Searcher returns entities in relevance order. Scores are dropped
-		// because executeQuery never sorted by them.
-		candidates, _ = runFreeTextSearchE(ctx, svc, sq, maxFreeTextSearchResults)
+		// Hits arrive in relevance order. Scores are dropped because
+		// executeQuery never sorted by them.
+		candidates, err = a.runVisibleFreeTextSearch(ctx, svc, sq, scope)
 	} else {
-		candidates = listFromStoreByTypes(ctx, svc, sq.EntityTypes)
+		candidates, err = visibleListByTypes(ctx, svc, sq.EntityTypes, scope)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	results := make([]*entity.Entity, 0, len(candidates))
@@ -412,14 +453,115 @@ func (a *App) executeQuery(ctx context.Context, query string) []*entity.Entity {
 			continue
 		}
 		results = append(results, e)
+		if sq.HasFreeText() && len(results) >= maxFreeTextSearchResults {
+			break
+		}
 	}
 
-	// Apply sort from query syntax (Bleve results are already ranked by relevance)
+	// Apply sort from query syntax (free-text results are already ranked by relevance)
 	if sq.HasSort() {
 		a.sortEntitiesMulti(results, sq.SortClauses)
 	}
 
-	return results
+	return results, nil
+}
+
+// runVisibleFreeTextSearch is executeQuery's free-text branch: the
+// same phrase re-quoting as runFreeTextSearchE, routed through the
+// ACL-scoped searcher. The backend-side limit is only set when no
+// property filters remain — with Go-side filters pending, truncation
+// happens in executeQuery after them, or the filter gap would re-open
+// the starvation the post-visibility limit closes.
+func (a *App) runVisibleFreeTextSearch(
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery, scope map[string]search.TypeScope,
+) ([]*entity.Entity, error) {
+	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
+	parts = append(parts, sq.FreeTextWords...)
+	for _, p := range sq.FreeTextPhrases {
+		parts = append(parts, `"`+p+`"`)
+	}
+	limit := 0
+	if len(sq.PropertyFilters) == 0 {
+		limit = maxFreeTextSearchResults
+	}
+	q := search.Query{
+		Text:  strings.Join(parts, " "),
+		Types: sq.EntityTypes,
+		Limit: limit,
+	}
+	out := make([]*entity.Entity, 0)
+	for hit, err := range a.visibleSearcher.SearchVisible(ctx, q, scope) {
+		if err != nil {
+			if errors.Is(err, search.ErrScope) {
+				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+			}
+			return nil, fmt.Errorf("free-text search: %w", err)
+		}
+		e, getErr := svc.Store.GetEntity(ctx, hit.ID)
+		if getErr != nil {
+			// Stale index hit (entity deleted between index query and
+			// store read). Skip silently — the result stays a coherent
+			// set of currently-existing entities.
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// visibleListByTypes is executeQuery's no-free-text branch: load
+// entities by type under the per-type scope verdict. Unlike
+// listFromStoreByTypes (which other, ungated consumers still use and
+// which swallows iterator errors), this fails loud on both verdict
+// paths — same rationale as scopedSortedEntities.
+func visibleListByTypes(
+	ctx context.Context, svc Services, types []string, scope map[string]search.TypeScope,
+) ([]*entity.Entity, error) {
+	if len(types) == 0 {
+		if _, wildcard := scope[search.WildcardType]; wildcard {
+			// Wildcard-allow (no ACL): every entity, any type — the
+			// pre-ACL listAll shape, with iterator errors surfaced.
+			out := make([]*entity.Entity, 0)
+			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{}) {
+				if err != nil {
+					return nil, fmt.Errorf("%w: %w", errListLoad, err)
+				}
+				out = append(out, e)
+			}
+			return out, nil
+		}
+		// Under ACL, "all types" means "all granted types":
+		// deterministic order over the scope's entries.
+		types = make([]string, 0, len(scope))
+		for typ := range scope {
+			types = append(types, typ)
+		}
+		slices.Sort(types)
+	}
+
+	var out []*entity.Entity
+	for _, typ := range types {
+		ts, ok := search.ResolveTypeScope(scope, typ)
+		if !ok {
+			continue // denied type
+		}
+		if ts.AllowAll {
+			for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+				if err != nil {
+					return nil, fmt.Errorf("%w: %w", errListLoad, err)
+				}
+				out = append(out, e)
+			}
+			continue
+		}
+		for e, err := range svc.Store.GraphQuery(ctx, *ts.Query) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+			}
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // freeTextIDsForTypeResult is what freeTextIDsForType returns: the set of

@@ -172,13 +172,17 @@ describe('CommandPaletteModal', () => {
       expect(opts[0].textContent).toContain('Ticket')
     })
 
-    it('falls back to properties.title when _title missing', async () => {
-      const entity = makeEntity({ properties: { title: 'Legacy title' } })
+    it('ignores properties.title and falls back to id when _title missing', async () => {
+      // properties.title is NOT a display source — only the backend's
+      // metamodel-aware _title is. An entity with a `title` property but no
+      // _title must render its ID, not the property (BUG-1P88YM).
+      const entity = makeEntity({ id: 'T-9', properties: { title: 'Legacy title' } })
       searchSpy.mockResolvedValueOnce(listResponse([entity]))
       factory()
       await typeQuery('leg')
 
-      expect(options()[0].textContent).toContain(entity.properties.title as string)
+      expect(options()[0].textContent).toContain('T-9')
+      expect(options()[0].textContent).not.toContain('Legacy title')
     })
 
     it('falls back to id when both title fields missing', async () => {

@@ -11,4 +11,5 @@ export { ConflictsPage } from './conflicts.page';
 export { DashboardPage } from './dashboard.page';
 export { RelationCardsPage } from './relation-cards.page';
 export { AppShellPage } from './app-shell.page';
+export { AppHostPage } from './app-host.page';
 export { DocumentPage } from './document.page';

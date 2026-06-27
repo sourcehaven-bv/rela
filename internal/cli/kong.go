@@ -43,6 +43,12 @@ var (
 )
 
 // CLI is the kong-parsed root.
+//
+// TODO(TKT-N0IKN9): CLI has 38 exported fields (kong binds one per subcommand,
+// so growth is structural here) — over the 20-field load line. Revisit grouping
+// subcommands into sub-structs; ratchet this number down if/when that lands.
+//
+//plimsoll:max-fields=38
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -53,6 +59,7 @@ type CLI struct {
 	// Subcommands.
 	Version    VersionCmd    `cmd:"" help:"Print version information."`
 	Init       InitCmd       `cmd:"" help:"Initialize a new rela project."`
+	Apps       AppsCmd       `cmd:"" help:"Manage custom data-entry apps."`
 	Migrate    MigrateCmd    `cmd:"" help:"Migrate project files to current schema."`
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
@@ -84,6 +91,7 @@ type CLI struct {
 	Script      ScriptCmd      `cmd:"" help:"Execute a Lua script against the graph."`
 	Scheduler   SchedulerCmd   `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber    RenumberCmd    `cmd:"" help:"Renumber managed order properties on orderable relations."`
+	Sync        SyncCmd        `cmd:"" help:"Sync local changes with a remote rela-server."`
 }
 
 // VersionCmd needs no services.
@@ -187,7 +195,8 @@ func requiresProject(cmd string) bool {
 	case "show", "list", "trace", "graph", "export", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
-		"rename", "analyze", "attach", "attachments", "gc", "renumber":
+		"rename", "analyze", "attach", "attachments", "gc", "renumber",
+		"sync":
 		return true
 	}
 	return false

@@ -79,6 +79,19 @@ func policyFromYAML(t *testing.T, src string) *acl.Policy {
 	return &p
 }
 
+// declFor builds a Declarative wrapping `p` with [acl.NullGraph] —
+// suitable for the affordance unit tests below, which don't exercise
+// group expansion or local-role edges (those are pinned by the
+// feature tests in features_test.go).
+func declFor(t *testing.T, p *acl.Policy) *acl.Declarative {
+	t.Helper()
+	d, err := acl.NewDeclarative(p, acl.NullGraph{}, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	return d
+}
+
 // ctxAs builds a request context for the named principal. user varies
 // across the table even where current tests happen to use one value;
 // keeping it explicit documents which principal each case exercises.
@@ -100,13 +113,14 @@ func ticket(id string, props map[string]interface{}) *entity.Entity {
 // AC2: a policy with no affordance blocks yields empty verdicts
 // (permissive default — byte-identical to Nop downstream).
 func TestResolver_NoAffordanceBlocks_EmptyVerdicts(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
-  admin: { write: ["*"] }
+  admin: { create: ["*"], update: ["*"], delete: ["*"] }
 assignments:
   alice: admin
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -120,6 +134,7 @@ assignments:
 // field with a passing predicate is writable; an unlisted field is
 // denied (writable=false).
 func TestResolver_FieldsClosedWorld(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -129,7 +144,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -147,6 +162,7 @@ assignments:
 
 // AC3: a field grant whose predicate evaluates false denies the field.
 func TestResolver_FieldPredicateFalse_Denies(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -157,7 +173,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -177,6 +193,7 @@ assignments:
 
 // AC4: an opted-in option grant filters disallowed options.
 func TestResolver_OptionFiltered(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -189,7 +206,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -207,6 +224,7 @@ assignments:
 
 // AC5: a relation grant with create:false denies creation.
 func TestResolver_RelationCreateFalse(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -218,7 +236,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -238,6 +256,7 @@ assignments:
 // DR-S3: cross-role union is monotonic. A user with two roles, one
 // granting status and one granting title, can write BOTH.
 func TestResolver_CrossRoleUnion(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   a:
@@ -258,7 +277,7 @@ assignments:
 `)
 	// alice has role a + everyone. everyone grants both; a grants status.
 	// Union → both writable.
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -273,6 +292,7 @@ assignments:
 
 // DR-C6: has_role with a local role conferred by a role-relation edge.
 func TestResolver_LocalRole_HasRole(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   owner:
@@ -287,7 +307,7 @@ role_relations:
 `)
 	// alice --owner-of--> T-1 confers owner on T-1.
 	lookup := newStubLookup([3]string{"alice", "owner-of", "T-1"})
-	r, err := affordances.New(p, testMeta(t), lookup)
+	r, err := affordances.New(testMeta(t), lookup, declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -308,6 +328,7 @@ role_relations:
 
 // DR-C7: has_global_role checks only assignment-based roles.
 func TestResolver_HasGlobalRole(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   admin: {}
@@ -320,7 +341,7 @@ assignments:
   alice: triager
   bob: admin
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -336,6 +357,7 @@ assignments:
 // or vice versa) coerces to Nil rather than failing Eval and locking
 // the field. A predicate referencing it just sees nil.
 func TestResolver_OffTypeProperty_CoercesNotFails(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -346,7 +368,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -369,6 +391,7 @@ assignments:
 // A malformed predicate fails construction with the grant path in the
 // error (DR-S2 multi-error collection).
 func TestResolver_New_CompileError_IncludesPath(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -377,7 +400,7 @@ roles:
         - field: status
           when: "entity.nonexistent_field == 1"
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected compile error for unknown field reference")
 	}
@@ -390,6 +413,7 @@ roles:
 // attributed role is deterministic (first in sorted order), not
 // dependent on map iteration. Run repeatedly to catch flakiness.
 func TestResolver_MultiRoleDeny_DeterministicAttribution(t *testing.T) {
+	t.Parallel()
 	// Both zeta and alpha opt-in for status with a false predicate, so
 	// status is denied by both. Sorted order → "alpha" is attributed.
 	p := policyFromYAML(t, `
@@ -410,7 +434,7 @@ assignments:
 	// alice holds zeta (assigned) + everyone (implicit). Both deny
 	// status. Effective roles sorted: everyone, zeta → "everyone" is
 	// the first denier and thus the attributed role.
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -437,6 +461,7 @@ assignments:
 // declare fails construction with the grant path — a typo can't
 // silently invert closed-world intent.
 func TestResolver_New_UnknownFieldTarget_Rejected(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -444,7 +469,7 @@ roles:
       ticket:
         - field: stauts
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected error for unknown field target")
 	}
@@ -457,6 +482,7 @@ roles:
 
 // S2: an option grant on a non-declared option value is rejected.
 func TestResolver_New_UnknownOptionTarget_Rejected(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -465,7 +491,7 @@ roles:
         - field: status
           option: nonexistent
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected error for unknown option")
 	}
@@ -476,6 +502,7 @@ roles:
 
 // S2: a relation grant on a type the metamodel lacks is rejected.
 func TestResolver_New_UnknownRelationTarget_Rejected(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -483,7 +510,7 @@ roles:
       ticket:
         - relation: nonexistent-rel
 `)
-	_, err := affordances.New(p, testMeta(t), newStubLookup())
+	_, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err == nil {
 		t.Fatal("expected error for unknown relation type")
 	}
@@ -496,6 +523,7 @@ roles:
 // failing meta predicate denies just that field (AND-ed with the
 // grant). Exercises the previously-untested relation_accum meta path.
 func TestResolver_RelationMetaField(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -508,7 +536,7 @@ roles:
 assignments:
   alice: triager
 `)
-	r, err := affordances.New(p, testMeta(t), newStubLookup())
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -557,6 +585,7 @@ func (l *ctxRecordingLookup) OutgoingCounts(ctx context.Context, fromID string) 
 // predicate that invokes a relation host func is evaluated with a
 // marker on the context; the lookup must observe it.
 func TestResolver_CallerContext_ThreadsToHostFuncs(t *testing.T) {
+	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
   triager:
@@ -568,7 +597,7 @@ assignments:
   alice: triager
 `)
 	lookup := &ctxRecordingLookup{stubLookup: newStubLookup([3]string{"T-1", "blocks", "T-9"})}
-	r, err := affordances.New(p, testMeta(t), lookup)
+	r, err := affordances.New(testMeta(t), lookup, declFor(t, p))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -589,4 +618,92 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// countingGraph is a minimal acl.Graph wrapper that records every
+// OutgoingRelations call. Used to prove that a per-request acl.Request
+// attached via acl.WithRequest is reused across multiple resolver
+// invocations on the same ctx — avoiding the per-entity member-of
+// re-walk that motivated RR-JJYW.
+type countingGraph struct {
+	outgoingCalls int
+	hasEdgeCalls  int
+}
+
+func (g *countingGraph) HasEdge(_ context.Context, _, _, _ string) bool {
+	g.hasEdgeCalls++
+	return false
+}
+
+func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string) ([]string, error) {
+	g.outgoingCalls++
+	return nil, nil
+}
+
+// RR-JJYW: when ctx carries an acl.Request via acl.WithRequest, the
+// affordance resolver reuses it across per-entity calls instead of
+// opening a fresh Request each time. The fresh-per-call shape (the
+// pre-fix code) re-walked member-of N times for an N-entity list
+// response, defeating the very memoisation Request was designed to
+// provide.
+//
+// We pin the contract via the OutgoingRelations call counter on a
+// minimal Graph. With one Request attached, Globals computes once;
+// repeated FieldVerdicts calls add zero member-of calls. Without
+// the attached Request, each FieldVerdicts opens its own Request
+// and increments the counter.
+func TestResolver_ReusesRequestFromContext(t *testing.T) {
+	t.Parallel()
+	p := policyFromYAML(t, `
+roles:
+  viewer:
+    visible:
+      ticket:
+        - field: status
+assignments:
+  alice: viewer
+`)
+	g := &countingGraph{}
+	d, err := acl.NewDeclarative(p, g, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatalf("NewDeclarative: %v", err)
+	}
+	r, err := affordances.New(testMeta(t), newStubLookup(), d)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	e := ticket("T-1", nil)
+
+	// Baseline: fresh-Request-per-call (no acl.WithRequest on ctx)
+	// MUST re-walk member-of, otherwise the test below trivially
+	// passes (RR-K7CT: was a silent t.Skipf — gone now). If a
+	// future refactor makes Globals lazy enough to skip the walk
+	// even on the fresh path, this test loses its
+	// regression-detection capability, so fail loud.
+	baselineCtx := ctxAs("alice")
+	_ = r.FieldVerdicts(baselineCtx, e)
+	freshFirstCallOutgoing := g.outgoingCalls
+	_ = r.FieldVerdicts(baselineCtx, e)
+	freshSecondCallOutgoing := g.outgoingCalls - freshFirstCallOutgoing
+	if freshSecondCallOutgoing == 0 {
+		t.Fatalf("test premise broken: second fresh-per-call FieldVerdicts did not re-walk member-of (got %d additional outgoing calls); the without-Request baseline cannot discriminate the with-Request fix, so the rest of this test would be vacuous",
+			freshSecondCallOutgoing)
+	}
+
+	// With Request attached: subsequent calls must not re-walk.
+	g.outgoingCalls = 0
+	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+	scopedCtx := acl.WithRequest(ctxAs("alice"), req)
+	_ = r.FieldVerdicts(scopedCtx, e)
+	firstCallOutgoing := g.outgoingCalls
+	_ = r.FieldVerdicts(scopedCtx, e)
+	secondCallOutgoing := g.outgoingCalls - firstCallOutgoing
+
+	if secondCallOutgoing != 0 {
+		t.Errorf("with acl.WithRequest: second call added %d OutgoingRelations calls; want 0 (Request should memoise Globals)",
+			secondCallOutgoing)
+	}
 }

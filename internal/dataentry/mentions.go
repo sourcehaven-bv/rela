@@ -10,29 +10,11 @@ import (
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
-
-// Mention is the resolved target of an entity-ID code span found in
-// markdown content. Mirrors the Lua-side `rela.md.entity_refs`/`resolve_refs`
-// semantics (TKT-LXYHQ): only bare-content code spans whose entire text is
-// an entity ID are collected; the data-entry SPA uses this map to rewrite
-// those code spans into titled in-app links.
-//
-// `Inaccessible` is true when the entity's display title is unreadable
-// (e.g. the file is git-crypt encrypted) — the SPA renders such links
-// with a lock affordance using the same tooltip copy as inaccessible
-// properties. `InaccessibleReason` carries the matching
-// `entity.InaccessibleReason` value as a string so the wire shape stays
-// stable across reason-enum additions.
-type Mention struct {
-	Type               string `json:"type"`
-	Title              string `json:"title"`
-	Inaccessible       bool   `json:"inaccessible,omitempty"`
-	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
-}
 
 // collectMentions scans the supplied markdown blobs for inline code spans
 // whose entire content is an entity ID known to the store, and returns a
@@ -47,12 +29,12 @@ type Mention struct {
 // unknown-ID UX. Context cancellation is honored — callers (HTTP handlers)
 // have already bound the request context and abandoning further lookups
 // after the client disconnects saves wasted work.
-func collectMentions(ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string) map[string]Mention {
+func collectMentions(ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string) map[string]v1.Mention {
 	candidates := scanCodeSpanCandidates(contents...)
 	if len(candidates) == 0 {
 		return nil
 	}
-	out := make(map[string]Mention, len(candidates))
+	out := make(map[string]v1.Mention, len(candidates))
 	for id := range candidates {
 		if err := ctx.Err(); err != nil {
 			if len(out) == 0 {
@@ -77,14 +59,14 @@ func collectMentions(ctx context.Context, s store.EntityReader, meta *metamodel.
 	return out
 }
 
-// buildMention turns a resolved entity into a wire-shape Mention. Title
+// buildMention turns a resolved entity into a wire-shape v1.Mention. Title
 // uses the metamodel's DisplayTitle so entity types whose primary
 // property is something other than `title` (e.g. concept's `name`)
 // still produce readable link text. Inaccessibility flips on only when
 // the display-title source is itself unreadable — a partial lock on an
 // unrelated property must not turn a link into a lock affordance.
-func buildMention(e *entityPkg.Entity, meta *metamodel.Metamodel) Mention {
-	m := Mention{Type: e.Type}
+func buildMention(e *entityPkg.Entity, meta *metamodel.Metamodel) v1.Mention {
+	m := v1.Mention{Type: e.Type}
 	if meta != nil {
 		m.Title = meta.DisplayTitle(e.ID, e.Type, e.Properties)
 	} else {

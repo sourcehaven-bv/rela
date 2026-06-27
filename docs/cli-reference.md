@@ -56,6 +56,23 @@ Creates:
 
 ---
 
+### rela apps new
+
+Scaffold a new custom data-entry app (see the data-entry guide's "Custom apps"
+section).
+
+```bash
+rela apps new my-dashboard
+```
+
+Creates `apps/<id>/index.html` — a working starter that links the bridge SDK
+(`_rela.js`) and the optional theme (`_rela.css`), reads data via
+`rela.list(...)`, and renders a result. Edit it, then open `/app/<id>` in the
+data-entry server. The `<id>` must match `^[a-z0-9_-]{1,64}$` and becomes the
+folder name and route; it errors if the app already exists.
+
+---
+
 ### rela create
 
 Create a new entity.
@@ -321,8 +338,13 @@ rela attach <entity-id> <file>... [flags]
 ```
 
 Each file is stored at `attachments/<entity-id>/<property>/<filename>`.
-Each file-type property holds at most one attachment; re-running `attach`
-replaces the existing file.
+A file-type property holds one attachment by default; set `max` above 1 on
+the property (see the metamodel reference) to allow several.
+
+> **Note:** for a single-attachment property (`max: 1`), re-running `attach`
+> **replaces** the existing file. For a multi-attachment property (`max > 1`),
+> `attach` **appends** up to the cap, auto-suffixing a duplicate name
+> (`report.pdf` → `report (1).pdf`) and erroring when full.
 
 **Arguments:**
 
@@ -372,26 +394,34 @@ rela attachments DEC-007
 
 ### rela detach
 
-Remove the attachment from an entity property.
+Remove an attachment from an entity property.
 
 ```bash
-rela detach <entity-id> <property>
+rela detach <entity-id> <property> [--file <name>]
 ```
 
-Clears the property on the entity and deletes the underlying file from the
-attachment store. Each file-type property holds at most one attachment, so no
-further disambiguation is needed.
+Deletes the underlying file from the attachment store and re-stamps the
+property. When the property holds a single attachment, `--file` may be
+omitted. When it holds several (a `file` property with `max > 1`), pass
+`--file` to select which one — `rela attachments <entity-id>` lists the
+names.
 
 **Arguments:**
 
 - `entity-id` - Entity ID
 - `property` - Property name containing the attachment
 
+**Flags:**
+
+| Flag           | Description                                            |
+| -------------- | ----------------------------------------------------- |
+| `-f, --file`   | File name to detach (required when more than one)     |
+
 **Examples:**
 
 ```bash
 rela detach BUG-042 screenshot
-rela detach DEC-007 supporting-docs
+rela detach DEC-007 supporting-docs --file spec.pdf
 ```
 
 ---
@@ -452,26 +482,56 @@ rela unlink DEC-001 addresses REQ-001
 
 ### rela sync
 
-Rebuild the graph from markdown files.
+Two-way sync between a local project (fsstore) and a remote rela-server backed
+by PostgreSQL. `push` sends locally-changed records to the server; `pull` brings
+remote changes into the local project. Conflicts are surfaced for manual
+resolution — no automatic merge. See [Sync](sync.md) for the full design.
 
 ```bash
-rela sync [flags]
+rela sync push [--remote <url>] [--token <token>] [--force <id>]
+rela sync pull [--remote <url>] [--token <token>] [--force <id>]
 ```
 
 **Flags:**
 
-| Flag      | Description        |
-| --------- | ------------------ |
-| `--force` | Force full rebuild |
+| Flag       | Description                                                          |
+| ---------- | ------------------------------------------------------------------- |
+| `--remote` | Remote rela-server base URL (proxy-fronted). Env: `RELA_REMOTE`.    |
+| `--token`  | Bearer token for the OAuth proxy. Prefer env `RELA_SYNC_TOKEN`.      |
+| `--force`  | Resolve one record id: push = local wins, pull = remote wins.       |
 
-Use after manually editing markdown files to update the cache.
+The sync state (a per-record content-hash index and an opaque server cursor)
+lives in `.rela/sync-state.json`. Dirty detection is local: a record whose
+canonical hash differs from the index is pushed; the index advances only past
+confirmed-applied records, so an interrupted run resumes on re-run.
+
+**Conflicts.** A record changed on both ends halts with a clear report and is
+NOT applied. Resolve it explicitly:
+
+- `rela sync push --force <id>` — overwrite the remote with the local copy.
+- `rela sync pull --force <id>` — overwrite the local copy with the remote.
+
+**Authentication.** In production rela-server sits behind an OAuth proxy and has
+no native auth — the CLI authenticates to the *proxy* by presenting a JWT bearer
+(`Authorization: Bearer $RELA_SYNC_TOKEN`). The token is read from the env/flag
+and never logged. On loopback/dev with no proxy, sync works without a token. See
+[Sync](sync.md) for the proxy configuration.
 
 **Examples:**
 
 ```bash
-rela sync
-rela sync --force
+export RELA_REMOTE=https://rela.example.com
+export RELA_SYNC_TOKEN=$(my-idp-get-token)
+
+rela sync push                 # send local changes
+rela sync pull                 # bring in remote changes
+rela sync push --force TKT-42  # resolve TKT-42: local wins
+rela sync pull --force TKT-42  # resolve TKT-42: remote wins
 ```
+
+> Note: sync requires the remote to run the PostgreSQL backend. Against a
+> non-postgres server the manifest endpoint returns 501 and `pull` reports that
+> the server does not support sync.
 
 ---
 

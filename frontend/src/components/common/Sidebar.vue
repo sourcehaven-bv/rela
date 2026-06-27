@@ -5,7 +5,7 @@ import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
 import { useScriptErrorStore } from '@/stores/scriptError'
 import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { isScriptError } from '@/types/scriptError'
+import { ApiError, getErrorMessage, getScriptError } from '@/api/errors'
 import type { SidebarGroup, SidebarItem } from '@/types'
 
 const schemaStore = useSchemaStore()
@@ -23,6 +23,15 @@ const sidebarGroups = ref<SidebarGroup[]>([])
 const sidebarAppName = ref('')
 
 const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
+
+// Custom apps surfaced as sidebar links. The label falls back to title, then
+// the id, so an app with no metadata still gets a usable entry.
+const appLinks = computed(() =>
+  Array.from(schemaStore.apps.entries()).map(([id, app]) => ({
+    id,
+    label: app.label || app.title || id,
+  })),
+)
 // Logo lives on the schema store so SettingsView can update it after
 // upload/remove without a sidebar refetch.
 const logoUrl = computed(() => schemaStore.logoUrl)
@@ -116,16 +125,13 @@ async function handleAction(item: SidebarItem, ev?: Event) {
       router.push(response.redirect)
     }
   } catch (err: unknown) {
-    if (isScriptError(err)) {
-      scriptErrorStore.show(err, triggerEl)
+    const scriptErr = getScriptError(err)
+    if (scriptErr) {
+      scriptErrorStore.show(scriptErr, triggerEl)
     } else {
-      let msg = 'Action failed'
-      const e = err as { response?: { data?: { correlation_id?: string } }; correlation_id?: string }
-      const corrID = e?.response?.data?.correlation_id ?? e?.correlation_id
-      if (corrID) {
-        msg = `Action failed (ref: ${corrID})`
-      }
-      uiStore.error(msg)
+      const corrID = err instanceof ApiError ? err.correlationId : undefined
+      const msg = getErrorMessage(err, 'Action failed')
+      uiStore.error(corrID ? `${msg} (ref: ${corrID})` : msg)
     }
   } finally {
     actionInFlight.value.delete(item.action)
@@ -216,6 +222,21 @@ async function handleAction(item: SidebarItem, ev?: Event) {
           </template>
         </template>
       </template>
+
+      <!-- Custom apps (sandboxed-iframe extensions). Routes to /app/:id. -->
+      <div v-if="appLinks.length" class="nav-section">
+        <div class="nav-section-title">Apps</div>
+        <RouterLink
+          v-for="app in appLinks"
+          :key="app.id"
+          :to="`/app/${app.id}`"
+          class="nav-item"
+          :class="{ active: isActive(`/app/${app.id}`) }"
+        >
+          <span class="nav-icon">🧩</span>
+          <span class="nav-label">{{ app.label }}</span>
+        </RouterLink>
+      </div>
     </nav>
 
     <!-- Mobile-only footer: git status, settings, theme toggle -->

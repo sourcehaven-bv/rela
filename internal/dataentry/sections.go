@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -61,14 +62,24 @@ type SectionFieldData struct {
 }
 
 // SectionEntityData holds a resolved entity for template rendering.
+//
+// `Props` and `FieldVerdicts` (TKT-IHC7D) carry the typed property
+// values and per-cell writability verdicts for inline-edit hosts on
+// cards/list view sections. Both are hidden-property-stripped. The
+// wire converter dumb-copies them into v1.ViewEntity._props and
+// v1.ViewEntity._fields respectively. They are nil for code paths that
+// don't compute them (notably the entry-source branch and table rows);
+// the wire converter's nil-checks gate emission.
 type SectionEntityData struct {
-	ID         string
-	Title      string
-	Type       string
-	EditFormID string
-	Fields     []SectionFieldData
-	Content    string
-	HasContent bool
+	ID            string
+	Title         string
+	Type          string
+	EditFormID    string
+	Fields        []SectionFieldData
+	Content       string
+	HasContent    bool
+	Props         map[string]any
+	FieldVerdicts map[string]v1.FieldAffordance
 }
 
 // SectionColumnData holds a resolved table cell for template rendering.
@@ -140,6 +151,44 @@ type SectionData struct {
 	LinkInfo     *SectionLinkInfo
 }
 
+// buildSectionEntityData composes the per-row data for a cards/list
+// view section (TKT-IHC7D). Both non-entry display modes — `properties`
+// / `list` and `content` / `cards` — call this so the typed `_props`
+// and `_fields` wire surfaces stay consistent across modes.
+//
+// Returns a value (not a pointer) so callers can layer on display-mode-
+// specific fields (e.g. `Content`/`HasContent` for the `content`/`cards`
+// branch) without sharing mutation across rows.
+func (a *App) buildSectionEntityData(ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef) SectionEntityData {
+	s := a.State()
+	sed := SectionEntityData{
+		ID:            e.ID,
+		Title:         s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
+		Type:          e.Type,
+		EditFormID:    a.editFormForType(e.Type),
+		Props:         a.affordances.copyVisibleProperties(ctx, e),
+		FieldVerdicts: a.affordances.computeFieldAffordances(ctx, e),
+	}
+	for _, f := range secFields {
+		values := propertyToStrings(e.Properties[f.Property])
+		propType := ""
+		if eDef != nil {
+			if pd, ok := eDef.Properties[f.Property]; ok {
+				propType = pd.Type
+			}
+		}
+		label := f.Label
+		if label == "" {
+			label = titleCase(f.Property)
+		}
+		sed.Fields = append(sed.Fields, SectionFieldData{
+			Property: f.Property, Label: label, Values: values, PropType: propType,
+			Inaccessible: e.IsInaccessible(f.Property),
+		})
+	}
+	return sed
+}
+
 // buildSections builds template-ready section data from view sections and a view result.
 func (a *App) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := a.State()
@@ -192,29 +241,7 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			case "properties", "list":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := SectionEntityData{
-						ID:         e.ID,
-						Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
-						Type:       e.Type,
-						EditFormID: a.editFormForType(e.Type),
-					}
-					for _, f := range sec.Fields {
-						values := propertyToStrings(e.Properties[f.Property])
-						propType := ""
-						if eDef != nil {
-							if pd, ok := eDef.Properties[f.Property]; ok {
-								propType = pd.Type
-							}
-						}
-						label := f.Label
-						if label == "" {
-							label = titleCase(f.Property)
-						}
-						sed.Fields = append(sed.Fields, SectionFieldData{
-							Property: f.Property, Label: label, Values: values, PropType: propType,
-							Inaccessible: e.IsInaccessible(f.Property),
-						})
-					}
+					sed := a.buildSectionEntityData(ctx, e, sec.Fields, eDef)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
@@ -279,31 +306,9 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := SectionEntityData{
-						ID:         e.ID,
-						Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
-						Type:       e.Type,
-						EditFormID: a.editFormForType(e.Type),
-						Content:    e.Content,
-						HasContent: e.Content != "",
-					}
-					for _, f := range sec.Fields {
-						values := propertyToStrings(e.Properties[f.Property])
-						propType := ""
-						if eDef != nil {
-							if pd, ok := eDef.Properties[f.Property]; ok {
-								propType = pd.Type
-							}
-						}
-						label := f.Label
-						if label == "" {
-							label = titleCase(f.Property)
-						}
-						sed.Fields = append(sed.Fields, SectionFieldData{
-							Property: f.Property, Label: label, Values: values, PropType: propType,
-							Inaccessible: e.IsInaccessible(f.Property),
-						})
-					}
+					sed := a.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed.Content = e.Content
+					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
 				}
 			}

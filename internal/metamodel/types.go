@@ -5,6 +5,13 @@ import (
 )
 
 // Metamodel represents the full metamodel configuration
+//
+// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
+// This is the schema accessor — wide read-API by nature — but a ratchet
+// candidate: group the type/relation/property lookups behind focused accessors
+// (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
+//
+//plimsoll:max-exported-methods=30
 type Metamodel struct {
 	Version     string                 `yaml:"version"`
 	Namespace   string                 `yaml:"namespace"`
@@ -14,6 +21,10 @@ type Metamodel struct {
 	Relations   map[string]RelationDef `yaml:"relations"`
 	Validations []ValidationRule       `yaml:"validations,omitempty"`
 	Automations []AutomationDef        `yaml:"automations,omitempty"`
+
+	// Attachments holds the global attachment safety floor (MIME allowlist,
+	// scan policy) applied to every `file` property unless overridden.
+	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
@@ -124,6 +135,11 @@ type CustomType struct {
 }
 
 // EntityDef defines an entity type in the metamodel
+//
+// TODO(TKT-N0IKN9): 23 exported methods, over the 20 exported-method line.
+// Schema value type; ratchet candidate alongside Metamodel.
+//
+//plimsoll:max-exported-methods=23
 type EntityDef struct {
 	Label         string                 `yaml:"label"`
 	LabelPlural   string                 `yaml:"label_plural,omitempty"`
@@ -182,6 +198,50 @@ type PropertyDef struct {
 	Description string   `yaml:"description,omitempty"` // Documentation for the property
 	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
 	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	// Max caps how many attachments a `file`-type property may hold.
+	// Zero/unset means 1 (the default, single-attachment). When > 1 the
+	// property holds a list of attachment paths and the data-entry UI
+	// switches from replace-mode to multi-file add-mode. Only meaningful
+	// for `type: file`.
+	Max int `yaml:"max,omitempty"`
+
+	// Accept narrows the MIME allowlist for this `file` property to these
+	// sniffed MIME types (e.g. ["application/pdf"]). Empty means inherit the
+	// global allowlist. Only meaningful for `type: file`.
+	Accept []string `yaml:"accept,omitempty"`
+
+	// Scan overrides the global virus-scan policy for this `file` property.
+	// ScanUnset (the zero value) means inherit the global policy. Only
+	// meaningful for `type: file`.
+	Scan ScanPolicy `yaml:"scan,omitempty"`
+
+	// ScanCmd is the external scan command (array args) run when the effective
+	// scan policy is `required`. Empty inherits the global scan command. Only
+	// meaningful for `type: file`. See [AttachmentsConfig.ScanCmd].
+	ScanCmd []string `yaml:"scan_cmd,omitempty"`
+
+	// Transform is the ordered list of byte transforms (each an external
+	// command) applied to this `file` property's uploads. Only meaningful for
+	// `type: file`.
+	Transform []TransformStep `yaml:"transform,omitempty"`
+}
+
+// TransformStep is one entry in a `transform:` pipeline — an external command
+// (array args) that rewrites the attachment bytes (e.g. metadata strip,
+// resize, CDR). The command receives templated {in}/{out} paths owned by the
+// runner; see the attachment-security guide for vetted recipes.
+type TransformStep struct {
+	Cmd []string `yaml:"cmd"`
+}
+
+// FileMax returns the effective attachment cap for a file property:
+// Max when set (>0), otherwise 1. Callers should use this rather than
+// reading Max directly so the unset-means-one default lives in one place.
+func (p PropertyDef) FileMax() int {
+	if p.Max > 0 {
+		return p.Max
+	}
+	return 1
 }
 
 // Built-in property types
@@ -441,6 +501,13 @@ type AutomationAction struct {
 	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
 	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
+
+	// AllowACLBypass unlocks rela.bypass_acl in this Lua action (TKT-D8T148).
+	// Operator-only (lives in metamodel.yaml). When true, the script may call
+	// rela.bypass_acl(fn) to obtain a closure-scoped elevated write handle
+	// whose writes skip the ACL deny (still audited, real principal preserved).
+	// Ignored for non-Lua actions.
+	AllowACLBypass bool `yaml:"allow_acl_bypass,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.

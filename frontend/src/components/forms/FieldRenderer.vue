@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { FormFieldOrRelation, PropertyDef } from '@/types'
+import type { FormFieldOrRelation, PropertyDef, AttachmentInfo } from '@/types'
 import { defaultRegistry, defaultWidgetFor } from '@/widgets/registry'
 import FieldShell from './FieldShell.vue'
 
@@ -15,10 +15,18 @@ const props = defineProps<{
   // map denies it or the existing transition rules deny it — the two
   // signals are independent and either one is sufficient.
   optionVerdicts?: Record<string, boolean>
+  // File-widget context: the owning entity identity + current attachment
+  // LIST + the property's `max`, forwarded so the file widget can
+  // upload/preview/remove. Only the file-property edit path supplies these.
+  entityType?: string
+  entityId?: string
+  attachments?: AttachmentInfo[]
+  max?: number
 }>()
 
 const emit = defineEmits<{
   update: [value: unknown]
+  'attachment-changed': []
 }>()
 
 const fieldId = computed(() => `field-${props.field.property}`)
@@ -53,7 +61,9 @@ const isCheckbox = computed(() => resolvedWidgetName.value === 'checkbox')
       :is="widgetComponent"
       :id="fieldId"
       :model-value="value"
+      :mode="'edit'"
       :property-def="propertyDef"
+      :property-name="field.property"
       :disabled="readonly"
       :required="propertyDef?.required"
       :error="error"
@@ -61,7 +71,12 @@ const isCheckbox = computed(() => resolvedWidgetName.value === 'checkbox')
       :help="help"
       :option-verdicts="optionVerdicts"
       :transitions="field.transitions"
+      :attachments="attachments"
+      :max="max"
+      :entity-type="entityType"
+      :entity-id="entityId"
       @update:model-value="emit('update', $event)"
+      @attachment-changed="emit('attachment-changed')"
     />
   </FieldShell>
 </template>

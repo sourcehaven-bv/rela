@@ -8,6 +8,7 @@ import (
 )
 
 func TestEngine_EntityCreated(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("set-created-at").
 			OnCreate("ticket").
@@ -30,6 +31,7 @@ func TestEngine_EntityCreated(t *testing.T) {
 }
 
 func TestEngine_EntityCreated_WrongType(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().OnCreate("ticket").Set("created_at", "{{today}}").Build(),
 	})
@@ -47,6 +49,7 @@ func TestEngine_EntityCreated_WrongType(t *testing.T) {
 }
 
 func TestEngine_PropertyChange(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnProperty("ticket", "status", "in-progress").
@@ -73,6 +76,7 @@ func TestEngine_PropertyChange(t *testing.T) {
 }
 
 func TestEngine_PropertyChange_NoChange(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnProperty("ticket", "status", "in-progress").
@@ -96,6 +100,7 @@ func TestEngine_PropertyChange_NoChange(t *testing.T) {
 }
 
 func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnPropertyFrom("ticket", "status", "backlog", "in-progress").
@@ -135,6 +140,7 @@ func TestEngine_PropertyChange_FromConstraint(t *testing.T) {
 }
 
 func TestEngine_ValidationWarning(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnProperty("bug", "status", "in-progress").
@@ -161,6 +167,7 @@ func TestEngine_ValidationWarning(t *testing.T) {
 }
 
 func TestEngine_ValidationPasses(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnProperty("bug", "status", "in-progress").
@@ -185,6 +192,7 @@ func TestEngine_ValidationPasses(t *testing.T) {
 }
 
 func TestEngine_CreateRelation(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnCreate("ticket").
@@ -208,6 +216,7 @@ func TestEngine_CreateRelation(t *testing.T) {
 }
 
 func TestEngine_MultipleEntityTypes(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("mark-created").
 			OnCreate("ticket", "bug", "feature").
@@ -240,6 +249,7 @@ func TestEngine_MultipleEntityTypes(t *testing.T) {
 }
 
 func TestEngine_RelationCreated(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("mark-linked").
 			OnRelationCreated("implements").
@@ -262,6 +272,7 @@ func TestEngine_RelationCreated(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_OnPropertyChange(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-planning-checklist").
 			OnProperty("ticket", "status", "planning").
@@ -306,6 +317,7 @@ func TestEngine_CreateEntity_OnPropertyChange(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_OnCreated(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-default-checklist").
 			OnCreate("ticket").
@@ -336,6 +348,7 @@ func TestEngine_CreateEntity_OnCreated(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_NoRelation(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-without-relation").
 			OnCreate("ticket").
@@ -363,6 +376,7 @@ func TestEngine_CreateEntity_NoRelation(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_MissingType(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-invalid").
 			OnCreate("ticket").
@@ -391,6 +405,7 @@ func TestEngine_CreateEntity_MissingType(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_IfExistsDefaultsToSkip(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-checklist").
 			OnCreate("ticket").
@@ -416,6 +431,7 @@ func TestEngine_CreateEntity_IfExistsDefaultsToSkip(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_IfExistsExplicit(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-with-error").
 			OnCreate("ticket").
@@ -445,6 +461,7 @@ func TestEngine_CreateEntity_IfExistsExplicit(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_WithTemplate(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-checklist-with-template").
 			OnProperty("ticket", "status", "planning").
@@ -489,6 +506,7 @@ func TestEngine_CreateEntity_WithTemplate(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_TemplateEmpty(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("create-checklist-no-template").
 			OnCreate("ticket").
@@ -514,6 +532,7 @@ func TestEngine_CreateEntity_TemplateEmpty(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_TemplateMissingProperty(t *testing.T) {
+	t.Parallel()
 	// When the property used in template interpolation doesn't exist,
 	// the template becomes empty string (uses default template).
 	engine := NewEngine([]Automation{
@@ -549,6 +568,7 @@ func TestEngine_CreateEntity_TemplateMissingProperty(t *testing.T) {
 }
 
 func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		kind     string
@@ -584,6 +604,7 @@ func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			engine := NewEngine([]Automation{
 				newAutomation("create-with-template").
 					OnCreate("ticket").
@@ -624,6 +645,7 @@ func TestEngine_CreateEntity_TemplatePathTraversal(t *testing.T) {
 }
 
 func TestEngine_WhenConditionMet(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("docs-for-enhancements").
 			OnProperty("ticket", "status", "review").
@@ -651,6 +673,7 @@ func TestEngine_WhenConditionMet(t *testing.T) {
 }
 
 func TestEngine_WhenConditionNotMet(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("docs-for-enhancements").
 			OnProperty("ticket", "status", "review").
@@ -678,6 +701,7 @@ func TestEngine_WhenConditionNotMet(t *testing.T) {
 }
 
 func TestEngine_MultipleWhenConditions(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("high-priority-enhancements").
 			OnProperty("ticket", "status", "review").
@@ -727,6 +751,7 @@ func TestEngine_MultipleWhenConditions(t *testing.T) {
 }
 
 func TestEngine_NoWhenConditions(t *testing.T) {
+	t.Parallel()
 	// Backward compatibility: no when conditions = always match
 	engine := NewEngine([]Automation{
 		newAutomation("always-trigger").
@@ -752,6 +777,7 @@ func TestEngine_NoWhenConditions(t *testing.T) {
 }
 
 func TestEngine_WhenConditionOnCreated(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("init-enhancement").
 			OnCreate("ticket").
@@ -786,6 +812,7 @@ func TestEngine_WhenConditionOnCreated(t *testing.T) {
 }
 
 func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("link-only-enhancements").
 			OnRelationCreated("implements").
@@ -824,6 +851,7 @@ func TestEngine_WhenConditionOnRelationCreated(t *testing.T) {
 }
 
 func TestEngine_WhenConditionNilEntity(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("with-when").
 			OnProperty("", "status", "done").
@@ -844,6 +872,7 @@ func TestEngine_WhenConditionNilEntity(t *testing.T) {
 }
 
 func TestEngine_LuaInline(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnProperty("ticket", "status", "done").
@@ -874,6 +903,7 @@ func TestEngine_LuaInline(t *testing.T) {
 }
 
 func TestEngine_LuaFile(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnProperty("ticket", "status", "archived").
@@ -904,6 +934,7 @@ func TestEngine_LuaFile(t *testing.T) {
 }
 
 func TestEngine_LuaInlineWithSafeInterpolation(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation("run-lua-with-vars").
 			OnCreate("ticket").
@@ -936,6 +967,7 @@ local user = "Alice"`
 }
 
 func TestEngine_LuaInlineDoesNotInterpolateEntityProperties(t *testing.T) {
+	t.Parallel()
 	// Security test: entity properties should NOT be interpolated into Lua code
 	engine := NewEngine([]Automation{
 		newAutomation("check-no-entity-interpolation").
@@ -964,6 +996,7 @@ func TestEngine_LuaInlineDoesNotInterpolateEntityProperties(t *testing.T) {
 }
 
 func TestEngine_LuaOnCreated(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnCreate("ticket").
@@ -984,6 +1017,7 @@ func TestEngine_LuaOnCreated(t *testing.T) {
 }
 
 func TestEngine_LuaEmptyAction(t *testing.T) {
+	t.Parallel()
 	// Both Lua and LuaFile empty - should not add to LuaToExecute
 	engine := NewEngine([]Automation{
 		newAutomation().
@@ -1005,6 +1039,7 @@ func TestEngine_LuaEmptyAction(t *testing.T) {
 }
 
 func TestEngine_LuaMultipleActions(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine([]Automation{
 		newAutomation().
 			OnCreate("ticket").
@@ -1037,6 +1072,7 @@ func TestEngine_LuaMultipleActions(t *testing.T) {
 }
 
 func TestEngine_LuaFilePathPassthrough(t *testing.T) {
+	t.Parallel()
 	// Test that lua_file paths are passed through to LuaToExecute.
 	// Path validation is centralized in the script package at execution time.
 	engine := NewEngine([]Automation{
@@ -1069,6 +1105,7 @@ func TestEngine_LuaFilePathPassthrough(t *testing.T) {
 }
 
 func TestEngine_LuaFileExtensionPassthrough(t *testing.T) {
+	t.Parallel()
 	// Test that lua_file paths are passed through regardless of extension.
 	// Extension validation is centralized in the script package at execution time.
 	engine := NewEngine([]Automation{

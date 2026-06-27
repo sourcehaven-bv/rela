@@ -211,7 +211,9 @@ Rules when touching this:
 - Prefer table-driven tests with `t.Run(tc.name, ...)` subtests.
 - Use `t.Helper()` on assertion helpers.
 - `internal/store/storetest` provides the store conformance harness — any
-  new `store.Store` implementation must pass it.
+  new `store.Store` implementation must pass it. Likewise any new
+  `search.VisibleSearcher` implementation must pass
+  `storetest.RunVisibleSearchTests` (the ACL-scoped search contract).
 - Race detector is on in CI; don't add `//go:build !race` tags.
 
 ## Coverage
@@ -219,8 +221,8 @@ Rules when touching this:
 Go: `go-test-coverage` enforces **package floor thresholds** (no ratchet);
 minimums live in `.testcoverage.yml`. Coverage within the floor is free to
 move up or down — floors exist to catch "new untested package added" and
-"core package silently lost its tests." Frontend uses a separate per-file
-ratchet at 100%.
+"core package silently lost its tests." The frontend has no coverage
+enforcement — unit tests run plain (`npm run test:run`).
 
 - Run locally: `just coverage-check`, `just coverage-html`.
 - When a floor fails, add tests — don't lower the threshold without a reason.
@@ -232,6 +234,29 @@ ratchet at 100%.
 
 golangci-lint with project rules. Test files exempt from `dupl`, `funlen`,
 magic numbers. Cobra `cmd`/`args` unused parameters allowed. Line length: 120.
+
+**God-object load lines** (`just plimsoll`, CI job "God-object lint"). The
+[plimsoll](https://github.com/sourcehaven-bv/plimsoll) linter caps three
+independent surfaces — the metric that tracks a type accreting into a
+god-object (`App`, `Runtime`, `FSStore` got there because nothing stopped them):
+
+- **`max-methods` (40)** — total methods, exported + unexported. The backstop
+  for internal sprawl: a receiver with dozens of private helpers is one struct
+  whose fields they can all reach.
+- **`max-exported-methods` (20)** — exported methods only. The sharper signal,
+  since the public API is the coupling surface consumers bind to. Note these
+  often diverge wildly from the total: `App` is 226 methods but only 13
+  exported; the genuinely-wide _public_ APIs are the store implementations and
+  schema value types (`FSStore`, `MemStore`, `Metamodel`).
+- **`max-fields` (20)** — exported struct fields.
+
+A new type over any line fails CI. Existing offenders are grandfathered with a
+`//plimsoll:max-methods=N` / `max-exported-methods=N` / `max-fields=N` directive
+at the declaration site, pinned to the current count so they can't grow; ratchet
+those down as you decompose (TKT-N0IKN9). A store-implementation's exported count
+is the mandated `store.Store` interface, so its directive is a documented
+"required interface" exception rather than a ratchet target. Prefer splitting the
+type over raising the number.
 
 ## Security
 

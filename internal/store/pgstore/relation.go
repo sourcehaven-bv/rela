@@ -125,11 +125,8 @@ func (s *Store) CreateRelation(
 			return nil, err
 		}
 	}
-	if relType == "" {
-		return nil, errors.New("store: empty relation type")
-	}
-	if strings.Contains(relType, "--") {
-		return nil, fmt.Errorf("store: relation type %q contains consecutive dashes", relType)
+	if err := storeutil.ValidateRelationType(relType); err != nil {
+		return nil, err
 	}
 
 	var props map[string]interface{}
@@ -224,6 +221,12 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 	}
 	if tag.RowsAffected() == 0 {
 		return store.ErrNotFound
+	}
+
+	// Record a tombstone in the same tx so the durable manifest can report the
+	// removal after the live row is gone (FEAT-NJ9FEN).
+	if err := s.writeRelationTombstone(ctx, tx, from, relType, to); err != nil {
+		return err
 	}
 
 	ev := store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to}

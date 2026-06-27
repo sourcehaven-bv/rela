@@ -1,5 +1,19 @@
+// @vitest-environment jsdom
+//
+// renderMarkdown sanitizes through DOMPurify, which depends on
+// browser-accurate DOM serialization. happy-dom (the suite default) mangles
+// adjacent block elements under DOMPurify >= 3.4.6 — e.g. it strips the first
+// of two sibling <p> tags — so these assertions fail there while real
+// browsers (and the E2E suite) render correctly. jsdom matches browser
+// serialization, so this file opts into it. See BUG-SQSV6V.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderMarkdown, getCheckboxStats, renderMermaidDiagrams } from './markdown'
+import {
+  renderMarkdown,
+  getCheckboxStats,
+  renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
+  encodePlantUMLHex,
+} from './markdown'
 
 describe('markdown', () => {
   describe('renderMarkdown', () => {
@@ -482,6 +496,141 @@ describe('markdown', () => {
       expect(renderSpy.mock.calls[0][1]).toBe('graph TD\nA-->B')
       expect(container.querySelector('.mermaid-diagram')).toBeTruthy()
       expect(container.querySelector('pre.mermaid')).toBeNull()
+    })
+  })
+
+  describe('encodePlantUMLHex', () => {
+    it('hex-encodes UTF-8 bytes with a ~h prefix', () => {
+      // "AB" -> 0x41 0x42
+      expect(encodePlantUMLHex('AB')).toBe('~h4142')
+    })
+
+    it('zero-pads single-digit bytes', () => {
+      // newline is 0x0a, must be "0a" not "a"
+      expect(encodePlantUMLHex('\n')).toBe('~h0a')
+    })
+
+    it('encodes multi-byte UTF-8 characters by byte', () => {
+      // "é" is U+00E9 -> UTF-8 0xc3 0xa9
+      expect(encodePlantUMLHex('é')).toBe('~hc3a9')
+    })
+  })
+
+  describe('renderPlantUMLDiagrams', () => {
+    const SERVER = 'https://plantuml.example.com'
+
+    it('is a no-op when no server URL is configured (undefined)', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre><code class="language-plantuml">@startuml\nA->B\n@enduml</code></pre>'
+
+      const count = renderPlantUMLDiagrams(container, undefined)
+
+      // Block left untouched: degrades to a plain code block, no <img>.
+      expect(count).toBe(0)
+      expect(container.querySelector('img.plantuml-diagram')).toBeNull()
+      expect(container.querySelector('code.language-plantuml')).toBeTruthy()
+    })
+
+    it('is a no-op for the empty-string server URL (YAML-disabled value)', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="plantuml">@startuml</pre>'
+
+      // `plantuml_server_url: ""` deserializes to '' — the real disabled value.
+      expect(renderPlantUMLDiagrams(container, '')).toBe(0)
+      expect(container.querySelector('img.plantuml-diagram')).toBeNull()
+      expect(container.querySelector('pre.plantuml')).toBeTruthy()
+    })
+
+    it('leaves the block as code when the server URL is unsafe (non-http scheme)', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="plantuml">@startuml</pre>'
+
+      // A javascript: scheme must never reach img.src.
+      expect(renderPlantUMLDiagrams(container, 'javascript:alert(1)')).toBe(0)
+      expect(container.querySelector('img.plantuml-diagram')).toBeNull()
+      expect(container.querySelector('pre.plantuml')).toBeTruthy()
+    })
+
+    it('sets no-referrer on the diagram image', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="plantuml">@startuml</pre>'
+
+      renderPlantUMLDiagrams(container, SERVER)
+
+      const img = container.querySelector('img.plantuml-diagram') as HTMLImageElement
+      expect(img.referrerPolicy).toBe('no-referrer')
+    })
+
+    it('restores a code block when the image fails to load', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="plantuml">@startuml\nA->B\n@enduml</pre>'
+
+      renderPlantUMLDiagrams(container, SERVER)
+      const img = container.querySelector('img.plantuml-diagram') as HTMLImageElement
+      expect(img).toBeTruthy()
+
+      // Simulate the server being unreachable.
+      img.dispatchEvent(new Event('error'))
+
+      expect(container.querySelector('img.plantuml-diagram')).toBeNull()
+      const code = container.querySelector('pre > code.language-plantuml')
+      expect(code).toBeTruthy()
+      // Source is preserved, not lost to a broken-image glyph.
+      expect(code?.textContent).toBe('@startuml\nA->B\n@enduml')
+    })
+
+    it('replaces a marked.js fenced block with an <img> to the server', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre><code class="language-plantuml">@startuml</code></pre>'
+
+      renderPlantUMLDiagrams(container, SERVER)
+
+      const img = container.querySelector('img.plantuml-diagram') as HTMLImageElement
+      expect(img).toBeTruthy()
+      expect(img.src).toBe(`${SERVER}/svg/${encodePlantUMLHex('@startuml')}`)
+      expect(container.querySelector('code.language-plantuml')).toBeNull()
+    })
+
+    it('handles the server-rewritten pre.plantuml form', () => {
+      const container = document.createElement('div')
+      // textContent decoding: &gt; becomes > before we read it.
+      container.innerHTML = '<pre class="plantuml">@startuml\nA--&gt;B\n@enduml</pre>'
+
+      renderPlantUMLDiagrams(container, SERVER)
+
+      const img = container.querySelector('img.plantuml-diagram') as HTMLImageElement
+      expect(img).toBeTruthy()
+      expect(img.src).toBe(`${SERVER}/svg/${encodePlantUMLHex('@startuml\nA-->B\n@enduml')}`)
+      expect(container.querySelector('pre.plantuml')).toBeNull()
+    })
+
+    it('does not double the slash when the server URL has a trailing slash', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="plantuml">@startuml</pre>'
+
+      renderPlantUMLDiagrams(container, `${SERVER}/`)
+
+      const img = container.querySelector('img.plantuml-diagram') as HTMLImageElement
+      expect(img.src).toBe(`${SERVER}/svg/${encodePlantUMLHex('@startuml')}`)
+    })
+
+    it('skips empty blocks', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="plantuml">   </pre>'
+
+      renderPlantUMLDiagrams(container, SERVER)
+
+      expect(container.querySelector('img.plantuml-diagram')).toBeNull()
+    })
+
+    it('leaves mermaid blocks alone', () => {
+      const container = document.createElement('div')
+      container.innerHTML = '<pre class="mermaid">graph TD</pre>'
+
+      renderPlantUMLDiagrams(container, SERVER)
+
+      expect(container.querySelector('img.plantuml-diagram')).toBeNull()
+      expect(container.querySelector('pre.mermaid')).toBeTruthy()
     })
   })
 })

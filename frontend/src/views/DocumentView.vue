@@ -7,9 +7,9 @@ import { renderDocument } from '@/api/documents'
 import { useEvents } from '@/composables/useEvents'
 import { createDocumentClickHandler } from '@/composables/useDocumentClicks'
 import { useBackTarget } from '@/composables/useBackTarget'
-import { renderMermaidDiagrams } from '@/utils/markdown'
+import { renderMermaidDiagrams, renderPlantUMLDiagrams } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
-import { isScriptError } from '@/types/scriptError'
+import { getErrorMessage, getScriptError } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
 import DOMPurify from 'dompurify'
 
@@ -29,7 +29,6 @@ const { on, off } = useEvents()
 const docContent = ref<string>('')
 const loading = ref(true)
 const isCached = ref(false)
-const entityIds = ref<string[]>([])
 
 // Sanitized content for safe rendering
 const sanitizedContent = computed(() => DOMPurify.sanitize(docContent.value))
@@ -44,6 +43,7 @@ watch(sanitizedContent, async () => {
   await nextTick()
   if (docBody.value) {
     await renderMermaidDiagrams(docBody.value)
+    renderPlantUMLDiagrams(docBody.value, schemaStore.app?.plantuml_server_url)
   }
 })
 
@@ -95,15 +95,14 @@ async function loadDocument(refresh = false) {
     })
     docContent.value = result.html
     isCached.value = result.cached
-    entityIds.value = result.entity_ids || []
   } catch (err: unknown) {
-    if (isScriptError(err)) {
-      scriptErrorStore.show(err)
+    const scriptErr = getScriptError(err)
+    if (scriptErr) {
+      scriptErrorStore.show(scriptErr)
     } else {
-      uiStore.error('Failed to render document')
+      uiStore.error(getErrorMessage(err, 'Failed to render document'))
     }
     docContent.value = ''
-    entityIds.value = []
   } finally {
     loading.value = false
   }
@@ -114,11 +113,11 @@ async function loadDocument(refresh = false) {
 // the form redirect scrolls back near where the user clicked.
 const handleContentClick = createDocumentClickHandler(router)
 
-// Handle entity change events via centralized SSE
-function handleEntityChange(data: { id?: string }) {
-  if (data.id && entityIds.value.includes(data.id)) {
-    loadDocument(true)
-  }
+// Handle entity change events via centralized SSE. Type-scoped feed (no
+// entity id, TKT-POT9GQ) → re-render the document on any entity change;
+// the re-render is cheap and server-gated.
+function handleEntityChange() {
+  loadDocument(true)
 }
 
 // Load on mount and watch for prop changes
@@ -127,15 +126,11 @@ watch([() => props.name, () => props.entityId], () => {
 }, { immediate: true })
 
 onMounted(() => {
-  on('entity:created', handleEntityChange)
-  on('entity:updated', handleEntityChange)
-  on('entity:deleted', handleEntityChange)
+  on('entity:changed', handleEntityChange)
 })
 
 onUnmounted(() => {
-  off('entity:created', handleEntityChange)
-  off('entity:updated', handleEntityChange)
-  off('entity:deleted', handleEntityChange)
+  off('entity:changed', handleEntityChange)
 })
 </script>
 

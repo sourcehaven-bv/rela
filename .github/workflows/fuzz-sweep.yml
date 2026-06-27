@@ -1,0 +1,96 @@
+name: Fuzz Sweep
+
+# Weekly sweep over every fuzz target in the repo (the per-PR fuzz job
+# in ci.yml runs only a 3-target smoke). Targets are discovered by
+# scripts/fuzz-all.sh, so new Fuzz* functions are swept automatically.
+#
+# On failure: the crashing inputs are uploaded as an artifact and a
+# GitHub issue is filed (or an existing open one gets a comment) so
+# findings don't silently rot in the Actions tab.
+#
+# Note: the pgstore fuzz targets self-skip without
+# RELA_TEST_DATABASE_URL; wiring a postgres service into this sweep is
+# a known follow-up.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC, before the weekly security scan
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fuzz-sweep:
+    name: Fuzz all targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Run all fuzz targets
+        run: FUZZTIME=25s scripts/fuzz-all.sh
+
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failing-inputs
+          path: |
+            internal/**/testdata/fuzz/**
+            fuzz-failures.txt
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: File or update fuzz-failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Config/setup errors (script exit 2 — bad FUZZTIME, broken
+          # build, zero targets) produce no summary file and should fail
+          # the run without filing a "fuzz found a bug" issue.
+          if [ ! -f fuzz-failures.txt ]; then
+            echo "No target-failure summary — setup error, not filing an issue."
+            exit 0
+          fi
+          gh label create fuzz-failure \
+            --description "Filed automatically by the weekly fuzz sweep" \
+            --color D93F0B --force
+
+          {
+            echo "The weekly fuzz sweep failed."
+            echo ""
+            echo "Failed targets (package, target, kind — fuzz-crash means a"
+            echo "crashing input was found; error means the target failed for"
+            echo "an infrastructure reason, e.g. a seed-corpus regression):"
+            echo '```'
+            cat fuzz-failures.txt 2>/dev/null || echo "(summary missing — see run log)"
+            echo '```'
+            echo ""
+            echo "Run: ${RUN_URL}"
+            echo ""
+            echo "The crashing inputs are attached to the run as the **fuzz-failing-inputs** artifact."
+            echo "To reproduce locally: copy the artifact's \`testdata/fuzz/<Target>/\` files into the"
+            echo "package directory, then \`go test -run='^Fuzz<Target>\$' ./<pkg>\` — the failing input"
+            echo "now runs as a regular regression test. Once fixed, commit the input as a seed."
+          } > issue-body.md
+
+          existing="$(gh issue list --label fuzz-failure --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create \
+              --title "Weekly fuzz sweep found failures" \
+              --label fuzz-failure \
+              --body-file issue-body.md
+          fi

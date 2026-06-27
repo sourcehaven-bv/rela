@@ -11,8 +11,10 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -23,7 +25,138 @@ var (
 	ErrNotFound     = errors.New("store: not found")
 	ErrConflict     = errors.New("store: already exists")
 	ErrHasRelations = errors.New("store: entity has relations")
+	// ErrAttachmentTooLarge is returned by AttachFile when the supplied
+	// bytes exceed MaxAttachmentBytes. Every backend enforces this as a
+	// backstop so no storage path is ever unbounded; the HTTP/API layer
+	// caps at its own ingress for a clean 413 before reaching the store.
+	ErrAttachmentTooLarge = errors.New("store: attachment too large")
 )
+
+// MaxAttachmentBytes is the backstop cap every store backend enforces on
+// a single attachment's bytes. It is a defense-in-depth guard, not the
+// product policy limit — the API layer caps uploads at its own (usually
+// equal or lower) ingress. 64 MiB comfortably covers the expected use
+// (images, PDFs, office documents); PostgreSQL also caps BYTEA near 1 GB.
+const MaxAttachmentBytes = 64 << 20
+
+// CapAttachmentReader wraps r so reads fail with ErrAttachmentTooLarge
+// once they exceed `limit` bytes. It is the single shared bounded-reader
+// behind both the store backstop (every backend, at MaxAttachmentBytes)
+// and the API layer's per-request cap (at the configured upload limit),
+// so the off-by-one lives in one place. Unlike io.LimitReader (which
+// reports io.EOF at the boundary, indistinguishable from a genuine short
+// file), this surfaces an explicit error so callers can map it to a 413
+// and clean up any partial write. The too-large error deliberately wins
+// over any underlying read error at the boundary.
+func CapAttachmentReader(r io.Reader, limit int64) io.Reader {
+	return &cappedAttachmentReader{r: r, remaining: limit}
+}
+
+type cappedAttachmentReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func (l *cappedAttachmentReader) Read(p []byte) (int, error) {
+	if l.remaining < 0 {
+		return 0, ErrAttachmentTooLarge
+	}
+	// Allow reading one extra byte past the cap so a file exactly at the
+	// limit succeeds but anything larger trips on the next read.
+	if int64(len(p)) > l.remaining+1 {
+		p = p[:l.remaining+1]
+	}
+	n, err := l.r.Read(p)
+	l.remaining -= int64(n)
+	if l.remaining < 0 {
+		return n, ErrAttachmentTooLarge
+	}
+	return n, err
+}
+
+// ValidateFileName rejects attachment file names that would corrupt the
+// per-file storage key / path. The file name is a key segment (and an
+// on-disk path leaf in fsstore), so it must not be empty, contain a path
+// separator or NUL, or be a directory-traversal token. Callers should
+// normalize with [NormalizeFileName] before storing; this is the hard gate
+// every backend's AttachFile applies.
+func ValidateFileName(name string) error {
+	if name == "" {
+		return errors.New("store: empty attachment file name")
+	}
+	if strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') {
+		return fmt.Errorf("store: attachment file name %q contains a path separator", name)
+	}
+	if strings.ContainsRune(name, 0) {
+		return fmt.Errorf("store: attachment file name %q contains a NUL byte", name)
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("store: attachment file name %q is a directory reference", name)
+	}
+	return nil
+}
+
+// NormalizeFileName reduces an arbitrary upload name to a safe storage
+// key: it takes the base name (stripping any path), replaces path
+// separators and control characters, and trims surrounding dots/spaces. It
+// preserves the extension and the human-readable stem so the stored name
+// still resembles what the user uploaded. Returns "file" if nothing usable
+// remains.
+func NormalizeFileName(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	const firstPrintable = 0x20 // chars below this are ASCII control codes
+	var b strings.Builder
+	for _, r := range name {
+		if r == '/' || r == '\\' || r == 0 || r < firstPrintable {
+			b.WriteRune('_')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	cleaned := strings.Trim(b.String(), " .")
+	if cleaned == "" || cleaned == "." || cleaned == ".." {
+		return "file"
+	}
+	return cleaned
+}
+
+// SuffixOnCollision returns name unchanged if exists(name) is false;
+// otherwise it appends a " (n)" counter before the extension until it
+// finds a free name (report.pdf -> "report (1).pdf" -> "report (2).pdf"),
+// mirroring how a file manager handles duplicate drops so a multi-file
+// upload never silently overwrites a same-named file.
+func SuffixOnCollision(name string, exists func(string) bool) string {
+	if !exists(name) {
+		return name
+	}
+	ext := attachmentExt(name)
+	stem := name[:len(name)-len(ext)]
+	// Terminates in practice: callers only suffix when the property is under
+	// its (small, validated) `max` cap, so at most `max` names are taken.
+	for n := 1; ; n++ {
+		candidate := fmt.Sprintf("%s (%d)%s", stem, n, ext)
+		if !exists(candidate) {
+			return candidate
+		}
+	}
+}
+
+// attachmentExt returns the trailing extension (including the dot), or ""
+// — like filepath.Ext but treating a leading-dot name (".bashrc") as
+// having no extension.
+func attachmentExt(name string) string {
+	for i := len(name) - 1; i >= 0 && name[i] != '/'; i-- {
+		if name[i] == '.' {
+			if i == 0 {
+				return ""
+			}
+			return name[i:]
+		}
+	}
+	return ""
+}
 
 // Store is the primary storage abstraction. All mutations are atomic:
 // the index is always consistent with the persisted state.
@@ -38,6 +171,7 @@ type Store interface {
 	EntityWriter
 	RelationReader
 	RelationWriter
+	GraphQueryer
 	AttachmentManager
 	Watcher
 	Lifecycle
@@ -214,11 +348,16 @@ type AttachmentInfo struct {
 	Size        int64
 }
 
-// AttachmentManager provides file attachment operations.
+// AttachmentManager provides file attachment operations. A property can
+// hold multiple attachments, each keyed by its (normalized) file name —
+// so reads and deletes target a specific (entityID, property, fileName).
+// AttachFile appends; it does not overwrite other files on the property.
+// Enforcing a per-property cap (the metamodel `max`) and replace-at-1
+// semantics is the write path's job, not the store's.
 type AttachmentManager interface {
 	AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error
-	ReadAttachment(ctx context.Context, entityID, property string) (io.ReadCloser, error)
-	DeleteAttachment(ctx context.Context, entityID, property string) error
+	ReadAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error)
+	DeleteAttachment(ctx context.Context, entityID, property, fileName string) error
 	ListAttachments(ctx context.Context, entityID string) ([]AttachmentInfo, error)
 }
 
@@ -239,7 +378,7 @@ type Formatter interface {
 }
 
 // EntityObserver receives notifications when entities are created, updated,
-// or deleted. Stores call observers synchronously after each write.
+// deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.
 //
 // This is the hook mechanism for building derived state (search indexes,
@@ -251,6 +390,20 @@ type EntityObserver interface {
 
 	// EntityDelete is called when an entity is removed.
 	EntityDelete(id string) error
+
+	// EntityRenamed is called when an entity's ID changes. The renamed
+	// argument carries the entity AFTER the rename (renamed.ID == newID)
+	// so content-driven observers (search indexes, projections that
+	// hold a copy) have everything they need without a follow-up
+	// store lookup, and ID-keyed observers (waiver stores, anything
+	// that stores references by entity ID) can rewrite those
+	// references in one step.
+	//
+	// Rename emits EXACTLY this one callback — not EntityDelete(oldID)
+	// + EntityPut(renamed). Implementations of search-index-style
+	// backends should atomically delete the old key and index the new
+	// content in their EntityRenamed body.
+	EntityRenamed(oldID string, renamed *entity.Entity) error
 }
 
 // Event represents a change that occurred in the store.

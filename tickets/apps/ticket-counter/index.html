@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ticket Counter</title>
+    <!-- App self-description, read by rela for the sidebar. The app id is the
+         folder name (ticket-counter); remove index.html or rename the folder to
+         unpublish. -->
+    <meta name="rela-app:bridge-version" content="1" />
+    <meta name="rela-app:label" content="Ticket Counter" />
+    <meta name="rela-app:description" content="Counts tickets by status via the rela bridge" />
+    <!-- The rela bridge SDK (window.rela). Served by rela at this app's own
+         path; the path-scoped CSP allows it. -->
+    <script src="_rela.js"></script>
+    <!-- Opt into rela's theme tokens + base controls (.btn/.input/.card).
+         Dark mode follows the host automatically (the SDK toggles .dark). -->
+    <link rel="stylesheet" href="_rela.css" />
+    <style>
+      /* App-specific layout, using the rela tokens for colors so it matches the
+         host theme in both light and dark. */
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        font-family: inherit;
+        margin: 0;
+        padding: 1.5rem;
+        color: var(--text-color);
+        background: var(--bg-color);
+        box-sizing: border-box;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0 0 1rem;
+      }
+      table {
+        border-collapse: collapse;
+        min-width: 16rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.35rem 0.75rem;
+        border-bottom: 1px solid var(--border-color);
+      }
+      td.count {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .muted {
+        color: var(--muted-text);
+      }
+      .err {
+        color: var(--error-color);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tickets by status</h1>
+    <div id="status" class="muted">Connecting…</div>
+    <table id="table" class="card" hidden style="padding: 0.5rem 1rem;">
+      <thead>
+        <tr><th>Status</th><th>Count</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <button id="refresh" class="btn" hidden style="margin-top: 1rem;">Refresh</button>
+
+    <script>
+      // The host hands the SDK its bridge port a moment after load and signals
+      // it with the one-time 'rela:ready' event. The SDK queues calls made
+      // before the port arrives, so we could call straight away — but waiting
+      // avoids a flash of an empty table if the handshake is slow.
+      let started = false;
+      function whenReady(fn) {
+        if (started) return;
+        started = true;
+        fn();
+      }
+      window.addEventListener('rela:ready', () => whenReady(load), { once: true });
+      // Safety net: if the event already fired (or fires very fast), start anyway.
+      setTimeout(() => whenReady(load), 500);
+
+      const statusEl = document.getElementById('status');
+      const tableEl = document.getElementById('table');
+      const rowsEl = document.getElementById('rows');
+      const refreshBtn = document.getElementById('refresh');
+
+      async function load() {
+        statusEl.textContent = 'Loading tickets…';
+        try {
+          // Page through tickets and tally status. A real app would request a
+          // server-side aggregate; this keeps the demo dependency-free.
+          const res = await window.rela.list({ type: 'ticket', params: { per_page: 200 } });
+          const items = (res && res.data) || [];
+          const counts = {};
+          for (const t of items) {
+            const s = (t.properties && t.properties.status) || 'unknown';
+            counts[s] = (counts[s] || 0) + 1;
+          }
+          rowsEl.replaceChildren();
+          Object.keys(counts)
+            .sort()
+            .forEach((s) => {
+              // Build cells with textContent (auto-escaping) rather than
+              // innerHTML string concatenation — status values come from the
+              // entity store and must never be treated as HTML.
+              const tr = document.createElement('tr');
+              const label = document.createElement('td');
+              label.textContent = s;
+              const count = document.createElement('td');
+              count.className = 'count';
+              count.textContent = String(counts[s]);
+              tr.append(label, count);
+              rowsEl.appendChild(tr);
+            });
+          statusEl.textContent = items.length + ' tickets';
+          tableEl.hidden = false;
+          refreshBtn.hidden = false;
+        } catch (e) {
+          statusEl.className = 'err';
+          statusEl.textContent = 'Error: ' + (e && e.message ? e.message : e);
+        }
+      }
+
+      refreshBtn.addEventListener('click', load);
+    </script>
+  </body>
+</html>

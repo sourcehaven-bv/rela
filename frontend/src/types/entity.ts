@@ -25,6 +25,14 @@ export interface Entity {
   // sparse / closed-world semantics as _fields. Per-relation-type
   // uniform — per-link verdicts are predicate territory (deferred).
   _relations?: Record<string, RelationAffordance>
+  // Per-`file`-property attachment metadata on per-entity responses.
+  // Keyed by property name; the value is always a LIST (a property may
+  // hold several files when its metamodel `max` > 1, and a single file is
+  // a 1-element list). Only properties that carry a file appear. Same
+  // closed-world semantics as _fields/_relations: present (possibly empty)
+  // on every per-entity response (GET, PATCH, POST, clone), absent on list
+  // rows. The file widget reads this to render download links / previews.
+  _attachments?: Record<string, AttachmentInfo[]>
   inaccessible?: InaccessibleField[]
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
@@ -48,6 +56,20 @@ export interface RelationAffordance {
   creatable?: boolean
   removable?: boolean
   fields?: Record<string, FieldAffordance>
+}
+
+// AttachmentInfo describes one file attached to a `file`-type property,
+// as surfaced in Entity._attachments. `id` identifies the file within the
+// property (its normalized name) and is used to build the per-file
+// download/delete URL. `href` is the ACL-gated download URL (inherits the
+// entity's read permission). `contentType` is inferred from the filename
+// by the backend.
+export interface AttachmentInfo {
+  id: string
+  filename: string
+  size: number
+  contentType: string
+  href: string
 }
 
 // Warning is a soft validation finding returned alongside a successful

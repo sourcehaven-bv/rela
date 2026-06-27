@@ -72,6 +72,18 @@ func (e *ConflictingIDPrefixError) Error() string {
 	return "entity " + e.EntityType + " specifies both id_prefix and id_prefixes; use only one"
 }
 
+// InvalidIDPrefixError is returned when an id_prefix would generate
+// IDs that fail entity ID validation (BUG-RHFHTH).
+type InvalidIDPrefixError struct {
+	EntityType string
+	Prefix     string
+	Reason     string
+}
+
+func (e *InvalidIDPrefixError) Error() string {
+	return "entity " + e.EntityType + ": " + e.Reason
+}
+
 // ReservedTypeNameError is returned when a custom type name conflicts with a built-in type.
 type ReservedTypeNameError struct {
 	TypeName string

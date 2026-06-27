@@ -109,6 +109,21 @@ type Action struct {
 type AppConfig struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
+	// MaxAttachmentBytes optionally overrides the product-wide default
+	// per-attachment upload cap (see dataentry.DefaultMaxAttachmentBytes).
+	// Zero or unset means use the default. Set this lower for
+	// semi-untrusted deployments. The store backends also enforce their
+	// own backstop guard independent of this value.
+	MaxAttachmentBytes int64 `yaml:"max_attachment_bytes,omitempty" json:"max_attachment_bytes,omitempty"`
+	// PlantUMLServerURL is the base URL of a PlantUML rendering server (e.g.
+	// "https://plantuml.internal.example.com"). When set, the SPA renders
+	// ```plantuml fenced code blocks as diagrams by pointing an <img> at
+	// "<url>/svg/<encoded>". Empty (the default) disables PlantUML rendering
+	// entirely — blocks degrade to plain code, and no diagram source ever
+	// leaves the browser. Deliberately not defaulted to the public
+	// plantuml.com server: that would silently publish private diagram source
+	// to a third party. Operators opt in by configuring a server they trust.
+	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
 }
 
 // Form defines a create/edit form for an entity type.

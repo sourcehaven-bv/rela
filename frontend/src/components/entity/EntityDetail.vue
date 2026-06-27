@@ -5,9 +5,11 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
-import { fetchView, getCommands, updateEntity } from '@/api'
-import type { ViewResponse, ViewSectionField } from '@/api'
+import { fetchView, getCommands, getErrorMessage } from '@/api'
+import type { ViewEntity, ViewResponse, ViewSection, ViewSectionField } from '@/api'
 import type { Entity } from '@/types'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { Command } from '@/types'
 import { getEditFormId } from '@/types'
@@ -18,15 +20,32 @@ import { isAnyModalOpen } from '@/composables/modalStack'
 import {
   renderMarkdown,
   renderMermaidDiagrams,
+  renderPlantUMLDiagrams,
   getCheckboxStats,
   type EntityRefResolver,
 } from '@/utils/markdown'
 import BackButton from '@/components/common/BackButton.vue'
 import Badge from '@/components/common/Badge.vue'
+import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
+import { defaultRegistry } from '@/widgets/registry'
+import { viewFieldRoutingHint } from '@/widgets/viewRouting'
+import type { WidgetRoutingHint } from '@/widgets/types'
+import type { PropertyDef } from '@/types'
+import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
+import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
+import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
+import {
+  buildSectionEditFields as buildSectionEditFieldsPure,
+  sectionShouldRouteToInlineEdit as sectionShouldRouteToInlineEditPure,
+  applyPropertyToEntry,
+  applyPropertyToRow,
+  rowShouldRouteToInlineEdit as rowShouldRouteToInlineEditPure,
+} from './sectionEditFields'
+import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 
 const props = defineProps<{
@@ -63,7 +82,7 @@ const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
 const entry = computed(() => viewData.value?.entry || null)
 const entryTitle = computed(() => {
   if (!entry.value) return props.entityId
-  return (entry.value.properties.title as string) || entry.value.id
+  return entityDisplayTitle(entry.value)
 })
 
 // inaccessibleByName maps each inaccessible field's name to its reason
@@ -148,17 +167,58 @@ watch(
   async () => {
     if (contentRef.value) {
       await renderMermaidDiagrams(contentRef.value)
+      renderPlantUMLDiagrams(contentRef.value, schemaStore.app?.plantuml_server_url)
     }
   },
   { flush: 'post' },
 )
 
-// Tracks toggle requests still in flight, keyed by data-cb-idx. Without
-// this, a rapid double-click queues two toggles that net to zero — the
-// user sees the click "do nothing". The server's writeMu serializes
-// writes but does not collapse them; deduping at the client is the only
-// place we can suppress the second click before it leaves the browser.
-const togglingIndices = new Set<number>()
+// Content-only useAutoSave instance. EntityDetail does not own a form
+// surface, so the property and relations channels are disabled —
+// scheduleFieldSave/scheduleRelationsChange would throw if called. The
+// content channel debounces at 100ms so rapid checkbox clicks coalesce
+// into one PATCH while still feeling instant; the e2e suite tolerates
+// up to 2s for the UI poll and 5s for the server poll.
+//
+// contentRef is a computed mirror of viewData.entry.content; the
+// composable only reads its shape (never writes), so a read-only
+// computed is sufficient. Property/relations callbacks are no-ops to
+// satisfy AutoSaveOptions's required surface; they are unreachable
+// because their channels are disabled and mergeServerResponse skips
+// them.
+const entryContent = computed(() => entry.value?.content ?? '')
+const entryProperties = computed<Record<string, unknown>>(() => entry.value?.properties ?? {})
+// When the route changes mid-debounce, the watch pins the previous
+// entity identity here so the in-flight flush PATCHes the entity the
+// user actually clicked, not the one they just navigated to.
+const pinEntityForFlush = ref<{ type: string; id: string } | null>(null)
+const contentAutoSave = useAutoSave({
+  getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
+  getEntityId: () => pinEntityForFlush.value?.id ?? props.entityId,
+  contentDebounceMs: 100,
+  formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
+  contentRef: entryContent as unknown as import('vue').Ref<string>,
+  inverseToCanonical: new Map(),
+  buildRelationsBody: () => null,
+  applyServerProperty: () => {},
+  applyServerContent: (next) => {
+    const view = viewData.value
+    if (!view || !view.entry) return
+    // If the route changed mid-flush, the previous entity's PATCH may
+    // resolve after the new entity's loadView; reject the apply by
+    // entity-identity rather than splice stale content into the new
+    // view.
+    const pinned = pinEntityForFlush.value
+    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
+    const nextSections = view.sections.map((s) =>
+      isEntryContentSection(s) ? { ...s, content: next } : s,
+    )
+    viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
+  },
+  onError: (msg) => uiStore.error(msg),
+  disablePropertyChannel: true,
+  disableRelationsChannel: true,
+})
 
 function contentClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
@@ -168,66 +228,37 @@ function contentClick(event: MouseEvent) {
   const raw = checkbox.dataset.cbIdx
   if (raw === undefined) return
   const idx = parseInt(raw, 10)
-  if (Number.isNaN(idx) || togglingIndices.has(idx)) return
-  void handleCheckboxToggle(idx)
+  if (Number.isNaN(idx)) return
+  handleCheckboxToggle(idx)
 }
 
-async function handleCheckboxToggle(index: number) {
+function handleCheckboxToggle(index: number) {
   const current = entry.value
   const view = viewData.value
   if (!current || !view) return
-  // Reserve the index BEFORE the synchronous toggler runs so a rapid
-  // double-click on a checkbox the toggler rejects (e.g. an unsupported
-  // bullet shape) doesn't fire two error toasts.
-  togglingIndices.add(index)
+  let newContent: string
   try {
-    let newContent: string
-    try {
-      newContent = toggleCheckboxInSource(current.content || '', index)
-    } catch (err) {
-      // The toggler is intentionally narrower than the renderer (see
-      // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
-      // task items in marked but are rejected here). Surface the thrown
-      // detail so users know which line of the source the click missed.
-      const detail = err instanceof Error ? err.message : 'unknown error'
-      uiStore.error(`Failed to toggle checkbox: ${detail}`)
-      console.error(err)
-      return
-    }
-    // No If-Match — toggles are commutative-ish (last-write-wins is
-    // acceptable for two users racing the same checkbox) and the
-    // ViewResponse doesn't currently surface an ETag for us to thread
-    // through. Matches the prior /api/toggle-checkbox behavior.
-    const updated: Entity = await updateEntity(current.type, current.id, { content: newContent })
-    // Route may have changed while the PATCH was in flight (entity nav,
-    // back-button, etc.); the watch on entityType/entityId would have
-    // refetched a different viewData. Detect via reference identity
-    // and bail rather than splice updates into a stale snapshot that
-    // would clobber the destination entity's view.
-    if (viewData.value !== view) return
-    // Mutate view state in place so Vue's reactivity re-renders only the
-    // dependents (content body via renderedEntryContent, stats counter via
-    // checkboxStats). Replacing viewData entirely keeps everything else —
-    // header, scope nav, properties, relations, documents panel —
-    // referentially stable. The entry-content section's content field is
-    // what renderedEntryContent reads, so it must mirror the updated
-    // entity content alongside viewData.entry.
-    //
-    // ASSUMPTION: PATCH side-effects are limited to entry.content. True for
-    // checkbox toggles today. If a future caller routes property edits or
-    // automation-triggering changes through this path, properties/relations
-    // sections will display stale fetchView data — fall back to loadView()
-    // or re-derive sections from `updated` for those cases.
-    const nextSections = view.sections.map((s) =>
-      isEntryContentSection(s) ? { ...s, content: updated.content || '' } : s,
-    )
-    viewData.value = { ...view, entry: updated, sections: nextSections }
+    newContent = toggleCheckboxInSource(current.content || '', index)
   } catch (err) {
-    uiStore.error('Failed to toggle checkbox')
+    // The toggler is intentionally narrower than the renderer (see
+    // checkboxToggle.ts — `*`, `+`, ordered-list checkboxes parse as
+    // task items in marked but are rejected here). Surface the thrown
+    // detail so users know which line of the source the click missed.
+    const detail = getErrorMessage(err, 'unknown error')
+    uiStore.error(`Failed to toggle checkbox: ${detail}`)
     console.error(err)
-  } finally {
-    togglingIndices.delete(index)
+    return
   }
+  // Apply optimistically so a second click within the debounce window
+  // toggles the post-first state (the source for the next toggle is
+  // viewData.entry.content). Without this, two rapid clicks on the
+  // same index would each toggle the unchanged server content and
+  // net to zero on the next PATCH.
+  const nextSections = view.sections.map((s) =>
+    isEntryContentSection(s) ? { ...s, content: newContent } : s,
+  )
+  viewData.value = { ...view, entry: { ...current, content: newContent }, sections: nextSections }
+  contentAutoSave.scheduleContentSave(newContent)
 }
 
 // Keyboard shortcuts
@@ -304,10 +335,16 @@ async function loadView() {
   error.value = null
   try {
     viewData.value = await fetchView(props.entityType, props.entityId)
+    if (viewData.value?.entry) {
+      // Seed the autosave baseline so the first toggle's no-op
+      // suppression can compare against server state without waiting
+      // for the response of a sentinel PATCH.
+      contentAutoSave.recordServerSnapshot(viewData.value.entry)
+    }
     await Promise.all([loadCommands(), loadScopeNav()])
   } catch (err) {
     if (isCancelledFetch(err)) return
-    error.value = err instanceof Error ? err.message : 'Failed to load entity'
+    error.value = getErrorMessage(err, 'Failed to load entity')
     console.error('Failed to load entity view:', err)
   } finally {
     loading.value = false
@@ -368,22 +405,201 @@ function navigateToEdit(formId: string, entityId: string) {
   router.push({ name: 'form-edit', params: { id: formId, entityId } })
 }
 
+// Look up a schema PropertyDef for an entity type's property. Returns
+// undefined when the entity type or property isn't in the schema. Used
+// to pre-resolve defs at section level (RR-UD1H) instead of in every
+// cell render.
+function getPropertyDef(entityType: string, propertyName: string): PropertyDef | undefined {
+  const et = schemaStore.getEntityType(entityType)
+  return et?.properties?.[propertyName]
+}
+
 function mapFieldsToProperties(fields: ViewSectionField[] | undefined): PropertyItem[] {
   if (!fields) return []
+  // Pre-resolve PropertyDef for the entry entity once (RR-UD1H). For
+  // entry-level properties the entity type is fixed for the section.
+  // When the property isn't in the schema we leave propertyDef undefined
+  // and let PropertyDisplay fall back to a WidgetRoutingHint
+  // (RR-UD2B) -- no more synthesised PropertyDef lies.
+  const entryType = entry.value?.type
   return fields.map((field) => {
     // PropertyDisplay's `name` is used as a vue list key; favor the raw
     // property name when available and fall back to a slugged label so
     // older shapes still render.
     const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
+    const def =
+      entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
     return {
       name,
       label: field.label,
       value: field.values ?? [],
       propType: field.propType,
+      propertyDef: def,
       inaccessible: field.inaccessible ?? false,
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
+      attachments: field.property ? entry.value?._attachments?.[field.property] : undefined,
+      max: def?.max,
     }
   })
+}
+
+// FieldRow bundles per-field data for cards/list rendering. Computed
+// once per (entity, field) instead of recomputed inline on every
+// reactive tick (RR-UD2A).
+interface FieldRow {
+  field: ViewSectionField
+  widget: Component
+  hint: WidgetRoutingHint
+}
+
+// fieldRowsFor returns the precomputed FieldRow array for one entity's
+// fields. Cards/list templates iterate this instead of calling helper
+// functions inline per cell.
+function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
+  return (ent.fields ?? []).map((field) => {
+    const hint = viewFieldRoutingHint(field)
+    return {
+      field,
+      hint,
+      widget: defaultRegistry.resolveFromHint(hint),
+    }
+  })
+}
+
+// Memoize per (section reference, entry reference) so the SectionEditForm's
+// `watch(() => props.fields)` only fires when the underlying section or
+// entry identity changes — not on every reactive tick (RR-FB2D NEW-4).
+const sectionEditFieldsCache = new WeakMap<ViewSection, { entry: Entity; fields: SectionEditField[] }>()
+function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionEditField[] {
+  const cached = sectionEditFieldsCache.get(section)
+  if (cached && cached.entry === ent) return cached.fields
+  const fields = buildSectionEditFieldsPure(section.fields, ent, getPropertyDef)
+  sectionEditFieldsCache.set(section, { entry: ent, fields })
+  return fields
+}
+
+function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): boolean {
+  return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
+}
+
+// One-shot dedupe for the 401/403 → loadView path. Cleared on each
+// loadView call to allow the next 4xx to refetch again.
+let pendingRefetch = false
+
+function handlePropertyApplied(
+  prop: string,
+  value: unknown,
+  applyOwner: { type: string; id: string },
+) {
+  const view = viewData.value
+  const nextEntry = applyPropertyToEntry(view?.entry ?? null, prop, value, applyOwner)
+  if (!nextEntry || !view) return
+  viewData.value = { ...view, entry: nextEntry }
+}
+
+function handleSectionEditError(msg: string, info?: AutoSaveErrorInfo) {
+  uiStore.error(msg)
+  if ((info?.status === 401 || info?.status === 403) && !pendingRefetch) {
+    pendingRefetch = true
+    void loadView().finally(() => {
+      pendingRefetch = false
+    })
+  }
+}
+
+function handleVerdictFlip(_prop: string, label: string) {
+  uiStore.warning(`Permission changed — your unsaved edit to '${label}' was discarded`)
+}
+
+// ─── Per-row inline edit on cards/list sections (TKT-IHC7C) ──────────────
+
+// Above this row count, a cards/list section falls back to display mode
+// for ALL rows. SectionEditForm instances are cheap individually but
+// quadratic in aggregate (each holds its own debounce timers and watch);
+// 100 rows is the soft cap (RR-FC1D). Above this the user is more
+// likely browsing than editing.
+const INLINE_EDIT_ROW_CAP = 100
+
+// Thin SFC adapter — the cap-behaviour logic lives in the pure module
+// so it's unit-testable without mounting EntityDetail.
+function rowShouldRouteToInlineEdit(ent: ViewEntity, rowCount: number): boolean {
+  return rowShouldRouteToInlineEditPure(ent, rowCount, INLINE_EDIT_ROW_CAP, getPropertyDef)
+}
+
+// Memoize per-row field shape, keyed on the row reference. Spread-clone
+// of the row in handleRowPropertyApplied produces a new reference for
+// THAT row only — surrounding rows retain their references and their
+// cached entry. Cache invalidation is naturally GC-driven via the
+// WeakMap (RR-FC1E NEW-3).
+const rowEditFieldsCache = new WeakMap<ViewEntity, SectionEditField[]>()
+function memoBuildRowEditFields(ent: ViewEntity): SectionEditField[] {
+  const cached = rowEditFieldsCache.get(ent)
+  if (cached) return cached
+  const fields = buildSectionEditFieldsPure(ent.fields, ent, getPropertyDef)
+  rowEditFieldsCache.set(ent, fields)
+  return fields
+}
+
+// rowDisplayValue: per-cell display-mode read prefers `_props` over the
+// display-stringified `fields[i].values`. This eliminates the
+// stale-string-mirror bug where a verdict flips writable→display and
+// the cell shows last-loadView's display string instead of the
+// post-edit value (RR-FC1C).
+function rowDisplayValue(ent: ViewEntity, field: ViewSectionField): unknown {
+  if (field.property && ent._props && field.property in ent._props) {
+    return ent._props[field.property]
+  }
+  return field.values ?? []
+}
+
+// Owner → (sectionIdx, rowIdx) index, rebuilt per viewData change so
+// `handleRowPropertyApplied` is O(1) instead of O(sections × rows)
+// (RR-FC1E NEW-3). The rebuild is itself O(rows) but only fires when
+// `viewData.value` reference changes — including after every confirmed
+// row PATCH, which is acceptable.
+const rowIndex = ref(new Map<string, { sectionIdx: number; rowIdx: number }>())
+watch(
+  viewData,
+  (vd) => {
+    const next = new Map<string, { sectionIdx: number; rowIdx: number }>()
+    if (vd?.sections) {
+      vd.sections.forEach((section, sectionIdx) => {
+        section.entities?.forEach((ent, rowIdx) => {
+          next.set(`${ent.type}/${ent.id}`, { sectionIdx, rowIdx })
+        })
+      })
+    }
+    rowIndex.value = next
+  },
+  { immediate: true },
+)
+
+function handleRowPropertyApplied(
+  prop: string,
+  value: unknown,
+  applyOwner: { type: string; id: string },
+) {
+  const view = viewData.value
+  if (!view) return
+  const key = `${applyOwner.type}/${applyOwner.id}`
+  const loc = rowIndex.value.get(key)
+  if (!loc) return // row deleted / repositioned beyond identity reach
+  const section = view.sections[loc.sectionIdx]
+  const currentRow = section?.entities?.[loc.rowIdx]
+  if (!currentRow) return
+  // applyPropertyToRow rejects the apply if the row at this location
+  // no longer matches the owner identity (defensive against an index
+  // rebuilt mid-flight against a different layout).
+  const nextRow = applyPropertyToRow(currentRow, prop, value, applyOwner)
+  if (!nextRow) return
+  const nextSections = view.sections.map((s, i) => {
+    if (i !== loc.sectionIdx) return s
+    return {
+      ...s,
+      entities: s.entities?.map((e, j) => (j === loc.rowIdx ? nextRow : e)),
+    }
+  })
+  viewData.value = { ...view, sections: nextSections }
 }
 
 function shouldUseBadge(value: string, propType?: string): boolean {
@@ -404,6 +620,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
   commandsAbort?.abort()
+  // Flush any pending toggle PATCH so navigating away mid-debounce
+  // doesn't silently drop the user's click. commitImmediately returns
+  // a promise; we don't await it because Vue's onBeforeUnmount is
+  // synchronous — the FIFO chain will run to completion regardless.
+  void contentAutoSave.commitImmediately()
 })
 
 onUnmounted(() => document.removeEventListener('click', closeOverflow))
@@ -411,13 +632,19 @@ onUnmounted(() => document.removeEventListener('click', closeOverflow))
 // Watch for route changes
 watch(
   () => [props.entityType, props.entityId],
-  () => {
-    // Drop any toggles that were in-flight against the previous entity —
-    // their PATCH responses (if they ever come back) will be discarded by
-    // the viewData identity check in handleCheckboxToggle, but clearing
-    // here also lets the new entity's checkboxes at the same index respond
-    // to clicks immediately instead of being silently swallowed.
-    togglingIndices.clear()
+  (_next, prev) => {
+    // Flush pending toggles for the previous entity before loading the
+    // next one. The composable reads entity identity from
+    // getEntityType/getEntityId at fire time, which would resolve to
+    // the new entity by the time the FIFO chain runs — so we capture
+    // the previous identity for the duration of the flush via a
+    // one-shot override before triggering commit.
+    const [prevType, prevId] = prev
+    const fireWith = { type: prevType, id: prevId }
+    pinEntityForFlush.value = fireWith
+    void contentAutoSave.commitImmediately().finally(() => {
+      if (pinEntityForFlush.value === fireWith) pinEntityForFlush.value = null
+    })
     loadView()
   },
 )
@@ -574,6 +801,27 @@ watch(
             {{ section.emptyMessage || 'No items' }}
           </div>
 
+          <!--
+            Properties section routing (TKT-IHC7B):
+            - At least one writable field → SectionEditForm (inline edit).
+            - All non-writable                → PropertyDisplay (read-only).
+            The `:key` on `${entry.type}/${entry.id}` forces SectionEditForm
+            remount on entity-id change so its lifecycle handles route
+            navigation cleanly (RR-FB1D + RR-FB2A).
+          -->
+          <SectionEditForm
+            v-else-if="section.display === 'properties' && entry && sectionShouldRouteToInlineEdit(section, entry)"
+            :key="`${entry.type}/${entry.id}`"
+            :entity-type="entry.type"
+            :entity-id="entry.id"
+            :initial-values="entry.properties"
+            :attachments="entry._attachments"
+            :fields="memoBuildSectionEditFields(section, entry)"
+            :on-property-applied="handlePropertyApplied"
+            :on-error="handleSectionEditError"
+            :on-verdict-flip="handleVerdictFlip"
+            :on-attachment-changed="loadView"
+          />
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"
@@ -618,9 +866,15 @@ watch(
               :key="ent.id"
               :data-entity-id="ent.id"
               class="entity-card"
-              @click="navigateToEntity(ent)"
             >
-              <header class="card-header">
+              <!--
+                Navigation handler moved from <article> to .card-header
+                (TKT-IHC7C / RR-FC1B): clicks on inline-edit widgets
+                inside the card must not bubble to the row-level click
+                because that would navigate away mid-edit. The header
+                still navigates; cells stay editable.
+              -->
+              <header class="card-header" @click="navigateToEntity(ent)">
                 <span class="entity-type">{{ ent.type }}</span>
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
@@ -633,18 +887,49 @@ watch(
                   &times;
                 </button>
               </header>
-              <div v-if="ent.fields?.length" class="card-fields">
-                <div v-for="field in ent.fields" :key="field.label" class="card-field">
-                  <span class="field-label">{{ field.label }}:</span>
-                  <div v-if="field.propType && field.values?.length" class="badge-row">
-                    <Badge
-                      v-for="v in field.values"
-                      :key="v"
-                      :value="v"
-                      :property="field.propType"
-                    />
-                  </div>
-                  <span v-else class="field-value">{{ field.values?.join(', ') || '-' }}</span>
+              <SectionEditForm
+                v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
+                :key="`${ent.type}/${ent.id}`"
+                :entity-type="ent.type"
+                :entity-id="ent.id"
+                :initial-values="ent._props ?? {}"
+                :fields="memoBuildRowEditFields(ent)"
+                :on-property-applied="handleRowPropertyApplied"
+                :on-error="handleSectionEditError"
+                :on-verdict-flip="handleVerdictFlip"
+              >
+                <!-- Indicator rendered inline in the card (TKT-IHC7C). NOT
+                     teleported: the former <Teleport> target span lived in
+                     the same render subtree as the Teleport itself, so Vue
+                     could leave the teleported child orphaned with a null
+                     instance that crashed on route-driven unmount (#997). -->
+                <template #indicator="{ status, error }">
+                  <span class="card-indicator-slot">
+                    <AutoSaveIndicator :status="status" :error="error" />
+                  </span>
+                </template>
+              </SectionEditForm>
+              <div v-else-if="ent.fields?.length" class="card-fields">
+                <div
+                  v-for="row in fieldRowsFor(ent)"
+                  :key="row.field.label"
+                  class="card-field"
+                >
+                  <span class="field-label">{{ row.field.label }}:</span>
+                  <!-- The wire-level inaccessibleReason map is keyed on
+                       the entry's properties, not the per-entity card
+                       row's. We don't have a per-card reason map today
+                       (see RR-UD2E follow-up), so InaccessibleField
+                       falls back to the generic tooltip. -->
+                  <InaccessibleField v-if="row.field.inaccessible" />
+                  <component
+                    :is="row.widget"
+                    v-else
+                    :model-value="rowDisplayValue(ent, row.field)"
+                    :mode="'display'"
+                    :property-name="row.hint.propertyName"
+                    class="field-value"
+                  />
                 </div>
               </div>
             </article>
@@ -662,13 +947,40 @@ watch(
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
               </a>
-              <span v-if="ent.fields?.length" class="list-fields">
-                <template v-for="field in ent.fields" :key="field.label">
-                  <Badge
-                    v-for="v in field.values ?? []"
-                    :key="`${field.label}-${v}`"
-                    :value="v"
-                    :property="field.propType"
+              <SectionEditForm
+                v-if="rowShouldRouteToInlineEdit(ent, section.entities?.length ?? 0)"
+                :key="`${ent.type}/${ent.id}`"
+                :entity-type="ent.type"
+                :entity-id="ent.id"
+                :initial-values="ent._props ?? {}"
+                :fields="memoBuildRowEditFields(ent)"
+                :on-property-applied="handleRowPropertyApplied"
+                :on-error="handleSectionEditError"
+                :on-verdict-flip="handleVerdictFlip"
+              >
+                <!-- Indicator rendered inline in the row (TKT-IHC7C). NOT
+                     teleported: the former <Teleport> target span lived in
+                     the same render subtree as the Teleport itself, so Vue
+                     could leave the teleported child orphaned with a null
+                     instance that crashed on route-driven unmount (#997). -->
+                <template #indicator="{ status, error }">
+                  <span class="list-indicator-slot">
+                    <AutoSaveIndicator :status="status" :error="error" />
+                  </span>
+                </template>
+              </SectionEditForm>
+              <span v-else-if="ent.fields?.length" class="list-fields">
+                <template v-for="row in fieldRowsFor(ent)" :key="row.field.label">
+                  <!-- Per-card inaccessibility reason isn't on the wire
+                       today (see RR-UD2E follow-up); InaccessibleField
+                       falls back to the generic tooltip. -->
+                  <InaccessibleField v-if="row.field.inaccessible" />
+                  <component
+                    :is="row.widget"
+                    v-else
+                    :model-value="rowDisplayValue(ent, row.field)"
+                    :mode="'display'"
+                    :property-name="row.hint.propertyName"
                   />
                 </template>
               </span>
@@ -1276,6 +1588,19 @@ watch(
 .list-fields {
   display: flex;
   gap: 6px;
+}
+
+/* AutoSaveIndicator slot for inline-edit rows (TKT-IHC7C). Rendered inline
+   in the row's SectionEditForm rather than teleported (#997). Pinned to the
+   top-right of the form so it reads as inline-right of the row content,
+   matching the pre-teleport placement. */
+.list-indicator-slot,
+.card-indicator-slot {
+  position: absolute;
+  top: -28px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* Table */

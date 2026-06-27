@@ -241,6 +241,8 @@ function createTestProject(): string {
   fs.mkdirSync(path.join(tmpDir, 'relations'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'templates', 'entities'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'scripts', 'docs'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'apps', 'e2e-demo'), { recursive: true });
+  fs.writeFileSync(path.join(tmpDir, 'apps', 'e2e-demo', 'index.html'), E2E_DEMO_APP_HTML);
   for (const [rel, content] of Object.entries(SEED_ENTITIES)) {
     fs.writeFileSync(path.join(tmpDir, rel), content);
   }
@@ -356,9 +358,37 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       if (origin !== allowedOrigin) offOriginRequests.push(url);
     });
 
+    // Vue-error guard (issue #997). Errors thrown inside a Vue lifecycle
+    // hook / render / watcher — notably the route-driven unmount crash that
+    // motivated this guard — are swallowed by the framework: they never reach
+    // `pageerror` or surface as a thrown exception. They DO reach the SPA's
+    // global `app.config.errorHandler` (see frontend/src/main.ts), which logs
+    // a `[vue-error] ...` line to console.error. We capture those here and
+    // fail the test in afterEach, so EVERY navigation in EVERY spec is an
+    // unmount-error probe for free — not just the dedicated regression test.
+    const vueErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() !== 'error') return;
+      const text = msg.text();
+      if (text.startsWith('[vue-error]')) vueErrors.push(text);
+    });
+
     await page.goto(`${serverUrl}/`);
     await use(page);
     await context.close();
+
+    if (vueErrors.length > 0) {
+      await testInfo.attach('vue-errors', {
+        body: vueErrors.join('\n\n'),
+        contentType: 'text/plain',
+      });
+      throw new Error(
+        `The SPA's Vue error handler fired ${vueErrors.length} time(s) during this test ` +
+          `(framework-swallowed errors — e.g. a lifecycle/unmount crash, see issue #997): ` +
+          `${vueErrors[0].split('\n')[0]}` +
+          (vueErrors.length > 1 ? ` (+${vueErrors.length - 1} more — see attachment)` : ''),
+      );
+    }
 
     if (offOriginRequests.length > 0) {
       await testInfo.attach('off-origin-requests', {
@@ -793,6 +823,39 @@ lists:
     create_form: task
     edit_form: task
 
+# Custom entity-detail views. The task view deliberately renders a
+# "display: list" relation section with fields so the row mounts a
+# SectionEditForm whose AutoSaveIndicator is inline in the list row. This
+# is the exact shape that triggered the navigate-away unmount crash in
+# issue #997 (entity-detail-list-unmount.spec.ts). It lives on the task
+# type so it doesn't override the default feature detail rendering that
+# other specs (e.g. git-crypt.spec.ts) assert against.
+views:
+  task:
+    title: "Task"
+    entry:
+      type: task
+    traverse:
+      # TASK-001 implements FEAT-001 in the seed, so this list section
+      # renders one populated row with an inline-edit SectionEditForm.
+      - from: entry
+        follow: implements
+        collect_as: implemented
+    sections:
+      - heading: "Task"
+        source: entry
+        display: properties
+        fields:
+          - property: status
+          - property: assignee
+      - heading: "Implements"
+        source: implemented
+        display: list
+        fields:
+          - property: status
+          - property: priority
+        empty_message: "No implemented features"
+
 kanbans:
   feature-board:
     entity_type: feature
@@ -884,6 +947,77 @@ navigation:
   - label: "Conflicts"
     conflicts: true
 `;
+
+/** Custom-app HTML used by apps.spec.ts. Exercises the rela bridge end-to-end:
+ *  a read (list features) on load, and a relation write (FEAT-001 blocks
+ *  FEAT-002) on button click. Results land in stable data-testid nodes the
+ *  page object reads. The app is plain HTML+JS — it talks to the host only via
+ *  the injected `window.rela` SDK over the MessageChannel. */
+const E2E_DEMO_APP_HTML = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>E2E Demo</title>
+    <meta name="rela-app:bridge-version" content="1">
+    <meta name="rela-app:label" content="E2E Demo">
+    <meta name="rela-app:description" content="Drives the rela bridge from a sandboxed iframe for e2e tests">
+    <script src="_rela.js"></script></head>
+  <body>
+    <div data-testid="status">starting</div>
+    <div data-testid="feature-count"></div>
+    <button data-testid="link-btn" type="button">Link</button>
+    <div data-testid="link-result"></div>
+    <!-- CSP enforcement probe: the app's OWN JS tries to reach /api/ directly;
+         the path-scoped CSP (connect-src 'none' + scoped img-src) must block it.
+         Result lands in [data-testid=csp-probe]: 'blocked' if the boundary holds. -->
+    <div data-testid="csp-probe">pending</div>
+    <script>
+      var cspEl = document.querySelector('[data-testid=csp-probe]');
+      (function probeCSP() {
+        // 1) connect-src 'none' must reject a direct fetch to the API.
+        fetch('/api/v1/features/FEAT-001')
+          .then(function () { cspEl.textContent = 'LEAK: fetch reached /api/'; })
+          .catch(function () {
+            // 2) img-src is path-scoped to the app, so an /api/ image must fail.
+            var img = new Image();
+            img.onload = function () { cspEl.textContent = 'LEAK: img loaded /api/'; };
+            img.onerror = function () { cspEl.textContent = 'blocked'; };
+            img.src = '/api/v1/features/FEAT-001';
+          });
+      })();
+      function ready(fn) {
+        var done = false;
+        function go() { if (!done) { done = true; fn(); } }
+        window.addEventListener('rela:ready', go, { once: true });
+        setTimeout(go, 1000);
+      }
+      var statusEl = document.querySelector('[data-testid=status]');
+      var countEl = document.querySelector('[data-testid=feature-count]');
+      var linkResultEl = document.querySelector('[data-testid=link-result]');
+
+      ready(async function () {
+        try {
+          var res = await window.rela.list({ type: 'feature', params: { per_page: 200 } });
+          var n = (res && res.data ? res.data.length : 0);
+          countEl.textContent = String(n);
+          statusEl.textContent = 'loaded';
+        } catch (e) {
+          statusEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+        }
+      });
+
+      document.querySelector('[data-testid=link-btn]').addEventListener('click', async function () {
+        linkResultEl.textContent = 'linking';
+        try {
+          await window.rela.relationCreate({
+            type: 'feature', id: 'FEAT-001', relation: 'blocks', targetId: 'FEAT-002',
+          });
+          linkResultEl.textContent = 'linked';
+        } catch (e) {
+          linkResultEl.textContent = 'error: ' + (e && e.message ? e.message : e);
+        }
+      });
+    </script>
+  </body>
+</html>`;
 
 /** Document script rendered by rela-server when visiting
  *  /entity/feature/FEAT-001?doc=feature-overview. Emits a single link to

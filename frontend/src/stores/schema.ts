@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getSchema, getConfig } from '@/api/schema'
+import { registerEntityPlurals } from '@/api/entities'
+import { getErrorMessage } from '@/api/errors'
 import type {
   EntityType,
   RelationType,
@@ -12,6 +14,7 @@ import type {
   DashboardConfig,
   NavigationEntry,
   AppConfig,
+  AppEntry,
   DocumentConfig,
   ActionConfig,
 } from '@/types'
@@ -26,6 +29,7 @@ export const useSchemaStore = defineStore('schema', () => {
   const views = ref<Map<string, ViewConfig>>(new Map())
   const kanbans = ref<Map<string, KanbanConfig>>(new Map())
   const documents = ref<Map<string, DocumentConfig>>(new Map())
+  const apps = ref<Map<string, AppEntry>>(new Map())
   const actions = ref<Map<string, ActionConfig>>(new Map())
   const dashboard = ref<DashboardConfig | undefined>(undefined)
   const navigation = ref<NavigationEntry[]>([])
@@ -103,6 +107,15 @@ export const useSchemaStore = defineStore('schema', () => {
       relationTypes.value = new Map(Object.entries(schemaData.relations || {}))
       customTypes.value = new Map(Object.entries(schemaData.types || {}))
 
+      // Feed the API layer's plural registry so it doesn't have to import
+      // this store (B1a). Mirror the server's GetPlural fallback (type+'s')
+      // for entity types that don't declare an explicit plural.
+      const plurals = new Map<string, string>()
+      for (const [type, def] of entityTypes.value) {
+        plurals.set(type, def.plural || `${type}s`)
+      }
+      registerEntityPlurals(plurals)
+
       // Config
       app.value = configData.app || { name: 'rela' }
       styles.value = configData.styles || {}
@@ -111,6 +124,7 @@ export const useSchemaStore = defineStore('schema', () => {
       views.value = new Map(Object.entries(configData.views || {}))
       kanbans.value = new Map(Object.entries(configData.kanbans || {}))
       documents.value = new Map(Object.entries(configData.documents || {}))
+      apps.value = new Map(Object.entries(configData.apps || {}))
       actions.value = new Map(Object.entries(configData.actions || {}))
       dashboard.value = configData.dashboard
       navigation.value = configData.navigation || []
@@ -128,7 +142,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
       loaded.value = true
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load schema'
+      error.value = getErrorMessage(err, 'Failed to load schema')
       throw err
     } finally {
       loading.value = false
@@ -154,6 +168,7 @@ export const useSchemaStore = defineStore('schema', () => {
     views,
     kanbans,
     documents,
+    apps,
     actions,
     dashboard,
     navigation,
