@@ -1,0 +1,26 @@
+/* Text-overflow utilities for handling pathological content (long URLs,
+ * no-space identifiers, pasted single-token strings) that would
+ * otherwise force horizontal layout overflow. */
+
+/* Force-wrap unbreakable strings mid-character.
+ *
+ * `overflow-wrap: anywhere` differs from `break-word` in that it counts
+ * the break opportunity when computing the element's min-content size —
+ * which is what lets a flex child with `min-width: 0` actually shrink to
+ * fit. Without `anywhere`, an unbreakable token forces the whole layout
+ * wider than the viewport even if the parent has overflow-wrap set. */
+.text-wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+/* Clamp text to N lines with ellipsis. Uses the legacy -webkit-box
+ * model that all modern browsers (including iOS WebKit) implement.
+ * Pair with .text-wrap-anywhere when the text may contain unbreakable
+ * tokens — without it, a giant token won't reach the clamp at all. */
+.text-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

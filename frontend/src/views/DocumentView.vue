@@ -246,6 +246,28 @@ onUnmounted(() => {
   }
 }
 
+@media (max-width: 768px) {
+  /* Stack the header on mobile so the title isn't pushed off-centre by
+     the empty back-button slot, and the Refresh button doesn't compete
+     with the title for horizontal room. */
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .page-header h1 {
+    font-size: 20px;
+    text-align: left;
+    flex: none;
+  }
+
+  .header-left,
+  .header-right {
+    min-width: 0;
+  }
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

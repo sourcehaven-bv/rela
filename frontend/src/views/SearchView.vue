@@ -323,9 +323,11 @@ watch(
 
 <template>
   <div class="search-view">
-    <header class="search-header">
-      <BackButton v-if="backTarget" :target="backTarget" />
-      <h1>Search</h1>
+    <header class="search-header mobile-topbar mobile-topbar--with-menu">
+      <div class="header-left">
+        <BackButton v-if="backTarget" :target="backTarget" />
+        <h1>Search</h1>
+      </div>
       <button
         type="button"
         class="help-btn"
@@ -447,8 +449,15 @@ watch(
 .search-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 24px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .search-header h1 {
@@ -739,6 +748,22 @@ watch(
 @media (max-width: 768px) {
   .search-input-row {
     flex-wrap: wrap;
+  }
+
+  /* .search-header uses .mobile-topbar.mobile-topbar--with-menu from
+     mobile-bars.css. */
+  .search-header h1 {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* .main-content drops to 12px horizontal padding at this breakpoint;
+     the sticky header's full-bleed negative margin must match or it
+     pokes past the screen edge and triggers horizontal scroll. */
+  .search-header {
+    margin-left: -12px;
+    margin-right: -12px;
   }
 }
 </style>

@@ -617,7 +617,7 @@ watch(searchQuery, () => {
 
 <template>
   <div v-if="listConfig" class="entity-list">
-    <header class="list-header">
+    <header class="list-header mobile-topbar mobile-topbar--with-menu">
       <div class="header-left">
         <BackButton v-if="backTarget" :target="backTarget" />
         <h1>{{ listConfig.title || listConfig.entity }}</h1>
@@ -726,7 +726,7 @@ watch(searchQuery, () => {
           @click="navigateToEntity(entity)"
         >
           <div class="mobile-card-header">
-            <span class="mobile-card-title">
+            <span class="mobile-card-title text-wrap-anywhere text-clamp-2">
               {{ getFormattedCellValue(entity, listConfig.columns[0]) }}
             </span>
             <button
@@ -1307,7 +1307,6 @@ watch(searchQuery, () => {
   color: var(--text-color);
   flex: 1;
   min-width: 0;
-  word-break: break-word;
 }
 
 .mobile-card-fields {
@@ -1339,15 +1338,8 @@ watch(searchQuery, () => {
 }
 
 @media (max-width: 768px) {
-  .list-header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--bg-color);
-    padding: 8px 0;
-    margin-bottom: 12px;
-  }
-
+  /* .list-header uses .mobile-topbar.mobile-topbar--with-menu from
+     mobile-bars.css (sticky chrome + safe-area math + hamburger room). */
   .list-header h1 {
     font-size: 18px;
   }
@@ -1362,6 +1354,16 @@ watch(searchQuery, () => {
   .mobile-card .delete-btn {
     width: 44px;
     height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* .main-content drops to 12px horizontal padding at this breakpoint;
+     the sticky header's full-bleed negative margin must match or the
+     header pokes 4px past each screen edge and triggers horizontal scroll. */
+  .list-header {
+    margin-left: -12px;
+    margin-right: -12px;
   }
 }
 </style>
