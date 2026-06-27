@@ -440,7 +440,7 @@ func TestHandleV1App(t *testing.T) {
 				t.Errorf("%s: Cache-Control = %q, want must-revalidate", entry, cc)
 			}
 			// Conditional request with the ETag → 304, empty body (not re-sent).
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/_apps/demo/"+entry, nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/_apps/demo/"+entry, http.NoBody)
 			req.Host = "localhost"
 			req.Header.Set("If-None-Match", etag)
 			rec := httptest.NewRecorder()
