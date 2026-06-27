@@ -2675,10 +2675,13 @@ func newTestAppV1(t *testing.T) *App {
 				Label:    "Ticket",
 				IDPrefix: "TKT-",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":      {Type: "string", Required: true},
-					"status":     {Type: "string"},
-					"screenshot": {Type: "file"},
-					"docs":       {Type: "file", Max: 3},
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "string"},
+					// The mechanics tests upload arbitrary text content, so the
+					// fixture file properties accept text/plain; a dedicated
+					// test exercises the default-safe allowlist rejection path.
+					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
+					"docs":       {Type: "file", Max: 3, Accept: []string{"text/plain"}},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise

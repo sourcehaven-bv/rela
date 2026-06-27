@@ -118,16 +118,16 @@ func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, type
 	}
 	defer rc.Close()
 
-	// Serve user-supplied bytes defensively: never let the browser sniff a
-	// different (e.g. text/html) type, sandbox any active content, and
-	// send Content-Disposition with a sanitized filename so an SVG/HTML
-	// payload can't execute as stored XSS in the app's origin. Mirrors the
-	// theme-logo serve path.
+	// Serve user-supplied bytes defensively: force a download rather than
+	// inline rendering (Content-Disposition: attachment), never let the
+	// browser sniff a different (e.g. text/html) type, and sandbox any active
+	// content — so an SVG/HTML payload can't execute as stored XSS in the
+	// app's origin even if it slipped the upload allowlist.
 	h := w.Header()
 	h.Set("Content-Type", contentTypeForFilename(fileName))
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	h.Set("Content-Disposition", `inline; filename="`+safeAttachmentFilename(fileName)+`"`)
+	h.Set("Content-Disposition", `attachment; filename="`+safeAttachmentFilename(fileName)+`"`)
 
 	if _, err := io.Copy(w, rc); err != nil {
 		// Headers (and likely some bytes) are already written; we can't
@@ -237,12 +237,55 @@ func (a *App) writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, 
 			"Property already holds the maximum number of attachments", "")
 		return
 	}
+	// A processor rejection (disallowed MIME type, failed/positive scan) is a
+	// client error, not a server fault: 422 with the reason, not a 500.
+	if errors.Is(err, attachment.ErrRejected) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "attachment_rejected",
+			"Attachment rejected", strings.TrimPrefix(err.Error(), "attachment: rejected by processor: "))
+		return
+	}
 	if writeForbiddenIfACLDenied(w, err) {
 		return
 	}
 	slog.Warn("dataentry: attachment write failed", "err", err, "path", r.URL.Path)
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
 		"Validation failed", err.Error())
+}
+
+// attachmentCmdTimeout bounds each external scan/transform command. Generous
+// for a single synchronous upload of small-ish files; the runner also caps
+// output size at the per-attachment limit.
+const attachmentCmdTimeout = 60 * time.Second
+
+// probeAttachmentCommands checks, at startup, that every scan/transform binary
+// referenced by the metamodel's file properties is resolvable on PATH, warning
+// (never failing) for any that are missing — so an operator learns a typo or an
+// uninstalled tool at boot rather than on the first upload.
+func (a *App) probeAttachmentCommands(meta *metamodel.Metamodel, runner *attachment.CmdRunner) {
+	seen := map[string]bool{}
+	probe := func(cmd []string) {
+		if len(cmd) == 0 || seen[cmd[0]] {
+			return
+		}
+		seen[cmd[0]] = true
+		if err := runner.Probe(cmd); err != nil {
+			slog.Warn("attachments: configured command not found", "binary", cmd[0], "err", err)
+		}
+	}
+	if meta.Attachments != nil {
+		probe(meta.Attachments.ScanCmd)
+	}
+	for _, def := range meta.Entities {
+		for _, prop := range def.Properties {
+			if prop.Type != metamodel.PropertyTypeFile {
+				continue
+			}
+			probe(prop.ScanCmd)
+			for _, step := range prop.Transform {
+				probe(step.Cmd)
+			}
+		}
+	}
 }
 
 // attachmentService builds the shared attachment write-policy service from
@@ -254,6 +297,9 @@ func (a *App) attachmentService(s *AppState) (*attachment.Service, error) {
 		Store:         a.store,
 		Meta:          s.Meta,
 		EntityManager: a.entityManager,
+		// Native MIME allowlist + (when a command runner is wired) scan/
+		// transform. a.attachmentRunner is nil out-of-box → MIME validation only.
+		Processor: attachment.NewPolicyProcessor(s.Meta, a.attachmentRunner),
 	})
 }
 

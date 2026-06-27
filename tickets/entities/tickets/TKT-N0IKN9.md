@@ -41,3 +41,13 @@ into an `api` package with a gated read interface also closes the read-ACL
 class of bug (a route package that never holds `store.Store` can't skip the
 read gate). `CLI` growth is structural (kong binds one field per subcommand);
 revisit grouping into sub-structs but it may stay grandfathered.
+
+## Progress
+
+- `dataentry.App` decomposition tracked in sub-arc TKT-N26KLB (227 → ~166
+  methods; the `visibleReader` ACL seam landed), remainder in TKT-R68TV8.
+- `metamodel.Metamodel`: the attachment-scan accessors (`ScanCommandFor`,
+  `HasUnconfiguredScan`) were moved behind a focused `AttachmentPolicy` view
+  rather than widening the metamodel's public surface — the plimsoll line held
+  at 30 instead of being bumped when the attachment feature landed. This is the
+  ratchet working as intended: the linter forced the extraction at write time.

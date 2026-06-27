@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -151,6 +152,11 @@ type App struct {
 	cfgLoader config.Loader
 	kv        state.KV
 	acl       acl.ACL
+
+	// attachmentRunner drives external scan/transform commands for uploads.
+	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
+	// the cmd: harness). See internal/attachment.PolicyProcessor.
+	attachmentRunner attachment.CommandRunner
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -538,6 +544,27 @@ func NewApp(
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(paths.Root) {
 		app.gitOps = git.NewOps(paths.Root, *cfg.Git)
 		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
+	}
+
+	// Wire the external-command runner for attachment scan/transform. It is
+	// always available; the PolicyProcessor only invokes it when a property's
+	// scan/transform config references a command. A nil runner (constructor
+	// failure) leaves uploads with native MIME validation only.
+	if runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes); rerr == nil {
+		app.attachmentRunner = runner
+		app.probeAttachmentCommands(meta, runner)
+	} else {
+		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
+	}
+
+	// Nudge the operator to make a conscious virus-scan choice: if the
+	// metamodel has file properties with no scan command configured (and no
+	// explicit `scan: off`), warn once. Configuring a scan_cmd or setting
+	// `scan: off` silences this. The warning never blocks startup or uploads.
+	if metamodel.NewAttachmentPolicy(meta).HasUnconfiguredScan() {
+		slog.Warn("attachments: no virus scanner configured for file properties; "+
+			"set attachments.scan_cmd to enable scanning, or `scan: off` on the property to silence this",
+			"docs", "docs/attachment-security.md")
 	}
 
 	return app, nil

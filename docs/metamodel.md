@@ -465,6 +465,10 @@ entities:
 | `description`    | Documentation for the property                       |
 | `list: true`     | Allow multiple values (multi-select for enum types)  |
 | `max`            | For `file` properties: max attachments (default 1)   |
+| `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`) |
+| `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
+| `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd` |
+| `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` |
 
 ### File attachments and `max`
 
@@ -483,6 +487,38 @@ data-entry UI shows a multi-file picker (add up to `max`, remove
 individually), and uploading a file whose name already exists auto-suffixes
 it (`report.pdf` → `report (1).pdf`). `max` must be `>= 1` and only applies
 to `file` properties.
+
+### Attachment security: scanning, allowlist & transforms
+
+Uploaded attachments are inspected before they are stored. A native MIME
+allowlist (sniffed, blocks SVG/HTML/executables) is always on; virus scanning
+and byte transforms (metadata strip, resize, document disarm) are opt-in and
+driven by **external commands you configure** — rela ships no scanner or image
+library. Policy lives in a global `attachments:` block plus per-property
+overrides:
+
+```yaml
+attachments:
+  allow: default-safe                       # MIME allowlist preset (or a list)
+  scan_cmd: [clamdscan, --no-summary, "{in}"]   # configuring this enables scanning
+
+entities:
+  report:
+    properties:
+      evidence:
+        type: file
+        transform:
+          - cmd: [exiftool, -all=, "{in}", -o, "{out}"]   # strip metadata
+```
+
+Commands use array args (no shell — no injection) with `{in}`/`{out}`
+placeholders rela substitutes with temp paths it owns; each runs under a
+timeout and output-size cap. **Configuring a `scan_cmd` enables scanning**
+(fail-closed: rejects on a hit **or** when the scanner can't run); a property
+can opt out with `scan: off`. See the dedicated
+[Attachment Security guide](attachment-security.md)
+for the full configuration and vetted command recipes (ClamAV, vips, exiftool,
+qpdf, ImageMagick).
 
 ### Date Formats
 
