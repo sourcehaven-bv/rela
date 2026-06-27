@@ -30,6 +30,15 @@ import fontOverrideCSS from './relaEditorFont.css?inline'
 // the editor follows the host light/dark theme. Injected LAST so it wins over
 // EasyMDE's own CSS.
 import themeCSS from './relaEditorTheme.css?inline'
+import { attachBacktickAutocomplete, type BacktickController } from './relaBacktick'
+
+// The bridge SDK (_rela.js) exposes window.rela. The backtick autocomplete only
+// needs three read methods; declare the minimal shape we consume.
+interface RelaBridge {
+  schema(): Promise<{ entities: Record<string, { label?: string; id_prefix?: string; id_type?: string }> }>
+  search(p: { query: string; type?: string }): Promise<{ data?: Array<{ id: string }> }>
+  list(p: { type: string; params?: Record<string, unknown> }): Promise<{ data?: Array<{ id: string }> }>
+}
 
 const TAG = 'rela-editor'
 const STYLE_ID = 'rela-editor-styles'
@@ -51,6 +60,8 @@ class RelaEditorElement extends HTMLElement {
   // Set only when EasyMDE construction failed and we fell back to the raw
   // <textarea>. When non-null, the value/focus contract routes through it.
   private _fallbackTextarea: HTMLTextAreaElement | null = null
+  // Backtick entity-reference autocomplete, attached when window.rela is present.
+  private _backtick: BacktickController | null = null
   // Holds the value set via the property before the element is connected (and
   // before EasyMDE exists). Flushed into the editor on connect.
   private _pendingValue = ''
@@ -237,9 +248,25 @@ class RelaEditorElement extends HTMLElement {
     // meaningful while _editor is null (the getter/setter both check _editor
     // first); _unmount repopulates it from the live value on teardown.
     this._pendingValue = ''
+
+    // Attach backtick entity-reference autocomplete when the bridge is present.
+    // The app sets window.rela via _rela.js; if it's absent (editor used without
+    // the bridge) we just skip completion — the editor still works.
+    const bridge = (window as unknown as { rela?: RelaBridge }).rela
+    if (bridge && typeof bridge.schema === 'function') {
+      try {
+        this._backtick = attachBacktickAutocomplete(editor, bridge)
+      } catch (err) {
+        console.error('[rela-editor] backtick autocomplete failed to attach', err)
+      }
+    }
   }
 
   private _unmount(): void {
+    if (this._backtick) {
+      this._backtick.destroy()
+      this._backtick = null
+    }
     if (this._editor) {
       if (this._onCmChange) this._editor.codemirror.off('change', this._onCmChange)
       if (this._onCmFocus) this._editor.codemirror.off('focus', this._onCmFocus)
