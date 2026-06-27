@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -304,7 +305,7 @@ func TestAttachmentUpload_ReplaceOversizeKeepsExisting(t *testing.T) {
 // serialized entity.
 //
 //nolint:unparam // entityID is conceptually variable; tests use one fixture.
-func attachmentsFor(t *testing.T, app *App, entityID, property string) []V1Attachment {
+func attachmentsFor(t *testing.T, app *App, entityID, property string) []v1.Attachment {
 	t.Helper()
 	result := app.serializer.forWire(context.Background(), mustGet(t, app, entityID), app.reader.outgoingRelations(context.Background(), entityID), app.Meta(), "tickets")
 	if result.Attachments == nil {

@@ -667,15 +667,15 @@ func (svc affordanceService) validateRelationMetaWrite(ctx context.Context, e *e
 // Empty input verdicts yield an empty (non-nil) map so the wire shape
 // is consistent: `_fields: {}` under the nop resolver, sparse entries
 // under any other.
-func (svc affordanceService) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1FieldAffordance {
+func (svc affordanceService) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]v1.FieldAffordance {
 	return computeFieldAffordancesFrom(svc.resolver().FieldVerdicts(ctx, e))
 }
 
 // computeFieldAffordancesFrom is computeFieldAffordances given an
 // already-resolved verdict set, so callers that need the verdicts for more
 // than one thing (e.g. _fields + _attachments) resolve them once.
-func computeFieldAffordancesFrom(v FieldVerdicts) map[string]V1FieldAffordance {
-	out := make(map[string]V1FieldAffordance)
+func computeFieldAffordancesFrom(v FieldVerdicts) map[string]v1.FieldAffordance {
+	out := make(map[string]v1.FieldAffordance)
 
 	// writable=false entries
 	for name, writable := range v.Writable {
@@ -753,7 +753,7 @@ func (v FieldVerdicts) IsOptionAllowed(name, opt string) bool {
 func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 
 // hiddenProperties returns the set of property names that should be
-// stripped from V1Entity.Properties before serialization. Caller uses
+// stripped from v1.Entity.Properties before serialization. Caller uses
 // this to enforce the omit-on-hidden invariant.
 func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.Entity) map[string]struct{} {
 	v := svc.resolver().FieldVerdicts(ctx, e)
@@ -774,11 +774,11 @@ func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.
 // (creatable=false, removable=false, or any meta-field writable=false)
 // appear in the map. Default-permissive types are absent — the SPA's
 // "no entry = default" path handles them.
-func (svc affordanceService) computeRelationAffordances(ctx context.Context, e *entityPkg.Entity) map[string]V1RelationAffordance {
+func (svc affordanceService) computeRelationAffordances(ctx context.Context, e *entityPkg.Entity) map[string]v1.RelationAffordance {
 	v := svc.resolver().RelationVerdicts(ctx, e)
-	out := make(map[string]V1RelationAffordance)
+	out := make(map[string]v1.RelationAffordance)
 	for relType, rv := range v.Types {
-		var entry V1RelationAffordance
+		var entry v1.RelationAffordance
 		emit := false
 		if !rv.Creatable {
 			f := false
@@ -790,16 +790,16 @@ func (svc affordanceService) computeRelationAffordances(ctx context.Context, e *
 			entry.Removable = &f
 			emit = true
 		}
-		var fields map[string]V1FieldAffordance
+		var fields map[string]v1.FieldAffordance
 		for metaField, writable := range rv.Fields {
 			if writable {
 				continue
 			}
 			if fields == nil {
-				fields = make(map[string]V1FieldAffordance)
+				fields = make(map[string]v1.FieldAffordance)
 			}
 			f := false
-			fields[metaField] = V1FieldAffordance{Writable: &f}
+			fields[metaField] = v1.FieldAffordance{Writable: &f}
 		}
 		if fields != nil {
 			entry.Fields = fields
@@ -814,14 +814,14 @@ func (svc affordanceService) computeRelationAffordances(ctx context.Context, e *
 
 // copyVisibleProperties returns a fresh map of the entity's properties
 // with hidden names filtered out, ready to ship on a per-row wire
-// surface (cards/list rows in V1ViewEntity._props). Shallow copy: each
+// surface (cards/list rows in v1.ViewEntity._props). Shallow copy: each
 // value points at the same underlying object as e.Properties[k], which
 // is fine because the response is JSON-marshaled before the caller can
 // alias anything (TKT-IHC7D).
 //
 // Mirrors stripHiddenProperties's hidden-property contract but returns
-// a new map instead of mutating an existing V1Entity — the per-row
-// case never goes through V1Entity, so the in-place strip pattern
+// a new map instead of mutating an existing v1.Entity — the per-row
+// case never goes through v1.Entity, so the in-place strip pattern
 // doesn't fit.
 func (svc affordanceService) copyVisibleProperties(ctx context.Context, e *entityPkg.Entity) map[string]any {
 	hidden := svc.hiddenProperties(ctx, e)
@@ -843,7 +843,7 @@ func (svc affordanceService) copyVisibleProperties(ctx context.Context, e *entit
 // Also rewrites `_title` to the entity ID when the entity-type's
 // display property is hidden — otherwise the display title would leak
 // the hidden value through the wire's secondary channel.
-func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
+func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entityPkg.Entity, result *v1.Entity) {
 	hidden := svc.hiddenProperties(ctx, e)
 	for name := range hidden {
 		delete(result.Properties, name)
@@ -870,7 +870,7 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 // `_relations` wire maps onto result. Called by paths that return a
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
 // and includes get [App.stripHiddenProperties] only.
-func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *V1Entity) {
+func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *entityPkg.Entity, result *v1.Entity) {
 	verdicts := svc.resolver().FieldVerdicts(ctx, e)
 	fields := computeFieldAffordancesFrom(verdicts)
 	relations := svc.computeRelationAffordances(ctx, e)
@@ -887,7 +887,7 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 // computeAttachments returns the per-property attachment metadata for an
 // entity, keyed by `file`-type property name. Only properties that carry
 // a file appear; an empty map means "no attachments". Rides every
-// per-entity V1Entity response (GET, PATCH, POST, clone) alongside
+// per-entity v1.Entity response (GET, PATCH, POST, clone) alongside
 // `_fields` / `_relations`, never on list rows — same closed-world shape.
 //
 // selfHref is the entity's `_self` link (`/api/v1/{plural}/{id}`); each
@@ -899,8 +899,8 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 // The value per property is a LIST: a property may hold several files, and
 // even a single file is reported as a 1-element list (always-array wire
 // shape).
-func (svc affordanceService) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]V1Attachment {
-	out := make(map[string][]V1Attachment)
+func (svc affordanceService) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]v1.Attachment {
+	out := make(map[string][]v1.Attachment)
 	if selfHref == "" {
 		return out
 	}
@@ -924,7 +924,7 @@ func (svc affordanceService) computeAttachments(ctx context.Context, e *entityPk
 		if !verdicts.IsVisible(info.Property) {
 			continue
 		}
-		out[info.Property] = append(out[info.Property], V1Attachment{
+		out[info.Property] = append(out[info.Property], v1.Attachment{
 			ID:          info.FileName,
 			FileName:    info.FileName,
 			Size:        info.Size,

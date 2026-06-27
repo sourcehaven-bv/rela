@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 )
@@ -23,16 +24,6 @@ var actionIDRegex = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 // Tighter than the default Lua timeout because the action handler holds
 // writeMu for the entire script execution, blocking other mutations.
 const actionTimeout = 5 * time.Second
-
-// V1ActionResponse mirrors script.ActionResponse for API JSON output.
-// Has both successful response fields and error fields with correlation ID.
-type V1ActionResponse struct {
-	Redirect      string `json:"redirect,omitempty"`
-	Message       string `json:"message,omitempty"`
-	MessageType   string `json:"message_type,omitempty"`
-	Error         string `json:"error,omitempty"`
-	CorrelationID string `json:"correlation_id,omitempty"`
-}
 
 // v1ActionRequest is the optional JSON body for action invocation.
 // When entity_id is provided, the script context includes the entity.
@@ -112,7 +103,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		// Non-Lua failure (script-not-found, contract failure from
 		// parseActionResponse, redirect validation, etc.) — keep the
 		// existing minimal-detail shape.
-		writeV1JSON(w, http.StatusInternalServerError, V1ActionResponse{
+		writeV1JSON(w, http.StatusInternalServerError, v1.ActionResponse{
 			Error:         "action_failed",
 			Message:       "Action failed",
 			CorrelationID: correlationID,
@@ -125,7 +116,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeV1JSON(w, http.StatusOK, V1ActionResponse{
+	writeV1JSON(w, http.StatusOK, v1.ActionResponse{
 		Redirect:    resp.Redirect,
 		Message:     resp.Message,
 		MessageType: resp.MessageType,

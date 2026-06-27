@@ -2,7 +2,7 @@
 // view sections. Covers:
 //   - copyVisibleProperties hidden-stripping (AC 5 + RR-FD1A)
 //   - buildSectionEntityData populates Props + FieldVerdicts (AC 3)
-//   - sectionEntityToV1 wire conversion at the V1ViewEntity level (AC 4)
+//   - sectionEntityToV1 wire conversion at the v1.ViewEntity level (AC 4)
 //   - Key-set invariant between _props and _fields (RR-FD1B)
 //   - Both properties/list AND content/cards branches produce the
 //     same wire shape (RR-FD1C)
@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -160,8 +161,8 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 
 func TestSectionEntityToV1_WiresPropsAndFields(t *testing.T) {
 	// AC 4: the wire converter dumb-copies Props and FieldVerdicts off
-	// SectionEntityData into V1ViewEntity._props and ._fields.
-	verdict := map[string]V1FieldAffordance{
+	// SectionEntityData into v1.ViewEntity._props and ._fields.
+	verdict := map[string]v1.FieldAffordance{
 		"status": {Writable: ptrTo(false)},
 	}
 	sed := SectionEntityData{
@@ -206,7 +207,7 @@ func TestSectionEntityToV1_EmptyFieldVerdicts_EmitsPresentButEmpty(t *testing.T)
 	sed := SectionEntityData{
 		ID:            "TKT-001",
 		Type:          "ticket",
-		FieldVerdicts: map[string]V1FieldAffordance{},
+		FieldVerdicts: map[string]v1.FieldAffordance{},
 	}
 	got := sectionEntityToV1(sed)
 	if got.FieldAffordances == nil {

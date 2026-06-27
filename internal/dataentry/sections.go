@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -65,8 +66,8 @@ type SectionFieldData struct {
 // `Props` and `FieldVerdicts` (TKT-IHC7D) carry the typed property
 // values and per-cell writability verdicts for inline-edit hosts on
 // cards/list view sections. Both are hidden-property-stripped. The
-// wire converter dumb-copies them into V1ViewEntity._props and
-// V1ViewEntity._fields respectively. They are nil for code paths that
+// wire converter dumb-copies them into v1.ViewEntity._props and
+// v1.ViewEntity._fields respectively. They are nil for code paths that
 // don't compute them (notably the entry-source branch and table rows);
 // the wire converter's nil-checks gate emission.
 type SectionEntityData struct {
@@ -78,7 +79,7 @@ type SectionEntityData struct {
 	Content       string
 	HasContent    bool
 	Props         map[string]any
-	FieldVerdicts map[string]V1FieldAffordance
+	FieldVerdicts map[string]v1.FieldAffordance
 }
 
 // SectionColumnData holds a resolved table cell for template rendering.

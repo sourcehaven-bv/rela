@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -127,9 +128,9 @@ func patch(t *testing.T, app *App, plural, id, body string, headers ...string) *
 	return rec
 }
 
-func decodeV1(t *testing.T, body []byte) V1Entity {
+func decodeV1(t *testing.T, body []byte) v1.Entity {
 	t.Helper()
-	var got V1Entity
+	var got v1.Entity
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decode response: %v\nbody: %s", err, body)
 	}

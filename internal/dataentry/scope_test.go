@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 )
@@ -24,12 +25,12 @@ func positionURL(t *testing.T, id string, scope ScopeDescriptor) string {
 	return "/api/v1/_position?" + q.Encode()
 }
 
-func getPosition(t *testing.T, app *App, id string, scope ScopeDescriptor) (*httptest.ResponseRecorder, V1Position) {
+func getPosition(t *testing.T, app *App, id string, scope ScopeDescriptor) (*httptest.ResponseRecorder, v1.Position) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, positionURL(t, id, scope), http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1EntityPosition(rec, req)
-	var pos V1Position
+	var pos v1.Position
 	if rec.Code == http.StatusOK {
 		if err := json.NewDecoder(rec.Body).Decode(&pos); err != nil {
 			t.Fatalf("decode position: %v", err)
@@ -295,7 +296,7 @@ func TestV1PositionMatchesListOrdering(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var list V1ListResponse
+	var list v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatal(err)
 	}
