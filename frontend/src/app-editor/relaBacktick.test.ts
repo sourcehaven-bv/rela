@@ -144,6 +144,63 @@ describe('attachBacktickAutocomplete', () => {
     expect(popup()!.style.display).toBe('none')
   })
 
+  it('keyboard nav (ArrowDown/Up) moves the highlight and keeps the popup open', async () => {
+    attachBacktickAutocomplete(ed, bridge)
+    await flushTimers()
+    typeBacktick(ed, 'see ')
+    await flushTimers()
+    const p = popup()!
+    const activeIdx = () => [...p.querySelectorAll('.rela-bt-option')].findIndex((o) => o.classList.contains('active'))
+    expect(activeIdx()).toBe(0)
+    // CM delivers keydown via the 'keydown' event with (cm, KeyboardEvent).
+    const fire = (key: string) => {
+      const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      ed.codemirror._emit('keydown', ed.codemirror, ev)
+      return ev
+    }
+    fire('ArrowDown')
+    expect(activeIdx()).toBe(1)
+    expect(p.style.display).toBe('block') // MUST stay open (regression: cursorActivity closed it)
+    fire('ArrowUp')
+    expect(activeIdx()).toBe(0)
+    expect(p.style.display).toBe('block')
+    // Arrow keys must preventDefault so CM doesn't move the caret instead.
+    expect(fire('ArrowDown').defaultPrevented).toBe(true)
+  })
+
+  it('a tolerant cursorActivity does not close the popup on in-place caret moves', async () => {
+    attachBacktickAutocomplete(ed, bridge)
+    await flushTimers()
+    typeBacktick(ed, 'see ')
+    await flushTimers()
+    expect(popup()!.style.display).toBe('block')
+    // cursorActivity while the caret is still after the trigger → stays open.
+    ed.codemirror._emit('cursorActivity')
+    expect(popup()!.style.display).toBe('block')
+  })
+
+  it('Enter selects the highlighted item (no newline) in the id phase', async () => {
+    attachBacktickAutocomplete(ed, bridge)
+    await flushTimers()
+    typeBacktick(ed, 'see ')
+    await flushTimers()
+    const fire = (key: string) => {
+      const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      ed.codemirror._emit('keydown', ed.codemirror, ev)
+      return ev
+    }
+    // highlight "Ticket" then Enter → id phase
+    const labels = () => [...popup()!.querySelectorAll('.rela-bt-title')].map((o) => o.textContent)
+    const tIdx = labels().indexOf('Ticket')
+    for (let i = 0; i < tIdx; i++) fire('ArrowDown')
+    fire('Enter')
+    await flushTimers()
+    // Enter on the first entity inserts it, no newline.
+    fire('Enter')
+    await Promise.resolve()
+    expect(ed.codemirror._getText()).toBe('see `TKT-AAAA`')
+  })
+
   it('destroy() removes the popup and unsubscribes', async () => {
     const ctrl = attachBacktickAutocomplete(ed, bridge)
     await flushTimers()

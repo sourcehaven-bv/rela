@@ -374,6 +374,18 @@ export function attachBacktickAutocomplete(editor: EasyMDE, bridge: Bridge): Bac
     applyTyped(typed)
   }
 
+  // cursorActivity is SEPARATE from change and must be tolerant: arrow-key
+  // navigation in the popup must NOT close the session. Only close when the
+  // caret leaves the trigger's line or retreats to/before the trigger (e.g. a
+  // click elsewhere). We intentionally do NOT re-run applyTyped here (that's
+  // the change handler's job) — doing so on every caret move is what closed the
+  // popup on ArrowUp/Down. (TKT-D2JML7)
+  function onCursorActivity(): void {
+    if (phase === 'idle') return
+    const cur = cm.getCursor()
+    if (!triggerPos || cur.line !== triggerPos.line || cur.ch <= triggerPos.ch) reset()
+  }
+
   function onKeyDown(_cm: unknown, ev: KeyboardEvent): void {
     if (phase !== 'prefix' && phase !== 'id') return
     const count = phase === 'prefix' ? prefixItems.length : entityItems.length
@@ -394,11 +406,13 @@ export function attachBacktickAutocomplete(editor: EasyMDE, bridge: Bridge): Bac
   // Warm the prefix cache so the first trigger is instant.
   void ensurePrefixes().then((p) => { cachedPrefixes = p })
 
+  const onBlur = (): void => { setTimeout(reset, 150) } // let a popup click land first
+
   cm.on('inputRead', onInputRead as (...a: unknown[]) => void)
   cm.on('change', onChange)
   cm.on('keydown', onKeyDown as (...a: unknown[]) => void)
-  cm.on('cursorActivity', onChange) // close/re-eval on caret moves
-  cm.on('blur', () => setTimeout(reset, 100)) // let a click on the popup land first
+  cm.on('cursorActivity', onCursorActivity)
+  cm.on('blur', onBlur)
 
   return {
     destroy() {
@@ -406,7 +420,8 @@ export function attachBacktickAutocomplete(editor: EasyMDE, bridge: Bridge): Bac
       cm.off('inputRead', onInputRead as (...a: unknown[]) => void)
       cm.off('change', onChange)
       cm.off('keydown', onKeyDown as (...a: unknown[]) => void)
-      cm.off('cursorActivity', onChange)
+      cm.off('cursorActivity', onCursorActivity)
+      cm.off('blur', onBlur)
       if (popup.parentNode) popup.parentNode.removeChild(popup)
     },
   }
