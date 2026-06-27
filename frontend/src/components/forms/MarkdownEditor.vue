@@ -261,6 +261,10 @@ function onPopupHover(idx: number): void {
   position: relative;
 }
 
+/* DRIFT: these EasyMDE token overrides are mirrored (de-scoped, plain CSS) in
+   the sandboxed-app editor at frontend/src/app-editor/relaEditorTheme.css, and
+   the toolbar/options config is mirrored in relaEditor.ts. Keep them in sync;
+   the eventual shared core is tracked in TKT-D2JML7. */
 .markdown-editor :deep(.EasyMDEContainer) {
   width: 100%;
 }

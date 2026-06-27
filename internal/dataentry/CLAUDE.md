@@ -102,6 +102,33 @@ User-authored apps served in a sandboxed iframe. An app is a **folder**
   reserved `/_apps/<id>/_rela.js`; apps include `<script src="_rela.js">`. The
   app cannot shadow `_rela.js` or serve any `_`-prefixed entry from its files.
   No server-side HTML rewriting of the app's index.
+- **Readiness is replayable; prefer `rela.ready` / `rela.whenReady(cb)` over the
+  `rela:ready` event.** The handshake can complete before an app's inline code
+  runs (e.g. a large `<script src="_rela-editor.js">` between `_rela.js` and the
+  app's listener delays it past the port arrival) — an `addEventListener('rela:ready')`
+  added that late never fires. The SDK resolves a `rela.ready` Promise on the
+  handshake (and `rela.whenReady(cb)`), which is not-missable. The event is kept
+  for back-compat only. `TestAppSDKReadiness` pins this. Don't add `ready`/
+  `whenReady`/`isReady` to `appSDKMethods` — they're local SDK helpers, not host
+  calls.
+- **Optional markdown editor: `<rela-editor>` from the reserved
+  `/_apps/<id>/_rela-editor.js`** (`appEditorSource()`), with its glyph webfont
+  at `/_apps/<id>/_rela-editor.woff2` (`appEditorFontSource()`, served with
+  `Access-Control-Allow-Origin: *` because the sandboxed iframe is null-origin so
+  the `@font-face` fetch is cross-origin). Both are embedded from
+  `app_editor_dist/` — a **build artifact** produced by `frontend/vite.editor.config.ts`
+  (`npm run build` runs it), gitignored like `static/v2`, with a committed
+  `.gitkeep` so the glob embed compiles on a clean checkout;
+  `TestAppEditorBundleEmbedded` skips when unbuilt and asserts the contract when
+  built. Separate from `_rela.js` so only apps that opt in pay the ~370KB bundle.
+  **The element's public contract is the swap seam — keep it minimal**: property
+  `value` (whitespace-exact), attributes `placeholder`/`readonly`, native
+  `input`/`change` events, `focus()`. Everything else (that it's EasyMDE/
+  CodeMirror, the toolbar, the generated DOM) is unsupported, so the editor can
+  be swapped later without breaking apps. Light DOM, not shadow DOM (CM5 misbehaves
+  in a shadow root); upgrades to enforced shadow encapsulation if the SPA moves
+  to CM6, without changing the contract. Programmatic `.value` sets are silent
+  (no `input`), matching a native `<textarea>`.
 - **Optional styling is served at the reserved `/_apps/<id>/_rela.css`**
   (`appCSSSource()` = theme tokens + the atomic `.btn`/`.input`/`.card`). The
   tokens are embedded from `apps_tokens.css`, a **byte-identical copy** of
