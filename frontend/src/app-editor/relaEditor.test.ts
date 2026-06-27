@@ -44,7 +44,12 @@ function makeFakeEasyMDE(opts: { initialValue?: string }): FakeEasyMDE {
   const editor: FakeEasyMDE = {
     codemirror: cm,
     value: (v?: string) => {
-      if (v !== undefined) val = v
+      if (v !== undefined) {
+        val = v
+        // Real EasyMDE.value(v) drives CodeMirror's 'change' handler; mirror
+        // that so the element's programmatic-set suppression is exercised.
+        cm._emit('change')
+      }
       return val
     },
     toTextArea: vi.fn(),
@@ -73,6 +78,11 @@ function makeEditor(): HTMLElement & { value: string } {
   return document.createElement('rela-editor') as HTMLElement & { value: string }
 }
 
+// connectedCallback defers the EasyMDE mount to a microtask (so it doesn't
+// block the parse path). flush() awaits that microtask so tests observe the
+// mounted editor.
+const flush = () => Promise.resolve()
+
 describe('<rela-editor> contract', () => {
   beforeEach(() => {
     lastEditor = null
@@ -83,32 +93,54 @@ describe('<rela-editor> contract', () => {
     expect(customElements.get('rela-editor')).toBeTruthy()
   })
 
-  it('flushes a value set BEFORE connection into the editor', () => {
+  it('flushes a value set BEFORE connection into the editor', async () => {
     const ed = makeEditor()
     ed.value = '# Before connect'
     document.body.appendChild(ed)
+    await flush()
     expect(ed.value).toBe('# Before connect')
     expect(lastEditor!.value()).toBe('# Before connect')
   })
 
-  it('round-trips value set AFTER connection', () => {
+  it('round-trips value set AFTER connection', async () => {
     const ed = makeEditor()
     document.body.appendChild(ed)
+    await flush()
     ed.value = '## After'
     expect(ed.value).toBe('## After')
   })
 
-  it('preserves whitespace-sensitive markdown exactly', () => {
+  it('preserves whitespace-sensitive markdown exactly', async () => {
     const ed = makeEditor()
     document.body.appendChild(ed)
+    await flush()
     const md = '- a\n    indented code\n\n\ttab line\n'
     ed.value = md
     expect(ed.value).toBe(md)
   })
 
-  it('dispatches input on CodeMirror change and change on blur', () => {
+  it('does NOT emit input when value is set programmatically', async () => {
+    // A native <textarea>.value setter is silent; <rela-editor> must match,
+    // else loading content into the editor triggers autosave loops in
+    // consumers (the bug that froze the Today app's goals load). The fake's
+    // value() emits a CodeMirror 'change' like EasyMDE, so the suppression
+    // path is exercised.
     const ed = makeEditor()
     document.body.appendChild(ed)
+    await flush()
+    const onInput = vi.fn()
+    ed.addEventListener('input', onInput)
+    ed.value = 'programmatic content'
+    expect(onInput).not.toHaveBeenCalled()
+    // But a genuine user edit (cm change OUTSIDE the setter) still fires input.
+    lastEditor!.codemirror._emit('change')
+    expect(onInput).toHaveBeenCalledOnce()
+  })
+
+  it('dispatches input on CodeMirror change and change on blur', async () => {
+    const ed = makeEditor()
+    document.body.appendChild(ed)
+    await flush()
     const onInput = vi.fn()
     const onChange = vi.fn()
     ed.addEventListener('input', onInput)
@@ -119,25 +151,28 @@ describe('<rela-editor> contract', () => {
     expect(onChange).toHaveBeenCalledOnce()
   })
 
-  it('applies readonly via attribute at mount and on change', () => {
+  it('applies readonly via attribute at mount and on change', async () => {
     const ed = makeEditor()
     ed.setAttribute('readonly', '')
     document.body.appendChild(ed)
+    await flush()
     expect(lastEditor!.codemirror.setOption).toHaveBeenCalledWith('readOnly', true)
     ed.removeAttribute('readonly')
     expect(lastEditor!.codemirror.setOption).toHaveBeenCalledWith('readOnly', false)
   })
 
-  it('focus() delegates to the editor', () => {
+  it('focus() delegates to the editor', async () => {
     const ed = makeEditor()
     document.body.appendChild(ed)
+    await flush()
     ed.focus()
     expect(lastEditor!.codemirror.focus).toHaveBeenCalledOnce()
   })
 
-  it('tears down EasyMDE on disconnect and preserves value across re-connect', () => {
+  it('tears down EasyMDE on disconnect and preserves value across re-connect', async () => {
     const ed = makeEditor()
     document.body.appendChild(ed)
+    await flush()
     ed.value = 'keep me'
     const first = lastEditor!
     ed.remove()
@@ -145,6 +180,7 @@ describe('<rela-editor> contract', () => {
     expect(first.cleanup).toHaveBeenCalledOnce()
     // Re-connect: a fresh editor seeded with the preserved value.
     document.body.appendChild(ed)
+    await flush()
     expect(ed.value).toBe('keep me')
     expect(lastEditor!.value()).toBe('keep me')
   })

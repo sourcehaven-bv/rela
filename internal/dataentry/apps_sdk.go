@@ -39,6 +39,14 @@ func appSDKSource() string {
 	methods := `["` + strings.Join(appSDKMethods, `","`) + `"]`
 	return `(function () {
   var port = null, nextId = 1, pending = {}, queue = [];
+  // Replayable readiness: resolves when the bridge port arrives. Exposed as
+  // rela.ready (a Promise) and rela.whenReady(cb). This is the robust way for
+  // an app to run code on connect — unlike the 'rela:ready' EVENT, which a
+  // listener added AFTER the handshake (e.g. registered below a large
+  // <script src> that delayed the inline code) would miss. The event is kept
+  // for back-compat; new apps should prefer rela.ready / whenReady.
+  var isReady = false, resolveReady = null;
+  var readyPromise = new Promise(function (res) { resolveReady = res; });
   function send(method, params) {
     return new Promise(function (resolve, reject) {
       var id = nextId++;
@@ -77,6 +85,8 @@ func appSDKSource() string {
     port.start && port.start();
     for (var i = 0; i < queue.length; i++) port.postMessage(queue[i]);
     queue = [];
+    isReady = true;
+    if (resolveReady) resolveReady();
     window.dispatchEvent(new Event('rela:ready'));
   });
   // Iframe-initiated handshake: ask the host for a port. The host verifies our
@@ -99,6 +109,14 @@ func appSDKSource() string {
   }
   var rela = {};
   ` + methods + `.forEach(function (m) { rela[m] = function (params) { return send(m, params); }; });
+  // Replayable readiness — safe to call/await at any time, before or after the
+  // handshake completes (see readyPromise above).
+  rela.ready = readyPromise;
+  rela.whenReady = function (cb) {
+    if (typeof cb === 'function') { readyPromise.then(cb); return; }
+    return readyPromise;
+  };
+  Object.defineProperty(rela, 'isReady', { get: function () { return isReady; } });
   window.rela = rela;
 })();`
 }

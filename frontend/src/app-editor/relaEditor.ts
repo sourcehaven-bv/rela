@@ -53,14 +53,29 @@ class RelaEditorElement extends HTMLElement {
   private _pendingValue = ''
   private _onCmChange: (() => void) | null = null
   private _onCmBlur: (() => void) | null = null
+  // True while the .value setter is writing to EasyMDE, so the re-dispatched
+  // input event is suppressed (programmatic sets are silent, like a textarea).
+  private _settingValue = false
+  // True between connectedCallback and the deferred mount running.
+  private _mountScheduled = false
 
   static get observedAttributes(): string[] {
     return ['placeholder', 'readonly']
   }
 
   connectedCallback(): void {
-    if (this._editor) return // already mounted (re-connect)
-    this._mount()
+    if (this._editor || this._mountScheduled) return // already mounted/scheduled
+    // Defer the (heavy) EasyMDE mount off the synchronous parse/upgrade path.
+    // Building CodeMirror during HTML parsing blocks the main thread long
+    // enough that a host message (e.g. the bridge's rela:port reply, which
+    // fires rela:ready) can be processed before the page's own end-of-body
+    // scripts register their listeners — making apps miss rela:ready. A
+    // microtask lets the current parse/script finish first, then we mount.
+    this._mountScheduled = true
+    queueMicrotask(() => {
+      this._mountScheduled = false
+      if (this.isConnected && !this._editor) this._mount()
+    })
   }
 
   disconnectedCallback(): void {
@@ -86,7 +101,17 @@ class RelaEditorElement extends HTMLElement {
     if (this._editor) {
       // Only replace if different, so setting the same value doesn't reset
       // the cursor/scroll.
-      if (this._editor.value() !== next) this._editor.value(next)
+      if (this._editor.value() !== next) {
+        // Programmatic set MUST NOT emit input/change — same as a native
+        // <textarea>/<input>, whose .value setter is silent. EasyMDE's
+        // value() drives CodeMirror's change handler, so guard the dispatch.
+        this._settingValue = true
+        try {
+          this._editor.value(next)
+        } finally {
+          this._settingValue = false
+        }
+      }
     } else {
       this._pendingValue = next
     }
@@ -143,8 +168,12 @@ class RelaEditorElement extends HTMLElement {
     }
 
     // Re-dispatch CodeMirror events as native element events so plugins use
-    // standard addEventListener('input'/'change').
+    // standard addEventListener('input'/'change'). Programmatic value sets
+    // (the .value setter) are suppressed via _settingValue so they stay
+    // silent like a native <textarea> — otherwise loading content into the
+    // editor would spuriously fire input and trigger autosave loops.
     this._onCmChange = () => {
+      if (this._settingValue) return
       this.dispatchEvent(new Event('input', { bubbles: true }))
     }
     this._onCmBlur = () => {
