@@ -136,19 +136,20 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if entry == appEditorEntry {
-		h.Set("Content-Type", "text/javascript; charset=utf-8")
-		_, _ = w.Write(appEditorSource())
+		// ETag + revalidate so the 372KB bundle isn't re-transferred on every
+		// iframe (re)load. appContentTypes[".js"] is the single source for the
+		// content-type so it can't drift.
+		serveCachedAsset(w, r, appContentTypes[".js"], appEditorJSETag(), appEditorSource())
 		return
 	}
 	if entry == appEditorFontEntry {
-		h.Set("Content-Type", "font/woff2")
 		// The app runs in a sandboxed iframe with an OPAQUE (null) origin, so an
 		// @font-face request for this font is cross-origin and the browser
 		// blocks it without CORS. Allow it: this is a static glyph webfont with
 		// no sensitive data (fonts are the canonical CORS-allowed cross-origin
 		// resource). Without this the editor toolbar renders as tofu boxes.
 		h.Set("Access-Control-Allow-Origin", "*")
-		_, _ = w.Write(appEditorFontSource())
+		serveCachedAsset(w, r, appContentTypes[".woff2"], appEditorFontETag(), appEditorFontSource())
 		return
 	}
 

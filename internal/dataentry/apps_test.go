@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -379,9 +380,7 @@ func TestHandleV1App(t *testing.T) {
 	})
 
 	t.Run("serves the reserved _rela-editor.js bundle", func(t *testing.T) {
-		if !editorBundleBuilt() {
-			t.Skip("editor bundle not built")
-		}
+		withTestEditorAssets(t)
 		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela-editor.js")
 		if w.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", w.Code)
@@ -404,9 +403,7 @@ func TestHandleV1App(t *testing.T) {
 	})
 
 	t.Run("serves the reserved _rela-editor.woff2 font", func(t *testing.T) {
-		if !editorBundleBuilt() {
-			t.Skip("editor bundle not built")
-		}
+		withTestEditorAssets(t)
 		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/_rela-editor.woff2")
 		if w.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", w.Code)
@@ -431,10 +428,34 @@ func TestHandleV1App(t *testing.T) {
 		}
 	})
 
-	t.Run("an app cannot shadow _rela-editor.js / .woff2 with its own files", func(t *testing.T) {
-		if !editorBundleBuilt() {
-			t.Skip("editor bundle not built")
+	t.Run("editor assets carry an ETag and 304 on If-None-Match", func(t *testing.T) {
+		withTestEditorAssets(t)
+		for _, entry := range []string{"_rela-editor.js", "_rela-editor.woff2"} {
+			w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/"+entry)
+			etag := w.Header().Get("ETag")
+			if etag == "" {
+				t.Fatalf("%s: missing ETag (caching not applied)", entry)
+			}
+			if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "must-revalidate") {
+				t.Errorf("%s: Cache-Control = %q, want must-revalidate", entry, cc)
+			}
+			// Conditional request with the ETag → 304, empty body (not re-sent).
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/_apps/demo/"+entry, nil)
+			req.Host = "localhost"
+			req.Header.Set("If-None-Match", etag)
+			rec := httptest.NewRecorder()
+			app.handleV1App(rec, req)
+			if rec.Code != http.StatusNotModified {
+				t.Errorf("%s: If-None-Match should 304, got %d", entry, rec.Code)
+			}
+			if rec.Body.Len() != 0 {
+				t.Errorf("%s: 304 body must be empty, got %d bytes", entry, rec.Body.Len())
+			}
 		}
+	})
+
+	t.Run("an app cannot shadow _rela-editor.js / .woff2 with its own files", func(t *testing.T) {
+		withTestEditorAssets(t)
 		writeApp(t, root, "shadowed", map[string]string{
 			"index.html":         "<html></html>",
 			"_rela-editor.js":    "EVIL",
@@ -519,6 +540,24 @@ func TestHandleV1App(t *testing.T) {
 // need the real bytes must skip when it's absent rather than fail. The
 // production/release build always runs the frontend build first.
 func editorBundleBuilt() bool { return len(appEditorSource()) > 0 }
+
+// withTestEditorAssets swaps the editor bundle/font source vars with fixed test
+// bytes for the duration of a test, restoring them after. This lets the serving
+// path (content-type, CORS, caching, shadowing) be exercised in CI even when the
+// frontend build hasn't run (the `go test ./...` job doesn't build it) — closing
+// the coverage hole where the new reserved-entry branches would otherwise only
+// run on a developer's machine. The fake JS deliberately contains the
+// "rela-editor" marker and the reserved font path so the same assertions hold.
+func withTestEditorAssets(t *testing.T) {
+	t.Helper()
+	const fakeJS = `(function(){customElements.define('rela-editor',class extends HTMLElement{});` +
+		`/* @font-face url(` + appEditorFontEntry + `) */})();`
+	fakeFont := []byte("wOF2-test-font-bytes")
+	origJS, origFont := appEditorSource, appEditorFontSource
+	appEditorSource = func() []byte { return []byte(fakeJS) }
+	appEditorFontSource = func() []byte { return fakeFont }
+	t.Cleanup(func() { appEditorSource, appEditorFontSource = origJS, origFont })
+}
 
 // TestAppEditorBundleEmbedded verifies the editor bundle + font, WHEN BUILT,
 // define the custom element and reference the same-path font. It skips on a

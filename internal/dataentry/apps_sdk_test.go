@@ -31,6 +31,13 @@ func TestAppSDKReadiness(t *testing.T) {
 	if !strings.Contains(src, "resolveReady") {
 		t.Error("SDK must resolve the ready promise on handshake")
 	}
+
+	// whenReady must ALWAYS return the promise (chainable) — i.e. there is a
+	// `return readyPromise` outside any conditional in the helper. Guard against
+	// regressing to the early-`return;` form that made whenReady(cb).then() throw.
+	if !strings.Contains(src, "return readyPromise;") {
+		t.Error("whenReady must always return readyPromise (chainable)")
+	}
 }
 
 // TestAppSDKMethodsNotPollutedByReadiness ensures the readiness helpers are NOT

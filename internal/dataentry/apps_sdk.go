@@ -112,8 +112,10 @@ func appSDKSource() string {
   // Replayable readiness — safe to call/await at any time, before or after the
   // handshake completes (see readyPromise above).
   rela.ready = readyPromise;
+  // Always returns the promise (chainable) — whether or not a callback is given,
+  // so whenReady(cb).then(...) and whenReady().then(...) both work.
   rela.whenReady = function (cb) {
-    if (typeof cb === 'function') { readyPromise.then(cb); return; }
+    if (typeof cb === 'function') readyPromise.then(cb);
     return readyPromise;
   };
   Object.defineProperty(rela, 'isReady', { get: function () { return isReady; } });

@@ -48,29 +48,39 @@ function ensureStylesInjected(): void {
 class RelaEditorElement extends HTMLElement {
   private _editor: EasyMDE | null = null
   private _textarea: HTMLTextAreaElement | null = null
+  // Set only when EasyMDE construction failed and we fell back to the raw
+  // <textarea>. When non-null, the value/focus contract routes through it.
+  private _fallbackTextarea: HTMLTextAreaElement | null = null
   // Holds the value set via the property before the element is connected (and
   // before EasyMDE exists). Flushed into the editor on connect.
   private _pendingValue = ''
   private _onCmChange: (() => void) | null = null
   private _onCmBlur: (() => void) | null = null
+  private _onCmFocus: (() => void) | null = null
   // True while the .value setter is writing to EasyMDE, so the re-dispatched
   // input event is suppressed (programmatic sets are silent, like a textarea).
   private _settingValue = false
   // True between connectedCallback and the deferred mount running.
   private _mountScheduled = false
+  // Value snapshot at focus, so `change` fires on blur ONLY when the content
+  // actually changed — matching native <textarea>, not on every focus-out.
+  private _valueAtFocus = ''
 
+  // `placeholder` is intentionally NOT observed: EasyMDE reads it once at mount
+  // and has no live setter, so observing it would invite a "set it reactively,
+  // it silently no-ops after mount" footgun. It is a mount-time-only attribute.
   static get observedAttributes(): string[] {
-    return ['placeholder', 'readonly']
+    return ['readonly']
   }
 
   connectedCallback(): void {
     if (this._editor || this._mountScheduled) return // already mounted/scheduled
-    // Defer the (heavy) EasyMDE mount off the synchronous parse/upgrade path.
-    // Building CodeMirror during HTML parsing blocks the main thread long
-    // enough that a host message (e.g. the bridge's rela:port reply, which
-    // fires rela:ready) can be processed before the page's own end-of-body
-    // scripts register their listeners — making apps miss rela:ready. A
-    // microtask lets the current parse/script finish first, then we mount.
+    // Defer the (heavy) EasyMDE/CodeMirror mount off the synchronous parse/
+    // upgrade path so it doesn't block the main thread while the page is still
+    // parsing (responsiveness). NOTE: this is a PERF measure, not a correctness
+    // fix for the bridge handshake — readiness is made not-missable by the
+    // SDK's replayable rela.ready/whenReady (see apps_sdk.go); do not rely on
+    // this defer for that.
     this._mountScheduled = true
     queueMicrotask(() => {
       this._mountScheduled = false
@@ -87,13 +97,13 @@ class RelaEditorElement extends HTMLElement {
     if (name === 'readonly') {
       this._editor.codemirror.setOption('readOnly', this.hasAttribute('readonly'))
     }
-    // EasyMDE has no live placeholder setter; placeholder is read at mount.
-    // Changing it after mount is not part of the supported contract.
   }
 
   // --- public property: value (markdown text, whitespace-exact) ---
   get value(): string {
-    return this._editor ? this._editor.value() : this._pendingValue
+    if (this._editor) return this._editor.value()
+    if (this._fallbackTextarea) return this._fallbackTextarea.value
+    return this._pendingValue
   }
 
   set value(v: string) {
@@ -112,6 +122,9 @@ class RelaEditorElement extends HTMLElement {
           this._settingValue = false
         }
       }
+    } else if (this._fallbackTextarea) {
+      // Native textarea .value is already silent — no dispatch guard needed.
+      this._fallbackTextarea.value = next
     } else {
       this._pendingValue = next
     }
@@ -120,6 +133,7 @@ class RelaEditorElement extends HTMLElement {
   // --- public method: focus() ---
   override focus(): void {
     if (this._editor) this._editor.codemirror.focus()
+    else if (this._fallbackTextarea) this._fallbackTextarea.focus()
     else super.focus()
   }
 
@@ -132,36 +146,62 @@ class RelaEditorElement extends HTMLElement {
     this.appendChild(ta)
     this._textarea = ta
 
-    const editor = new EasyMDE({
-      element: ta,
-      initialValue: this._pendingValue,
-      placeholder: this.getAttribute('placeholder') || '',
-      spellChecker: false,
-      autofocus: false,
-      status: false,
-      // Suppress EasyMDE's runtime <link> to the FA CDN — the glyphs are
-      // bundled (and the font is served same-origin under the app base).
-      autoDownloadFontAwesome: false,
-      toolbar: [
-        'bold',
-        'italic',
-        'heading',
-        '|',
-        'unordered-list',
-        'ordered-list',
-        '|',
-        'link',
-        'code',
-        'quote',
-        '|',
-        'preview',
-        'side-by-side',
-        'fullscreen',
-        '|',
-        'guide',
-      ],
-      minHeight: '200px',
-    } satisfies EasyMDE.Options)
+    let editor: EasyMDE
+    try {
+      editor = new EasyMDE({
+        element: ta,
+        initialValue: this._pendingValue,
+        placeholder: this.getAttribute('placeholder') || '',
+        spellChecker: false,
+        autofocus: false,
+        status: false,
+        // Suppress EasyMDE's runtime <link> to the FA CDN — the glyphs are
+        // bundled (and the font is served same-origin under the app base).
+        autoDownloadFontAwesome: false,
+        // NOTE: this toolbar/options config is intentionally kept close to the
+        // SPA editor's (frontend/src/components/forms/MarkdownEditor.vue) so the
+        // two editors feel the same. They are NOT yet shared (this is a plain
+        // IIFE with no Vue). If you change one, change the other — or do the
+        // extraction tracked in TKT-D2JML7 (shared core). The app editor omits
+        // the SPA's entity-ref toolbar button (it needs the schema store).
+        toolbar: [
+          'bold',
+          'italic',
+          'heading',
+          '|',
+          'unordered-list',
+          'ordered-list',
+          '|',
+          'link',
+          'code',
+          'quote',
+          '|',
+          'preview',
+          'side-by-side',
+          'fullscreen',
+          '|',
+          'guide',
+        ],
+        minHeight: '200px',
+      } satisfies EasyMDE.Options)
+    } catch (err) {
+      // Degraded fallback: if EasyMDE fails to construct (e.g. CM5 in an
+      // unexpected DOM state), keep the raw <textarea> — it already holds the
+      // seeded value — and route the value/focus/event contract through it so
+      // the app still has a working (plain) editor rather than a dead element.
+      console.error('[rela-editor] editor failed to initialize; falling back to a plain textarea', err)
+      ta.placeholder = this.getAttribute('placeholder') || ''
+      ta.readOnly = this.hasAttribute('readonly')
+      ta.style.cssText = 'width:100%;min-height:200px;box-sizing:border-box'
+      ta.addEventListener('input', () => {
+        if (!this._settingValue) this.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      ta.addEventListener('change', () => this.dispatchEvent(new Event('change', { bubbles: true })))
+      this._fallbackTextarea = ta
+      // Keep _pendingValue in sync so the getter (which checks _fallbackTextarea)
+      // and a later re-read are consistent.
+      return
+    }
 
     if (this.hasAttribute('readonly')) {
       editor.codemirror.setOption('readOnly', true)
@@ -176,19 +216,45 @@ class RelaEditorElement extends HTMLElement {
       if (this._settingValue) return
       this.dispatchEvent(new Event('input', { bubbles: true }))
     }
+    // `change` matches native <textarea> semantics: fire on blur ONLY when the
+    // value changed since focus, so consumers wiring autosave/dirty-tracking to
+    // `change` don't get a spurious save on every click-away.
+    this._onCmFocus = () => {
+      this._valueAtFocus = editor.value()
+    }
     this._onCmBlur = () => {
-      this.dispatchEvent(new Event('change', { bubbles: true }))
+      if (editor.value() !== this._valueAtFocus) {
+        this.dispatchEvent(new Event('change', { bubbles: true }))
+      }
     }
     editor.codemirror.on('change', this._onCmChange)
+    editor.codemirror.on('focus', this._onCmFocus)
     editor.codemirror.on('blur', this._onCmBlur)
 
     this._editor = editor
+    // _pendingValue's job is done (EasyMDE now owns the content); clear it so a
+    // large initial document isn't held twice. Invariant: _pendingValue is only
+    // meaningful while _editor is null (the getter/setter both check _editor
+    // first); _unmount repopulates it from the live value on teardown.
+    this._pendingValue = ''
   }
 
   private _unmount(): void {
     if (this._editor) {
       if (this._onCmChange) this._editor.codemirror.off('change', this._onCmChange)
+      if (this._onCmFocus) this._editor.codemirror.off('focus', this._onCmFocus)
       if (this._onCmBlur) this._editor.codemirror.off('blur', this._onCmBlur)
+      // Exit fullscreen BEFORE teardown. EasyMDE's fullscreen sets
+      // document.body.style.overflow='hidden' and only restores it on toggle-
+      // off; toTextArea()/cleanup() don't. Tearing down while fullscreen would
+      // leave the host page permanently unscrollable with no editor to fix it.
+      // `fullScreen` is a runtime CodeMirror option added by EasyMDE's
+      // fullscreen addon (not in CM's typed EditorConfiguration); toggleFullScreen
+      // is exposed statically.
+      const cm = this._editor.codemirror as unknown as { getOption(name: string): unknown }
+      if (cm.getOption('fullScreen')) {
+        EasyMDE.toggleFullScreen(this._editor)
+      }
       // Capture the current value back to _pendingValue so a disconnect →
       // reconnect round-trip preserves content.
       this._pendingValue = this._editor.value()
@@ -198,7 +264,13 @@ class RelaEditorElement extends HTMLElement {
       this._editor = null
     }
     this._onCmChange = null
+    this._onCmFocus = null
     this._onCmBlur = null
+    // Preserve content across a fallback disconnect → reconnect too.
+    if (this._fallbackTextarea) {
+      this._pendingValue = this._fallbackTextarea.value
+      this._fallbackTextarea = null
+    }
     if (this._textarea && this._textarea.parentNode === this) {
       this.removeChild(this._textarea)
     }

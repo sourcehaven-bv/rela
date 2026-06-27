@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 
 // The <rela-editor> element wraps EasyMDE, which needs real layout (CodeMirror 5)
 // and doesn't mount under happy-dom. We mock EasyMDE so these tests exercise the
@@ -10,8 +10,11 @@ interface FakeCM {
   on(ev: string, fn: () => void): void
   off(ev: string, fn: () => void): void
   focus: ReturnType<typeof vi.fn>
-  setOption: ReturnType<typeof vi.fn>
+  setOption: Mock
+  getOption(name: string): unknown
   _emit(ev: string): void
+  _setValue(v: string): void // simulate a USER edit (no setter suppression)
+  _options: Record<string, unknown>
 }
 
 interface FakeEasyMDE {
@@ -22,12 +25,14 @@ interface FakeEasyMDE {
 }
 
 let lastEditor: FakeEasyMDE | null = null
+const toggleFullScreenSpy = vi.fn()
 
 // Built with closures (no `this`) so the handler registry and value are
 // captured locally — keeps eslint's no-this-alias happy and the fake simple.
 function makeFakeEasyMDE(opts: { initialValue?: string }): FakeEasyMDE {
   let val = opts.initialValue ?? ''
   const handlers: Record<string, Array<() => void>> = {}
+  const options: Record<string, unknown> = {}
   const cm: FakeCM = {
     on: (ev, fn) => {
       ;(handlers[ev] ||= []).push(fn)
@@ -36,10 +41,18 @@ function makeFakeEasyMDE(opts: { initialValue?: string }): FakeEasyMDE {
       handlers[ev] = (handlers[ev] || []).filter((f) => f !== fn)
     },
     focus: vi.fn(),
-    setOption: vi.fn(),
+    setOption: vi.fn((name: string, v: unknown) => {
+      options[name] = v
+    }),
+    getOption: (name: string) => options[name],
     _emit: (ev) => {
       ;(handlers[ev] || []).forEach((f) => f())
     },
+    _setValue: (v: string) => {
+      val = v
+      cm._emit('change')
+    },
+    _options: options,
   }
   const editor: FakeEasyMDE = {
     codemirror: cm,
@@ -59,10 +72,17 @@ function makeFakeEasyMDE(opts: { initialValue?: string }): FakeEasyMDE {
   return editor
 }
 
-// EasyMDE is used as `new EasyMDE(opts)`; wrap the factory so `new` works.
+// EasyMDE is used as `new EasyMDE(opts)` with a static `toggleFullScreen`.
 const FakeEasyMDE = function (this: unknown, opts: { initialValue?: string }) {
   return makeFakeEasyMDE(opts)
-} as unknown as new (opts: { initialValue?: string }) => FakeEasyMDE
+} as unknown as (new (opts: { initialValue?: string }) => FakeEasyMDE) & {
+  toggleFullScreen: (e: FakeEasyMDE) => void
+}
+FakeEasyMDE.toggleFullScreen = (e: FakeEasyMDE) => {
+  toggleFullScreenSpy(e)
+  // mirror EasyMDE: flips the cm fullScreen option
+  e.codemirror.setOption('fullScreen', !e.codemirror.getOption('fullScreen'))
+}
 
 vi.mock('easymde', () => ({ default: FakeEasyMDE }))
 // The ?inline CSS imports return strings; stub them so the module loads.
@@ -86,6 +106,7 @@ const flush = () => Promise.resolve()
 describe('<rela-editor> contract', () => {
   beforeEach(() => {
     lastEditor = null
+    toggleFullScreenSpy.mockClear()
     document.body.replaceChildren()
   })
 
@@ -137,7 +158,7 @@ describe('<rela-editor> contract', () => {
     expect(onInput).toHaveBeenCalledOnce()
   })
 
-  it('dispatches input on CodeMirror change and change on blur', async () => {
+  it('dispatches input on CodeMirror change, and change on blur after an edit', async () => {
     const ed = makeEditor()
     document.body.appendChild(ed)
     await flush()
@@ -145,10 +166,24 @@ describe('<rela-editor> contract', () => {
     const onChange = vi.fn()
     ed.addEventListener('input', onInput)
     ed.addEventListener('change', onChange)
-    lastEditor!.codemirror._emit('change')
+    lastEditor!.codemirror._emit('focus') // snapshot value at focus
+    lastEditor!.codemirror._setValue('user typed this') // a real edit
     lastEditor!.codemirror._emit('blur')
     expect(onInput).toHaveBeenCalledOnce()
     expect(onChange).toHaveBeenCalledOnce()
+  })
+
+  it('does NOT dispatch change on blur when nothing was edited (native textarea semantics)', async () => {
+    const ed = makeEditor()
+    document.body.appendChild(ed)
+    await flush()
+    const onChange = vi.fn()
+    ed.addEventListener('change', onChange)
+    // Focus then blur with no edit in between → no change event (a click-away
+    // must not trigger autosave).
+    lastEditor!.codemirror._emit('focus')
+    lastEditor!.codemirror._emit('blur')
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('applies readonly via attribute at mount and on change', async () => {
@@ -183,5 +218,25 @@ describe('<rela-editor> contract', () => {
     await flush()
     expect(ed.value).toBe('keep me')
     expect(lastEditor!.value()).toBe('keep me')
+  })
+
+  it('exits fullscreen on teardown so the host page is not left unscrollable', async () => {
+    const ed = makeEditor()
+    document.body.appendChild(ed)
+    await flush()
+    // Simulate the user entering fullscreen (EasyMDE sets the cm option).
+    lastEditor!.codemirror.setOption('fullScreen', true)
+    ed.remove()
+    // Teardown must have toggled fullscreen back off (which restores
+    // document.body.style.overflow in real EasyMDE).
+    expect(toggleFullScreenSpy).toHaveBeenCalledOnce()
+  })
+
+  it('does not toggle fullscreen on teardown when not fullscreen', async () => {
+    const ed = makeEditor()
+    document.body.appendChild(ed)
+    await flush()
+    ed.remove()
+    expect(toggleFullScreenSpy).not.toHaveBeenCalled()
   })
 })

@@ -16,8 +16,19 @@ function stripFontAwesomeFontFace(): Plugin {
       // query suffix means .endsWith('.css') won't match — check includes).
       if (!id.includes('font-awesome') || !id.includes('.css')) return null
       // FA ships exactly one @font-face{...} block listing eot/ttf/woff/woff2/
-      // svg sources; remove it so Vite doesn't base64-inline all five.
+      // svg sources; remove it so Vite doesn't base64-inline all five. The
+      // [^}]* match relies on FA's block having no nested braces (true for 4.7).
       const stripped = code.replace(/@font-face\s*\{[^}]*\}/g, '')
+      // Fail loud if nothing was stripped: a silent no-op (FA restructured its
+      // CSS, or this matched the wrong module) would ship ~1.5MB of base64 fonts
+      // unnoticed. The override @font-face in relaEditorFont.css is what we keep.
+      if (stripped === code) {
+        throw new Error(
+          'strip-fontawesome-fontface: expected an @font-face block in ' +
+            id +
+            ' but found none — Font Awesome CSS structure changed; verify the strip.',
+        )
+      }
       return { code: stripped, map: null }
     },
   }
@@ -43,9 +54,20 @@ function emitEditorFont(): Plugin {
   return {
     name: 'emit-editor-font',
     async generateBundle() {
-      const fontPath = fileURLToPath(
-        new URL('./node_modules/font-awesome/fonts/fontawesome-webfont.woff2', import.meta.url),
-      )
+      // Resolve via package resolution rather than a hardcoded ./node_modules
+      // path, so it survives hoisting / pnpm / monorepo layouts. Fail loudly
+      // with a clear message if the font can't be found.
+      const { createRequire } = await import('node:module')
+      const require = createRequire(import.meta.url)
+      let fontPath: string
+      try {
+        fontPath = require.resolve('font-awesome/fonts/fontawesome-webfont.woff2')
+      } catch {
+        throw new Error(
+          'emit-editor-font: could not resolve font-awesome/fonts/fontawesome-webfont.woff2 — ' +
+            'is the font-awesome dependency installed?',
+        )
+      }
       const { readFile } = await import('node:fs/promises')
       this.emitFile({
         type: 'asset',
