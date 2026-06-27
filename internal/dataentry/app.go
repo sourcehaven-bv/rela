@@ -561,7 +561,7 @@ func NewApp(
 	// metamodel has file properties with no scan command configured (and no
 	// explicit `scan: off`), warn once. Configuring a scan_cmd or setting
 	// `scan: off` silences this. The warning never blocks startup or uploads.
-	if meta.HasUnconfiguredScan() {
+	if metamodel.NewAttachmentPolicy(meta).HasUnconfiguredScan() {
 		slog.Warn("attachments: no virus scanner configured for file properties; "+
 			"set attachments.scan_cmd to enable scanning, or `scan: off` on the property to silence this",
 			"docs", "docs/attachment-security.md")

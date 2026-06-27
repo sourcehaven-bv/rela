@@ -41,7 +41,7 @@ func (p *PolicyProcessor) applyCommands(
 	// Scanning runs iff a command is configured for this property (and it has
 	// not opted out with `scan: off`); the command's presence IS the intent to
 	// scan, so it is always fail-closed.
-	if scanCmd := p.meta.ScanCommandFor(prop); len(scanCmd) > 0 {
+	if scanCmd := metamodel.NewAttachmentPolicy(p.meta).ScanCommandFor(prop); len(scanCmd) > 0 {
 		if err := p.runner.Scan(ctx, scanCmd, data); err != nil {
 			return nil, ProcessInfo{}, err
 		}

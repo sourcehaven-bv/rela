@@ -75,19 +75,33 @@ type AttachmentsConfig struct {
 	ScanCmd []string `yaml:"scan_cmd,omitempty"`
 }
 
+// AttachmentPolicy is a focused read-view over a metamodel's attachment-scan
+// configuration. It is constructed with [NewAttachmentPolicy] rather than living
+// as methods on [Metamodel], keeping the scan accessors off the metamodel's wide
+// public surface (the plimsoll god-object load line) — consumers depend on the
+// narrow scan policy, not the whole schema.
+type AttachmentPolicy struct {
+	m *Metamodel
+}
+
+// NewAttachmentPolicy returns the scan-policy view over m. m must be non-nil.
+func NewAttachmentPolicy(m *Metamodel) AttachmentPolicy {
+	return AttachmentPolicy{m: m}
+}
+
 // ScanCommandFor resolves the scan command that should run for a file property,
 // or nil when the property is not scanned. Scanning runs when a command is
 // configured (property-level wins over global) and the property has not opted
 // out with `scan: off`.
-func (m *Metamodel) ScanCommandFor(prop PropertyDef) []string {
+func (p AttachmentPolicy) ScanCommandFor(prop PropertyDef) []string {
 	if prop.Scan == ScanOff {
 		return nil
 	}
 	if len(prop.ScanCmd) > 0 {
 		return prop.ScanCmd
 	}
-	if m.Attachments != nil && len(m.Attachments.ScanCmd) > 0 {
-		return m.Attachments.ScanCmd
+	if p.m.Attachments != nil && len(p.m.Attachments.ScanCmd) > 0 {
+		return p.m.Attachments.ScanCmd
 	}
 	return nil
 }
@@ -97,9 +111,9 @@ func (m *Metamodel) ScanCommandFor(prop PropertyDef) []string {
 // command, no property command) and it has not explicitly opted out with
 // `scan: off`. The composition root uses this to emit a single startup warning
 // nudging the operator to wire a scanner or explicitly disable scanning.
-func (m *Metamodel) HasUnconfiguredScan() bool {
-	globalCmd := m.Attachments != nil && len(m.Attachments.ScanCmd) > 0
-	for _, def := range m.Entities {
+func (p AttachmentPolicy) HasUnconfiguredScan() bool {
+	globalCmd := p.m.Attachments != nil && len(p.m.Attachments.ScanCmd) > 0
+	for _, def := range p.m.Entities {
 		for _, prop := range def.Properties {
 			if prop.Type != PropertyTypeFile {
 				continue

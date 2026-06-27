@@ -74,7 +74,7 @@ func TestScanCommandFor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := fileMetaCmd(tc.globalCmd, tc.propCmd, tc.propScan, true)
 			prop := m.Entities["thing"].Properties["doc"]
-			got := m.ScanCommandFor(prop)
+			got := NewAttachmentPolicy(m).ScanCommandFor(prop)
 			if len(got) != len(tc.wantCmd) {
 				t.Fatalf("ScanCommandFor = %v, want %v", got, tc.wantCmd)
 			}
@@ -106,7 +106,7 @@ func TestHasUnconfiguredScan(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := fileMetaCmd(tc.globalCmd, tc.propCmd, tc.propScan, tc.hasFileProp)
-			if got := m.HasUnconfiguredScan(); got != tc.want {
+			if got := NewAttachmentPolicy(m).HasUnconfiguredScan(); got != tc.want {
 				t.Errorf("HasUnconfiguredScan = %v, want %v", got, tc.want)
 			}
 		})
