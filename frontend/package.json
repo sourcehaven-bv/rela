@@ -26,7 +26,7 @@
     "dompurify": "^3.4.11",
     "easymde": "^2.21.0",
     "font-awesome": "^4.7.0",
-    "marked": "^18.0.3",
+    "marked": "^18.0.5",
     "mermaid": "^11.15.0",
     "pinia": "^3.0.4",
     "rrule": "^2.8.1",
