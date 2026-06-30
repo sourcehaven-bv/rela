@@ -45,14 +45,17 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 		})
 	}
 
-	// A1 — the membership relation can confer an assigned role (there is at
-	// least one assignment to a declared role) but writes to it are not gated.
-	if len(p.Assignments) > 0 && assignsAnyDeclaredRole(p) && requiresPermissionFor(p, rel) == "" {
+	// A1 — the membership relation can confer a PRIVILEGED assigned role but
+	// writes to it are not gated. Gated on isPrivileged (symmetric with A2):
+	// granting yourself a read-only role is a visibility choice, not an
+	// escalation path (RR-LXI3NW / RR-UR0LJU / RR-EG5D3E), so a read-only
+	// group does not trip A1.
+	if assignsAnyPrivilegedRole(p) && requiresPermissionFor(p, rel) == "" {
 		f = append(f, Finding{
 			Rule: "A1-ungated-membership", Severity: High, Subject: rel,
-			Detail: fmt.Sprintf("membership relation %q confers group roles via assignments but is not "+
-				"gated by requires_permission; any principal who can write a %q edge can grant "+
-				"themselves any assigned role", rel, rel),
+			Detail: fmt.Sprintf("membership relation %q confers a privileged group role via assignments "+
+				"but is not gated by requires_permission; any principal who can write a %q edge can "+
+				"grant themselves that role", rel, rel),
 			Fix: fmt.Sprintf("add role_relations.%s.requires_permission and grant that permission "+
 				"only to admins (see docs/security.md)", rel),
 		})
@@ -60,11 +63,12 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 	return f
 }
 
-// assignsAnyDeclaredRole reports whether at least one assignment targets a
-// declared role (so the membership walk actually confers something).
-func assignsAnyDeclaredRole(p *acl.Policy) bool {
-	for _, role := range p.Assignments {
-		if roleDeclared(p, role) {
+// assignsAnyPrivilegedRole reports whether at least one assignment targets a
+// declared, privileged role — i.e. the membership walk can confer escalation-
+// relevant power. Mirrors A2's isPrivileged gate.
+func assignsAnyPrivilegedRole(p *acl.Policy) bool {
+	for _, roleName := range p.Assignments {
+		if role, ok := p.Roles[roleName]; ok && isPrivileged(role) {
 			return true
 		}
 	}
@@ -240,6 +244,11 @@ func checkNameWhitespace(p *acl.Policy) []Finding {
 		}
 	}
 	for _, key := range sortedAssignmentKeys(p) {
+		// The key is the member/group ID matched in computeGlobals; a padded
+		// key silently matches no member, same foot-gun as a padded value.
+		if hasLeadingTrailingSpace(key) {
+			add(key, "assignment key")
+		}
 		if hasLeadingTrailingSpace(p.Assignments[key]) {
 			add(p.Assignments[key], "assignment role")
 		}

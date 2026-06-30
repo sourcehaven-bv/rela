@@ -164,7 +164,7 @@ func isPrivileged(r acl.RoleDef) bool {
 	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
 }
 
-// roleGrants reports whether the policy declares a role by this name.
+// roleDeclared reports whether the policy declares a role by this name.
 func roleDeclared(p *acl.Policy, role string) bool {
 	_, ok := p.Roles[role]
 	return ok

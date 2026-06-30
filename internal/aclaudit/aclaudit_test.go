@@ -90,6 +90,20 @@ func TestAudit_A1_GatedMembership_NoFinding(t *testing.T) {
 	}
 }
 
+func TestAudit_A1_ReadOnlyGroup_NoFinding(t *testing.T) {
+	t.Parallel()
+	// RR-EG5D3E: a group assigned only a READ-ONLY role is a visibility choice,
+	// not an escalation path. A1 must NOT fire (symmetric with A2). This is the
+	// false-positive the design fought; gating must be on isPrivileged.
+	p := &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"engineering": "reader"},
+	}
+	if got := Audit(p, nil); hasRule(got, "A1-ungated-membership") {
+		t.Errorf("read-only assigned role must not flag A1, got %+v", got)
+	}
+}
+
 func TestAudit_A1b_InertMembership(t *testing.T) {
 	t.Parallel()
 	// Configured a non-default membership relation with no assignments → A1b low.
@@ -239,6 +253,18 @@ func TestAudit_A10_NameWhitespace(t *testing.T) {
 	}
 }
 
+func TestAudit_A10_AssignmentKeyWhitespace(t *testing.T) {
+	t.Parallel()
+	// RR-KUOAVH: a padded assignment KEY silently matches no member.
+	p := &acl.Policy{
+		Assignments: map[string]string{"engineering ": "editor"},
+		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
+	}
+	if got := Audit(p, nil); !hasRule(got, "A10-name-whitespace") {
+		t.Fatalf("expected A10 for padded assignment key, got %+v", got)
+	}
+}
+
 // ---- Tier B ------------------------------------------------------------
 
 func TestAudit_B1_UndeclaredType(t *testing.T) {
@@ -321,6 +347,28 @@ func TestAudit_B5_UndeclaredOption(t *testing.T) {
 	}}
 	if got := Audit(p, meta); !hasRule(got, "B5-undeclared-option") {
 		t.Fatalf("expected B5, got %+v", got)
+	}
+}
+
+func TestAudit_B5_AbsentField_ReportsUndeclaredNotNonEnum(t *testing.T) {
+	t.Parallel()
+	// RR-O50E4R: an options grant on a field that doesn't exist must report
+	// B4-undeclared-field (a typo), not B5-options-non-enum (wrong diagnosis).
+	meta := fakeMetamodel{
+		types:  map[string]bool{"ticket": true},
+		fields: map[string]map[string][]string{"ticket": {"status": {"open", "done"}}},
+	}
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		"triager": {Read: []string{"ticket"}, Options: map[string][]acl.OptionGrant{
+			"ticket": {{Field: "stutus", Option: "open"}}, // field typo
+		}},
+	}}
+	got := Audit(p, meta)
+	if !hasRule(got, "B4-undeclared-field") {
+		t.Errorf("absent options field must report B4-undeclared-field, got %+v", got)
+	}
+	if hasRule(got, "B5-options-non-enum") {
+		t.Errorf("absent field must NOT be reported as non-enum, got %+v", got)
 	}
 }
 

@@ -150,17 +150,17 @@ func (r *metamodelReader) EnumOptions(t, field string) ([]string, bool) {
 		return nil, false
 	}
 	if len(prop.Values) > 0 {
-		return slicesClone(prop.Values), true
+		return sortedClone(prop.Values), true
 	}
 	if ct, ok := r.m.Types[prop.Type]; ok && len(ct.Values) > 0 {
-		return slicesClone(ct.Values), true
+		return sortedClone(ct.Values), true
 	}
 	return nil, false
 }
 
-// slicesClone returns a sorted copy so the audit's "outside the enum" message
+// sortedClone returns a sorted copy so the audit's "outside the enum" message
 // is deterministic regardless of metamodel iteration.
-func slicesClone(xs []string) []string {
+func sortedClone(xs []string) []string {
 	out := append([]string(nil), xs...)
 	sort.Strings(out)
 	return out

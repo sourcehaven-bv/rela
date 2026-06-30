@@ -31,10 +31,12 @@ func checkUndeclaredEntityTypes(p *acl.Policy, m MetamodelReader) []Finding {
 		role := p.Roles[name]
 		seen := map[string]bool{}
 		flag := func(verb, t string) {
-			if t == "*" || m.HasEntityType(t) || seen[verb+"\x00"+t] {
+			// Dedupe on type alone: one typo'd type used across several verbs
+			// (or an affordance key) is one mistake with one fix.
+			if t == "*" || m.HasEntityType(t) || seen[t] {
 				return
 			}
-			seen[verb+"\x00"+t] = true
+			seen[t] = true
 			f = append(f, Finding{
 				Rule: "B1-undeclared-type", Severity: High, Subject: name,
 				Detail: fmt.Sprintf("role %q grants %s on entity type %q which the metamodel does not "+
@@ -158,6 +160,17 @@ func checkUndeclaredOptions(p *acl.Policy, m MetamodelReader) []Finding {
 			}
 			for _, g := range role.Options[t] {
 				if g.Field == "" {
+					continue
+				}
+				// Distinguish "field doesn't exist" (a typo) from "field exists
+				// but isn't an enum" — the operator needs the right diagnosis.
+				if !m.HasField(t, g.Field) {
+					f = append(f, Finding{
+						Rule: "B4-undeclared-field", Severity: Medium, Subject: name,
+						Detail: fmt.Sprintf("role %q options grant on %q names field %q which the type does "+
+							"not declare; the grant does nothing", name, t, g.Field),
+						Fix: fmt.Sprintf("declare field %q on %q, or fix the grant", g.Field, t),
+					})
 					continue
 				}
 				opts, isEnum := m.EnumOptions(t, g.Field)
