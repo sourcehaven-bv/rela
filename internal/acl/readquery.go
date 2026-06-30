@@ -54,6 +54,14 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 	q := &store.GraphQuery{
 		EntityType: entityType,
 		HasInbound: &store.RelationPredicate{
+			// Endpoints is the principal's group-member set, already
+			// expanded by walkMembers over the *configured* membership
+			// relation (Policy.membershipRelation). This is the deliberate
+			// seam: group expansion happens once, upstream, so this read
+			// path inherits the configured relation for free. Do NOT inline
+			// the membership relation here as another RelationPredicate —
+			// that would re-hardcode "member-of" and bypass the single
+			// accessor guard (TKT-Z8A62F).
 			Endpoints: globals.Members,
 			OfTypes:   conferring,
 		},

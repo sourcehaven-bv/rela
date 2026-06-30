@@ -6,13 +6,15 @@ This guide covers the security properties an operator running
 rela with an `acl.yaml` needs to understand. Read [GUIDE-acl-overview]
 first; this assumes you know the resolver vocabulary.
 
-## Hardening `member-of`
+## Hardening the membership relation
 
-rela's v1 ACL confers group roles by walking `member-of` edges from
-the principal. By default, `member-of` is a regular relation type —
-there is no built-in restriction on who can create one. **If you use
-groups in `assignments`, you must gate `member-of` writes**, or any
-user who can create a relation can grant themselves any role.
+rela's v1 ACL confers group roles by walking the **membership
+relation** from the principal — the relation type named by
+`membership_relation:` in `acl.yaml`, default `member-of`. By default
+that relation is a regular relation type — there is no built-in
+restriction on who can create one. **If you use groups in
+`assignments`, you must gate writes to the membership relation**, or
+any user who can create such a relation can grant themselves any role.
 
 The simplest hardening is to require a `member-of:create` permission
 on the relation and grant it only to administrative roles:
@@ -36,6 +38,22 @@ With that in place, only principals who hold `member-of:create`
 Operators of single-user instances who don't use groups can ignore
 this; the moment you add an `assignments` mapping for a group, this
 is mandatory.
+
+If you point `membership_relation:` at a domain-specific relation
+(e.g. `heeft_rol` in a Dutch-language ISMS), the same hardening
+applies to *that* relation — the `requires_permission` gate must name
+the relation you actually configured:
+
+```yaml
+membership_relation: heeft_rol
+role_relations:
+  heeft_rol:
+    requires_permission: member-of:create
+```
+
+`Policy.Validate` emits an advisory warning at load when a non-default
+`membership_relation:` is configured without such a gate, but it does
+not block boot — don't rely on it to catch the mistake.
 
 The companion section in `docs/security.md` carries the same
 guidance with more context on the broader threat model.

@@ -298,17 +298,18 @@ delegate-X, so principals with access are distinct from principals
 who can hand out access. It prevents a contributor from making
 themselves admin by writing their own role-binding relation.
 
-### Hardening `member-of` (group membership writes)
+### Hardening the membership relation (group membership writes)
 
-v1 confers group roles by walking `member-of` edges. By default
-`member-of` is a regular relation type — no `requires_permission`
-gate. Combined with a permissive write grant on `person`, this is a
-privilege-escalation foot-cannon: an attacker who can create
-entities of type `person` can also create their own
+v1 confers group roles by walking the **membership relation** — the
+relation type named by `membership_relation:` in `acl.yaml`, default
+`member-of`. By default that relation is a regular relation type — no
+`requires_permission` gate. Combined with a permissive write grant on
+`person`, this is a privilege-escalation foot-cannon: an attacker who
+can create entities of type `person` can also create their own
 `alice --member-of--> admins` edge and inherit whatever role
 `assignments: { admins: ... }` declared.
 
-**If you use groups, gate `member-of` writes:**
+**If you use groups, gate writes to the membership relation:**
 
 ```yaml
 role_relations:
@@ -324,11 +325,28 @@ write a `member-of` edge. Everyone else gets a 403 with
 `rule_kind=delegate-permission`. The audit log records the deny
 with `op=denied-write`.
 
+**If you set `membership_relation:` to a domain-specific name** (e.g.
+`heeft_rol` in a Dutch-language ISMS), the same hardening applies to
+*that* relation type — the `requires_permission` gate must reference the
+relation you actually configured:
+
+```yaml
+membership_relation: heeft_rol
+role_relations:
+  heeft_rol:
+    requires_permission: delegate-membership
+```
+
+`Policy.Validate` emits a warning at load when a non-default
+`membership_relation:` is configured without such a gate, but the
+warning is advisory — it does not block startup, so don't rely on it
+catching the mistake for you.
+
 The same pattern applies to any relation type listed in
-`role_relations` — `member-of` is called out because it's the
-relation TKT-SVXL added for group expansion and is easy to forget.
-The example policies in this repo's tests are intentionally minimal
-and would be wide-open if copy-pasted into a production deployment.
+`role_relations` — the membership relation is called out because it's
+the one that drives group expansion and is easy to forget. The example
+policies in this repo's tests are intentionally minimal and would be
+wide-open if copy-pasted into a production deployment.
 
 ### Trust boundary
 
