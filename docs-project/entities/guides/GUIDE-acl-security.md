@@ -351,6 +351,19 @@ The `attachACLRequest` middleware:
   read handlers couldn't tell "no ACL" from "ACL but no
   principal."
 
+## Property-level redaction (`visible:`)
+
+Entity-level filtering decides whether you see an entity at all. The
+`visible:` grant is the orthogonal, finer cut: a field denied by
+`visible:` is **omitted from the response `properties` map** even on an
+entity you are allowed to read. This redaction is applied by the
+data-entry serializer on **every** HTTP read shape — per-entity GET,
+list rows, `?include=` peers, and `/_search` results — not just the
+write form. When the hidden field is the entity's display property, the
+`_title` falls back to the entity ID so the redacted value cannot leak
+through the title. See [GUIDE-acl-overview] for how `visible:` grants
+are written.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
@@ -362,13 +375,28 @@ The `attachACLRequest` middleware:
   neighbor-disclosure analysis (a visible neighbor's id confirms a
   visible entity, but gap analysis around hidden entities needs its
   own treatment).
-- **MCP transport** — tracked as TKT-G3PPD.
+- **Search match-on-hidden-field oracle** — `/_search` redacts the
+  *body* of a `visible:`-hidden property, but the search index still
+  matches on its text. A query whose only match is a hidden field still
+  returns the entity as a hit, so its presence in the results confirms
+  the hidden value (e.g. searching a candidate postcode against a hidden
+  address field turns search into a guess oracle). Closing this — dropping
+  hits that matched only on a hidden field, at the `VisibleSearcher` seam
+  — is a tracked follow-up. Treat `visible:` as hiding values from view,
+  not as making them unguessable via search.
+- **MCP transport** — tracked as TKT-G3PPD. MCP read tools
+  (`show_entity`, `list_entities`, `search_entities`, trace) apply
+  neither the entity-level read gate nor `visible:` redaction; they
+  return full entity bodies. The MCP server is local-only (stdio), so
+  this is an accepted gap at this stage.
 
 For threat-modelling purposes today: per-entity GET, write, include,
 list, sidebar, pagination, global-search, and the SSE event stream are
-all read-gated (the SSE feed per-type, see above). The remaining
-read-side gap is the MCP transport (TKT-G3PPD); within the data-entry
-server every read channel a browser can reach is tight.
+all read-gated (the SSE feed per-type, see above), and `visible:`
+redaction applies to every data-entry HTTP read body. The remaining
+read-side gaps are the MCP transport (TKT-G3PPD) and the search-oracle
+above; within the data-entry server every read channel a browser can
+reach is tight.
 
 ## Where to read next
 
