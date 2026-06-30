@@ -5,9 +5,19 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// defaultMembershipRelation is the relation type the resolver walks
+// for group membership when [Policy.MembershipRelation] is unset (or
+// blank/whitespace). Promoting this from a hard-coded literal to a
+// policy field (TKT-Z8A62F) lets operators point the resolver at a
+// domain relation they already model (e.g. `heeft_rol` in a Dutch
+// ISMS) instead of maintaining a parallel `member-of` edge system.
+// The default preserves existing deployments verbatim.
+const defaultMembershipRelation = "member-of"
 
 // EveryoneRole is the one built-in role name. A role declared under
 // this name in `acl.yaml` is held implicitly by every principal,
@@ -27,8 +37,13 @@ const EveryoneRole = "everyone"
 //
 //   - [Policy.UserEntityType] names the entity type that represents
 //     a user (e.g. "person", "user"). Reserved for a future
-//     check that validates `member-of` edges originate from a user
+//     check that validates membership edges originate from a user
 //     entity; not consulted by the resolver today (RR-NIGK).
+//   - [Policy.MembershipRelation] names the relation type the resolver
+//     walks from a principal to resolve group membership (TKT-Z8A62F).
+//     Blank/whitespace means the default ("member-of") — read the
+//     effective value via [Policy.membershipRelation], never the raw
+//     field, since a blank type would otherwise match *all* relations.
 //   - [Policy.Roles] declares the named capability bundles. The
 //     built-in role name [EveryoneRole] ("everyone") is appended to
 //     every principal's effective role set in both the write path
@@ -51,10 +66,34 @@ const EveryoneRole = "everyone"
 // key, and security-critical invariants — see [Policy.Validate].
 type Policy struct {
 	UserEntityType      string                     `yaml:"user_entity_type"`
+	MembershipRelation  string                     `yaml:"membership_relation"`
 	Roles               map[string]RoleDef         `yaml:"roles"`
 	Assignments         map[string]string          `yaml:"assignments"`
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
+}
+
+// membershipRelation returns the effective relation type the resolver
+// walks for group membership: a space-trimmed [Policy.MembershipRelation]
+// when set, or [defaultMembershipRelation] when blank/whitespace.
+//
+// This is the single source of truth for the membership relation name
+// and the resolver MUST read through it rather than the raw field.
+// [NewDeclarative] does not run [Policy.Validate], and the resolver
+// passes the name straight into a [store.RelationQuery] where an empty
+// Type means "all relation types" — so a blank field reaching the walk
+// would silently follow *every* outgoing edge as if it were membership
+// (an over-grant). Collapsing blank to the default here, on every read,
+// closes that hole regardless of how the [Policy] was constructed.
+//
+// The value is trimmed so a stray-whitespace YAML value (e.g.
+// `"heeft_rol "`) resolves to the relation the operator meant rather
+// than silently matching zero edges.
+func (p *Policy) membershipRelation() string {
+	if trimmed := strings.TrimSpace(p.MembershipRelation); trimmed != "" {
+		return trimmed
+	}
+	return defaultMembershipRelation
 }
 
 // RoleDef is the capability bundle for a single role. The per-verb
@@ -191,18 +230,21 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 // gate — the relation type is recognized as role-conferring (for
 // future group expansion) but no permission check fires on writes.
 //
-// **Escalation risk for the `member-of` relation** (RR-7O6Q). v1
-// confers group roles by walking `member-of` edges. By default
-// `member-of` is a regular relation type with no `requires_permission`
+// **Escalation risk for the configured membership relation** (RR-7O6Q).
+// v1 confers group roles by walking the membership relation —
+// [Policy.MembershipRelation], default `member-of`. By default that
+// relation is a regular relation type with no `requires_permission`
 // gate, so anyone with write access on the relation's source type can
-// create their own `member-of` edge into any group named in
+// create their own membership edge into any group named in
 // [Policy.Assignments]. If a group is assigned a privileged role
 // (e.g. `assignments: { admins: admin }`), an attacker with write
 // access on `person` can self-promote by writing
 // `alice --member-of--> admins`.
 //
-// Operators using groups for role attribution MUST gate
-// `member-of` writes. Recommended shape:
+// Operators using groups for role attribution MUST gate writes to the
+// membership relation. Recommended shape (substitute the configured
+// relation name for `member-of` when [Policy.MembershipRelation] is
+// set):
 //
 //	role_relations:
 //	  member-of:
@@ -211,7 +253,7 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 //	  admin:
 //	    permissions: [delegate-membership]
 //
-// This restricts `member-of` creation to principals holding
+// This restricts membership-edge creation to principals holding
 // `delegate-membership` — typically only admins. See
 // `docs/security.md` for the full hardening pattern. The UC1 example
 // policy in features_test.go is intentionally minimal and would be
@@ -225,6 +267,7 @@ type RoleRelationDef struct {
 // Keep in sync with [Policy]'s yaml tags.
 var knownPolicyKeys = map[string]bool{
 	"user_entity_type":      true,
+	"membership_relation":   true,
 	"roles":                 true,
 	"assignments":           true,
 	"role_relations":        true,
@@ -333,6 +376,16 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // entity types in grants, etc. remain warnings (or analyze-tool
 // findings) per the "tolerant by design" stance. Security-relevant
 // invariants like the ones above are the exception.
+//
+// Membership-relation hardening (TKT-Z8A62F) is advisory: when an
+// operator configures a non-default [Policy.MembershipRelation],
+// Validate emits an `slog.Warn` if the relation can have no effect
+// (empty Assignments) or is an un-gated escalation foot-gun (no
+// `role_relations.<rel>.requires_permission`). These warn-and-continue
+// rather than fail — consistent with the un-gated default `member-of`,
+// which is documented in `docs/security.md` but not enforced either.
+// A dedicated authorization-misconfiguration audit is tracked in
+// TKT-TS0J5K.
 func (p *Policy) Validate() error {
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
@@ -368,7 +421,34 @@ func (p *Policy) Validate() error {
 			}
 		}
 	}
+	p.warnMembershipRelationHardening()
 	return nil
+}
+
+// warnMembershipRelationHardening emits advisory warnings when the
+// operator configures a non-default membership relation that is either
+// inert or an un-gated escalation foot-gun (TKT-Z8A62F). Gated on the
+// effective relation differing from the default so the standard
+// `member-of` path stays silent — that one is covered by the docs and
+// the dedicated audit follow-up (TKT-TS0J5K), not by load-time noise.
+func (p *Policy) warnMembershipRelationHardening() {
+	rel := p.membershipRelation()
+	if rel == defaultMembershipRelation {
+		return
+	}
+	if len(p.Assignments) == 0 {
+		// Note: the membership walk still feeds local-role resolution via
+		// the group-member set (computeForEntity's role-relation cross
+		// product), so this is "no group-level roles", not "fully inert".
+		slog.Warn("acl: configured membership_relation confers no group-level roles; assignments map is empty",
+			"membership_relation", rel)
+	}
+	if p.RoleRelations[rel].RequiresPermission == "" {
+		slog.Warn("acl: membership_relation confers group roles but is not gated by requires_permission; "+
+			"any principal who can write this edge can grant themselves any assigned role "+
+			"(see docs/security.md, 'Hardening the membership relation')",
+			"membership_relation", rel)
+	}
 }
 
 func isBlank(s string) bool {
