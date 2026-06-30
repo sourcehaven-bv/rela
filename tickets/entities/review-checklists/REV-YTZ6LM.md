@@ -2,15 +2,15 @@
 id: REV-YTZ6LM
 type: review-checklist
 title: 'Review: ACL: make the membership relation (member-of) configurable via membership_relation: in acl.yaml'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [x] All tests pass (`just test`) — full suite green, acl 88.5%
-- [x] Lint clean (`just lint`) — 0 issues
+- [x] All tests pass (`just test`) — full suite green, acl 88.5%; CI Test job green
+- [x] Lint clean (`just lint`) — 0 issues; CI Lint + God-object lint green
 - [x] Coverage maintained (`just coverage-check`) — floors + total (76.8%) PASS
 
 ## Code Review
@@ -47,14 +47,14 @@ RR-WG5NY1, RR-1659OA, RR-HPZTJ1, RR-LAU07P (code-review). All addressed.
 
 ## Final Checks
 
-- [x] Commit message will explain the why (single source of truth for membership relation, blank-guard rationale)
+- [x] Commit message explains the why (single source of truth for the membership relation, blank-guard rationale)
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (every job green except the "Rela Tickets" guard, which fails only because this very checklist was in-progress; checking these boxes + marking done clears it)
+- [x] PR URL documented below
 
-**PR:** *pending — awaiting user go-ahead to branch/commit/PR*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1060
