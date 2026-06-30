@@ -126,10 +126,12 @@ func TestAppTokensCSSInSyncWithFrontend(t *testing.T) {
 }
 
 func TestAppCSSSource(t *testing.T) {
-	css := appCSSSource()
-	for _, want := range []string{"--text-color", ":root.dark", ".btn", ".btn-primary", ".input", ".card"} {
+	// nil palette → fall back to the embedded default tokens. The embed
+	// carries a :root.dark block, so it must be present here.
+	css := appCSSSource(nil)
+	for _, want := range []string{"--text-color", ":root", ":root.dark", ".btn", ".btn-primary", ".input", ".card"} {
 		if !strings.Contains(css, want) {
-			t.Errorf("appCSSSource missing %q", want)
+			t.Errorf("appCSSSource(nil) missing %q", want)
 		}
 	}
 	// Stays tokens + atomic controls — must NOT smuggle in component-shaped
@@ -137,6 +139,49 @@ func TestAppCSSSource(t *testing.T) {
 	for _, unwanted := range []string{".table", ".modal", ".select", ".dropdown"} {
 		if strings.Contains(css, unwanted) {
 			t.Errorf("appCSSSource should not include component-shaped %q", unwanted)
+		}
+	}
+}
+
+// TestAppCSSSourceUsesResolvedPalette verifies that a configured project
+// palette is reflected in the served _rela.css — the whole point of TKT-XGXLZH.
+// An app must receive the host's actual theme colors, not the framework
+// defaults, so it can't drift from the SPA shell it's embedded in.
+func TestAppCSSSourceUsesResolvedPalette(t *testing.T) {
+	// A project palette with a distinctive cream surface + amber accent
+	// (the same shape the PIM project uses). ResolvePalette derives the full
+	// 21-var maps the SPA serves at /_palette.
+	project := &PaletteConfig{
+		PaletteColors: PaletteColors{
+			Base:    "#1f0e1c",
+			Surface: "#f5edba",
+			Accent:  "#e4943a",
+			Text:    "#3e2137",
+			Success: "#34859d",
+			Error:   "#d26471",
+			Warning: "#c0c741",
+			Info:    "#17434b",
+		},
+	}
+	resolved := ResolvePalette(project, nil)
+	css := appCSSSource(resolved)
+
+	// The project's surface/accent/text must appear in the :root block
+	// (not the framework default cream #f3f2ef / blue #4772fb).
+	for _, want := range []string{"--bg-color: #f5edba", "--accent-color: #e4943a", "--text-color: #3e2137"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("appCSSSource(resolved) missing project token %q\n--- css ---\n%s", want, css)
+		}
+	}
+	// The framework default surface must NOT leak through.
+	if strings.Contains(css, "#f3f2ef") {
+		t.Errorf("appCSSSource(resolved) leaked the default surface #f3f2ef instead of the project palette")
+	}
+	// Dark mode is on by default → a :root.dark block is present, and the
+	// atomic controls are always appended.
+	for _, want := range []string{":root {", ":root.dark {", ".btn-primary"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("appCSSSource(resolved) missing %q", want)
 		}
 	}
 }
