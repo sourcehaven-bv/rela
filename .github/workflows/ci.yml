@@ -153,6 +153,9 @@ jobs:
         with:
           globs: "**/*.md"
 
+      - name: Check audit-log retention docs (>= 12 months; issue #887)
+        run: ./scripts/check-audit-retention-docs.sh
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
