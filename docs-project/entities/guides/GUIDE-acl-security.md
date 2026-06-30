@@ -57,12 +57,53 @@ role_relations:
     requires_permission: member-of:create
 ```
 
-`Policy.Validate` emits an advisory warning at load when a non-default
-`membership_relation:` is configured without such a gate, but it does
-not block boot — don't rely on it to catch the mistake.
+The `rela acl audit` linter (below) flags an un-gated membership
+relation — default or configured — as a high-severity finding, so run
+it after editing `acl.yaml`.
 
 The companion section in `docs/security.md` carries the same
 guidance with more context on the broader threat model.
+
+## Auditing your policy with `rela acl audit`
+
+`acl.yaml` is easy to get subtly wrong in ways that don't fail boot: a
+typo'd entity type silently grants nothing, an un-gated membership
+relation is a self-promotion path, a write grant on the `everyone`
+role hands capabilities to anonymous callers. Boot-time validation
+(`Policy.Validate`) deliberately stays a narrow *structural* gate — it
+rejects malformed policies but does not hunt for these foot-guns.
+
+`rela acl audit` is the on-demand linter that does. It reports
+severity-ranked findings across two tiers:
+
+- **Pure-policy** — escalation foot-guns (un-gated membership relation
+  or role-relation conferring a privileged role; a privileged
+  `everyone` role) and dead/inert config (assignments or `confers`
+  naming an undeclared role, a `requires_permission` no role grants,
+  dead permissions, wildcard write sprawl).
+- **Metamodel cross-check** — grants, `membership_relation`,
+  `role_relations`, `inherit_roles_through`, `user_entity_type`, field,
+  and option references that the schema doesn't declare (silent drift).
+
+```console
+$ rela acl audit
+⚠ ACL audit: 2 finding(s)
+  [critical] role "everyone" ... grants write or permissions ...
+      fix: remove write/permission grants from the everyone role ...
+  [high] membership relation "member-of" confers group roles ... not gated ...
+      fix: add role_relations.member-of.requires_permission ...
+```
+
+The audit is **advisory** — it never blocks boot. For CI, pass
+`--exit-code` to fail the build when any **critical** or **high**
+finding is present:
+
+```console
+$ rela acl audit --exit-code   # exits non-zero on critical/high findings
+```
+
+Use `-o json` for machine-readable output. A clean, well-gated policy
+reports no findings and exits zero.
 
 ## Fail-loud on malformed `acl.yaml`
 
