@@ -72,6 +72,56 @@ assignments:
 	}
 }
 
+// --fail-on sets the exit-code threshold. A policy whose worst finding is
+// medium (A9 wildcard-write) exits 0 at the default high gate but non-zero at
+// --fail-on=medium / =any — so medium/low warnings don't break CI unless the
+// operator opts in.
+func TestACLAudit_FailOnThreshold(t *testing.T) {
+	// A9 wildcard-write (medium) is the worst finding; no critical/high.
+	const policy = `
+roles:
+  power:
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+    read: ["*"]
+`
+	cases := []struct {
+		name      string
+		cmd       ACLAuditCmd
+		wantError bool
+	}{
+		{"advisory default", ACLAuditCmd{}, false},
+		{"exit-code alias (=high)", ACLAuditCmd{ExitCode: true}, false},
+		{"fail-on high", ACLAuditCmd{FailOn: "high"}, false},
+		{"fail-on medium", ACLAuditCmd{FailOn: "medium"}, true},
+		{"fail-on any", ACLAuditCmd{FailOn: "any"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := aclTestServices(t, aclTestMeta(), policy)
+			withOutput(t, output.FormatTable)
+			err := tc.cmd.Run(svc)
+			var exitErr *errors.ExitError
+			gotError := stderrors.As(err, &exitErr)
+			if gotError != tc.wantError {
+				t.Errorf("%s: gotError=%v (err=%v), want %v", tc.name, gotError, err, tc.wantError)
+			}
+		})
+	}
+}
+
+// An invalid --fail-on value is rejected with a clear error (belt-and-suspenders
+// behind Kong's enum tag).
+func TestACLAudit_FailOnInvalid(t *testing.T) {
+	svc := aclTestServices(t, aclTestMeta(), "roles:\n  everyone:\n    read: [\"*\"]\n")
+	withOutput(t, output.FormatTable)
+	cmd := &ACLAuditCmd{FailOn: "bogus"}
+	if err := cmd.Run(svc); err == nil {
+		t.Fatal("expected an error for --fail-on=bogus, got nil")
+	}
+}
+
 // A clean, well-gated policy produces no findings; --exit-code returns nil.
 func TestACLAudit_CleanPolicyExitsZero(t *testing.T) {
 	const policy = `

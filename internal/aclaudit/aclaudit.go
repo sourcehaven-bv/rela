@@ -70,6 +70,27 @@ func (s Severity) String() string {
 	}
 }
 
+// ParseSeverity maps a lowercase label to a Severity. The special label
+// "any" maps to [Nit] — the least-severe level — so a threshold of "any"
+// matches every finding (used by `--fail-on=any`). Returns false for an
+// unknown label.
+func ParseSeverity(s string) (Severity, bool) {
+	switch s {
+	case "critical":
+		return Critical, true
+	case "high":
+		return High, true
+	case "medium":
+		return Medium, true
+	case "low":
+		return Low, true
+	case "nit", "any":
+		return Nit, true
+	default:
+		return 0, false
+	}
+}
+
 // Finding is one authorization-misconfiguration the audit reports. Each
 // analyzer-style finding owns these fields (the codebase has no shared base
 // finding type; see internal/analysis / internal/validation).

@@ -20,14 +20,25 @@ type ACLCmd struct {
 }
 
 // ACLAuditCmd runs the on-demand authorization-misconfiguration linter over the
-// project's acl.yaml. It is advisory by default; pass --exit-code to make CI
-// fail on critical/high findings. See internal/aclaudit (TKT-TS0J5K).
+// project's acl.yaml. It is advisory by default: it prints findings and exits 0.
+// For CI, --fail-on=<severity> (or the --exit-code alias) makes the command exit
+// non-zero when a finding at or above that severity is present. See
+// internal/aclaudit (TKT-TS0J5K).
 type ACLAuditCmd struct {
-	ExitCode bool `help:"Exit non-zero when any critical or high finding is present (for CI gating)."`
+	// FailOn gates the exit code. Empty = never fail (advisory). A severity
+	// label (critical|high|medium|low|nit) or "any" fails when a finding at or
+	// above that level is present. "any" == "nit" (every finding).
+	FailOn   string `help:"Exit non-zero when a finding at or above this severity is present: critical|high|medium|low|any. Empty = advisory (always exit 0)." enum:",critical,high,medium,low,any" default:""`
+	ExitCode bool   `help:"Alias for --fail-on=high (fail CI on critical or high findings)."`
 }
 
 // Run executes `rela acl audit`.
 func (c *ACLAuditCmd) Run(svc *cliServices) error {
+	threshold, gate, err := c.resolveFailOn()
+	if err != nil {
+		return err
+	}
+
 	policyPath := filepath.Join(svc.Paths().Root, "acl.yaml")
 	policy, err := acl.LoadPolicy(policyPath)
 	if err != nil {
@@ -46,10 +57,28 @@ func (c *ACLAuditCmd) Run(svc *cliServices) error {
 		writeAuditText(findings)
 	}
 
-	if c.ExitCode && aclaudit.HasAtLeast(findings, aclaudit.High) {
+	if gate && aclaudit.HasAtLeast(findings, threshold) {
 		return errors.NewExitError(1)
 	}
 	return nil
+}
+
+// resolveFailOn computes the exit-code gate from --fail-on / --exit-code.
+// Returns (threshold, gateEnabled, error). When gateEnabled is false the
+// command is advisory and always exits 0. --exit-code is sugar for
+// --fail-on=high; if both are set, --fail-on wins (the explicit threshold).
+func (c *ACLAuditCmd) resolveFailOn() (aclaudit.Severity, bool, error) {
+	if c.FailOn != "" {
+		threshold, ok := aclaudit.ParseSeverity(c.FailOn)
+		if !ok {
+			return 0, false, fmt.Errorf("invalid --fail-on %q: want one of critical, high, medium, low, any", c.FailOn)
+		}
+		return threshold, true, nil
+	}
+	if c.ExitCode {
+		return aclaudit.High, true, nil
+	}
+	return 0, false, nil
 }
 
 // writeAuditText renders findings as human-readable lines grouped by severity.

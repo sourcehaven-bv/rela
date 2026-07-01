@@ -445,6 +445,29 @@ func TestAudit_DeterministicOrder(t *testing.T) {
 	}
 }
 
+func TestParseSeverity(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		want Severity
+		ok   bool
+	}{
+		"critical": {Critical, true},
+		"high":     {High, true},
+		"medium":   {Medium, true},
+		"low":      {Low, true},
+		"nit":      {Nit, true},
+		"any":      {Nit, true}, // "any" == least-severe → matches every finding
+		"bogus":    {0, false},
+		"":         {0, false},
+	}
+	for in, want := range cases {
+		got, ok := ParseSeverity(in)
+		if ok != want.ok || (ok && got != want.want) {
+			t.Errorf("ParseSeverity(%q) = (%v, %v), want (%v, %v)", in, got, ok, want.want, want.ok)
+		}
+	}
+}
+
 func TestHasAtLeast(t *testing.T) {
 	t.Parallel()
 	findings := []Finding{{Severity: Medium}, {Severity: Low}}
