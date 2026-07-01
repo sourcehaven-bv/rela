@@ -60,15 +60,16 @@ guidance with more context on the broader threat model.
 
 ## Auditing your policy with `rela acl audit`
 
-`acl.yaml` is easy to get subtly wrong in ways that don't fail boot: a
-typo'd entity type silently grants nothing, an un-gated membership
-relation is a self-promotion path, a write grant on the `everyone`
-role hands capabilities to anonymous callers. Boot-time validation
-(`Policy.Validate`) deliberately stays a narrow *structural* gate — it
-rejects malformed policies but does not hunt for these foot-guns.
+To keep your policy correct and hardened, run `rela acl audit` after
+every change to `acl.yaml`. It catches the mistakes that don't fail
+boot: a typo'd entity type that silently grants nothing, an un-gated
+membership relation that opens a self-promotion path, a write grant on
+the `everyone` role that hands capabilities to anonymous callers.
+Boot-time validation (`Policy.Validate`) deliberately stays a narrow
+*structural* gate — it rejects malformed policies but does not hunt for
+these foot-guns; the audit is the tool that does.
 
-`rela acl audit` is the on-demand linter that does. It reports
-severity-ranked findings across two tiers:
+The audit reports severity-ranked findings across two tiers:
 
 - **Pure-policy** — escalation foot-guns (un-gated membership relation
   or role-relation conferring a privileged role; a privileged
@@ -103,6 +104,12 @@ A finding **below** the threshold never changes the exit code — so
 `--fail-on=high` lets a medium "wildcard write" nudge through without
 breaking the build, while `--fail-on=any` is the strictest gate.
 Findings are always printed regardless of the threshold.
+
+**For a production deployment, gate CI on `--fail-on=any`** and keep
+the policy clean — the medium/low findings (wildcard sprawl, dead
+permissions, drift) are exactly the slow rot you want to catch before
+it hides a real hole. Loosen to `--fail-on=high` only if you have a
+deliberate, reviewed reason to tolerate the lower-severity findings.
 
 Use `-o json` for machine-readable output. A clean, well-gated policy
 reports no findings and exits zero.
