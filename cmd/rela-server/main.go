@@ -53,7 +53,7 @@ func parseFlags() *serverFlags {
 	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
 	flag.StringVar(&f.port, "port", "8080", "HTTP port to listen on")
 	flag.StringVar(&f.bind, "bind", "127.0.0.1",
-		"Network interface to bind to. Defaults to loopback. Use 0.0.0.0 to expose on the LAN (see docs/security.md).")
+		"Network interface to bind to. Defaults to loopback. Use 0.0.0.0 to expose on the LAN (see docs/server-security.md).")
 	flag.Var(&f.allowedOrigins, "allowed-origin",
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
@@ -66,7 +66,7 @@ func parseFlags() *serverFlags {
 			"Default empty: do not read any header. Operators can override per-process via "+
 			"$RELA_DATAENTRY_USER (wins over the header). "+
 			"WARNING: the header is only as trustworthy as the upstream proxy that sets it. "+
-			"See docs/security.md.")
+			"See docs/server-security.md.")
 	flag.BoolVar(&f.readOnly, "read-only", false,
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
@@ -176,7 +176,7 @@ func main() {
 	srv := newHTTPServer(addr, app.NewRouter())
 
 	if !isLoopbackHost(f.bind) {
-		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
+		slog.Warn("rela-server bound beyond loopback; see docs/server-security.md for threat model",
 			"bind", f.bind)
 		if f.principalHeader != "" {
 			// The combination — exposed bind + header-trusted principal —
@@ -186,7 +186,7 @@ func main() {
 			slog.Warn("--principal-header set on non-loopback bind: "+
 				"audit attribution trusts an HTTP header from the network; "+
 				"only safe if a reverse proxy strips + replaces the header. "+
-				"See docs/security.md.",
+				"See docs/server-security.md.",
 				"bind", f.bind, "header", f.principalHeader)
 		}
 		if shouldWarnNoACL(svc.ACL(), f.readOnly) {
@@ -200,7 +200,7 @@ func main() {
 			// the gap at startup rather than at first-incident time.
 			slog.Warn("rela-server bound beyond loopback without acl.yaml: "+
 				"every reachable client can write. Add an acl.yaml at the project "+
-				"root or pass --read-only. See docs/security.md.",
+				"root or pass --read-only. See docs/server-security.md.",
 				"bind", f.bind)
 		}
 	}
@@ -249,7 +249,7 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		// long-lived responses and would otherwise be killed mid-flight.
 		// Trade-off: a slow-reading client can hold a goroutine open as
 		// long as it accepts data slowly. On a loopback bind that risk
-		// is limited to local processes; see docs/security.md for the
+		// is limited to local processes; see docs/server-security.md for the
 		// residual exposure when --bind opts into LAN access.
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,

@@ -66,6 +66,6 @@ wiring boundary is explicit.
   on reads is the perf cliff every comparable system regrets — see
   `.ignored/acl-design.md`.
 
-See `docs/security.md` (schema reference), `.ignored/acl-design.md` (design
+See `docs/server-security.md` (schema reference), `.ignored/acl-design.md` (design
 rationale, four-layer model: users → groups → roles → local roles), and
 `docs/audit-log.md` (the `denied-write` audit op).
