@@ -271,6 +271,17 @@ function getCardTitle(entity: Entity): string {
 // relation's declared inverse (schemaStore.getInverseName), falling back to
 // `<relation>_inverse` when no inverse is declared. This mirrors the wire
 // contract shared with EntityList relation columns (TKT-ODHV2D).
+//
+// MERGE-ORDER DEPENDENCY (RR-M8IIHV): the INCOMING branch only resolves once
+// TKT-ODHV2D's server change lands. The list endpoint on this branch
+// serializes OUTGOING edges only (see entityserializer.forWireRelated, fed by
+// entityReader.outgoingRelations) — it does NOT populate the inverse key for
+// incoming edges. Until ODHV2D merges, an incoming card field computes an
+// inverse key that is absent from `relations`, so getCardFieldValue below
+// returns '' and the card renders the '-' placeholder (degrades visibly, not a
+// silent blank). The Go contract test `TestListEndpoint_IncomingEdge_InverseKey_ODHV2DContract`
+// in internal/dataentry pins the server side of this inverse-key contract and
+// activates once ODHV2D is integrated.
 function relationCardKey(field: KanbanCardField): string {
   const rel = field.relation || ''
   if (field.direction === 'incoming') {
@@ -285,6 +296,13 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
     return ids
       .map((id) => {
         const included = includedEntities.value[id]
+        // Unresolved target → raw ID fallback, matching EntityList.vue's
+        // getFormattedCellValue (`included ? title : id`). Intentionally NOT
+        // divergent: kanban and the list share one relation-cell contract
+        // (RR-XM5ZEB). ACL-hidden targets do not leak their IDs here because
+        // TKT-ODHV2D's server gate (`visibleRelationIDs`) removes hidden
+        // neighbour IDs from the `relations` map before it reaches this
+        // fallback — the SPA never sees a hidden ID to fall back to.
         return included ? entityDisplayTitle(included) : id
       })
       .join(', ')

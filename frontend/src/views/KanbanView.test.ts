@@ -104,7 +104,20 @@ async function mountBoard(fields: Array<Record<string, unknown>>, entities: Enti
   return wrapper
 }
 
-describe('KanbanView card relation fields', () => {
+// NOTE (RR-UKS8BW): these are SPA-only unit tests. They prove that GIVEN the
+// wire shape (a `relations` map with the expected key + an `included` map) the
+// component resolves and renders the target — nothing more. The listEntities
+// mock injects those maps directly; it is NOT the real endpoint.
+//
+// In particular the two INCOMING cases inject the inverse key
+// (`relations: { handled_by: [...] }` / `{ blocks_inverse: [...] }`) that the
+// real list endpoint does NOT emit on this branch — that key is populated
+// server-side only once TKT-ODHV2D merges. So a green here is NOT end-to-end
+// proof that incoming card fields work; it assumes the ODHV2D wire contract.
+// The server side of that contract is pinned by the Go test
+// `TestListEndpoint_IncomingEdge_InverseKey_ODHV2DContract` in
+// internal/dataentry, which skips until ODHV2D lands.
+describe('KanbanView card relation fields (assumes TKT-ODHV2D wire contract)', () => {
   it('renders an outgoing relation target title resolved from included', async () => {
     const ticket = makeTicket('T-1')
     // Outgoing edge keyed by the relation name itself.
@@ -127,9 +140,12 @@ describe('KanbanView card relation fields', () => {
     wrapper.unmount()
   })
 
-  it('renders an incoming relation target via the declared inverse key', async () => {
+  it('renders an incoming relation target via the declared inverse key (ODHV2D contract)', async () => {
     const ticket = makeTicket('T-2')
-    // Incoming edges are serialized under the relation's inverse (handled_by).
+    // ODHV2D CONTRACT: incoming edges are serialized under the relation's
+    // inverse (handled_by). The real list endpoint only emits this key once
+    // TKT-ODHV2D merges (see the Go contract test); here we inject it to test
+    // the SPA's resolution given that shape.
     ticket.relations = { handled_by: ['PER-7'] }
     const included = {
       'PER-7': { id: 'PER-7', type: 'person', _title: 'Bob', properties: {} } as Entity,
@@ -145,9 +161,12 @@ describe('KanbanView card relation fields', () => {
     wrapper.unmount()
   })
 
-  it('falls back to <relation>_inverse when no inverse is declared', async () => {
+  it('falls back to <relation>_inverse when no inverse is declared (ODHV2D contract)', async () => {
     const schemaStore = useSchemaStore()
     const ticket = makeTicket('T-3')
+    // ODHV2D CONTRACT: same as above — the `<relation>_inverse` key is a
+    // server-side emission that only exists once TKT-ODHV2D merges; injected
+    // here to exercise the SPA fallback key derivation.
     ticket.relations = { blocks_inverse: ['PER-5'] }
     const included = {
       'PER-5': { id: 'PER-5', type: 'person', _title: 'Carol', properties: {} } as Entity,
