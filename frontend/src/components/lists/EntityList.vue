@@ -515,10 +515,31 @@ function isCellInaccessible(entity: Entity, column: { property?: string }): bool
   return entity.inaccessible.some((f) => f.name === column.property)
 }
 
-function getFormattedCellValue(entity: Entity, column: { property?: string; relation?: string }): string {
-  // For relation columns, resolve IDs to titles using included entities
+// relationCellKey returns the wire key in entity.relations that holds a
+// relation column's target IDs. Outgoing columns read the relation type
+// directly; incoming columns read the relation's inverse key — the declared
+// inverse name if the metamodel has one, else the `<relation>_inverse`
+// fallback. This mirrors the backend's inverseRelationKey (see MECHANISM.md);
+// the two must stay in lockstep.
+function relationCellKey(relation: string, direction?: 'outgoing' | 'incoming'): string {
+  if (direction === 'incoming') {
+    return schemaStore.getInverseName(relation) ?? `${relation}_inverse`
+  }
+  return relation
+}
+
+function getFormattedCellValue(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' },
+): string {
+  // For relation columns, resolve IDs to titles using included entities.
+  // Outgoing edges are serialized under the relation type; incoming edges
+  // under the relation's INVERSE key (matching the backend serializer, see
+  // MECHANISM.md). The included map carries both target and source entities
+  // because the list is fetched with ?include=*.
   if (column.relation) {
-    const relationIds = entity.relations?.[column.relation] || []
+    const key = relationCellKey(column.relation, column.direction)
+    const relationIds = entity.relations?.[key] || []
     const titles = relationIds.map((id) => {
       const included = includedEntities.value[id]
       return included ? entityDisplayTitle(included) : id

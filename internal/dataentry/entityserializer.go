@@ -24,7 +24,14 @@ type entitySerializer struct {
 // toV1 builds the base v1.Entity. meta is the request's metamodel snapshot;
 // outgoing is the entity's outgoing relations, already loaded by the caller
 // (nil omits the relations map — the former includeRelations=false shape).
-func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
+// incoming is the entity's incoming relations; when non-nil each incoming
+// edge is added to the relations map under its relation's INVERSE key
+// (inverseRelationKey), so an incoming list column has a distinct lookup key
+// that never collides with the same relation used outgoing. The SPA computes
+// the identical key from the column's relation + the metamodel inverse — see
+// MECHANISM.md. Loading incoming edges is the caller's job; this stays a pure
+// transform.
+func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
 	out := v1.Entity{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -49,10 +56,22 @@ func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoin
 		}
 	}
 
-	if outgoing != nil {
+	if outgoing != nil || incoming != nil {
 		out.Relations = make(map[string][]string)
 		for _, edge := range outgoing {
 			out.Relations[edge.Type] = append(out.Relations[edge.Type], edge.To)
+		}
+		// Incoming edges are keyed by the relation's inverse name so an
+		// `direction: incoming` column looks them up without colliding with
+		// outgoing edges of the same relation. edge.From is the source
+		// entity ID (resolved to a title client-side via ?include=*).
+		for _, edge := range incoming {
+			relDef, ok := meta.Relations[edge.Type]
+			if !ok {
+				continue
+			}
+			key := inverseRelationKey(edge.Type, relDef)
+			out.Relations[key] = append(out.Relations[key], edge.From)
 		}
 	}
 
@@ -64,7 +83,10 @@ func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoin
 // maps. Use forWireRelated for entities that appear as list rows or under
 // `included` (no affordance maps, but still strip).
 func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
-	result := s.toV1(ctx, e, outgoing, meta, plural)
+	// Per-entity responses carry outgoing edges only; incoming edges reach the
+	// SPA via the dedicated /relations endpoint, not the top-level relations
+	// map. Incoming list columns are served by forWireRelated (list rows).
+	result := s.toV1(ctx, e, outgoing, nil, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	s.affordances.attachEntityAffordances(ctx, e, &result)
 	return result
@@ -75,8 +97,10 @@ func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outg
 // properties but omits the `_fields` / `_relations` maps (those ride on
 // per-entity responses only). Hidden-field stripping still applies: the wire
 // contract is "hidden values never reach the client, regardless of shape."
-func (s entitySerializer) forWireRelated(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
-	result := s.toV1(ctx, e, outgoing, meta, plural)
+// Pass incoming edges (nil to omit) so `direction: incoming` list columns can
+// resolve their source entities under the relation's inverse key.
+func (s entitySerializer) forWireRelated(ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
+	result := s.toV1(ctx, e, outgoing, incoming, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	return result
 }

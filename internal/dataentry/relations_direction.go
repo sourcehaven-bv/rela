@@ -56,6 +56,23 @@ func resolveDirection(meta *metamodel.Metamodel, bodyKey string) (canonical stri
 	return owner, true, true
 }
 
+// inverseRelationKey returns the wire key under which INCOMING edges of a
+// relation type are serialized. Incoming edges are keyed by the relation's
+// inverse name so they never collide with the same relation used outgoing (a
+// row can carry both `implements` outgoing targets and `implements_inverse`
+// incoming sources). When the metamodel declares an explicit inverse
+// (`relDef.Inverse.ID`), that name is used; otherwise the synthetic
+// `<type>_inverse` fallback applies. This is the single source of truth for
+// the key — the per-entity relations handler (handleV1EntityRelations), the
+// list-row serializer (entitySerializer.toV1), and the SPA's
+// getFormattedCellValue must all agree on it. See MECHANISM.md.
+func inverseRelationKey(relType string, relDef metamodel.RelationDef) string {
+	if relDef.Inverse != nil && relDef.Inverse.ID != "" {
+		return relDef.Inverse.ID
+	}
+	return relType + "_inverse"
+}
+
 // edgeEndpoints resolves the (from, to) endpoints of an edge written
 // against `entityID`, given a peer ID and a direction flag. Centralizes
 // the source/target flip so callers don't repeat it inline.

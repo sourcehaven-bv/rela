@@ -318,7 +318,17 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	data := make([]v1.Entity, 0, len(entities))
 	included := make(map[string]v1.Entity)
 	for _, e := range entities {
-		v1Entity := a.serializer.forWireRelated(r.Context(), e, a.reader.outgoingRelations(r.Context(), e.ID), a.Meta(), plural)
+		// List rows carry BOTH outgoing edges (keyed by relation type) and
+		// incoming edges (keyed by the relation's inverse name) so that
+		// `direction: incoming` relation columns have a wire key to resolve
+		// against. The SPA computes the same inverse key and reads the source
+		// entities from the ?include=* peers. See MECHANISM.md.
+		v1Entity := a.serializer.forWireRelated(
+			r.Context(), e,
+			a.reader.outgoingRelations(r.Context(), e.ID),
+			a.reader.incomingRelations(r.Context(), e.ID),
+			a.Meta(), plural,
+		)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -1013,10 +1023,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		if !ok {
 			continue
 		}
-		inverseName := edge.Type + "_inverse"
-		if relDef.Inverse != nil && relDef.Inverse.ID != "" {
-			inverseName = relDef.Inverse.ID
-		}
+		inverseName := inverseRelationKey(edge.Type, relDef)
 		rel := map[string]interface{}{
 			"id":        edge.From,
 			"type":      a.reader.entityType(r.Context(), edge.From),
@@ -1620,7 +1627,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, a.Meta(), plural))
+		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, nil, a.Meta(), plural))
 	}
 
 	resp := v1.ListResponse{
@@ -1811,7 +1818,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
-		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, a.Meta(), plural)
+		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, nil, a.Meta(), plural)
 
 		if nested, ok := nestedFor[target.ID]; ok {
 			for k, v := range a.resolveV1Includes(ctx, target, nested) {
