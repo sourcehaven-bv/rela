@@ -831,7 +831,6 @@ func TestIsRelationLinked(t *testing.T) {
 	}
 }
 
-
 func TestResolveFilterVariable(t *testing.T) {
 	// Pin the clock so date variables are deterministic.
 	pinned := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)

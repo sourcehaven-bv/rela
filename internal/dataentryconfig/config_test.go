@@ -342,3 +342,59 @@ func TestConfigRelationFilterDirection(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigRelationFilterDirection_DeterministicOverConflicts pins RR-9MJRJG:
+// when two lists of the same entity type configure the same relation with
+// conflicting directions, RelationFilterDirection must resolve to the lowest
+// list ID deterministically — NOT randomly over map iteration order. Running
+// many times must always yield the same answer.
+func TestConfigRelationFilterDirection_DeterministicOverConflicts(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{
+			// "aaa" < "zzz": lowest list ID wins → outgoing.
+			"zzz": {
+				EntityType:     "taak",
+				FilterControls: []FilterControl{{Relation: "belongs_to", Direction: DirectionIncoming}},
+			},
+			"aaa": {
+				EntityType:     "taak",
+				FilterControls: []FilterControl{{Relation: "belongs_to", Direction: DirectionOutgoing}},
+			},
+		},
+	}
+
+	// Repeat enough times that map-iteration randomization would surface a
+	// flip if the resolver weren't sorted.
+	for i := range 100 {
+		dir, ok := cfg.RelationFilterDirection("taak", "belongs_to")
+		if !ok || dir != DirectionOutgoing {
+			t.Fatalf("iteration %d: got (%q, %v), want (outgoing, true) — non-deterministic resolution", i, dir, ok)
+		}
+	}
+}
+
+// TestConfigHasPropertyFilterControl pins the discriminator helper used to
+// resolve a property/relation name collision in favor of an explicit property
+// control (RR-0HWAS0).
+func TestConfigHasPropertyFilterControl(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{
+			"taken": {
+				EntityType: "taak",
+				FilterControls: []FilterControl{
+					{Property: "belongs_to"}, // property control sharing a relation name
+					{Relation: "verantwoordelijk_voor"},
+				},
+			},
+		},
+	}
+	if !cfg.HasPropertyFilterControl("taak", "belongs_to") {
+		t.Error("HasPropertyFilterControl(taak, belongs_to) = false, want true")
+	}
+	if cfg.HasPropertyFilterControl("taak", "verantwoordelijk_voor") {
+		t.Error("HasPropertyFilterControl(taak, verantwoordelijk_voor) = true (it's a relation control), want false")
+	}
+	if cfg.HasPropertyFilterControl("persoon", "belongs_to") {
+		t.Error("HasPropertyFilterControl for wrong type = true, want false")
+	}
+}
