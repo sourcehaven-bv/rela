@@ -53,7 +53,7 @@ func resolveListType(meta *metamodel.Metamodel, typeName string) (string, store.
 	if typeName == "" {
 		return "", q, nil
 	}
-	resolvedType, _, err := resolveEntityType(meta, typeName)
+	resolvedType, err := resolveEntityType(meta, typeName)
 	if err != nil {
 		return "", q, err
 	}

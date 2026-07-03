@@ -6,23 +6,30 @@ repos:
       - id: go-fmt
       - id: go-imports
         args: ["-local", "github.com/Sourcehaven-BV/rela"]
-      - id: go-vet
       - id: go-mod-tidy
 
-  # Markdown linting
+  # go vet as a local module-wide hook. The dnephin go-vet hook (v0.5.1)
+  # passes individual file paths and errors ("no Go files in <root>") when a
+  # commit also touches non-Go files; running `go vet ./...` once avoids that.
+  - repo: local
+    hooks:
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # Markdown linting. Excludes must mirror .markdownlint-cli2.yaml's
+  # `ignores` (the config CI's markdownlint-cli2-action uses) so the hook
+  # never flags files CI deliberately skips — notably tickets/, which hold
+  # rela-owned entity markdown that rela formats itself.
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.43.0
     hooks:
       - id: markdownlint
         args: ["--config", ".markdownlint.yaml"]
-
-  # Markdown formatting with prettier
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v4.0.0-alpha.8
-    hooks:
-      - id: prettier
-        types: [markdown]
-        args: ["--prose-wrap", "preserve"]
+        exclude: '^(tickets/|docs/templates/|\.ignored/|.*/\.ignored/|.*/testdata/)'
 
   # General file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks

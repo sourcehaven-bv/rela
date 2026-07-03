@@ -221,11 +221,6 @@ lint-md-fix:
     @echo "Linting and fixing markdown files..."
     npx markdownlint-cli2 --fix "**/*.md" "#node_modules" "#**/node_modules"
 
-# Format markdown files with prettier
-fmt-md:
-    @echo "Formatting markdown files..."
-    npx prettier --write "**/*.md" --ignore-path .gitignore
-
 # Format Go code
 fmt:
     @echo "Formatting code..."

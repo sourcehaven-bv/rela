@@ -71,14 +71,14 @@ This creates `templates/entities/` and `templates/relations/` with template file
 Create a requirement:
 
 ```bash
-rela create requirement --title "System must handle 1000 concurrent users"
+rela create requirement -P title="System must handle 1000 concurrent users"
 # Creates REQ-001
 ```
 
 Create a decision that addresses this requirement:
 
 ```bash
-rela create decision --title "Use horizontal scaling with load balancer"
+rela create decision -P title="Use horizontal scaling with load balancer"
 # Creates DEC-001
 ```
 
@@ -136,18 +136,18 @@ Navigate with arrow keys or `j`/`k`, press `?` for help.
 
 ```bash
 # Start with requirements
-rela create requirement --title "Users must authenticate before accessing data"
+rela create requirement -P title="Users must authenticate before accessing data"
 
 # Make design decisions
-rela create decision --title "Implement OAuth 2.0 with JWT tokens"
+rela create decision -P title="Implement OAuth 2.0 with JWT tokens"
 rela link DEC-001 addresses REQ-001
 
 # Define solutions
-rela create solution --title "Auth service with Redis token storage"
+rela create solution -P title="Auth service with Redis token storage"
 rela link SOL-001 implements DEC-001
 
 # Track components
-rela create component --title "auth-service container"
+rela create component -P title="auth-service container"
 rela link COMP-001 realizes SOL-001
 ```
 

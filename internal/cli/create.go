@@ -14,7 +14,6 @@ import (
 // CreateCmd creates a new entity.
 type CreateCmd struct {
 	Type     string   `arg:"" help:"Entity type (alias allowed)."`
-	Title    string   `short:"t" help:"Primary property value (title, name, etc. depending on entity type)."`
 	Status   string   `short:"s" help:"Entity status (defaults to entity type's default)."`
 	Priority string   `short:"p" help:"Entity priority."`
 	ID       string   `name:"id" help:"Custom entity ID (auto-generated if not provided)."`
@@ -26,7 +25,7 @@ type CreateCmd struct {
 
 // Run dispatches `rela create <type>`.
 func (c *CreateCmd) Run(ctx context.Context, svc *cliServices) error {
-	resolvedType, entityDef, err := resolveEntityType(svc.Meta(), c.Type)
+	resolvedType, err := resolveEntityType(svc.Meta(), c.Type)
 	if err != nil {
 		return err
 	}
@@ -38,14 +37,6 @@ func (c *CreateCmd) Run(ctx context.Context, svc *cliServices) error {
 			return parseErr
 		}
 		props[key] = value
-	}
-
-	if strings.TrimSpace(c.Title) != "" {
-		primaryProp := entityDef.GetPrimaryProperty()
-		if primaryProp == "" {
-			primaryProp = "title"
-		}
-		props[primaryProp] = c.Title
 	}
 
 	if c.Status != "" {
