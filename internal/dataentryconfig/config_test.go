@@ -300,3 +300,45 @@ func TestDirection_IsIncoming(t *testing.T) {
 		}
 	})
 }
+
+func TestConfigRelationFilterDirection(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{
+			"taken": {
+				EntityType: "taak",
+				FilterControls: []FilterControl{
+					{Relation: "verantwoordelijk_voor", Direction: DirectionIncoming},
+					{Relation: "belongs_to"}, // default outgoing
+				},
+			},
+			"other_type": {
+				EntityType:     "persoon",
+				FilterControls: []FilterControl{{Relation: "verantwoordelijk_voor"}},
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		entityType string
+		relation   string
+		wantDir    Direction
+		wantOK     bool
+	}{
+		{"incoming resolves", "taak", "verantwoordelijk_voor", DirectionIncoming, true},
+		{"outgoing default resolves", "taak", "belongs_to", DirectionOutgoing, true},
+		{"other entity type isolated", "persoon", "verantwoordelijk_voor", DirectionOutgoing, true},
+		{"unknown relation for type", "taak", "missing", DirectionOutgoing, false},
+		{"unknown entity type", "widget", "belongs_to", DirectionOutgoing, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, ok := cfg.RelationFilterDirection(tt.entityType, tt.relation)
+			if dir != tt.wantDir || ok != tt.wantOK {
+				t.Errorf("RelationFilterDirection(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.entityType, tt.relation, dir, ok, tt.wantDir, tt.wantOK)
+			}
+		})
+	}
+}

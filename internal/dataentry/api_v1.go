@@ -274,9 +274,58 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 		entities = filtered
 	}
 
-	entities = applyV1Filters(entities, query, typeName)
+	meta := a.Meta()
+	isRelationKey := func(key string) bool {
+		_, ok := meta.GetRelationDef(key)
+		return ok
+	}
+	entities = applyV1Filters(entities, query, typeName, isRelationKey)
+	entities = a.applyRelationFilters(ctx, entities, query, typeName)
 	entities = applyV1Sorting(entities, query)
 	return entities, nil
+}
+
+// applyRelationFilters keeps only the entities that match every relation
+// filter present in the query. A relation filter is a `filter[<rel>]` param
+// whose key is a metamodel relation name (property filters are handled by
+// applyV1Filters). Matching is direction-aware: the FilterControl config on
+// a list of this entity type supplies the direction (default outgoing), and
+// an entity matches iff resolveRelationColumnValues for that (relation,
+// direction) contains the requested title.
+//
+// This runs in scopedSortedEntities so BOTH the list handler and scope nav
+// (_position, via resolveScope) observe identical relation filtering — they
+// share this pipeline. Property filters are untouched (TKT-5U7QBR).
+func (a *App) applyRelationFilters(
+	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
+) []*entityPkg.Entity {
+	meta := a.Meta()
+	cfg := a.Cfg()
+	for key, values := range query {
+		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
+			continue
+		}
+		// Relation filters only use the plain `filter[<rel>]` form (no
+		// operator segment) — the SPA renders a single text input.
+		relation := strings.TrimSuffix(strings.TrimPrefix(key, "filter["), "]")
+		if _, ok := meta.GetRelationDef(relation); !ok {
+			continue // property filter, already handled
+		}
+		want := values[len(values)-1]
+		if want == "" {
+			continue // empty control value = no constraint
+		}
+		direction, _ := cfg.RelationFilterDirection(typeName, relation)
+
+		filtered := entities[:0]
+		for _, e := range entities {
+			if containsString(a.resolveRelationColumnValues(ctx, e.ID, relation, direction), want) {
+				filtered = append(filtered, e)
+			}
+		}
+		entities = filtered
+	}
+	return entities
 }
 
 // queryGet returns the first value for key from a raw query map, or "".
@@ -1863,7 +1912,16 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure
 // data transform — a free function, not App behavior (TKT-N26KLB M5.5).
-func applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
+//
+// isRelationKey identifies filter keys that target a metamodel relation rather
+// than an entity property; those are skipped here and handled by the relation
+// pass in scopedSortedEntities (which has ctx + config for direction-aware
+// traversal). A relation key would otherwise match no property and nuke the
+// whole result set (TKT-5U7QBR). A nil predicate treats every key as a
+// property filter (the pre-TKT-5U7QBR behavior).
+func applyV1Filters(
+	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
+) []*entityPkg.Entity {
 	filtered := entities
 
 	for key, values := range query {
@@ -1894,6 +1952,14 @@ func applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ s
 			slog.Warn("filter key has empty property", "key", key)
 			continue
 		}
+
+		// Relation filter keys are handled by the direction-aware relation
+		// pass in scopedSortedEntities. Skip them here so a relation key
+		// (which matches no property) doesn't nuke the result set.
+		if isRelationKey != nil && isRelationKey(property) {
+			continue
+		}
+
 		operator := "eq"
 		if len(parts) == 2 {
 			if parts[1] == "" {

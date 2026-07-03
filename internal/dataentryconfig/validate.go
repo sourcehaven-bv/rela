@@ -487,6 +487,52 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+// CollectConfigWarnings returns non-fatal configuration issues that should be
+// surfaced at load time (logged) but must NOT abort startup — unlike
+// ValidateConfig, whose findings are hard errors. Kept as a pure,
+// deterministically-ordered []string so the caller can log each and tests can
+// assert on the set.
+//
+// Currently it flags relation FilterControls declared `direction: incoming`
+// whose list entity_type is not a `to:` side of the relation. Such a filter
+// follows incoming edges into a type that is never the target, so it can only
+// ever match zero rows — a config smell, but not fatal (the filter still
+// behaves, it just filters everything out).
+func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
+	var warnings []string
+	for _, listID := range sortedListIDs(cfg) {
+		list := cfg.Lists[listID]
+		for i, fc := range list.FilterControls {
+			if fc.Relation == "" || !fc.Direction.IsIncoming() {
+				continue
+			}
+			relDef, ok := meta.GetRelationDef(fc.Relation)
+			if !ok {
+				continue // unknown relation already caught as a hard error
+			}
+			if slices.Contains(relDef.To, list.EntityType) {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"list %q: filter_controls[%d] relation %q with direction: incoming targets entity type %q, "+
+					"which is not a `to:` side of the relation (valid: %s); this filter will match no rows",
+				listID, i, fc.Relation, list.EntityType, strings.Join(relDef.To, ", ")))
+		}
+	}
+	return warnings
+}
+
+// sortedListIDs returns the config's list IDs in deterministic order so
+// warning output is stable across runs.
+func sortedListIDs(cfg *Config) []string {
+	ids := make([]string, 0, len(cfg.Lists))
+	for id := range cfg.Lists {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // validateViews validates view definitions with their traversal rules and sections.
 func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string

@@ -1813,3 +1813,91 @@ func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectConfigWarnings_IncomingRelationFilterWrongSide(t *testing.T) {
+	meta := testMetamodel() // belongs-to: from ticket, to category
+
+	tests := []struct {
+		name        string
+		list        List
+		wantWarning bool
+	}{
+		{
+			name: "incoming filter on the `to` side is fine",
+			list: List{
+				EntityType:     "category",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "incoming filter on the `from` side warns",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+			wantWarning: true,
+		},
+		{
+			name: "outgoing filter on the `from` side is fine (no direction check)",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to"}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "property filter control never warns",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Property: "status"}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "incoming filter on a self-referential relation is fine",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "blocks", Direction: DirectionIncoming}},
+			},
+			wantWarning: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Lists: map[string]List{"lst": tt.list}}
+			warnings := CollectConfigWarnings(cfg, meta)
+			if tt.wantWarning {
+				if len(warnings) == 0 {
+					t.Fatalf("expected a warning, got none")
+				}
+				if !strings.Contains(warnings[0], "belongs-to") ||
+					!strings.Contains(warnings[0], "incoming") {
+					t.Errorf("warning missing expected detail: %q", warnings[0])
+				}
+			} else if len(warnings) != 0 {
+				t.Errorf("expected no warnings, got %v", warnings)
+			}
+		})
+	}
+}
+
+func TestCollectConfigWarnings_NotFatal(t *testing.T) {
+	meta := testMetamodel()
+	// A wrong-side incoming filter is a warning, NOT a hard validation error.
+	cfg := &Config{
+		Lists: map[string]List{
+			"lst": {
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("wrong-side incoming filter should not be a fatal error, got: %v", err)
+	}
+	if len(CollectConfigWarnings(cfg, meta)) == 0 {
+		t.Error("expected a non-fatal warning for the wrong-side incoming filter")
+	}
+}
