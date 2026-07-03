@@ -404,8 +404,8 @@ Verdicts come from one of three sources, selected at server startup by the
 | any other | Unknown — logs a warning and falls back to policy / permissive. Never panics. |
 
 The policy-backed resolver compiles `when:` predicates from `acl.yaml` at
-startup and evaluates them per entity. See the [security model
-affordances section](../security.md#field--and-relation-level-affordances)
+startup and evaluates them per entity. See the [ACL security
+guide](../acl-security.md) and the [ACL overview](../acl-overview.md)
 for the `acl.yaml` schema, the predicate language, and the closed-world /
 cross-role semantics. The wire shape and SPA rendering below are identical
 regardless of source.

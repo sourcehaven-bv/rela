@@ -14,7 +14,7 @@ import (
 
 // envDataEntryUser is the local-dev escape hatch: if this env var is
 // set, EnvPrincipalResolver returns its value as the principal user.
-// Documented in docs/security.md alongside the --principal-header
+// Documented in docs/server-security.md alongside the --principal-header
 // flag.
 const envDataEntryUser = "RELA_DATAENTRY_USER"
 
@@ -265,7 +265,7 @@ func defaultPrincipalResolver(_ *http.Request) principal.Principal {
 // the reverse proxy that sets it. Operators serving data-entry
 // without a trusted proxy must not enable this resolver — anyone
 // can spoof identity by setting the header on the wire. See
-// docs/security.md for the deployment guidance.
+// docs/server-security.md for the deployment guidance.
 //
 // Sanitization: control characters (C0 + DEL) in the header value
 // are replaced with regular spaces, the value is truncated to 256

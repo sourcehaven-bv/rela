@@ -97,7 +97,7 @@ clear error and leaves no partial state.
 
 In production, `rela-server` runs behind an OAuth proxy (e.g. oauth2-proxy) and
 has **no native authentication** — it trusts the proxy-set `X-Forwarded-User`.
-The trust-boundary invariant (see [security.md](security.md)) is that the server
+The trust-boundary invariant (see [server-security.md](server-security.md)) is that the server
 is reachable **only** through the proxy.
 
 The sync CLI therefore authenticates **to the proxy, not to rela**, by presenting

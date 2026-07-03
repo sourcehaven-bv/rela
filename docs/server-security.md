@@ -1,12 +1,17 @@
-# Security model for `rela-server`
+<!-- This file is auto-generated from docs-project/entities/. Do not edit directly. -->
+
+# Security model for rela-server
 
 `rela-server` is the HTTP data-entry app shipped with rela. It is intended to
 run on a local port (`http://localhost:8080` by default) and be opened in your
 normal browser.
 
-This page documents the threat model the server is hardened against, the
+This guide documents the threat model the server is hardened against, the
 defenses it employs, the residual risks, and the configuration knobs available
-to operators and developers.
+to operators and developers. For the ACL system itself — the resolver
+vocabulary, role configuration, and the read-side filtering guarantees — read
+[GUIDE-acl-overview] and [GUIDE-acl-security]; this guide summarizes how that
+coverage stands and links out rather than restating it.
 
 ## Threat model
 
@@ -122,8 +127,8 @@ engine-initiated writes — the originating automation or schedule.
 
 The log is forensic, not authoritative: a process crash between the
 store write and the audit append can leave a write un-audited; see
-[audit-log.md](./audit-log.md) for the durability story, the JSONL
-schema, and `jq` recipes for common queries.
+[GUIDE-audit-log] for the durability story, the JSONL schema, and `jq`
+recipes for common queries.
 
 `.rela/audit/` is gitignored by convention — audit content is
 per-machine and should not be committed.
@@ -147,8 +152,8 @@ retained ≥ 12 months**):
   is gitignored and lives only on the local disk.
 - If you prune at all, prune **only beyond** the retention window. The
   daily file naming makes this exact: delete files whose date is older
-  than your window, never on a shorter `-mtime`. See
-  [audit-log.md](./audit-log.md#retention) for a compliant example.
+  than your window, never on a shorter `-mtime`. See [GUIDE-audit-log]
+  for a compliant example.
 
 There is no built-in enforcement of the minimum — `rela` cannot police
 an operator's `rm`. The guarantee it provides is the converse: it will
@@ -186,22 +191,28 @@ corrupting the JSONL stream.
 
 ## Access control (`acl.yaml`)
 
-rela-server enforces a declarative ACL at every write entry point.
-The policy lives at `acl.yaml` at the project root (alongside
-`metamodel.yaml`). Three modes:
+rela-server enforces a declarative ACL at every write entry point, and — when
+a policy is configured — filters reads. The policy lives at `acl.yaml` at the
+project root (alongside `metamodel.yaml`). Three modes:
 
 | Mode | How | Behavior |
 |---|---|---|
 | **Open** (default) | No `acl.yaml` present | Every authenticated request can write. Reads have no filtering. Suitable for single-user local projects. |
 | **Read-only** | `rela-server --read-only` or `RELA_READ_ONLY=1` | Every write returns HTTP 403; reads unaffected. Useful for demos, maintenance, observe-only deployments. Wins over `acl.yaml` — explicit flag overrides policy. |
-| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered: per-entity GETs 404 like not-found for hidden entities, and lists / sidebar counts / pagination return only the visible subset (see `docs/acl-security.md`). |
+| **Policy** | `acl.yaml` present | Writes are gated by role assignments and delegate permissions. Reads are filtered on the data-entry HTTP surface: per-entity GETs 404 like not-found for hidden entities; lists / sidebar counts / pagination / `?include=` / `/_position` / `/_search` return only the visible subset; and `visible:`-denied properties are redacted from every response body. MCP read surfaces are not yet filtered. See [GUIDE-acl-security]. |
 
 A startup warning fires when the server binds **beyond loopback**
 (`--bind` non-loopback) **without** `acl.yaml` AND **without**
 `--read-only` — that combination means anyone reachable on the
 network can write to the project.
 
-### Minimal `acl.yaml`
+**Configuring the policy** — roles, per-verb grants, delegate-X tamper
+resistance, group membership (`member-of`) hardening, the trust boundary on
+`principal.user`, and the field-/option-/relation-level affordances driven by
+`fields:` / `visible:` / `options:` / `relations:` grants — is covered in
+[GUIDE-acl-overview] (the model) and [GUIDE-acl-security] (operator
+hardening). The rest of this section documents only what the ACL **covers as a
+defense** in the server threat model.
 
 ```yaml
 user_entity_type: person   # which entity type represents a user
@@ -366,34 +377,50 @@ the header is a spoofable identity surface; the security model
 falls apart. The non-loopback warning at startup nags about both
 gaps independently.
 
-### What the ACL covers in v0
+### What the ACL covers
 
 - ✅ Write authz at every `Manager.{Create,Update,Delete}{Entity,Relation}` + `RenameEntity`.
 - ✅ HTTP 403 with structured `{error, rule_kind, rule_id, reason}` body.
-- ✅ Audit log records every deny as `denied-write` (see
-  [audit-log](./audit-log.md)).
+- ✅ Audit log records every deny as `denied-write` (see [GUIDE-audit-log]).
 - ✅ Data-entry SPA hides entity-CRUD write controls based on the
   per-resource `_actions` verdict map — read-only mode produces a
   UI with no "+ New", delete, or Edit buttons for entities,
   driven by the ACL with no frontend flag. Deferred phase-2 sites
   (Lua command buttons, settings / theme / git writes, relation
   add/remove inside form widgets) remain visible and 403 at the
-  server on click; later phases gate them as new verbs land. See
-  the [API reference action-affordances
-  section](./data-entry/api-reference.md#how-the-spa-consumes-_actions)
-  for the consumer contract.
+  server on click; later phases gate them as new verbs land.
 - ✅ Field-, option-, and relation-level affordances driven by
   per-role `fields:` / `visible:` / `options:` / `relations:` grants
-  with optional `when:` predicates. See [Field- and relation-level
-  affordances](#field--and-relation-level-affordances).
-- ❌ Read filtering, property redaction — deferred to v1. (Field
-  *visibility* via `visible:` omits a property from the write-form
-  response, but list-query reads are not filtered.)
-- ❌ Group expansion (`member-of` transitive) — deferred to v1.
-- ❌ Inherited local roles (containment) — deferred to v1; direct
-  local roles are honored.
+  with optional `when:` predicates. See [GUIDE-acl-security].
+- ✅ **Entity-level read filtering** on the data-entry HTTP surface.
+  Per-entity GETs 404 like not-found for hidden entities; lists,
+  sidebar counts, pagination, `?include=` neighbours, `/_position`,
+  and `/_search` return only the visible subset. See [GUIDE-acl-security].
+- ✅ **Property-level redaction** (`visible:` grants) on every
+  data-entry HTTP read. A field denied by `visible:` is omitted from
+  the response `properties` map on per-entity GET, list rows,
+  `?include=` peers, and `/_search` results — not just the write
+  form. When the hidden field is the display property, the title
+  falls back to the entity ID so the redacted value can't leak
+  through `_title`.
+- ✅ Group expansion (`member-of`, transitive) and inherited local
+  roles (containment, via `inherit_roles_through`). Direct local
+  roles are honored as well.
+- ❌ **MCP read surfaces are not yet ACL-filtered.** `show_entity`,
+  `list_entities`, `search_entities`, and the trace tools return
+  full entity bodies with no entity-level gate and no `visible:`
+  redaction. The MCP server is local-only (stdio), so this is an
+  accepted gap at this stage, tracked as a follow-up. Do not expose
+  the MCP transport to an untrusted caller while relying on `visible:`
+  for confidentiality.
+- ❌ **Search match-on-hidden-field oracle.** `/_search` redacts the
+  *body* of a hidden property but the search index still matches on
+  its text, so a hit can confirm a hidden value's presence by
+  appearing in results (e.g. searching a candidate postcode). Closing
+  this — dropping hits that matched only on a hidden field — is a
+  tracked follow-up. Treat `visible:` as hiding values from view, not
+  as making them unguessable via search.
 - ❌ MCP transport intersection (filtering the tool list per principal) — deferred to a follow-up.
-- ❌ Containment inheritance — deferred to v2.
 
 > **`_actions` is a UI hint, not an authorization layer.** The
 > data-entry server re-authorizes every write — a client that
@@ -403,144 +430,6 @@ gaps independently.
 > invariant is HTTP write endpoints reached by the SPA; MCP / Lua /
 > scheduler write paths share the same enforcement but do not emit
 > or consult `_actions`.
-
-### Field- and relation-level affordances
-
-Beyond the per-resource `_actions` verb map, a role can grant
-**field-, option-, and relation-level** affordances. These drive the
-`_fields` and `_relations` maps the data-entry server emits on
-per-entity GET (see the [API reference affordances
-section](./data-entry/api-reference.md#affordances-_fields-and-_relations)),
-and they gate the corresponding writes server-side.
-
-Each grant may carry a `when:` predicate — a single expression in the
-[predicate language](#affordance-predicates) — evaluated against the
-entity and the requesting principal. An absent `when:` grants
-unconditionally.
-
-```yaml
-roles:
-  triager:
-    create: [ticket]           # per-verb grants
-    update: [ticket]
-    delete: [ticket]
-    read:   [ticket]
-
-    # Per-field write grants. A role that declares `fields:` for a
-    # type is closed-world for that type: only listed fields are
-    # writable; everything else renders read-only.
-    fields:
-      ticket:
-        - field: status
-          when: "entity.assignee == current_user.id"
-        - field: description    # unconditional
-
-    # Per-field visibility. Same closed-world rule; a field denied
-    # here is OMITTED from the response entirely (not just read-only).
-    visible:
-      ticket:
-        - field: internal_notes
-          when: "has_global_role(current_user, 'admin')"
-
-    # Per-enum-option grants. Closed-world per field: only listed
-    # options are selectable; others are filtered out and rejected
-    # on write.
-    options:
-      ticket:
-        - field: status
-          option: open
-        - field: status
-          option: review
-
-    # Per-relation-type grants. create/remove default to true when the
-    # grant exists; set them false to deny. `fields:` grants per-meta-
-    # field writability on links of that type.
-    relations:
-      ticket:
-        - relation: implements
-          create: true
-          remove: false
-          when: "entity.status == 'ready'"
-        - relation: has-planning
-          fields:
-            - field: note
-```
-
-**Opt-in is per type, by key presence.** A role that does *not*
-declare a block (e.g. no `fields:` key for `ticket`) leaves that
-dimension fully permissive for the type. A role that declares the key
-— even as an empty list (`fields: {ticket: []}`) or null
-(`fields: {ticket:}`) — makes it closed-world: anything not granted is
-denied. This mirrors how the type-level create/update/delete grants already work.
-
-**Cross-role union, monotonic.** When a principal holds several roles,
-a field/option/relation is allowed if *any* role grants it under a
-passing predicate. Adding a role can only widen access, never narrow
-it.
-
-**Effective roles are entity-scoped.** The role set for a given
-`(principal, entity)` is the principal's global roles (from
-`assignments` plus the built-in `everyone`) unioned with **local
-roles** conferred
-on that entity by a `role_relations` edge from the principal (e.g.
-`alice --owner-of--> TKT-001` confers `owner` on `TKT-001` only).
-Grant blocks keyed on a local role therefore apply only to the
-entities where the principal holds that role. v1 resolves *direct*
-local roles only; inherited local roles (containment) are deferred.
-
-#### Affordance predicates
-
-Predicates are compiled at server startup. A compile error — a syntax
-error, an unknown variable, a type mismatch, or a reference to a
-property the metamodel doesn't declare — **aborts startup** with the
-offending grant path in the error. This is stricter than a malformed
-`acl.yaml` (which downgrades to allow-all): a broken predicate is an
-operator typo with a deterministic fix, so it surfaces loudly rather
-than silently disabling a gate.
-
-Available in a predicate:
-
-| Symbol | Meaning |
-|--------|---------|
-| `entity.<property>` | The evaluated entity's property value. Missing or off-type values bind as `nil`. |
-| `entity.id`, `entity.type` | The entity's identity. |
-| `current_user.id`, `current_user.type` | The requesting principal. |
-| `has_role(current_user, entity, 'name')` | Holds `name` scoped to this entity (global ∪ local roles). |
-| `has_global_role(current_user, 'name')` | Holds `name` as a global (assignment) role; ignores local roles. |
-| `has_relation(entity, 'type')` | Entity has an outgoing relation of `type`. |
-| `count_relations(entity, 'type')` | Count of outgoing relations of `type`. |
-| `string_in_list(value, entity.<listprop>)` | `value` is an element of a list-typed property. The list argument must be a list-typed property — inline list literals are not supported. |
-
-Combine conditions with `and` / `or` / `not` inside the expression.
-
-> - **Predicates evaluate server-side against the full entity**,
->   including properties that will be visibility-stripped from the
->   response. A predicate may key a visible field's verdict on a hidden
->   property; that is intentional.
-> - **Predicate failures fail closed.** A runtime error in a `when:`
->   predicate (e.g. a host-function error) denies the grant rather than
->   allowing it, and logs a warning for operator visibility. It never
->   500s the GET.
-> - **Adding a property referenced by a predicate requires a server
->   restart.** Predicates compile against the metamodel at startup; a
->   hot metamodel reload does not recompile them.
-
-#### Selecting the affordance source
-
-The data-entry server picks its affordance source at startup via
-`RELA_AFFORDANCE_PROFILE`:
-
-| `RELA_AFFORDANCE_PROFILE` | Source |
-|---------------------------|--------|
-| unset / empty | Policy-backed if `acl.yaml` declares any affordance block; otherwise permissive (no deviations). |
-| `none` | Permissive — explicit opt-out even when a policy has affordance blocks. |
-| `demo` | A hardcoded dev fixture against the `ticket` type (for manual UI testing); overrides the policy. |
-
-Like `_actions`, `_fields` / `_relations` are **UI hints** — the
-server re-authorizes every write. The role and predicate that produced
-a deny are recorded in the audit log's `Summary` (not the wire 403
-body), so operators can attribute a denial without exposing policy
-internals to clients.
 
 ## Running the Vue dev server (Vite)
 

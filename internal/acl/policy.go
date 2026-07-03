@@ -28,7 +28,7 @@ const defaultMembershipRelation = "member-of"
 // source of truth for the name so the two paths can't drift.
 //
 // (No `anonymous` / `authenticated` built-ins yet: rela-server has no
-// authentication layer — see docs/security.md. Those would be added
+// authentication layer — see docs/server-security.md. Those would be added
 // here when auth lands, so both write and affordance paths see them.)
 const EveryoneRole = "everyone"
 
@@ -255,7 +255,7 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 //
 // This restricts membership-edge creation to principals holding
 // `delegate-membership` — typically only admins. See
-// `docs/security.md` for the full hardening pattern. The UC1 example
+// `docs/server-security.md` for the full hardening pattern. The UC1 example
 // policy in features_test.go is intentionally minimal and would be
 // wide-open if copy-pasted into a deployment.
 type RoleRelationDef struct {
