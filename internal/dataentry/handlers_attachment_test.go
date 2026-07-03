@@ -210,7 +210,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 
 	// A list-row serialization must NOT carry the map (closed-world: it
 	// rides on per-entity responses only).
-	row := app.serializer.forWireRelated(context.Background(), mustGet(t, app, "TKT-001"), nil, nil, app.Meta(), "tickets")
+	row := app.serializer.forWireRelated(context.Background(), mustGet(t, app, "TKT-001"), nil, nil, nil, app.Meta(), "tickets")
 	if row.Attachments != nil {
 		t.Errorf("_attachments must be nil on list-row serialization; got %+v", *row.Attachments)
 	}
