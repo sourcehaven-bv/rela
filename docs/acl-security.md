@@ -114,6 +114,80 @@ deliberate, reviewed reason to tolerate the lower-severity findings.
 Use `-o json` for machine-readable output. A clean, well-gated policy
 reports no findings and exits zero.
 
+## Resolving the principal by property (`principal_property`)
+
+When `user_entity_type` + `principal_property` are set, the resolver
+maps the raw authenticated identifier to a user entity by looking it up
+against that property (see GUIDE-acl-overview). Because the property is
+used as an **identity key**, a duplicate value is a security ambiguity,
+not just a data-quality issue — two `persoon` records with the same
+`email` would make "who is this principal?" unanswerable.
+
+Two layers keep that from happening:
+
+1. **The property must be declared `unique: true`** on the
+   `user_entity_type` in the metamodel. Boot fails if
+   `principal_property` names a property that does not exist or is not
+   unique. `unique: true` is a general metamodel constraint: no two
+   entities of the same type may carry the same non-empty value for that
+   property. It is enforced at write time — a create or update that would
+   introduce a duplicate is rejected as a validation error (422). Empty
+   values are exempt (a property is unique among the entities that set
+   it).
+
+2. **The resolver refuses to guess through a duplicate.** If, despite the
+   constraint, more than one entity matches (e.g. data predating the
+   constraint), the resolver keeps the raw principal, logs a warning, and
+   grants only what the raw string is assigned — it never silently picks
+   one of the duplicates.
+
+**Enforcement rigor by backend.** The write-time uniqueness check is
+exact on the single-writer backends (fsstore, memstore). On PostgreSQL,
+concurrent writers leave a narrow time-of-check/time-of-use window
+between the check and the durable write. Operators who need race-free
+enforcement add a partial unique index — which is also the recommended
+performance index for the lookup itself:
+
+```sql
+CREATE UNIQUE INDEX persoon_email_unique_idx
+  ON entities ((properties->>'email'))
+  WHERE type = 'persoon';
+```
+
+With the index in place a colliding write fails atomically in the
+database and surfaces as the same conflict the write path already
+reports.
+
+**The write-time check is not atomic.** It reads the existing entities
+of the type, then writes — two separate operations with no lock held
+across them. Under concurrent writers (the data-entry server runs one
+goroutine per request) two racing writes with the same value can both
+pass the check and both commit, on *any* backend, not just PostgreSQL.
+The window is small, and the resolver's multi-match fallback (keep-raw,
+above) is the runtime backstop for the identity-key case — but the only
+*race-free* enforcement is the store-level unique index. If you rely on
+uniqueness for correctness rather than as a data-quality guard, add the
+index.
+
+**Two operator notes for `principal_property`:**
+
+- **Case sensitivity.** The lookup and the uniqueness check are exact
+  byte comparisons. If your auth proxy emits `JV@x.com` but the persoon
+  stores `jv@x.com`, the lookup finds no match and the request silently
+  falls back to the raw principal (losing grants, never gaining them).
+  Normalise the property value on write (or configure the proxy to emit
+  a canonical form) — rela does not case-fold.
+
+- **Resolution is data-entry-only.** The `principal_property` lookup is
+  wired into the `/api/` data-entry path only. Writes via the CLI, MCP,
+  scheduler, or desktop entry points authorize against the raw stamped
+  principal and are NOT resolved to a `persoon`. A grant keyed on the
+  resolved entity ID therefore applies to data-entry writes but not to
+  the same person's CLI/MCP writes (which fall back to whatever the raw
+  identifier is assigned — typically `everyone` only). This is
+  fail-closed. Don't assume one `acl.yaml` grants the same authority on
+  every transport.
+
 ## Fail-loud on malformed `acl.yaml`
 
 A malformed `acl.yaml` fails boot. This is intentional: silently

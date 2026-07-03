@@ -175,6 +175,14 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 			// upstream layer attached a Request from a different
 			// identity); under that condition the gate would run
 			// against the wrong policy with no loud signal.
+			//
+			// Note: principal_property resolution (resolvePrincipalEntity
+			// below) has NOT run on this branch — it only applies when we
+			// open a fresh Request. So both sides here are the raw,
+			// pre-resolution principal and match in production (nothing
+			// upstream resolves). If a future upstream layer ever attaches
+			// a Request built from a *resolved* principal while ctx still
+			// holds the raw one, this correctly 500s as a genuine mismatch.
 			ctxPrin := principal.From(ctx)
 			if existing.Principal() != ctxPrin {
 				slog.Warn("acl: attachACLRequest: existing Request principal mismatch",
@@ -202,6 +210,16 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
+		// Resolve the raw principal to a user entity via the policy's
+		// `principal_property` lookup (a no-op unless both policy keys are
+		// set). On a single match we re-stamp ctx with the resolved ID so
+		// BOTH the ACL walk below and the audit writer (which re-reads
+		// principal.From(ctx)) attribute the write to the real entity while
+		// preserving the raw header value in RawUser. Any non-match /
+		// ambiguous / errored lookup keeps the raw principal (fail-open to
+		// pre-feature behavior) — see acl.Declarative.ResolvePrincipal.
+		ctx = resolvePrincipalEntity(ctx, d, r)
+
 		req, err := d.ForPrincipal(principal.From(ctx))
 		if err != nil {
 			// RR-372L: log the raw error server-side; never emit it
@@ -238,6 +256,30 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 		ctx = withReadGate(ctx, gate)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// resolvePrincipalEntity applies the ACL policy's `principal_property`
+// lookup to the ctx principal. When the policy has the lookup enabled and
+// the raw principal resolves to exactly one user entity, it returns a ctx
+// carrying a principal whose User is the entity ID and whose RawUser is
+// the original identifier (so the audit log records both). In every other
+// case — lookup disabled, no match, ambiguous match, or backend error —
+// it returns ctx unchanged so the write falls back to the raw principal
+// (pre-feature behavior); ambiguity and errors are logged, a plain
+// no-match is not (a principal absent from the graph is expected, e.g. a
+// break-glass identity assigned by raw UPN).
+func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Request) context.Context {
+	p := principal.From(ctx)
+	id, err := d.ResolvePrincipal(ctx, p.User)
+	if err != nil {
+		slog.Warn("acl: principal_property lookup failed; using raw principal",
+			"path", r.URL.Path, "method", r.Method, "err", err)
+		return ctx
+	}
+	if id == "" || id == p.User {
+		return ctx
+	}
+	return principal.With(ctx, principal.Principal{User: id, Tool: p.Tool, RawUser: p.User})
 }
 
 // PrincipalResolver maps an incoming HTTP request to the audit

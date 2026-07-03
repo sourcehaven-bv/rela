@@ -50,6 +50,14 @@ const (
 	ValidationErrorInvalidType  ValidationErrorType = "invalid_type"
 	ValidationErrorUnknownType  ValidationErrorType = "unknown_type"
 	ValidationErrorIDPrefix     ValidationErrorType = "id_prefix"
+	// ValidationErrorUnique reports a duplicate value for a property
+	// declared `unique: true`. It is a HARD error (IsSoft returns false):
+	// a natural-key collision is a constraint violation the write path
+	// must reject with a 422, not a tolerable hand-edit state. Unlike the
+	// other types, this one is raised by the entitymanager write path
+	// (which can query other entities), not by the pure per-entity
+	// [Metamodel.ValidateEntity].
+	ValidationErrorUnique ValidationErrorType = "unique"
 )
 
 // ValidationError represents a structured validation error with field information.

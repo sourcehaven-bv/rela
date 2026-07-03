@@ -155,6 +155,61 @@ exist — or one your data doesn't populate — the walk finds no edges and grou
 roles silently never resolve. There's no separate "is this a real relation"
 check; the relation simply has to be there.
 
+## Resolving the principal to a user entity
+
+By default `principal.User` is whatever the entry point stamped — for the
+data-entry server that is the reverse-proxy header value verbatim (e.g.
+`X-Forwarded-User: jvloothuis@sourcehaven.nl`). Assignments and membership
+walks then match on that raw string, which forces operators to either
+duplicate every human's identity in `acl.yaml` or rewrite headers in the
+proxy.
+
+When your graph already models people as entities (an ISMS `persoon`, a
+`user` type), set two coupled keys so the resolver consults the graph
+instead:
+
+```yaml
+user_entity_type: persoon
+principal_property: email      # persoon.email holds the header value
+membership_relation: heeft_rol
+assignments:
+  ROLE-MD: md
+```
+
+At the start of each request the resolver looks the raw principal up
+against `persoon.email`. On **exactly one** match it substitutes that
+entity's ID for `principal.User` for the rest of the request, so
+membership and local-role walks operate from a real entity:
+
+```text
+Header (jvloothuis@sourcehaven.nl)
+   └─ property lookup on persoon.email ─▶ PERS-JV
+         └─ walkMembers via heeft_rol ─▶ ROLE-MD ─▶ role md
+```
+
+Rules and fallbacks:
+
+- **Both keys required.** With `principal_property` unset, behaviour is
+  byte-for-byte identical to before — the raw string is used as-is.
+- **`principal_property` must be `unique: true`** on `user_entity_type`
+  in the metamodel (enforced at boot). A non-unique key admits duplicates,
+  which makes resolution ambiguous. See GUIDE-acl-security for how the
+  uniqueness constraint is enforced on writes.
+- **No match** keeps the raw principal — so an assignment keyed on the raw
+  UPN (`assignments: { jvloothuis@sourcehaven.nl: md }`) still works as a
+  break-glass escape hatch for identities not yet in the graph.
+- **Multiple matches** (a data-integrity failure) keeps the raw principal
+  and logs a warning; the resolver refuses to guess which entity is meant.
+- **Lookup errors** keep the raw principal (fail-open to pre-feature
+  behaviour) so a transient store hiccup never locks everyone out.
+
+The audit log records both identities: `user` is the resolved entity ID
+and `raw_user` is the original header value, so an operator can trace what
+authenticated and what it resolved to without a graph round-trip.
+
+For large user-entity sets, push the property equality into a backend
+index — see GUIDE-acl-security.
+
 Given the graph:
 
 ```text
