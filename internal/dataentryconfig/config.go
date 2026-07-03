@@ -346,8 +346,25 @@ type KanbanSwimlane struct {
 
 // KanbanCard defines how cards are displayed on the board.
 type KanbanCard struct {
-	Title  string             `yaml:"title" json:"title"`
-	Fields []ViewSectionField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Title  string            `yaml:"title" json:"title"`
+	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// KanbanCardField defines a single field shown on a kanban card.
+// A field references either a Property (entity property) or a Relation
+// (relation type whose target titles are shown). For relation fields,
+// Direction controls whether to show outgoing (default) or incoming edges.
+//
+// This is a dedicated type rather than a reuse of ViewSectionField: the
+// latter is shared by form relations, side panels, and view sections, and
+// widening it would leak card-relation semantics into all of them. An
+// existing property-only card field (`- property: X`) unmarshals unchanged
+// because Property carries the same yaml tag.
+type KanbanCardField struct {
+	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
+	Label     string    `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // NavigationEntry defines a sidebar navigation item or a group of items.

@@ -959,6 +959,14 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate card fields
 		for i, f := range kanban.Card.Fields {
+			if f.Relation != "" {
+				if _, ok := meta.GetRelationDef(f.Relation); !ok {
+					errs = append(errs, fmt.Sprintf(
+						"kanban %q: card.fields[%d] references unknown relation %q",
+						kanbanID, i, f.Relation))
+				}
+				continue
+			}
 			if f.Property != "" && f.Property != "title" && f.Property != "id" {
 				if _, ok := entDef.Properties[f.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(

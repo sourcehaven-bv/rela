@@ -280,6 +280,51 @@ func TestDirection_UnmarshalYAML(t *testing.T) {
 	}
 }
 
+func TestKanbanCardField_Unmarshal(t *testing.T) {
+	// A single card.fields list mixing the legacy property-only shape with
+	// the new relation shapes must all unmarshal into KanbanCardField.
+	const src = `
+title: title
+fields:
+  - property: status
+  - property: priority
+    label: Priority
+  - relation: verantwoordelijk_voor
+    direction: incoming
+  - relation: blocks
+`
+	var card KanbanCard
+	if err := yaml.Unmarshal([]byte(src), &card); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if card.Title != "title" {
+		t.Errorf("title: got %q, want %q", card.Title, "title")
+	}
+	if len(card.Fields) != 4 {
+		t.Fatalf("fields: got %d, want 4", len(card.Fields))
+	}
+
+	// Legacy property-only field.
+	if got := card.Fields[0]; got.Property != "status" || got.Relation != "" {
+		t.Errorf("fields[0]: got %+v, want property=status", got)
+	}
+	// Property field with label.
+	if got := card.Fields[1]; got.Property != "priority" || got.Label != "Priority" {
+		t.Errorf("fields[1]: got %+v, want property=priority label=Priority", got)
+	}
+	// Incoming relation field: direction decodes via Direction.UnmarshalYAML.
+	if got := card.Fields[2]; got.Relation != "verantwoordelijk_voor" || !got.Direction.IsIncoming() {
+		t.Errorf("fields[2]: got %+v, want relation=verantwoordelijk_voor direction=incoming", got)
+	}
+	// Relation field with no direction: the key is absent so UnmarshalYAML
+	// never runs and the zero-value Direction ("") stands — treated as
+	// outgoing everywhere (IsIncoming is false).
+	if got := card.Fields[3]; got.Relation != "blocks" || got.Direction.IsIncoming() {
+		t.Errorf("fields[3]: got %+v, want relation=blocks direction=outgoing", got)
+	}
+}
+
 func TestDirection_IsIncoming(t *testing.T) {
 	t.Run("incoming returns true", func(t *testing.T) {
 		if !DirectionIncoming.IsIncoming() {
