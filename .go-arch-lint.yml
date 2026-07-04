@@ -294,6 +294,7 @@ deps:
       - singleflight
   dataentryconfig:
     mayDependOn:
+      - filter
       - git
       - metamodel
   desktop:

@@ -27,6 +27,7 @@ var validTopLevelKeys = map[string]bool{
 	"entity_views": true,
 	"kanbans":      true,
 	"documents":    true,
+	"feeds":        true,
 	"dashboard":    true,
 	"commands":     true,
 	"actions":      true,
@@ -125,6 +126,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateActions(cfg, meta)...)
 	errs = append(errs, validateApp(cfg)...)
 	errs = append(errs, validateDocuments(cfg)...)
+	errs = append(errs, validateFeeds(cfg, meta)...)
 	errs = append(errs, validateStyles(cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
