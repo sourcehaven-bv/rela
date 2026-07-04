@@ -87,6 +87,12 @@ func (a *App) NewRouter() http.Handler {
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
 	a.registerSyncRoutes(inner)
 
+	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
+	// configured (SetWebhookReceiver). It lives OUTSIDE /api/ because it
+	// authenticates itself by verifying a signed JWT body, not a proxy header or
+	// cookie, so it is CSRF-immune by construction and needs no same-origin gate.
+	a.registerWebhookRoutes(inner)
+
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))

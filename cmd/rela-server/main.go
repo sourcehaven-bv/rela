@@ -54,6 +54,12 @@ type serverFlags struct {
 	jwtAudience string
 	jwtJWKSURL  string
 	jwtHeader   string
+	// Inbound-IdP webhook: verify a signed-JWT webhook body (same JWKS/issuer as
+	// the identity JWT, but its OWN audience) and dispatch to a named action that
+	// provisions a person entity. Both must be set to enable; empty ⇒ disabled.
+	// Requires the JWT identity flags above (the webhook reuses that JWKS).
+	webhookAudience string
+	webhookAction   string
 }
 
 // coverage-ignore: flag wiring — exercised at startup, not in tests
@@ -92,6 +98,15 @@ func parseFlags() *serverFlags {
 	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
 		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
 			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
+	// Inbound-IdP webhook flags (env fallbacks $RELA_WEBHOOK_*). Enable POST
+	// /webhooks/idp: a signed-JWT callback that provisions a user via an action.
+	flag.StringVar(&f.webhookAudience, "webhook-audience", os.Getenv("RELA_WEBHOOK_AUDIENCE"),
+		"Expected audience (aud) of an inbound IdP webhook JWT — distinct from -jwt-audience so an "+
+			"identity assertion can't be replayed as a webhook. Set with -webhook-action to enable "+
+			"POST /webhooks/idp. Reuses the -jwt-issuer/-jwt-jwks-url trust root.")
+	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
+		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
+			"receives event/user_id/org_id as params and provisions the user.")
 	// Note: there is no --database-url flag. The postgres build reads the DSN
 	// from $RELA_DATABASE_URL only, so the credential never lands in process
 	// listings or shell history. See appbuild.Config.DatabaseURL.
@@ -129,8 +144,8 @@ func envOr(key, def string) string {
 // the plain header because it proves authenticity.
 //
 // coverage-ignore: startup wiring.
-func wirePrincipalResolvers(app *dataentry.App, f *serverFlags) {
-	jwtResolver, jwtHeader := buildJWTResolver(context.Background(), f)
+func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
+	jwtResolver, jwtHeader := buildJWTResolver(idv, f)
 	if jwtHeader != "" && f.principalHeader != "" {
 		// Both a verified JWT and a plain trusted header are enabled. Because the
 		// JWT sits ahead of the plain header in the chain, a JWT verification
@@ -156,17 +171,17 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags) {
 	app.SetPrincipalHeader(varyHeader)
 }
 
-// buildJWTResolver builds the signed-JWT principal resolver from the flags,
-// returning it plus the header name it reads (empty when disabled). JWT identity
-// is enabled only when issuer, audience, and JWKS URL are all set. A build
-// failure — a bad config, a non-https JWKS URL, or an unreachable JWKS — is fatal
-// so identity never silently no-ops (jwtauth.New fetches the JWKS up front and
-// errors if it can't). Returns an inert resolver + "" header when disabled.
+// buildIdentityVerifier builds the shared signed-JWT verifier from the flags, or
+// returns nil when JWT identity is disabled (any of issuer/audience/jwks unset). A
+// build failure — a bad config, a non-https JWKS URL, or an unreachable JWKS — is
+// fatal so identity never silently no-ops (jwtauth.New fetches the JWKS up front
+// and errors if it can't). The one verifier is reused by both the principal
+// resolver and the webhook receiver, so the JWKS is fetched once.
 //
-// coverage-ignore: startup wiring — exercised via the resolver's own tests.
-func buildJWTResolver(ctx context.Context, f *serverFlags) (resolver dataentry.PrincipalResolver, header string) {
+// coverage-ignore: startup wiring — exercised via jwtauth's own tests.
+func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifier {
 	if f.jwtIssuer == "" || f.jwtAudience == "" || f.jwtJWKSURL == "" {
-		return dataentry.JWTPrincipalResolver(nil, ""), ""
+		return nil
 	}
 	v, err := jwtauth.New(ctx, jwtauth.Config{
 		Issuer:   f.jwtIssuer,
@@ -178,7 +193,62 @@ func buildJWTResolver(ctx context.Context, f *serverFlags) (resolver dataentry.P
 		os.Exit(1)
 	}
 	slog.Info("jwt identity enabled", "issuer", f.jwtIssuer, "header", f.jwtHeader)
-	return dataentry.JWTPrincipalResolver(v, f.jwtHeader), f.jwtHeader
+	return v
+}
+
+// buildJWTResolver wraps the shared verifier into a principal resolver, returning
+// it plus the header name it reads. A nil verifier (JWT identity disabled) yields
+// an inert resolver + "" header.
+//
+// coverage-ignore: startup wiring — exercised via the resolver's own tests.
+func buildJWTResolver(idv *jwtauth.Verifier, f *serverFlags) (resolver dataentry.PrincipalResolver, header string) {
+	if idv == nil {
+		return dataentry.JWTPrincipalResolver(nil, ""), ""
+	}
+	return dataentry.JWTPrincipalResolver(idv, f.jwtHeader), f.jwtHeader
+}
+
+// wireWebhookReceiver enables POST /webhooks/idp when -webhook-audience and
+// -webhook-action are both set. It requires JWT identity (the webhook reuses that
+// verifier's JWKS/issuer); a webhook audience without JWT identity, or a build
+// failure, is fatal so a misconfiguration fails loud rather than silently leaving
+// the endpoint off.
+//
+// coverage-ignore: startup wiring — exercised via the shim + verifier tests.
+func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
+	if f.webhookAudience == "" && f.webhookAction == "" {
+		return // disabled
+	}
+	if f.webhookAudience == "" || f.webhookAction == "" {
+		slog.Error("webhook: both -webhook-audience and -webhook-action are required to enable POST /webhooks/idp")
+		os.Exit(1)
+	}
+	if idv == nil {
+		slog.Error("webhook: -webhook-* requires JWT identity (-jwt-issuer/-jwt-audience/-jwt-jwks-url); the webhook reuses that JWKS")
+		os.Exit(1)
+	}
+	wv, err := jwtauth.NewWebhookVerifier(idv, f.webhookAudience)
+	if err != nil {
+		slog.Error("webhook: failed to initialize verifier", "error", err)
+		os.Exit(1)
+	}
+	app.SetWebhookReceiver(webhookVerifierAdapter{wv}, f.webhookAction)
+	slog.Info("idp webhook enabled", "audience", f.webhookAudience, "action", f.webhookAction)
+}
+
+// webhookVerifierAdapter bridges the concrete jwtauth.WebhookVerifier to the
+// dataentry receiver's expected shape, translating jwtauth.WebhookClaims into
+// dataentry.WebhookClaims. This adapter lives in the wiring layer — the one place
+// allowed to import both packages — so dataentry needn't depend on jwtauth (the
+// inward-pointing layering rule, mirroring the JWTPrincipalResolver seam).
+type webhookVerifierAdapter struct{ v *jwtauth.WebhookVerifier }
+
+func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (dataentry.WebhookClaims, error) {
+	c, err := a.v.VerifyWebhook(ctx, raw)
+	if err != nil {
+		return dataentry.WebhookClaims{}, err
+	}
+	return dataentry.WebhookClaims{Event: c.Event, UserID: c.UserID, OrgID: c.OrgID, ID: c.ID}, nil
 }
 
 // coverage-ignore: main function - entry point
@@ -250,7 +320,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	wirePrincipalResolvers(app, f)
+	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
+	// share it between the principal resolver and the webhook receiver so the JWKS
+	// is fetched a single time.
+	idv := buildIdentityVerifier(context.Background(), f)
+	wirePrincipalResolvers(app, f, idv)
+	wireWebhookReceiver(app, f, idv)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 

@@ -46,6 +46,11 @@ const (
 	// ToolSync attributes writes applied by the sync API (FEAT-NJ9FEN) so the
 	// audit log distinguishes a synced write from a direct data-entry edit.
 	ToolSync = "sync"
+	// ToolWebhookReceiver attributes writes made by an inbound-webhook handler
+	// (e.g. an IdP membership event that provisions a person entity). It is a
+	// distinct entry point from data-entry: the write originates from a verified
+	// server-to-server callback, not a human at the UI.
+	ToolWebhookReceiver = "webhook-receiver"
 )
 
 // principalKey is the unexported context.WithValue key so no other

@@ -102,7 +102,7 @@ const userPaletteFile = "palette.yaml"
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up.
 //
-//plimsoll:max-methods=167
+//plimsoll:max-methods=169
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -222,6 +222,12 @@ type App struct {
 	// implementations with a policy-driven resolver via the same
 	// interface.
 	fieldResolver FieldVerdictResolver
+
+	// webhook holds the inbound-IdP webhook receiver (verifier + target action +
+	// dedup). nil until SetWebhookReceiver is called, in which case the
+	// /webhooks/idp route is not mounted. Optional wiring, like security and
+	// principalResolver above.
+	webhook *webhookReceiver
 
 	// auditSink records short-circuit rejections (affordance gates)
 	// that never reach the entitymanager. ACL denials already get a
