@@ -399,3 +399,144 @@ describe('EntityList search integration', () => {
     wrapper.unmount()
   })
 })
+
+// TKT-ODHV2D: incoming relation columns. Verifies getFormattedCellValue is
+// direction-aware — an `direction: incoming` column reads the relation's
+// inverse key from entity.relations and resolves the source IDs via the
+// included map (exactly the same client-side ID→title path as outgoing
+// columns). Rendered through the DOM since the function is component-local.
+describe('EntityList incoming relation columns', () => {
+  const listId = 'taaks'
+  const entityType = 'taak'
+
+  // A taak list with an incoming relation column (verantwoordelijk_voor points
+  // persoon → taak; its inverse is verantwoordelijken).
+  function seedSchema() {
+    const schemaStore = useSchemaStore()
+    schemaStore.lists.set(listId, {
+      id: listId,
+      title: 'Taken',
+      entity: entityType,
+      columns: [
+        { property: 'title', label: 'Title' },
+        { relation: 'verantwoordelijk_voor', direction: 'incoming', label: 'Verantwoordelijken' },
+      ],
+    } as never)
+    schemaStore.entityTypes.set(entityType, {
+      name: entityType,
+      label: 'Taak',
+      properties: { title: { type: 'string', values: null } },
+    } as never)
+    // The relation type declares an explicit inverse, so getInverseName
+    // returns "verantwoordelijken" — the wire key the backend uses.
+    schemaStore.relationTypes.set('verantwoordelijk_voor', {
+      label: 'verantwoordelijk voor',
+      from: ['persoon'],
+      to: ['taak'],
+      inverse: { id: 'verantwoordelijken' },
+    } as never)
+  }
+
+  // Build a list response where the taak row carries incoming sources under
+  // the inverse key, and the included map holds those source persoons.
+  function seedIncomingResponse(sourceIds: string[]): ListResponse<Entity> {
+    const included: Record<string, Entity> = {}
+    for (const id of sourceIds) {
+      included[id] = { id, type: 'persoon', properties: { title: `Name ${id}` }, _title: `Name ${id}` }
+    }
+    const response: ListResponse<Entity> = {
+      data: [
+        {
+          id: 'TASK-1',
+          type: entityType,
+          properties: { title: 'Ship it' },
+          relations: { verantwoordelijken: sourceIds },
+        },
+      ],
+      meta: { total: 1, page: 1, per_page: 25, has_more: false },
+      included,
+    }
+    listEntitiesMock.mockResolvedValue(response)
+    return response
+  }
+
+  let pinia: ReturnType<typeof createPinia>
+  beforeEach(() => {
+    pinia = createPinia()
+    setActivePinia(pinia)
+    _setEntityPluralForTest(entityType, 'taaks')
+    listEntitiesMock.mockReset()
+    deleteEntityMock.mockReset().mockResolvedValue(undefined)
+    _resetModalStack()
+    routerPush.mockClear()
+    routerReplace.mockClear()
+    mockRoute.query = {}
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+    _resetModalStack()
+  })
+
+  it('resolves a single incoming source to its title', async () => {
+    seedSchema()
+    seedIncomingResponse(['PERS-JV'])
+    const wrapper = mount(EntityList, {
+      props: { listId },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    // The second column cell renders the resolved persoon title.
+    const dataCells = wrapper.findAll('tbody tr td:not(.actions-cell):not(.select-cell)')
+    const relCell = dataCells[dataCells.length - 1]
+    expect(relCell.text()).toBe('Name PERS-JV')
+    wrapper.unmount()
+  })
+
+  it('resolves multiple incoming sources comma-separated', async () => {
+    seedSchema()
+    seedIncomingResponse(['PERS-JV', 'PERS-AB'])
+    const wrapper = mount(EntityList, {
+      props: { listId },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    const dataCells = wrapper.findAll('tbody tr td:not(.actions-cell):not(.select-cell)')
+    const relCell = dataCells[dataCells.length - 1]
+    expect(relCell.text()).toBe('Name PERS-JV, Name PERS-AB')
+    wrapper.unmount()
+  })
+
+  it('outgoing lookup key stays empty for an incoming column (no collision)', async () => {
+    seedSchema()
+    // Row carries edges ONLY under the outgoing relation type, none under the
+    // inverse. An incoming column must therefore render empty.
+    listEntitiesMock.mockResolvedValue({
+      data: [
+        {
+          id: 'TASK-1',
+          type: entityType,
+          properties: { title: 'Ship it' },
+          relations: { verantwoordelijk_voor: ['PERS-JV'] },
+        },
+      ],
+      meta: { total: 1, page: 1, per_page: 25, has_more: false },
+      included: { 'PERS-JV': { id: 'PERS-JV', type: 'persoon', properties: {}, _title: 'Name' } },
+    } as ListResponse<Entity>)
+    const wrapper = mount(EntityList, {
+      props: { listId },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    const dataCells = wrapper.findAll('tbody tr td:not(.actions-cell):not(.select-cell)')
+    const relCell = dataCells[dataCells.length - 1]
+    expect(relCell.text()).toBe('')
+    wrapper.unmount()
+  })
+})
