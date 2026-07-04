@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -45,6 +46,14 @@ type serverFlags struct {
 	debugPprof      string
 	principalHeader string
 	readOnly        bool
+	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
+	// JWKS and stamp the verified subject as the principal. Provider-agnostic
+	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
+	// must be set to enable; empty ⇒ disabled.
+	jwtIssuer   string
+	jwtAudience string
+	jwtJWKSURL  string
+	jwtHeader   string
 }
 
 // coverage-ignore: flag wiring — exercised at startup, not in tests
@@ -71,6 +80,18 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
+	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
+	// is safer than --principal-header (which merely trusts the proxy set a header).
+	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
+		"Expected issuer (iss) of the identity JWT. Set with -jwt-audience and -jwt-jwks-url to "+
+			"enable cryptographic principal verification.")
+	flag.StringVar(&f.jwtAudience, "jwt-audience", os.Getenv("RELA_JWT_AUDIENCE"),
+		"Expected audience (aud) of the identity JWT — this server's id, per the proxy config.")
+	flag.StringVar(&f.jwtJWKSURL, "jwt-jwks-url", os.Getenv("RELA_JWT_JWKS_URL"),
+		"HTTPS URL of the proxy's JWKS, used to verify the identity JWT's ES256 signature.")
+	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
+		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
+			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
 	// Note: there is no --database-url flag. The postgres build reads the DSN
 	// from $RELA_DATABASE_URL only, so the credential never lands in process
 	// listings or shell history. See appbuild.Config.DatabaseURL.
@@ -90,6 +111,74 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
 	}
 	return opts
+}
+
+// envOr returns $key, or def when unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// wirePrincipalResolvers installs the principal-resolver chain on the app.
+//
+// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch) wins over any
+// identity source; then the cryptographically-VERIFIED JWT assertion; then the
+// plain (proxy-trusted) header; then "unknown". A verified JWT is preferred over
+// the plain header because it proves authenticity.
+//
+// coverage-ignore: startup wiring.
+func wirePrincipalResolvers(app *dataentry.App, f *serverFlags) {
+	jwtResolver, jwtHeader := buildJWTResolver(context.Background(), f)
+	if jwtHeader != "" && f.principalHeader != "" {
+		// Both a verified JWT and a plain trusted header are enabled. Because the
+		// JWT sits ahead of the plain header in the chain, a JWT verification
+		// failure falls THROUGH to the spoofable plain header — a downgrade path an
+		// attacker could exploit by, e.g., briefly disrupting the JWKS. Warn loudly.
+		slog.Warn("both --jwt-* and --principal-header are enabled: a JWT failure "+
+			"downgrades to the plain (spoofable) header. Prefer one identity source. "+
+			"See docs/server-security.md.",
+			"jwt_header", jwtHeader, "principal_header", f.principalHeader)
+	}
+	app.SetPrincipalResolver(dataentry.ChainResolvers(
+		dataentry.EnvPrincipalResolver(),
+		jwtResolver,
+		dataentry.HeaderPrincipalResolver(f.principalHeader),
+	))
+	// Vary on the active identity header: under ACL, API responses are
+	// per-principal (TKT-VMD8). When JWT identity is enabled its header determines
+	// the principal, so vary on that; else the plain header.
+	varyHeader := f.principalHeader
+	if jwtHeader != "" {
+		varyHeader = jwtHeader
+	}
+	app.SetPrincipalHeader(varyHeader)
+}
+
+// buildJWTResolver builds the signed-JWT principal resolver from the flags,
+// returning it plus the header name it reads (empty when disabled). JWT identity
+// is enabled only when issuer, audience, and JWKS URL are all set. A build
+// failure — a bad config, a non-https JWKS URL, or an unreachable JWKS — is fatal
+// so identity never silently no-ops (jwtauth.New fetches the JWKS up front and
+// errors if it can't). Returns an inert resolver + "" header when disabled.
+//
+// coverage-ignore: startup wiring — exercised via the resolver's own tests.
+func buildJWTResolver(ctx context.Context, f *serverFlags) (resolver dataentry.PrincipalResolver, header string) {
+	if f.jwtIssuer == "" || f.jwtAudience == "" || f.jwtJWKSURL == "" {
+		return dataentry.JWTPrincipalResolver(nil, ""), ""
+	}
+	v, err := jwtauth.New(ctx, jwtauth.Config{
+		Issuer:   f.jwtIssuer,
+		Audience: f.jwtAudience,
+		JWKSURL:  f.jwtJWKSURL,
+	})
+	if err != nil {
+		slog.Error("jwt identity: failed to initialize verifier", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("jwt identity enabled", "issuer", f.jwtIssuer, "header", f.jwtHeader)
+	return dataentry.JWTPrincipalResolver(v, f.jwtHeader), f.jwtHeader
 }
 
 // coverage-ignore: main function - entry point
@@ -161,17 +250,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch)
-	// wins over an incoming header; either falls through to
-	// "unknown" when both are absent. Empty --principal-header
-	// keeps the legacy default behavior.
-	app.SetPrincipalResolver(dataentry.ChainResolvers(
-		dataentry.EnvPrincipalResolver(),
-		dataentry.HeaderPrincipalResolver(f.principalHeader),
-	))
-	// Vary on the identity header: under ACL, API responses are
-	// per-principal (TKT-VMD8). No-op when the flag is empty.
-	app.SetPrincipalHeader(f.principalHeader)
+	wirePrincipalResolvers(app, f)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 
