@@ -482,6 +482,17 @@ function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): bool
   return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
+// The properties inline-edit section renders its OWN heading row (so the
+// heading and the auto-save indicator are flex siblings on one line —
+// TKT-U62DVR). For that case the generic <h2> above is suppressed to avoid
+// a duplicate heading. Every other section keeps the shared <h2>.
+function sectionRendersOwnHeading(section: ViewSection): boolean {
+  const ent = entry.value
+  return (
+    section.display === 'properties' && ent != null && sectionShouldRouteToInlineEdit(section, ent)
+  )
+}
+
 // One-shot dedupe for the 401/403 → loadView path. Cleared on each
 // loadView call to allow the next 4xx to refetch again.
 let pendingRefetch = false
@@ -787,7 +798,10 @@ watch(
           class="view-section"
         >
           <h2
-            v-if="section.heading || (section === entryContentSection && checkboxStats)"
+            v-if="
+              !sectionRendersOwnHeading(section) &&
+              (section.heading || (section === entryContentSection && checkboxStats))
+            "
             class="section-heading"
           >
             {{ section.heading }}
@@ -812,6 +826,7 @@ watch(
           <SectionEditForm
             v-else-if="section.display === 'properties' && entry && sectionShouldRouteToInlineEdit(section, entry)"
             :key="`${entry.type}/${entry.id}`"
+            :heading="section.heading"
             :entity-type="entry.type"
             :entity-id="entry.id"
             :initial-values="entry.properties"

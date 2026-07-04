@@ -36,6 +36,12 @@ export type SectionEditField = {
 )
 
 const props = defineProps<{
+  // Optional section heading. When set, the form renders its own header
+  // row with the heading on the left and the auto-save indicator on the
+  // right (TKT-U62DVR) — so the two are genuine flex siblings on one line
+  // with no positioning tricks. When omitted, the host owns the heading
+  // and typically supplies an explicit `#indicator` slot (cards/list).
+  heading?: string
   entityType: string
   entityId: string
   initialValues: Record<string, unknown>
@@ -185,15 +191,30 @@ defineExpose({
 <template>
   <div class="section-edit-form">
     <!--
-      Indicator slot (TKT-IHC7C / RR-FC1D + RR-FC2A): scope props `status`
-      and `error` so a host can render the indicator anywhere (e.g. via
-      Vue `<Teleport>` into a card header). Default preserves IHC7B
-      behaviour: an inline-positioned AutoSaveIndicator inside the form.
+      Heading row (TKT-U62DVR): when `heading` is provided the form owns the
+      section heading so the heading and the auto-save indicator are flex
+      siblings on one line — no absolute positioning, no template refs. The
+      indicator hides itself when idle and fades out after a save.
     -->
-    <slot name="indicator" :status="autoSave.status.value" :error="autoSave.lastError.value">
-      <div class="section-edit-form-indicator">
+    <div v-if="heading" class="section-edit-form-header">
+      <h2 class="section-heading">{{ heading }}</h2>
+      <slot name="indicator" :status="autoSave.status.value" :error="autoSave.lastError.value">
         <AutoSaveIndicator :status="autoSave.status.value" :error="autoSave.lastError.value" />
-      </div>
+      </slot>
+    </div>
+    <!--
+      Headless indicator slot (TKT-IHC7C / RR-FC1D + RR-FC2A): when no
+      `heading` is given the host owns placement (e.g. inline in a card or
+      list header) and supplies its own `#indicator`. Scope props `status`
+      and `error` are exposed either way.
+    -->
+    <slot
+      v-if="!heading"
+      name="indicator"
+      :status="autoSave.status.value"
+      :error="autoSave.lastError.value"
+    >
+      <AutoSaveIndicator :status="autoSave.status.value" :error="autoSave.lastError.value" />
     </slot>
     <dl class="properties-list">
       <div
@@ -241,14 +262,24 @@ defineExpose({
 </template>
 
 <style scoped>
-.section-edit-form {
-  position: relative;
+/* Heading row: heading left, auto-save indicator right, on one line.
+   Carries the section-heading border so it spans the full width beneath
+   both. Mirrors EntityDetail's `.section-heading` look (TKT-U62DVR). */
+.section-edit-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.section-edit-form-indicator {
-  position: absolute;
-  top: -28px;
-  right: 0;
+.section-edit-form-header .section-heading {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-color);
 }
 
 .properties-list {
