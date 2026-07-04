@@ -43,22 +43,22 @@ region empty at idle, announces "Saving…"→"Saved" on edit; visual wrapper
 
 ## Documentation (enhancements only)
 
-- [x] Docs-checklist created and linked via `has-docs` (see below)
+- [x] Docs-checklist created and linked via `has-docs` (DOCS-4KPR9D)
 - [x] ~~User-facing documentation updated~~ (N/A: cosmetic indicator micro-behaviour, no documented feature/API surface)
 - [x] Docs-checklist marked as done
 
-**Docs Checklist:** created below
+**Docs Checklist:** DOCS-4KPR9D
 
 ## Final Checks
 
-- [x] Commit message explains the why (float removal + hidden-until-needed + a11y)
+- [x] Commit message explains the why, not just what
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — see monitoring below
+- [x] PR URL documented below
 
-**PR:** <!-- pending /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1068
