@@ -587,11 +587,12 @@ func TestMembershipRelation_Configured_Transitive(t *testing.T) {
 	}
 }
 
-func TestPolicy_membershipRelation_EffectiveName(t *testing.T) {
+func TestPolicy_EffectiveMembershipRelation(t *testing.T) {
 	t.Parallel()
 	// AC6: blank/whitespace collapses to the default; a real value passes
-	// through. The accessor is the single guard against a blank relation
-	// reaching the store as a Type=="" match-all query.
+	// through (trimmed). The accessor is the single guard against a blank
+	// relation reaching the store as a Type=="" match-all query, and the
+	// shared source of truth between the resolver and the aclaudit linter.
 	cases := []struct {
 		name string
 		set  string
@@ -609,8 +610,8 @@ func TestPolicy_membershipRelation_EffectiveName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			p := &Policy{MembershipRelation: tc.set}
-			if got := p.membershipRelation(); got != tc.want {
-				t.Errorf("membershipRelation() with %q = %q, want %q", tc.set, got, tc.want)
+			if got := p.EffectiveMembershipRelation(); got != tc.want {
+				t.Errorf("EffectiveMembershipRelation() with %q = %q, want %q", tc.set, got, tc.want)
 			}
 		})
 	}

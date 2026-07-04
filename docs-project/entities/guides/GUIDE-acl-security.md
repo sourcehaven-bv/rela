@@ -57,12 +57,68 @@ role_relations:
     requires_permission: member-of:create
 ```
 
-`Policy.Validate` emits an advisory warning at load when a non-default
-`membership_relation:` is configured without such a gate, but it does
-not block boot — don't rely on it to catch the mistake.
+The `rela acl audit` linter (below) flags an un-gated membership
+relation — default or configured — as a high-severity finding, so run
+it after editing `acl.yaml`.
 
 The companion section in `docs/security.md` carries the same
 guidance with more context on the broader threat model.
+
+## Auditing your policy with `rela acl audit`
+
+To keep your policy correct and hardened, run `rela acl audit` after
+every change to `acl.yaml`. It catches the mistakes that don't fail
+boot: a typo'd entity type that silently grants nothing, an un-gated
+membership relation that opens a self-promotion path, a write grant on
+the `everyone` role that hands capabilities to anonymous callers.
+Boot-time validation (`Policy.Validate`) deliberately stays a narrow
+*structural* gate — it rejects malformed policies but does not hunt for
+these foot-guns; the audit is the tool that does.
+
+The audit reports severity-ranked findings across two tiers:
+
+- **Pure-policy** — escalation foot-guns (un-gated membership relation
+  or role-relation conferring a privileged role; a privileged
+  `everyone` role) and dead/inert config (assignments or `confers`
+  naming an undeclared role, a `requires_permission` no role grants,
+  dead permissions, wildcard write sprawl).
+- **Metamodel cross-check** — grants, `membership_relation`,
+  `role_relations`, `inherit_roles_through`, `user_entity_type`, field,
+  and option references that the schema doesn't declare (silent drift).
+
+```console
+$ rela acl audit
+⚠ ACL audit: 2 finding(s)
+  [critical] role "everyone" ... grants write or permissions ...
+      fix: remove write/permission grants from the everyone role ...
+  [high] membership relation "member-of" confers group roles ... not gated ...
+      fix: add role_relations.member-of.requires_permission ...
+```
+
+The audit is **advisory** — with no flag it prints findings and always
+exits zero. For CI, gate the exit code on a severity threshold with
+`--fail-on`:
+
+```bash
+rela acl audit --fail-on=high     # non-zero if any critical/high finding
+rela acl audit --fail-on=medium   # also fail on medium
+rela acl audit --fail-on=any      # fail on any finding at all
+rela acl audit --exit-code        # alias for --fail-on=high
+```
+
+A finding **below** the threshold never changes the exit code — so
+`--fail-on=high` lets a medium "wildcard write" nudge through without
+breaking the build, while `--fail-on=any` is the strictest gate.
+Findings are always printed regardless of the threshold.
+
+**For a production deployment, gate CI on `--fail-on=any`** and keep
+the policy clean — the medium/low findings (wildcard sprawl, dead
+permissions, drift) are exactly the slow rot you want to catch before
+it hides a real hole. Loosen to `--fail-on=high` only if you have a
+deliberate, reviewed reason to tolerate the lower-severity findings.
+
+Use `-o json` for machine-readable output. A clean, well-gated policy
+reports no findings and exits zero.
 
 ## Fail-loud on malformed `acl.yaml`
 

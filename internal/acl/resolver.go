@@ -65,7 +65,7 @@ func (r *Request) walkMembers(ctx context.Context) []string {
 	for depth := 0; depth < depthCap && len(frontier) > 0; depth++ {
 		var next []string
 		for _, n := range frontier {
-			tos, err := r.d.graph.OutgoingRelations(ctx, n, r.d.policy.membershipRelation())
+			tos, err := r.d.graph.OutgoingRelations(ctx, n, r.d.policy.EffectiveMembershipRelation())
 			if err != nil {
 				// Abort the walk loud rather than silently undercount.
 				return order

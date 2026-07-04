@@ -73,23 +73,27 @@ type Policy struct {
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
 }
 
-// membershipRelation returns the effective relation type the resolver
+// EffectiveMembershipRelation returns the relation type the resolver
 // walks for group membership: a space-trimmed [Policy.MembershipRelation]
-// when set, or [defaultMembershipRelation] when blank/whitespace.
+// when set, or [defaultMembershipRelation] ("member-of") when
+// blank/whitespace.
 //
-// This is the single source of truth for the membership relation name
-// and the resolver MUST read through it rather than the raw field.
-// [NewDeclarative] does not run [Policy.Validate], and the resolver
-// passes the name straight into a [store.RelationQuery] where an empty
-// Type means "all relation types" — so a blank field reaching the walk
-// would silently follow *every* outgoing edge as if it were membership
-// (an over-grant). Collapsing blank to the default here, on every read,
-// closes that hole regardless of how the [Policy] was constructed.
+// This is the single source of truth for the membership relation name.
+// The resolver MUST read through it rather than the raw field, and any
+// out-of-package consumer that needs to reason about the *effective*
+// relation (e.g. the aclaudit linter) must use this too — so the audit
+// can never disagree with what the resolver actually walks. [NewDeclarative]
+// does not run [Policy.Validate], and the resolver passes the name straight
+// into a [store.RelationQuery] where an empty Type means "all relation
+// types" — so a blank field reaching the walk would silently follow *every*
+// outgoing edge as if it were membership (an over-grant). Collapsing blank
+// to the default here, on every read, closes that hole regardless of how
+// the [Policy] was constructed.
 //
 // The value is trimmed so a stray-whitespace YAML value (e.g.
 // `"heeft_rol "`) resolves to the relation the operator meant rather
 // than silently matching zero edges.
-func (p *Policy) membershipRelation() string {
+func (p *Policy) EffectiveMembershipRelation() string {
 	if trimmed := strings.TrimSpace(p.MembershipRelation); trimmed != "" {
 		return trimmed
 	}
@@ -377,15 +381,13 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // findings) per the "tolerant by design" stance. Security-relevant
 // invariants like the ones above are the exception.
 //
-// Membership-relation hardening (TKT-Z8A62F) is advisory: when an
-// operator configures a non-default [Policy.MembershipRelation],
-// Validate emits an `slog.Warn` if the relation can have no effect
-// (empty Assignments) or is an un-gated escalation foot-gun (no
-// `role_relations.<rel>.requires_permission`). These warn-and-continue
-// rather than fail — consistent with the un-gated default `member-of`,
-// which is documented in `docs/security.md` but not enforced either.
-// A dedicated authorization-misconfiguration audit is tracked in
-// TKT-TS0J5K.
+// Validate is a pure structural gate: it does NOT flag escalation
+// foot-guns, dead/inert config, or policy-vs-metamodel drift. Those
+// advisory checks (including the un-gated / inert membership relation
+// warnings that briefly lived here in TKT-Z8A62F) belong to the
+// on-demand `rela acl audit` linter — see internal/aclaudit and
+// TKT-TS0J5K — which can rank findings by severity and cross-check the
+// metamodel, neither of which fits a boot gate.
 func (p *Policy) Validate() error {
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
@@ -421,34 +423,7 @@ func (p *Policy) Validate() error {
 			}
 		}
 	}
-	p.warnMembershipRelationHardening()
 	return nil
-}
-
-// warnMembershipRelationHardening emits advisory warnings when the
-// operator configures a non-default membership relation that is either
-// inert or an un-gated escalation foot-gun (TKT-Z8A62F). Gated on the
-// effective relation differing from the default so the standard
-// `member-of` path stays silent — that one is covered by the docs and
-// the dedicated audit follow-up (TKT-TS0J5K), not by load-time noise.
-func (p *Policy) warnMembershipRelationHardening() {
-	rel := p.membershipRelation()
-	if rel == defaultMembershipRelation {
-		return
-	}
-	if len(p.Assignments) == 0 {
-		// Note: the membership walk still feeds local-role resolution via
-		// the group-member set (computeForEntity's role-relation cross
-		// product), so this is "no group-level roles", not "fully inert".
-		slog.Warn("acl: configured membership_relation confers no group-level roles; assignments map is empty",
-			"membership_relation", rel)
-	}
-	if p.RoleRelations[rel].RequiresPermission == "" {
-		slog.Warn("acl: membership_relation confers group roles but is not gated by requires_permission; "+
-			"any principal who can write this edge can grant themselves any assigned role "+
-			"(see docs/security.md, 'Hardening the membership relation')",
-			"membership_relation", rel)
-	}
 }
 
 func isBlank(s string) bool {
