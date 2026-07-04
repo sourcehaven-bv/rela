@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -301,6 +302,58 @@ func HeaderPrincipalResolver(headerName string) PrincipalResolver {
 func EnvPrincipalResolver() PrincipalResolver {
 	return func(*http.Request) principal.Principal {
 		user := sanitizeUser(os.Getenv(envDataEntryUser))
+		if user == "" {
+			return principal.Principal{}
+		}
+		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+	}
+}
+
+// SubjectVerifier verifies a signed identity assertion and returns its subject
+// (the stable OIDC `sub`). Implemented by internal/jwtauth; an interface here so
+// the resolver is testable with a stub and the dataentry package doesn't depend
+// on the concrete verifier.
+type SubjectVerifier interface {
+	VerifySubject(ctx context.Context, raw string) (string, error)
+}
+
+// JWTPrincipalResolver reads a signed identity assertion from headerName,
+// verifies it (ES256 against the proxy's JWKS, via v), and stamps the verified
+// STABLE subject as Principal.User. This is provider-agnostic — any OIDC proxy
+// that injects a signed JWT works by configuring the issuer/audience/JWKS/header.
+//
+// Unlike [HeaderPrincipalResolver] (which trusts the proxy set the header), this
+// resolver CRYPTOGRAPHICALLY verifies the assertion, so it is safe even when the
+// header could reach the server from the network — a spoofed header without a
+// valid signature simply fails verification and falls through.
+//
+// Tool is [principal.ToolDataEntry]: the assertion changes WHO authenticated, not
+// the entry point (a verified user still arrives via the data-entry HTTP surface).
+//
+// A missing header, an "Authorization: Bearer" wrapper (stripped), or any
+// verification failure yields a zero Principal so the chain falls through — a nil
+// v also yields an inert resolver. Empty headerName ⇒ inert (matches the
+// disabled-flag shape of the other resolvers).
+func JWTPrincipalResolver(v SubjectVerifier, headerName string) PrincipalResolver {
+	if v == nil || headerName == "" {
+		return func(*http.Request) principal.Principal { return principal.Principal{} }
+	}
+	return func(r *http.Request) principal.Principal {
+		raw := strings.TrimSpace(r.Header.Get(headerName))
+		raw = strings.TrimPrefix(raw, "Bearer ")
+		raw = strings.TrimPrefix(raw, "bearer ")
+		if raw == "" {
+			return principal.Principal{}
+		}
+		sub, err := v.VerifySubject(r.Context(), raw)
+		if err != nil || sub == "" {
+			return principal.Principal{}
+		}
+		// The subject is a controlled id (opaque, from the IdP), but sanitize it
+		// the same way as header/env users for defense in depth (length cap,
+		// control-char strip). A control-only value sanitizes to "" and falls
+		// through.
+		user := sanitizeUser(sub)
 		if user == "" {
 			return principal.Principal{}
 		}

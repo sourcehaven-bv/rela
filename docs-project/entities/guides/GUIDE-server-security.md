@@ -195,6 +195,49 @@ Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.
 
+### Verified JWT identity (`--jwt-*`)
+
+A third, **stronger** attribution source: a signed identity assertion
+(an ES256 JWT) from an OIDC identity proxy — Pratique, oauth2-proxy,
+Pomerium, Keycloak, and the like. Unlike `--principal-header`, this
+path does not *trust* that a proxy set a header; it **cryptographically
+verifies** the assertion, so a spoofed header without a valid signature
+simply fails verification and falls through (it does not authenticate).
+
+Enable it by setting all three (env fallbacks `$RELA_JWT_ISSUER` /
+`_AUDIENCE` / `_JWKS_URL`):
+
+- **`--jwt-issuer`** — the expected `iss` of the assertion.
+- **`--jwt-audience`** — this server's id (the `aud` the proxy mints for
+  it); enforced strictly as a confused-deputy guard.
+- **`--jwt-jwks-url`** — the proxy's JWKS endpoint; the ES256 signature
+  is verified against it (keys auto-refresh, so rotation needs no
+  restart). An unreachable JWKS at startup is fatal — identity never
+  silently no-ops.
+- **`--jwt-header`** — the request header carrying the JWT (default
+  `X-Auth-Assertion`; a leading `Bearer ` is stripped). Point it at
+  whatever your proxy injects, e.g. `X-Pratique-Assertion` or
+  `Authorization`.
+
+The verified **subject (`sub`)** — a stable, opaque user id — becomes
+`principal.user`. Keying on `sub` (not email) means a user's audit
+attribution and any `acl.yaml` assignments survive an email change.
+The verification rejects non-ES256 algorithms (including `alg:none`),
+a wrong issuer or audience, and expired or unsigned tokens.
+
+**Chain order.** When several sources are configured, `$RELA_DATAENTRY_USER`
+(local-dev override) wins, then the verified JWT, then the plain
+`--principal-header`, then `unknown`. A verified JWT is preferred over
+the plain header because it proves authenticity rather than trusting
+the network path.
+
+**Deployment.** As with any proxy-fronted setup, run `rela-server`
+bound to `0.0.0.0` behind the proxy (so it accepts the forwarded
+`Host`), and give the proxy's browser origin via `--allowed-origin`
+so same-origin API writes are permitted. The JWT signature is the
+authentication; the Host/Origin allowlists remain the browser-CSRF
+defense.
+
 ## Access control (`acl.yaml`)
 
 rela-server enforces a declarative ACL at every write entry point, and — when
