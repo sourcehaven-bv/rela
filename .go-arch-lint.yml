@@ -45,6 +45,7 @@ components:
   attachment:       { in: internal/attachment }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
+  calfeed:          { in: internal/calfeed }
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
