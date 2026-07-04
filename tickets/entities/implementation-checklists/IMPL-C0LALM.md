@@ -2,7 +2,7 @@
 id: IMPL-C0LALM
 type: implementation-checklist
 title: 'Implementation: Reposition Properties auto-save indicator inline in the section heading, hidden when idle'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

@@ -5,7 +5,7 @@ title: Reposition Properties auto-save indicator inline in the section heading, 
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: review
 ---
 
 ## Description

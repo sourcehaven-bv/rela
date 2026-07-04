@@ -313,5 +313,34 @@ describe('SectionEditForm', () => {
       // via the #indicator slot, as cards/list do).
       expect(wrapper.findAll('[data-testid="autosave-indicator"]')).toHaveLength(1)
     })
+
+    it('treats an empty-string heading as headless (no header row, single indicator) — RR-32ARO9', () => {
+      // The EntityDetail wiring passes `:heading="section.heading"`, which is
+      // '' for a headingless configured properties section. That must NOT
+      // render an empty header row; it falls back to the headless path.
+      const { wrapper } = mountForm({ heading: '' })
+      expect(wrapper.find('.section-edit-form-header').exists()).toBe(false)
+      expect(wrapper.findAll('[data-testid="autosave-indicator"]')).toHaveLength(1)
+    })
+
+    it('lets a host #indicator slot override the default fallback (cards/list path) — RR-95OACT', () => {
+      const wrapper = mount(SectionEditForm, {
+        props: {
+          entityType: 'ticket',
+          entityId: 'TKT-001',
+          initialValues: { title: 'Original', status: 'open' },
+          fields: makeFields(),
+          onPropertyApplied: vi.fn(),
+          onError: vi.fn(),
+          onVerdictFlip: vi.fn(),
+        },
+        slots: {
+          indicator: '<span class="host-indicator">HOST</span>',
+        },
+      })
+      // Host slot content wins; the default AutoSaveIndicator is not rendered.
+      expect(wrapper.find('.host-indicator').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="autosave-indicator"]').exists()).toBe(false)
+    })
   })
 })

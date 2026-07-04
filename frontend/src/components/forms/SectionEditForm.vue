@@ -275,6 +275,10 @@ defineExpose({
   border-bottom: 1px solid var(--border-color);
 }
 
+/* KEEP IN SYNC with EntityDetail.vue `.section-heading` (RR-ZE29PY). Scoped
+   styles don't cross components, so this deliberately duplicates that rule
+   (font, margin, border via the row) — the Properties heading must match
+   every sibling section heading on the page. */
 .section-edit-form-header .section-heading {
   font-size: 18px;
   font-weight: 600;

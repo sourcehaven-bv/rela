@@ -40,9 +40,25 @@ const renderState = computed(() => {
 })
 
 // Visible while saving/saved/error; invisible (faded out) when idle. Kept in
-// the DOM either way so the opacity transition can run and aria-live still
-// announces state changes.
+// the DOM either way so the opacity transition can run.
 const visible = computed(() => props.error != null || props.status !== 'idle')
+
+// Screen-reader announcement. A live region announces its TEXT CONTENT, not
+// attribute changes — the glyphs are aria-hidden SVGs, so state is conveyed
+// through this visually-hidden text node instead (RR-4SN00Y). Empty at idle
+// so the live region has nothing to announce on mount or when settling back
+// to idle; only saving/saved/error produce a message.
+const announcement = computed(() => {
+  if (props.error != null || props.status === 'error') return 'Save failed'
+  switch (props.status) {
+    case 'saving':
+      return 'Saving…'
+    case 'saved':
+      return 'Saved'
+    default:
+      return ''
+  }
+})
 </script>
 
 <template>
@@ -52,10 +68,7 @@ const visible = computed(() => props.error != null || props.status !== 'idle')
     :title="tooltip"
     data-testid="autosave-indicator"
     :data-status="status"
-    :data-visible="visible"
-    role="status"
-    aria-live="polite"
-    :aria-label="tooltip"
+    aria-hidden="true"
   >
     <!-- Saved: check mark in circle (no cloud — rela is local-first) -->
     <svg
@@ -108,6 +121,13 @@ const visible = computed(() => props.error != null || props.status !== 'idle')
       />
     </svg>
   </div>
+
+  <!--
+    Visually-hidden live region: announces the save state via changing TEXT
+    (the glyph SVGs are aria-hidden). Empty at idle so nothing is announced
+    on mount or when settling back to idle (RR-4SN00Y).
+  -->
+  <span class="autosave-sr-only" role="status" aria-live="polite">{{ announcement }}</span>
 </template>
 
 <style scoped>
@@ -126,11 +146,24 @@ const visible = computed(() => props.error != null || props.status !== 'idle')
 }
 
 /* Hidden-until-needed: idle fades out over 0.3s. Stays in the DOM (opacity,
-   not v-if) so the saved → idle transition animates and aria-live still
-   announces. pointer-events off so the invisible glyph isn't hoverable. */
+   not v-if) so the saved → idle transition animates. pointer-events off so
+   the invisible glyph isn't hoverable. */
 .autosave-hidden {
   opacity: 0;
   pointer-events: none;
+}
+
+/* Visually hidden but exposed to assistive tech (the standard sr-only clip). */
+.autosave-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
