@@ -2,7 +2,9 @@ package metamodel
 
 import (
 	"errors"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -535,6 +537,41 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 			},
 			properties: map[string]interface{}{"voornaam": nil, "achternaam": "Vloothuis"},
 			want:       "Vloothuis",
+		},
+		{
+			name: "template adjacent placeholders with no separator",
+			def: EntityDef{
+				DisplayProperty: "{a}{b}",
+				Properties: map[string]PropertyDef{
+					"a": {Type: "string"},
+					"b": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"a": "foo", "b": "bar"},
+			want:       "foobar",
+		},
+		{
+			name: "template property value containing braces is not re-substituted",
+			def: EntityDef{
+				DisplayProperty: "{a}",
+				Properties: map[string]PropertyDef{
+					"a": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"a": "{b}"},
+			want:       "{b}",
+		},
+		{
+			name: "template unicode value passes through intact",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"voornaam": "José", "achternaam": "Müller"},
+			want:       "José Müller",
 		},
 	}
 
@@ -1753,5 +1790,144 @@ validations:
 	h2 := rule.Content.RequiredHeaders[1]
 	if h2.Pattern != "## (Alternative|Alternatives)" || !h2.IsPattern() {
 		t.Errorf("RequiredHeaders[1] = {Pattern: %q, IsPattern: %v}, want pattern", h2.Pattern, h2.IsPattern())
+	}
+}
+
+// TKT-NJTBQX: direct tests for the display-template scanner. These pin the
+// parse/render agreement invariant (both must treat placeholder boundaries
+// identically) and the render-side graceful-degradation branch that
+// validation normally prevents from being reached.
+
+func TestParseDisplayTemplate(t *testing.T) {
+	tests := []struct {
+		name    string
+		tmpl    string
+		want    []string
+		wantErr string
+	}{
+		{name: "single placeholder", tmpl: "{a}", want: []string{"a"}},
+		{name: "two with literal", tmpl: "{a} {b}", want: []string{"a", "b"}},
+		{name: "adjacent placeholders", tmpl: "{a}{b}", want: []string{"a", "b"}},
+		{name: "literal only around one field", tmpl: "Mr. {a}", want: []string{"a"}},
+		{name: "leading close brace is literal", tmpl: "a}{b}", want: []string{"b"}},
+		{name: "trailing close brace is literal", tmpl: "{a}}", want: []string{"a"}},
+		{name: "nested open treated as name char", tmpl: "{a{b}", want: []string{"a{b"}},
+		{name: "unclosed brace errors", tmpl: "{a", wantErr: "unclosed"},
+		{name: "unclosed after valid errors", tmpl: "{a} {b", wantErr: "unclosed"},
+		{name: "empty placeholder errors", tmpl: "{}", wantErr: "empty placeholder"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseDisplayTemplate(tt.tmpl)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseDisplayTemplate(%q) error = %v, want containing %q", tt.tmpl, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseDisplayTemplate(%q) unexpected error: %v", tt.tmpl, err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("parseDisplayTemplate(%q) = %v, want %v", tt.tmpl, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderDisplayTemplate(t *testing.T) {
+	props := map[string]interface{}{"a": "foo", "b": "bar", "n": 7}
+	tests := []struct {
+		name string
+		tmpl string
+		want string
+	}{
+		{name: "concatenation with separator", tmpl: "{a} {b}", want: "foo bar"},
+		{name: "adjacent", tmpl: "{a}{b}", want: "foobar"},
+		{name: "literal passthrough", tmpl: "{a}, {b}", want: "foo, bar"},
+		{name: "non-string stringified", tmpl: "v{n}", want: "v7"},
+		{name: "missing property renders empty", tmpl: "{a} {missing}", want: "foo"},
+		{name: "whitespace collapses to single space", tmpl: "{a}   {b}", want: "foo bar"},
+		// Graceful degradation: an unclosed '{' can only reach render via the
+		// no-validate migration path; it is emitted verbatim, not dropped.
+		{name: "unclosed brace emitted verbatim", tmpl: "{a} {b", want: "foo {b"},
+		{name: "value braces are not re-scanned", tmpl: "{a}", want: "foo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := renderDisplayTemplate(tt.tmpl, props); got != tt.want {
+				t.Errorf("renderDisplayTemplate(%q) = %q, want %q", tt.tmpl, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollapseWhitespace(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"", ""},
+		{"   ", ""},
+		{"a  b", "a b"},
+		{"  a  b  ", "a b"},
+		{"a\tb\nc", "a b c"},
+	}
+	for _, tt := range tests {
+		if got := collapseWhitespace(tt.in); got != tt.want {
+			t.Errorf("collapseWhitespace(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestEntityDef_DisplayProperties(t *testing.T) {
+	tests := []struct {
+		name string
+		def  EntityDef
+		want []string
+	}{
+		{
+			name: "template returns all placeholders in order",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			want: []string{"voornaam", "achternaam"},
+		},
+		{
+			name: "bare display_property returns the single name",
+			def: EntityDef{
+				DisplayProperty: "achternaam",
+				Properties: map[string]PropertyDef{
+					"achternaam": {Type: "string"},
+				},
+			},
+			want: []string{"achternaam"},
+		},
+		{
+			name: "autoderived primary returns that name",
+			def: EntityDef{
+				Properties: map[string]PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
+			},
+			want: []string{"title"},
+		},
+		{
+			name: "no display source returns nil",
+			def: EntityDef{
+				Properties: map[string]PropertyDef{
+					"status": {Type: "status", Required: true},
+				},
+			},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.def.DisplayProperties(); !slices.Equal(got, tt.want) {
+				t.Errorf("DisplayProperties() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

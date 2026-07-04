@@ -5,7 +5,7 @@ title: display_property as a template (multi-property title)
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## TL;DR

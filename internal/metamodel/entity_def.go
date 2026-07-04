@@ -195,6 +195,34 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
+// DisplayProperties returns every property whose value backs the display
+// title, so callers can reason about the title's data sources — notably to
+// decide whether the title is unreadable when one of those properties is
+// access-controlled (see internal/dataentry mentions).
+//
+//   - Templated display_property: all placeholder property names, in order.
+//   - Bare display_property or an autoderived primary: that single name.
+//   - No display name source (autoderivation found nothing): empty.
+//
+// Unlike GetPrimaryProperty (which returns "" for a template because a
+// template names no single *writable* target), this reports the full read
+// set. The template was validated at load, so parsing here cannot fail; a
+// malformed template (only reachable via the no-validate migration path)
+// yields no names rather than an error.
+func (e *EntityDef) DisplayProperties() []string {
+	if isDisplayTemplate(e.DisplayProperty) {
+		names, err := parseDisplayTemplate(e.DisplayProperty)
+		if err != nil {
+			return nil
+		}
+		return names
+	}
+	if primary := e.GetPrimaryProperty(); primary != "" {
+		return []string{primary}
+	}
+	return nil
+}
+
 // DisplayTitle returns the display title for an entity using its
 // type's primary property. Behavior:
 //

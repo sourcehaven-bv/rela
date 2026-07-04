@@ -309,11 +309,13 @@ entities:
 renders `"Jeroen Vloothuis"` — and `"Jan van der Berg"` for someone
 with a `tussenvoegsel`. Consecutive whitespace collapses to one space
 and the result is trimmed, so an empty middle field doesn't leave a
-double space. If every placeholder is empty, the display falls back to
-the entity ID. Each placeholder must name a defined property of an
-allowed type (same rules as above), checked at load. A template names
-no single primary property, so it is display-only — it isn't a target
-for writing values.
+double space. The ID fallback applies only when the rendered result is
+empty after trimming — a template with literal text (e.g. `"Mr.
+{achternaam}"`) always renders that text, so it never falls back to the
+ID even when every placeholder is empty. Each placeholder must name a
+defined property of an allowed type (same rules as above), checked at
+load. A template names no single primary property, so it is
+display-only — it isn't a target for writing values.
 
 **Validation.** A typo, whitespace mistake, list-typed reference,
 disallowed type, or a malformed template (unclosed `{`, empty `{}`, or
