@@ -309,11 +309,11 @@ func EnvPrincipalResolver() PrincipalResolver {
 	}
 }
 
-// SubjectVerifier verifies a signed identity assertion and returns its subject
-// (the stable OIDC `sub`). Implemented by internal/jwtauth; an interface here so
-// the resolver is testable with a stub and the dataentry package doesn't depend
-// on the concrete verifier.
-type SubjectVerifier interface {
+// subjectVerifier verifies a signed identity assertion and returns its subject
+// (the stable OIDC `sub`). Satisfied by *jwtauth.Verifier; kept local (and
+// unexported, per the other consumer interfaces here) so the dataentry package
+// doesn't import the concrete verifier and the resolver is testable with a stub.
+type subjectVerifier interface {
 	VerifySubject(ctx context.Context, raw string) (string, error)
 }
 
@@ -330,18 +330,17 @@ type SubjectVerifier interface {
 // Tool is [principal.ToolDataEntry]: the assertion changes WHO authenticated, not
 // the entry point (a verified user still arrives via the data-entry HTTP surface).
 //
-// A missing header, an "Authorization: Bearer" wrapper (stripped), or any
-// verification failure yields a zero Principal so the chain falls through — a nil
-// v also yields an inert resolver. Empty headerName ⇒ inert (matches the
-// disabled-flag shape of the other resolvers).
-func JWTPrincipalResolver(v SubjectVerifier, headerName string) PrincipalResolver {
+// A missing header, an "Authorization: Bearer <jwt>" wrapper (the scheme is
+// stripped case-insensitively per RFC 6750), or any verification failure yields a
+// zero Principal so the chain falls through — a nil v also yields an inert
+// resolver. Empty headerName ⇒ inert (matches the disabled-flag shape of the
+// other resolvers).
+func JWTPrincipalResolver(v subjectVerifier, headerName string) PrincipalResolver {
 	if v == nil || headerName == "" {
 		return func(*http.Request) principal.Principal { return principal.Principal{} }
 	}
 	return func(r *http.Request) principal.Principal {
-		raw := strings.TrimSpace(r.Header.Get(headerName))
-		raw = strings.TrimPrefix(raw, "Bearer ")
-		raw = strings.TrimPrefix(raw, "bearer ")
+		raw := stripBearer(r.Header.Get(headerName))
 		if raw == "" {
 			return principal.Principal{}
 		}
@@ -359,6 +358,24 @@ func JWTPrincipalResolver(v SubjectVerifier, headerName string) PrincipalResolve
 		}
 		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 	}
+}
+
+// stripBearer trims the header value and removes an optional "Bearer" auth
+// scheme (case-insensitive, per RFC 6750, tolerating any run of whitespace after
+// it) so the header may carry either a raw JWT or an "Authorization: Bearer <jwt>"
+// value. Returns the bare token, or "" if the value is empty.
+func stripBearer(v string) string {
+	v = strings.TrimSpace(v)
+	const scheme = "bearer"
+	if len(v) > len(scheme) && strings.EqualFold(v[:len(scheme)], scheme) {
+		rest := v[len(scheme):]
+		if trimmed := strings.TrimLeft(rest, " \t"); trimmed != rest {
+			// Only strip when the scheme was actually followed by whitespace, so a
+			// token that merely starts with "bearer" isn't mangled.
+			return strings.TrimSpace(trimmed)
+		}
+	}
+	return v
 }
 
 // ChainResolvers returns a resolver that tries each supplied

@@ -39,11 +39,40 @@ func TestJWTPrincipalResolver_VerifiedSubjectBecomesUser(t *testing.T) {
 
 func TestJWTPrincipalResolver_StripsBearerPrefix(t *testing.T) {
 	v := stubVerifier{validToken: "good.jwt.token", subject: "usr_abc123"}
-	got := runResolver(t,
-		ChainResolvers(JWTPrincipalResolver(v, "Authorization")),
-		map[string]string{"Authorization": "Bearer good.jwt.token"})
-	if got.User != "usr_abc123" {
-		t.Errorf("User = %q, want subject (Bearer prefix should be stripped)", got.User)
+	// The Bearer scheme is stripped case-insensitively (RFC 6750) with any run of
+	// whitespace after it — so all these header values resolve to the same user.
+	for _, header := range []string{
+		"Bearer good.jwt.token",
+		"bearer good.jwt.token",
+		"BEARER good.jwt.token",
+		"Bearer\tgood.jwt.token",
+		"Bearer  good.jwt.token",
+		"  Bearer good.jwt.token  ",
+	} {
+		got := runResolver(t,
+			ChainResolvers(JWTPrincipalResolver(v, "Authorization")),
+			map[string]string{"Authorization": header})
+		if got.User != "usr_abc123" {
+			t.Errorf("header %q: User = %q, want subject (Bearer should be stripped)", header, got.User)
+		}
+	}
+}
+
+// TestStripBearer covers the parser directly, including the "don't mangle a token
+// that merely starts with 'bearer'" case.
+func TestStripBearer(t *testing.T) {
+	cases := map[string]string{
+		"good.jwt.token":         "good.jwt.token",
+		"Bearer good.jwt.token":  "good.jwt.token",
+		"bearer\tgood.jwt.token": "good.jwt.token",
+		"  raw.token  ":          "raw.token",
+		"bearerish.token":        "bearerish.token", // no whitespace after 'bearer' → not a scheme
+		"":                       "",
+	}
+	for in, want := range cases {
+		if got := stripBearer(in); got != want {
+			t.Errorf("stripBearer(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

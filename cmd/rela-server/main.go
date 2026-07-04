@@ -121,12 +121,6 @@ func envOr(key, def string) string {
 	return def
 }
 
-// buildJWTResolver builds the signed-JWT principal resolver from the flags,
-// returning it plus the header name it reads (empty when disabled). JWT identity
-// is enabled only when issuer, audience, and JWKS URL are all set; a build
-// failure (e.g. unreachable JWKS) is fatal so identity never silently no-ops. An
-// inert resolver + "" header is returned when disabled.
-//
 // wirePrincipalResolvers installs the principal-resolver chain on the app.
 //
 // Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch) wins over any
@@ -137,6 +131,16 @@ func envOr(key, def string) string {
 // coverage-ignore: startup wiring.
 func wirePrincipalResolvers(app *dataentry.App, f *serverFlags) {
 	jwtResolver, jwtHeader := buildJWTResolver(context.Background(), f)
+	if jwtHeader != "" && f.principalHeader != "" {
+		// Both a verified JWT and a plain trusted header are enabled. Because the
+		// JWT sits ahead of the plain header in the chain, a JWT verification
+		// failure falls THROUGH to the spoofable plain header — a downgrade path an
+		// attacker could exploit by, e.g., briefly disrupting the JWKS. Warn loudly.
+		slog.Warn("both --jwt-* and --principal-header are enabled: a JWT failure "+
+			"downgrades to the plain (spoofable) header. Prefer one identity source. "+
+			"See docs/server-security.md.",
+			"jwt_header", jwtHeader, "principal_header", f.principalHeader)
+	}
 	app.SetPrincipalResolver(dataentry.ChainResolvers(
 		dataentry.EnvPrincipalResolver(),
 		jwtResolver,
@@ -152,6 +156,13 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags) {
 	app.SetPrincipalHeader(varyHeader)
 }
 
+// buildJWTResolver builds the signed-JWT principal resolver from the flags,
+// returning it plus the header name it reads (empty when disabled). JWT identity
+// is enabled only when issuer, audience, and JWKS URL are all set. A build
+// failure — a bad config, a non-https JWKS URL, or an unreachable JWKS — is fatal
+// so identity never silently no-ops (jwtauth.New fetches the JWKS up front and
+// errors if it can't). Returns an inert resolver + "" header when disabled.
+//
 // coverage-ignore: startup wiring — exercised via the resolver's own tests.
 func buildJWTResolver(ctx context.Context, f *serverFlags) (resolver dataentry.PrincipalResolver, header string) {
 	if f.jwtIssuer == "" || f.jwtAudience == "" || f.jwtJWKSURL == "" {

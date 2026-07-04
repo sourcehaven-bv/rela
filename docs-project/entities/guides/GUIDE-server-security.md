@@ -212,8 +212,10 @@ Enable it by setting all three (env fallbacks `$RELA_JWT_ISSUER` /
   it); enforced strictly as a confused-deputy guard.
 - **`--jwt-jwks-url`** — the proxy's JWKS endpoint; the ES256 signature
   is verified against it (keys auto-refresh, so rotation needs no
-  restart). An unreachable JWKS at startup is fatal — identity never
-  silently no-ops.
+  restart). Must be `https` (the JWKS is the root of trust — cleartext
+  would let an on-path attacker substitute a signing key; loopback URLs
+  are exempted for local testing). An unreachable JWKS at startup is
+  fatal — identity never silently no-ops.
 - **`--jwt-header`** — the request header carrying the JWT (default
   `X-Auth-Assertion`; a leading `Bearer` prefix is stripped). Point it at
   whatever your proxy injects, e.g. `X-Pratique-Assertion` or
