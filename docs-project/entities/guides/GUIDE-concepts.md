@@ -40,7 +40,7 @@ Requirements describe what the system must do. They can be:
 - **Non-functional** (NFR): Quality attributes like performance, security
 
 ```bash
-rela create requirement --title "System must authenticate users via OAuth 2.0"
+rela create requirement -P title="System must authenticate users via OAuth 2.0"
 ```
 
 ### Decisions
@@ -54,7 +54,7 @@ significant choices made during design. They should explain:
 - Consequences
 
 ```bash
-rela create decision --title "Use JWT tokens for session management"
+rela create decision -P title="Use JWT tokens for session management"
 ```
 
 ### Solutions
@@ -63,7 +63,7 @@ Solutions describe how decisions are implemented at a design level. They bridge
 the gap between abstract decisions and concrete components.
 
 ```bash
-rela create solution --title "Auth service with Redis-backed token storage"
+rela create solution -P title="Auth service with Redis-backed token storage"
 ```
 
 ### Components
@@ -77,7 +77,7 @@ could be:
 - Infrastructure resources
 
 ```bash
-rela create component --title "auth-service Docker container"
+rela create component -P title="auth-service Docker container"
 ```
 
 ## Relations
@@ -104,10 +104,10 @@ Decision ──────────→ Requirement    Solution ────�
 
 ```bash
 # Create the chain
-rela create requirement --title "Users must be authenticated"
-rela create decision --title "Implement OAuth 2.0 with PKCE"
-rela create solution --title "Auth service using Keycloak"
-rela create component --title "keycloak-deployment"
+rela create requirement -P title="Users must be authenticated"
+rela create decision -P title="Implement OAuth 2.0 with PKCE"
+rela create solution -P title="Auth service using Keycloak"
+rela create component -P title="keycloak-deployment"
 
 # Link them
 rela link DEC-001 addresses REQ-001
@@ -221,7 +221,7 @@ relations:
   addresses:
     from: [decision]
     to: [requirement]
-    min_incoming: 1  # Every requirement must be addressed by at least one decision
+    min_incoming: 1 # Every requirement must be addressed by at least one decision
 ```
 
 Check constraints with:

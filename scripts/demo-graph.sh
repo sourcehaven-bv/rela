@@ -63,9 +63,9 @@ YAML
 cd "${DEMO}"
 
 say "Creating entities with rela create"
-"${BIN}" create feature         --id FEAT-001 -t "Graph DOT export" -q
-"${BIN}" create ticket          --id TKT-001  -t "Render DOT with subgraph clusters per type" -q
-"${BIN}" create review-response --id RR-001   -t "Sanitize cluster IDs for hyphenated types" -P status=addressed -q
+"${BIN}" create feature         --id FEAT-001 -P title="Graph DOT export" -q
+"${BIN}" create ticket          --id TKT-001  -P title="Render DOT with subgraph clusters per type" -q
+"${BIN}" create review-response --id RR-001   -P title="Sanitize cluster IDs for hyphenated types" -P status=addressed -q
 
 say "Creating relations with rela link"
 "${BIN}" link TKT-001 implements          FEAT-001 -q

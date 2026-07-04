@@ -69,7 +69,7 @@ func (c *ExportCmd) Run(ctx context.Context, svc *cliServices) error {
 	}
 
 	typeName := strings.TrimSuffix(c.Type, "s")
-	resolvedType, _, err := resolveEntityType(svc.Meta(), typeName)
+	resolvedType, err := resolveEntityType(svc.Meta(), typeName)
 	if err != nil {
 		return err
 	}

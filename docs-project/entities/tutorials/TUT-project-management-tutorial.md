@@ -519,7 +519,7 @@ goals for an example e-commerce platform modernization project.
 ### Create Your First Goal
 
 ```bash
-rela create goal -t "Increase customer retention by 15%"
+rela create goal -P title="Increase customer retention by 15%"
 ```
 
 This creates `entities/goals/GOAL-001.md`. Let's add more detail:
@@ -536,7 +536,7 @@ rela update GOAL-001 \
 ### Create Additional Goals
 
 ```bash
-rela create goal -t "Reduce time-to-market by 30%"
+rela create goal -P title="Reduce time-to-market by 30%"
 rela update GOAL-002 \
   -P "description=Accelerate feature delivery through improved tooling and processes" \
   -P "success_criteria=Average feature cycle time drops from 6 weeks to 4 weeks" \
@@ -544,7 +544,7 @@ rela update GOAL-002 \
   -P "priority=high" \
   -P "status=active"
 
-rela create goal -t "Achieve 99.9% platform uptime"
+rela create goal -P title="Achieve 99.9% platform uptime"
 rela update GOAL-003 \
   -P "description=Improve reliability to support business growth" \
   -P "success_criteria=Monthly uptime consistently exceeds 99.9%" \
@@ -574,21 +574,21 @@ Navigate to Goals to see all strategic objectives.
 Epics are large bodies of work that contribute to goals:
 
 ```bash
-rela create epic -t "Self-service Account Management"
+rela create epic -P title="Self-service Account Management"
 rela update EPIC-001 \
   -P "description=Enable customers to manage their accounts without support intervention" \
   -P "target_release=v2.0" \
   -P "priority=high" \
   -P "status=active"
 
-rela create epic -t "Mobile App Redesign"
+rela create epic -P title="Mobile App Redesign"
 rela update EPIC-002 \
   -P "description=Complete redesign of mobile shopping experience" \
   -P "target_release=v2.1" \
   -P "priority=high" \
   -P "status=active"
 
-rela create epic -t "Infrastructure Reliability"
+rela create epic -P title="Infrastructure Reliability"
 rela update EPIC-003 \
   -P "description=Improve system reliability through better monitoring and redundancy" \
   -P "target_release=v2.0" \
@@ -610,7 +610,7 @@ Features are specific deliverables within an epic:
 
 ```bash
 # Self-service account features
-rela create feature -t "Password Reset Flow"
+rela create feature -P title="Password Reset Flow"
 rela update FEAT-001 \
   -P "description=Allow users to reset passwords via email or SMS" \
   -P "acceptance_criteria=Users can reset password within 2 minutes" \
@@ -618,14 +618,14 @@ rela update FEAT-001 \
   -P "priority=high" \
   -P "status=ready"
 
-rela create feature -t "Profile Management"
+rela create feature -P title="Profile Management"
 rela update FEAT-002 \
   -P "description=Users can update profile info, preferences, and communication settings" \
   -P "estimate=8 points" \
   -P "priority=medium" \
   -P "status=backlog"
 
-rela create feature -t "Order History Dashboard"
+rela create feature -P title="Order History Dashboard"
 rela update FEAT-003 \
   -P "description=View past orders with filtering and search" \
   -P "estimate=8 points" \
@@ -633,7 +633,7 @@ rela update FEAT-003 \
   -P "status=backlog"
 
 # Mobile app features
-rela create feature -t "Mobile Checkout Redesign"
+rela create feature -P title="Mobile Checkout Redesign"
 rela update FEAT-004 \
   -P "description=Streamlined mobile checkout with Apple Pay and Google Pay" \
   -P "estimate=13 points" \
@@ -641,7 +641,7 @@ rela update FEAT-004 \
   -P "status=backlog"
 
 # Infrastructure features
-rela create feature -t "Automated Failover"
+rela create feature -P title="Automated Failover"
 rela update FEAT-005 \
   -P "description=Automatic failover to backup systems on primary failure" \
   -P "estimate=13 points" \
@@ -662,17 +662,17 @@ rela link FEAT-005 partOfEpic EPIC-003
 ### Create Milestones
 
 ```bash
-rela create milestone -t "Phase 1: Foundation"
+rela create milestone -P title="Phase 1: Foundation"
 rela update MS-001 \
   -P "target_date=2024-03-31" \
   -P "status=active"
 
-rela create milestone -t "Phase 2: Self-Service Launch"
+rela create milestone -P title="Phase 2: Self-Service Launch"
 rela update MS-002 \
   -P "target_date=2024-06-30" \
   -P "status=draft"
 
-rela create milestone -t "Phase 3: Mobile Relaunch"
+rela create milestone -P title="Phase 3: Mobile Relaunch"
 rela update MS-003 \
   -P "target_date=2024-09-30" \
   -P "status=draft"
@@ -694,21 +694,21 @@ rela link FEAT-004 targetedFor MS-003
 
 ```bash
 # Tasks for Password Reset Flow
-rela create task -t "Implement email verification service"
+rela create task -P title="Implement email verification service"
 rela update TASK-001 \
   -P "description=Build service to send and verify email tokens" \
   -P "assignee=alice@example.com" \
   -P "estimate=2 days" \
   -P "status=in_progress"
 
-rela create task -t "Create password reset UI"
+rela create task -P title="Create password reset UI"
 rela update TASK-002 \
   -P "description=Frontend forms for password reset flow" \
   -P "assignee=bob@example.com" \
   -P "estimate=3 days" \
   -P "status=ready"
 
-rela create task -t "Add SMS verification option"
+rela create task -P title="Add SMS verification option"
 rela update TASK-003 \
   -P "description=Integrate Twilio for SMS-based verification" \
   -P "assignee=alice@example.com" \
@@ -716,21 +716,21 @@ rela update TASK-003 \
   -P "status=backlog"
 
 # Tasks for Automated Failover
-rela create task -t "Set up health check endpoints"
+rela create task -P title="Set up health check endpoints"
 rela update TASK-004 \
   -P "description=Add /health endpoints to all services" \
   -P "assignee=charlie@example.com" \
   -P "estimate=1 day" \
   -P "status=done"
 
-rela create task -t "Configure load balancer failover"
+rela create task -P title="Configure load balancer failover"
 rela update TASK-005 \
   -P "description=Set up automatic failover in AWS ALB" \
   -P "assignee=charlie@example.com" \
   -P "estimate=2 days" \
   -P "status=in_progress"
 
-rela create task -t "Implement database replication"
+rela create task -P title="Implement database replication"
 rela update TASK-006 \
   -P "description=Set up PostgreSQL streaming replication" \
   -P "assignee=charlie@example.com" \
@@ -768,7 +768,7 @@ rela link TASK-006 dependsOn TASK-005
 ### Track a Bug
 
 ```bash
-rela create bug -t "Password reset emails marked as spam"
+rela create bug -P title="Password reset emails marked as spam"
 rela update BUG-001 \
   -P "description=Reset emails going to spam folder for Gmail users" \
   -P "severity=major" \
@@ -777,7 +777,7 @@ rela update BUG-001 \
   -P "status=in_progress"
 
 # Create a fix task
-rela create task -t "Fix email deliverability issues"
+rela create task -P title="Fix email deliverability issues"
 rela update TASK-007 \
   -P "description=Configure SPF, DKIM, and DMARC records" \
   -P "assignee=alice@example.com" \
@@ -792,7 +792,7 @@ rela link TASK-007 fixes BUG-001
 ### Record an Architectural Decision
 
 ```bash
-rela create decision -t "Use GraphQL for Mobile API"
+rela create decision -P title="Use GraphQL for Mobile API"
 rela update DEC-001 \
   -P "context=Mobile app needs efficient data fetching with bandwidth constraints" \
   -P "options_considered=1. REST API, 2. GraphQL, 3. gRPC" \
@@ -814,7 +814,7 @@ rela link DEC-001 affects EPIC-002
 ### Record Decision in a Meeting
 
 ```bash
-rela create meeting -t "Architecture Review - Mobile API"
+rela create meeting -P title="Architecture Review - Mobile API"
 rela update MTG-001 \
   -P "date=2024-01-15" \
   -P "attendees=Alice, Bob, Charlie, Diana" \
@@ -826,7 +826,7 @@ rela link DEC-001 decidedIn MTG-001
 ### Another Decision Example
 
 ```bash
-rela create decision -t "Adopt Kubernetes for container orchestration"
+rela create decision -P title="Adopt Kubernetes for container orchestration"
 rela update DEC-002 \
   -P "context=Need container orchestration for microservices deployment" \
   -P "options_considered=1. Docker Swarm, 2. Kubernetes, 3. ECS" \
@@ -846,7 +846,7 @@ rela link DEC-002 affects EPIC-003
 ### Identify Risks
 
 ```bash
-rela create risk -t "Third-party Payment Provider API Changes"
+rela create risk -P title="Third-party Payment Provider API Changes"
 rela update RISK-001 \
   -P "description=Payment provider may deprecate current API version" \
   -P "likelihood=likely" \
@@ -857,7 +857,7 @@ rela update RISK-001 \
   -P "owner=alice@example.com" \
   -P "status=mitigating"
 
-rela create risk -t "Key Team Member Departure"
+rela create risk -P title="Key Team Member Departure"
 rela update RISK-002 \
   -P "description=Single point of failure in infrastructure knowledge" \
   -P "likelihood=possible" \
@@ -867,7 +867,7 @@ rela update RISK-002 \
   -P "owner=bob@example.com" \
   -P "status=mitigating"
 
-rela create risk -t "Mobile App Store Rejection"
+rela create risk -P title="Mobile App Store Rejection"
 rela update RISK-003 \
   -P "description=App updates may be rejected by Apple/Google" \
   -P "likelihood=possible" \
@@ -892,7 +892,7 @@ rela link RISK-003 threatens MS-003
 ### Create Mitigation Tasks
 
 ```bash
-rela create task -t "Create payment provider abstraction layer"
+rela create task -P title="Create payment provider abstraction layer"
 rela update TASK-008 \
   -P "description=Build adapter pattern for payment integrations" \
   -P "assignee=alice@example.com" \
@@ -906,7 +906,7 @@ rela link RISK-001 mitigatedBy TASK-008
 
 ```bash
 # Risk materialized!
-rela create issue -t "Stripe API v2 Sunset Announced"
+rela create issue -P title="Stripe API v2 Sunset Announced"
 rela update ISS-001 \
   -P "description=Stripe announced v2 API end-of-life in 6 months" \
   -P "impact=Must migrate before deadline or payments will fail" \
@@ -918,7 +918,7 @@ rela update ISS-001 \
 rela link RISK-001 becameIssue ISS-001
 
 # Create resolution task
-rela create task -t "Migrate to Stripe API v3"
+rela create task -P title="Migrate to Stripe API v3"
 rela update TASK-009 \
   -P "description=Update all payment integrations to use Stripe API v3" \
   -P "assignee=alice@example.com" \
@@ -933,7 +933,7 @@ rela link ISS-001 resolvedBy TASK-009
 ### Define Stakeholders
 
 ```bash
-rela create stakeholder -t "Sarah Johnson"
+rela create stakeholder -P title="Sarah Johnson"
 rela update STK-001 \
   -P "role=VP of Product" \
   -P "organization=Product Team" \
@@ -942,7 +942,7 @@ rela update STK-001 \
   -P "communication_preference=Weekly email summary + monthly steering" \
   -P "engagement_approach=Strategic updates; involve in major decisions"
 
-rela create stakeholder -t "Mike Chen"
+rela create stakeholder -P title="Mike Chen"
 rela update STK-002 \
   -P "role=Engineering Director" \
   -P "organization=Engineering" \
@@ -951,7 +951,7 @@ rela update STK-002 \
   -P "communication_preference=Daily standups + Slack" \
   -P "engagement_approach=Technical deep-dives; involve in architecture"
 
-rela create stakeholder -t "Lisa Park"
+rela create stakeholder -P title="Lisa Park"
 rela update STK-003 \
   -P "role=Customer Success Lead" \
   -P "organization=Customer Success" \
@@ -960,7 +960,7 @@ rela update STK-003 \
   -P "communication_preference=Bi-weekly sync + feature demos" \
   -P "engagement_approach=Customer feedback channel; beta testing coordination"
 
-rela create stakeholder -t "David Kim"
+rela create stakeholder -P title="David Kim"
 rela update STK-004 \
   -P "role=CFO" \
   -P "organization=Finance" \
@@ -1002,7 +1002,7 @@ rela link STK-002 attended MTG-001
 ### Record a Retrospective
 
 ```bash
-rela create retrospective -t "Sprint 23 Retrospective"
+rela create retrospective -P title="Sprint 23 Retrospective"
 rela update RETRO-001 \
   -P "date=2024-02-15" \
   -P "team=Platform Team" \
@@ -1013,14 +1013,14 @@ rela update RETRO-001 \
 ### Create Improvements from Retro
 
 ```bash
-rela create improvement -t "Implement no-meeting Wednesdays"
+rela create improvement -P title="Implement no-meeting Wednesdays"
 rela update IMP-001 \
   -P "description=Reserve Wednesdays for focused development work" \
   -P "owner=bob@example.com" \
   -P "status=in_progress" \
   -P "expected_benefit=Increase deep work time by 20%"
 
-rela create improvement -t "Add priority labels to sprint items"
+rela create improvement -P title="Add priority labels to sprint items"
 rela update IMP-002 \
   -P "description=Clear P0/P1/P2 labels on all sprint items" \
   -P "owner=alice@example.com" \
