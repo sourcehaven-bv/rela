@@ -292,6 +292,7 @@ deps:
       - goldmark
       - gogit
       - nethtml
+      - rrulego
       - singleflight
   dataentryconfig:
     mayDependOn:

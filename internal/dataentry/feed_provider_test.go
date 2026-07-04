@@ -97,8 +97,8 @@ func TestDeclarativeFeed_ListMapsAndFilters(t *testing.T) {
 		t.Fatalf("event count = %d, want 1 (status filter + no-date skip); got %+v", len(events), events)
 	}
 	e := events[0]
-	if e.UID != "task-TSK-1@rela" {
-		t.Errorf("UID = %q, want task-TSK-1@rela", e.UID)
+	if e.UID != "task--TSK-1@rela" {
+		t.Errorf("UID = %q, want task--TSK-1@rela", e.UID)
 	}
 	if e.Summary != "Renew passport" {
 		t.Errorf("summary = %q", e.Summary)
@@ -140,7 +140,7 @@ func TestDeclarativeFeed_MultiSourceMerges(t *testing.T) {
 	for _, e := range events {
 		uids[e.UID] = true
 	}
-	if !uids["task-TSK-1@rela"] || !uids["party-PTY-1@rela"] {
+	if !uids["task--TSK-1@rela"] || !uids["party--PTY-1@rela"] {
 		t.Errorf("merged UIDs wrong: %v", uids)
 	}
 }
@@ -206,7 +206,7 @@ func TestDeclarativeFeed_Get(t *testing.T) {
 	ctx := context.Background()
 
 	// get(uid) for TSK-1 == that uid's event in list.
-	ev, ok, err := d.Get(ctx, "task-TSK-1@rela")
+	ev, ok, err := d.Get(ctx, "task--TSK-1@rela")
 	if err != nil || !ok {
 		t.Fatalf("Get TSK-1: ok=%v err=%v", ok, err)
 	}
@@ -214,11 +214,11 @@ func TestDeclarativeFeed_Get(t *testing.T) {
 		t.Errorf("Get summary = %q", ev.Summary)
 	}
 	// Filtered-out entity → not in feed.
-	if _, ok, _ := d.Get(ctx, "task-TSK-2@rela"); ok {
+	if _, ok, _ := d.Get(ctx, "task--TSK-2@rela"); ok {
 		t.Error("Get returned a filtered-out (done) entity")
 	}
 	// Unknown uid → not in feed.
-	if _, ok, _ := d.Get(ctx, "task-NOPE@rela"); ok {
+	if _, ok, _ := d.Get(ctx, "task--NOPE@rela"); ok {
 		t.Error("Get returned a nonexistent entity")
 	}
 	// Malformed uid → not ok, no error.
@@ -287,6 +287,86 @@ func TestDeclarativeFeed_RruleAndEndDate(t *testing.T) {
 	}
 }
 
+func TestDeclarativeFeed_GetRejectsTypeMismatch(t *testing.T) {
+	// A source of type "task", but the store (fake here mimicking the production
+	// by-id lookup) returns an entity of a different type for the same id.
+	// Get must reject the mismatch rather than map it under the task source.
+	mod := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	wrongType := &entity.Entity{ID: "TSK-1", Type: "party", UpdatedAt: mod,
+		Properties: map[string]any{"name": "not a task", "on": "2026-07-10"}}
+	src := byIDSource{e: wrongType}
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{{EntityType: "task", Date: "due", Summary: "title"}}}
+	d := newTestFeed(t, cfg, src)
+
+	if _, ok, err := d.Get(context.Background(), "task--TSK-1@rela"); ok || err != nil {
+		t.Errorf("Get should reject a type-mismatched entity: ok=%v err=%v", ok, err)
+	}
+}
+
+// byIDSource mimics the production reader: getEntity resolves by id regardless
+// of the requested type (the type is only used for the ACL gate upstream).
+type byIDSource struct{ e *entity.Entity }
+
+func (s byIDSource) listType(_ context.Context, t string) ([]*entity.Entity, error) {
+	if s.e != nil && s.e.Type == t {
+		return []*entity.Entity{s.e}, nil
+	}
+	return nil, nil
+}
+
+func (s byIDSource) getEntity(_ context.Context, _, id string) (*entity.Entity, bool, error) {
+	if s.e != nil && s.e.ID == id {
+		return s.e, true, nil // returns whatever type it has, ignoring the requested type
+	}
+	return nil, false, nil
+}
+
+func TestDeclarativeFeed_MalformedPropertyRRuleDropped(t *testing.T) {
+	mod := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	// schedule holds a non-RRULE string; the event should render with no rrule
+	// rather than emit a broken RRULE that breaks the whole feed.
+	e := mkTask("TSK-1", "X", "todo", "2026-07-10", mod)
+	e.Properties["schedule"] = "not a rule at all"
+	src := fakeSource{byType: map[string][]*entity.Entity{"task": {e}}}
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{
+		{EntityType: "task", Date: "due", Summary: "title", Rrule: "schedule"},
+	}}
+	d := newTestFeed(t, cfg, src)
+	events, _, _ := d.List(context.Background(), feedListOpts{})
+	if len(events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(events))
+	}
+	if events[0].RRule != "" {
+		t.Errorf("malformed property rrule should be dropped, got %q", events[0].RRule)
+	}
+
+	// A well-formed property rule is kept.
+	e.Properties["schedule"] = "FREQ=WEEKLY"
+	events, _, _ = d.List(context.Background(), feedListOpts{})
+	if events[0].RRule != "FREQ=WEEKLY" {
+		t.Errorf("valid property rrule dropped: %q", events[0].RRule)
+	}
+}
+
+func TestDeclarativeFeed_UnparseableDateSkipped(t *testing.T) {
+	// An entity whose date property holds garbage is skipped (not a hard error) —
+	// pins the deliberate //nolint:nilerr tolerate-bad-data path.
+	mod := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	good := mkTask("TSK-1", "Good", "todo", "2026-07-10", mod)
+	bad := mkTask("TSK-2", "Bad date", "todo", "not-a-date", mod)
+	src := fakeSource{byType: map[string][]*entity.Entity{"task": {good, bad}}}
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{{EntityType: "task", Date: "due", Summary: "title"}}}
+	d := newTestFeed(t, cfg, src)
+
+	events, _, err := d.List(context.Background(), feedListOpts{})
+	if err != nil {
+		t.Fatalf("a bad date should skip the entity, not error: %v", err)
+	}
+	if len(events) != 1 || events[0].Summary != "Good" {
+		t.Errorf("want only the good event, got %+v", events)
+	}
+}
+
 func TestDeclarativeFeed_EmptyFeed(t *testing.T) {
 	src := fakeSource{byType: map[string][]*entity.Entity{}}
 	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{{EntityType: "task", Date: "due", Summary: "title"}}}
@@ -315,12 +395,18 @@ func TestSplitFeedUID(t *testing.T) {
 		wantType, wantID string
 		wantOK           bool
 	}{
-		{"task-TSK-001@rela", "task", "TSK-001", true}, // id contains a hyphen
-		{"party-PTY-9@rela", "party", "PTY-9", true},
-		{"task-x@other", "", "", false}, // wrong domain
-		{"garbage", "", "", false},      // no @
-		{"@rela", "", "", false},        // empty local
-		{"task-@rela", "", "", false},   // empty id
+		{"task--TSK-001@rela", "task", "TSK-001", true}, // id contains a hyphen
+		{"party--PTY-9@rela", "party", "PTY-9", true},
+		// Hyphenated entity types MUST round-trip (a single-hyphen separator
+		// would mis-split these — the reason "--" is the separator).
+		{"test-case--TC-1@rela", "test-case", "TC-1", true},
+		{"review-response--RR-3@rela", "review-response", "RR-3", true},
+		{"doc-task--DOC-9@rela", "doc-task", "DOC-9", true},
+		{"task--x@other", "", "", false},   // wrong domain
+		{"garbage", "", "", false},         // no @
+		{"@rela", "", "", false},           // empty local
+		{"task--@rela", "", "", false},     // empty id
+		{"task-TSK-1@rela", "", "", false}, // single hyphen: not our format
 	}
 	for _, tc := range tests {
 		typ, id, ok := splitFeedUID(tc.uid)
@@ -329,8 +415,15 @@ func TestSplitFeedUID(t *testing.T) {
 				tc.uid, typ, id, ok, tc.wantType, tc.wantID, tc.wantOK)
 		}
 	}
-	// Round-trips with feedUID.
-	if u := feedUID("task", "TSK-001"); u != "task-TSK-001@rela" {
-		t.Errorf("feedUID = %q", u)
+	// Round-trips with feedUID, including hyphenated types.
+	for _, tc := range []struct{ typ, id string }{
+		{"task", "TSK-001"},
+		{"test-case", "TC-1"},
+		{"review-response", "RR-3"},
+	} {
+		typ, id, ok := splitFeedUID(feedUID(tc.typ, tc.id))
+		if !ok || typ != tc.typ || id != tc.id {
+			t.Errorf("round-trip feedUID(%q,%q) = (%q,%q,%v)", tc.typ, tc.id, typ, id, ok)
+		}
 	}
 }

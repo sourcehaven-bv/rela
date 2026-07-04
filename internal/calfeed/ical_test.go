@@ -165,6 +165,29 @@ func TestETag_SensitiveToRRuleAndEnd(t *testing.T) {
 	}
 }
 
+// TestRenderEvent_NoLineBreakInjection pins that a CR/LF smuggled into any field
+// (here RRULE, which is not TEXT-escaped) cannot inject extra iCalendar lines:
+// stripLineBreaks removes them at the writeLine choke point. Without the guard, a
+// property-referenced RRULE value could inject a whole VALARM/VEVENT into the feed.
+func TestRenderEvent_NoLineBreakInjection(t *testing.T) {
+	evil := "FREQ=DAILY\r\nBEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:PT0S\r\nEND:VALARM"
+	body := testICal().RenderEvent(Event{UID: "u", Summary: "X", Start: day(7, 10), RRule: evil})
+	lines := logicalLines(t, body)
+	// The whole rule must collapse onto one RRULE line; no injected components.
+	if !containsLine(lines, "RRULE:FREQ=DAILYBEGIN:VALARMACTION:AUDIOTRIGGER:PT0SEND:VALARM") {
+		t.Errorf("RRULE not collapsed to a single line; got: %v", lines)
+	}
+	// Exactly one VEVENT boundary, no injected VALARM.
+	if countLine(lines, "BEGIN:VALARM") != 0 {
+		t.Error("CRLF injection produced a VALARM")
+	}
+	// Also verify a summary with a raw newline can't break the line.
+	sumLines := logicalLines(t, testICal().RenderEvent(Event{UID: "u", Summary: "a\r\nSUMMARY:injected", Start: day(7, 10)}))
+	if countLine(sumLines, "SUMMARY:injected") != 0 {
+		t.Error("newline in summary injected a second SUMMARY line")
+	}
+}
+
 func TestRenderEvent_VALARM(t *testing.T) {
 	withAlarm := logicalLines(t, testICal().RenderEvent(Event{
 		UID: "TSK-1@rela", Summary: "X", Start: day(7, 10),

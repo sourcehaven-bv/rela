@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	rrule "github.com/teambition/rrule-go"
+
 	"github.com/Sourcehaven-BV/rela/internal/calfeed"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -93,6 +95,14 @@ func (d *declarativeFeed) calendarName() string {
 // cursor. opts.Since is honored as an extra "modified since" gate so a client
 // re-poll only re-emits changed events; unchanged content still yields a stable
 // ETag downstream, so ignoring or honoring Since is equally correct.
+//
+// Delta caveat: the returned cursor advances only over EMITTED events. An entity
+// whose change dropped it from the feed (e.g. a filter no longer matches) does
+// not advance the watermark and will not re-appear under a since-scoped poll — a
+// delta consumer must derive tombstones itself (by diffing against the last
+// served ETag set). The live ICS/JSON path is unaffected: it always calls List
+// with an empty Since (a full enumeration), and ICS has no delete semantics
+// anyway. Only a future delta/CalDAV client needs to handle this.
 func (d *declarativeFeed) List(ctx context.Context, opts feedListOpts) ([]calfeed.Event, string, error) {
 	var since time.Time
 	if opts.Since != "" {
@@ -154,7 +164,11 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 		if err != nil {
 			return calfeed.Event{}, false, err
 		}
-		if !found {
+		// getEntity may resolve by id alone (the production reader does), so an
+		// id shared across types could return a different type than the UID
+		// named. Reject the mismatch rather than map the wrong entity under this
+		// source's rules — mirrors the entity handlers' type guards.
+		if !found || e.Type != entityType {
 			return calfeed.Event{}, false, nil
 		}
 		filters, err := filter.ParseAll(s.Where)
@@ -229,15 +243,38 @@ func (d *declarativeFeed) mapEntity(e *entity.Entity, s dataentryconfig.FeedSour
 // resolveRRule turns a source's rrule config into the event's recurrence rule.
 // A value containing "=" is a literal rule used as-is; a bare identifier is a
 // property name read from the entity (empty when the property is unset).
+//
+// The resolved value is validated as an RFC 5545 rule. A literal is already
+// checked at config load, but a property-referenced value is arbitrary entity
+// data (an unset property, a wrong-typed value, or a hostile string): an invalid
+// rule is dropped rather than emitted, so one bad entity can't produce a
+// malformed RRULE that breaks the whole feed for every subscriber — matching the
+// "skip the bad entity" policy used for unparseable dates.
 func resolveRRule(cfg string, e *entity.Entity) string {
+	var v string
 	switch {
 	case cfg == "":
 		return ""
 	case strings.Contains(cfg, "="):
-		return cfg
+		v = cfg
 	default:
-		return e.GetString(cfg)
+		v = e.GetString(cfg)
 	}
+	if v == "" || !validRRule(v) {
+		return ""
+	}
+	return v
+}
+
+// validRRule reports whether v parses as an RFC 5545 recurrence rule (with or
+// without a leading "RRULE:").
+func validRRule(v string) bool {
+	s := strings.TrimSpace(v)
+	if u := strings.ToUpper(s); strings.HasPrefix(u, "RRULE:") {
+		s = s[len("RRULE:"):]
+	}
+	_, err := rrule.StrToRRule(s)
+	return err == nil
 }
 
 // renderFeed collects all events from a provider and packages them with the

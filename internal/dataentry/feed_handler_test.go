@@ -86,7 +86,7 @@ func TestFeedHandler_ICS(t *testing.T) {
 	if !strings.Contains(body, "SUMMARY:Renew passport") {
 		t.Errorf("missing expected event; body:\n%s", body)
 	}
-	if !strings.Contains(body, "UID:task-TSK-1@rela") {
+	if !strings.Contains(body, "UID:task--TSK-1@rela") {
 		t.Errorf("missing/incorrect UID; body:\n%s", body)
 	}
 	// Deep link must be ABSOLUTE (scheme://host) so a calendar client can open

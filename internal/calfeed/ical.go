@@ -131,9 +131,25 @@ func writeProp(b *strings.Builder, name, value string) {
 
 // writeLine folds a single content line to the RFC 5545 octet limit and
 // terminates it with CRLF. The line must already be escaped.
+//
+// Any raw CR or LF in the input is stripped first: folding is the only
+// legitimate source of CRLF in the output, so a stray line break in content is
+// always a bug or an injection attempt (e.g. a CRLF-bearing property value
+// smuggling extra iCalendar lines). Stripping here makes "no unfolded line
+// breaks" a structural invariant rather than a per-field responsibility.
 func writeLine(b *strings.Builder, line string) {
-	b.WriteString(foldLine(line))
+	b.WriteString(foldLine(stripLineBreaks(line)))
 	b.WriteString(crlf)
+}
+
+// stripLineBreaks removes raw CR and LF bytes so they cannot terminate a line
+// prematurely. TEXT values render newlines as the "\n" escape (see escapeText),
+// so any surviving raw break is unwanted.
+func stripLineBreaks(s string) string {
+	if !strings.ContainsAny(s, "\r\n") {
+		return s
+	}
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
 }
 
 // escapeText escapes a TEXT value per RFC 5545 §3.3.11: backslash, semicolon,
