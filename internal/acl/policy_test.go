@@ -121,6 +121,68 @@ also_unknown:
 	}
 }
 
+// TKT-Z8A62F AC5: a non-default membership_relation that is not gated by
+// a requires_permission role-relation is an escalation foot-gun; Validate
+// emits an advisory slog.Warn and still succeeds (warn-and-continue).
+// NOT parallel: swaps the process-global default slog logger.
+func TestPolicy_MembershipRelation_UngatedWarns(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	// heeft_rol is configured + assigned but NOT gated by role_relations,
+	// so the un-gated-escalation warning must fire. Validate must still
+	// return a usable policy (no error).
+	p, err := acl.LoadPolicyBytes([]byte(`
+membership_relation: heeft_rol
+assignments:
+  engineering: editor
+roles:
+  editor:
+    read: [ticket]
+`))
+	if err != nil {
+		t.Fatalf("LoadPolicyBytes returned error; hardening checks must warn, not fail: %v", err)
+	}
+	if p.MembershipRelation != "heeft_rol" {
+		t.Errorf("MembershipRelation = %q, want heeft_rol", p.MembershipRelation)
+	}
+	logs := buf.String()
+	if !contains(logs, "requires_permission") || !contains(logs, "heeft_rol") {
+		t.Errorf("expected un-gated membership_relation warning mentioning requires_permission + heeft_rol, got:\n%s", logs)
+	}
+}
+
+// TKT-Z8A62F AC5 (companion): when the membership_relation IS gated by a
+// role_relations.requires_permission entry, the escalation warning must
+// NOT fire. The default member-of path is likewise silent (covered by the
+// many existing tests that load default policies without warnings).
+func TestPolicy_MembershipRelation_GatedNoWarn(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	if _, err := acl.LoadPolicyBytes([]byte(`
+membership_relation: heeft_rol
+assignments:
+  engineering: editor
+role_relations:
+  heeft_rol:
+    requires_permission: delegate-membership
+roles:
+  editor:
+    read: [ticket]
+    permissions: [delegate-membership]
+`)); err != nil {
+		t.Fatalf("LoadPolicyBytes: %v", err)
+	}
+	if logs := buf.String(); contains(logs, "requires_permission") {
+		t.Errorf("gated membership_relation must not warn, got:\n%s", logs)
+	}
+}
+
 // AC2.1: missing file returns an error wrapping os.ErrNotExist so
 // callers (appbuild in PR 3) can fall back to NopACL via errors.Is.
 func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {

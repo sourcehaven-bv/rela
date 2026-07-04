@@ -5,9 +5,10 @@ import (
 	"sort"
 )
 
-// computeGlobals walks member-of from the principal and unions in
-// Assignments[m] for every member m, plus the "everyone" role if
-// declared.
+// computeGlobals walks the configured membership relation (default
+// `member-of`, see [Policy.MembershipRelation]) from the principal and
+// unions in Assignments[m] for every member m, plus the "everyone" role
+// if declared.
 //
 // Called once per Request via Globals(); the result is cached for the
 // lifetime of the Request.
@@ -46,7 +47,9 @@ func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
 	return GlobalRoles{Attributions: attrs, Members: members}
 }
 
-// walkMembers returns {principal.User} ∪ transitive member-of closure.
+// walkMembers returns {principal.User} ∪ the transitive closure over
+// the configured membership relation (default `member-of`, see
+// [Policy.MembershipRelation]).
 // Visited-set primary; depthCap as backstop. Errors from the graph
 // abort the surrounding walk — under-counting members is safer than
 // over-granting, but a partial-data principal-resolution is worse
@@ -62,7 +65,7 @@ func (r *Request) walkMembers(ctx context.Context) []string {
 	for depth := 0; depth < depthCap && len(frontier) > 0; depth++ {
 		var next []string
 		for _, n := range frontier {
-			tos, err := r.d.graph.OutgoingRelations(ctx, n, "member-of")
+			tos, err := r.d.graph.OutgoingRelations(ctx, n, r.d.policy.membershipRelation())
 			if err != nil {
 				// Abort the walk loud rather than silently undercount.
 				return order

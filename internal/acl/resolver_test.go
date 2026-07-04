@@ -416,6 +416,206 @@ func TestRequest_ForEntity_AttributionsDeterministic(t *testing.T) {
 	}
 }
 
+// ---- Configurable membership relation (TKT-Z8A62F) ----------------------
+//
+// The resolver walks Policy.MembershipRelation (default "member-of") for
+// group membership. These tests pin: a configured relation is followed
+// (and attributed as a group source), the default relation is NOT
+// followed when a non-default is configured, the default applies when
+// the field is blank, and transitivity holds under a renamed relation.
+
+// hasAttribution reports whether attrs contains the given (role, source)
+// attribution.
+func hasAttribution(attrs []RoleAttribution, want RoleAttribution) bool {
+	return slices.Contains(attrs, want)
+}
+
+func TestMembershipRelation_Configured_ConfersGroupRole(t *testing.T) {
+	t.Parallel()
+	// AC1: with membership_relation=heeft_rol, a heeft_rol edge into a
+	// group named in assignments confers that group's role, attributed as
+	// a SourceGroup.
+	g := newFakeGraph()
+	g.add("alice", "heeft_rol", "engineering")
+
+	d := newTestDeclarative(t, &Policy{
+		MembershipRelation: "heeft_rol",
+		Roles:              map[string]RoleDef{"editor": {Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}, Read: []string{"ticket"}}},
+		Assignments:        map[string]string{"engineering": "editor"},
+	}, g)
+
+	req, err := d.ForPrincipal(aliceDataEntry())
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+
+	attrs := req.Globals(context.Background()).Attributions
+	want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
+	if !hasAttribution(attrs, want) {
+		t.Errorf("expected %+v in attributions, got %+v", want, attrs)
+	}
+	// The walk must have queried heeft_rol, never member-of.
+	if n := g.outgoingByRel["heeft_rol"]; n == 0 {
+		t.Errorf("expected the walk to query heeft_rol, but it did not (%v)", g.outgoingByRel)
+	}
+	if n := g.outgoingByRel["member-of"]; n != 0 {
+		t.Errorf("walk queried member-of %d times; with a configured relation it must not", n)
+	}
+}
+
+func TestMembershipRelation_Default_WhenUnset(t *testing.T) {
+	t.Parallel()
+	// AC2: an unset MembershipRelation falls back to member-of, so a
+	// member-of edge still confers the group role.
+	g := newFakeGraph()
+	g.add("alice", "member-of", "engineering")
+
+	d := newTestDeclarative(t, &Policy{
+		Roles:       map[string]RoleDef{"editor": {Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}, Read: []string{"ticket"}}},
+		Assignments: map[string]string{"engineering": "editor"},
+	}, g)
+
+	req, err := d.ForPrincipal(aliceDataEntry())
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+
+	attrs := req.Globals(context.Background()).Attributions
+	want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
+	if !hasAttribution(attrs, want) {
+		t.Errorf("expected %+v via default member-of, got %+v", want, attrs)
+	}
+}
+
+func TestMembershipRelation_Configured_DoesNotFollowMemberOf(t *testing.T) {
+	t.Parallel()
+	// AC3 (negative): with membership_relation=heeft_rol, a member-of edge
+	// is NOT followed. (The blank → match-all guard is exercised
+	// end-to-end in TestMembershipRelation_BlankNeverQueriesMatchAll, not
+	// here — this policy is non-blank, so "" could never arise anyway.)
+	g := newFakeGraph()
+	g.add("alice", "member-of", "engineering")
+
+	d := newTestDeclarative(t, &Policy{
+		MembershipRelation: "heeft_rol",
+		Roles:              map[string]RoleDef{"editor": {Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}, Read: []string{"ticket"}}},
+		Assignments:        map[string]string{"engineering": "editor"},
+	}, g)
+
+	req, err := d.ForPrincipal(aliceDataEntry())
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+
+	attrs := req.Globals(context.Background()).Attributions
+	notWant := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
+	if hasAttribution(attrs, notWant) {
+		t.Errorf("member-of edge must not confer a role when membership_relation=heeft_rol; got %+v", attrs)
+	}
+	// The walk must have queried heeft_rol (the configured relation), and
+	// must not have queried member-of.
+	if n := g.outgoingByRel["heeft_rol"]; n == 0 {
+		t.Errorf("expected the walk to query heeft_rol, but it did not (%v)", g.outgoingByRel)
+	}
+	if n := g.outgoingByRel["member-of"]; n != 0 {
+		t.Errorf("walk queried member-of %d times; with membership_relation=heeft_rol it must not", n)
+	}
+}
+
+func TestMembershipRelation_BlankNeverQueriesMatchAll(t *testing.T) {
+	t.Parallel()
+	// RR-WG5NY1: the end-to-end guard. A blank/whitespace MembershipRelation
+	// must drive the *resolver* to walk member-of, never issue a Type==""
+	// match-all query. This is the one that would fail if the resolver
+	// stopped reading through Policy.membershipRelation(); the accessor unit
+	// test (TestPolicy_membershipRelation_EffectiveName) can't catch that.
+	for _, blank := range []string{"", "   ", "\t"} {
+		t.Run("blank="+strconv.Quote(blank), func(t *testing.T) {
+			t.Parallel()
+			g := newFakeGraph()
+			g.add("alice", "member-of", "engineering")
+
+			d := newTestDeclarative(t, &Policy{
+				MembershipRelation: blank,
+				Roles:              map[string]RoleDef{"editor": {Read: []string{"ticket"}}},
+				Assignments:        map[string]string{"engineering": "editor"},
+			}, g)
+
+			req, err := d.ForPrincipal(aliceDataEntry())
+			if err != nil {
+				t.Fatalf("ForPrincipal: %v", err)
+			}
+
+			attrs := req.Globals(context.Background()).Attributions
+			want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
+			if !hasAttribution(attrs, want) {
+				t.Errorf("blank membership relation must walk member-of; expected %+v, got %+v", want, attrs)
+			}
+			if n := g.outgoingByRel[""]; n != 0 {
+				t.Errorf("resolver issued a match-all query (Type==\"\") %d times; a blank relation must never reach the store", n)
+			}
+			if n := g.outgoingByRel["member-of"]; n == 0 {
+				t.Errorf("resolver did not walk member-of for a blank relation (%v)", g.outgoingByRel)
+			}
+		})
+	}
+}
+
+func TestMembershipRelation_Configured_Transitive(t *testing.T) {
+	t.Parallel()
+	// AC4: transitivity holds under a renamed membership relation.
+	// A --heeft_rol--> B --heeft_rol--> C, assignments{C: editor} → A editor.
+	g := newFakeGraph()
+	g.add("A", "heeft_rol", "B")
+	g.add("B", "heeft_rol", "C")
+
+	d := newTestDeclarative(t, &Policy{
+		MembershipRelation: "heeft_rol",
+		Roles:              map[string]RoleDef{"editor": {Read: []string{"ticket"}}},
+		Assignments:        map[string]string{"C": "editor"},
+	}, g)
+
+	req, err := d.ForPrincipal(principal.Principal{User: "A", Tool: principal.ToolDataEntry})
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+
+	attrs := req.Globals(context.Background()).Attributions
+	want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "C"}}
+	if !hasAttribution(attrs, want) {
+		t.Errorf("expected %+v via transitive heeft_rol, got %+v", want, attrs)
+	}
+}
+
+func TestPolicy_membershipRelation_EffectiveName(t *testing.T) {
+	t.Parallel()
+	// AC6: blank/whitespace collapses to the default; a real value passes
+	// through. The accessor is the single guard against a blank relation
+	// reaching the store as a Type=="" match-all query.
+	cases := []struct {
+		name string
+		set  string
+		want string
+	}{
+		{"unset", "", "member-of"},
+		{"spaces", "   ", "member-of"},
+		{"tab", "\t", "member-of"},
+		{"newline", "\n", "member-of"},
+		{"explicit default", "member-of", "member-of"},
+		{"configured", "heeft_rol", "heeft_rol"},
+		{"configured with padding", "  heeft_rol  ", "heeft_rol"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &Policy{MembershipRelation: tc.set}
+			if got := p.membershipRelation(); got != tc.want {
+				t.Errorf("membershipRelation() with %q = %q, want %q", tc.set, got, tc.want)
+			}
+		})
+	}
+}
+
 // ---- Helpers ------------------------------------------------------------
 
 // chainID names the i'th node in a synthetic chain used by depth-cap
