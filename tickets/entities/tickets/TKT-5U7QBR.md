@@ -7,7 +7,7 @@ priority: medium
 effort: m
 tags:
     - regression
-status: review
+status: done
 ---
 
 ## Problem
