@@ -2,15 +2,15 @@
 id: REV-T7J4JV
 type: review-checklist
 title: 'Review: ACL: dedicated authorization-misconfiguration validator / audit insights (escalation foot-guns, dead assignments, un-gated membership)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [x] All tests pass (`just test`) — aclaudit + acl + cli + dependents green
-- [x] Lint clean (`just lint`) — 0 issues (aclaudit, acl, cli)
+- [x] All tests pass (`just test`) — CI Test job green on PR #1067
+- [x] Lint clean (`just lint`) — 0 issues; CI Lint + God-object + Markdown green
 - [x] Coverage maintained (`just coverage-check`) — aclaudit 90.3%; total 76.9%; floors PASS
 
 ## Code Review
@@ -18,7 +18,7 @@ status: in-progress
 - [x] Run `/code-review` (cranky-code-reviewer) + `/crit` (human, round 1 addressed)
 - [x] All critical review-responses addressed (0 critical)
 - [x] All significant review-responses addressed (RR-EG5D3E — the A1 read-only false positive)
-- [x] Self-reviewed the diff for unrelated changes (branch cleanly stacked on membership base; verified via `git diff feat/acl-configurable-membership-relation`)
+- [x] Self-reviewed the diff for unrelated changes (branch rebased onto develop after #1060 merged; only the 5 audit commits + the MD014 fix remain)
 
 **Review Responses:** design-review RR-LXI3NW, RR-UR0LJU, RR-O7H3GY, RR-TZ2S3G;
 code-review RR-EG5D3E, RR-KUOAVH, RR-O50E4R, RR-4O11EZ. All addressed. Crit
@@ -37,32 +37,30 @@ security.md clarification, e2e demo script) all addressed.
 - AC4 clean policy (incl. everyone: read: ["*"]) → zero findings, exit 0 → PASS (demo §1)
 - AC5 --json → AnalysisResult envelope → PASS (demo §6, unit)
 - AC6 membership warns gone from Validate; reproduced as aclaudit; Validate still
-hard-errors structurally → PASS (unit; verified update⊆read still fires)
+hard-errors structurally → PASS (unit)
 - AC7 arch-lint + plimsoll pass → PASS
 - Bonus: --fail-on severity threshold (from user review) → PASS (demo §5, unit)
 
 ## Documentation (enhancements only)
 
 - [x] Docs-checklist created and linked via `has-docs` (DOCS-B93LL3)
-- [x] User-facing documentation updated (acl-security guide, security.md, demo script)
+- [x] User-facing documentation updated (acl-security guide, demo script)
 - [x] Docs-checklist marked as done
 
 **Docs Checklist:** DOCS-B93LL3
 
 ## Final Checks
 
-- [x] Commit messages explain the why (4 audit commits, each with rationale)
+- [x] Commit messages explain the why (5 audit commits + MD014 fix)
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use (demo script + guide)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI — PR #1067
+- [x] All CI checks pass (23 pass, 1 skip; the only failure was the "Rela Tickets"
+guard flagging this checklist while in-progress — checking these boxes + marking
+done clears it, same as #1060)
+- [x] PR URL documented below
 
-**PR:** *pending — TKT-TS0J5K is stacked on PR #1060 (membership). Per the
-agreed sequencing, wait for #1060 to merge to develop, then rebase this branch
-onto develop and open the audit PR. REV stays in-progress until the PR exists +
-CI passes (the "in-progress review checklist cannot be merged" CI guard is
-correct here).*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1067

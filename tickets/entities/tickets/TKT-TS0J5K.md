@@ -5,7 +5,7 @@ title: 'ACL: dedicated authorization-misconfiguration validator / audit insights
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Follow-up from TKT-Z8A62F. Design settled in RES-VWNN2T; design-review in
