@@ -290,9 +290,36 @@ values) are stringified via `fmt.Sprintf("%v", val)`. The display
 falls back to the entity ID when the value is empty, missing, or
 `nil`.
 
-**Validation.** A typo, whitespace mistake, list-typed reference, or
-disallowed type fails metamodel-load with a diagnostic naming the
-entity, the offending value, and the available properties.
+**Templates.** When `display_property` contains a `{`, it is a
+template: each `{propname}` placeholder is replaced with that
+property's value, and literal text (spaces, commas) passes through.
+This composes a display name from several fields:
+
+```yaml
+entities:
+  persoon:
+    label: Persoon
+    display_property: "{voornaam} {tussenvoegsel} {achternaam}"
+    properties:
+      voornaam: { type: string }
+      tussenvoegsel: { type: string }
+      achternaam: { type: string, required: true }
+```
+
+renders `"Jeroen Vloothuis"` — and `"Jan van der Berg"` for someone
+with a `tussenvoegsel`. Consecutive whitespace collapses to one space
+and the result is trimmed, so an empty middle field doesn't leave a
+double space. If every placeholder is empty, the display falls back to
+the entity ID. Each placeholder must name a defined property of an
+allowed type (same rules as above), checked at load. A template names
+no single primary property, so it is display-only — it isn't a target
+for writing values.
+
+**Validation.** A typo, whitespace mistake, list-typed reference,
+disallowed type, or a malformed template (unclosed `{`, empty `{}`, or
+a placeholder naming an undefined property) fails metamodel-load with a
+diagnostic naming the entity, the offending value, and the available
+properties.
 
 How the data-entry app surfaces the display name across lists, cards,
 breadcrumbs, and related-entity links is documented in

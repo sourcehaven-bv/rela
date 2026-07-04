@@ -270,6 +270,22 @@ func TestEntityDef_GetPrimaryProperty(t *testing.T) {
 			},
 			want: "title",
 		},
+		// TKT-NJTBQX: a templated display_property has no single primary
+		// property (it is readonly-derived), so GetPrimaryProperty is "" —
+		// even though a required `title` exists that the priority list would
+		// otherwise pick.
+		{
+			name: "templated display_property returns empty (AC8)",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"title":      {Type: "string", Required: true},
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -433,6 +449,92 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 			},
 			properties: map[string]interface{}{"other": "foo"},
 			want:       "ENT-001",
+		},
+		// TKT-NJTBQX: display_property as a template.
+		{
+			name: "template concatenates two properties (AC1)",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+			want:       "Jeroen Vloothuis",
+		},
+		{
+			name: "template collapses whitespace when middle field empty (AC2)",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {tussenvoegsel} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":      {Type: "string"},
+					"tussenvoegsel": {Type: "string"},
+					"achternaam":    {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"voornaam": "Jeroen", "tussenvoegsel": "", "achternaam": "Vloothuis"},
+			want:       "Jeroen Vloothuis",
+		},
+		{
+			name: "template with all placeholders empty falls back to ID (AC3)",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {tussenvoegsel} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":      {Type: "string"},
+					"tussenvoegsel": {Type: "string"},
+					"achternaam":    {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"voornaam": "", "tussenvoegsel": "", "achternaam": ""},
+			want:       "ENT-001",
+		},
+		{
+			name: "template with all placeholders missing falls back to ID (AC3)",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{},
+			want:       "ENT-001",
+		},
+		{
+			name: "template passes literal punctuation through (AC5)",
+			def: EntityDef{
+				DisplayProperty: "{achternaam}, {voornaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+			want:       "Vloothuis, Jeroen",
+		},
+		{
+			name: "template stringifies non-string property values",
+			def: EntityDef{
+				DisplayProperty: "v{version}",
+				Properties: map[string]PropertyDef{
+					"version": {Type: PropertyTypeInteger},
+				},
+			},
+			properties: map[string]interface{}{"version": 42},
+			want:       "v42",
+		},
+		{
+			name: "template nil-valued placeholder renders empty",
+			def: EntityDef{
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string"},
+				},
+			},
+			properties: map[string]interface{}{"voornaam": nil, "achternaam": "Vloothuis"},
+			want:       "Vloothuis",
 		},
 	}
 
