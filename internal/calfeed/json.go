@@ -22,8 +22,10 @@ type jsonEvent struct {
 	Summary     string      `json:"summary"`
 	Description string      `json:"description,omitempty"`
 	URL         string      `json:"url,omitempty"`
-	Date        string      `json:"date"`   // YYYY-MM-DD (all-day)
-	AllDay      bool        `json:"allDay"` // always true in Phase 1
+	Date        string      `json:"date"`              // YYYY-MM-DD (all-day)
+	EndDate     string      `json:"endDate,omitempty"` // YYYY-MM-DD, for a range
+	AllDay      bool        `json:"allDay"`            // always true in Phase 1
+	RRule       string      `json:"rrule,omitempty"`   // bare RFC 5545 recurrence rule
 	Alarms      []jsonAlarm `json:"alarms,omitempty"`
 }
 
@@ -50,6 +52,10 @@ func RenderJSON(f Feed) ([]byte, error) {
 			URL:         e.URL,
 			Date:        e.Start.Format(time.DateOnly),
 			AllDay:      true,
+			RRule:       e.RRule,
+		}
+		if !e.End.IsZero() {
+			je.EndDate = e.End.Format(time.DateOnly)
 		}
 		for _, a := range e.Alarms {
 			je.Alarms = append(je.Alarms, jsonAlarm(a))

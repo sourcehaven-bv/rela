@@ -130,6 +130,41 @@ func TestRenderEvent_StableAcrossRenders(t *testing.T) {
 	}
 }
 
+func TestRenderEvent_RRuleAndDTEND(t *testing.T) {
+	lines := logicalLines(t, testICal().RenderEvent(Event{
+		UID: "u", Summary: "Ranged recurring", Start: day(7, 10), End: day(7, 13),
+		RRule: "FREQ=DAILY",
+	}))
+	if !containsLine(lines, "DTSTART;VALUE=DATE:20260710") {
+		t.Error("missing DTSTART")
+	}
+	if !containsLine(lines, "DTEND;VALUE=DATE:20260713") {
+		t.Errorf("missing/incorrect DTEND; got %v", lines)
+	}
+	if !containsLine(lines, "RRULE:FREQ=DAILY") {
+		t.Errorf("missing RRULE; got %v", lines)
+	}
+
+	// Neither present when unset.
+	plain := logicalLines(t, testICal().RenderEvent(Event{UID: "u", Summary: "Plain", Start: day(7, 10)}))
+	for _, l := range plain {
+		if strings.HasPrefix(l, "DTEND") || strings.HasPrefix(l, "RRULE") {
+			t.Errorf("unexpected %q on a plain event", l)
+		}
+	}
+}
+
+func TestETag_SensitiveToRRuleAndEnd(t *testing.T) {
+	ic := testICal()
+	base := Event{UID: "u", Summary: "X", Start: day(7, 10)}
+	if ic.ETag(base) == ic.ETag(Event{UID: "u", Summary: "X", Start: day(7, 10), RRule: "FREQ=DAILY"}) {
+		t.Error("ETag unchanged after adding RRULE")
+	}
+	if ic.ETag(base) == ic.ETag(Event{UID: "u", Summary: "X", Start: day(7, 10), End: day(7, 12)}) {
+		t.Error("ETag unchanged after adding DTEND")
+	}
+}
+
 func TestRenderEvent_VALARM(t *testing.T) {
 	withAlarm := logicalLines(t, testICal().RenderEvent(Event{
 		UID: "TSK-1@rela", Summary: "X", Start: day(7, 10),

@@ -298,6 +298,8 @@ deps:
       - filter
       - git
       - metamodel
+    canUse:
+      - rrulego
   desktop:
     canUse:
       - wails

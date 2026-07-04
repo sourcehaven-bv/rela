@@ -97,6 +97,38 @@ func TestValidateFeeds_Errors(t *testing.T) {
 	}
 }
 
+func TestValidateFeeds_RruleAndEndDate(t *testing.T) {
+	valid := []FeedSource{
+		{EntityType: "task", Date: "due", Summary: "title", Rrule: "FREQ=DAILY"},           // literal
+		{EntityType: "task", Date: "due", Summary: "title", Rrule: "FREQ=WEEKLY;COUNT=10"}, // bounded literal
+		{EntityType: "task", Date: "due", Summary: "title", Rrule: "RRULE:FREQ=DAILY"},     // literal w/ prefix
+		{EntityType: "note", Date: "on", Summary: "text", Rrule: "on"},                     // property ref (on is date-typed but exists)
+		{EntityType: "note", Date: "on", Summary: "text", EndDate: "on"},                   // end_date property
+	}
+	for i, src := range valid {
+		cfg := &Config{Feeds: map[string]Feed{"f": {Sources: []FeedSource{src}}}}
+		if errs := validateFeeds(cfg, feedMetamodel()); len(errs) != 0 {
+			t.Errorf("valid[%d] %+v: unexpected errors: %v", i, src, errs)
+		}
+	}
+
+	bad := []struct {
+		src FeedSource
+		sub string
+	}{
+		{FeedSource{EntityType: "task", Date: "due", Summary: "title", Rrule: "FREQ=NONSENSE"}, "not a valid RFC 5545"},
+		{FeedSource{EntityType: "task", Date: "due", Summary: "title", Rrule: "nope"}, "neither a valid RRULE"},
+		{FeedSource{EntityType: "task", Date: "due", Summary: "title", EndDate: "nope"}, "end_date property \"nope\""},
+		{FeedSource{EntityType: "task", Date: "due", Summary: "title", EndDate: "title"}, "end_date property \"title\" must be date-typed"},
+	}
+	for _, tc := range bad {
+		cfg := &Config{Feeds: map[string]Feed{"f": {Sources: []FeedSource{tc.src}}}}
+		if !containsSub(validateFeeds(cfg, feedMetamodel()), tc.sub) {
+			t.Errorf("expected error containing %q for %+v; got %v", tc.sub, tc.src, validateFeeds(cfg, feedMetamodel()))
+		}
+	}
+}
+
 func TestValidateFeeds_NoSources(t *testing.T) {
 	cfg := &Config{Feeds: map[string]Feed{"empty": {}}}
 	errs := validateFeeds(cfg, feedMetamodel())

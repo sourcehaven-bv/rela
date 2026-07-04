@@ -3,10 +3,31 @@ package dataentryconfig
 import (
 	"fmt"
 	"regexp"
+	"strings"
+
+	rrule "github.com/teambition/rrule-go"
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
+
+// rruleIsLiteral reports whether an rrule config value is a literal RFC 5545
+// rule (rather than a property reference). The two are disambiguated by syntax:
+// a literal contains "=" (RRULE parts are KEY=VALUE), which a bare property
+// identifier never does. Syntax-based (not schema-based) so the same config
+// line means the same thing regardless of the project's properties.
+func rruleIsLiteral(v string) bool { return strings.Contains(v, "=") }
+
+// parseLiteralRRule validates a literal RRULE string via rrule-go. rrule-go's
+// StrToRRule wants the bare rule (no "RRULE:" prefix), so any prefix is stripped.
+func parseLiteralRRule(v string) error {
+	s := strings.TrimSpace(v)
+	if u := strings.ToUpper(s); strings.HasPrefix(u, "RRULE:") {
+		s = s[len("RRULE:"):]
+	}
+	_, err := rrule.StrToRRule(s)
+	return err
+}
 
 // icalDurationRe matches an RFC 5545 duration as used for a VALARM trigger:
 // an optional sign, "P", then either a week form ("1W") or a day/time form
@@ -94,6 +115,27 @@ func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Me
 			if _, ok := entDef.Properties[f.Property]; !ok {
 				errs = append(errs, fmt.Sprintf("%s: where[%d] references unknown property %q", prefix, j, f.Property))
 			}
+		}
+	}
+
+	// EndDate: optional, must exist and be date-typed.
+	if src.EndDate != "" {
+		if def, ok := entDef.Properties[src.EndDate]; !ok {
+			errs = append(errs, fmt.Sprintf("%s: end_date property %q not in metamodel for entity %q", prefix, src.EndDate, src.EntityType))
+		} else if def.Type != metamodel.PropertyTypeDate {
+			errs = append(errs, fmt.Sprintf("%s: end_date property %q must be date-typed, is %q", prefix, src.EndDate, def.Type))
+		}
+	}
+
+	// Rrule: optional. A value with "=" is a literal RRULE (validate via
+	// rrule-go); a bare identifier is a property reference (validate existence).
+	if src.Rrule != "" {
+		if rruleIsLiteral(src.Rrule) {
+			if err := parseLiteralRRule(src.Rrule); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: rrule %q is not a valid RFC 5545 recurrence rule: %v", prefix, src.Rrule, err))
+			}
+		} else if _, ok := entDef.Properties[src.Rrule]; !ok {
+			errs = append(errs, fmt.Sprintf("%s: rrule %q is neither a valid RRULE (needs '=') nor a property of entity %q", prefix, src.Rrule, src.EntityType))
 		}
 	}
 

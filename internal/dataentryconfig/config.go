@@ -545,6 +545,15 @@ type FeedSource struct {
 	// (DTSTART;VALUE=DATE). Required in Phase 1; entities lacking a value are
 	// skipped.
 	Date string `yaml:"date" json:"date"`
+	// EndDate optionally names a date-typed property mapped to the (exclusive)
+	// end of an all-day range (DTEND;VALUE=DATE). Omit for single-day events.
+	EndDate string `yaml:"end_date,omitempty" json:"end_date,omitempty"`
+	// Rrule optionally makes events recurring. Its value is disambiguated by
+	// SYNTAX: a value containing "=" is a literal RFC 5545 rule applied to every
+	// event ("FREQ=DAILY"); a bare identifier is a property name whose value is
+	// used per entity. An unbounded rule keeps an event visible until it leaves
+	// the feed. Validated at load.
+	Rrule string `yaml:"rrule,omitempty" json:"rrule,omitempty"`
 	// Summary names a property mapped to the event title (SUMMARY). Optional;
 	// defaults to the entity type's display property when omitted.
 	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`

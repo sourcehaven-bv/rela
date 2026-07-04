@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/calfeed"
@@ -210,10 +211,33 @@ func (d *declarativeFeed) mapEntity(e *entity.Entity, s dataentryconfig.FeedSour
 	if s.Description != "" {
 		ev.Description = e.GetString(s.Description)
 	}
+	if s.EndDate != "" {
+		if endStr := e.GetString(s.EndDate); endStr != "" {
+			endDef := entDef.Properties[s.EndDate]
+			if end, err := metamodel.ParseDateValue(endStr, &endDef); err == nil {
+				ev.End = end
+			}
+		}
+	}
+	ev.RRule = resolveRRule(s.Rrule, e)
 	if s.Alarm != "" {
 		ev.Alarms = []calfeed.Alarm{{Trigger: s.Alarm}}
 	}
 	return ev, true, nil
+}
+
+// resolveRRule turns a source's rrule config into the event's recurrence rule.
+// A value containing "=" is a literal rule used as-is; a bare identifier is a
+// property name read from the entity (empty when the property is unset).
+func resolveRRule(cfg string, e *entity.Entity) string {
+	switch {
+	case cfg == "":
+		return ""
+	case strings.Contains(cfg, "="):
+		return cfg
+	default:
+		return e.GetString(cfg)
+	}
 }
 
 // renderFeed collects all events from a provider and packages them with the

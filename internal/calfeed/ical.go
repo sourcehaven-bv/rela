@@ -69,6 +69,12 @@ func (ic ICal) RenderEvent(e Event) []byte {
 	writeProp(&b, "UID", e.UID)
 	writeLine(&b, "DTSTAMP:"+formatDateTimeUTC(ic.Now))
 	writeLine(&b, "DTSTART;VALUE=DATE:"+formatDate(e.Start))
+	if !e.End.IsZero() {
+		writeLine(&b, "DTEND;VALUE=DATE:"+formatDate(e.End))
+	}
+	if e.RRule != "" {
+		writeLine(&b, "RRULE:"+e.RRule)
+	}
 	writeProp(&b, "SUMMARY", e.Summary)
 	if e.Description != "" {
 		writeProp(&b, "DESCRIPTION", e.Description)

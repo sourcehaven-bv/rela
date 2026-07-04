@@ -46,6 +46,14 @@ type Event struct {
 	URL string
 	// Start is the event's day. Its time-of-day is ignored in Phase 1 (all-day).
 	Start time.Time
+	// End, when non-zero, is the (exclusive) end day of an all-day range,
+	// rendered DTEND;VALUE=DATE. Zero means a single-day event.
+	End time.Time
+	// RRule, when non-empty, is a bare RFC 5545 recurrence rule (without the
+	// "RRULE:" prefix), e.g. "FREQ=DAILY". Rendered as an RRULE line so the
+	// event recurs; an unbounded rule keeps the event visible until it leaves
+	// the feed.
+	RRule string
 	// Alarms are optional reminders.
 	Alarms []Alarm
 }

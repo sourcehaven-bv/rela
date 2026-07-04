@@ -21,9 +21,10 @@ func feedTestMeta() *metamodel.Metamodel {
 			"task": {
 				Label: "Task", IDPrefix: "TSK-", DisplayProperty: "title",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: metamodel.PropertyTypeString},
-					"due":    {Type: metamodel.PropertyTypeDate},
-					"status": {Type: metamodel.PropertyTypeString},
+					"title":    {Type: metamodel.PropertyTypeString},
+					"due":      {Type: metamodel.PropertyTypeDate},
+					"status":   {Type: metamodel.PropertyTypeString},
+					"schedule": {Type: metamodel.PropertyTypeString},
 				},
 			},
 			"party": {
@@ -31,6 +32,7 @@ func feedTestMeta() *metamodel.Metamodel {
 				Properties: map[string]metamodel.PropertyDef{
 					"name": {Type: metamodel.PropertyTypeString},
 					"on":   {Type: metamodel.PropertyTypeDate},
+					"ends": {Type: metamodel.PropertyTypeDate},
 				},
 			},
 		},
@@ -242,6 +244,46 @@ func TestDeclarativeFeed_GetMatchesList(t *testing.T) {
 	}
 	if got.UID != list[0].UID || got.Summary != list[0].Summary || got.Start != list[0].Start {
 		t.Errorf("list/get mismatch:\n list=%+v\n get =%+v", list[0], got)
+	}
+}
+
+func TestDeclarativeFeed_RruleAndEndDate(t *testing.T) {
+	mod := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	// A task with an entity-level rrule property + a party with an end date range.
+	task := mkTask("TSK-1", "Recurring", "todo", "2026-07-10", mod)
+	task.Properties["schedule"] = "FREQ=WEEKLY"
+	party := &entity.Entity{ID: "PTY-1", Type: "party", UpdatedAt: mod, Properties: map[string]any{
+		"name": "Long party", "on": "2026-07-20", "ends": "2026-07-22",
+	}}
+	src := fakeSource{byType: map[string][]*entity.Entity{"task": {task}, "party": {party}}}
+
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{
+		{EntityType: "task", Date: "due", Summary: "title", Rrule: "FREQ=DAILY"}, // literal, all tasks
+	}}
+	d := newTestFeed(t, cfg, src)
+	events, _, _ := d.List(context.Background(), feedListOpts{})
+	if len(events) != 1 || events[0].RRule != "FREQ=DAILY" {
+		t.Fatalf("literal rrule not applied: %+v", events)
+	}
+
+	// Property-referenced rrule reads from the entity's own property.
+	cfgProp := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{
+		{EntityType: "task", Date: "due", Summary: "title", Rrule: "schedule"},
+	}}
+	dp := newTestFeed(t, cfgProp, src)
+	ev, _, _ := dp.List(context.Background(), feedListOpts{})
+	if len(ev) != 1 || ev[0].RRule != "FREQ=WEEKLY" {
+		t.Fatalf("property rrule not read from entity: %+v", ev)
+	}
+
+	// end_date maps a range.
+	cfgEnd := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{
+		{EntityType: "party", Date: "on", EndDate: "ends", Summary: "name"},
+	}}
+	de := newTestFeed(t, cfgEnd, src)
+	ee, _, _ := de.List(context.Background(), feedListOpts{})
+	if len(ee) != 1 || ee[0].End != time.Date(2026, 7, 22, 0, 0, 0, 0, time.UTC) {
+		t.Fatalf("end_date not mapped: %+v", ee)
 	}
 }
 
