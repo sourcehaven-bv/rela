@@ -209,7 +209,7 @@ Enable it by setting all three (env fallbacks `$RELA_JWT_ISSUER` /
   restart). An unreachable JWKS at startup is fatal — identity never
   silently no-ops.
 - **`--jwt-header`** — the request header carrying the JWT (default
-  `X-Auth-Assertion`; a leading `Bearer ` is stripped). Point it at
+  `X-Auth-Assertion`; a leading `Bearer` prefix is stripped). Point it at
   whatever your proxy injects, e.g. `X-Pratique-Assertion` or
   `Authorization`.
 
