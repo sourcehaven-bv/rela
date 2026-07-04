@@ -99,11 +99,11 @@ The audit is **advisory** — with no flag it prints findings and always
 exits zero. For CI, gate the exit code on a severity threshold with
 `--fail-on`:
 
-```console
-$ rela acl audit --fail-on=high     # non-zero if any critical/high finding
-$ rela acl audit --fail-on=medium   # also fail on medium
-$ rela acl audit --fail-on=any      # fail on any finding at all
-$ rela acl audit --exit-code        # alias for --fail-on=high
+```bash
+rela acl audit --fail-on=high     # non-zero if any critical/high finding
+rela acl audit --fail-on=medium   # also fail on medium
+rela acl audit --fail-on=any      # fail on any finding at all
+rela acl audit --exit-code        # alias for --fail-on=high
 ```
 
 A finding **below** the threshold never changes the exit code — so
