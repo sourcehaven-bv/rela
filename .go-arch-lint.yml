@@ -263,6 +263,7 @@ deps:
       - apiwire
       - attachment
       - audit
+      - calfeed
       - canonical
       - config
       - conflict
