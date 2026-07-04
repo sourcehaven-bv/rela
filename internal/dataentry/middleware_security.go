@@ -242,6 +242,12 @@ var sensitivePathPrefixes = []string{
 // remove it.
 var nonBrowserExemptPrefixes = []string{
 	"/api/sync/",
+	// Calendar feeds (TKT-RDM9M5) are fetched by non-browser pollers (Apple
+	// dataaccessd, Google's fetcher) that send no Cookie / Origin / Sec-Fetch-*.
+	// Like the sync API, the exemption is conditioned on isCSRFExempt (provably
+	// non-browser), so a browser fetch() of a feed still hits the same-origin
+	// check. Feed responses are read-only and ACL-scoped to the request principal.
+	"/api/v1/_feeds/",
 }
 
 // insensitivePathPrefixes carves exceptions OUT of the sensitive prefixes above.
