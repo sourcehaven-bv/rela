@@ -5,7 +5,7 @@ title: 'Phase 1: declarative calendar/feed export — internal/feed serializer, 
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: done
 ---
 
 ## Description
