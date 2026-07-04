@@ -44,8 +44,13 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Deep links must be absolute so a calendar client can open them: a
+	// relative path is useless once the .ics leaves the server. Scheme/host
+	// come from the request (matching however the client reached us — loopback,
+	// LAN, or a proxied hostname), mirroring appBaseURL.
+	base := feedBaseURL(r)
 	provider, err := newDeclarativeFeed(name, cfg, s.Meta, feedEntitySource{app: a}, func(entityType, id string) string {
-		return "/entity/" + entityType + "/" + id
+		return base + "/entity/" + entityType + "/" + id
 	})
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Feed misconfigured", "")
@@ -72,6 +77,22 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write(body)
 	}
+}
+
+// feedBaseURL returns the absolute "scheme://host" prefix for deep links,
+// derived from the request so links resolve however the client reached the
+// server. Scheme follows TLS / an X-Forwarded-Proto hint. When the Host is
+// empty or unsafe it returns "" — links then fall back to relative, which is
+// no worse than before.
+func feedBaseURL(r *http.Request) string {
+	if r.Host == "" || hostUnsafeForCSP.MatchString(r.Host) {
+		return ""
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 // parseFeedPath splits "<name>.<ext>" into the feed name and a supported

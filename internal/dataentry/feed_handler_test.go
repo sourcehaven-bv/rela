@@ -89,6 +89,11 @@ func TestFeedHandler_ICS(t *testing.T) {
 	if !strings.Contains(body, "UID:task-TSK-1@rela") {
 		t.Errorf("missing/incorrect UID; body:\n%s", body)
 	}
+	// Deep link must be ABSOLUTE (scheme://host) so a calendar client can open
+	// it — a relative path is useless once the .ics leaves the server.
+	if !strings.Contains(body, "URL:http://localhost/entity/task/TSK-1") {
+		t.Errorf("expected absolute deep link; body:\n%s", body)
+	}
 	if strings.Contains(body, "Finished") {
 		t.Errorf("status filter failed: 'done' task leaked into feed")
 	}
