@@ -115,8 +115,12 @@ func generateDOT(
 			color = def.Color
 		}
 		for _, e := range group {
-			label := escapeLabel(e.Title())
-			if label == "" {
+			// DisplayTitle honors display_property (bare or template); it
+			// falls back to the ID itself, so strip a title equal to the ID
+			// to avoid the redundant "ID\nID" label.
+			title := meta.DisplayTitle(e.ID, e.Type, e.Properties)
+			label := escapeLabel(title)
+			if label == "" || title == e.ID {
 				label = e.ID
 			} else {
 				label = e.ID + "\\n" + label

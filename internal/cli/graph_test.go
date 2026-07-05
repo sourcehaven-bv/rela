@@ -21,11 +21,17 @@ func setupGraphTestGraph(t *testing.T) *cliServices {
 				Label:    "Requirement",
 				IDPrefix: "REQ-",
 				Color:    "#E3F2FD",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
 			},
 			"decision": {
 				Label:    "Decision",
 				IDPrefix: "DEC-",
 				Color:    "#FFF3E0",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -137,6 +143,11 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 
 	if !strings.Contains(dot, `label="CMP-001"`) {
 		t.Error("DOT should use entity ID as label when no title is set")
+	}
+	// The label guard must not duplicate the ID when DisplayTitle falls back
+	// to it (would otherwise render "CMP-001\nCMP-001").
+	if strings.Contains(dot, `CMP-001\nCMP-001`) {
+		t.Errorf("titleless label must not duplicate the ID, got:\n%s", dot)
 	}
 }
 
