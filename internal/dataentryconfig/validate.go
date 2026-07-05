@@ -487,6 +487,159 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+// CollectConfigWarnings returns non-fatal configuration issues that should be
+// surfaced at load time (logged) but must NOT abort startup — unlike
+// ValidateConfig, whose findings are hard errors. Kept as a pure,
+// deterministically-ordered []string so the caller can log each and tests can
+// assert on the set.
+//
+// It flags two conditions:
+//
+//   - A relation FilterControl declared `direction: incoming` whose list
+//     entity_type is not a `to:` side of the relation. Such a filter follows
+//     incoming edges into a type that is never the target, so it can only ever
+//     match zero rows — a config smell, but not fatal (the filter still
+//     behaves, it just filters everything out).
+//   - Two lists of the same entity type configuring the same relation filter
+//     with conflicting directions. The shared list pipeline is keyed by entity
+//     type (not list ID), so RelationFilterDirection resolves a single winner
+//     (lowest list ID); the loser's declared direction is silently ignored,
+//     which the author should know about (RR-9MJRJG).
+func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
+	var warnings []string
+	for _, listID := range sortedListIDs(cfg) {
+		list := cfg.Lists[listID]
+		for i, fc := range list.FilterControls {
+			if fc.Relation == "" || !fc.Direction.IsIncoming() {
+				continue
+			}
+			relDef, ok := meta.GetRelationDef(fc.Relation)
+			if !ok {
+				continue // unknown relation already caught as a hard error
+			}
+			if slices.Contains(relDef.To, list.EntityType) {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"list %q: filter_controls[%d] relation %q with direction: incoming targets entity type %q, "+
+					"which is not a `to:` side of the relation (valid: %s); this filter will match no rows",
+				listID, i, fc.Relation, list.EntityType, strings.Join(relDef.To, ", ")))
+		}
+	}
+	warnings = append(warnings, conflictingRelationDirectionWarnings(cfg)...)
+	warnings = append(warnings, relationPropertyNameCollisionWarnings(cfg, meta)...)
+	return warnings
+}
+
+// relationPropertyNameCollisionWarnings flags a relation FilterControl whose
+// name also names a property of the list's entity type, with no property
+// FilterControl to disambiguate. Properties (per-type) and relations (global)
+// are disjoint namespaces, so nothing forbids the collision; the runtime
+// resolves it in favor of the PROPERTY (safe, backward-compatible), which means
+// the relation filter the author configured silently does nothing. Warn so the
+// ambiguity is visible at load (RR-0HWAS0).
+func relationPropertyNameCollisionWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
+	var warnings []string
+	for _, listID := range sortedListIDs(cfg) {
+		list := cfg.Lists[listID]
+		entDef, ok := meta.GetEntityDef(list.EntityType)
+		if !ok {
+			continue
+		}
+		for i, fc := range list.FilterControls {
+			if fc.Relation == "" {
+				continue
+			}
+			if _, isProp := entDef.Properties[fc.Relation]; !isProp {
+				continue
+			}
+			if cfg.HasPropertyFilterControl(list.EntityType, fc.Relation) {
+				continue // an explicit property control resolves the routing
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"list %q: filter_controls[%d] relation %q collides with a property of entity type %q; "+
+					"the filter will match the PROPERTY, not the relation — rename or add a property "+
+					"filter control to disambiguate",
+				listID, i, fc.Relation, list.EntityType))
+		}
+	}
+	return warnings
+}
+
+// conflictingRelationDirectionWarnings flags (entityType, relation) pairs where
+// two or more lists of the same type configure the same relation filter with
+// conflicting directions. RelationFilterDirection resolves to the lowest list
+// ID, so any other list's declared direction is ignored at runtime.
+func conflictingRelationDirectionWarnings(cfg *Config) []string {
+	// Group the (listID, direction) each list declares for a given
+	// (entityType, relation), in sorted-list-ID order so the winner and the
+	// warning text are deterministic.
+	type decl struct {
+		listID    string
+		direction Direction
+	}
+	byPair := map[string][]decl{}
+	var pairOrder []string
+	for _, listID := range sortedListIDs(cfg) {
+		list := cfg.Lists[listID]
+		for _, fc := range list.FilterControls {
+			if fc.Relation == "" {
+				continue
+			}
+			dir := DirectionOutgoing
+			if fc.Direction.IsIncoming() {
+				dir = DirectionIncoming
+			}
+			key := list.EntityType + "\x00" + fc.Relation
+			if _, seen := byPair[key]; !seen {
+				pairOrder = append(pairOrder, key)
+			}
+			byPair[key] = append(byPair[key], decl{listID: listID, direction: dir})
+		}
+	}
+
+	var warnings []string
+	for _, key := range pairOrder {
+		decls := byPair[key]
+		conflict := false
+		for _, d := range decls[1:] {
+			if d.direction != decls[0].direction {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
+			continue
+		}
+		parts := strings.SplitN(key, "\x00", 2)
+		entityType, relation := parts[0], parts[1]
+		winner := decls[0]
+		var others []string
+		for _, d := range decls {
+			if d.listID == winner.listID {
+				continue
+			}
+			others = append(others, fmt.Sprintf("%s=%s", d.listID, d.direction))
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"entity type %q: relation %q filter is configured with conflicting directions across lists; "+
+				"list %q (direction: %s) wins (lowest list ID), ignoring %s",
+			entityType, relation, winner.listID, winner.direction, strings.Join(others, ", ")))
+	}
+	return warnings
+}
+
+// sortedListIDs returns the config's list IDs in deterministic order so
+// warning output is stable across runs.
+func sortedListIDs(cfg *Config) []string {
+	ids := make([]string, 0, len(cfg.Lists))
+	for id := range cfg.Lists {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // validateViews validates view definitions with their traversal rules and sections.
 func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string

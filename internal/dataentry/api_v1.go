@@ -274,9 +274,228 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 		entities = filtered
 	}
 
-	entities = applyV1Filters(entities, query, typeName)
+	// Classify each filter[<key>] param as property vs relation ONCE, up
+	// front, so both passes agree on routing. The config's FilterControls are
+	// authoritative (RR-0HWAS0 / RR-B0JPPL): a relation filter applies only
+	// when a control on a list of this type configures it. Name-based
+	// GetRelationDef is only a fallback and only ever routes AWAY from
+	// properties, never toward relations without a control.
+	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
+	entities = applyV1Filters(entities, query, typeName, isRelationKey)
+	entities = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
 	entities = applyV1Sorting(entities, query)
 	return entities, nil
+}
+
+// relationFilterClassifier returns a predicate that decides, for a bare filter
+// param name (the property/relation segment, no operator), whether it should be
+// handled by the direction-aware relation pass rather than applyV1Filters.
+//
+// Relation filtering is restricted to configured filter_controls (RR-B0JPPL):
+// a `filter[<rel>]` param routes to the relation pass ONLY when a relation
+// FilterControl on a list of this entity type configures it. An arbitrary
+// metamodel relation with no control is NOT filterable and falls through to
+// applyV1Filters (where, absent a matching property, it fails closed rather
+// than silently widening the set).
+//
+// The config discriminator also resolves the property/relation NAME COLLISION
+// (RR-0HWAS0): properties (per-type) and relations (global) are disjoint
+// namespaces, so a property can share a name with a relation. An explicit
+// property FilterControl for the name forces the property pass; a name that is
+// only ever a relation control routes to the relation pass. When a name is both
+// a property of this type and a relation control with no disambiguating
+// property control, the property wins (safe, backward-compatible) and
+// CollectConfigWarnings flags the ambiguity at load.
+//
+// A free function (not an App method) taking the already-loaded meta/cfg
+// snapshot: it needs no other App state, and keeping it off the receiver keeps
+// App under its plimsoll method cap.
+func relationFilterClassifier(meta *metamodel.Metamodel, cfg *dataentryconfig.Config, typeName string) func(string) bool {
+	return func(key string) bool {
+		// Explicit property control → property pass.
+		if cfg.HasPropertyFilterControl(typeName, key) {
+			return false
+		}
+		// A relation control is required for relation filtering.
+		if _, ok := cfg.RelationFilterDirection(typeName, key); !ok {
+			return false
+		}
+		// Relation control exists, but the collision rule: if the name is
+		// also a property of this type (and no property control disambiguated
+		// above), the property wins.
+		if entDef, ok := meta.GetEntityDef(typeName); ok {
+			if _, isProp := entDef.Properties[key]; isProp {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// applyRelationFilters keeps only the entities that match every relation
+// filter present in the query. isRelationKey (the config-backed classifier
+// built in scopedSortedEntities) decides which `filter[<key>]` params are
+// relation filters; property filters are handled by applyV1Filters. Matching is
+// direction-aware: the FilterControl config on a list of this entity type
+// supplies the direction (default outgoing), and an entity matches iff it has
+// an edge of that (relation, direction) to a READABLE neighbor whose display
+// title equals the requested value.
+//
+// Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
+// (`filter[<rel>][ne]`) are supported. Any other operator segment fails CLOSED
+// — the whole result set is dropped to zero rows with an slog.Warn — matching
+// the fail-closed contract applyV1Filters enforces for unknown property
+// operators (RR-6RF60V). Never fail open.
+//
+// ACL (RR-HK1XNO): neighbor titles are resolved through the read gate, so a
+// filter value matching a neighbor the caller cannot read does NOT include the
+// edged rows (no title-match inference channel). Neighbors are gated in one
+// batch per relation param via matchRelationFilter → visibleNeighborTitles.
+// NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
+// this should converge on it; today it uses the same readGate.PermitsReadMany
+// batching pattern inline.
+//
+// Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
+// pagination, doing ListRelations + a batched GetEntity per row. It is
+// therefore O(N·edges) per request, uncached, where N is the unpaginated
+// visible row count — acceptable for the current dataset sizes but NOT a
+// store-side pushdown. A future optimization is to push the relation-title
+// predicate into the store query. Each row short-circuits: matchRelationFilter
+// stops scanning a row's edges as soon as one matches.
+//
+// This runs in scopedSortedEntities so BOTH the list handler and scope nav
+// (_position, via resolveScope) observe identical relation filtering — they
+// share this pipeline. Property filters are untouched (TKT-5U7QBR).
+func (a *App) applyRelationFilters(
+	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
+	isRelationKey func(string) bool,
+) []*entityPkg.Entity {
+	cfg := a.Cfg()
+	for key, values := range query {
+		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
+			continue
+		}
+		relation, operator, ok := parseRelationFilterKey(key)
+		if !ok || !isRelationKey(relation) {
+			continue // malformed, or a property filter handled elsewhere
+		}
+		want := values[len(values)-1]
+		if want == "" {
+			continue // empty control value = no constraint
+		}
+
+		// Fail CLOSED on any operator we don't support for relations. Never
+		// fall through and leave the set unfiltered (that would be the
+		// fail-open bug RR-6RF60V).
+		switch operator {
+		case "eq", "ne":
+			// supported below
+		default:
+			slog.Warn("relation filter uses unsupported operator; dropping all rows",
+				"key", key, "operator", operator)
+			return entities[:0]
+		}
+
+		direction, _ := cfg.RelationFilterDirection(typeName, relation)
+		filtered := entities[:0]
+		for _, e := range entities {
+			matched := a.matchRelationFilter(ctx, e.ID, relation, direction, want)
+			if (operator == "eq" && matched) || (operator == "ne" && !matched) {
+				filtered = append(filtered, e)
+			}
+		}
+		entities = filtered
+	}
+	return entities
+}
+
+// parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
+// using the SAME `][`-split logic as applyV1Filters, so an operator segment is
+// recognized rather than being swallowed into the relation name (RR-6RF60V,
+// the old TrimPrefix/TrimSuffix bug). Returns (relation, operator, ok) with
+// operator defaulting to "eq". ok is false for a malformed key (empty relation,
+// too many segments).
+func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
+	filterKey := strings.TrimPrefix(key, "filter[")
+	filterKey = strings.TrimSuffix(filterKey, "]")
+	filterKey = strings.TrimSuffix(filterKey, "][") // was "...[]"
+	parts := strings.Split(filterKey, "][")
+	if len(parts) > 2 || parts[0] == "" {
+		return "", "", false
+	}
+	operator = "eq"
+	if len(parts) == 2 {
+		if parts[1] == "" {
+			return "", "", false
+		}
+		operator = parts[1]
+	}
+	return parts[0], operator, true
+}
+
+// matchRelationFilter reports whether entityID has an edge of the given
+// relation+direction to a neighbor the caller can READ whose display title
+// equals want. It gates neighbor entities through the read gate so a hidden
+// neighbor cannot be used as a title-match inference channel (RR-HK1XNO), and
+// short-circuits as soon as a readable neighbor's title matches (RR-38K7K9).
+//
+// Neighbors are gated in batches grouped by type via readGate.PermitsReadMany
+// (one call per neighbor type on the row), rather than a per-neighbor gate
+// call. When the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
+// this should converge on it.
+func (a *App) matchRelationFilter(
+	ctx context.Context, entityID, relation string, direction dataentryconfig.Direction, want string,
+) bool {
+	svc := a.Services()
+	q := store.RelationQuery{
+		EntityID:  entityID,
+		Type:      relation,
+		Direction: relationDirection(direction),
+	}
+
+	// Load each neighbor once, keeping only those whose title matches want.
+	// Group the candidates by type so the read gate can batch per type.
+	candidatesByType := map[string][]string{}
+	entByID := map[string]*entityPkg.Entity{}
+	for r, err := range svc.Store.ListRelations(ctx, q) {
+		if err != nil {
+			return false
+		}
+		targetID := r.To
+		if direction.IsIncoming() {
+			targetID = r.From
+		}
+		if _, seen := entByID[targetID]; seen {
+			continue
+		}
+		e, err := svc.Store.GetEntity(ctx, targetID)
+		if err != nil {
+			continue // dangling relation
+		}
+		entByID[targetID] = e
+		if svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties) == want {
+			candidatesByType[e.Type] = append(candidatesByType[e.Type], targetID)
+		}
+	}
+	if len(candidatesByType) == 0 {
+		return false
+	}
+
+	// A row matches iff at least one title-matching neighbor is READABLE. Gate
+	// only the title-matching candidates (the minimal set) per type.
+	gate := readGateFromContext(ctx)
+	for typ, ids := range candidatesByType {
+		perm, err := gate.PermitsReadMany(ctx, typ, ids)
+		if err != nil {
+			continue
+		}
+		for _, id := range ids {
+			if perm[id] {
+				return true // readable title match (RR-HK1XNO honored)
+			}
+		}
+	}
+	return false
 }
 
 // queryGet returns the first value for key from a raw query map, or "".
@@ -1863,7 +2082,16 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure
 // data transform — a free function, not App behavior (TKT-N26KLB M5.5).
-func applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
+//
+// isRelationKey identifies filter keys that target a metamodel relation rather
+// than an entity property; those are skipped here and handled by the relation
+// pass in scopedSortedEntities (which has ctx + config for direction-aware
+// traversal). A relation key would otherwise match no property and nuke the
+// whole result set (TKT-5U7QBR). A nil predicate treats every key as a
+// property filter (the pre-TKT-5U7QBR behavior).
+func applyV1Filters(
+	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
+) []*entityPkg.Entity {
 	filtered := entities
 
 	for key, values := range query {
@@ -1894,6 +2122,14 @@ func applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ s
 			slog.Warn("filter key has empty property", "key", key)
 			continue
 		}
+
+		// Relation filter keys are handled by the direction-aware relation
+		// pass in scopedSortedEntities. Skip them here so a relation key
+		// (which matches no property) doesn't nuke the result set.
+		if isRelationKey != nil && isRelationKey(property) {
+			continue
+		}
+
 		operator := "eq"
 		if len(parts) == 2 {
 			if parts[1] == "" {

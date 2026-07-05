@@ -249,14 +249,6 @@ func TestExecuteView(t *testing.T) {
 	})
 }
 
-func collectModelIDs(entities []*entity.Entity) []string {
-	ids := make([]string, len(entities))
-	for i, e := range entities {
-		ids[i] = e.ID
-	}
-	return ids
-}
-
 func collectIDs(entities []*entity.Entity) []string {
 	ids := make([]string, len(entities))
 	for i, e := range entities {

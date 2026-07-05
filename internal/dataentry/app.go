@@ -425,6 +425,13 @@ func NewApp(
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
+	// Non-fatal configuration warnings (e.g. a relation filter control whose
+	// incoming direction targets a type the relation never points to). Logged,
+	// not fatal — the app still serves, the filter just returns no rows.
+	for _, w := range CollectConfigWarnings(&cfg, meta) {
+		slog.Warn("data-entry config warning", "detail", w)
+	}
+
 	// Verify action scripts exist on disk (catches typos at startup).
 	// Skip set-only actions which have no script.
 	for id, action := range cfg.Actions {
