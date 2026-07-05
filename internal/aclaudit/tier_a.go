@@ -57,7 +57,7 @@ func checkUngatedMembership(p *acl.Policy) []Finding {
 				"but is not gated by requires_permission; any principal who can write a %q edge can "+
 				"grant themselves that role", rel, rel),
 			Fix: fmt.Sprintf("add role_relations.%s.requires_permission and grant that permission "+
-				"only to admins (see docs/security.md)", rel),
+				"only to admins (see docs/server-security.md)", rel),
 		})
 	}
 	return f
