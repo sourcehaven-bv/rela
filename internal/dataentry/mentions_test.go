@@ -28,6 +28,16 @@ func TestCollectMentions(t *testing.T) {
 		// (`status`) is locked. The display title is still readable, so
 		// the resulting mention must NOT carry the inaccessible flag.
 		entityWithLockedProperty("TKT-PARTIAL", "ticket", "Mostly Readable", "status"),
+		// Templated display title, fully readable → renders both placeholders.
+		mustPersoon("PERS-OK", "Jeroen", "Vloothuis"),
+		// Templated display title with a locked PLACEHOLDER property
+		// (`achternaam`) → the title is incomplete, so the mention must be
+		// flagged inaccessible. This is the TKT-NJTBQX regression: a bare
+		// display_property was protected here; the template must be too.
+		mustPersoon("PERS-LOCKED", "Jeroen", "Vloothuis", "achternaam"),
+		// Templated display title with a locked NON-placeholder property
+		// → title still fully readable, must NOT be flagged.
+		mustPersoon("PERS-PARTIAL", "Jeroen", "Vloothuis", "geboortedatum"),
 	}
 
 	tests := []struct {
@@ -102,6 +112,32 @@ func TestCollectMentions(t *testing.T) {
 			contents: []string{"partial: `TKT-PARTIAL`"},
 			want: map[string]v1.Mention{
 				"TKT-PARTIAL": {Type: "ticket", Title: "Mostly Readable"},
+			},
+		},
+		{
+			name:     "templated title renders all placeholders",
+			contents: []string{"person: `PERS-OK`"},
+			want: map[string]v1.Mention{
+				"PERS-OK": {Type: "persoon", Title: "Jeroen Vloothuis"},
+			},
+		},
+		{
+			name:     "templated title with a locked placeholder is inaccessible (TKT-NJTBQX)",
+			contents: []string{"person: `PERS-LOCKED`"},
+			want: map[string]v1.Mention{
+				"PERS-LOCKED": {
+					Type:               "persoon",
+					Title:              "Jeroen Vloothuis",
+					Inaccessible:       true,
+					InaccessibleReason: "git-crypt",
+				},
+			},
+		},
+		{
+			name:     "templated title with a locked non-placeholder property is NOT inaccessible",
+			contents: []string{"person: `PERS-PARTIAL`"},
+			want: map[string]v1.Mention{
+				"PERS-PARTIAL": {Type: "persoon", Title: "Jeroen Vloothuis"},
 			},
 		},
 		{
@@ -269,6 +305,16 @@ func buildTestMetamodel(t *testing.T) *metamodel.Metamodel {
 					"name": {Type: "string", Required: true},
 				},
 			},
+			// Templated display_property: the title reads from two
+			// placeholders. A lock on either must lock the title.
+			"persoon": {
+				Label:           "Persoon",
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]metamodel.PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string", Required: true},
+				},
+			},
 		},
 	}
 }
@@ -285,6 +331,20 @@ func mustEntity(id, typeName, title string) *entity.Entity {
 func mustEntityNamed(id, typeName, name string) *entity.Entity {
 	e := entity.New(id, typeName)
 	e.Properties["name"] = name
+	return e
+}
+
+// mustPersoon builds a persoon whose title comes from the template
+// "{voornaam} {achternaam}". Any inaccessible field names in lockedProps are
+// marked inaccessible (git-crypt) to exercise the templated locked-title path.
+func mustPersoon(id, voornaam, achternaam string, lockedProps ...string) *entity.Entity {
+	e := entity.New(id, "persoon")
+	e.Properties["voornaam"] = voornaam
+	e.Properties["achternaam"] = achternaam
+	for _, p := range lockedProps {
+		e.Inaccessible = append(e.Inaccessible,
+			entity.InaccessibleField{Name: p, Reason: entity.InaccessibleReasonGitCrypt})
+	}
 	return e
 }
 

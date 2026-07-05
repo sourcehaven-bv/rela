@@ -1694,6 +1694,127 @@ entities:
 	assertEqual(t, def.DisplayProperty, "number")
 }
 
+// TKT-NJTBQX: display_property as a template.
+
+// TestParse_DisplayPropertyTemplateSucceeds verifies a well-formed template
+// whose placeholders all reference defined properties loads cleanly.
+func TestParse_DisplayPropertyTemplateSucceeds(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam} {tussenvoegsel} {achternaam}"
+    properties:
+      voornaam:
+        type: string
+      tussenvoegsel:
+        type: string
+      achternaam:
+        type: string
+        required: true
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	assertEqual(t, m.Entities["persoon"].DisplayProperty, "{voornaam} {tussenvoegsel} {achternaam}")
+}
+
+// TestParse_DisplayPropertyTemplateUnknownProperty verifies AC6: a placeholder
+// naming an undefined property is a load-time error.
+func TestParse_DisplayPropertyTemplateUnknownProperty(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam} {unknown_prop}"
+    properties:
+      voornaam:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "unknown_prop", `entity "persoon"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyTemplateUnclosed verifies AC7: a template with an
+// unclosed '{' is a load-time error.
+func TestParse_DisplayPropertyTemplateUnclosed(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam"
+    properties:
+      voornaam:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "unclosed", `entity "persoon"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyTemplateEmptyPlaceholder verifies an empty
+// placeholder `{}` is a load-time error.
+func TestParse_DisplayPropertyTemplateEmptyPlaceholder(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam} {}"
+    properties:
+      voornaam:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "empty placeholder") {
+		t.Errorf("error should mention the empty placeholder: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyTemplateRejectsDatePlaceholder verifies the
+// per-property type restriction applies to each placeholder: a date-typed
+// property in a template is rejected just as a bare-name one is.
+func TestParse_DisplayPropertyTemplateRejectsDatePlaceholder(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  event:
+    label: Event
+    id_prefix: "EVT-"
+    display_property: "{naam} ({datum})"
+    properties:
+      naam:
+        type: string
+        required: true
+      datum:
+        type: date
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "datum"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
 // TestParse_DisplayPropertyAcrossIncludes verifies that display_property
 // validation runs on the merged metamodel when an entity is defined in
 // an included file. RR-GO9T7.

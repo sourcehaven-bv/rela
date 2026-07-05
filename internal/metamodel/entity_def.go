@@ -1,6 +1,85 @@
 package metamodel
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// isDisplayTemplate reports whether a display_property value is a template
+// (contains a '{' placeholder) rather than a bare property name. Property
+// names can't contain '{' in a valid metamodel, so the presence of one
+// disambiguates cleanly.
+func isDisplayTemplate(displayProperty string) bool {
+	return strings.ContainsRune(displayProperty, '{')
+}
+
+// parseDisplayTemplate scans a display_property template and returns the
+// property names referenced by its `{name}` placeholders, in order. It
+// returns an error for a malformed template: an unclosed `{`, or an empty
+// placeholder `{}`. Literal text between placeholders is ignored here — it
+// only matters at render time.
+//
+// This is the single source of truth for template syntax, shared by
+// renderDisplayTemplate (runtime) and validateDisplayProperty (load time).
+func parseDisplayTemplate(tmpl string) ([]string, error) {
+	var names []string
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			continue
+		}
+		end := strings.IndexByte(tmpl[i:], '}')
+		if end < 0 {
+			return nil, fmt.Errorf("unclosed '{' in template %q", tmpl)
+		}
+		name := tmpl[i+1 : i+end]
+		if name == "" {
+			return nil, fmt.Errorf("empty placeholder '{}' in template %q", tmpl)
+		}
+		names = append(names, name)
+		i += end
+	}
+	return names, nil
+}
+
+// renderDisplayTemplate substitutes each `{name}` placeholder with the
+// stringified property value, passes literal text through, then collapses
+// consecutive whitespace to a single space and trims the result. A nil or
+// missing property renders as empty, so `"{a} {b}"` with an empty middle
+// field collapses to a single space rather than a double. The caller
+// (DisplayTitle) falls back to the entity ID when the result is empty.
+//
+// The template is assumed already validated at load time (parseDisplayTemplate
+// succeeded and every placeholder names a defined property), so a malformed
+// template here degrades gracefully rather than erroring: an unclosed '{' is
+// emitted verbatim.
+func renderDisplayTemplate(tmpl string, properties map[string]interface{}) string {
+	var b strings.Builder
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		end := strings.IndexByte(tmpl[i:], '}')
+		if end < 0 {
+			// Malformed (shouldn't happen post-validation); emit verbatim.
+			b.WriteString(tmpl[i:])
+			break
+		}
+		name := tmpl[i+1 : i+end]
+		if val, ok := properties[name]; ok && val != nil {
+			fmt.Fprintf(&b, "%v", val)
+		}
+		i += end
+	}
+	return collapseWhitespace(b.String())
+}
+
+// collapseWhitespace replaces every run of whitespace with a single space and
+// trims the ends. Newlines are treated as ordinary whitespace (multi-line
+// display titles are out of scope).
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
 
 // GetLabelPlural returns the human-readable plural label for an entity
 // type (used in UI strings, e.g. "List of Features").
@@ -69,9 +148,20 @@ func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 //     when defined as a required string.
 //  3. Any required string property (alphabetical for determinism).
 //  4. Empty string when no candidate exists.
+//
+// A *templated* display_property (containing `{`) has no single primary
+// property — it is a readonly, derived display string. GetPrimaryProperty
+// returns "" for it; DisplayTitle renders the template directly. Callers
+// that treat the result as a writable property key (e.g. a create title
+// shortcut) therefore get "" and skip, which is correct: there is no single
+// field to write into.
 func (e *EntityDef) GetPrimaryProperty() string {
-	// (1) Author-declared override wins.
+	// (1) Author-declared override wins — unless it's a template, which
+	// names no single property.
 	if e.DisplayProperty != "" {
+		if isDisplayTemplate(e.DisplayProperty) {
+			return ""
+		}
 		return e.DisplayProperty
 	}
 
@@ -105,6 +195,34 @@ func (e *EntityDef) GetPrimaryProperty() string {
 	return ""
 }
 
+// DisplayProperties returns every property whose value backs the display
+// title, so callers can reason about the title's data sources — notably to
+// decide whether the title is unreadable when one of those properties is
+// access-controlled (see internal/dataentry mentions).
+//
+//   - Templated display_property: all placeholder property names, in order.
+//   - Bare display_property or an autoderived primary: that single name.
+//   - No display name source (autoderivation found nothing): empty.
+//
+// Unlike GetPrimaryProperty (which returns "" for a template because a
+// template names no single *writable* target), this reports the full read
+// set. The template was validated at load, so parsing here cannot fail; a
+// malformed template (only reachable via the no-validate migration path)
+// yields no names rather than an error.
+func (e *EntityDef) DisplayProperties() []string {
+	if isDisplayTemplate(e.DisplayProperty) {
+		names, err := parseDisplayTemplate(e.DisplayProperty)
+		if err != nil {
+			return nil
+		}
+		return names
+	}
+	if primary := e.GetPrimaryProperty(); primary != "" {
+		return []string{primary}
+	}
+	return nil
+}
+
 // DisplayTitle returns the display title for an entity using its
 // type's primary property. Behavior:
 //
@@ -119,7 +237,18 @@ func (e *EntityDef) GetPrimaryProperty() string {
 // The non-string stringification is what makes the explicit
 // display_property override pay off for enum-typed fields. See
 // review-response RR-9CW5N.
+//
+// When display_property is a template (contains `{`), the placeholders are
+// substituted from properties, whitespace is collapsed, and the result is
+// returned — falling back to the ID when it renders empty.
 func (e *EntityDef) DisplayTitle(id string, properties map[string]interface{}) string {
+	if isDisplayTemplate(e.DisplayProperty) {
+		if s := renderDisplayTemplate(e.DisplayProperty, properties); s != "" {
+			return s
+		}
+		return id
+	}
+
 	primary := e.GetPrimaryProperty()
 	if primary == "" {
 		return id
