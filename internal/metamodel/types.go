@@ -202,6 +202,25 @@ type PropertyDef struct {
 	Description string   `yaml:"description,omitempty"` // Documentation for the property
 	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
 	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	// Unique constrains the property to a natural key: no two entities of
+	// the same type may carry the same non-empty value. Enforced at write
+	// time by the entitymanager (a colliding create/update is rejected as
+	// a validation error → 422). Empty values are exempt (a property is
+	// unique among the entities that set it). Ignored on `list` properties
+	// (a natural key is a scalar).
+	//
+	// Guarantee level is not uniform across backends. The write-path check
+	// is a check-then-write, not an atomic constraint, so under concurrent
+	// writers two racing creates with the same value can both commit on
+	// ANY backend. For race-free enforcement an operator adds a store-level
+	// unique index (a partial unique index on pgstore), which is the only
+	// mechanism that makes the constraint atomic. Uniqueness is therefore
+	// NOT part of the store conformance contract — a new store.Store
+	// implementation is not required to enforce it. See
+	// `internal/entitymanager` checkUniqueProperties and the ACL
+	// `principal_property` gate, which requires the referenced property to
+	// be unique (and non-list).
+	Unique bool `yaml:"unique,omitempty"`
 	// Max caps how many attachments a `file`-type property may hold.
 	// Zero/unset means 1 (the default, single-attachment). When > 1 the
 	// property holds a list of attachment paths and the data-entry UI

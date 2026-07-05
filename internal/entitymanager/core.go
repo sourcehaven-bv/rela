@@ -94,6 +94,13 @@ func createCore(
 		return nil, nil, err
 	}
 
+	// Enforce `unique: true` natural-key constraints before the durable
+	// write. excludeSelfID is empty: on create there is no prior version
+	// of this entity to exclude.
+	if err := checkUniqueProperties(ctx, deps, e, ""); err != nil {
+		return nil, nil, err
+	}
+
 	// A create must never fall through to an update — that would
 	// overwrite a colliding entity (a racing create, or a stale-scan
 	// duplicate ID). Write with a direct CreateEntity and surface a

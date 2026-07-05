@@ -376,6 +376,16 @@ func (m *Manager) CreateEntity(
 		for prop, val := range autoResult.PropertiesSet {
 			created.SetString(prop, val)
 		}
+		// Re-enforce unique constraints against the POST-automation values:
+		// createCore's check ran before automations, so an automation that
+		// set a `unique` property could otherwise write a duplicate natural
+		// key that the update path would reject (the create path must not be
+		// the weaker one). excludeSelfID is created.ID — the entity is
+		// already persisted from createCore, so it must not collide with
+		// itself. A violation aborts before the duplicate is re-written.
+		if err := checkUniqueProperties(ctx, m.deps, created, created.ID); err != nil {
+			return nil, err
+		}
 		if writeErr := upsertEntity(ctx, m.deps.Store, created); writeErr != nil {
 			return nil, fmt.Errorf("write entity after automation: %w", writeErr)
 		}
@@ -505,6 +515,13 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
+	}
+
+	// Enforce `unique: true` natural-key constraints against the final
+	// (post-automation) property values, excluding this entity's own
+	// prior version so a re-save of an unchanged value does not collide.
+	if err := checkUniqueProperties(ctx, m.deps, e, e.ID); err != nil {
+		return nil, err
 	}
 
 	if err := upsertEntity(ctx, m.deps.Store, e); err != nil {

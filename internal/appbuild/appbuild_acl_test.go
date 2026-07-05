@@ -120,14 +120,81 @@ func TestDiscover_MalformedACL_FailsBoot(t *testing.T) {
 	}
 }
 
+// principalPropertyMetamodel declares a persoon type with a unique email
+// and a non-unique nickname, for the principal_property boot checks.
+const principalPropertyMetamodel = `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    plural: personen
+    id_type: manual
+    properties:
+      email:
+        type: string
+        unique: true
+      nickname:
+        type: string
+relations: {}
+`
+
+// principal_property referencing a non-unique property must fail boot —
+// a non-unique identity key admits duplicates and makes resolution
+// ambiguous (the ValidateAgainstMetamodel gate, wired via buildACL).
+func TestDiscover_PrincipalPropertyNotUnique_FailsBoot(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, principalPropertyMetamodel)
+	writePolicy(t, root, "user_entity_type: persoon\nprincipal_property: nickname\n")
+
+	svc, err := appbuildOnDisk(t, root)
+	if err == nil {
+		svc.Close()
+		t.Fatalf("expected boot to fail on non-unique principal_property, got nil")
+	}
+	if !strings.Contains(err.Error(), "unique") {
+		t.Errorf("error should explain the uniqueness requirement; got %q", err.Error())
+	}
+}
+
+// principal_property referencing an unknown property must fail boot.
+func TestDiscover_PrincipalPropertyUnknown_FailsBoot(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, principalPropertyMetamodel)
+	writePolicy(t, root, "user_entity_type: persoon\nprincipal_property: ghost\n")
+
+	svc, err := appbuildOnDisk(t, root)
+	if err == nil {
+		svc.Close()
+		t.Fatalf("expected boot to fail on unknown principal_property, got nil")
+	}
+}
+
+// principal_property referencing a unique property boots successfully.
+func TestDiscover_PrincipalPropertyUnique_Boots(t *testing.T) {
+	root := t.TempDir()
+	writeMetamodelBody(t, root, principalPropertyMetamodel)
+	writePolicy(t, root, "user_entity_type: persoon\nprincipal_property: email\n"+
+		"roles:\n  everyone:\n    read: [\"*\"]\n")
+
+	svc, err := appbuildOnDisk(t, root)
+	if err != nil {
+		t.Fatalf("expected boot to succeed with unique principal_property, got %v", err)
+	}
+	svc.Close()
+}
+
 // --- helpers ---
 
 func writeMetamodel(t *testing.T, root string) {
 	t.Helper()
+	writeMetamodelBody(t, root, minimalMetamodel)
+}
+
+func writeMetamodelBody(t *testing.T, root, body string) {
+	t.Helper()
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "metamodel.yaml"), []byte(minimalMetamodel), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "metamodel.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, ".rela", "audit"), 0o700); err != nil {

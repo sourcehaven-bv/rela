@@ -107,6 +107,12 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, newValidationError(hard)
 	}
 
+	// Enforce `unique: true` natural-key constraints, excluding this
+	// entity's own prior version (sync upserts an existing ID).
+	if err := checkUniqueProperties(ctx, m.deps, e, e.ID); err != nil {
+		return nil, err
+	}
+
 	if err := upsertEntity(ctx, m.deps.Store, e); err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: %w", err)
 	}
