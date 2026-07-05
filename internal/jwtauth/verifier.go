@@ -98,6 +98,79 @@ func (v *Verifier) VerifySubject(ctx context.Context, raw string) (string, error
 	return sub, nil
 }
 
+// WebhookClaims is the subset of a verified webhook JWT the receiver acts on.
+// It is a typed projection — the package never leaks jwt.MapClaims across its
+// boundary — so a caller can't accidentally trust an unverified claim.
+type WebhookClaims struct {
+	Event  string // the "event" claim, e.g. "membership.created"
+	UserID string // the "user_id" claim — the subject the event concerns
+	OrgID  string // the "org_id" claim — the tenant the event concerns
+	ID     string // the "jti" claim, if present — used for replay dedup
+}
+
+// WebhookVerifier verifies signed webhook JWTs. It is DISTINCT from the identity
+// Verifier on purpose: a webhook is a server-to-server notification, not a
+// request assertion, so it carries its OWN audience (the value the IdP stamps on
+// callbacks, e.g. "rela-webhook"). Pinning that audience separately — rather than
+// relaxing the audience check — keeps the confused-deputy guard intact: an
+// identity assertion (aud = this server) can't be replayed as a webhook and vice
+// versa. Same JWKS + issuer + ES256 + required-expiry as the identity path.
+type WebhookVerifier struct {
+	kf   keyfunc.Keyfunc
+	opts []jwt.ParserOption
+}
+
+// NewWebhookVerifier builds a webhook verifier sharing an existing identity
+// Verifier's JWKS + issuer, but pinning webhookAudience instead of the identity
+// audience. Reusing the identity Verifier's already-fetched, auto-refreshing JWKS
+// means no second network fetch and one refresh cadence. webhookAudience is
+// required — an empty one would accept any audience, reopening the confused-
+// deputy hole this type exists to close.
+func NewWebhookVerifier(idv *Verifier, webhookAudience string) (*WebhookVerifier, error) {
+	if idv == nil {
+		return nil, errors.New("jwtauth: identity verifier is required")
+	}
+	if webhookAudience == "" {
+		return nil, errors.New("jwtauth: webhook audience is required")
+	}
+	opts := []jwt.ParserOption{
+		jwt.WithValidMethods([]string{"ES256"}),
+		jwt.WithIssuer(idv.cfg.Issuer),
+		jwt.WithAudience(webhookAudience),
+		jwt.WithExpirationRequired(),
+	}
+	return &WebhookVerifier{kf: idv.kf, opts: opts}, nil
+}
+
+// VerifyWebhook verifies a webhook JWT and projects the claims the receiver acts
+// on. Any signature/issuer/audience/expiry failure yields ErrInvalid. The event,
+// user_id, and org_id claims are read as strings; a missing one comes back "" and
+// the caller decides whether that's fatal (a membership event with no user_id is
+// unusable, for instance). ctx bounds any JWKS refresh a rare unknown-kid needs.
+func (v *WebhookVerifier) VerifyWebhook(ctx context.Context, raw string) (WebhookClaims, error) {
+	claims := jwt.MapClaims{}
+	if _, err := jwt.NewParser(v.opts...).ParseWithClaims(raw, claims, v.kf.KeyfuncCtx(ctx)); err != nil {
+		return WebhookClaims{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	return WebhookClaims{
+		Event:  stringClaim(claims, "event"),
+		UserID: stringClaim(claims, "user_id"),
+		OrgID:  stringClaim(claims, "org_id"),
+		ID:     stringClaim(claims, "jti"),
+	}, nil
+}
+
+// stringClaim reads a string claim, returning "" when absent or not a string.
+// Non-string is treated as absent rather than an error: a malformed claim is
+// indistinguishable from a missing one for the receiver's purposes (it acts on
+// the value only when non-empty).
+func stringClaim(claims jwt.MapClaims, key string) string {
+	if v, ok := claims[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
 // requireHTTPS rejects a JWKS URL that isn't https — the JWKS is the root of
 // trust for every signature, so fetching it over cleartext would let an on-path
 // attacker substitute their own signing key (a full auth bypass). A loopback

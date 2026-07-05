@@ -162,6 +162,98 @@ func TestVerifySubject_RejectsRS256(t *testing.T) {
 
 func future() int64 { return time.Now().Add(time.Hour).Unix() }
 
+const testWebhookAud = "rela-webhook"
+
+// TestVerifyWebhook_Valid: a webhook JWT with the webhook audience verifies and
+// its event/user_id/org_id/jti claims are projected.
+func TestVerifyWebhook_Valid(t *testing.T) {
+	idv, mint, srv := testIssuer(t)
+	defer srv.Close()
+	wv, err := NewWebhookVerifier(idv, testWebhookAud)
+	if err != nil {
+		t.Fatalf("NewWebhookVerifier: %v", err)
+	}
+	tok := mint(jwt.MapClaims{
+		"iss": testIss, "aud": testWebhookAud, "exp": future(),
+		"event": "membership.created", "user_id": "usr_1", "org_id": "org_1", "jti": "evt_abc",
+	})
+	got, err := wv.VerifyWebhook(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("VerifyWebhook: %v", err)
+	}
+	if got.Event != "membership.created" || got.UserID != "usr_1" || got.OrgID != "org_1" || got.ID != "evt_abc" {
+		t.Fatalf("claims = %+v; want event/user/org/jti populated", got)
+	}
+}
+
+// TestVerifyWebhook_RejectsIdentityAudience is the confused-deputy guard: a token
+// minted for the IDENTITY audience must NOT verify as a webhook (and vice versa),
+// because the two verifiers pin different audiences.
+func TestVerifyWebhook_RejectsIdentityAudience(t *testing.T) {
+	idv, mint, srv := testIssuer(t)
+	defer srv.Close()
+	wv, err := NewWebhookVerifier(idv, testWebhookAud)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// aud = the identity audience, not the webhook one → must be rejected.
+	tok := mint(jwt.MapClaims{
+		"iss": testIss, "aud": testAud, "exp": future(),
+		"event": "membership.created", "user_id": "usr_1", "org_id": "org_1",
+	})
+	if _, err := wv.VerifyWebhook(context.Background(), tok); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("an identity-audience token must not verify as a webhook, got %v", err)
+	}
+}
+
+// TestVerifyWebhook_Rejects covers the same failure modes as the identity path:
+// wrong issuer, expired, missing expiry, alg:none, forged key.
+func TestVerifyWebhook_Rejects(t *testing.T) {
+	idv, mint, srv := testIssuer(t)
+	defer srv.Close()
+	wv, err := NewWebhookVerifier(idv, testWebhookAud)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		claims jwt.MapClaims
+	}{
+		{"wrong issuer", jwt.MapClaims{"iss": "https://evil.test", "aud": testWebhookAud, "exp": future()}},
+		{"wrong audience", jwt.MapClaims{"iss": testIss, "aud": "something-else", "exp": future()}},
+		{"expired", jwt.MapClaims{"iss": testIss, "aud": testWebhookAud, "exp": time.Now().Add(-time.Hour).Unix()}},
+		{"no expiry", jwt.MapClaims{"iss": testIss, "aud": testWebhookAud}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := wv.VerifyWebhook(context.Background(), mint(c.claims)); !errors.Is(err, ErrInvalid) {
+				t.Errorf("expected ErrInvalid, got %v", err)
+			}
+		})
+	}
+
+	// alg:none must be rejected.
+	none := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
+		"iss": testIss, "aud": testWebhookAud, "exp": future(),
+	})
+	raw, _ := none.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if _, err := wv.VerifyWebhook(context.Background(), raw); !errors.Is(err, ErrInvalid) {
+		t.Errorf("alg:none must be rejected, got %v", err)
+	}
+}
+
+// TestNewWebhookVerifier_RequiresAudienceAndVerifier: both pins are mandatory.
+func TestNewWebhookVerifier_RequiresAudienceAndVerifier(t *testing.T) {
+	idv, _, srv := testIssuer(t)
+	defer srv.Close()
+	if _, err := NewWebhookVerifier(nil, testWebhookAud); err == nil {
+		t.Error("NewWebhookVerifier must require an identity verifier")
+	}
+	if _, err := NewWebhookVerifier(idv, ""); err == nil {
+		t.Error("NewWebhookVerifier must require a non-empty webhook audience")
+	}
+}
+
 // TestNew_FatalOnUnreachableJWKS pins the C1 contract: New MUST error when the
 // JWKS can't be fetched at startup, so the server fails loud instead of booting a
 // verifier that silently rejects every token. (keyfunc's default would swallow
