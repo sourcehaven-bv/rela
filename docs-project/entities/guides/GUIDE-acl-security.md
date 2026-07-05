@@ -61,7 +61,7 @@ The `rela acl audit` linter (below) flags an un-gated membership
 relation — default or configured — as a high-severity finding, so run
 it after editing `acl.yaml`.
 
-The companion section in `docs/security.md` carries the same
+The companion section in `docs/server-security.md` carries the same
 guidance with more context on the broader threat model.
 
 ## Auditing your policy with `rela acl audit`
@@ -476,5 +476,5 @@ reach is tight.
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.
 - [CON-authorization] — vocabulary and core concept.
-- `docs/security.md` — the broader `rela-server` threat model
+- `docs/server-security.md` — the broader `rela-server` threat model
   (CSRF, DNS rebinding, loopback binding, command allowlist).
