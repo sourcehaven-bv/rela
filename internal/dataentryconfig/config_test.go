@@ -280,6 +280,51 @@ func TestDirection_UnmarshalYAML(t *testing.T) {
 	}
 }
 
+func TestKanbanCardField_Unmarshal(t *testing.T) {
+	// A single card.fields list mixing the legacy property-only shape with
+	// the new relation shapes must all unmarshal into KanbanCardField.
+	const src = `
+title: title
+fields:
+  - property: status
+  - property: priority
+    label: Priority
+  - relation: verantwoordelijk_voor
+    direction: incoming
+  - relation: blocks
+`
+	var card KanbanCard
+	if err := yaml.Unmarshal([]byte(src), &card); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if card.Title != "title" {
+		t.Errorf("title: got %q, want %q", card.Title, "title")
+	}
+	if len(card.Fields) != 4 {
+		t.Fatalf("fields: got %d, want 4", len(card.Fields))
+	}
+
+	// Legacy property-only field.
+	if got := card.Fields[0]; got.Property != "status" || got.Relation != "" {
+		t.Errorf("fields[0]: got %+v, want property=status", got)
+	}
+	// Property field with label.
+	if got := card.Fields[1]; got.Property != "priority" || got.Label != "Priority" {
+		t.Errorf("fields[1]: got %+v, want property=priority label=Priority", got)
+	}
+	// Incoming relation field: direction decodes via Direction.UnmarshalYAML.
+	if got := card.Fields[2]; got.Relation != "verantwoordelijk_voor" || !got.Direction.IsIncoming() {
+		t.Errorf("fields[2]: got %+v, want relation=verantwoordelijk_voor direction=incoming", got)
+	}
+	// Relation field with no direction: the key is absent so UnmarshalYAML
+	// never runs and the zero-value Direction ("") stands — treated as
+	// outgoing everywhere (IsIncoming is false).
+	if got := card.Fields[3]; got.Relation != "blocks" || got.Direction.IsIncoming() {
+		t.Errorf("fields[3]: got %+v, want relation=blocks direction=outgoing", got)
+	}
+}
+
 func TestDirection_IsIncoming(t *testing.T) {
 	t.Run("incoming returns true", func(t *testing.T) {
 		if !DirectionIncoming.IsIncoming() {
@@ -299,4 +344,102 @@ func TestDirection_IsIncoming(t *testing.T) {
 			t.Error("expected false")
 		}
 	})
+}
+
+func TestConfigRelationFilterDirection(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{
+			"taken": {
+				EntityType: "taak",
+				FilterControls: []FilterControl{
+					{Relation: "verantwoordelijk_voor", Direction: DirectionIncoming},
+					{Relation: "belongs_to"}, // default outgoing
+				},
+			},
+			"other_type": {
+				EntityType:     "persoon",
+				FilterControls: []FilterControl{{Relation: "verantwoordelijk_voor"}},
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		entityType string
+		relation   string
+		wantDir    Direction
+		wantOK     bool
+	}{
+		{"incoming resolves", "taak", "verantwoordelijk_voor", DirectionIncoming, true},
+		{"outgoing default resolves", "taak", "belongs_to", DirectionOutgoing, true},
+		{"other entity type isolated", "persoon", "verantwoordelijk_voor", DirectionOutgoing, true},
+		{"unknown relation for type", "taak", "missing", DirectionOutgoing, false},
+		{"unknown entity type", "widget", "belongs_to", DirectionOutgoing, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, ok := cfg.RelationFilterDirection(tt.entityType, tt.relation)
+			if dir != tt.wantDir || ok != tt.wantOK {
+				t.Errorf("RelationFilterDirection(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.entityType, tt.relation, dir, ok, tt.wantDir, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestConfigRelationFilterDirection_DeterministicOverConflicts pins RR-9MJRJG:
+// when two lists of the same entity type configure the same relation with
+// conflicting directions, RelationFilterDirection must resolve to the lowest
+// list ID deterministically — NOT randomly over map iteration order. Running
+// many times must always yield the same answer.
+func TestConfigRelationFilterDirection_DeterministicOverConflicts(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{
+			// "aaa" < "zzz": lowest list ID wins → outgoing.
+			"zzz": {
+				EntityType:     "taak",
+				FilterControls: []FilterControl{{Relation: "belongs_to", Direction: DirectionIncoming}},
+			},
+			"aaa": {
+				EntityType:     "taak",
+				FilterControls: []FilterControl{{Relation: "belongs_to", Direction: DirectionOutgoing}},
+			},
+		},
+	}
+
+	// Repeat enough times that map-iteration randomization would surface a
+	// flip if the resolver weren't sorted.
+	for i := range 100 {
+		dir, ok := cfg.RelationFilterDirection("taak", "belongs_to")
+		if !ok || dir != DirectionOutgoing {
+			t.Fatalf("iteration %d: got (%q, %v), want (outgoing, true) — non-deterministic resolution", i, dir, ok)
+		}
+	}
+}
+
+// TestConfigHasPropertyFilterControl pins the discriminator helper used to
+// resolve a property/relation name collision in favor of an explicit property
+// control (RR-0HWAS0).
+func TestConfigHasPropertyFilterControl(t *testing.T) {
+	cfg := &Config{
+		Lists: map[string]List{
+			"taken": {
+				EntityType: "taak",
+				FilterControls: []FilterControl{
+					{Property: "belongs_to"}, // property control sharing a relation name
+					{Relation: "verantwoordelijk_voor"},
+				},
+			},
+		},
+	}
+	if !cfg.HasPropertyFilterControl("taak", "belongs_to") {
+		t.Error("HasPropertyFilterControl(taak, belongs_to) = false, want true")
+	}
+	if cfg.HasPropertyFilterControl("taak", "verantwoordelijk_voor") {
+		t.Error("HasPropertyFilterControl(taak, verantwoordelijk_voor) = true (it's a relation control), want false")
+	}
+	if cfg.HasPropertyFilterControl("persoon", "belongs_to") {
+		t.Error("HasPropertyFilterControl for wrong type = true, want false")
+	}
 }

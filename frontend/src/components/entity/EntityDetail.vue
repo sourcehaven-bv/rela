@@ -482,6 +482,26 @@ function sectionShouldRouteToInlineEdit(section: ViewSection, ent: Entity): bool
   return sectionShouldRouteToInlineEditPure(section.fields, ent, getPropertyDef)
 }
 
+// The properties inline-edit section renders its OWN heading row (so the
+// heading and the auto-save indicator are flex siblings on one line —
+// TKT-U62DVR). For that case the generic <h2> above is suppressed to avoid
+// a duplicate heading. Every other section keeps the shared <h2>.
+//
+// Requires a truthy `section.heading`: SectionEditForm only renders its
+// header row when `heading` is non-empty (v-if="heading"), so if we
+// suppressed the generic <h2> for a headingless properties section we'd
+// end up with NO heading at all and a bare indicator. Gating on the same
+// truthiness keeps the two guards in agreement (RR-32ARO9).
+function sectionRendersOwnHeading(section: ViewSection): boolean {
+  const ent = entry.value
+  return (
+    !!section.heading &&
+    section.display === 'properties' &&
+    ent != null &&
+    sectionShouldRouteToInlineEdit(section, ent)
+  )
+}
+
 // One-shot dedupe for the 401/403 → loadView path. Cleared on each
 // loadView call to allow the next 4xx to refetch again.
 let pendingRefetch = false
@@ -787,7 +807,10 @@ watch(
           class="view-section"
         >
           <h2
-            v-if="section.heading || (section === entryContentSection && checkboxStats)"
+            v-if="
+              !sectionRendersOwnHeading(section) &&
+              (section.heading || (section === entryContentSection && checkboxStats))
+            "
             class="section-heading"
           >
             {{ section.heading }}
@@ -812,6 +835,7 @@ watch(
           <SectionEditForm
             v-else-if="section.display === 'properties' && entry && sectionShouldRouteToInlineEdit(section, entry)"
             :key="`${entry.type}/${entry.id}`"
+            :heading="section.heading"
             :entity-type="entry.type"
             :entity-id="entry.id"
             :initial-values="entry.properties"
@@ -1337,6 +1361,9 @@ watch(
   scroll-margin-top: 20px;
 }
 
+/* KEEP IN SYNC with SectionEditForm.vue `.section-edit-form-header
+   .section-heading` (RR-ZE29PY): the properties inline-edit section renders
+   its heading inside that component, which can't reach these scoped styles. */
 .section-heading {
   font-size: 18px;
   font-weight: 600;

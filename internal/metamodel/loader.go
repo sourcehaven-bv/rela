@@ -359,18 +359,43 @@ func validateDisplayProperty(entityName string, def EntityDef) []string {
 		return errs
 	}
 
-	prop, ok := def.Properties[dp]
-	if !ok {
-		errs = append(errs, fmt.Sprintf(
-			"entity %q: display_property %q is not a defined property (have: %s)",
-			entityName, dp, available))
+	// A template (contains `{`) references properties via `{name}`
+	// placeholders. Each named property is checked exactly as a bare-name
+	// display_property would be.
+	if isDisplayTemplate(dp) {
+		names, err := parseDisplayTemplate(dp)
+		if err != nil {
+			return append(errs, fmt.Sprintf("entity %q: display_property: %s", entityName, err))
+		}
+		for _, name := range names {
+			errs = append(errs, validateDisplayPropertyRef(entityName, dp, name, def.Properties, available)...)
+		}
 		return errs
 	}
 
+	return append(errs, validateDisplayPropertyRef(entityName, dp, dp, def.Properties, available)...)
+}
+
+// validateDisplayPropertyRef checks that a single property referenced by a
+// display_property (bare name or template placeholder) exists and has a type
+// that renders meaningfully as a display name. dp is the whole
+// display_property value (for the error message); name is the referenced
+// property. See validateDisplayProperty for the type-restriction rationale.
+func validateDisplayPropertyRef(
+	entityName, dp, name string, props map[string]PropertyDef, available string,
+) []string {
+	prop, ok := props[name]
+	if !ok {
+		return []string{fmt.Sprintf(
+			"entity %q: display_property %q references undefined property %q (have: %s)",
+			entityName, dp, name, available)}
+	}
+
+	var errs []string
 	if prop.List {
 		errs = append(errs, fmt.Sprintf(
-			"entity %q: display_property %q is list-typed; lists cannot render as a display name",
-			entityName, dp))
+			"entity %q: display_property %q references list-typed property %q; lists cannot render as a display name",
+			entityName, dp, name))
 	}
 
 	// Allow string (default), integer, boolean, enum, custom enum-like
@@ -379,8 +404,9 @@ func validateDisplayProperty(entityName string, def EntityDef) []string {
 	switch prop.Type {
 	case PropertyTypeDate, PropertyTypeFile, PropertyTypeRrule:
 		errs = append(errs, fmt.Sprintf(
-			"entity %q: display_property %q has type %q; only string, integer, boolean, or enum types render as display names",
-			entityName, dp, prop.Type))
+			"entity %q: display_property %q references property %q of type %q; "+
+				"only string, integer, boolean, or enum types render as display names",
+			entityName, dp, name, prop.Type))
 	}
 
 	return errs

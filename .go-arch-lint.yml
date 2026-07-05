@@ -90,9 +90,11 @@ components:
 
   # Infrastructure
   acl:              { in: internal/acl }
+  aclaudit:         { in: internal/aclaudit }
   affordances:      { in: internal/affordances }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
+  jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
   cache:            { in: internal/cache }
@@ -143,6 +145,10 @@ vendors:
     in:
       - golang.org/x/net/html
       - golang.org/x/net/html/**
+  jwtlib:
+    in:
+      - github.com/golang-jwt/jwt/**
+      - github.com/MicahParks/keyfunc/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -165,6 +171,7 @@ deps:
       - appbuild
       - audit
       - dataentry
+      - jwtauth
       - principal
       - scheduler
       - script
@@ -193,6 +200,7 @@ deps:
   cli:
     mayDependOn:
       - acl
+      - aclaudit
       - ai
       - analysis
       - app
@@ -425,6 +433,9 @@ deps:
       - entity
       - principal
       - store
+  aclaudit:
+    mayDependOn:
+      - acl
   affordances:
     mayDependOn:
       - acl
@@ -435,6 +446,11 @@ deps:
   audit:
     mayDependOn:
       - principal
+  jwtauth:
+    # Leaf: verifies signed JWTs against a JWKS. No internal deps; only the JWT
+    # vendor libs. The dataentry resolver consumes it via a local interface.
+    canUse:
+      - jwtlib
   renametype:
     mayDependOn:
       - metamodel

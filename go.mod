@@ -3,6 +3,7 @@ module github.com/Sourcehaven-BV/rela
 go 1.26
 
 require (
+	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/alecthomas/kong v1.15.0
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/charmbracelet/glamour v1.0.0
@@ -11,8 +12,9 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.19.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/mark3labs/mcp-go v0.55.0
+	github.com/mark3labs/mcp-go v0.55.1
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/mitchellh/go-wordwrap v1.0.1
 	github.com/olekukonko/tablewriter v1.1.4
@@ -31,6 +33,7 @@ require (
 require (
 	dario.cat/mergo v1.0.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
+	github.com/MicahParks/jwkset v0.11.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect
@@ -148,6 +151,7 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )

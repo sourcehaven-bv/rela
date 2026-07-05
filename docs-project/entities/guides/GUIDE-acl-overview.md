@@ -138,7 +138,22 @@ role_relations:
 
 inherit_roles_through:
   - belongs-to               # walk these ancestry edges when resolving local roles
+
+# membership_relation: member-of   # optional; the relation walked for group
+#                                  # membership. Default "member-of". Set it to
+#                                  # a domain relation you already model
+#                                  # (e.g. heeft_rol) to avoid a parallel edge
+#                                  # system. If you do, gate writes to it the
+#                                  # same way (see GUIDE-acl-security).
 ```
+
+`membership_relation:` is optional. When omitted (or blank) the resolver walks
+`member-of`, so existing policies are unaffected. Only set it to a relation type
+your metamodel **actually defines** and uses for membership (e.g. `heeft_rol`):
+the resolver walks exactly that relation, so if you name a type that doesn't
+exist — or one your data doesn't populate — the walk finds no edges and group
+roles silently never resolve. There's no separate "is this a real relation"
+check; the relation simply has to be there.
 
 Given the graph:
 

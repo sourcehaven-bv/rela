@@ -30,8 +30,8 @@ orphan detection, coverage analysis, validation rules, and graph export.
 rela init
 
 # Create entities
-rela create requirement --title "System must support 1000 users"
-rela create decision --title "Use PostgreSQL for persistence"
+rela create requirement -P title="System must support 1000 users"
+rela create decision -P title="Use PostgreSQL for persistence"
 
 # Link them together
 rela link DEC-001 addresses REQ-001

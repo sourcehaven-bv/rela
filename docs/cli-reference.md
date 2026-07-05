@@ -29,12 +29,12 @@ when it doesn't exist.
 
 ```yaml
 formatting:
-  line_width: 80  # Maximum line width for paragraph wrapping (default: 80)
+  line_width: 80 # Maximum line width for paragraph wrapping (default: 80)
 ```
 
-| Setting                  | Description                                      | Default |
-| ------------------------ | ------------------------------------------------ | ------- |
-| `formatting.line_width`  | Maximum line width for paragraph wrapping        | 80      |
+| Setting                 | Description                               | Default |
+| ----------------------- | ----------------------------------------- | ------- |
+| `formatting.line_width` | Maximum line width for paragraph wrapping | 80      |
 
 ## Commands
 
@@ -89,13 +89,21 @@ rela create <type> [flags]
 
 | Flag              | Description                                                                    |
 | ----------------- | ------------------------------------------------------------------------------ |
-| `-t, --title`     | Entity title (required)                                                        |
 | `-s, --status`    | Entity status (default: `draft`)                                               |
 | `-p, --priority`  | Entity priority                                                                |
 | `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
 | `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
 | `-b, --body`      | Markdown body content for the entity                                           |
 | `-B, --body-file` | Read body content from file (use `-` for stdin)                                |
+
+Set the title (and any other property) with `-P`, e.g. `-P title="..."`.
+
+> **Removed:** `create` no longer has a `-t, --title` flag. It used to write
+> into the entity type's _display_ property, which is not always `title` (a
+> project may name it `naam`/`label` or set `display_property`). If you relied
+> on `--title` writing into a non-`title` display property, set that property
+> directly: `-P <yourprop>="..."`. (`rela update -t` is unaffected — it always
+> wrote the literal `title` property.)
 
 **Templates:**
 
@@ -112,11 +120,11 @@ Entity types can have either sequential or string IDs (configured in `metamodel.
 
 ```bash
 # Sequential ID type (auto-generated)
-rela create requirement --title "System must scale to 1000 users"
+rela create requirement -P title="System must scale to 1000 users"
 # Creates REQ-001
 
 # String ID type (requires --id)
-rela create component --id auth-service --title "Authentication Service"
+rela create component --id auth-service -P title="Authentication Service"
 # Creates auth-service
 ```
 
@@ -124,25 +132,25 @@ rela create component --id auth-service --title "Authentication Service"
 
 ```bash
 # Create with auto-generated ID (sequential types)
-rela create requirement --title "System must scale to 1000 users"
+rela create requirement -P title="System must scale to 1000 users"
 
 # Use type alias
-rela create req -t "Short form works too"
+rela create req -P title="Short form works too"
 
 # With status and priority
-rela create requirement --title "Security audit" --status proposed --priority high
+rela create requirement -P title="Security audit" --status proposed --priority high
 
 # With custom ID (works for both sequential and string types)
-rela create requirement --title "Custom ID" --id REQ-CUSTOM-001
+rela create requirement -P title="Custom ID" --id REQ-CUSTOM-001
 
 # String ID type (--id is required)
-rela create component --id user-service --title "User Service"
+rela create component --id user-service -P title="User Service"
 
 # With custom properties
-rela create control -t "Access Control" -P "iso27001=A.5.15" -P "owner=Security Team"
+rela create control -P title="Access Control" -P "iso27001=A.5.15" -P "owner=Security Team"
 
 # With body content
-rela create requirement -t "Auth feature" --body "## Description\n\nUser authentication."
+rela create requirement -P title="Auth feature" --body "## Description\n\nUser authentication."
 ```
 
 ---
@@ -161,26 +169,26 @@ rela list [type] [flags]
 
 **Flags:**
 
-| Flag      | Description                                      |
-| --------- | ------------------------------------------------ |
-| `--where` | Filter by property (repeatable for AND logic)    |
-| `--sort`  | Sort by property (or `id`, `modified`)           |
-| `--desc`  | Sort descending                                  |
+| Flag      | Description                                   |
+| --------- | --------------------------------------------- |
+| `--where` | Filter by property (repeatable for AND logic) |
+| `--sort`  | Sort by property (or `id`, `modified`)        |
+| `--desc`  | Sort descending                               |
 
 **Filter Operators:**
 
 The `--where` flag supports multiple comparison operators:
 
-| Operator | Description                        | Example                            |
-| -------- | ---------------------------------- | ---------------------------------- |
-| `=`      | Exact match (supports `*` glob)    | `--where "status=draft"`           |
-| `!=`     | Not equal                          | `--where "status!=done"`           |
-| `<`      | Less than (date/integer)           | `--where "due_date<2025-03-01"`    |
-| `<=`     | Less than or equal                 | `--where "priority<=2"`            |
-| `>`      | Greater than                       | `--where "risk_score>5"`           |
-| `>=`     | Greater than or equal              | `--where "valid_until>=2025-01-01"`|
-| `=~`     | Regex match                        | `--where "title=~^Auth"`           |
-| `~`      | Fuzzy match                        | `--where "title~authentcation"`    |
+| Operator | Description                     | Example                             |
+| -------- | ------------------------------- | ----------------------------------- |
+| `=`      | Exact match (supports `*` glob) | `--where "status=draft"`            |
+| `!=`     | Not equal                       | `--where "status!=done"`            |
+| `<`      | Less than (date/integer)        | `--where "due_date<2025-03-01"`     |
+| `<=`     | Less than or equal              | `--where "priority<=2"`             |
+| `>`      | Greater than                    | `--where "risk_score>5"`            |
+| `>=`     | Greater than or equal           | `--where "valid_until>=2025-01-01"` |
+| `=~`     | Regex match                     | `--where "title=~^Auth"`            |
+| `~`      | Fuzzy match                     | `--where "title~authentcation"`     |
 
 **Glob Patterns:**
 
@@ -353,9 +361,9 @@ the property (see the metamodel reference) to allow several.
 
 **Flags:**
 
-| Flag              | Description                              |
-| ----------------- | ---------------------------------------- |
-| `-P, --property`  | Property to attach file(s) to            |
+| Flag             | Description                   |
+| ---------------- | ----------------------------- |
+| `-P, --property` | Property to attach file(s) to |
 
 If `--property` is not specified, uses the first `file`-type property defined for the entity type.
 
@@ -413,9 +421,9 @@ names.
 
 **Flags:**
 
-| Flag           | Description                                            |
-| -------------- | ----------------------------------------------------- |
-| `-f, --file`   | File name to detach (required when more than one)     |
+| Flag         | Description                                       |
+| ------------ | ------------------------------------------------- |
+| `-f, --file` | File name to detach (required when more than one) |
 
 **Examples:**
 
@@ -494,11 +502,11 @@ rela sync pull [--remote <url>] [--token <token>] [--force <id>]
 
 **Flags:**
 
-| Flag       | Description                                                          |
-| ---------- | ------------------------------------------------------------------- |
-| `--remote` | Remote rela-server base URL (proxy-fronted). Env: `RELA_REMOTE`.    |
-| `--token`  | Bearer token for the OAuth proxy. Prefer env `RELA_SYNC_TOKEN`.      |
-| `--force`  | Resolve one record id: push = local wins, pull = remote wins.       |
+| Flag       | Description                                                      |
+| ---------- | ---------------------------------------------------------------- |
+| `--remote` | Remote rela-server base URL (proxy-fronted). Env: `RELA_REMOTE`. |
+| `--token`  | Bearer token for the OAuth proxy. Prefer env `RELA_SYNC_TOKEN`.  |
+| `--force`  | Resolve one record id: push = local wins, pull = remote wins.    |
 
 The sync state (a per-record content-hash index and an opaque server cursor)
 lives in `.rela/sync-state.json`. Dirty detection is local: a record whose
@@ -512,7 +520,7 @@ NOT applied. Resolve it explicitly:
 - `rela sync pull --force <id>` — overwrite the local copy with the remote.
 
 **Authentication.** In production rela-server sits behind an OAuth proxy and has
-no native auth — the CLI authenticates to the *proxy* by presenting a JWT bearer
+no native auth — the CLI authenticates to the _proxy_ by presenting a JWT bearer
 (`Authorization: Bearer $RELA_SYNC_TOKEN`). The token is read from the env/flag
 and never logged. On loopback/dev with no proxy, sync works without a token. See
 [Sync](sync.md) for the proxy configuration.
@@ -745,10 +753,10 @@ rela fmt [type] [flags]
 
 **Flags:**
 
-| Flag        | Description                                          |
-| ----------- | ---------------------------------------------------- |
-| `--dry-run` | Preview changes without writing                      |
-| `--check`   | Check if files need formatting (exits 1 if they do)  |
+| Flag        | Description                                         |
+| ----------- | --------------------------------------------------- |
+| `--dry-run` | Preview changes without writing                     |
+| `--check`   | Check if files need formatting (exits 1 if they do) |
 
 This command normalizes:
 
@@ -762,7 +770,7 @@ Line width can be configured in `.rela/config.yaml`:
 
 ```yaml
 formatting:
-  line_width: 100  # default: 80
+  line_width: 100 # default: 80
 ```
 
 **What gets wrapped:**
@@ -1014,11 +1022,11 @@ Shows:
 
 **Flags:**
 
-| Flag          | Description                                                    |
-| ------------- | -------------------------------------------------------------- |
-| `--threshold` | Show types with instance count <= threshold (0 = only unused)  |
-| `--cleanup`   | Remove unused types from metamodel.yaml                        |
-| `--dry-run`   | Preview cleanup changes without modifying files                |
+| Flag          | Description                                                   |
+| ------------- | ------------------------------------------------------------- |
+| `--threshold` | Show types with instance count <= threshold (0 = only unused) |
+| `--cleanup`   | Remove unused types from metamodel.yaml                       |
+| `--dry-run`   | Preview cleanup changes without modifying files               |
 
 The cleanup operation only removes types that have no instances AND no references in
 configuration files (data-entry.yaml, validations, automations). Types referenced in
@@ -1213,7 +1221,7 @@ rela template init requirement
 # templates/entities/requirement.md
 
 # New entities will use the template
-rela create requirement --title "My Requirement"
+rela create requirement -P title="My Requirement"
 ```
 
 ---
@@ -1282,9 +1290,11 @@ This command adjusts header levels so the minimum header level in each entity is
 preserving the relative hierarchy. For example:
 
 ```markdown
-# Overview        →  ## Overview
-## Details        →  ### Details
-### Subsection    →  #### Subsection
+# Overview → ## Overview
+
+## Details → ### Details
+
+### Subsection → #### Subsection
 ```
 
 Setext-style headers (underlined with `===` or `---`) are converted to ATX style (`##`).
@@ -1295,9 +1305,9 @@ Setext-style headers (underlined with `===` or `---`) are converted to ATX style
 
 **Flags:**
 
-| Flag        | Description                        |
-| ----------- | ---------------------------------- |
-| `--dry-run` | Preview changes without writing    |
+| Flag        | Description                     |
+| ----------- | ------------------------------- |
+| `--dry-run` | Preview changes without writing |
 
 **Examples:**
 
@@ -1329,10 +1339,10 @@ rela rename entity <old-type> <new-type> [flags]
 
 **Flags:**
 
-| Flag           | Description                              |
-| -------------- | ---------------------------------------- |
-| `--plural`     | Override plural form for directory name  |
-| `-f, --force`  | Skip confirmation prompt                 |
+| Flag          | Description                             |
+| ------------- | --------------------------------------- |
+| `--plural`    | Override plural form for directory name |
+| `-f, --force` | Skip confirmation prompt                |
 
 This updates:
 
@@ -1397,21 +1407,21 @@ and custom types.
 
 **Subcommands:**
 
-| Command     | Description                              |
-| ----------- | ---------------------------------------- |
-| `overview`  | Show metamodel overview (default)        |
-| `entities`  | List all entity types with descriptions  |
-| `relations` | List all relation types                  |
-| `types`     | List custom types defined in metamodel   |
-| `entity`    | Show details for a specific entity type  |
-| `relation`  | Show details for a specific relation     |
+| Command     | Description                             |
+| ----------- | --------------------------------------- |
+| `overview`  | Show metamodel overview (default)       |
+| `entities`  | List all entity types with descriptions |
+| `relations` | List all relation types                 |
+| `types`     | List custom types defined in metamodel  |
+| `entity`    | Show details for a specific entity type |
+| `relation`  | Show details for a specific relation    |
 
 **Flags:**
 
-| Flag            | Description                                     |
-| --------------- | ----------------------------------------------- |
-| `--graphviz`    | Output metamodel as GraphViz DOT format         |
-| `--constraints` | Include cardinality constraints in DOT output   |
+| Flag            | Description                                   |
+| --------------- | --------------------------------------------- |
+| `--graphviz`    | Output metamodel as GraphViz DOT format       |
+| `--constraints` | Include cardinality constraints in DOT output |
 
 **Examples:**
 
@@ -1441,10 +1451,10 @@ attachments with it, so there is no separate attachment GC pass.
 
 **Flags:**
 
-| Flag            | Description                                              |
-| --------------- | -------------------------------------------------------- |
-| `--temp-files`  | Clean up orphaned `.new` files from interrupted writes   |
-| `--dry-run`     | Show what would be removed without actually removing     |
+| Flag           | Description                                            |
+| -------------- | ------------------------------------------------------ |
+| `--temp-files` | Clean up orphaned `.new` files from interrupted writes |
+| `--dry-run`    | Show what would be removed without actually removing   |
 
 **Examples:**
 

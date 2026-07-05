@@ -48,7 +48,7 @@ var (
 // so growth is structural here) — over the 20-field load line. Revisit grouping
 // subcommands into sub-structs; ratchet this number down if/when that lands.
 //
-//plimsoll:max-fields=38
+//plimsoll:max-fields=39
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -83,6 +83,7 @@ type CLI struct {
 	Schema      SchemaCmd      `cmd:"" help:"View the metamodel schema."`
 	Template    TemplateCmd    `cmd:"" help:"Manage entity and relation templates."`
 	Analyze     AnalyzeCmd     `cmd:"" help:"Analyze the entity graph."`
+	ACL         ACLCmd         `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
 	Rename      RenameCmd      `cmd:"" help:"Rename entities or relations."`
 	Attach      AttachCmd      `cmd:"" help:"Attach file(s) to an entity."`
 	Attachments AttachmentsCmd `cmd:"" help:"List attachments for an entity."`
@@ -155,6 +156,14 @@ func runKong() int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		// Resolve entity display titles through the metamodel so the entity
+		// table and detail output honor display_property (bare name or
+		// template), matching the data-entry app. Without a project (no
+		// metamodel) the writer falls back to the literal `title` property.
+		// NOTE: trace/path output builds its own titles in internal/tracer
+		// (still literal `title`); honoring display_property there is
+		// tracked separately (TKT-VHSHOB follow-up).
+		out.Titles = cliSvc.Meta()
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
@@ -195,7 +204,7 @@ func requiresProject(cmd string) bool {
 	case "show", "list", "trace", "graph", "export", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
-		"rename", "analyze", "attach", "attachments", "gc", "renumber",
+		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync":
 		return true
 	}

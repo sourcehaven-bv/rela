@@ -73,44 +73,52 @@ func buildMention(e *entityPkg.Entity, meta *metamodel.Metamodel) v1.Mention {
 		m.Title = e.Title()
 	}
 
-	primary := displayProperty(meta, e.Type)
-	if reason, locked := lockedReasonFor(e, primary); locked {
+	titleProps := displayProperties(meta, e.Type)
+	if reason, locked := lockedReasonFor(e, titleProps); locked {
 		m.Inaccessible = true
 		m.InaccessibleReason = reason
 	}
 	return m
 }
 
-// displayProperty returns the property name whose value backs the display
-// title for this entity type. Empty when the metamodel has no entry for
-// the type or no primary property is configured — falls back to the ID
-// being the source of truth, in which case the entity can't really be
-// "locked behind its title."
-func displayProperty(meta *metamodel.Metamodel, entityType string) string {
+// displayProperties returns the property names whose values back the display
+// title for this entity type — a single name for a bare/autoderived primary,
+// or every placeholder for a templated display_property. Empty when the
+// metamodel has no entry for the type or no primary property is configured
+// (the ID is then the source of truth, so the entity can't be "locked behind
+// its title"). Any one of these being inaccessible locks the title, because
+// DisplayTitle would render an incomplete name.
+func displayProperties(meta *metamodel.Metamodel, entityType string) []string {
 	if meta == nil {
-		return "title"
+		return []string{"title"}
 	}
 	def, ok := meta.GetEntityDef(entityType)
 	if !ok {
-		return ""
+		return nil
 	}
-	return def.GetPrimaryProperty()
+	return def.DisplayProperties()
 }
 
 // lockedReasonFor reports whether the entity's display title is
 // unreadable (and the matching reason). The entity's whole content body
 // being inaccessible (`InaccessibleFieldContent`) counts too, because the
-// lookup of the title property may have failed for the same reason —
+// lookup of a title property may have failed for the same reason —
 // markdown loaders produce a `content` inaccessible field for the whole
 // file when git-crypt blocks the read. A property unrelated to the title
-// being locked does not affect the link.
-func lockedReasonFor(e *entityPkg.Entity, displayProp string) (string, bool) {
+// being locked does not affect the link; but any property the title reads
+// from (all placeholders of a template) being locked does.
+func lockedReasonFor(e *entityPkg.Entity, displayProps []string) (string, bool) {
 	if e == nil {
 		return "", false
 	}
 	for _, f := range e.Inaccessible {
-		if f.Name == displayProp || f.Name == entityPkg.InaccessibleFieldContent {
+		if f.Name == entityPkg.InaccessibleFieldContent {
 			return string(f.Reason), true
+		}
+		for _, dp := range displayProps {
+			if f.Name == dp {
+				return string(f.Reason), true
+			}
 		}
 	}
 	return "", false

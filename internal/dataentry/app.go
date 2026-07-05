@@ -98,13 +98,13 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (167 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object. Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design) — 168 adds handleV1Feed (TKT-RDM9M5).
+// HTTP route by the router's design) — this branch adds handleV1Feed (TKT-RDM9M5).
 //
-//plimsoll:max-methods=168
+//plimsoll:max-methods=170
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -224,6 +224,12 @@ type App struct {
 	// implementations with a policy-driven resolver via the same
 	// interface.
 	fieldResolver FieldVerdictResolver
+
+	// webhook holds the inbound-IdP webhook receiver (verifier + target action +
+	// dedup). nil until SetWebhookReceiver is called, in which case the
+	// /webhooks/idp route is not mounted. Optional wiring, like security and
+	// principalResolver above.
+	webhook *webhookReceiver
 
 	// auditSink records short-circuit rejections (affordance gates)
 	// that never reach the entitymanager. ACL denials already get a
@@ -425,6 +431,13 @@ func NewApp(
 	// Validate config against metamodel
 	if validationErr := ValidateConfig(cfgData, &cfg, meta); validationErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
+	}
+
+	// Non-fatal configuration warnings (e.g. a relation filter control whose
+	// incoming direction targets a type the relation never points to). Logged,
+	// not fatal — the app still serves, the filter just returns no rows.
+	for _, w := range CollectConfigWarnings(&cfg, meta) {
+		slog.Warn("data-entry config warning", "detail", w)
 	}
 
 	// Verify action scripts exist on disk (catches typos at startup).

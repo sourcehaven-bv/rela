@@ -9,7 +9,6 @@ import (
 	"html/template"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -702,53 +701,6 @@ func (a *App) resolveRelationColumnValues(
 	return titles
 }
 
-// filterByRelation filters entities to those that have an outgoing edge of the given
-// relation type pointing to a target whose display title matches value.
-func (a *App) filterByRelation(
-	ctx context.Context, entities []*entity.Entity, relationType, value string,
-) []*entity.Entity {
-	svc := a.Services()
-	var result []*entity.Entity
-	for _, e := range entities {
-		if hasOutgoingRelationTo(ctx, svc, e.ID, relationType, value) {
-			result = append(result, e)
-		}
-	}
-	return result
-}
-
-// resolveRelationFilterValues returns sorted, unique display titles of all entities
-// reachable via the given relation type from any of the provided entities.
-func (a *App) resolveRelationFilterValues(
-	ctx context.Context, entities []*entity.Entity, relationType string,
-) []string {
-	svc := a.Services()
-	seen := make(map[string]bool)
-	var vals []string
-	for _, e := range entities {
-		q := store.RelationQuery{
-			EntityID:  e.ID,
-			Type:      relationType,
-			Direction: store.DirectionOutgoing,
-		}
-		for r, err := range svc.Store.ListRelations(ctx, q) {
-			if err != nil {
-				break
-			}
-			title, ok := entityTitle(ctx, svc, r.To)
-			if !ok {
-				continue
-			}
-			if !seen[title] {
-				seen[title] = true
-				vals = append(vals, title)
-			}
-		}
-	}
-	sort.Strings(vals)
-	return vals
-}
-
 // entityTitle resolves an entity ID to its metamodel-rendered display title.
 // Returns ("", false) when the entity does not exist (e.g. dangling relation).
 func entityTitle(ctx context.Context, svc Services, id string) (string, bool) {
@@ -757,25 +709,6 @@ func entityTitle(ctx context.Context, svc Services, id string) (string, bool) {
 		return "", false
 	}
 	return svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties), true
-}
-
-// hasOutgoingRelationTo reports whether fromID has an outgoing relation of
-// the given type pointing to a target whose display title matches value.
-func hasOutgoingRelationTo(ctx context.Context, svc Services, fromID, relationType, value string) bool {
-	q := store.RelationQuery{
-		EntityID:  fromID,
-		Type:      relationType,
-		Direction: store.DirectionOutgoing,
-	}
-	for r, err := range svc.Store.ListRelations(ctx, q) {
-		if err != nil {
-			return false
-		}
-		if title, ok := entityTitle(ctx, svc, r.To); ok && title == value {
-			return true
-		}
-	}
-	return false
 }
 
 // relationDirection maps the data-entry config direction type to the

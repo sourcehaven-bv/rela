@@ -6,11 +6,12 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { listEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
-import type { Entity, KanbanConfig } from '@/types'
+import type { Entity, KanbanConfig, KanbanCardField } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { entityDisplayTitle } from '@/utils/entityDisplay'
 
 const props = defineProps<{
   id: string
@@ -41,6 +42,14 @@ function canUpdate(entity: Entity): boolean {
 // Computed
 const kanbanConfig = computed(() => schemaStore.getKanban(props.id) as KanbanConfig | undefined)
 
+// Cards may render relation targets by ID; when any card field references a
+// relation we must ask the server to embed the related entities (?include=*)
+// so we can resolve those IDs to titles. Property-only boards fetch without
+// includes, exactly as before.
+const hasRelationFields = computed(
+  () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation) ?? false
+)
+
 // The board's list query (FEAT-XY2D1L). The key derives from the
 // configured entity type, so switching boards (props.id) switches cache
 // entries automatically, and useEvents' targeted SSE invalidation on
@@ -53,12 +62,15 @@ const boardQuery = useQuery({
   query: () => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
-    return listEntities(config.entity)
+    return listEntities(config.entity, hasRelationFields.value ? { include: '*' } : undefined)
   },
   enabled: () => !!kanbanConfig.value,
 })
 
 const entities = computed(() => boardQuery.data.value?.data ?? [])
+const includedEntities = computed<Record<string, Entity>>(
+  () => boardQuery.data.value?.included ?? {}
+)
 const collectionActions = computed(() => boardQuery.data.value?._actions)
 const loading = computed(() => boardQuery.isPending.value)
 const loadError = computed(() => {
@@ -253,17 +265,60 @@ function getCardTitle(entity: Entity): string {
   return String(entity.properties[kanbanConfig.value.card.title] || entity.id)
 }
 
-function getCardFieldValue(entity: Entity, field: { property?: string }): string {
+// relationCardKey resolves the key under which a card field's relation
+// targets are serialized on the entity's `relations` map. Outgoing edges
+// are keyed by the relation name itself; incoming edges are keyed by the
+// relation's declared inverse (schemaStore.getInverseName), falling back to
+// `<relation>_inverse` when no inverse is declared. This mirrors the wire
+// contract shared with EntityList relation columns (TKT-ODHV2D).
+//
+// MERGE-ORDER DEPENDENCY (RR-M8IIHV): the INCOMING branch only resolves once
+// TKT-ODHV2D's server change lands. The list endpoint on this branch
+// serializes OUTGOING edges only (see entityserializer.forWireRelated, fed by
+// entityReader.outgoingRelations) — it does NOT populate the inverse key for
+// incoming edges. Until ODHV2D merges, an incoming card field computes an
+// inverse key that is absent from `relations`, so getCardFieldValue below
+// returns '' and the card renders the '-' placeholder (degrades visibly, not a
+// silent blank). The Go contract test `TestListEndpoint_IncomingEdge_InverseKey_ODHV2DContract`
+// in internal/dataentry pins the server side of this inverse-key contract and
+// activates once ODHV2D is integrated.
+function relationCardKey(field: KanbanCardField): string {
+  const rel = field.relation || ''
+  if (field.direction === 'incoming') {
+    return schemaStore.getInverseName(rel) || `${rel}_inverse`
+  }
+  return rel
+}
+
+function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
+  if (field.relation) {
+    const ids = entity.relations?.[relationCardKey(field)] || []
+    return ids
+      .map((id) => {
+        const included = includedEntities.value[id]
+        // Unresolved target → raw ID fallback, matching EntityList.vue's
+        // getFormattedCellValue (`included ? title : id`). Intentionally NOT
+        // divergent: kanban and the list share one relation-cell contract
+        // (RR-XM5ZEB). ACL-hidden targets do not leak their IDs here because
+        // TKT-ODHV2D's server gate (`visibleRelationIDs`) removes hidden
+        // neighbour IDs from the `relations` map before it reaches this
+        // fallback — the SPA never sees a hidden ID to fall back to.
+        return included ? entityDisplayTitle(included) : id
+      })
+      .join(', ')
+  }
   if (!field.property) return ''
   return String(entity.properties[field.property] || '')
 }
 
-function getCardFieldLabel(field: { property?: string }): string {
-  return field.property || ''
+function getCardFieldLabel(field: KanbanCardField): string {
+  if (field.label) return field.label
+  return field.relation || field.property || ''
 }
 
-function isEnumField(field: { property?: string }): boolean {
-  if (!field.property || !entityType.value) return false
+// Relation fields never render as enum badges — only scalar enum properties do.
+function isEnumField(field: KanbanCardField): boolean {
+  if (field.relation || !field.property || !entityType.value) return false
   const propDef = entityType.value.properties[field.property]
   return propDef?.type === 'enum' || (propDef?.values?.length ?? 0) > 0
 }
@@ -407,8 +462,8 @@ function createNew() {
             <div class="card-title">{{ getCardTitle(entity) }}</div>
             <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
               <div
-                v-for="field in kanbanConfig.card.fields"
-                :key="field.property"
+                v-for="(field, fieldIndex) in kanbanConfig.card.fields"
+                :key="field.relation || field.property || fieldIndex"
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>
@@ -473,8 +528,8 @@ function createNew() {
             <div class="card-title">{{ getCardTitle(entity) }}</div>
             <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
               <div
-                v-for="field in kanbanConfig.card.fields"
-                :key="field.property"
+                v-for="(field, fieldIndex) in kanbanConfig.card.fields"
+                :key="field.relation || field.property || fieldIndex"
                 class="card-field"
               >
                 <span class="field-label">{{ getCardFieldLabel(field) }}:</span>

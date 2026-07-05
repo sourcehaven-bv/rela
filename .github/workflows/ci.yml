@@ -459,9 +459,9 @@ jobs:
             echo "ERROR: PR must include a new or modified bug, feature, or ticket entity in tickets/entities/"
             echo ""
             echo "Create one with:"
-            echo "  rela create bug --project tickets -t 'Title'"
-            echo "  rela create feature --project tickets -t 'Title'"
-            echo "  rela create ticket --project tickets -t 'Title'"
+            echo "  rela create bug --project tickets -P title='Title'"
+            echo "  rela create feature --project tickets -P title='Title'"
+            echo "  rela create ticket --project tickets -P title='Title'"
             exit 1
           fi
 

@@ -35,12 +35,14 @@ function mountForm(opts: {
   onPropertyApplied?: Mock
   onError?: Mock
   onVerdictFlip?: Mock
+  heading?: string
 }) {
   const onPropertyApplied = opts.onPropertyApplied ?? vi.fn()
   const onError = opts.onError ?? vi.fn()
   const onVerdictFlip = opts.onVerdictFlip ?? vi.fn()
   const wrapper = mount(SectionEditForm, {
     props: {
+      heading: opts.heading,
       entityType: opts.entityType ?? 'ticket',
       entityId: opts.entityId ?? 'TKT-001',
       initialValues: opts.initialValues ?? { title: 'Original', status: 'open' },
@@ -283,5 +285,62 @@ describe('SectionEditForm', () => {
     expect(widget.props('entityId')).toBe('TKT-001')
     // The preview renders from the forwarded metadata.
     expect(wrapper.find('img.file-preview').exists()).toBe(true)
+  })
+
+  // TKT-U62DVR: heading-row placement of the auto-save indicator.
+  describe('heading row (indicator placement)', () => {
+    it('renders its own heading row with the indicator as a flex sibling when `heading` is set', () => {
+      const { wrapper } = mountForm({ heading: 'Properties' })
+      const header = wrapper.find('.section-edit-form-header')
+      expect(header.exists()).toBe(true)
+      // Heading and indicator are siblings inside the one header row.
+      expect(header.find('.section-heading').text()).toBe('Properties')
+      expect(header.find('[data-testid="autosave-indicator"]').exists()).toBe(true)
+      // Exactly one indicator (no duplicate headless one).
+      expect(wrapper.findAll('[data-testid="autosave-indicator"]')).toHaveLength(1)
+    })
+
+    it('indicator starts idle-hidden in the heading row (no floating check)', () => {
+      const { wrapper } = mountForm({ heading: 'Properties' })
+      const indicator = wrapper.find('.section-edit-form-header [data-testid="autosave-indicator"]')
+      expect(indicator.classes()).toContain('autosave-hidden')
+    })
+
+    it('renders no heading row and defers indicator placement to a slot when `heading` is omitted', () => {
+      const { wrapper } = mountForm({})
+      expect(wrapper.find('.section-edit-form-header').exists()).toBe(false)
+      // Headless default still renders an indicator inline (host may override
+      // via the #indicator slot, as cards/list do).
+      expect(wrapper.findAll('[data-testid="autosave-indicator"]')).toHaveLength(1)
+    })
+
+    it('treats an empty-string heading as headless (no header row, single indicator) — RR-32ARO9', () => {
+      // The EntityDetail wiring passes `:heading="section.heading"`, which is
+      // '' for a headingless configured properties section. That must NOT
+      // render an empty header row; it falls back to the headless path.
+      const { wrapper } = mountForm({ heading: '' })
+      expect(wrapper.find('.section-edit-form-header').exists()).toBe(false)
+      expect(wrapper.findAll('[data-testid="autosave-indicator"]')).toHaveLength(1)
+    })
+
+    it('lets a host #indicator slot override the default fallback (cards/list path) — RR-95OACT', () => {
+      const wrapper = mount(SectionEditForm, {
+        props: {
+          entityType: 'ticket',
+          entityId: 'TKT-001',
+          initialValues: { title: 'Original', status: 'open' },
+          fields: makeFields(),
+          onPropertyApplied: vi.fn(),
+          onError: vi.fn(),
+          onVerdictFlip: vi.fn(),
+        },
+        slots: {
+          indicator: '<span class="host-indicator">HOST</span>',
+        },
+      })
+      // Host slot content wins; the default AutoSaveIndicator is not rendered.
+      expect(wrapper.find('.host-indicator').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="autosave-indicator"]').exists()).toBe(false)
+    })
   })
 })

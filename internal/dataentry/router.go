@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -85,6 +86,12 @@ func (a *App) NewRouter() http.Handler {
 
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
 	a.registerSyncRoutes(inner)
+
+	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
+	// configured (SetWebhookReceiver). It lives OUTSIDE /api/ because it
+	// authenticates itself by verifying a signed JWT body, not a proxy header or
+	// cookie, so it is CSRF-immune by construction and needs no same-origin gate.
+	a.registerWebhookRoutes(inner)
 
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
@@ -306,6 +313,75 @@ func EnvPrincipalResolver() PrincipalResolver {
 		}
 		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 	}
+}
+
+// subjectVerifier verifies a signed identity assertion and returns its subject
+// (the stable OIDC `sub`). Satisfied by *jwtauth.Verifier; kept local (and
+// unexported, per the other consumer interfaces here) so the dataentry package
+// doesn't import the concrete verifier and the resolver is testable with a stub.
+type subjectVerifier interface {
+	VerifySubject(ctx context.Context, raw string) (string, error)
+}
+
+// JWTPrincipalResolver reads a signed identity assertion from headerName,
+// verifies it (ES256 against the proxy's JWKS, via v), and stamps the verified
+// STABLE subject as Principal.User. This is provider-agnostic — any OIDC proxy
+// that injects a signed JWT works by configuring the issuer/audience/JWKS/header.
+//
+// Unlike [HeaderPrincipalResolver] (which trusts the proxy set the header), this
+// resolver CRYPTOGRAPHICALLY verifies the assertion, so it is safe even when the
+// header could reach the server from the network — a spoofed header without a
+// valid signature simply fails verification and falls through.
+//
+// Tool is [principal.ToolDataEntry]: the assertion changes WHO authenticated, not
+// the entry point (a verified user still arrives via the data-entry HTTP surface).
+//
+// A missing header, an "Authorization: Bearer <jwt>" wrapper (the scheme is
+// stripped case-insensitively per RFC 6750), or any verification failure yields a
+// zero Principal so the chain falls through — a nil v also yields an inert
+// resolver. Empty headerName ⇒ inert (matches the disabled-flag shape of the
+// other resolvers).
+func JWTPrincipalResolver(v subjectVerifier, headerName string) PrincipalResolver {
+	if v == nil || headerName == "" {
+		return func(*http.Request) principal.Principal { return principal.Principal{} }
+	}
+	return func(r *http.Request) principal.Principal {
+		raw := stripBearer(r.Header.Get(headerName))
+		if raw == "" {
+			return principal.Principal{}
+		}
+		sub, err := v.VerifySubject(r.Context(), raw)
+		if err != nil || sub == "" {
+			return principal.Principal{}
+		}
+		// The subject is a controlled id (opaque, from the IdP), but sanitize it
+		// the same way as header/env users for defense in depth (length cap,
+		// control-char strip). A control-only value sanitizes to "" and falls
+		// through.
+		user := sanitizeUser(sub)
+		if user == "" {
+			return principal.Principal{}
+		}
+		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+	}
+}
+
+// stripBearer trims the header value and removes an optional "Bearer" auth
+// scheme (case-insensitive, per RFC 6750, tolerating any run of whitespace after
+// it) so the header may carry either a raw JWT or an "Authorization: Bearer <jwt>"
+// value. Returns the bare token, or "" if the value is empty.
+func stripBearer(v string) string {
+	v = strings.TrimSpace(v)
+	const scheme = "bearer"
+	if len(v) > len(scheme) && strings.EqualFold(v[:len(scheme)], scheme) {
+		rest := v[len(scheme):]
+		if trimmed := strings.TrimLeft(rest, " \t"); trimmed != rest {
+			// Only strip when the scheme was actually followed by whitespace, so a
+			// token that merely starts with "bearer" isn't mangled.
+			return strings.TrimSpace(trimmed)
+		}
+	}
+	return v
 }
 
 // ChainResolvers returns a resolver that tries each supplied

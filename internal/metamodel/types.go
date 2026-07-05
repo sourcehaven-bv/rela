@@ -136,10 +136,14 @@ type CustomType struct {
 
 // EntityDef defines an entity type in the metamodel
 //
-// TODO(TKT-N0IKN9): 23 exported methods, over the 20 exported-method line.
-// Schema value type; ratchet candidate alongside Metamodel.
+// TODO(TKT-N0IKN9): 24 exported methods, over the 20 exported-method line.
+// Schema value type; ratchet candidate alongside Metamodel. DisplayProperties
+// (TKT-NJTBQX) is the 24th — it reports the property set backing the display
+// title so the ACL locked-title guard can gate on templated display_property
+// (see internal/dataentry mentions); ratchet back down when this type is
+// decomposed.
 //
-//plimsoll:max-exported-methods=23
+//plimsoll:max-exported-methods=24
 type EntityDef struct {
 	Label         string                 `yaml:"label"`
 	LabelPlural   string                 `yaml:"label_plural,omitempty"`

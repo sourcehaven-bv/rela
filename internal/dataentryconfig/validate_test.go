@@ -1813,3 +1813,190 @@ func TestValidateApp_PlantUMLServerURL(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectConfigWarnings_IncomingRelationFilterWrongSide(t *testing.T) {
+	meta := testMetamodel() // belongs-to: from ticket, to category
+
+	tests := []struct {
+		name        string
+		list        List
+		wantWarning bool
+	}{
+		{
+			name: "incoming filter on the `to` side is fine",
+			list: List{
+				EntityType:     "category",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "incoming filter on the `from` side warns",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+			wantWarning: true,
+		},
+		{
+			name: "outgoing filter on the `from` side is fine (no direction check)",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to"}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "property filter control never warns",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Property: "status"}},
+			},
+			wantWarning: false,
+		},
+		{
+			name: "incoming filter on a self-referential relation is fine",
+			list: List{
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "blocks", Direction: DirectionIncoming}},
+			},
+			wantWarning: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Lists: map[string]List{"lst": tt.list}}
+			warnings := CollectConfigWarnings(cfg, meta)
+			if tt.wantWarning {
+				if len(warnings) == 0 {
+					t.Fatalf("expected a warning, got none")
+				}
+				if !strings.Contains(warnings[0], "belongs-to") ||
+					!strings.Contains(warnings[0], "incoming") {
+
+					t.Errorf("warning missing expected detail: %q", warnings[0])
+				}
+			} else if len(warnings) != 0 {
+				t.Errorf("expected no warnings, got %v", warnings)
+			}
+		})
+	}
+}
+
+func TestCollectConfigWarnings_NotFatal(t *testing.T) {
+	meta := testMetamodel()
+	// A wrong-side incoming filter is a warning, NOT a hard validation error.
+	cfg := &Config{
+		Lists: map[string]List{
+			"lst": {
+				EntityType:     "ticket",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("wrong-side incoming filter should not be a fatal error, got: %v", err)
+	}
+	if len(CollectConfigWarnings(cfg, meta)) == 0 {
+		t.Error("expected a non-fatal warning for the wrong-side incoming filter")
+	}
+}
+
+// TestCollectConfigWarnings_ConflictingRelationDirections pins RR-9MJRJG: two
+// lists of the same entity type configuring the same relation with conflicting
+// directions must produce a warning naming the winning (lowest) list ID.
+func TestCollectConfigWarnings_ConflictingRelationDirections(t *testing.T) {
+	meta := testMetamodel()
+
+	t.Run("conflict warns and names lowest list ID winner", func(t *testing.T) {
+		cfg := &Config{Lists: map[string]List{
+			"zzz_open": {
+				EntityType:     "category",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionIncoming}},
+			},
+			"aaa_open": {
+				EntityType:     "category",
+				FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionOutgoing}},
+			},
+		}}
+		warnings := CollectConfigWarnings(cfg, meta)
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "conflicting directions") && strings.Contains(w, `"aaa_open"`) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a conflicting-directions warning naming aaa_open, got %v", warnings)
+		}
+	})
+
+	t.Run("agreeing directions across lists do not warn", func(t *testing.T) {
+		cfg := &Config{Lists: map[string]List{
+			"a": {EntityType: "ticket", FilterControls: []FilterControl{{Relation: "belongs-to"}}},
+			"b": {EntityType: "ticket", FilterControls: []FilterControl{{Relation: "belongs-to", Direction: DirectionOutgoing}}},
+		}}
+		for _, w := range CollectConfigWarnings(cfg, meta) {
+			if strings.Contains(w, "conflicting directions") {
+				t.Errorf("unexpected conflict warning: %q", w)
+			}
+		}
+	})
+}
+
+// TestCollectConfigWarnings_RelationPropertyNameCollision pins RR-0HWAS0: a
+// relation FilterControl whose name also names a property of the list's entity
+// type (disjoint namespaces) is flagged, because the runtime routes the filter
+// to the property.
+func TestCollectConfigWarnings_RelationPropertyNameCollision(t *testing.T) {
+	// taak has property "belongs_to"; the metamodel also has a global relation
+	// "belongs_to". Configuring a relation filter on it collides.
+	meta := &metamodel.Metamodel{
+		Version: "1.0",
+		Entities: map[string]metamodel.EntityDef{
+			"taak": {
+				Label:    "Taak",
+				IDPrefix: "TAAK-",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":      {Type: "string", Required: true},
+					"belongs_to": {Type: "string"},
+				},
+			},
+			"project": {Label: "Project", IDPrefix: "PRJ-", Properties: map[string]metamodel.PropertyDef{"name": {Type: "string"}}},
+		},
+		Relations: map[string]metamodel.RelationDef{
+			"belongs_to": {Label: "belongs to", From: []string{"taak"}, To: []string{"project"}},
+		},
+	}
+
+	t.Run("relation control colliding with a property warns", func(t *testing.T) {
+		cfg := &Config{Lists: map[string]List{
+			"taken": {EntityType: "taak", FilterControls: []FilterControl{{Relation: "belongs_to"}}},
+		}}
+		warnings := CollectConfigWarnings(cfg, meta)
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "collides with a property") && strings.Contains(w, "belongs_to") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a name-collision warning, got %v", warnings)
+		}
+	})
+
+	t.Run("explicit property control disambiguates, no warning", func(t *testing.T) {
+		cfg := &Config{Lists: map[string]List{
+			"taken": {EntityType: "taak", FilterControls: []FilterControl{
+				{Property: "belongs_to"},
+				{Relation: "belongs_to"},
+			}},
+		}}
+		for _, w := range CollectConfigWarnings(cfg, meta) {
+			if strings.Contains(w, "collides with a property") {
+				t.Errorf("unexpected collision warning when a property control disambiguates: %q", w)
+			}
+		}
+	})
+}

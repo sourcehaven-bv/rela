@@ -76,7 +76,7 @@ If one requirement replaces another, document the relationship:
 
 ```bash
 # Create the new requirement
-rela create requirement --title "JSON-based data import" --property "status=accepted"
+rela create requirement -P title="JSON-based data import" --property "status=accepted"
 
 # Retire the old one and link them
 rela update REQ-042 --property "status=retired"
@@ -205,7 +205,7 @@ draft → proposed → accepted → [retired|deprecated]
 ### Use Draft for Work in Progress
 
 ```bash
-rela create requirement --title "TBD: Auth approach" --property "status=draft"
+rela create requirement -P title="TBD: Auth approach" --property "status=draft"
 ```
 
 Draft entities:

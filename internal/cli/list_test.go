@@ -36,7 +36,7 @@ func TestResolveEntityTypeWithAlias(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved, _, err := resolveEntityType(meta, tt.input)
+			resolved, err := resolveEntityType(meta, tt.input)
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("resolveEntityType(%q) expected error, got nil", tt.input)
@@ -90,7 +90,7 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved, _, err := resolveEntityType(meta, tt.input)
+			resolved, err := resolveEntityType(meta, tt.input)
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("resolveEntityType(%q) expected error, got nil", tt.input)
@@ -111,7 +111,7 @@ func TestListTypeParsingEdgeCases(t *testing.T) {
 func TestListCommandWithUnknownType(t *testing.T) {
 	meta := metamodel.DefaultMetamodel()
 
-	_, _, err := resolveEntityType(meta, "nonexistent")
+	_, err := resolveEntityType(meta, "nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown entity type")
 	}

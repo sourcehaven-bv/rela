@@ -12,13 +12,15 @@ This guide covers the security properties an operator running
 rela with an `acl.yaml` needs to understand. Read [GUIDE-acl-overview]
 first; this assumes you know the resolver vocabulary.
 
-## Hardening `member-of`
+## Hardening the membership relation
 
-rela's v1 ACL confers group roles by walking `member-of` edges from
-the principal. By default, `member-of` is a regular relation type —
-there is no built-in restriction on who can create one. **If you use
-groups in `assignments`, you must gate `member-of` writes**, or any
-user who can create a relation can grant themselves any role.
+rela's v1 ACL confers group roles by walking the **membership
+relation** from the principal — the relation type named by
+`membership_relation:` in `acl.yaml`, default `member-of`. By default
+that relation is a regular relation type — there is no built-in
+restriction on who can create one. **If you use groups in
+`assignments`, you must gate writes to the membership relation**, or
+any user who can create such a relation can grant themselves any role.
 
 The simplest hardening is to require a `member-of:create` permission
 on the relation and grant it only to administrative roles:
@@ -43,8 +45,80 @@ Operators of single-user instances who don't use groups can ignore
 this; the moment you add an `assignments` mapping for a group, this
 is mandatory.
 
-The companion section in `docs/security.md` carries the same
+If you point `membership_relation:` at a domain-specific relation
+(e.g. `heeft_rol` in a Dutch-language ISMS), the same hardening
+applies to *that* relation — the `requires_permission` gate must name
+the relation you actually configured:
+
+```yaml
+membership_relation: heeft_rol
+role_relations:
+  heeft_rol:
+    requires_permission: member-of:create
+```
+
+The `rela acl audit` linter (below) flags an un-gated membership
+relation — default or configured — as a high-severity finding, so run
+it after editing `acl.yaml`.
+
+The companion section in `docs/server-security.md` carries the same
 guidance with more context on the broader threat model.
+
+## Auditing your policy with `rela acl audit`
+
+To keep your policy correct and hardened, run `rela acl audit` after
+every change to `acl.yaml`. It catches the mistakes that don't fail
+boot: a typo'd entity type that silently grants nothing, an un-gated
+membership relation that opens a self-promotion path, a write grant on
+the `everyone` role that hands capabilities to anonymous callers.
+Boot-time validation (`Policy.Validate`) deliberately stays a narrow
+*structural* gate — it rejects malformed policies but does not hunt for
+these foot-guns; the audit is the tool that does.
+
+The audit reports severity-ranked findings across two tiers:
+
+- **Pure-policy** — escalation foot-guns (un-gated membership relation
+  or role-relation conferring a privileged role; a privileged
+  `everyone` role) and dead/inert config (assignments or `confers`
+  naming an undeclared role, a `requires_permission` no role grants,
+  dead permissions, wildcard write sprawl).
+- **Metamodel cross-check** — grants, `membership_relation`,
+  `role_relations`, `inherit_roles_through`, `user_entity_type`, field,
+  and option references that the schema doesn't declare (silent drift).
+
+```console
+$ rela acl audit
+⚠ ACL audit: 2 finding(s)
+  [critical] role "everyone" ... grants write or permissions ...
+      fix: remove write/permission grants from the everyone role ...
+  [high] membership relation "member-of" confers group roles ... not gated ...
+      fix: add role_relations.member-of.requires_permission ...
+```
+
+The audit is **advisory** — with no flag it prints findings and always
+exits zero. For CI, gate the exit code on a severity threshold with
+`--fail-on`:
+
+```bash
+rela acl audit --fail-on=high     # non-zero if any critical/high finding
+rela acl audit --fail-on=medium   # also fail on medium
+rela acl audit --fail-on=any      # fail on any finding at all
+rela acl audit --exit-code        # alias for --fail-on=high
+```
+
+A finding **below** the threshold never changes the exit code — so
+`--fail-on=high` lets a medium "wildcard write" nudge through without
+breaking the build, while `--fail-on=any` is the strictest gate.
+Findings are always printed regardless of the threshold.
+
+**For a production deployment, gate CI on `--fail-on=any`** and keep
+the policy clean — the medium/low findings (wildcard sprawl, dead
+permissions, drift) are exactly the slow rot you want to catch before
+it hides a real hole. Loosen to `--fail-on=high` only if you have a
+deliberate, reviewed reason to tolerate the lower-severity findings.
+
+Use `-o json` for machine-readable output. A clean, well-gated policy
+reports no findings and exits zero.
 
 ## Fail-loud on malformed `acl.yaml`
 
@@ -402,5 +476,5 @@ reach is tight.
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.
 - [CON-authorization] — vocabulary and core concept.
-- `docs/security.md` — the broader `rela-server` threat model
+- `docs/server-security.md` — the broader `rela-server` threat model
   (CSRF, DNS rebinding, loopback binding, command allowlist).
