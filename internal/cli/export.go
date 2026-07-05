@@ -204,7 +204,11 @@ func getEntityRelations(ctx context.Context, svc *cliServices, entityID string) 
 		}
 		target := RelationTarget{ID: rel.To}
 		if node, err := st.GetEntity(ctx, rel.To); err == nil {
-			target.Title = svc.Meta().DisplayTitle(node.ID, node.Type, node.Properties)
+			// Export is a data-interchange format: emit the raw title
+			// property (empty when absent), not a DisplayTitle that would
+			// echo the ID for titleless entities. Presentation-layer
+			// display_property resolution belongs in human-facing output.
+			target.Title = node.Title()
 		}
 		relations.Outgoing[rel.Type] = append(relations.Outgoing[rel.Type], target)
 	}
@@ -215,7 +219,8 @@ func getEntityRelations(ctx context.Context, svc *cliServices, entityID string) 
 		}
 		source := RelationTarget{ID: rel.From}
 		if node, err := st.GetEntity(ctx, rel.From); err == nil {
-			source.Title = svc.Meta().DisplayTitle(node.ID, node.Type, node.Properties)
+			// See the outgoing branch: export keeps the raw title property.
+			source.Title = node.Title()
 		}
 		relations.Incoming[rel.Type] = append(relations.Incoming[rel.Type], source)
 	}

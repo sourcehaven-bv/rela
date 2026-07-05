@@ -67,8 +67,9 @@ type TitleResolver interface {
 }
 
 // entityTitle returns the entity's display title via the resolver when one is
-// set, otherwise the literal `title` property. Centralizes the fallback so the
-// table and trace paths agree.
+// set, otherwise the literal `title` property. Centralizes the fallback for
+// the entity table and detail (WriteEntity) paths. (Trace output builds its
+// own node titles in internal/tracer and does not route through here yet.)
 func (w *Writer) entityTitle(e *entity.Entity) string {
 	if w.Titles != nil {
 		return w.Titles.DisplayTitle(e.ID, e.Type, e.Properties)
