@@ -204,7 +204,7 @@ func getEntityRelations(ctx context.Context, svc *cliServices, entityID string) 
 		}
 		target := RelationTarget{ID: rel.To}
 		if node, err := st.GetEntity(ctx, rel.To); err == nil {
-			target.Title = node.Title()
+			target.Title = svc.Meta().DisplayTitle(node.ID, node.Type, node.Properties)
 		}
 		relations.Outgoing[rel.Type] = append(relations.Outgoing[rel.Type], target)
 	}
@@ -215,7 +215,7 @@ func getEntityRelations(ctx context.Context, svc *cliServices, entityID string) 
 		}
 		source := RelationTarget{ID: rel.From}
 		if node, err := st.GetEntity(ctx, rel.From); err == nil {
-			source.Title = node.Title()
+			source.Title = svc.Meta().DisplayTitle(node.ID, node.Type, node.Properties)
 		}
 		relations.Incoming[rel.Type] = append(relations.Incoming[rel.Type], source)
 	}

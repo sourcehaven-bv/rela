@@ -51,6 +51,29 @@ type Writer struct {
 	Format  Format
 	Out     io.Writer
 	NoColor bool
+	// Titles resolves an entity's display title, honoring the metamodel's
+	// display_property (bare name or template). When nil, the writer falls
+	// back to the entity's literal `title` property. Consumer-side interface
+	// so output does not depend on the metamodel package. *metamodel.Metamodel
+	// satisfies it.
+	Titles TitleResolver
+}
+
+// TitleResolver resolves an entity's display title from its type and
+// properties. Implemented by *metamodel.Metamodel; the CLI wires it onto the
+// Writer once the project's metamodel is loaded.
+type TitleResolver interface {
+	DisplayTitle(id, entityType string, properties map[string]interface{}) string
+}
+
+// entityTitle returns the entity's display title via the resolver when one is
+// set, otherwise the literal `title` property. Centralizes the fallback so the
+// table and trace paths agree.
+func (w *Writer) entityTitle(e *entity.Entity) string {
+	if w.Titles != nil {
+		return w.Titles.DisplayTitle(e.ID, e.Type, e.Properties)
+	}
+	return e.Title()
 }
 
 // New creates a new output writer
@@ -100,7 +123,7 @@ func (w *Writer) writeEntitiesTable(entities []*entity.Entity, showSummary bool)
 		if err := table.Append([]string{
 			e.ID,
 			e.Type,
-			truncate(e.Title(), tableTitleMaxLen),
+			truncate(w.entityTitle(e), tableTitleMaxLen),
 			statusDisplay,
 		}); err != nil {
 			return err
@@ -170,7 +193,7 @@ func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity
 	fmt.Fprintln(w.Out, strings.Repeat("─", headerSeparatorLen))
 
 	// Properties
-	if title := entity.Title(); title != "" {
+	if title := w.entityTitle(entity); title != "" {
 		fmt.Fprintf(w.Out, "Title:  %s\n", title)
 	}
 	if status := entity.GetString("status"); status != "" {

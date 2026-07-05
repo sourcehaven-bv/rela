@@ -38,7 +38,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *cliServices) error {
 	}
 
 	if !c.Force {
-		fmt.Printf("Delete %s '%s'", entity.Type, entity.Title())
+		fmt.Printf("Delete %s '%s'", entity.Type, svc.Meta().DisplayTitle(entity.ID, entity.Type, entity.Properties))
 		if totalRelations > 0 {
 			fmt.Printf(" and %d relation(s)", totalRelations)
 		}

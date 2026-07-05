@@ -5,7 +5,7 @@ title: CLI table output ignores display_property (uses literal title only)
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+status: in-progress
 ---
 
 ## Problem

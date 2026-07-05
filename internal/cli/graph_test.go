@@ -21,11 +21,17 @@ func setupGraphTestGraph(t *testing.T) *cliServices {
 				Label:    "Requirement",
 				IDPrefix: "REQ-",
 				Color:    "#E3F2FD",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
 			},
 			"decision": {
 				Label:    "Decision",
 				IDPrefix: "DEC-",
 				Color:    "#FFF3E0",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{

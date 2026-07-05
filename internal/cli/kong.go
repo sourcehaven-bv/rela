@@ -156,6 +156,11 @@ func runKong() int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		// Resolve entity display titles through the metamodel so table,
+		// trace, and detail output honor display_property (bare name or
+		// template), matching the data-entry app. Without a project (no
+		// metamodel) the writer falls back to the literal `title` property.
+		out.Titles = cliSvc.Meta()
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))

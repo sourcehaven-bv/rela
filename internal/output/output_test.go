@@ -1085,3 +1085,58 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 		t.Error("expected min_outgoing in output")
 	}
 }
+
+// fakeTitleResolver renders a fixed title, ignoring the entity, so the test
+// can distinguish "resolver was used" from "literal title property was read".
+type fakeTitleResolver struct{ title string }
+
+func (f fakeTitleResolver) DisplayTitle(_, _ string, _ map[string]interface{}) string {
+	return f.title
+}
+
+// TestWriter_TitleResolver verifies the entity table uses the injected
+// TitleResolver when set (honoring display_property) and falls back to the
+// literal `title` property when nil. TKT-VHSHOB.
+func TestWriter_TitleResolver(t *testing.T) {
+	// An entity whose display name is NOT in its `title` property — the case
+	// a bare/template display_property covers. Title() would return "".
+	e := &entity.Entity{
+		ID:   "PERS-1",
+		Type: "persoon",
+		Properties: map[string]interface{}{
+			"achternaam": "Vloothuis",
+			"status":     "draft",
+		},
+	}
+
+	t.Run("resolver set → uses resolved title", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable)
+		w.Titles = fakeTitleResolver{title: "Jeroen Vloothuis"}
+		if err := w.WriteEntities([]*entity.Entity{e}); err != nil {
+			t.Fatalf("WriteEntities: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Jeroen Vloothuis") {
+			t.Errorf("expected resolved title in output, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("resolver nil → falls back to literal title property", func(t *testing.T) {
+		withTitle := &entity.Entity{
+			ID:   "TKT-1",
+			Type: "ticket",
+			Properties: map[string]interface{}{
+				"title":  "Literal Title",
+				"status": "draft",
+			},
+		}
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable) // Titles left nil
+		if err := w.WriteEntities([]*entity.Entity{withTitle}); err != nil {
+			t.Fatalf("WriteEntities: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Literal Title") {
+			t.Errorf("expected literal title fallback in output, got:\n%s", buf.String())
+		}
+	})
+}
