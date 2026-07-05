@@ -218,10 +218,17 @@ export interface KanbanSwimlane {
   label?: string
 }
 
+export interface KanbanCardField {
+  property?: string
+  relation?: string
+  direction?: 'outgoing' | 'incoming'
+  label?: string
+}
+
 export interface KanbanCard {
   title: string
   subtitle?: string
-  fields?: Array<{ property?: string; relation?: string }>
+  fields?: KanbanCardField[]
 }
 
 export interface DashboardConfig {

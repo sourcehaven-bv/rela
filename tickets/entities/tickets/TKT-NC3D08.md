@@ -5,7 +5,7 @@ title: Support relation fields (incoming/outgoing) on kanban cards
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: done
 ---
 
 ## Problem
