@@ -7,10 +7,15 @@ const props = defineProps<{
   error?: string | null
 }>()
 
-// Always-on ambient indicator: glyph swaps with state.
-// - saved/idle: check mark in circle (rela is local-first; no cloud).
+// Hidden-until-needed ambient indicator: glyph swaps with state, and the
+// wrapper is only opaque while something is happening.
+// - idle: invisible (opacity 0) — nothing to report; the check for the
+//   preceding save has already faded out via SAVED_INDICATOR_MS upstream.
+// - saved: check mark in circle (rela is local-first; no cloud). Shown
+//   briefly after a save, then upstream flips status back to idle, which
+//   fades this out (transition on .autosave-indicator).
 // - saving: spinning ring.
-// - error: warning triangle.
+// - error: warning triangle (persists until resolved).
 const tooltip = computed(() => {
   if (props.error) return props.error
   switch (props.status) {
@@ -26,23 +31,44 @@ const tooltip = computed(() => {
 })
 
 const renderState = computed(() => {
+  if (props.error || props.status === 'error') return 'error'
   if (props.status === 'saving') return 'saving'
-  if (props.status === 'error') return 'error'
-  // idle and saved both render the same "saved" cloud — no flash on success.
+  if (props.status === 'saved') return 'saved'
+  // idle: render the "saved" glyph but hidden, so the saved → idle flip is a
+  // fade-out rather than a glyph swap.
   return 'saved'
+})
+
+// Visible while saving/saved/error; invisible (faded out) when idle. Kept in
+// the DOM either way so the opacity transition can run.
+const visible = computed(() => props.error != null || props.status !== 'idle')
+
+// Screen-reader announcement. A live region announces its TEXT CONTENT, not
+// attribute changes — the glyphs are aria-hidden SVGs, so state is conveyed
+// through this visually-hidden text node instead (RR-4SN00Y). Empty at idle
+// so the live region has nothing to announce on mount or when settling back
+// to idle; only saving/saved/error produce a message.
+const announcement = computed(() => {
+  if (props.error != null || props.status === 'error') return 'Save failed'
+  switch (props.status) {
+    case 'saving':
+      return 'Saving…'
+    case 'saved':
+      return 'Saved'
+    default:
+      return ''
+  }
 })
 </script>
 
 <template>
   <div
     class="autosave-indicator"
-    :class="`autosave-${renderState}`"
+    :class="[`autosave-${renderState}`, { 'autosave-hidden': !visible }]"
     :title="tooltip"
     data-testid="autosave-indicator"
     :data-status="status"
-    role="status"
-    aria-live="polite"
-    :aria-label="tooltip"
+    aria-hidden="true"
   >
     <!-- Saved: check mark in circle (no cloud — rela is local-first) -->
     <svg
@@ -95,6 +121,13 @@ const renderState = computed(() => {
       />
     </svg>
   </div>
+
+  <!--
+    Visually-hidden live region: announces the save state via changing TEXT
+    (the glyph SVGs are aria-hidden). Empty at idle so nothing is announced
+    on mount or when settling back to idle (RR-4SN00Y).
+  -->
+  <span class="autosave-sr-only" role="status" aria-live="polite">{{ announcement }}</span>
 </template>
 
 <style scoped>
@@ -107,7 +140,36 @@ const renderState = computed(() => {
   border-radius: 50%;
   user-select: none;
   cursor: default;
-  transition: color 0.2s ease;
+  transition:
+    color 0.2s ease,
+    opacity 0.3s ease;
+}
+
+/* Hidden-until-needed: idle fades out over 0.3s. Stays in the DOM (opacity,
+   not v-if) so the saved → idle transition animates. pointer-events off so
+   the invisible glyph isn't hoverable. */
+.autosave-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Visually hidden but exposed to assistive tech (the standard sr-only clip). */
+.autosave-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .autosave-indicator {
+    transition: none;
+  }
 }
 
 .autosave-icon {
@@ -116,10 +178,6 @@ const renderState = computed(() => {
 
 .autosave-saved {
   color: var(--text-2, #888);
-  opacity: 0.7;
-}
-.autosave-saved:hover {
-  opacity: 1;
 }
 
 .autosave-saving {
