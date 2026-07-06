@@ -18,26 +18,28 @@ import (
 // Title is the entity's literal `title` property (the tracer is a pure reader
 // with no metamodel, so it cannot resolve display_property). Properties carries
 // the raw property map so a metamodel-aware output layer can render the display
-// title itself. See internal/output.Writer.entityTitle.
+// title itself (see internal/output.Writer.traceTitle); it is `json:"-"` so the
+// trace JSON schema stays lean and unchanged — properties are plumbing for text
+// rendering, not part of the trace's data contract.
 type TraceResult struct {
 	ID         string
 	Type       string
 	Title      string
-	Properties map[string]interface{}
+	Properties map[string]interface{} `json:"-"`
 	Depth      int
 	Relation   string // relation that led to this node
 	Incoming   bool   // reached via an incoming relation
 	Children   []*TraceResult
 }
 
-// PathStep represents one step in a path between two entities. Title/Properties
-// carry the same meaning as on [TraceResult].
+// PathStep represents one step in a path between two entities. (No Properties
+// field: path text output renders only ID/Type, never a title, so there is
+// nothing to resolve.)
 type PathStep struct {
-	ID         string
-	Type       string
-	Title      string
-	Properties map[string]interface{}
-	Relation   string // relation that led to this step
+	ID       string
+	Type     string
+	Title    string
+	Relation string // relation that led to this step
 }
 
 // Tracer provides graph traversal operations.
@@ -199,7 +201,7 @@ func (t *GenericTracer) FindPath(ctx context.Context, fromID, toID string) []Pat
 		if err != nil {
 			return nil
 		}
-		return []PathStep{{ID: fromID, Type: e.Type, Title: e.Title(), Properties: e.Properties}}
+		return []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}}
 	}
 
 	queue := t.initPathQueue(ctx, fromID)
@@ -240,7 +242,7 @@ func (t *GenericTracer) initPathQueue(ctx context.Context, fromID string) []path
 	}
 	return []pathQueueItem{{
 		id:   fromID,
-		path: []PathStep{{ID: fromID, Type: e.Type, Title: e.Title(), Properties: e.Properties}},
+		path: []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}},
 	}}
 }
 
@@ -266,7 +268,7 @@ func (t *GenericTracer) step(ctx context.Context, id, relation string) (PathStep
 	if err != nil {
 		return PathStep{}, false
 	}
-	return PathStep{ID: id, Type: e.Type, Title: e.Title(), Properties: e.Properties, Relation: relation}, true
+	return PathStep{ID: id, Type: e.Type, Title: e.Title(), Relation: relation}, true
 }
 
 func clonePath(p []PathStep) []PathStep {

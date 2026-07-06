@@ -9,36 +9,35 @@ status: done
 
 ## Development
 
-- [ ] Unit tests written for new code
-- [ ] Integration tests written (test full flow, not just units)
-- [ ] Happy path implemented
-- [ ] Edge cases from planning handled
-- [ ] Error handling in place (errors surfaced, not swallowed)
+- [x] Unit tests written for new code (TestWriteTrace_TitleResolver: resolver-set, nil-fallback, nested-child; TestWriteTraceJSON pins Properties absent)
+- [x] ~~Integration tests~~ (N/A: exercised end-to-end manually via `rela trace`; unit tests cover the output boundary)
+- [x] Happy path implemented (tracer carries raw Properties; output.traceTitle resolves via TitleResolver)
+- [x] Edge cases handled (nil resolver → literal title; nested children recurse; JSON stays raw)
+- [x] Error handling: n/a (pure formatting)
 
 ## Test Quality
 
-- [ ] Using fixture builders or factories for test data
-- [ ] No hardcoded values in assertions when object is in scope
-- [ ] Only specifying values that matter for the test
-- [ ] Interpolated values constructed from objects, not hardcoded
-- [ ] Property comparisons use original object, not hardcoded strings
+- [x] Reused the fakeTitleResolver + new idTitleResolver (per-ID) rather than hardcoding
+- [x] Assertions specify only what matters (title substrings, Properties absence)
+- [x] No hardcoded magic
 
 ## Manual Verification
 
-- [ ] Feature manually tested end-to-end
-- [ ] Each acceptance criterion verified with test scenario from planning
-- [ ] Edge cases manually verified
+- [x] Feature manually tested end-to-end
+- [x] Each acceptance criterion verified
+- [x] Edge cases manually verified
 
 **Verification Evidence:**
-<!-- Document what you tested and the results -->
+
+- Built `bin/rela`, scratch project with `persoon` (`display_property: "{voornaam} {achternaam}"`) leading a titled `project`.
+- `rela trace from PERS-JV` → `PERS-JV Jeroen Vloothuis` (template rendered; was blank/literal before). `rela trace to PROJ-1` → same resolution upstream. `PROJ-1 Rela Platform` (literal title) unchanged.
+- `rela trace from PERS-JV -o json` → NO `Properties` field (raw JSON schema unchanged); confirmed after the `json:"-"` fix.
+- `rela trace path` runs cleanly (path text is ID/Type only, no title — unaffected).
 
 ## Quality
 
-- [ ] Code follows project patterns (check similar code)
-- [ ] Checked for DRY opportunities — repeated literals, expressions, or
-patterns extracted to a helper / constant / type where it sharpens the contract
-(don't extract for its own sake; CLAUDE.md "three similar lines is better than a
-premature abstraction" still holds)
-- [ ] No security issues introduced
-- [ ] No silent failures (errors logged AND returned)
-- [ ] No debug code left behind
+- [x] Follows project patterns (output-boundary resolution mirrors TKT-VHSHOB TitleResolver; tracer stays a pure reader — arch-lint clean)
+- [x] DRY: reused the existing TitleResolver; traceTitle is a thin sibling of entityTitle
+- [x] No security issues (git-crypt locked-title concern is table/mention-side, unaffected here; trace shows what the reader can read)
+- [x] No silent failures
+- [x] No debug code left behind

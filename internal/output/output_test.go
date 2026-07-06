@@ -420,6 +420,9 @@ func TestWriteTraceJSON(t *testing.T) {
 	trace := &tracer.TraceResult{
 		ID:    "REQ-001",
 		Title: "Root",
+		// Properties is json:"-" plumbing for text rendering; it must NOT
+		// appear in the trace JSON schema (TKT-COZN2E).
+		Properties: map[string]interface{}{"secret": "should-not-serialize"},
 	}
 
 	err := w.WriteTrace(trace)
@@ -433,6 +436,12 @@ func TestWriteTraceJSON(t *testing.T) {
 	}
 	if result.ID != "REQ-001" {
 		t.Errorf("expected ID REQ-001, got %s", result.ID)
+	}
+	// Pin the raw-JSON contract: Properties (text-rendering plumbing) stays
+	// out of the trace JSON, so the schema is unchanged and property maps
+	// don't bloat the output.
+	if strings.Contains(buf.String(), "Properties") || strings.Contains(buf.String(), "should-not-serialize") {
+		t.Errorf("trace JSON must not contain Properties, got:\n%s", buf.String())
 	}
 }
 
@@ -1094,6 +1103,15 @@ func (f fakeTitleResolver) DisplayTitle(_, _ string, _ map[string]interface{}) s
 	return f.title
 }
 
+// idTitleResolver returns a per-ID title, so a test can prove resolution is
+// applied to each node (e.g. at every depth of a trace tree) rather than only
+// the root.
+type idTitleResolver map[string]string
+
+func (r idTitleResolver) DisplayTitle(id, _ string, _ map[string]interface{}) string {
+	return r[id]
+}
+
 // TestWriter_TitleResolver verifies the entity table uses the injected
 // TitleResolver when set (honoring display_property) and falls back to the
 // literal `title` property when nil. TKT-VHSHOB.
@@ -1175,6 +1193,28 @@ func TestWriteTrace_TitleResolver(t *testing.T) {
 		}
 		if !strings.Contains(buf.String(), "Literal Trace Title") {
 			t.Errorf("expected literal title fallback in trace output, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("resolver applies to nested child nodes", func(t *testing.T) {
+		tree := &tracer.TraceResult{
+			ID: "ROOT-1", Type: "persoon",
+			Children: []*tracer.TraceResult{
+				{ID: "CHILD-1", Type: "persoon", Relation: "leads"},
+			},
+		}
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable)
+		w.Titles = idTitleResolver{"ROOT-1": "Root Person", "CHILD-1": "Child Person"}
+		if err := w.WriteTrace(tree); err != nil {
+			t.Fatalf("WriteTrace: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Root Person") {
+			t.Errorf("root title not resolved, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Child Person") {
+			t.Errorf("child title not resolved (resolution must recurse), got:\n%s", out)
 		}
 	})
 }
