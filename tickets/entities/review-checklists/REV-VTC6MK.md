@@ -47,8 +47,8 @@ status: done
 
 ## Pull Request
 
-- [ ] PR — to be created after this commit
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] PR created: https://github.com/sourcehaven-bv/rela/pull/1088
+- [x] All CI checks pass (verified locally: build, full test, lint, vet, arch-lint, plimsoll, coverage; PR CI running)
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1088

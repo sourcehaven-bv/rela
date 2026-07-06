@@ -5,7 +5,7 @@ title: rela trace/path output ignores display_property (tracer builds titles fro
 kind: enhancement
 priority: low
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
