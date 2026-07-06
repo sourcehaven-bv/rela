@@ -5,7 +5,7 @@ title: 'ACL read-side: close the /_search match-on-hidden-field oracle (drop hit
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
