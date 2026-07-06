@@ -8,6 +8,7 @@ import (
 	"context"
 	"iter"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -27,29 +28,24 @@ func New(reader store.EntityReader, backend Backend) *Service {
 	return &Service{reader: reader, backend: backend}
 }
 
-// MatchedFields reports which logical fields of the entity with the given id
-// the query text matched, in the [FieldID] / [FieldContent] / [PropFieldPrefix]
+// MatchedFields reports which logical fields of the already-loaded entity the
+// query text matched, in the [FieldID] / [FieldContent] / [PropFieldPrefix]
 // vocabulary. It delegates to the backend's [FieldMatcher] when the backend
 // implements one, so provenance is computed with the same matcher the backend
-// searched with; otherwise it falls back to the ground-truth [MatchTextFields]
-// over the loaded entity.
+// searched with; otherwise it falls back to the ground-truth [MatchTextFields].
 //
-// The (found=false) return means the entity could not be loaded (deleted since
-// indexing) — the caller treats that as "no provenance available". An empty
-// text query matches everything and has no field provenance, so it returns an
-// empty set with found=true.
-func (s *Service) MatchedFields(ctx context.Context, id, text string) (fields map[string]struct{}, found bool) {
-	e, err := s.reader.GetEntity(ctx, id)
-	if err != nil {
-		return nil, false
-	}
-	if text == "" {
-		return nil, true
+// It takes the entity rather than loading it so the seam can thread a single
+// snapshot through both provenance and the hidden-field verdict (no
+// re-load, no cross-snapshot race). An empty text query has no provenance and
+// returns nil.
+func (s *Service) MatchedFields(e *entity.Entity, text string) map[string]struct{} {
+	if e == nil || text == "" {
+		return nil
 	}
 	if fm, ok := s.backend.(FieldMatcher); ok {
-		return fm.MatchedFields(e, text), true
+		return fm.MatchedFields(e, text)
 	}
-	return MatchTextFields(e, text), true
+	return MatchTextFields(e, text)
 }
 
 func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {

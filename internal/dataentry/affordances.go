@@ -752,6 +752,16 @@ func (v FieldVerdicts) IsOptionAllowed(name, opt string) bool {
 // phrase the check in the negative form.
 func (v FieldVerdicts) isHidden(name string) bool { return !v.IsVisible(name) }
 
+// hidesAnyField reports whether the active resolver can ever hide a property.
+// The Nop resolver returns empty verdicts for every entity, so field-level
+// redaction is a provable no-op under it; a policy-backed resolver may hide.
+// Search uses this to decide whether the property-level filter needs to run at
+// all (and thus whether a non-provenance searcher is acceptable).
+func (svc affordanceService) hidesAnyField() bool {
+	_, isNop := svc.resolver().(NopFieldVerdictResolver)
+	return !isNop
+}
+
 // hiddenProperties returns the set of property names that should be
 // stripped from v1.Entity.Properties before serialization. Caller uses
 // this to enforce the omit-on-hidden invariant.

@@ -3,6 +3,7 @@ package bleveindex
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/blevesearch/bleve/v2/analysis"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/standard"
@@ -77,16 +78,23 @@ func (idx *Index) MatchedFields(e *entity.Entity, text string) map[string]struct
 	return normalizeEmpty(out)
 }
 
-// textAnalyzer returns the standard analyzer used by the text fields in the
-// index mapping (see buildMapping). Nil if the registry cannot provide it —
-// callers fall back to the substring floor.
-func (idx *Index) textAnalyzer() analysis.Analyzer {
-	cache := registry.NewCache()
-	a, err := cache.AnalyzerNamed(standard.Name)
+// cachedStandardAnalyzer resolves the standard analyzer once for the process.
+// The standard analyzer is stateless and safe to share across goroutines, and
+// MatchedFields runs once per surviving hit — building a fresh registry cache
+// per call (the previous shape) was needless hot-path allocation. Nil when the
+// registry cannot provide it; callers fall back to the substring floor.
+var cachedStandardAnalyzer = sync.OnceValue(func() analysis.Analyzer {
+	a, err := registry.NewCache().AnalyzerNamed(standard.Name)
 	if err != nil {
 		return nil
 	}
 	return a
+})
+
+// textAnalyzer returns the standard analyzer used by the text fields in the
+// index mapping (see buildMapping).
+func (idx *Index) textAnalyzer() analysis.Analyzer {
+	return cachedStandardAnalyzer()
 }
 
 // analyzeTerms tokenizes text with the analyzer, lower-cased token terms.

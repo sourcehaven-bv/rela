@@ -66,11 +66,16 @@ type FieldMatcher interface {
 // or a policy, exactly as with the scope map). A nil func, or a func that
 // returns an empty set, disables field-level filtering for that hit.
 //
-// It receives the Hit (ID + Type), not the full entity: the consumer holds
-// the store and the affordance resolver and loads what it needs. Returning an
-// error fails closed — the hit is dropped and the error surfaced — so an ACL
-// resolution failure can never widen visibility.
-type HiddenFieldsFunc func(ctx context.Context, h Hit) (map[string]struct{}, error)
+// It receives the ALREADY-LOADED entity, not just the Hit: the seam loads the
+// entity once and threads that single snapshot through both the hidden-field
+// computation and the match-provenance computation, so a concurrent write
+// cannot make the two observe different states (the fail-closed decision is
+// snapshot-consistent — CLAUDE.md "capture state once per operation"). The
+// consumer resolves its ACL verdict against this exact entity (the resolver's
+// `when:` predicates evaluate against it). Returning an error fails closed —
+// the hit is dropped and the error surfaced — so an ACL resolution failure can
+// never widen visibility.
+type HiddenFieldsFunc func(ctx context.Context, h Hit, e *entity.Entity) (map[string]struct{}, error)
 
 // WildcardType is the reserved scope-map key that supplies the default
 // verdict for entity types without an explicit entry. It cannot collide

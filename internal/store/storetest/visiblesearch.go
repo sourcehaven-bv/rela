@@ -330,7 +330,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 
 	// hideCode hides the `code` property (search vocabulary "prop:code") for
 	// every hit — the common closed-world case.
-	hideCode := func(_ context.Context, _ search.Hit) (map[string]struct{}, error) {
+	hideCode := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
 		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
 	}
 
@@ -378,7 +378,7 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 	t.Run("FailClosedOnHiddenFuncError", func(t *testing.T) {
 		s, _, vs := vsf(t)
 		seedVisibleFieldWorld(t, s)
-		boom := func(_ context.Context, _ search.Hit) (map[string]struct{}, error) {
+		boom := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
 			return nil, errors.New("acl resolution boom")
 		}
 		q := search.Query{Text: "zeta777"}
@@ -402,6 +402,39 @@ func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
 		q := search.Query{Text: "zeta777"}
 		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, map[string]search.TypeScope{}, nil))
 		require.Empty(t, got, "empty scope denies everything before field filtering")
+	})
+
+	t.Run("ContentMatchSurvivesHiddenProperty", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		e := entity.New("TKT-9", "ticket")
+		e.SetString("title", "gamma orbiter")
+		e.SetString("code", "zeta777")
+		e.Content = "uniquebodytoken operational notes"
+		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
+		// The query matches the entity body (content), which is never
+		// property-gated, so hiding `code` must not drop it.
+		q := search.Query{Text: "uniquebodytoken"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
+		require.True(t, hitInSet(got, "TKT-9"),
+			"a content match must survive: content is never property-gated")
+	})
+
+	t.Run("CallerCannotFalseDropViaIDOrContent", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		e := entity.New("TKT-9", "ticket")
+		e.SetString("title", "delta probe")
+		e.Content = "singularcontentword"
+		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
+		// A buggy HiddenFieldsFunc that (wrongly) lists id/content must NOT be
+		// able to drop a hit that matched id/content — the seam guards the
+		// never-gated invariant (MatchHasVisibleField special-cases them).
+		hideIDAndContent := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
+			return map[string]struct{}{search.FieldID: {}, search.FieldContent: {}}, nil
+		}
+		q := search.Query{Text: "singularcontentword"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideIDAndContent))
+		require.True(t, hitInSet(got, "TKT-9"),
+			"id/content are never property-gated even if a caller mis-lists them")
 	})
 }
 

@@ -1,10 +1,14 @@
 package search_test
 
 import (
+	"context"
+	"errors"
+	"iter"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -72,5 +76,60 @@ func TestNewVisible_RejectsNil(t *testing.T) {
 	}
 	if _, err := search.NewVisible(searcher, nil); err == nil {
 		t.Error("nil GraphQueryer accepted")
+	}
+}
+
+// nonProvenanceSearcher wraps a Searcher WITHOUT forwarding match provenance —
+// standing in for any decorator (metrics, caching, tracing) that a future
+// refactor might slip between the Service and NewVisible. It must NOT satisfy
+// the unexported fieldMatchProvenance interface.
+type nonProvenanceSearcher struct{ inner search.Searcher }
+
+func (n nonProvenanceSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[search.Hit, error] {
+	return n.inner.Search(ctx, q)
+}
+
+// TestSearchVisibleFields_FailsClosedWithoutProvenance is the regression guard
+// for the reviewer's finding #1: if the wired searcher can't report match
+// provenance, SearchVisibleFields must FAIL CLOSED (yield ErrScope), never
+// silently return un-redacted hits. A wrapped Service loses the provenance
+// type assertion — this proves that path errors instead of leaking.
+func TestSearchVisibleFields_FailsClosedWithoutProvenance(t *testing.T) {
+	s := memstore.New()
+	e := entity.New("TKT-1", "ticket")
+	e.SetString("title", "alpha rocket")
+	e.SetString("code", "zeta777")
+	if err := s.CreateEntity(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	ls := search.NewLinearSearch()
+	_ = ls.EntityPut(e)
+
+	wrapped := nonProvenanceSearcher{inner: search.New(s, ls)}
+	v, err := search.NewVisible(wrapped, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hide := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
+		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
+	}
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
+
+	var streamErr error
+	hits := 0
+	for _, iterErr := range v.SearchVisibleFields(
+		context.Background(), search.Query{Text: "zeta777"}, scope, hide) {
+		if iterErr != nil {
+			streamErr = iterErr
+			break
+		}
+		hits++
+	}
+	if hits != 0 {
+		t.Errorf("leak: %d hits returned without provenance; want fail-closed", hits)
+	}
+	if !errors.Is(streamErr, search.ErrScope) {
+		t.Errorf("want ErrScope on missing provenance, got %v", streamErr)
 	}
 }

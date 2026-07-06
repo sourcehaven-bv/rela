@@ -191,7 +191,7 @@ func fieldVisibleForEntity(
 	if hidden == nil || q.Text == "" {
 		return true, nil
 	}
-	hiddenFields, err := hidden(ctx, h)
+	hiddenFields, err := hidden(ctx, h, e)
 	if err != nil {
 		return false, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, h.ID, err)
 	}
@@ -199,12 +199,7 @@ func fieldVisibleForEntity(
 		return true, nil
 	}
 	matched := search.MatchTextFields(e, q.Text)
-	for f := range matched {
-		if _, isHidden := hiddenFields[f]; !isHidden {
-			return true, nil
-		}
-	}
-	return false, nil
+	return search.MatchHasVisibleField(matched, hiddenFields), nil
 }
 
 // buildVisibleSearchSQL emits the combined search+visibility statement.
