@@ -490,7 +490,7 @@ func (a *App) runVisibleFreeTextSearch(
 		Limit: limit,
 	}
 	out := make([]*entity.Entity, 0)
-	for hit, err := range a.searchVisibleHits(ctx, svc, q, scope) {
+	for hit, err := range searchVisibleHits(ctx, a.visibleSearcher, a.affordances, svc, q, scope) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
@@ -515,14 +515,18 @@ func (a *App) runVisibleFreeTextSearch(
 // confirming that property's value by its presence (the match-on-hidden-field
 // oracle, TKT-GGQ0JT). If the searcher is entity-level only, it degrades to
 // SearchVisible — no field redaction, matching pre-existing behavior.
-func (a *App) searchVisibleHits(
-	ctx context.Context, svc Services, q search.Query, scope map[string]search.TypeScope,
+//
+// Free function (not an App method) to keep App's method surface under the
+// god-object load line; it takes only the two collaborators it needs.
+func searchVisibleHits(
+	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
+	svc Services, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
-	fvs, ok := a.visibleSearcher.(search.FieldVisibleSearcher)
+	fvs, ok := vs.(search.FieldVisibleSearcher)
 	if !ok {
-		return a.visibleSearcher.SearchVisible(ctx, q, scope)
+		return vs.SearchVisible(ctx, q, scope)
 	}
-	return fvs.SearchVisibleFields(ctx, q, scope, a.hiddenSearchFields(svc))
+	return fvs.SearchVisibleFields(ctx, q, scope, hiddenSearchFields(svc, aff))
 }
 
 // hiddenSearchFields builds the [search.HiddenFieldsFunc] that reports, per
@@ -532,7 +536,7 @@ func (a *App) searchVisibleHits(
 // entity (the resolver's `when:` predicates evaluate against it) and fails
 // closed: a load error hides all of the entity's declared properties rather
 // than risk leaking a hidden-only match.
-func (a *App) hiddenSearchFields(svc Services) search.HiddenFieldsFunc {
+func hiddenSearchFields(svc Services, aff affordanceService) search.HiddenFieldsFunc {
 	return func(ctx context.Context, h search.Hit) (map[string]struct{}, error) {
 		e, err := svc.Store.GetEntity(ctx, h.ID)
 		if err != nil {
@@ -542,7 +546,7 @@ func (a *App) hiddenSearchFields(svc Services) search.HiddenFieldsFunc {
 			// set here is safe: this hit does not reach the result.
 			return nil, nil //nolint:nilerr // stale hit is dropped downstream; not a hidden-fields failure
 		}
-		hidden := a.affordances.hiddenProperties(ctx, e)
+		hidden := aff.hiddenProperties(ctx, e)
 		if len(hidden) == 0 {
 			return nil, nil
 		}
