@@ -31,6 +31,38 @@ func TestVisibleConformance_Bleve(t *testing.T) {
 	})
 }
 
+// TestVisibleFieldConformance_Bleve runs the property-level (match-on-hidden-
+// field) suite over the generic wrapper + bleve backend, exercising bleve's
+// own MatchedFields provenance path (TKT-GGQ0JT).
+func TestVisibleFieldConformance_Bleve(t *testing.T) {
+	storetest.RunVisibleFieldSearchTests(t, func(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher) {
+		t.Helper()
+		idx, err := bleveindex.NewMem()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = idx.Close() })
+		s := memstore.New(memstore.WithObserver(idx))
+		searcher := search.New(s, idx)
+		v, err := search.NewVisible(searcher, s)
+		require.NoError(t, err)
+		return s, searcher, v
+	})
+}
+
+// TestVisibleFieldConformance_Linear runs the property-level suite over the
+// generic wrapper + LinearSearch backend — the ground-truth matcher the other
+// backends are checked against.
+func TestVisibleFieldConformance_Linear(t *testing.T) {
+	storetest.RunVisibleFieldSearchTests(t, func(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher) {
+		t.Helper()
+		ls := search.NewLinearSearch()
+		s := memstore.New(memstore.WithObserver(ls))
+		searcher := search.New(s, ls)
+		v, err := search.NewVisible(searcher, s)
+		require.NoError(t, err)
+		return s, searcher, v
+	})
+}
+
 func TestNewVisible_RejectsNil(t *testing.T) {
 	s := memstore.New()
 	searcher := search.New(s, search.NewLinearSearch())

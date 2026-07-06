@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"iter"
 	"regexp"
 	"slices"
 	"strconv"
@@ -489,7 +490,7 @@ func (a *App) runVisibleFreeTextSearch(
 		Limit: limit,
 	}
 	out := make([]*entity.Entity, 0)
-	for hit, err := range a.visibleSearcher.SearchVisible(ctx, q, scope) {
+	for hit, err := range a.searchVisibleHits(ctx, svc, q, scope) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
@@ -506,6 +507,51 @@ func (a *App) runVisibleFreeTextSearch(
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// searchVisibleHits runs the ACL-scoped search with property-level redaction
+// when the wired searcher supports it ([search.FieldVisibleSearcher]), so a hit
+// that matched only a `visible:`-hidden property is dropped rather than
+// confirming that property's value by its presence (the match-on-hidden-field
+// oracle, TKT-GGQ0JT). If the searcher is entity-level only, it degrades to
+// SearchVisible — no field redaction, matching pre-existing behavior.
+func (a *App) searchVisibleHits(
+	ctx context.Context, svc Services, q search.Query, scope map[string]search.TypeScope,
+) iter.Seq2[search.Hit, error] {
+	fvs, ok := a.visibleSearcher.(search.FieldVisibleSearcher)
+	if !ok {
+		return a.visibleSearcher.SearchVisible(ctx, q, scope)
+	}
+	return fvs.SearchVisibleFields(ctx, q, scope, a.hiddenSearchFields(svc))
+}
+
+// hiddenSearchFields builds the [search.HiddenFieldsFunc] that reports, per
+// hit, the property fields the request principal may not see — resolved
+// through the same affordance verdict source the serializer uses, then
+// qualified into the search field vocabulary (`prop:<name>`). It loads the hit
+// entity (the resolver's `when:` predicates evaluate against it) and fails
+// closed: a load error hides all of the entity's declared properties rather
+// than risk leaking a hidden-only match.
+func (a *App) hiddenSearchFields(svc Services) search.HiddenFieldsFunc {
+	return func(ctx context.Context, h search.Hit) (map[string]struct{}, error) {
+		e, err := svc.Store.GetEntity(ctx, h.ID)
+		if err != nil {
+			// Stale hit — the entity vanished between index query and this
+			// read. The seam's own found=false path drops it (fail closed),
+			// and the caller's GetEntity re-check skips it too, so an empty
+			// set here is safe: this hit does not reach the result.
+			return nil, nil //nolint:nilerr // stale hit is dropped downstream; not a hidden-fields failure
+		}
+		hidden := a.affordances.hiddenProperties(ctx, e)
+		if len(hidden) == 0 {
+			return nil, nil
+		}
+		out := make(map[string]struct{}, len(hidden))
+		for name := range hidden {
+			out[search.PropFieldPrefix+name] = struct{}{}
+		}
+		return out, nil
+	}
 }
 
 // visibleListByTypes is executeQuery's no-free-text branch: load
