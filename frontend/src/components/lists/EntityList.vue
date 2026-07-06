@@ -13,9 +13,11 @@ import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticL
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
+import { listHeaderMarkdown, listFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
@@ -248,6 +250,14 @@ const entityType = computed(() => {
   if (!listConfig.value) return undefined
   return schemaStore.getEntityType(listConfig.value.entity)
 })
+
+// Admin-authored info regions (markdown from data-entry.yaml, sanitized by
+// renderMarkdown). `header` is canonical; `description` (previously unused) is a
+// fallback for the top slot, used only when `header` is unset. No refResolver
+// here — the /_config endpoint carries no mentions map, so bare-ID code spans
+// stay inert; standard [text](/entity/ID) links work.
+const headerHtml = computed(() => renderMarkdown(listHeaderMarkdown(listConfig.value)))
+const footerHtml = computed(() => renderMarkdown(listFooterMarkdown(listConfig.value)))
 
 // Pre-configured filters from list config
 const configuredFilters = computed(() => {
@@ -652,6 +662,9 @@ watch(searchQuery, () => {
       </router-link>
     </header>
 
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="headerHtml" class="list-info list-info--top" v-html="headerHtml"/>
+
     <div v-if="configuredFilters.length" class="configured-filters">
       <span
         v-for="filter in configuredFilters"
@@ -913,6 +926,9 @@ watch(searchQuery, () => {
         @page-change="handlePageChange"
       />
     </div>
+
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="footerHtml" class="list-info list-info--bottom" v-html="footerHtml"/>
   </div>
 
   <div v-else class="error-state">
@@ -926,6 +942,48 @@ watch(searchQuery, () => {
   color: var(--color-text-muted, #888);
   font-style: italic;
   cursor: help;
+}
+
+/* Admin-authored info regions (header/footer markdown). Rendered HTML is
+   sanitized by renderMarkdown; these styles only govern typography/spacing. */
+.list-info {
+  color: var(--text-color);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.list-info--top {
+  /* Pulls up against .list-header's margin-bottom: 24px so the info sits close
+     to the title rather than a full gap below it. Keep in sync if that changes. */
+  margin-top: -12px;
+  margin-bottom: 20px;
+}
+
+.list-info--bottom {
+  margin-top: 24px;
+}
+
+.list-info :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.list-info :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.list-info :deep(p),
+.list-info :deep(ul),
+.list-info :deep(ol) {
+  margin: 0 0 8px;
+}
+
+.list-info :deep(a) {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.list-info :deep(a:hover) {
+  text-decoration: underline;
 }
 
 .entity-list {

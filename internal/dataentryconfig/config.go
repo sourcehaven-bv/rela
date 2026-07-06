@@ -182,9 +182,17 @@ type RelationProperty struct {
 }
 
 // List defines a list view for an entity type.
+//
+// Header and Footer carry admin-authored markdown rendered above and below the
+// list, respectively (sanitized client-side via renderMarkdown). Description
+// predates this feature but was never rendered; the SPA now adopts it as a
+// fallback for Header (used only when Header is empty) so existing configs that
+// happen to set it get a header region without a rewrite.
 type List struct {
 	EntityType     string          `yaml:"entity_type" json:"entity"`
 	Title          string          `yaml:"title" json:"title"`
+	Header         string          `yaml:"header" json:"header,omitempty"`
+	Footer         string          `yaml:"footer" json:"footer,omitempty"`
 	Description    string          `yaml:"description" json:"description,omitempty"`
 	Columns        []ListColumn    `yaml:"columns" json:"columns"`
 	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`

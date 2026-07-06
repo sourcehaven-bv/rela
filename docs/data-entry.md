@@ -573,7 +573,9 @@ lists:
 | ----------------- | ------ | ----------------------------------------------------------- |
 | `entity_type`     | string | Entity type to list                                         |
 | `title`           | string | List heading                                                |
-| `description`     | string | Subtitle                                                    |
+| `header`          | string | Markdown rendered above the list (info/help; see below)     |
+| `footer`          | string | Markdown rendered below the list                            |
+| `description`     | string | Legacy alias for `header`; used only when `header` is unset  |
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
@@ -582,6 +584,38 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
+
+#### Header and footer info regions
+
+`header` and `footer` add admin-authored context to a list — a short
+description, links to relevant guides, or a process note. Both accept Markdown
+(GFM: headings, lists, links, emphasis, tables) and render as sanitized HTML
+above and below the list respectively. Content is authored in `data-entry.yaml`
+only; there is no in-app editor.
+
+```yaml
+lists:
+  risicoregister:
+    entity_type: risico
+    title: "Risicoregister"
+    header: |
+      This register is **ISO 27001** scope. See the
+      [scoring guide](/entity/guide-risk-scoring) for how KANS and IMPACT map to
+      a level. New risks are reviewed weekly.
+    footer: |
+      _Questions? Contact the security officer._
+    columns:
+      - property: title
+        sortable: true
+```
+
+Notes:
+
+- Output is sanitized (DOMPurify), so raw HTML/scripts in the config cannot
+  inject executable markup.
+- Use standard Markdown links (`[text](/entity/ID)`) to point at other entities.
+- `description` is the older name for the top region and still works; when both
+  `header` and `description` are set, `header` wins.
 
 ### Column Options
 

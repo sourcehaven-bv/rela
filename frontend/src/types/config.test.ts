@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { getEditFormId, type FormConfig } from './config'
+import {
+  getEditFormId,
+  listHeaderMarkdown,
+  listFooterMarkdown,
+  type FormConfig,
+  type ListConfig,
+} from './config'
+
+const list = (over: Partial<ListConfig>): ListConfig => ({
+  entity: 'risico',
+  columns: [],
+  ...over,
+})
 
 describe('config', () => {
   describe('getEditFormId', () => {
@@ -53,6 +65,54 @@ describe('config', () => {
       }
 
       expect(getEditFormId(schemaStore, 'task')).toBe('task-edit')
+    })
+  })
+
+  describe('listHeaderMarkdown', () => {
+    it('returns header when set', () => {
+      expect(listHeaderMarkdown(list({ header: '# Hi' }))).toBe('# Hi')
+    })
+
+    it('falls back to description (legacy alias) when header is unset', () => {
+      expect(listHeaderMarkdown(list({ description: 'legacy' }))).toBe('legacy')
+    })
+
+    it('prefers header over description when both are set', () => {
+      expect(listHeaderMarkdown(list({ header: 'new', description: 'legacy' }))).toBe('new')
+    })
+
+    it('ignores an empty header and falls back to description', () => {
+      expect(listHeaderMarkdown(list({ header: '', description: 'legacy' }))).toBe('legacy')
+    })
+
+    it('treats a whitespace-only header as unset and falls back to description', () => {
+      expect(listHeaderMarkdown(list({ header: '   \n', description: 'legacy' }))).toBe('legacy')
+    })
+
+    it('returns empty string when both are whitespace-only', () => {
+      expect(listHeaderMarkdown(list({ header: '  ', description: '\t' }))).toBe('')
+    })
+
+    it('returns empty string when neither is set', () => {
+      expect(listHeaderMarkdown(list({}))).toBe('')
+    })
+
+    it('returns empty string for an undefined list', () => {
+      expect(listHeaderMarkdown(undefined)).toBe('')
+    })
+  })
+
+  describe('listFooterMarkdown', () => {
+    it('returns footer when set', () => {
+      expect(listFooterMarkdown(list({ footer: 'bye' }))).toBe('bye')
+    })
+
+    it('returns empty string when unset', () => {
+      expect(listFooterMarkdown(list({}))).toBe('')
+    })
+
+    it('returns empty string for an undefined list', () => {
+      expect(listFooterMarkdown(undefined)).toBe('')
     })
   })
 })
