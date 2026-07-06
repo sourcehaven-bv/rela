@@ -68,13 +68,24 @@ type TitleResolver interface {
 
 // entityTitle returns the entity's display title via the resolver when one is
 // set, otherwise the literal `title` property. Centralizes the fallback for
-// the entity table and detail (WriteEntity) paths. (Trace output builds its
-// own node titles in internal/tracer and does not route through here yet.)
+// the entity table and detail (WriteEntity) paths.
 func (w *Writer) entityTitle(e *entity.Entity) string {
 	if w.Titles != nil {
 		return w.Titles.DisplayTitle(e.ID, e.Type, e.Properties)
 	}
 	return e.Title()
+}
+
+// traceTitle resolves a trace node/step display title. The tracer is a pure
+// reader with no metamodel, so it carries the entity's id/type/properties plus
+// its literal `title`; here we resolve display_property via the resolver when
+// set, falling back to the literal title otherwise. Keeps trace tree output
+// consistent with the entity table.
+func (w *Writer) traceTitle(id, entityType, literalTitle string, properties map[string]interface{}) string {
+	if w.Titles != nil {
+		return w.Titles.DisplayTitle(id, entityType, properties)
+	}
+	return literalTitle
 }
 
 // New creates a new output writer
@@ -322,7 +333,7 @@ func (w *Writer) writeTraceNode(node *tracer.TraceResult, prefix string, isLast 
 		prefix,
 		connector,
 		color.CyanString(node.ID),
-		truncate(node.Title, traceNodeMaxLen),
+		truncate(w.traceTitle(node.ID, node.Type, node.Title, node.Properties), traceNodeMaxLen),
 		relInfo)
 
 	// Print children

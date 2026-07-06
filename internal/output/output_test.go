@@ -1140,3 +1140,41 @@ func TestWriter_TitleResolver(t *testing.T) {
 		}
 	})
 }
+
+// TestWriteTrace_TitleResolver verifies trace-tree output resolves node titles
+// via the TitleResolver (honoring display_property) when set, and falls back to
+// the node's literal Title when nil. TKT-COZN2E.
+func TestWriteTrace_TitleResolver(t *testing.T) {
+	// A node whose display name comes from properties, not the literal Title
+	// (which is empty — as it is for a type with no `title` property).
+	trace := &tracer.TraceResult{
+		ID:         "PERS-1",
+		Type:       "persoon",
+		Title:      "",
+		Properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+	}
+
+	t.Run("resolver set → renders resolved display title", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable)
+		w.Titles = fakeTitleResolver{title: "Jeroen Vloothuis"}
+		if err := w.WriteTrace(trace); err != nil {
+			t.Fatalf("WriteTrace: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Jeroen Vloothuis") {
+			t.Errorf("expected resolved title in trace output, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("resolver nil → falls back to literal node Title", func(t *testing.T) {
+		node := &tracer.TraceResult{ID: "TKT-1", Type: "ticket", Title: "Literal Trace Title"}
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable) // Titles nil
+		if err := w.WriteTrace(node); err != nil {
+			t.Fatalf("WriteTrace: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Literal Trace Title") {
+			t.Errorf("expected literal title fallback in trace output, got:\n%s", buf.String())
+		}
+	})
+}

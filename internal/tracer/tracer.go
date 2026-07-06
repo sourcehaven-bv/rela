@@ -14,22 +14,30 @@ import (
 )
 
 // TraceResult represents a tree of entities reachable from a starting point.
+//
+// Title is the entity's literal `title` property (the tracer is a pure reader
+// with no metamodel, so it cannot resolve display_property). Properties carries
+// the raw property map so a metamodel-aware output layer can render the display
+// title itself. See internal/output.Writer.entityTitle.
 type TraceResult struct {
-	ID       string
-	Type     string
-	Title    string
-	Depth    int
-	Relation string // relation that led to this node
-	Incoming bool   // reached via an incoming relation
-	Children []*TraceResult
+	ID         string
+	Type       string
+	Title      string
+	Properties map[string]interface{}
+	Depth      int
+	Relation   string // relation that led to this node
+	Incoming   bool   // reached via an incoming relation
+	Children   []*TraceResult
 }
 
-// PathStep represents one step in a path between two entities.
+// PathStep represents one step in a path between two entities. Title/Properties
+// carry the same meaning as on [TraceResult].
 type PathStep struct {
-	ID       string
-	Type     string
-	Title    string
-	Relation string // relation that led to this step
+	ID         string
+	Type       string
+	Title      string
+	Properties map[string]interface{}
+	Relation   string // relation that led to this step
 }
 
 // Tracer provides graph traversal operations.
@@ -93,12 +101,13 @@ func (t *GenericTracer) traceBidirectional(
 	}
 
 	result := &TraceResult{
-		ID:       id,
-		Type:     e.Type,
-		Title:    e.Title(),
-		Depth:    depth,
-		Relation: relation,
-		Incoming: incoming,
+		ID:         id,
+		Type:       e.Type,
+		Title:      e.Title(),
+		Properties: e.Properties,
+		Depth:      depth,
+		Relation:   relation,
+		Incoming:   incoming,
 	}
 
 	if visited[id] {
@@ -148,11 +157,12 @@ func (t *GenericTracer) traceTo(
 	}
 
 	result := &TraceResult{
-		ID:       id,
-		Type:     e.Type,
-		Title:    e.Title(),
-		Depth:    depth,
-		Relation: relation,
+		ID:         id,
+		Type:       e.Type,
+		Title:      e.Title(),
+		Properties: e.Properties,
+		Depth:      depth,
+		Relation:   relation,
 	}
 
 	if visited[id] {
@@ -189,7 +199,7 @@ func (t *GenericTracer) FindPath(ctx context.Context, fromID, toID string) []Pat
 		if err != nil {
 			return nil
 		}
-		return []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}}
+		return []PathStep{{ID: fromID, Type: e.Type, Title: e.Title(), Properties: e.Properties}}
 	}
 
 	queue := t.initPathQueue(ctx, fromID)
@@ -230,7 +240,7 @@ func (t *GenericTracer) initPathQueue(ctx context.Context, fromID string) []path
 	}
 	return []pathQueueItem{{
 		id:   fromID,
-		path: []PathStep{{ID: fromID, Type: e.Type, Title: e.Title()}},
+		path: []PathStep{{ID: fromID, Type: e.Type, Title: e.Title(), Properties: e.Properties}},
 	}}
 }
 
@@ -256,7 +266,7 @@ func (t *GenericTracer) step(ctx context.Context, id, relation string) (PathStep
 	if err != nil {
 		return PathStep{}, false
 	}
-	return PathStep{ID: id, Type: e.Type, Title: e.Title(), Relation: relation}, true
+	return PathStep{ID: id, Type: e.Type, Title: e.Title(), Properties: e.Properties, Relation: relation}, true
 }
 
 func clonePath(p []PathStep) []PathStep {
