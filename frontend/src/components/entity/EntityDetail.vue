@@ -858,14 +858,14 @@ watch(
           <div
             v-else-if="section === entryContentSection"
             :ref="(el) => { contentRef = el as HTMLElement | null }"
-            class="content-body"
+            class="content-body md-body"
             @click="contentClick"
             v-html="renderedEntryContent"
           />
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
           <div v-else-if="section.display === 'content' && section.hasContent" class="content-block">
-            <div class="markdown-content" v-html="renderMarkdown(section.content || '', refResolver)"/>
+            <div class="markdown-content md-body" v-html="renderMarkdown(section.content || '', refResolver)"/>
           </div>
 
           <div v-else-if="section.display === 'content' && section.entities?.length" class="content-cards">
@@ -880,7 +880,7 @@ watch(
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
               </header>
-              <div v-if="ent.hasContent" class="markdown-content" v-html="renderMarkdown(ent.content || '', refResolver)"/>
+              <div v-if="ent.hasContent" class="markdown-content md-body" v-html="renderMarkdown(ent.content || '', refResolver)"/>
             </article>
           </div>
 
@@ -1389,74 +1389,12 @@ watch(
   font-style: italic;
 }
 
-/* Entry content body — fuller markdown styling for interactive checkboxes
- * and mermaid diagrams. Generic .markdown-content (used by content-card
- * snippets) gets a tighter treatment. */
-.content-body {
-  font-size: 15px;
-  line-height: 1.7;
-  color: var(--text-color);
-}
-
-.content-body :deep(h1),
-.content-body :deep(h2),
-.content-body :deep(h3) {
-  margin: 24px 0 12px;
-  color: var(--text-color);
-}
-
-.content-body :deep(h1) { font-size: 24px; }
-.content-body :deep(h2) { font-size: 20px; }
-.content-body :deep(h3) { font-size: 16px; }
-
-.content-body :deep(p) {
-  margin: 0 0 12px;
-}
-
-.content-body :deep(ul),
-.content-body :deep(ol) {
-  margin: 0 0 16px;
-  padding-left: 28px;
-}
-
-.content-body :deep(ol) {
-  list-style-type: decimal;
-}
-
-.content-body :deep(li) {
-  margin-bottom: 6px;
-  line-height: 1.6;
-}
-
-.content-body :deep(li::marker) {
-  color: var(--muted-text);
-  font-weight: 500;
-}
-
-.content-body :deep(code) {
-  background: var(--hover-bg);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-  color: var(--text-color);
-}
-
-.content-body :deep(a),
-.markdown-content :deep(a) {
-  color: var(--accent-color);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.content-body :deep(a:hover),
-.markdown-content :deep(a:hover) {
-  text-decoration-thickness: 2px;
-}
-
-.content-body :deep(input[type="checkbox"]) {
-  margin-right: 8px;
-  cursor: pointer;
-}
+/* Rendered-markdown element styling (headings, lists, code, links, tables,
+   blockquotes, line-height, …) is shared across all markdown surfaces via the
+   `.md-body` class on the container — see styles/markdown-content.css. Both
+   `.content-body` and `.markdown-content` carry that class, so neither
+   redefines those properties here (an earlier `.markdown-content` line-height
+   override silently beat the shared value and reintroduced drift). */
 
 /* Generic content (collected entities, configured-view content sections). */
 .content-block {
@@ -1464,10 +1402,6 @@ watch(
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-}
-
-.markdown-content {
-  line-height: 1.6;
 }
 
 .content-cards {

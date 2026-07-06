@@ -78,6 +78,19 @@ describe('markdown', () => {
       expect(result).toContain('<li>')
     })
 
+    it('renders GFM tables as table/th/td elements', () => {
+      // The shared `.md-body` stylesheet targets these tags on the rendered
+      // container (styles/markdown-content.css). This asserts the structural
+      // contract that styling relies on: GFM table markdown must produce a
+      // real <table> with header and body cells, not a paragraph of pipes.
+      const result = renderMarkdown(
+        '| Kans | Niveau |\n| --- | --- |\n| 1 | Onwaarschijnlijk |',
+      )
+      expect(result).toContain('<table>')
+      expect(result).toContain('<th>Kans</th>')
+      expect(result).toContain('<td>Onwaarschijnlijk</td>')
+    })
+
     it('renders checkboxes', () => {
       const result = renderMarkdown('- [ ] unchecked\n- [x] checked')
       expect(result).toContain('type="checkbox"')

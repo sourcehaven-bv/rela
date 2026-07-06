@@ -328,6 +328,10 @@ function onPopupHover(idx: number): void {
   justify-content: center;
 }
 
+/* Container chrome only (padding/background/color). The markdown *element*
+   styling inside the preview (headings, lists, code, blockquote, tables, …)
+   comes from the shared global stylesheet's `.editor-preview` alias — see
+   styles/markdown-content.css — so it matches the entity view exactly. */
 .markdown-editor :deep(.editor-preview) {
   padding: 16px;
   background: var(--card-bg);

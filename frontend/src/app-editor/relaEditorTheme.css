@@ -73,6 +73,151 @@
   border-left: none;
 }
 
+/* Live-preview markdown element styling. This sandboxed app-editor bundle
+   inlines its own CSS and does NOT load the SPA's styles/markdown-content.css,
+   so the `.editor-preview` rules there are mirrored here. Keep the two in
+   sync (same values, both re-skin EasyMDE's hardcoded light-theme defaults to
+   theme tokens). Tracked with the other editor DRIFT in TKT-D2JML7. */
+.EasyMDEContainer .editor-preview h1,
+.EasyMDEContainer .editor-preview h2,
+.EasyMDEContainer .editor-preview h3,
+.EasyMDEContainer .editor-preview h4,
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  margin: 24px 0 12px;
+  color: var(--text-color);
+  line-height: 1.3;
+  font-weight: 600;
+}
+.EasyMDEContainer .editor-preview > :first-child {
+  margin-top: 0;
+}
+.EasyMDEContainer .editor-preview h1 {
+  font-size: 26px;
+}
+.EasyMDEContainer .editor-preview h2 {
+  font-size: 21px;
+}
+.EasyMDEContainer .editor-preview h3 {
+  font-size: 17px;
+}
+.EasyMDEContainer .editor-preview h4 {
+  font-size: 15px;
+}
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  font-size: 14px;
+  color: var(--muted-text);
+}
+.EasyMDEContainer .editor-preview {
+  /* Mirrors --md-list-pad from markdown-content.css: couples list indent to
+     the task-list checkbox pull-back below. */
+  --md-list-pad: 26px;
+  overflow-wrap: anywhere;
+}
+.EasyMDEContainer .editor-preview p {
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview ul,
+.EasyMDEContainer .editor-preview ol {
+  margin: 0 0 14px;
+  padding-left: var(--md-list-pad);
+}
+.EasyMDEContainer .editor-preview ul {
+  list-style: disc outside;
+}
+.EasyMDEContainer .editor-preview ol {
+  list-style: decimal outside;
+}
+.EasyMDEContainer .editor-preview ul ul {
+  list-style-type: circle;
+}
+.EasyMDEContainer .editor-preview ul ul ul {
+  list-style-type: square;
+}
+.EasyMDEContainer .editor-preview li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+.EasyMDEContainer .editor-preview li > ul,
+.EasyMDEContainer .editor-preview li > ol {
+  margin: 4px 0 0;
+}
+.EasyMDEContainer .editor-preview li::marker {
+  color: var(--muted-text);
+}
+.EasyMDEContainer .editor-preview li:has(> input[type='checkbox']:first-child),
+.EasyMDEContainer .editor-preview li:has(> p:first-child > input[type='checkbox']:first-child) {
+  list-style: none;
+  margin-left: calc(-1 * var(--md-list-pad) + 4px);
+}
+.EasyMDEContainer .editor-preview li > p:first-child:has(> input[type='checkbox']:first-child) {
+  margin-bottom: 0;
+  display: inline;
+}
+.EasyMDEContainer .editor-preview code {
+  background: var(--hover-bg);
+  color: var(--text-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.EasyMDEContainer .editor-preview pre {
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+.EasyMDEContainer .editor-preview blockquote {
+  margin: 0 0 14px;
+  padding: 8px 16px;
+  background: var(--hover-bg);
+  border-left: 4px solid var(--accent-color);
+  color: var(--muted-text);
+  border-radius: 0 4px 4px 0;
+}
+.EasyMDEContainer .editor-preview blockquote > :last-child {
+  margin-bottom: 0;
+}
+.EasyMDEContainer .editor-preview hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 28px 0;
+}
+.EasyMDEContainer .editor-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.EasyMDEContainer .editor-preview a {
+  color: var(--accent-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.EasyMDEContainer .editor-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview th,
+.EasyMDEContainer .editor-preview td {
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+}
+.EasyMDEContainer .editor-preview th {
+  background: var(--hover-bg);
+  font-weight: 600;
+}
+
 .CodeMirror-gutters {
   background: var(--hover-bg);
   border-right-color: var(--border-color);
