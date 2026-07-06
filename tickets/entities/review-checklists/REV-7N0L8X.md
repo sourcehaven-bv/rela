@@ -18,7 +18,7 @@ status: done
 - [x] Ran cranky-code-reviewer on the diff — no critical findings.
 - [x] All critical review-responses addressed — none raised.
 - [x] All significant review-responses addressed — RR-B6NDXK (dead markdown-content class) → removed.
-- [x] Self-reviewed the diff for unrelated changes — only the 6 intended source files + docs.
+- [x] Self-reviewed the diff for unrelated changes — only the intended source files + docs.
 
 **Review Responses:** RR-B6NDXK (significant, addressed), RR-GW5I5R (minor,
 addressed), RR-R1LAKE (nit, addressed), RR-PUIE0H (minor, addressed), RR-RFRS5L
@@ -27,25 +27,25 @@ addressed), RR-R1LAKE (nit, addressed), RR-PUIE0H (minor, addressed), RR-RFRS5L
 ## Acceptance Verification
 
 **Acceptance Status:**
-1. Header markdown renders above filter row — **PASS**: `/_config` serves `all_ideas.header`; region rendered via `v-if="headerHtml"` after `</header>`; `list-info--top` in built CSS.
-2. Footer markdown renders below table/pagination — **PASS**: `all_ideas.footer` served; region after `<Pagination>`; `list-info--bottom` in built CSS.
-3. Sanitized (no injection) — **PASS**: reuses `renderMarkdown` (DOMPurify); `markdown.test.ts` covers `<script>`/`onerror`.
-4. No header/footer → renders as before, no layout shift — **PASS**: `v-if` guards + omitempty; unit tests assert `''` when unset.
-5. Legacy `description` still works, `header` wins when both set — **PASS**: `listHeaderMarkdown` precedence + trim; 16 unit tests incl. whitespace-only fallback.
+1. Header markdown renders above filter row — **PASS**.
+2. Footer markdown renders below table/pagination — **PASS**.
+3. Sanitized (no injection) — **PASS** (DOMPurify via renderMarkdown).
+4. No header/footer → renders as before, no layout shift — **PASS** (`v-if` + omitempty).
+5. Legacy `description` still works, `header` wins when both set — **PASS** (precedence + trim, 16 unit tests).
 
 ## Documentation (enhancements only)
 
-- [x] User-facing documentation updated — `docs/data-entry.md`: List Fields table gains `header`/`footer`/`description`; new "Header and footer info regions" subsection with example + sanitization/precedence notes.
-- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: docs updated inline within this ticket; the single doc change is verified above.)
+- [x] User-facing documentation updated — `docs/data-entry.md`.
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: single inline doc change verified above.)
 
 ## Final Checks
 
-- [x] Commit message will explain the why (in-context list guidance) not just what.
+- [x] Commit message explains the why, not just what.
 - [x] No TODOs/FIXMEs left.
-- [x] Ready for another developer to use — documented, example config in-tree.
+- [x] Ready for another developer to use.
 
 ## Pull Request
 
-- [x] PR created on branch `feat/list-info-regions`; CI monitored.
+- [x] PR created; CI monitored.
 
-**PR:** see branch `feat/list-info-regions`
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1091
