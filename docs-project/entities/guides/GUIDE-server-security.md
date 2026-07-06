@@ -291,6 +291,11 @@ defense** in the server threat model.
   form. When the hidden field is the display property, the title
   falls back to the entity ID so the redacted value can't leak
   through `_title`.
+- ✅ **`/_search` is not a hidden-field oracle.** A search whose only
+  match is a `visible:`-hidden property drops the hit rather than
+  confirming the value by returning the entity; a hit that also matched
+  a visible field (or id/content) still surfaces, body redacted. See
+  [GUIDE-acl-security].
 - ✅ Group expansion (`member-of`, transitive) and inherited local
   roles (containment, via `inherit_roles_through`). Direct local
   roles are honored as well.
@@ -301,13 +306,6 @@ defense** in the server threat model.
   accepted gap at this stage, tracked as a follow-up. Do not expose
   the MCP transport to an untrusted caller while relying on `visible:`
   for confidentiality.
-- ❌ **Search match-on-hidden-field oracle.** `/_search` redacts the
-  *body* of a hidden property but the search index still matches on
-  its text, so a hit can confirm a hidden value's presence by
-  appearing in results (e.g. searching a candidate postcode). Closing
-  this — dropping hits that matched only on a hidden field — is a
-  tracked follow-up. Treat `visible:` as hiding values from view, not
-  as making them unguessable via search.
 - ❌ MCP transport intersection (filtering the tool list per principal) — deferred to a follow-up.
 
 > **`_actions` is a UI hint, not an authorization layer.** The
