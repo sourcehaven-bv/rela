@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"iter"
 	"regexp"
 	"slices"
 	"strconv"
@@ -489,7 +490,7 @@ func (a *App) runVisibleFreeTextSearch(
 		Limit: limit,
 	}
 	out := make([]*entity.Entity, 0)
-	for hit, err := range a.visibleSearcher.SearchVisible(ctx, q, scope) {
+	for hit, err := range searchVisibleHits(ctx, a.visibleSearcher, a.affordances, q, scope) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
@@ -506,6 +507,53 @@ func (a *App) runVisibleFreeTextSearch(
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// searchVisibleHits runs the ACL-scoped search with property-level redaction
+// when the wired searcher supports it ([search.FieldVisibleSearcher]), so a hit
+// that matched only a `visible:`-hidden property is dropped rather than
+// confirming that property's value by its presence (the match-on-hidden-field
+// oracle, TKT-GGQ0JT). If the searcher is entity-level only, it degrades to
+// SearchVisible — no field redaction, matching pre-existing behavior.
+//
+// Free function (not an App method) to keep App's method surface under the
+// god-object load line; it takes only the two collaborators it needs.
+//
+// The field filter is engaged only when the resolver can actually hide a
+// property (a policy-backed resolver); under the Nop resolver redaction is a
+// provable no-op, so the plain entity-level path runs — and a searcher that
+// isn't a FieldVisibleSearcher is fine there. When redaction IS in play but the
+// searcher can't do it, SearchVisibleFields fails closed (it does not silently
+// skip) — see search.Visible.SearchVisibleFields.
+func searchVisibleHits(
+	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
+	q search.Query, scope map[string]search.TypeScope,
+) iter.Seq2[search.Hit, error] {
+	fvs, ok := vs.(search.FieldVisibleSearcher)
+	if !ok || !aff.hidesAnyField() {
+		return vs.SearchVisible(ctx, q, scope)
+	}
+	return fvs.SearchVisibleFields(ctx, q, scope, hiddenSearchFields(aff))
+}
+
+// hiddenSearchFields builds the [search.HiddenFieldsFunc] that reports, per
+// hit, the property fields the request principal may not see — resolved through
+// the same affordance verdict source the serializer uses, then qualified into
+// the search field vocabulary (`prop:<name>`). The seam passes the already-
+// loaded entity, so the resolver's `when:` predicates evaluate against the same
+// snapshot the provenance check uses (no second load, no cross-snapshot race).
+func hiddenSearchFields(aff affordanceService) search.HiddenFieldsFunc {
+	return func(ctx context.Context, _ search.Hit, e *entity.Entity) (map[string]struct{}, error) {
+		hidden := aff.hiddenProperties(ctx, e)
+		if len(hidden) == 0 {
+			return nil, nil
+		}
+		out := make(map[string]struct{}, len(hidden))
+		for name := range hidden {
+			out[search.PropFieldPrefix+name] = struct{}{}
+		}
+		return out, nil
+	}
 }
 
 // visibleListByTypes is executeQuery's no-free-text branch: load

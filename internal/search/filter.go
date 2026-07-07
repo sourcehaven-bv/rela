@@ -81,6 +81,23 @@ func MatchFilters(e *entity.Entity, filters []PropertyFilter) bool {
 	return true
 }
 
+// Logical field names reported by match-provenance (see [MatchTextFields]).
+// These form the vocabulary a [VisibleSearcher] intersects against a
+// principal's visible-field set to close the match-on-hidden-field oracle.
+//
+//   - FieldID / FieldContent name the entity ID and body. Neither is ever
+//     property-visibility-gated (only declared properties carry a `visible:`
+//     grant), so a hit that matched on either always survives.
+//   - PropFieldPrefix + the property name identifies a property match, e.g.
+//     "prop:internal_notes". The suffix is the raw property key — the same
+//     key space the affordance resolver's Visible map uses — so the consumer
+//     can intersect the two sets directly.
+const (
+	FieldID         = "id"
+	FieldContent    = "content"
+	PropFieldPrefix = "prop:"
+)
+
 // MatchText returns true if any of the entity's ID, content, or string
 // properties contain the search text (case-insensitive).
 func MatchText(e *entity.Entity, text string) bool {
@@ -97,4 +114,37 @@ func MatchText(e *entity.Entity, text string) bool {
 		}
 	}
 	return false
+}
+
+// MatchTextFields reports which logical fields of e the search text matches,
+// using the same case-insensitive substring rule as [MatchText]. It is the
+// ground-truth provenance implementation: the [FieldMatcher] every backend
+// exposes must agree with it on the visible-field projection (pinned by
+// storetest.RunVisibleSearchTests).
+//
+// Field names follow the [FieldID] / [FieldContent] / [PropFieldPrefix]
+// vocabulary. The returned set is nil when nothing matches (mirroring
+// MatchText returning false). Non-string properties never match (only string
+// values are indexed), matching MatchText and both native backends.
+func MatchTextFields(e *entity.Entity, text string) map[string]struct{} {
+	lower := strings.ToLower(text)
+	var fields map[string]struct{}
+	add := func(name string) {
+		if fields == nil {
+			fields = make(map[string]struct{})
+		}
+		fields[name] = struct{}{}
+	}
+	if strings.Contains(strings.ToLower(e.ID), lower) {
+		add(FieldID)
+	}
+	if strings.Contains(strings.ToLower(e.Content), lower) {
+		add(FieldContent)
+	}
+	for name, v := range e.Properties {
+		if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), lower) {
+			add(PropFieldPrefix + name)
+		}
+	}
+	return fields
 }

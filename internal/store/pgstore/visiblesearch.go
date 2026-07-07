@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -89,6 +92,114 @@ func (s *Store) SearchVisible(
 			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
 		}
 	}
+}
+
+// compile-time check: the postgres store also filters at the property level.
+var _ search.FieldVisibleSearcher = (*Store)(nil)
+
+// SearchVisibleFields is [SearchVisible] plus property-level redaction of the
+// match-on-hidden-field oracle. A hit whose text matched only fields the
+// principal may not see (per hidden) is dropped, so a search cannot confirm a
+// redacted property's value by returning its entity.
+//
+// The per-field match is computed in Go over the already-scanned entity with
+// [search.MatchTextFields] — the same ground-truth matcher the generic backend
+// uses — so pgstore and the simple backends agree. This does NOT push the
+// field projection into SQL; the entity is already in hand from the visibility
+// scan, so the filter is a cheap in-memory pass over the candidate rows. A SQL
+// pushdown (matching per-column server-side) is a tracked performance
+// follow-up, not a correctness gap.
+func (s *Store) SearchVisibleFields(
+	ctx context.Context, q search.Query, scope map[string]search.TypeScope, hidden search.HiddenFieldsFunc,
+) iter.Seq2[search.Hit, error] {
+	return func(yield func(search.Hit, error) bool) {
+		if err := search.ValidateFilters(q.Filters); err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		if ws, ok := scope[search.WildcardType]; ok && ws.Query != nil {
+			yield(search.Hit{}, fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", search.ErrScope))
+			return
+		}
+
+		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope)
+		if !anyVisible {
+			return
+		}
+
+		rows, err := s.db.Query(ctx, sqlText, args...)
+		if err != nil {
+			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
+			return
+		}
+		defer rows.Close()
+
+		emitFieldVisibleRows(ctx, rows, q, hidden, yield)
+	}
+}
+
+// emitFieldVisibleRows scans the visible-search rows, applies the Go-side
+// property filter and the property-level (hidden-field) drop, and yields the
+// survivors up to q.Limit. Any scan/row/hidden-func error is yielded and stops
+// iteration. Extracted from SearchVisibleFields to keep that closure's
+// branching within the complexity budget.
+func emitFieldVisibleRows(
+	ctx context.Context, rows pgx.Rows, q search.Query, hidden search.HiddenFieldsFunc,
+	yield func(search.Hit, error) bool,
+) {
+	emitted := 0
+	for rows.Next() {
+		e, scanErr := scanEntity(rows)
+		if scanErr != nil {
+			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search scan: %w", search.ErrScope, scanErr))
+			return
+		}
+		if !search.MatchFilters(e, q.Filters) {
+			continue
+		}
+		hit := search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}
+		keep, ferr := fieldVisibleForEntity(ctx, q, hit, e, hidden)
+		if ferr != nil {
+			yield(search.Hit{}, ferr)
+			return
+		}
+		if !keep {
+			continue
+		}
+		if q.Limit > 0 && emitted >= q.Limit {
+			return
+		}
+		if !yield(hit, nil) {
+			return
+		}
+		emitted++
+	}
+	if err := rows.Err(); err != nil {
+		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
+	}
+}
+
+// fieldVisibleForEntity decides whether a hit survives the property-level
+// filter, given the already-loaded entity. Mirrors search.Visible.fieldVisible
+// but computes provenance directly with [search.MatchTextFields] (the entity is
+// in hand, no reader round-trip). Keeps the hit when field filtering does not
+// apply (no hidden func, no text) or an empty hidden set; otherwise keeps only
+// if a non-hidden field matched. A hidden-func error fails closed.
+func fieldVisibleForEntity(
+	ctx context.Context, q search.Query, h search.Hit, e *entity.Entity, hidden search.HiddenFieldsFunc,
+) (bool, error) {
+	if hidden == nil || q.Text == "" {
+		return true, nil
+	}
+	hiddenFields, err := hidden(ctx, h, e)
+	if err != nil {
+		return false, fmt.Errorf("%w: hidden-fields for %q: %w", search.ErrScope, h.ID, err)
+	}
+	if len(hiddenFields) == 0 {
+		return true, nil
+	}
+	matched := search.MatchTextFields(e, q.Text)
+	return search.MatchHasVisibleField(matched, hiddenFields), nil
 }
 
 // buildVisibleSearchSQL emits the combined search+visibility statement.

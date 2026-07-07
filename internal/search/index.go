@@ -8,6 +8,7 @@ import (
 	"context"
 	"iter"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -25,6 +26,26 @@ var _ Searcher = (*Service)(nil)
 // New creates a Searcher backed by the given reader and search backend.
 func New(reader store.EntityReader, backend Backend) *Service {
 	return &Service{reader: reader, backend: backend}
+}
+
+// MatchedFields reports which logical fields of the already-loaded entity the
+// query text matched, in the [FieldID] / [FieldContent] / [PropFieldPrefix]
+// vocabulary. It delegates to the backend's [FieldMatcher] when the backend
+// implements one, so provenance is computed with the same matcher the backend
+// searched with; otherwise it falls back to the ground-truth [MatchTextFields].
+//
+// It takes the entity rather than loading it so the seam can thread a single
+// snapshot through both provenance and the hidden-field verdict (no
+// re-load, no cross-snapshot race). An empty text query has no provenance and
+// returns nil.
+func (s *Service) MatchedFields(e *entity.Entity, text string) map[string]struct{} {
+	if e == nil || text == "" {
+		return nil
+	}
+	if fm, ok := s.backend.(FieldMatcher); ok {
+		return fm.MatchedFields(e, text)
+	}
+	return MatchTextFields(e, text)
 }
 
 func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {

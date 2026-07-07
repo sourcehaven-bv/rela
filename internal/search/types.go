@@ -5,6 +5,7 @@ import (
 	"errors"
 	"iter"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -36,6 +37,45 @@ type Backend interface {
 	// limit ≤ 0 means no limit.
 	Search(text string, limit int) ([]string, error)
 }
+
+// FieldMatcher is the optional match-provenance capability a Backend may
+// implement. MatchedFields reports, for a single already-loaded entity and
+// the same query text, which logical fields the match came from — using the
+// [FieldID] / [FieldContent] / [PropFieldPrefix] vocabulary and the backend's
+// OWN matcher, so provenance stays faithful to what Search actually matched.
+//
+// It answers per-entity (not per-corpus) because it runs only over the
+// candidate set the coarse Search already produced: the seam re-asks "which
+// fields?" for each surviving hit. A backend that cannot cheaply reproduce its
+// own per-field matching may leave this unimplemented; the field-visibility
+// filter then degrades (see [Visible.SearchVisibleFields]).
+//
+// The returned set must be a SUPERSET-safe approximation of the true match:
+// it may report an extra field, but must not omit a field the coarse Search
+// genuinely matched on — omitting one could drop a hit the principal was
+// entitled to see (a false drop). When in doubt, report the field.
+type FieldMatcher interface {
+	Backend
+	MatchedFields(e *entity.Entity, text string) map[string]struct{}
+}
+
+// HiddenFieldsFunc reports, for one hit, the set of property fields the
+// requesting principal may NOT see — in the [PropFieldPrefix]-qualified
+// vocabulary (e.g. "prop:internal_notes"). It is supplied by the consumer,
+// which resolves the ACL verdict (the search package never sees a principal
+// or a policy, exactly as with the scope map). A nil func, or a func that
+// returns an empty set, disables field-level filtering for that hit.
+//
+// It receives the ALREADY-LOADED entity, not just the Hit: the seam loads the
+// entity once and threads that single snapshot through both the hidden-field
+// computation and the match-provenance computation, so a concurrent write
+// cannot make the two observe different states (the fail-closed decision is
+// snapshot-consistent — CLAUDE.md "capture state once per operation"). The
+// consumer resolves its ACL verdict against this exact entity (the resolver's
+// `when:` predicates evaluate against it). Returning an error fails closed —
+// the hit is dropped and the error surfaced — so an ACL resolution failure can
+// never widen visibility.
+type HiddenFieldsFunc func(ctx context.Context, h Hit, e *entity.Entity) (map[string]struct{}, error)
 
 // WildcardType is the reserved scope-map key that supplies the default
 // verdict for entity types without an explicit entry. It cannot collide
@@ -104,6 +144,24 @@ func ResolveTypeScope(scope map[string]TypeScope, entityType string) (TypeScope,
 // composing visibility into the search query itself.
 type VisibleSearcher interface {
 	SearchVisible(ctx context.Context, q Query, scope map[string]TypeScope) iter.Seq2[Hit, error]
+}
+
+// FieldVisibleSearcher is VisibleSearcher extended with property-level
+// redaction: SearchVisibleFields additionally drops any hit whose text matched
+// ONLY fields the principal may not see (per the consumer's HiddenFieldsFunc),
+// closing the match-on-hidden-field oracle. A hit that matched a visible
+// property — or the id/content, never property-gated — always survives.
+//
+// It layers on top of SearchVisible's entity-level scope: entity-level
+// filtering runs first, then the field filter over the survivors. Both the
+// generic wrapper ([Visible]) and the pgstore-native store implement it. A
+// consumer that needs field redaction for confidentiality must wire a
+// FieldVisibleSearcher, not a bare VisibleSearcher.
+type FieldVisibleSearcher interface {
+	VisibleSearcher
+	SearchVisibleFields(
+		ctx context.Context, q Query, scope map[string]TypeScope, hidden HiddenFieldsFunc,
+	) iter.Seq2[Hit, error]
 }
 
 // ErrScope marks a SearchVisible failure that occurred while evaluating

@@ -13,6 +13,13 @@ func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{Attachments: true})
 }
 
+// TestVisibleFieldConformance runs the property-level (match-on-hidden-field)
+// suite against the pgstore-native FieldVisibleSearcher (TKT-GGQ0JT).
+// DB-gated on RELA_TEST_DATABASE_URL like the rest of the suite.
+func TestVisibleFieldConformance(t *testing.T) {
+	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
+}
+
 func FuzzRelationKeyCollision(f *testing.F) {
 	storetest.FuzzRelationKeyCollision(f, fuzzFactory(f))
 }
