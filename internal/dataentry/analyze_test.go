@@ -381,6 +381,45 @@ func TestAnalyzeValidations(t *testing.T) {
 	}
 }
 
+// TestAnalyzeValidations_AttachesMissingHeaderDetail covers TKT-IL499B
+// (RR-UFUX7T): a content required-headers violation must carry the
+// missing exact headers through to AnalysisIssue.Detail, so the
+// data-entry analyze view can reveal *which* headers are missing rather
+// than only the flat rule description. Guards against the loop silently
+// dropping Detail on the way from RuleResult to AnalysisIssue.
+func TestAnalyzeValidations_AttachesMissingHeaderDetail(t *testing.T) {
+	g := newFixture()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{"ncr": {}},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "ncr-standard-headers",
+				Description: "NCR body moet standaardkoppen bevatten",
+				EntityType:  "ncr",
+				Severity:    "error",
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Beschrijving"},
+						{Header: "## Oorzaak"},
+					},
+				},
+			},
+		},
+	}
+	g.AddNode(&entity.Entity{ID: "NCR-001", Type: "ncr", Content: "# NCR\n## Beschrijving\ntext"})
+
+	svc := newAnalyzeService(t, g, meta)
+	section := svc.analyzeValidations(context.Background(), meta)
+
+	if len(section.Issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(section.Issues))
+	}
+	got := section.Issues[0].Detail
+	if len(got) != 1 || got[0] != "## Oorzaak" {
+		t.Errorf("Detail = %v, want [## Oorzaak]", got)
+	}
+}
+
 // TestAnalyzeValidations_SurfacesScriptError covers RR-MG0LG: a Lua
 // rule that fails to compile must appear as an error issue in the
 // analyze view rather than vanishing silently. The data-entry web

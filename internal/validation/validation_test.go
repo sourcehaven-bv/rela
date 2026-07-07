@@ -139,6 +139,43 @@ func TestCheckWarnings(t *testing.T) {
 	}
 }
 
+func TestContentViolationCarriesMissingHeaderDetail(t *testing.T) {
+	t.Parallel()
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ncr": {Label: "NCR", IDPrefixes: []string{"NCR-"}},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "ncr-standard-headers",
+				Description: "NCR body moet standaardkoppen bevatten",
+				EntityType:  "ncr",
+				Severity:    "error",
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Beschrijving"},
+						{Header: "## Oorzaak"},
+					},
+				},
+			},
+		},
+	}
+
+	entities := []*entity.Entity{
+		{ID: "NCR-001", Type: "ncr", Content: "# NCR\n## Beschrijving\nsome text"},
+	}
+
+	svc := New(meta, lua.ReadDeps{})
+	violations := svc.Check(context.Background(), entities, nil).Violations
+	if len(violations) != 1 {
+		t.Fatalf("got %d violations, want 1", len(violations))
+	}
+	got := violations[0].Detail
+	if len(got) != 1 || got[0] != "## Oorzaak" {
+		t.Errorf("Detail = %v, want [## Oorzaak]", got)
+	}
+}
+
 func TestCountBySeverity(t *testing.T) {
 	t.Parallel()
 	violations := []Violation{

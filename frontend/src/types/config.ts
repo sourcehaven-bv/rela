@@ -277,6 +277,13 @@ export interface AnalyzeIssue {
   severity: 'error' | 'warning'
   checkType: string
   /**
+   * Optional structured specifics about why the issue fired, beyond the
+   * flat message. For content required-headers violations it lists the
+   * missing exact headers. Absent on rows with no structured detail;
+   * the message cell reveals it in an expandable detail row.
+   */
+  detail?: string[]
+  /**
    * Present only on validation script-error rows. Carries the same
    * envelope as the action surface so the UI can branch: rows with
    * scriptError open ScriptErrorDialog instead of navigating.
