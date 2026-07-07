@@ -18,12 +18,12 @@ type stubProvider struct {
 	json []byte
 }
 
-func (p stubProvider) Projection() (string, []byte) { return p.hash, p.json }
+func (p stubProvider) Projection() (hash string, projectionJSON []byte) { return p.hash, p.json }
 
-func newVersionInput(id, typ, content string, props map[string]interface{}) store.VersionInput {
+func newVersionInput(id, content string, props map[string]interface{}) store.VersionInput {
 	return store.VersionInput{
 		EntityID:      id,
-		Type:          typ,
+		Type:          "ticket",
 		Content:       content,
 		Properties:    props,
 		SchemaHash:    "schema-abc",
@@ -41,11 +41,11 @@ func TestWriteVersionAndList(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	in := newVersionInput("TKT-1", "ticket", "first", map[string]interface{}{"title": "one"})
+	in := newVersionInput("TKT-1", "first", map[string]interface{}{"title": "one"})
 	in.Op = store.VersionOpCreate
 	require.NoError(t, s.WriteVersion(ctx, in))
 
-	in2 := newVersionInput("TKT-1", "ticket", "second", map[string]interface{}{"title": "two"})
+	in2 := newVersionInput("TKT-1", "second", map[string]interface{}{"title": "two"})
 	in2.Op = store.VersionOpUpdate
 	require.NoError(t, s.WriteVersion(ctx, in2))
 
@@ -92,18 +92,18 @@ func TestRenameLineage(t *testing.T) {
 	ctx := context.Background()
 
 	// v1 under OLD id.
-	old := newVersionInput("OLD-1", "ticket", "content-old", nil)
+	old := newVersionInput("OLD-1", "content-old", nil)
 	old.Op = store.VersionOpCreate
 	require.NoError(t, s.WriteVersion(ctx, old))
 
 	// rename OLD-1 -> NEW-1: a version row under NEW-1 carrying prev_id=OLD-1.
-	ren := newVersionInput("NEW-1", "ticket", "content-old", nil)
+	ren := newVersionInput("NEW-1", "content-old", nil)
 	ren.Op = store.VersionOpRename
 	ren.PrevID = "OLD-1"
 	require.NoError(t, s.WriteVersion(ctx, ren))
 
 	// v under NEW id.
-	upd := newVersionInput("NEW-1", "ticket", "content-new", nil)
+	upd := newVersionInput("NEW-1", "content-new", nil)
 	upd.Op = store.VersionOpUpdate
 	require.NoError(t, s.WriteVersion(ctx, upd))
 

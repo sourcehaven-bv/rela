@@ -54,10 +54,10 @@ type EntityProjection struct {
 // or diffed. Attachment/scan/transform config, description, and default are
 // omitted — they don't change how a stored value renders.
 type PropertyProjection struct {
-	Type     string   `json:"type"`
-	Required bool     `json:"required"`
-	List     bool     `json:"list"`
-	Format   string   `json:"format,omitempty"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+	List     bool   `json:"list"`
+	Format   string `json:"format,omitempty"`
 	// Values is the inline enum value list (for properties whose type is an
 	// inline enum rather than a named custom type).
 	Values []string `json:"values,omitempty"`

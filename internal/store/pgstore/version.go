@@ -37,7 +37,7 @@ func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHa
 	if err != nil {
 		return err
 	}
-	if err := ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection); err != nil {
+	if err = ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection); err != nil {
 		return fmt.Errorf("pgstore: ensure schema_version: %w", err)
 	}
 	var prev *string
@@ -53,23 +53,6 @@ func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHa
 		in.EntityID, string(in.Op), prev, in.Type, in.Content, props, contentHash,
 		in.SchemaHash, in.PrincipalUser, in.PrincipalTool, in.TriggeredBy)
 	return err
-}
-
-// latestContentHash returns the content_hash of an entity's newest version, or
-// ("", false, nil) when it has none. Used by the sweep to dedup: skip capture
-// when the live content hash already matches the latest version.
-func latestContentHash(ctx context.Context, q DBTX, entityID string) (string, bool, error) {
-	const sel = `SELECT content_hash FROM entity_versions
-	             WHERE entity_id = $1 ORDER BY vseq DESC LIMIT 1`
-	var h string
-	err := q.QueryRow(ctx, sel, entityID).Scan(&h)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return h, true, nil
 }
 
 // contentHashOf computes the canonical content hash of a snapshot, matching the

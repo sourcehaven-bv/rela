@@ -183,12 +183,12 @@ func (s *sweep) tick(ctx context.Context) error {
 // the content hash of its latest existing version (empty if none), so
 // captureOne can dedup without a second query.
 type sweepCandidate struct {
-	id             string
-	typ            string
-	content        string
-	props          []byte
-	latestHash     string
-	hasVersion     bool
+	id         string
+	typ        string
+	content    string
+	props      []byte
+	latestHash string
+	hasVersion bool
 }
 
 // selectCandidates returns up to Batch entities that have settled (updated_at

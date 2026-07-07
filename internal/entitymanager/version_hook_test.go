@@ -86,7 +86,9 @@ func TestVersionHook_DeleteCapturesFinalState(t *testing.T) {
 // record (op=rename) carrying the OLD id in PrevID and the NEW id as EntityID.
 func TestVersionHook_RenameCarriesPrevID(t *testing.T) {
 	mgr, rec := newVersionManager(t)
-	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
+	// A distinct principal (not the "alice" the other tests use) also confirms
+	// the rename version carries the acting identity, not a hardcoded one.
+	ctx := ctxWithPrincipal("bob", principal.ToolMCP)
 
 	e := entity.New("", "requirement")
 	e.Properties = map[string]interface{}{"title": "R1"}
@@ -113,6 +115,9 @@ func TestVersionHook_RenameCarriesPrevID(t *testing.T) {
 	}
 	if got.PrevID != oldID {
 		t.Errorf("prev id = %q, want the OLD id %q", got.PrevID, oldID)
+	}
+	if got.PrincipalUser != "bob" || got.PrincipalTool != principal.ToolMCP {
+		t.Errorf("attribution = %q/%q, want bob/%s", got.PrincipalUser, got.PrincipalTool, principal.ToolMCP)
 	}
 }
 
