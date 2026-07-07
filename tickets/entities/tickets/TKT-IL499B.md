@@ -5,7 +5,7 @@ title: 'Analysis view: reveal which detail failed a validation (missing headers 
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 In the data-entry Analysis view, the Validations table shows a flat rule
