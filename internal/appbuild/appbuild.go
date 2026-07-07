@@ -689,6 +689,11 @@ func assemble(
 		return nil, err
 	}
 
+	// Start the pgstore version-reconciliation sweep (postgres build only; a
+	// no-op elsewhere). It captures create/update versions for settled entities;
+	// rename/delete are captured synchronously via the entitymanager hook above.
+	startVersionSweepIfSupported(st, base.meta)
+
 	return &Services{
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
@@ -746,6 +751,14 @@ func versionRecorderFor(st store.Store) entitymanager.VersionRecorder {
 	}
 	return nil
 }
+
+// startVersionSweepIfSupported is a build-tagged hook: the postgres build
+// (appbuild_postgres.go) starts the pgstore version-reconciliation sweep; all
+// other builds use the no-op in appbuild_nosweep.go. Splitting on the build tag
+// keeps this build-agnostic file free of any pgstore import.
+//
+// It is called from assemble after the store is built, with the active
+// metamodel (the sweep's projection source).
 
 // Close releases resources held by Services: store first (so any
 // in-flight observer callbacks complete), then the search backend.
