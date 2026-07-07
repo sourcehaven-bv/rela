@@ -2007,6 +2007,13 @@ with links to affected entities.
 When a dashboard is configured, a validation summary card is automatically appended showing the
 total error and warning counts with a link to the full analysis page.
 
+In each issue row the entity title links to that entity, while the message is a
+separate click target that reveals more about the failure. For a
+`content.required-headers` validation, clicking the message expands a detail row
+listing exactly which required headers the entity is missing (only exact-match
+headers; regex `pattern:` checks are not listed). A validation whose Lua script
+failed instead opens the script-error dialog from the same message click.
+
 No configuration is needed — the analysis page is always available in the sidebar.
 
 ## Documents

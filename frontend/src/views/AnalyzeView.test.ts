@@ -427,6 +427,41 @@ describe('AnalyzeView missing-header detail', () => {
     expect(wrapper.find('.issue-detail-row').exists()).toBe(true)
   })
 
+  it('renders two same-message rows on one entity as distinct, independently-expandable rows', async () => {
+    // Two content rules sharing a Description, both violated by NCR-001,
+    // produce identical entityId+message rows. They must not collide on
+    // the row key (else Vue merges them and expand cross-links).
+    const sharedMessage = 'NCR body moet standaardkoppen bevatten'
+    const wrapper = await mountWith([
+      makeIssue({
+        entityId: 'NCR-001',
+        entityType: 'ncr',
+        message: sharedMessage,
+        severity: 'error',
+        checkType: 'Validations',
+        detail: ['## Oorzaak'],
+      }),
+      makeIssue({
+        entityId: 'NCR-001',
+        entityType: 'ncr',
+        message: sharedMessage,
+        severity: 'error',
+        checkType: 'Validations',
+        detail: ['## Corrigerende maatregel'],
+      }),
+    ])
+
+    const toggles = wrapper.findAll('.message-toggle')
+    expect(toggles).toHaveLength(2)
+
+    // Expanding the first must not expand the second.
+    await toggles[0].trigger('click')
+    const detailRows = wrapper.findAll('.issue-detail-row')
+    expect(detailRows).toHaveLength(1)
+    expect(detailRows[0].text()).toContain('## Oorzaak')
+    expect(detailRows[0].text()).not.toContain('## Corrigerende maatregel')
+  })
+
   it('shows no expand affordance when the issue has no detail', async () => {
     const wrapper = await mountWith([
       makeIssue({

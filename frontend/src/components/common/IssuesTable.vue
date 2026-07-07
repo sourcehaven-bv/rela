@@ -22,10 +22,17 @@ interface IssueRow {
   issue: AnalyzeIssue
 }
 
-// A stable per-row key so expand state survives re-render.
+// A stable per-row key so expand state survives re-render. The index is
+// part of the key because two distinct rules with the same Description
+// can be violated by the same entity, yielding identical
+// entityId+message rows; without the index those would collide (Vue
+// treats duplicate keys as one node, cross-linking their expand state).
+// The list only re-renders on a fresh analyze load, so index-based keys
+// are stable within a render and resetting expand state on reload is
+// acceptable.
 function rowsFor(issues: AnalyzeIssue[]): IssueRow[] {
-  return issues.map((issue) => ({
-    key: `${issue.checkType}:${issue.entityType}:${issue.entityId}:${issue.message}`,
+  return issues.map((issue, i) => ({
+    key: `${i}:${issue.checkType}:${issue.entityType}:${issue.entityId}`,
     issue,
   }))
 }
