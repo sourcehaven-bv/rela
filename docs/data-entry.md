@@ -675,7 +675,8 @@ escape it — choose property values that don't start with `$`.
 
 ### Filter Controls
 
-Interactive filters shown above the table:
+Interactive filters shown above the table. A control filters on either a
+**property** or a **relation** (set exactly one):
 
 ```yaml
 filter_controls:
@@ -685,12 +686,36 @@ filter_controls:
     widget: select
   - property: assignee
     widget: search
+  - relation: verantwoordelijk_voor
+    direction: incoming
+    label: Verantwoordelijke
 ```
 
-| Field      | Type   | Description                                              |
-| ---------- | ------ | -------------------------------------------------------- |
-| `property` | string | Property to filter on                                    |
-| `widget`   | string | `"select"`, `"multi-select"`, or `"search"`             |
+| Field       | Type   | Description                                                     |
+| ----------- | ------ | -------------------------------------------------------------- |
+| `property`  | string | Property to filter on                                          |
+| `relation`  | string | Relation to filter on (mutually exclusive with `property`)     |
+| `direction` | string | For `relation`: `"outgoing"` (default) or `"incoming"`         |
+| `widget`    | string | For `property`: `"select"`, `"multi-select"`, or `"search"`    |
+| `label`     | string | Optional display label override                                |
+
+**Relation filter controls** render as a **target selector** populated with the
+display titles of the relation's target entities — a plain `<select>` for a
+small set, upgrading to a typeahead combobox above ~10 options. `direction:
+incoming` pulls candidates from the relation's source types (`from`); `outgoing`
+(default) from its target types (`to`). The selected value the filter matches on
+is the target's **display title** (honoring each type's `display_property`), not
+its ID.
+
+Notes:
+
+- Two targets that resolve to the same display title collapse to one option and
+  the filter matches both (title-based matching).
+- The candidate list is fetched from the target types' entities; a type with
+  more than ~100 entities has its option set truncated.
+- A relation whose name is not a plain identifier (e.g. contains a hyphen)
+  cannot be deep-linked as a filter (the URL parser only accepts
+  `[a-zA-Z_][a-zA-Z0-9_]*` filter keys).
 
 ### URL Sync for Filters
 

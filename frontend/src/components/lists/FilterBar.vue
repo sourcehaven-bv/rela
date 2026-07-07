@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
+import { isCancelledFetch } from '@/composables/usePageData'
+import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
 import type {
   ListConfig,
   EntityType,
   FilterControl,
   PropertyDef,
   FilterState,
+  Entity,
 } from '@/types'
 
 const props = defineProps<{
@@ -18,18 +22,40 @@ const emit = defineEmits<{
   filter: [filters: FilterState]
 }>()
 
-// Debounce window for text-input filters. Select/multi-select fire immediately
-// because they only change on a deliberate click.
+const schemaStore = useSchemaStore()
+const entitiesStore = useEntitiesStore()
+const uiStore = useUIStore()
+
+// Debounce window for text-input filters. Select/multi-select/relation fire
+// immediately because they only change on a deliberate click.
 const TEXT_DEBOUNCE_MS = 250
 
-// Resolved filter control with computed widget type and options
+// At or below this many resolved targets, a relation filter renders as a plain
+// native <select>; above it, as a typeahead combobox (TKT-DL16XM).
+const RELATION_FILTER_SELECT_MAX = 10
+
+// Per-source-type candidate fetch cap, matching RelationPicker. Source types
+// with more than this many entities silently truncate their option set — the
+// documented ceiling that would trigger a server-side _filter_options endpoint.
+const CANDIDATE_FETCH_LIMIT = 100
+
+// Resolved filter control with computed widget type and options.
+// `relation` widgets carry their resolved candidate entities; property widgets
+// carry enum `options` strings.
 interface ResolvedFilter {
   key: string
   label: string
-  widget: 'select' | 'multi-select' | 'text'
+  widget: 'select' | 'multi-select' | 'text' | 'relation'
   options: string[]
   isRelation: boolean
+  // relation widgets only:
+  relationCandidates?: Entity[]
+  relationMode?: 'select' | 'typeahead'
 }
+
+// Candidate entities per relation-filter key, fetched on mount. Keyed by the
+// relation name (the control key). Empty until the fetch resolves.
+const relationCandidates = ref<Record<string, Entity[]>>({})
 
 const resolvedFilters = computed((): ResolvedFilter[] => {
   if (!props.config.filter_controls) return []
@@ -41,8 +67,17 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
   const label = fc.label || titleCase(key)
 
   if (fc.relation) {
-    // Relation filters: use text input for now (could be enhanced to select with targets)
-    return { key, label, widget: 'text', options: [], isRelation: true }
+    const candidates = relationCandidates.value[key] ?? []
+    const mode = candidates.length > RELATION_FILTER_SELECT_MAX ? 'typeahead' : 'select'
+    return {
+      key,
+      label,
+      widget: 'relation',
+      options: [],
+      isRelation: true,
+      relationCandidates: candidates,
+      relationMode: mode,
+    }
   }
 
   // Property filter
@@ -57,7 +92,50 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
   return { key, label, widget, options, isRelation: false }
 }
 
-function resolveWidgetType(propDef: PropertyDef, options: string[]): 'select' | 'multi-select' | 'text' {
+// Source entity types for a relation filter's option candidates. Incoming
+// filters keep rows whose incoming SOURCES match, so candidates come from the
+// relation's `from[*]`; outgoing (default) from `to[*]` — mirroring
+// RelationPicker.targetTypes and FilterControl.Direction semantics.
+function relationSourceTypes(fc: FilterControl): string[] {
+  const relType = schemaStore.getRelationType(fc.relation || '')
+  if (!relType) return []
+  return fc.direction === 'incoming' ? relType.from : relType.to
+}
+
+// Fetch candidate entities for every relation filter control. Uses the same
+// generic list endpoint (via entitiesStore.fetchList) that RelationPicker uses
+// — no dedicated backend.
+//
+// Each control loads in its own try/catch so one control's failure never
+// affects a sibling: a cancelled fetch (rapid nav) is suppressed silently; any
+// other error surfaces a toast and leaves that control's option set empty. Run
+// via a watcher below so a later props.config change refetches (RR-L78S8H).
+async function loadRelationCandidates() {
+  for (const fc of props.config.filter_controls || []) {
+    if (!fc.relation) continue
+    const relation = fc.relation
+    const types = relationSourceTypes(fc)
+    try {
+      const collected: Entity[] = []
+      for (const type of types) {
+        const result = await entitiesStore.fetchList(type, { per_page: CANDIDATE_FETCH_LIMIT })
+        collected.push(...result.data)
+      }
+      relationCandidates.value[relation] = collected
+    } catch (err) {
+      // Suppress cancellations (rapid nav); continue to the next control so a
+      // sibling isn't left permanently unloaded (RR-TE8HA6).
+      if (isCancelledFetch(err)) continue
+      uiStore.error(`Could not load filter options for “${fc.label || relation}”.`)
+      console.error(`Failed to load relation filter candidates for ${relation}:`, err)
+    }
+  }
+}
+
+function resolveWidgetType(
+  propDef: PropertyDef,
+  options: string[]
+): 'select' | 'multi-select' | 'text' {
   // Multi-select for list properties with enum values
   if (propDef.list && options.length > 0) {
     return 'multi-select'
@@ -71,9 +149,7 @@ function resolveWidgetType(propDef: PropertyDef, options: string[]): 'select' | 
 }
 
 function titleCase(str: string): string {
-  return str
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+  return str.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 // Which control keys are text widgets (vs select / multi-select). Text
@@ -136,7 +212,7 @@ watch(
     }
     localFilters.value = rebuilt
     preservedOps.value = captureOperators(newFilters)
-  },
+  }
 )
 
 function buildState(): FilterState {
@@ -175,6 +251,13 @@ function handleFilterChange() {
   emitFilters()
 }
 
+// Relation target selector committed a value (a bare display title, or '' to
+// clear). Fires immediately like a select — no debounce, no mid-type state.
+function handleRelationChange(key: string, value: string) {
+  localFilters.value[key] = value
+  handleFilterChange()
+}
+
 function handleMultiSelectChange(key: string, event: Event) {
   const select = event.target as HTMLSelectElement
   const selected = Array.from(select.selectedOptions).map((opt) => opt.value)
@@ -202,6 +285,20 @@ function hasActiveFilters(): boolean {
   return Object.values(localFilters.value).some((v) => v)
 }
 
+// Load candidates on mount and whenever the set of relation filter controls
+// changes (component reuse across route params, config reload). Keyed on the
+// relation names so an unrelated config edit doesn't refetch (RR-L78S8H).
+watch(
+  () =>
+    (props.config.filter_controls || [])
+      .map((fc) => `${fc.relation ?? ''}:${fc.direction ?? ''}`)
+      .join('|'),
+  () => {
+    loadRelationCandidates()
+  },
+  { immediate: true }
+)
+
 onBeforeUnmount(() => {
   if (textDebounceTimer !== null) {
     clearTimeout(textDebounceTimer)
@@ -213,11 +310,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="filter-bar">
     <div class="filters">
-      <div
-        v-for="filter in resolvedFilters"
-        :key="filter.key"
-        class="filter-item"
-      >
+      <div v-for="filter in resolvedFilters" :key="filter.key" class="filter-item">
         <label :for="`filter-${filter.key}`">
           {{ filter.label }}
         </label>
@@ -230,11 +323,7 @@ onBeforeUnmount(() => {
           @change="handleFilterChange"
         >
           <option value="">All</option>
-          <option
-            v-for="option in filter.options"
-            :key="option"
-            :value="option"
-          >
+          <option v-for="option in filter.options" :key="option" :value="option">
             {{ option }}
           </option>
         </select>
@@ -257,6 +346,20 @@ onBeforeUnmount(() => {
           </option>
         </select>
 
+        <!-- Relation widget — select (small) or typeahead (large) target
+             picker. Commits the target's bare display title as the value,
+             which the backend relation filter matches on. -->
+        <EntityTargetSelect
+          v-else-if="filter.widget === 'relation'"
+          :control-id="`filter-${filter.key}`"
+          :candidates="filter.relationCandidates || []"
+          :mode="filter.relationMode || 'select'"
+          :model-value="localFilters[filter.key] || ''"
+          :placeholder="`Filter by ${filter.label}`"
+          all-label="All"
+          @update:model-value="(v: string) => handleRelationChange(filter.key, v)"
+        />
+
         <!-- Text widget (default) — debounced to avoid a fetch per keystroke -->
         <input
           v-else
@@ -268,11 +371,7 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
-    <button
-      v-if="hasActiveFilters()"
-      class="clear-filters"
-      @click="clearFilters"
-    >
+    <button v-if="hasActiveFilters()" class="clear-filters" @click="clearFilters">
       Clear filters
     </button>
   </div>

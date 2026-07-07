@@ -147,6 +147,43 @@ test.describe('List View', () => {
       const count = await listPage.getRowCount();
       expect(count).toBeGreaterThanOrEqual(0);
     });
+
+    // TKT-DL16XM: a relation filter_control renders as a target selector (a
+    // native <select> here, since the feature set is small) whose options are
+    // the display titles of the relation's targets. Selecting a feature narrows
+    // the task list to tasks that implement it. The tasks list declares
+    // `filter_controls: [{ relation: implements }]`; the seed links
+    // TASK-001 --implements--> FEAT-001 ("User Authentication"), and TASK-002
+    // is unlinked.
+    test('relation filter narrows the list by target title', async ({ appPage }) => {
+      const listPage = new ListPage(appPage);
+
+      await listPage.navigateToList('tasks');
+      await listPage.waitForRowsRendered();
+
+      // Both seeded tasks visible initially.
+      await listPage.expectRowContains('Write unit tests');
+      await listPage.expectRowContains('Refactor auth module');
+
+      // The relation filter renders as a <select> populated with feature
+      // display titles (the option VALUE is the bare title — the backend
+      // matches on it).
+      const relationSelect = listPage.filterBar.locator('select').first();
+      await expect(relationSelect.locator('option', { hasText: 'User Authentication' })).toHaveCount(1);
+
+      // Filter by the feature TASK-001 implements.
+      await relationSelect.selectOption('User Authentication');
+      await listPage.waitForSpinnerToDisappear();
+
+      // Only the implementing task remains.
+      await listPage.expectRowContains('Write unit tests');
+      await listPage.expectRowNotVisible('Refactor auth module');
+
+      // Clearing restores the full list.
+      await relationSelect.selectOption('');
+      await listPage.waitForSpinnerToDisappear();
+      await listPage.expectRowContains('Refactor auth module');
+    });
   });
 
   test.describe('Navigation', () => {

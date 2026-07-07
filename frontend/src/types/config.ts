@@ -157,6 +157,10 @@ export function getEditFormId(
 export interface FilterControl {
   property?: string
   relation?: string
+  // For relation filters: which edge direction the filter follows.
+  // `outgoing` (default) pulls option candidates from the relation's `to[*]`
+  // types; `incoming` from `from[*]`. Mirrors ListColumn.direction.
+  direction?: 'outgoing' | 'incoming'
   label?: string
 }
 
