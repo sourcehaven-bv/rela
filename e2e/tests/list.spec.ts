@@ -168,20 +168,17 @@ test.describe('List View', () => {
       // The relation filter renders as a <select> populated with feature
       // display titles (the option VALUE is the bare title — the backend
       // matches on it).
-      const relationSelect = listPage.filterBar.locator('select').first();
-      await expect(relationSelect.locator('option', { hasText: 'User Authentication' })).toHaveCount(1);
+      expect(await listPage.filterOptionCount('User Authentication')).toBe(1);
 
       // Filter by the feature TASK-001 implements.
-      await relationSelect.selectOption('User Authentication');
-      await listPage.waitForSpinnerToDisappear();
+      await listPage.selectFilterOption('User Authentication');
 
       // Only the implementing task remains.
       await listPage.expectRowContains('Write unit tests');
       await listPage.expectRowNotVisible('Refactor auth module');
 
       // Clearing restores the full list.
-      await relationSelect.selectOption('');
-      await listPage.waitForSpinnerToDisappear();
+      await listPage.selectFilterOption('');
       await listPage.expectRowContains('Refactor auth module');
     });
   });
