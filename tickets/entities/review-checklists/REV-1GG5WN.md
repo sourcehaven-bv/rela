@@ -57,8 +57,8 @@ a11y "done right."
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI
 - [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1100
