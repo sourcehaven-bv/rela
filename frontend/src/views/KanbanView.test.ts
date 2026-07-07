@@ -225,3 +225,68 @@ describe('KanbanView card property fields', () => {
     wrapper.unmount()
   })
 })
+
+describe('KanbanView column header enum labels', () => {
+  // Seed a board grouped by `status` whose column carries no explicit label
+  // (label === value, the auto-generated shape) and whose status enum defines
+  // a display label. The header must resolve the enum label.
+  function seedLabeledBoard() {
+    const schemaStore = useSchemaStore()
+    schemaStore.kanbans.set(KANBAN_ID, {
+      entity: ENTITY_TYPE,
+      title: 'Board',
+      column_property: 'status',
+      columns: [{ value: 'todo', label: 'todo' }],
+      card: { title: 'title', fields: [{ property: 'status' }] },
+    } as never)
+    schemaStore.entityTypes.set(ENTITY_TYPE, {
+      name: ENTITY_TYPE,
+      label: 'Ticket',
+      properties: {
+        title: { type: 'string' },
+        status: { type: 'enum', values: ['todo'], labels: { todo: 'To Do' } },
+      },
+    } as never)
+  }
+
+  it('shows the enum label in the column header when no explicit column label', async () => {
+    seedLabeledBoard()
+    const ticket = makeTicket('T-7')
+    ticket.properties = { title: 'Ticket T-7', status: 'todo' }
+    seedBoard([ticket])
+    const wrapper = mount(KanbanView, {
+      props: { id: KANBAN_ID },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.column-title').text()).toBe('To Do')
+    wrapper.unmount()
+  })
+
+  it('keeps an explicit kanban column label over the enum label', async () => {
+    const schemaStore = useSchemaStore()
+    seedLabeledBoard()
+    // Override the column with an explicit, different label.
+    schemaStore.kanbans.set(KANBAN_ID, {
+      entity: ENTITY_TYPE,
+      title: 'Board',
+      column_property: 'status',
+      columns: [{ value: 'todo', label: 'Backlog' }],
+      card: { title: 'title', fields: [{ property: 'status' }] },
+    } as never)
+    const ticket = makeTicket('T-8')
+    ticket.properties = { title: 'Ticket T-8', status: 'todo' }
+    seedBoard([ticket])
+    const wrapper = mount(KanbanView, {
+      props: { id: KANBAN_ID },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.column-title').text()).toBe('Backlog')
+    wrapper.unmount()
+  })
+})

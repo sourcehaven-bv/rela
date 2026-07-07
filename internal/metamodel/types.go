@@ -128,10 +128,11 @@ func (tv *TypeValidation) SetCompiled(re *regexp.Regexp) {
 
 // CustomType defines a reusable type with optional enum values and/or regex validations.
 type CustomType struct {
-	Values      []string         `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
-	Default     string           `yaml:"default,omitempty"`     // Default value
-	Description string           `yaml:"description,omitempty"` // Documentation for the type
-	Validations []TypeValidation `yaml:"validations,omitempty"` // Regex validations with error messages
+	Values      []string          `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
+	Labels      map[string]string `yaml:"labels,omitempty"`      // Optional display labels keyed by value (display-only; value stays the identity)
+	Default     string            `yaml:"default,omitempty"`     // Default value
+	Description string            `yaml:"description,omitempty"` // Documentation for the type
+	Validations []TypeValidation  `yaml:"validations,omitempty"` // Regex validations with error messages
 }
 
 // EntityDef defines an entity type in the metamodel
@@ -195,13 +196,14 @@ type PropertySchema interface {
 
 // PropertyDef defines a property on an entity or relation
 type PropertyDef struct {
-	Type        string   `yaml:"type"`
-	Required    bool     `yaml:"required,omitempty"`
-	Values      []string `yaml:"values,omitempty"` // For inline enum types
-	Default     string   `yaml:"default,omitempty"`
-	Description string   `yaml:"description,omitempty"` // Documentation for the property
-	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
-	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	Type        string            `yaml:"type"`
+	Required    bool              `yaml:"required,omitempty"`
+	Values      []string          `yaml:"values,omitempty"` // For inline enum types
+	Labels      map[string]string `yaml:"labels,omitempty"` // Optional display labels keyed by value (display-only; value stays the identity)
+	Default     string            `yaml:"default,omitempty"`
+	Description string            `yaml:"description,omitempty"` // Documentation for the property
+	Format      string            `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
+	List        bool              `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
 	// Unique constrains the property to a natural key: no two entities of
 	// the same type may carry the same non-empty value. Enforced at write
 	// time by the entitymanager (a colliding create/update is rejected as

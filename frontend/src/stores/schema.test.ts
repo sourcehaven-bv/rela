@@ -304,4 +304,61 @@ describe('Schema Store', () => {
       ])
     })
   })
+
+  describe('getEnumLabel', () => {
+    it('returns the inline-enum label for a value', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        [
+          'ticket',
+          {
+            label: 'Ticket',
+            properties: {
+              status: { type: 'enum', values: ['in_progress'], labels: { in_progress: 'In Progress' } },
+            },
+          },
+        ],
+      ]) as never
+      expect(store.getEnumLabel('in_progress', 'status')).toBe('In Progress')
+    })
+
+    it('resolves a label from a referenced custom type', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { priority: { type: 'priority_t' } } }],
+      ]) as never
+      store.customTypes = new Map([
+        ['priority_t', { values: ['hi'], labels: { hi: 'High' } }],
+      ]) as never
+      expect(store.getEnumLabel('hi', 'priority')).toBe('High')
+    })
+
+    it('returns undefined when no label is configured (caller falls back to value)', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'enum', values: ['done'] } } }],
+      ]) as never
+      expect(store.getEnumLabel('done', 'status')).toBeUndefined()
+    })
+
+    it('returns undefined when property is absent', () => {
+      const store = useSchemaStore()
+      expect(store.getEnumLabel('x')).toBeUndefined()
+    })
+
+    it('prefers the given entity type when the same property name differs across types', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        [
+          'bug',
+          { label: 'Bug', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } } },
+        ],
+        [
+          'ticket',
+          { label: 'Ticket', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Ticket X' } } } },
+        ],
+      ]) as never
+      expect(store.getEnumLabel('x', 'status', 'ticket')).toBe('Ticket X')
+    })
+  })
 })

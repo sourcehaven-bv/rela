@@ -2,9 +2,12 @@
 import { computed } from 'vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
+import { useSchemaStore } from '@/stores/schema'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<WidgetProps>()
+
+const schemaStore = useSchemaStore()
 
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]
@@ -32,6 +35,16 @@ const safeStringValue = computed(() => {
 })
 
 const options = computed(() => props.propertyDef?.values || [])
+
+// Display label for an option value. Edit-mode `<option>` text shows the
+// label; the option's :value stays the raw value (the submitted identity).
+// Inline enums carry labels on the property def; a property referencing a
+// custom type resolves its labels via the schema store.
+function optionLabel(opt: string): string {
+  const inline = props.propertyDef?.labels?.[opt]
+  if (inline !== undefined) return inline
+  return schemaStore.getEnumLabel(opt, props.propertyName, props.entityType) ?? opt
+}
 
 const hasTransitions = computed(
   () => !!props.transitions && Object.keys(props.transitions).length > 0
@@ -91,7 +104,7 @@ function onChange(event: Event) {
         :disabled="isOptionDisabled(opt)"
         :class="{ 'disabled-transition': isOptionDisabled(opt) }"
       >
-        {{ opt }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
+        {{ optionLabel(opt) }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
       </option>
     </select>
 

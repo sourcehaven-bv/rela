@@ -132,12 +132,13 @@ type EntityType struct {
 
 // PropertyDef is the JSON representation of a property definition.
 type PropertyDef struct {
-	Type        string   `json:"type"`
-	Required    bool     `json:"required"`
-	Default     string   `json:"default,omitempty"`
-	Values      []string `json:"values,omitempty"`
-	Description string   `json:"description,omitempty"`
-	List        bool     `json:"list,omitempty"`
+	Type        string            `json:"type"`
+	Required    bool              `json:"required"`
+	Default     string            `json:"default,omitempty"`
+	Values      []string          `json:"values,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
+	Description string            `json:"description,omitempty"`
+	List        bool              `json:"list,omitempty"`
 	// Max is the attachment cap for a `file` property (default 1). The SPA's
 	// file widget reads it to switch between replace-mode and multi-file
 	// add-mode. Omitted unless set above 1.
@@ -179,8 +180,9 @@ type InverseDef struct {
 
 // CustomType is the JSON representation of a custom type.
 type CustomType struct {
-	Values  []string `json:"values"`
-	Default string   `json:"default,omitempty"`
+	Values  []string          `json:"values"`
+	Labels  map[string]string `json:"labels,omitempty"` // Display labels keyed by value; value stays the wire identity
+	Default string            `json:"default,omitempty"`
 }
 
 // Config is the JSON representation of the UI config.

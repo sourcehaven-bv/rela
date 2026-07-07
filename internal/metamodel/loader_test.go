@@ -2392,3 +2392,61 @@ entities:
 		t.Errorf("expected InvalidIDPrefixError, got %T: %v", err, err)
 	}
 }
+
+// TestParse_EnumLabels covers optional per-value display labels on both enum
+// forms: a named custom type and an inline `type: enum` property. Labels are
+// display-only; parsing must accept them and leave values untouched. A
+// string-list enum with no labels must parse with a nil Labels map (so it
+// round-trips byte-for-byte). See TKT-G6R5YE.
+func TestParse_EnumLabels(t *testing.T) {
+	yaml := `version: "1.0"
+types:
+  status_t:
+    values: [open, in_progress]
+    labels:
+      in_progress: In Progress
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      title:
+        type: string
+      status:
+        type: status_t
+      kind:
+        type: enum
+        values: [bug, feat]
+        labels:
+          feat: Feature
+      priority:
+        type: enum
+        values: [low, high]
+`
+	meta, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	// Custom type labels.
+	ct := meta.Types["status_t"]
+	if got := ct.Labels["in_progress"]; got != "In Progress" {
+		t.Errorf("custom type label: got %q, want %q", got, "In Progress")
+	}
+	// Values are untouched.
+	if len(ct.Values) != 2 || ct.Values[0] != "open" {
+		t.Errorf("custom type values changed: %v", ct.Values)
+	}
+
+	props := meta.Entities["ticket"].Properties
+
+	// Inline enum labels.
+	if got := props["kind"].Labels["feat"]; got != "Feature" {
+		t.Errorf("inline enum label: got %q, want %q", got, "Feature")
+	}
+
+	// A label-less inline enum has a nil Labels map (round-trip safety).
+	if props["priority"].Labels != nil {
+		t.Errorf("label-less enum should have nil Labels, got %v", props["priority"].Labels)
+	}
+}

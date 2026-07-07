@@ -41,12 +41,27 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 		List:        propDef.List,
 		Max:         propDef.Max,
 	}
+	// Labels mirror Values: a property naming a custom type inherits that
+	// type's values and labels; an inline `labels` map on a custom-typed
+	// property is ignored, exactly as inline `values` is.
 	if ct, ok := meta.Types[propDef.Type]; ok {
 		pd.Values = ct.Values
+		pd.Labels = ct.Labels
 	} else if len(propDef.Values) > 0 {
 		pd.Values = propDef.Values
+		pd.Labels = propDef.Labels
 	}
 	return pd
+}
+
+// toV1CustomType is the single serialization site for a metamodel custom type
+// onto the wire, so the _schema types map and any other consumer stay in sync.
+func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
+	return v1.CustomType{
+		Values:  ct.Values,
+		Labels:  ct.Labels,
+		Default: ct.Default,
+	}
 }
 
 // --- API v1 Router ---
@@ -1721,10 +1736,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for name, def := range s.Meta.Types {
-		schema.Types[name] = v1.CustomType{
-			Values:  def.Values,
-			Default: def.Default,
-		}
+		schema.Types[name] = toV1CustomType(def)
 	}
 
 	writeV1JSON(w, http.StatusOK, schema)

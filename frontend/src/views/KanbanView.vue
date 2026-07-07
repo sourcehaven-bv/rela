@@ -154,6 +154,22 @@ const swimlanes = computed(() => {
 
 const hasSwimmlanes = computed(() => swimlanes.value.length > 0)
 
+// Column header text. An explicit kanban-config column label wins; otherwise
+// fall back to the enum's display label for the grouping value, then the raw
+// value. Keeps headers consistent with the card badges (which resolve labels
+// via Badge). `column.label` defaults to the value for auto-generated columns
+// (see the columns computed), so treat label===value as "no explicit label".
+function columnTitle(column: { value: string; label?: string }): string {
+  if (column.label && column.label !== column.value) return column.label
+  const property = kanbanConfig.value?.column_property
+  const entityTypeName = kanbanConfig.value?.entity
+  return (
+    schemaStore.getEnumLabel(column.value, property, entityTypeName) ??
+    column.label ??
+    column.value
+  )
+}
+
 const entitiesByColumn = computed(() => {
   const grouped: Record<string, Entity[]> = {}
   const property = kanbanConfig.value?.column_property || ''
@@ -444,7 +460,7 @@ function createNew() {
         @drop="onDrop($event, column.value)"
       >
         <div class="column-header">
-          <span class="column-title">{{ column.label || column.value }}</span>
+          <span class="column-title">{{ columnTitle(column) }}</span>
           <span class="column-count">{{ entitiesByColumn[column.value]?.length || 0 }}</span>
         </div>
 
@@ -495,7 +511,7 @@ function createNew() {
           :key="column.value"
           class="swimlane-column-header"
         >
-          <span class="column-title">{{ column.label || column.value }}</span>
+          <span class="column-title">{{ columnTitle(column) }}</span>
         </div>
       </div>
 

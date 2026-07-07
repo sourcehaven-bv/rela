@@ -5,6 +5,7 @@ import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
 import type {
   EntityType,
+  PropertyDef,
   RelationType,
   CustomType,
   FormConfig,
@@ -80,6 +81,56 @@ export const useSchemaStore = defineStore('schema', () => {
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
   const relationTypeList = computed(() => Array.from(relationTypes.value.entries()))
+
+  // Resolve the enum labels map for a property. A property may either name a
+  // custom type (labels live on the custom type) or declare an inline enum
+  // (labels live on the property def). The `entityType` disambiguator may be a
+  // type-name string OR a resolved EntityType object (callers hold one or the
+  // other); when given we look up that type's property first. Otherwise (and as
+  // a fallback) we scan entity and relation types for the first matching
+  // property name — mirroring how `styles` collapses by property name across
+  // types, which holds for the data-entry model.
+  function labelsForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): Record<string, string> | undefined {
+    const fromDef = (def?: PropertyDef) => {
+      if (!def) return undefined
+      if (def.labels) return def.labels
+      // Property references a custom type → labels live on that custom type.
+      const ct = def.type ? customTypes.value.get(def.type) : undefined
+      return ct?.labels
+    }
+    if (entityType) {
+      const et = typeof entityType === 'string' ? entityTypes.value.get(entityType) : entityType
+      const hit = fromDef(et?.properties?.[property])
+      if (hit) return hit
+    }
+    for (const [, def] of entityTypes.value) {
+      const hit = fromDef(def.properties?.[property])
+      if (hit) return hit
+    }
+    for (const [, def] of relationTypes.value) {
+      const hit = fromDef(def.properties?.[property])
+      if (hit) return hit
+    }
+    return undefined
+  }
+
+  // Return the display label for an enum value, or undefined when no label is
+  // configured (caller falls back to the raw value). Display-only: the value
+  // stays the wire identity.
+  const getEnumLabel = computed(
+    () =>
+      (
+        value: string,
+        property?: string,
+        entityType?: string | EntityType,
+      ): string | undefined => {
+        if (!property) return undefined
+        return labelsForProperty(property, entityType)?.[value]
+      },
+  )
 
   // Actions
   async function load(): Promise<void> {
@@ -192,6 +243,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getView,
     getKanban,
     getAction,
+    getEnumLabel,
     entityTypeList,
     relationTypeList,
 

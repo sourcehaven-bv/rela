@@ -1808,6 +1808,85 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	}
 }
 
+// TestV1SchemaEnumLabels pins that display labels flow onto the wire for both
+// enum forms, and that label copy mirrors value precedence (a custom-typed
+// property inherits the custom type's labels; an inline `labels` map on such a
+// property is ignored, exactly as inline `values` is). See TKT-G6R5YE.
+func TestV1SchemaEnumLabels(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.Meta().Types = map[string]metamodel.CustomType{
+		"status_type": {
+			Values: []string{"open", "in_progress"},
+			Labels: map[string]string{"in_progress": "In Progress"},
+		},
+	}
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
+		Label: "Ticket",
+		Properties: map[string]metamodel.PropertyDef{
+			"title": {Type: "string", Required: true},
+			// Custom-type-backed: labels come from status_type; the inline
+			// labels here must be ignored (dead config), mirroring values.
+			"status": {Type: "status_type", Labels: map[string]string{"open": "SHOULD-BE-IGNORED"}},
+			// Inline enum with its own labels.
+			"kind": {Type: "enum", Values: []string{"bug", "feat"}, Labels: map[string]string{"feat": "Feature"}},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Schema(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var schema v1.Schema
+	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Custom type carries its labels in the types map.
+	if got := schema.Types["status_type"].Labels["in_progress"]; got != "In Progress" {
+		t.Errorf("custom type label: got %q, want %q", got, "In Progress")
+	}
+
+	props := schema.Entities["ticket"].Properties
+
+	// Custom-typed property inherits the custom type's labels, not the inline one.
+	statusLabels := props["status"].Labels
+	if got := statusLabels["in_progress"]; got != "In Progress" {
+		t.Errorf("status inherited label: got %q, want %q", got, "In Progress")
+	}
+	if _, present := statusLabels["open"]; present {
+		t.Errorf("inline labels on a custom-typed property must be ignored, got %v", statusLabels)
+	}
+
+	// Inline enum carries its own labels.
+	if got := props["kind"].Labels["feat"]; got != "Feature" {
+		t.Errorf("inline enum label: got %q, want %q", got, "Feature")
+	}
+}
+
+// TestV1SchemaEnumLabelsOmittedWhenAbsent pins that a label-less enum emits no
+// `labels` key (omitempty), so existing metamodels are byte-for-byte unchanged.
+func TestV1SchemaEnumLabelsOmittedWhenAbsent(t *testing.T) {
+	app := newTestAppV1(t)
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
+		Label: "Ticket",
+		Properties: map[string]metamodel.PropertyDef{
+			"kind": {Type: "enum", Values: []string{"bug", "feat"}},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Schema(rec, req)
+
+	if strings.Contains(rec.Body.String(), "\"labels\"") {
+		t.Errorf("expected no labels key for a label-less enum, body: %s", rec.Body.String())
+	}
+}
+
 func TestV1PaginationLinkHeaders(t *testing.T) {
 	app := newTestAppV1(t)
 

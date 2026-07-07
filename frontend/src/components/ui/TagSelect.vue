@@ -18,6 +18,10 @@ const props = defineProps<{
   // displayed (so the user can see + remove them) but are flagged
   // disabled in the dropdown so they can't be re-added.
   optionVerdicts?: Record<string, boolean>
+  // optionLabels: display text keyed by option value. Display-only — the
+  // option's value (and thus the emitted selection) stays the raw value.
+  // Absent keys fall back to showing the value itself.
+  optionLabels?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -26,7 +30,8 @@ const emit = defineEmits<{
 
 const data = computed(() =>
   props.options.map((opt) => ({
-    text: opt,
+    // Display label (falls back to the value); value stays the raw identity.
+    text: props.optionLabels?.[opt] ?? opt,
     value: opt,
     // Server-side affordance verdict denies this option → render
     // disabled in the dropdown so the user can't pick it.

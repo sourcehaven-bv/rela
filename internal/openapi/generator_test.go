@@ -270,6 +270,40 @@ func TestGenerator_PropertyTypes(t *testing.T) {
 	}
 }
 
+// TestGenerator_EnumLabelsDoNotLeakIntoEnum pins that display labels never
+// enter the OpenAPI `enum` — a JSON Schema enum is the set of accepted values,
+// not display text. Labels are a data-entry-UI concern only (TKT-G6R5YE).
+func TestGenerator_EnumLabelsDoNotLeakIntoEnum(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"test": {
+				Label: "Test",
+				Properties: map[string]metamodel.PropertyDef{
+					"status": {
+						Type:   "enum",
+						Values: []string{"open", "in_progress"},
+						Labels: map[string]string{"in_progress": "In Progress"},
+					},
+				},
+			},
+		},
+	}
+
+	spec := New(meta, Config{}).Generate()
+	media := spec.Paths["/api/v1/tests"].Post.RequestBody.Content["application/json"]
+	statusSchema := media.Schema.Properties["properties"].Properties["status"]
+
+	want := []string{"open", "in_progress"}
+	if len(statusSchema.Enum) != len(want) {
+		t.Fatalf("enum = %v, want %v", statusSchema.Enum, want)
+	}
+	for i, v := range want {
+		if statusSchema.Enum[i] != v {
+			t.Errorf("enum[%d] = %q, want %q (labels must not appear)", i, statusSchema.Enum[i], v)
+		}
+	}
+}
+
 func TestGenerator_DefaultConfig(t *testing.T) {
 	meta := &metamodel.Metamodel{}
 	gen := New(meta, Config{})

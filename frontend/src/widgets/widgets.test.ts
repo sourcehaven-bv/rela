@@ -129,6 +129,23 @@ describe('SelectWidget', () => {
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['review'])
   })
 
+  it('shows inline enum labels as option text while keeping the raw value', () => {
+    const labeled = {
+      type: 'enum' as const,
+      values: ['open', 'in_progress'],
+      labels: { in_progress: 'In Progress' },
+    }
+    const w = mount(SelectWidget, {
+      props: { modelValue: 'open', mode: 'edit' as const, propertyName: 'status', propertyDef: labeled },
+    })
+    const byValue = Object.fromEntries(w.findAll('option').map((o) => [o.attributes('value'), o]))
+    // Option value stays the raw wire value; only the visible text is the label.
+    expect(byValue['in_progress'].text()).toBe('In Progress')
+    expect(byValue['in_progress'].attributes('value')).toBe('in_progress')
+    // Unlabeled value falls back to the raw value.
+    expect(byValue['open'].text()).toBe('open')
+  })
+
   it('disables options denied by optionVerdicts', () => {
     const w = mount(SelectWidget, {
       props: { modelValue: 'open', mode: 'edit' as const, propertyName: '', propertyDef: def, optionVerdicts: { done: false } },

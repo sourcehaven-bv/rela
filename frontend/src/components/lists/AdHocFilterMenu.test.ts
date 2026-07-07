@@ -73,6 +73,45 @@ describe('AdHocFilterMenu', () => {
     wrapper.unmount()
   })
 
+  it('shows enum labels in the value picker but applies the raw value', async () => {
+    const labeledType = {
+      name: 'ticket',
+      label: 'Ticket',
+      properties: {
+        status: {
+          type: 'enum',
+          values: ['open', 'in_progress'],
+          labels: { in_progress: 'In Progress' },
+        },
+      },
+    }
+    const schema = useSchemaStore()
+    schema.entityTypes.set('ticket', labeledType as never)
+
+    const wrapper = mount(AdHocFilterMenu, {
+      props: { mode: 'list', entityType: labeledType as never },
+      attachTo: document.body,
+    })
+    await wrapper.find('.filter-btn').trigger('click')
+    await flushPromises()
+
+    const statusOption = wrapper
+      .findAll('.filter-option')
+      .find((n) => n.text().includes('Status'))
+    await statusOption!.trigger('click')
+
+    // Value picker shows the label, not the raw snake_case value.
+    const labeledOption = wrapper
+      .findAll('.filter-option')
+      .find((n) => n.text().trim() === 'In Progress')
+    expect(labeledOption).toBeDefined()
+    await labeledOption!.trigger('click')
+
+    // But the emitted filter value is the raw wire value.
+    expect(wrapper.emitted('apply')?.[0]).toEqual(['status', 'in_progress'])
+    wrapper.unmount()
+  })
+
   it('emits apply with free-text value when property has no enum values', async () => {
     const wrapper = mount(AdHocFilterMenu, {
       props: { mode: 'list', entityType: ticketType as never },

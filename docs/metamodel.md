@@ -165,6 +165,46 @@ types:
     values: [critical, high, medium, low]
 ```
 
+#### Display Labels
+
+Enum values are stored as-is (typically snake_case identifiers). For a
+friendlier data-entry UI you can attach an optional human-readable **label** to
+any value with a `labels:` map keyed by value:
+
+```yaml
+types:
+  status:
+    values: [draft, in_progress, wont_fix]
+    labels:
+      in_progress: In Progress
+      wont_fix: Won't Fix
+```
+
+Labels also work on inline enums:
+
+```yaml
+properties:
+  status:
+    type: enum
+    values: [open, in_progress, closed]
+    labels:
+      in_progress: In Progress
+```
+
+Notes:
+
+- **Labels are display-only.** The stored value, the value submitted by forms,
+  validation, and badge colours all key on the raw value — only the text shown
+  in the data-entry UI changes. A value with no entry in `labels` renders raw.
+- Labels are surfaced in the data-entry web UI (select dropdowns, badges across
+  lists / detail / kanban, and filter menus). The CLI and the OpenAPI `enum`
+  output stay value-based.
+- `labels` is optional and backwards compatible: existing metamodels with plain
+  value lists are unchanged and need no migration.
+- When a property references a custom type, labels come from the **custom
+  type**; an inline `labels` map on such a property is ignored (mirroring how an
+  inline `values` list is ignored there).
+
 ### Regex Validations
 
 Define validation patterns with user-friendly error messages. Multiple patterns

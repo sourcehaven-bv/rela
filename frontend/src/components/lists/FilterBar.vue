@@ -28,7 +28,14 @@ interface ResolvedFilter {
   label: string
   widget: 'select' | 'multi-select' | 'text'
   options: string[]
+  // Display labels keyed by option value (display-only; filter value stays raw).
+  optionLabels: Record<string, string>
   isRelation: boolean
+}
+
+// Resolve the display text for an option value in a filter dropdown.
+function optionText(filter: ResolvedFilter, option: string): string {
+  return filter.optionLabels[option] ?? option
 }
 
 const resolvedFilters = computed((): ResolvedFilter[] => {
@@ -42,19 +49,19 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
 
   if (fc.relation) {
     // Relation filters: use text input for now (could be enhanced to select with targets)
-    return { key, label, widget: 'text', options: [], isRelation: true }
+    return { key, label, widget: 'text', options: [], optionLabels: {}, isRelation: true }
   }
 
   // Property filter
   const propDef = props.entityType?.properties[fc.property || '']
   if (!propDef) {
-    return { key, label, widget: 'text', options: [], isRelation: false }
+    return { key, label, widget: 'text', options: [], optionLabels: {}, isRelation: false }
   }
 
   const options = propDef.values || []
   const widget = resolveWidgetType(propDef, options)
 
-  return { key, label, widget, options, isRelation: false }
+  return { key, label, widget, options, optionLabels: propDef.labels || {}, isRelation: false }
 }
 
 function resolveWidgetType(propDef: PropertyDef, options: string[]): 'select' | 'multi-select' | 'text' {
@@ -235,7 +242,7 @@ onBeforeUnmount(() => {
             :key="option"
             :value="option"
           >
-            {{ option }}
+            {{ optionText(filter, option) }}
           </option>
         </select>
 
@@ -253,7 +260,7 @@ onBeforeUnmount(() => {
             :value="option"
             :selected="getMultiSelectValues(filter.key).includes(option)"
           >
-            {{ option }}
+            {{ optionText(filter, option) }}
           </option>
         </select>
 
