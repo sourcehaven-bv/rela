@@ -74,6 +74,7 @@ type Config struct {
 	EntityViews map[string]EntityViewConfig  `yaml:"entity_views,omitempty" json:"entity_views,omitempty"`
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
+	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
@@ -587,4 +588,61 @@ type DocumentEdit struct {
 	// Label is the visible button text. Author-controlled to disambiguate
 	// multi-entity docs (e.g. "Edit release", "Open ticket").
 	Label string `yaml:"label" json:"label"`
+}
+
+// Feed is a declarative calendar feed: a named calendar composed of one or more
+// [FeedSource] projections that merge into a single calendar. It is served as
+// iCalendar (.ics) and JSON at /api/v1/_feeds/<name>.{ics,json}. See
+// TKT-RDM9M5 and the calfeed package.
+type Feed struct {
+	// Meta is optional calendar-level metadata (name, color, description).
+	Meta FeedMeta `yaml:"meta,omitempty" json:"meta,omitzero"`
+	// Sources are the event projections; at least one is required. Their events
+	// are merged into one calendar (which is also how OR is expressed, since a
+	// single source's filter clauses are ANDed).
+	Sources []FeedSource `yaml:"sources" json:"sources"`
+}
+
+// FeedMeta is calendar-level metadata for a [Feed].
+type FeedMeta struct {
+	// Name is the calendar's display name (iCalendar X-WR-CALNAME). Defaults to
+	// the feed's config key when empty.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Color is an optional calendar color, e.g. "#C2185B".
+	Color string `yaml:"color,omitempty" json:"color,omitempty"`
+	// Description is optional calendar-level text.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// FeedSource projects entities of one type into calendar events. Each surviving
+// entity yields one all-day event (Phase 1). Properties are mapped to event
+// fields by name; nothing is computed.
+type FeedSource struct {
+	// EntityType is the entity type to project. Required; validated at load.
+	EntityType string `yaml:"entity_type" json:"entity_type"`
+	// Where is a list of filter clauses (e.g. "status != done", "due != "),
+	// all ANDed. Uses the internal/filter language. Empty selects all entities
+	// of the type. There is no OR — use a second source for OR.
+	Where []string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Date names a date-typed property mapped to the event's day
+	// (DTSTART;VALUE=DATE). Required in Phase 1; entities lacking a value are
+	// skipped.
+	Date string `yaml:"date" json:"date"`
+	// EndDate optionally names a date-typed property mapped to the (exclusive)
+	// end of an all-day range (DTEND;VALUE=DATE). Omit for single-day events.
+	EndDate string `yaml:"end_date,omitempty" json:"end_date,omitempty"`
+	// Rrule optionally makes events recurring. Its value is disambiguated by
+	// SYNTAX: a value containing "=" is a literal RFC 5545 rule applied to every
+	// event ("FREQ=DAILY"); a bare identifier is a property name whose value is
+	// used per entity. An unbounded rule keeps an event visible until it leaves
+	// the feed. Validated at load.
+	Rrule string `yaml:"rrule,omitempty" json:"rrule,omitempty"`
+	// Summary names a property mapped to the event title (SUMMARY). Optional;
+	// defaults to the entity type's display property when omitted.
+	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	// Description names an optional property mapped to DESCRIPTION.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Alarm is an optional static RFC 5545 duration (e.g. "-PT9H") mapped to a
+	// VALARM reminder on every event from this source.
+	Alarm string `yaml:"alarm,omitempty" json:"alarm,omitempty"`
 }

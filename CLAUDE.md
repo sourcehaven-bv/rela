@@ -119,6 +119,7 @@ Domain and storage:
 | `internal/metamodel`     | Schema: entity types, relations, properties, validation   |
 | `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore` |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
+| `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor) |
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
 | `internal/audit`         | Append-only JSONL audit log of every successful write     |

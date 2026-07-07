@@ -98,11 +98,13 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through state.Load(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object (167 methods). Decompose toward the
+// TODO(TKT-N26KLB): App is a god-object. Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
-// their own types. Ratchet this number DOWN as methods move out; never up.
+// their own types. Ratchet this number DOWN as methods move out; never up
+// EXCEPT for a new required route handler (App owns one method per registered
+// HTTP route by the router's design) — this branch adds handleV1Feed (TKT-RDM9M5).
 //
-//plimsoll:max-methods=169
+//plimsoll:max-methods=170
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS

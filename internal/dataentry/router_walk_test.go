@@ -53,6 +53,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_schema", http.StatusOK},
 		{http.MethodGet, "/api/v1/_schema/ticket", 0},
 		{http.MethodGet, "/api/v1/_config", http.StatusOK},
+		{http.MethodGet, "/api/v1/_feeds/nope.ics", http.StatusNotFound}, // registered; unknown feed → 404
 		{http.MethodGet, "/api/v1/_search?q=ticket", 0},
 		{http.MethodGet, "/api/v1/_position?type=ticket&id=TKT-001", 0},
 		{http.MethodGet, "/api/v1/_analyze", 0},

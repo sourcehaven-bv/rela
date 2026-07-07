@@ -2304,6 +2304,123 @@ Editing `data-entry.yaml` to change a document's `script:` or `command:`
 takes effect on the next request; open document panels pick up the new
 renderer on their next reload.
 
+## Calendar feeds
+
+Feeds publish your entities as subscribable calendars. A feed is served as
+iCalendar (`.ics`) and JSON at `/api/v1/_feeds/<name>.<ext>`, so a calendar app
+(Apple Calendar, Google Calendar, Thunderbird, …) can subscribe to a URL and see
+your tasks, deadlines, or events — each linking back into the data-entry app.
+
+Feeds are declarative: you map entity properties to calendar fields. No scripting.
+
+```yaml
+feeds:
+  tasks:                          # → /api/v1/_feeds/tasks.ics and .json
+    meta:
+      name: "PIM tasks"           # calendar display name (default: the feed key)
+      color: "#C2185B"            # optional calendar color
+      description: "Open tasks"   # optional
+    sources:
+      - entity_type: task
+        where:                    # filter clauses, ALL ANDed (see below)
+          - "status != done"
+          - "due_date != "        # only tasks that have a due date
+        date: due_date            # date property → the event's day
+        summary: title            # property → event title (optional; see below)
+        description: notes        # property → event description (optional)
+        alarm: "-PT9H"            # optional reminder, 9h before (RFC 5545 duration)
+        rrule: "FREQ=DAILY"       # optional recurrence (see below)
+```
+
+### Sources and merging
+
+A feed has one or more **sources**. Each source projects a single entity type
+into events. All sources merge into one calendar — so a single calendar can mix
+`meeting` and `party` entities, each mapped its own way:
+
+```yaml
+feeds:
+  social:
+    sources:
+      - entity_type: meeting
+        where: ["status != cancelled"]
+        date: date
+        summary: title
+      - entity_type: party
+        date: date
+        summary: name
+```
+
+Multiple sources are also how you express **OR**: the filter language has no
+`or`, so "high-priority tasks OR overdue tasks" is two sources over the same type.
+
+### Source fields
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `entity_type` | yes | The entity type to project. |
+| `where` | no | A list of filter clauses, all ANDed. Empty = all entities of the type. |
+| `date` | yes | A **date**-typed property mapped to the event day (all-day). Entities without a value are skipped. |
+| `end_date` | no | A date property for an all-day range's end. Omit for single-day events. |
+| `summary` | no | A property mapped to the event title. Defaults to the entity type's display property. |
+| `description` | no | A property mapped to the event description. |
+| `alarm` | no | A static RFC 5545 duration (e.g. `-PT9H`, `-P1D`) for a reminder before the event. |
+| `rrule` | no | A recurrence rule — see below. |
+
+### Filters (`where`)
+
+`where` uses the same filter language as lists. It is a **list of
+`property operator value` clauses, all ANDed** — there is no OR, NOT, or
+parentheses (use multiple sources for OR). Operators: `=` (glob), `!=`, `<`,
+`<=`, `>`, `>=`, `=~` (regex), `~` (fuzzy). Dates compare chronologically:
+
+```yaml
+where:
+  - "due_date >= 2026-01-01"   # typed date comparison (unquoted value)
+  - "due_date != "             # existence: "!=" with an empty value = "has a value"
+  - "status != done"
+```
+
+### Recurrence (`rrule`)
+
+`rrule` makes a source's events repeat. Its value is interpreted by **syntax**:
+
+- A value containing `=` is a **literal** RFC 5545 rule applied to every event:
+  `rrule: "FREQ=DAILY"`, `rrule: "FREQ=WEEKLY;COUNT=10"`. Validated at load.
+- A **bare property name** reads the rule from that property per entity:
+  `rrule: recurrence` (where `recurrence` holds an RRULE string). An invalid
+  value in the property is dropped for that event rather than breaking the feed.
+
+A common use is keeping open items visible: an **unbounded** `rrule: "FREQ=DAILY"`
+makes each event repeat from its date onward, so an overdue task stays on today's
+calendar until it leaves the feed (e.g. your `status != done` filter drops it
+once done). An unbounded daily rule paints an all-day block on every future day
+for each matching entity — use `;COUNT=N` or `;UNTIL=…` to bound it if that's too
+dense.
+
+### The events
+
+Each entity becomes one all-day event (feeds serve all-day events only for now —
+timed events await a `datetime` property type):
+
+- **UID** is `<type>--<id>@rela` — stable across refreshes so a calendar client
+  tracks the same event over time.
+- **Deep link** — every event carries an absolute `URL` back to the entity in the
+  data-entry app (Apple Calendar shows it in the event's Get Info panel).
+- **JSON** — the same feed at `.json` returns `{ name, color, events: [...] }`
+  for non-calendar consumers (a menubar plugin, a notification script).
+
+### Serving and access
+
+Point your calendar app at
+`http://<host>:<port>/api/v1/_feeds/<name>.ics`. The endpoint applies the
+server's ACL: a feed only ever exposes entities the request's principal may read.
+
+On a plain localhost server there is no authentication — the feed is readable by
+anything that can reach the port, which is appropriate for a single-user local
+setup (bind to `127.0.0.1`). Exposing feeds on a network is a deployment concern;
+see the server security guide.
+
 ## Custom apps
 
 Custom **apps** let you extend the data-entry web app with your own HTML+JS

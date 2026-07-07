@@ -62,6 +62,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
+	mux.HandleFunc("/api/v1/_feeds/", a.handleV1Feed)
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
 	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
