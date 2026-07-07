@@ -124,6 +124,11 @@ export interface FormFieldOrRelation {
 export interface ListConfig {
   entity: string
   title?: string
+  /** Markdown rendered above the list. `description` is a fallback alias. */
+  header?: string
+  /** Markdown rendered below the list. */
+  footer?: string
+  /** Fallback for `header`; the previously-unused field, used when `header` is unset. */
   description?: string
   columns: ListColumn[]
   filters?: ListFilter[]
@@ -133,6 +138,22 @@ export interface ListConfig {
   edit_form?: string
   page_size?: number
   actions?: string[]
+}
+
+/**
+ * Resolve the raw markdown for a list's top info region. `header` is canonical;
+ * `description` is a fallback — the field predates this feature but was never
+ * rendered, so we adopt it as an alias rather than require every config to be
+ * rewritten. Returns '' when neither is set (a blank/whitespace-only value is
+ * treated as unset). The caller passes the result through renderMarkdown.
+ */
+export function listHeaderMarkdown(list: ListConfig | undefined): string {
+  return list?.header?.trim() || list?.description?.trim() || ''
+}
+
+/** Resolve the raw markdown for a list's bottom info region ('' when unset). */
+export function listFooterMarkdown(list: ListConfig | undefined): string {
+  return list?.footer?.trim() || ''
 }
 
 // Helper to get edit form for an entity type

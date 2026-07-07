@@ -686,7 +686,11 @@ lists:
   all_ideas:
     entity_type: idea
     title: "All Ideas"
-    description: "Browse all captured ideas"
+    header: |
+      Browse all captured ideas. New ideas start in **inbox** — triage them
+      into `explored` or `rejected` during weekly review.
+    footer: |
+      _Tip: use the filters above to focus on a single status or category._
     columns:
       - property: title
         sortable: true
