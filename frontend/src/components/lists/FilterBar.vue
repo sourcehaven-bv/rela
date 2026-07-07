@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { useSchemaStore } from '@/stores/schema'
 import type {
   ListConfig,
   EntityType,
@@ -13,6 +14,8 @@ const props = defineProps<{
   entityType?: EntityType
   filters: FilterState
 }>()
+
+const schemaStore = useSchemaStore()
 
 const emit = defineEmits<{
   filter: [filters: FilterState]
@@ -60,8 +63,9 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
 
   const options = propDef.values || []
   const widget = resolveWidgetType(propDef, options)
+  const optionLabels = schemaStore.resolveOptionLabels(propDef, fc.property || '', props.entityType)
 
-  return { key, label, widget, options, optionLabels: propDef.labels || {}, isRelation: false }
+  return { key, label, widget, options, optionLabels, isRelation: false }
 }
 
 function resolveWidgetType(propDef: PropertyDef, options: string[]): 'select' | 'multi-select' | 'text' {

@@ -5,7 +5,7 @@ title: Enum values support a display label/title for better UX on snake_case val
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Problem

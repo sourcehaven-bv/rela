@@ -36,14 +36,14 @@ const safeStringValue = computed(() => {
 
 const options = computed(() => props.propertyDef?.values || [])
 
-// Display label for an option value. Edit-mode `<option>` text shows the
-// label; the option's :value stays the raw value (the submitted identity).
-// Inline enums carry labels on the property def; a property referencing a
-// custom type resolves its labels via the schema store.
+// Display labels keyed by value (value stays the submitted identity). Shared
+// resolver so all enum pickers agree; see the store. Edit-mode `<option>` text
+// shows the label, falling back to the raw value when unlabeled.
+const optionLabels = computed(() =>
+  schemaStore.resolveOptionLabels(props.propertyDef, props.propertyName, props.entityType)
+)
 function optionLabel(opt: string): string {
-  const inline = props.propertyDef?.labels?.[opt]
-  if (inline !== undefined) return inline
-  return schemaStore.getEnumLabel(opt, props.propertyName, props.entityType) ?? opt
+  return optionLabels.value[opt] ?? opt
 }
 
 const hasTransitions = computed(

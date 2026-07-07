@@ -360,5 +360,22 @@ describe('Schema Store', () => {
       ]) as never
       expect(store.getEnumLabel('x', 'status', 'ticket')).toBe('Ticket X')
     })
+
+    it('falls back to first-inserted type on collision when no entity type given', () => {
+      const store = useSchemaStore()
+      // Insertion order fixes the tie-break: `bug` first, so `bug`'s label wins
+      // when the caller does not disambiguate. Pins the documented behavior.
+      store.entityTypes = new Map([
+        [
+          'bug',
+          { label: 'Bug', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } } },
+        ],
+        [
+          'ticket',
+          { label: 'Ticket', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Ticket X' } } } },
+        ],
+      ]) as never
+      expect(store.getEnumLabel('x', 'status')).toBe('Bug X')
+    })
   })
 })

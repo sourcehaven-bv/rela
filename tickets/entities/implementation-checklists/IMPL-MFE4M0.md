@@ -2,7 +2,7 @@
 id: IMPL-MFE4M0
 type: implementation-checklist
 title: 'Implementation: Enum values support a display label/title for better UX on snake_case values'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

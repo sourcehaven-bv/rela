@@ -15,19 +15,11 @@ const schemaStore = useSchemaStore()
 
 const options = computed(() => props.propertyDef?.values || [])
 
-// Display labels keyed by value for the edit-mode dropdown. Inline enums
-// carry labels on the property def; custom-type-backed enums resolve via the
-// schema store. Value stays the wire identity.
-const optionLabels = computed<Record<string, string>>(() => {
-  const inline = props.propertyDef?.labels
-  if (inline && Object.keys(inline).length > 0) return inline
-  const out: Record<string, string> = {}
-  for (const opt of options.value) {
-    const label = schemaStore.getEnumLabel(opt, props.propertyName, props.entityType)
-    if (label !== undefined) out[opt] = label
-  }
-  return out
-})
+// Display labels keyed by value for the edit-mode dropdown (value stays the
+// wire identity). Shared resolver so all enum pickers agree; see the store.
+const optionLabels = computed<Record<string, string>>(() =>
+  schemaStore.resolveOptionLabels(props.propertyDef, props.propertyName, props.entityType)
+)
 
 const arrayValue = computed(() => {
   if (Array.isArray(props.modelValue)) return props.modelValue.map(String)

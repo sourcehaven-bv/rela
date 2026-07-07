@@ -68,17 +68,19 @@ const displayText = computed(() => label.value ?? props.value)
   font-size: 12px;
   font-weight: 500;
   text-transform: capitalize;
-  /* Guard long labels from blowing out list columns / kanban cards. */
+}
+
+/* A metamodel-authored label is already in its intended casing; don't let
+   capitalize override the author's choice (e.g. "iOS", "high priority").
+   Labels can also be arbitrarily long (unlike snake_case values), so guard
+   them from blowing out list columns / kanban cards — scoped to labeled
+   badges only, leaving raw-value badges rendered exactly as before. */
+.badge--labeled {
+  text-transform: none;
   max-width: 24ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* A metamodel-authored label is already in its intended casing; don't let
-   capitalize override the author's choice (e.g. "iOS", "high priority"). */
-.badge--labeled {
-  text-transform: none;
 }
 
 .badge--blue {
