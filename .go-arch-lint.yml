@@ -619,6 +619,7 @@ deps:
       - store
   pgstore:
     mayDependOn:
+      - canonical
       - graphquerynaive
       - search
       - store
