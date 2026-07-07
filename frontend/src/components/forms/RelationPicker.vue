@@ -145,7 +145,20 @@ async function loadCandidates() {
 }
 
 async function loadIncomingValue() {
-  if (!isIncoming.value || !props.entityId || !props.field.relation) return
+  if (!isIncoming.value || !props.field.relation) return
+  // Create mode: the entity doesn't exist yet, so there are no existing
+  // incoming edges to load. Establish an empty baseline and mark the
+  // picker loaded so selections emit as pure additions. Without this,
+  // `incomingLoaded` stays false and emitIncomingDiff() no-ops every
+  // pick — the load-failure-cannot-wipe guard (TKT-GFQK) wrongly
+  // suppressing additions on a brand-new entity (BUG-10IPBP).
+  if (!props.entityId) {
+    incomingValue.value = []
+    incomingOriginal.value = []
+    incomingLoadedEntries.value = []
+    incomingLoaded.value = true
+    return
+  }
   try {
     const edges = await getEntityRelations(
       props.entityType,
