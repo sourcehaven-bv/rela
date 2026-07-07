@@ -1,0 +1,412 @@
+/*
+ * Shared styling for rendered markdown bodies — the single source of truth.
+ *
+ * Every surface that renders markdown into a `v-html` container carries the
+ * `.md-body` marker class and gets identical styling from this one global
+ * stylesheet (loaded once from main.ts):
+ *   - EntityDetail  `.content-body` / `.markdown-content` (client renderMarkdown)
+ *   - DocumentView  `.document-body`  (server goldmark HTML)
+ *   - DocumentsPanel `.document-body` (server goldmark HTML)
+ *   - MarkdownEditor `.editor-preview` (EasyMDE live preview) — re-skinned to
+ *     match; see the `.editor-preview` block at the bottom.
+ *
+ * Before this file these rules were copy-pasted into each component's scoped
+ * `<style>` and had silently drifted (h1 was 24px in one place, 28px in
+ * another; EntityDetail had no blockquote/pre/hr/img rules at all; the EasyMDE
+ * preview used the library's hardcoded #ddd/5px table defaults). One shared
+ * sheet keyed on `.md-body` keeps them from diverging again.
+ *
+ * Global, not scoped: markdown HTML is injected via v-html, so rules must not
+ * be namespaced to a component's scope hash. Selectors stay under `.md-body`
+ * (or `.editor-preview`) so they only touch rendered markdown, never the
+ * app's own layout tables/lists (kanban, analyze, conflicts, dashboard).
+ *
+ * All colors come from theme tokens (tokens.css), so light and dark modes
+ * work without a per-theme override.
+ */
+
+.md-body {
+  /* --md-list-pad drives both the list indent and the negative margin that
+     pulls task-list checkboxes back to the body edge; keep them coupled. */
+  --md-list-pad: 26px;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-color);
+  /* A long unbroken token (URL, inline code) must wrap rather than trip the
+     container's horizontal scroll (see the overflow-x note in the Tables
+     section) and drag a scrollbar across the whole body. */
+  overflow-wrap: anywhere;
+}
+
+/* ── Headings ───────────────────────────────────────────────────────────── */
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  margin: 24px 0 12px;
+  color: var(--text-color);
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+/* The first heading shouldn't push the body down with a leading margin. */
+.md-body > :first-child {
+  margin-top: 0;
+}
+
+.md-body h1 {
+  font-size: 26px;
+}
+.md-body h2 {
+  font-size: 21px;
+}
+.md-body h3 {
+  font-size: 17px;
+}
+.md-body h4 {
+  font-size: 15px;
+}
+.md-body h5,
+.md-body h6 {
+  font-size: 14px;
+  color: var(--muted-text);
+}
+
+/* ── Text blocks ────────────────────────────────────────────────────────── */
+
+.md-body p {
+  margin: 0 0 14px;
+}
+
+/* ── Lists ──────────────────────────────────────────────────────────────── */
+
+.md-body ul,
+.md-body ol {
+  margin: 0 0 14px;
+  padding-left: var(--md-list-pad);
+}
+
+/* Restore list markers: EasyMDE's preview and some resets strip them. Nested
+   lists get the conventional disc → circle → square / decimal cascade. */
+.md-body ul {
+  list-style: disc outside;
+}
+.md-body ol {
+  list-style: decimal outside;
+}
+.md-body ul ul {
+  list-style-type: circle;
+}
+.md-body ul ul ul {
+  list-style-type: square;
+}
+
+.md-body li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+
+/* Tighten spacing between a list item and a nested sub-list. */
+.md-body li > ul,
+.md-body li > ol {
+  margin: 4px 0 0;
+}
+
+.md-body li::marker {
+  color: var(--muted-text);
+}
+
+/* Task-list items (GFM `- [ ]`) render a checkbox + text; drop the bullet so
+   the checkbox is the only marker, and pull the row back by the list indent
+   (minus the checkbox's own width) so it aligns with the body edge. Requires
+   :has() (Baseline 2023); older browsers just keep the bulleted checkbox row.
+   Two shapes to match: a "tight" list emits `<li><input> text`, a "loose"
+   one (blank lines between items) wraps it as `<li><p><input> text</p>`.
+   Both marked (client) and goldmark (server) put the checkbox first within
+   that wrapper, so match a leading checkbox at either depth. */
+.md-body li:has(> input[type='checkbox']:first-child),
+.md-body li:has(> p:first-child > input[type='checkbox']:first-child) {
+  list-style: none;
+  margin-left: calc(-1 * var(--md-list-pad) + 4px);
+}
+
+/* A loose task item's inner <p> shouldn't add its own paragraph gap. */
+.md-body li > p:first-child:has(> input[type='checkbox']:first-child) {
+  margin-bottom: 0;
+  display: inline;
+}
+
+.md-body input[type='checkbox'] {
+  margin-right: 8px;
+  cursor: pointer;
+}
+
+/* ── Code ───────────────────────────────────────────────────────────────── */
+
+.md-body code {
+  background: var(--hover-bg);
+  color: var(--text-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.md-body pre {
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
+/* Inside a <pre> the code shouldn't get its own inline chip background. */
+.md-body pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* ── Blockquote ─────────────────────────────────────────────────────────── */
+
+.md-body blockquote {
+  margin: 0 0 14px;
+  padding: 8px 16px;
+  background: var(--hover-bg);
+  border-left: 4px solid var(--accent-color);
+  color: var(--muted-text);
+  border-radius: 0 4px 4px 0;
+}
+
+/* A blockquote's own paragraphs shouldn't add a second trailing gap. */
+.md-body blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── Rule / images / links ──────────────────────────────────────────────── */
+
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 28px 0;
+}
+
+.md-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-body a {
+  color: var(--accent-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-body a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+/*
+ * `overflow-x: auto` lives on the *container*, not the table, so the table
+ * keeps `display: table; width: 100%` and fills the body when it fits, while
+ * a table wider than the container scrolls horizontally instead of pushing
+ * the page. The container only grows a scrollbar when a child actually
+ * overflows on the x-axis.
+ *
+ * Caveat: per the overflow spec, setting overflow-x to a non-visible value
+ * forces the y-axis to `auto` too and makes `.md-body` a block formatting
+ * context. That's fine here (nothing constrains the body's height, so the
+ * y-axis never actually scrolls), but it means a long inline token would
+ * scroll the whole body — hence the `overflow-wrap: anywhere` on `.md-body`
+ * above. If a future ancestor sets a max-height on the body, expect an inner
+ * vertical scrollbar and revisit this.
+ */
+.md-body {
+  overflow-x: auto;
+}
+
+.md-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+}
+
+.md-body th,
+.md-body td {
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+}
+
+.md-body th {
+  background: var(--hover-bg);
+  font-weight: 600;
+}
+
+/* ── Keyboard ───────────────────────────────────────────────────────────── */
+
+.md-body kbd {
+  padding: 2px 6px;
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/*
+ * EasyMDE live-preview pane (MarkdownEditor.vue). EasyMDE renders the preview
+ * into `.editor-preview`, which is created by the library and can't take the
+ * `.md-body` class, so we alias it here to the same rules. This makes the
+ * preview show what the entity view will actually render — EasyMDE otherwise
+ * ships hardcoded, light-theme-only, header-less table/quote/list defaults.
+ * The container padding/background/color come from the component's scoped
+ * `.editor-preview` rule; everything below inherits the `.md-body` element
+ * styling above.
+ */
+.EasyMDEContainer .editor-preview h1,
+.EasyMDEContainer .editor-preview h2,
+.EasyMDEContainer .editor-preview h3,
+.EasyMDEContainer .editor-preview h4,
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  margin: 24px 0 12px;
+  color: var(--text-color);
+  line-height: 1.3;
+  font-weight: 600;
+}
+.EasyMDEContainer .editor-preview > :first-child {
+  margin-top: 0;
+}
+.EasyMDEContainer .editor-preview h1 {
+  font-size: 26px;
+}
+.EasyMDEContainer .editor-preview h2 {
+  font-size: 21px;
+}
+.EasyMDEContainer .editor-preview h3 {
+  font-size: 17px;
+}
+.EasyMDEContainer .editor-preview h4 {
+  font-size: 15px;
+}
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  font-size: 14px;
+  color: var(--muted-text);
+}
+.EasyMDEContainer .editor-preview {
+  /* Mirrors --md-list-pad from `.md-body`: couples list indent to the
+     task-list checkbox pull-back below. */
+  --md-list-pad: 26px;
+  overflow-wrap: anywhere;
+}
+.EasyMDEContainer .editor-preview p {
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview ul,
+.EasyMDEContainer .editor-preview ol {
+  margin: 0 0 14px;
+  padding-left: var(--md-list-pad);
+}
+.EasyMDEContainer .editor-preview ul {
+  list-style: disc outside;
+}
+.EasyMDEContainer .editor-preview ol {
+  list-style: decimal outside;
+}
+.EasyMDEContainer .editor-preview ul ul {
+  list-style-type: circle;
+}
+.EasyMDEContainer .editor-preview ul ul ul {
+  list-style-type: square;
+}
+.EasyMDEContainer .editor-preview li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+.EasyMDEContainer .editor-preview li > ul,
+.EasyMDEContainer .editor-preview li > ol {
+  margin: 4px 0 0;
+}
+.EasyMDEContainer .editor-preview li::marker {
+  color: var(--muted-text);
+}
+.EasyMDEContainer .editor-preview li:has(> input[type='checkbox']:first-child),
+.EasyMDEContainer .editor-preview li:has(> p:first-child > input[type='checkbox']:first-child) {
+  list-style: none;
+  margin-left: calc(-1 * var(--md-list-pad) + 4px);
+}
+.EasyMDEContainer .editor-preview li > p:first-child:has(> input[type='checkbox']:first-child) {
+  margin-bottom: 0;
+  display: inline;
+}
+.EasyMDEContainer .editor-preview code {
+  background: var(--hover-bg);
+  color: var(--text-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.EasyMDEContainer .editor-preview pre {
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+.EasyMDEContainer .editor-preview blockquote {
+  margin: 0 0 14px;
+  padding: 8px 16px;
+  background: var(--hover-bg);
+  border-left: 4px solid var(--accent-color);
+  color: var(--muted-text);
+  border-radius: 0 4px 4px 0;
+}
+.EasyMDEContainer .editor-preview blockquote > :last-child {
+  margin-bottom: 0;
+}
+.EasyMDEContainer .editor-preview hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 28px 0;
+}
+.EasyMDEContainer .editor-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.EasyMDEContainer .editor-preview a {
+  color: var(--accent-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.EasyMDEContainer .editor-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview th,
+.EasyMDEContainer .editor-preview td {
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+}
+.EasyMDEContainer .editor-preview th {
+  background: var(--hover-bg);
+  font-weight: 600;
+}

@@ -167,7 +167,7 @@ onUnmounted(() => {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div ref="docBody" class="document-body" @click="handleContentClick" v-html="sanitizedContent" />
+      <div ref="docBody" class="document-body md-body" @click="handleContentClick" v-html="sanitizedContent" />
     </div>
 
     <div v-else class="empty-state">
@@ -335,126 +335,8 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
-.document-body {
-  font-size: 15px;
-  line-height: 1.7;
-  color: var(--text-color);
-}
-
-/* Style injected HTML content */
-.document-body :deep(h1),
-.document-body :deep(h2),
-.document-body :deep(h3) {
-  margin: 24px 0 12px;
-  color: var(--text-color);
-}
-
-.document-body :deep(h1:first-child),
-.document-body :deep(h2:first-child),
-.document-body :deep(h3:first-child) {
-  margin-top: 0;
-}
-
-.document-body :deep(h1) {
-  font-size: 28px;
-}
-
-.document-body :deep(h2) {
-  font-size: 22px;
-}
-
-.document-body :deep(h3) {
-  font-size: 18px;
-}
-
-.document-body :deep(p) {
-  margin: 0 0 16px;
-}
-
-.document-body :deep(ul),
-.document-body :deep(ol) {
-  margin: 0 0 16px;
-  padding-left: 24px;
-}
-
-.document-body :deep(li) {
-  margin-bottom: 6px;
-}
-
-.document-body :deep(pre) {
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 16px;
-  overflow-x: auto;
-  font-size: 13px;
-}
-
-.document-body :deep(code) {
-  background: var(--hover-bg);
-  color: var(--text-color);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-.document-body :deep(pre code) {
-  background: none;
-  padding: 0;
-}
-
-.document-body :deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 16px 0;
-}
-
-.document-body :deep(th),
-.document-body :deep(td) {
-  padding: 10px 14px;
-  text-align: left;
-  border: 1px solid var(--border-color);
-}
-
-.document-body :deep(th) {
-  background: var(--hover-bg);
-  font-weight: 600;
-}
-
-.document-body :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--border-color);
-  margin: 32px 0;
-}
-
-.document-body :deep(blockquote) {
-  margin: 16px 0;
-  padding: 16px 20px;
-  background: var(--hover-bg);
-  border-left: 4px solid var(--accent-color);
-  color: var(--muted-text);
-}
-
-.document-body :deep(img) {
-  max-width: 100%;
-  height: auto;
-}
-
-.document-body :deep(a) {
-  color: var(--accent-color);
-  text-decoration: none;
-}
-
-.document-body :deep(a:hover) {
-  text-decoration: underline;
-}
-
-kbd {
-  padding: 2px 6px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: inherit;
-}
+/* All rendered-markdown element styling (headings, paragraphs, lists, code,
+   pre, blockquote, hr, img, links, tables, kbd) is shared across every
+   markdown surface via the `.md-body` class on the `.document-body` container
+   — see styles/markdown-content.css. */
 </style>
