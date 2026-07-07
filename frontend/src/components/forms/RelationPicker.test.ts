@@ -188,3 +188,139 @@ describe('RelationPicker — affordance verdicts', () => {
     wrapper.unmount()
   })
 })
+
+// BUG-10IPBP: on the CREATE form (no entityId) a `direction: incoming`
+// picker used to silently drop every selection — loadIncomingValue()
+// short-circuited without setting incomingLoaded, so emitIncomingDiff()
+// no-op'd on each pick and nothing reached the create POST body. Edit
+// mode worked because the entity existed and the snapshot loaded. The
+// fix establishes an empty baseline in create mode so incoming picks
+// emit as pure additions.
+describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function seedIncomingSchema(maxIncoming = 10) {
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('ticket', {
+      name: 'ticket',
+      label: 'Ticket',
+      properties: {},
+    } as never)
+    // An incoming picker selects sources from the relation's `from` set.
+    // `max_incoming` drives single- vs multi-select on the picker.
+    schemaStore.relationTypes.set('blocks', {
+      name: 'blocks',
+      from: ['ticket'],
+      to: ['ticket'],
+      inverse: 'blockedBy',
+      max_outgoing: 10,
+      max_incoming: maxIncoming,
+    } as never)
+  }
+
+  async function mountIncoming(
+    entityId: string | undefined,
+    candidates: Entity[],
+    maxIncoming = 10
+  ) {
+    seedIncomingSchema(maxIncoming)
+    seedCandidates(candidates)
+    const field: FormFieldOrRelation = {
+      relation: 'blocks',
+      label: 'Blocked By',
+      direction: 'incoming',
+    }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', entityId, value: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('create mode: selecting an incoming peer emits incoming-changed as an addition', async () => {
+    const peer = entity('TKT-900', 'A blocker')
+    // No entityId → create form.
+    const wrapper = await mountIncoming(undefined, [peer])
+
+    const search = wrapper.find('input[role="combobox"]')
+    await search.trigger('focus')
+    await flushPromises()
+    await wrapper.find('.dropdown-item').trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('incoming-changed')
+    expect(events).toBeTruthy()
+    const payload = events![events!.length - 1][0] as {
+      added: Array<{ targetId: string }>
+      removed: string[]
+      currentEntries: Array<{ id: string }>
+    }
+    expect(payload.added).toEqual([{ targetId: 'TKT-900' }])
+    expect(payload.removed).toEqual([])
+    expect(payload.currentEntries.map((e) => e.id)).toEqual(['TKT-900'])
+    // The chip renders so the user sees the pending selection.
+    expect(wrapper.find('.selected-entity').text()).toContain('TKT-900')
+    wrapper.unmount()
+  })
+
+  it('create mode: removing a just-added incoming peer emits an empty desired set', async () => {
+    const peer = entity('TKT-901')
+    const wrapper = await mountIncoming(undefined, [peer])
+
+    const search = wrapper.find('input[role="combobox"]')
+    await search.trigger('focus')
+    await flushPromises()
+    await wrapper.find('.dropdown-item').trigger('click')
+    await flushPromises()
+    await wrapper.find('.remove-btn').trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('incoming-changed')!
+    const last = events[events.length - 1][0] as {
+      added: Array<{ targetId: string }>
+      currentEntries: Array<{ id: string }>
+    }
+    expect(last.added).toEqual([])
+    expect(last.currentEntries).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('create mode: an untouched incoming picker emits nothing', async () => {
+    // The fix establishes an empty loaded baseline on create. That must
+    // NOT translate into a spurious emit: a picker the user never touches
+    // has to stay silent, or it would risk a `data: []` wipe in the body.
+    const peer = entity('TKT-902')
+    const wrapper = await mountIncoming(undefined, [peer])
+
+    // No interaction at all — just mounted.
+    expect(wrapper.emitted('incoming-changed')).toBeFalsy()
+    wrapper.unmount()
+  })
+
+  it('create mode: single-select incoming picker (max_incoming=1) emits the addition', async () => {
+    // The empty-baseline fix also feeds the single-select branch
+    // (selectEntity replaces the list with [id] when !isMulti). Cover it
+    // so single-cardinality incoming relations persist on create too.
+    const peer = entity('TKT-903')
+    const wrapper = await mountIncoming(undefined, [peer], 1)
+
+    const search = wrapper.find('input[role="combobox"]')
+    await search.trigger('focus')
+    await flushPromises()
+    await wrapper.find('.dropdown-item').trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('incoming-changed')
+    expect(events).toBeTruthy()
+    const payload = events![events!.length - 1][0] as {
+      added: Array<{ targetId: string }>
+      currentEntries: Array<{ id: string }>
+    }
+    expect(payload.added).toEqual([{ targetId: 'TKT-903' }])
+    expect(payload.currentEntries.map((e) => e.id)).toEqual(['TKT-903'])
+    wrapper.unmount()
+  })
+})

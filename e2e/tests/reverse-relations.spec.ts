@@ -112,6 +112,36 @@ test.describe('Reverse relations', () => {
     expect(fromSource.map((r) => r.id)).toContain(SEED.features.authentication);
   });
 
+  test('non-cards picker add persists on CREATE, not just edit (BUG-10IPBP)', async ({
+    appPage,
+    api,
+  }) => {
+    // Regression for BUG-10IPBP: an incoming-direction picker on the
+    // CREATE form silently dropped every selection, because
+    // loadIncomingValue() short-circuited without setting incomingLoaded
+    // when there was no entityId, so emitIncomingDiff() no-op'd on each
+    // pick. Edit worked; create didn't. Here we create a NEW feature and
+    // pick TASK-002 in its "Implemented by" incoming picker; the edge
+    // `TASK-002 --implements--> <new feature>` must exist afterward.
+    const candidateTitle = 'Refactor auth module'; // matches TASK-002 in the seed
+    const form = new FormPage(appPage);
+    await form.navigateToCreateForm('feature');
+    await form.fillTitle(`Reverse-on-create ${Date.now().toString(36)}`);
+
+    const picker = form.relationPickerByLabel('Implemented by');
+    await expect(picker).toBeVisible();
+    await form.pickInRelationPicker(picker, candidateTitle, candidateTitle);
+    await expect(form.pickerTileByText(picker, candidateTitle)).toBeVisible();
+
+    const created = await form.submitAndExpectCreate('features');
+
+    // Read from the source side: TASK-002's outgoing `implements` must now
+    // include the newly created feature. Before the fix this list was
+    // unchanged because the create POST never carried the incoming edge.
+    const fromSource = await api.listRelations('tasks', SEED.tasks.refactorAuth, 'implements');
+    expect(fromSource.map((r) => r.id)).toContain(created.id);
+  });
+
   test('non-cards picker remove deletes the underlying edge', async ({ appPage, api }) => {
     // Removing the TASK-001 tile from the "Implemented by" picker on
     // FEAT-001 must delete `TASK-001 --implements--> FEAT-001`. Sanity-
