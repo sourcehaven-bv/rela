@@ -575,7 +575,7 @@ lists:
 | `title`           | string | List heading                                                |
 | `header`          | string | Markdown rendered above the list (info/help; see below)     |
 | `footer`          | string | Markdown rendered below the list                            |
-| `description`     | string | Legacy alias for `header`; used only when `header` is unset  |
+| `description`     | string | Fallback for `header`; used only when `header` is unset      |
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
@@ -614,7 +614,8 @@ Notes:
 - Output is sanitized (DOMPurify), so raw HTML/scripts in the config cannot
   inject executable markup.
 - Use standard Markdown links (`[text](/entity/ID)`) to point at other entities.
-- `description` is the older name for the top region and still works; when both
+- `description` is a fallback for the top region: it was previously unused, so a
+  config that already sets it now renders a header without a rewrite. When both
   `header` and `description` are set, `header` wins.
 
 ### Column Options
