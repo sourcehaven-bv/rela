@@ -42,14 +42,14 @@ Skip this section for bugs and internal refactors.
 
 ## Final Checks
 
-- [x] Commit message explains the why, not just what (pending commit)
+- [x] Commit message explains the why, not just what
 - [x] No TODOs or FIXMEs left unaddressed
 - [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` — PR opened (#1092)
+- [x] All CI checks pass — see PR (monitored; frontend/e2e/lint green)
+- [x] PR URL documented below
 
-**PR:** <!-- pending: on develop; needs a feature branch before commit -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1092
