@@ -1,0 +1,9 @@
+---
+id: RR-HKM0S6
+type: review-response
+title: Sweep cannot detect renames — no old→new signal in the snapshot it observes (breaks AC-3)
+finding: 'The redesign requires the sweep to emit op=rename version rows and derive cross-rename lineage, but the sweep observes only CURRENT entity state and cannot know a rename occurred. RenameEntity (pgstore/entity.go:392) does UPDATE entities SET id=newID, updated_at=now() — to the sweep, B just appears with a fresh updated_at, indistinguishable from a normal update. The rename tombstone (tombstone.go:13, deletions row kind=''e'', id_a=oldID) records ONLY that A was removed — no newID column, no link to B; byte-identical to a real delete of A. Pairing tombstone-A with new-entity-B is a heuristic that breaks on id reuse (the plan''s own ''rename A→B then create A'' edge case) and interleaved renames/creates. My earlier claim that RR-OKNRDR was ''resolved by derived lineage'' was WRONG: you cannot derive what the snapshot never recorded. The redesign discarded the only ground-truth rename signal — Manager.RenameEntity (manager.go:633/675) which knows oldID→newID and the Principal. Fix: capture rename SYNCHRONOUSLY at manager.go:675 (alongside recordRenameAudit), like delete. The sweep handles create/update only; rename+delete are synchronous choke-point captures.'
+severity: critical
+resolution: 'Fixed: rename is captured SYNCHRONOUSLY at Manager.RenameEntity (manager.go:675, alongside recordRenameAudit), which knows oldID→newID and the Principal. The version row is op=rename with a prev_id column holding the old id; cross-rename lineage is walked at read time via op=rename/prev_id. The sweep handles create/update ONLY. Capture model is now explicitly HYBRID (sync rename+delete, sweep create/update). AC-3 tests rename continuity incl. A→B→A and rename-then-reuse-of-id.'
+status: addressed
+---

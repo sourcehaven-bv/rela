@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"hash"
 )
 
@@ -146,6 +147,21 @@ func (p RenderProjection) Hash() string {
 	}
 
 	return h.sum()
+}
+
+// JSON returns the projection serialized as deterministic JSON, for storage in
+// schema_versions.projection. The bytes are content-addressed by [Hash] (a
+// separate length-prefixed digest), so this serialization is for storage and
+// re-render, not identity — encoding/json with sorted map keys is sufficient.
+func (p RenderProjection) JSON() []byte {
+	b, err := json.Marshal(p)
+	if err != nil {
+		// RenderProjection contains only strings, bools, and slices/maps of
+		// them — all trivially marshalable. An error here is impossible short
+		// of a runtime bug; surface it loudly rather than storing nothing.
+		panic("metamodel: RenderProjection.JSON marshal: " + err.Error())
+	}
+	return b
 }
 
 // projectionHasher streams a length-prefixed encoding into a SHA-256 hash. It
