@@ -85,6 +85,8 @@ type CLI struct {
 	Analyze     AnalyzeCmd     `cmd:"" help:"Analyze the entity graph."`
 	ACL         ACLCmd         `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
 	Rename      RenameCmd      `cmd:"" help:"Rename entities or relations."`
+	History     HistoryCmd     `cmd:"" help:"Show an entity's version history (postgres build)."`
+	Restore     RestoreCmd     `cmd:"" help:"Restore an entity to a past version (postgres build)."`
 	Attach      AttachCmd      `cmd:"" help:"Attach file(s) to an entity."`
 	Attachments AttachmentsCmd `cmd:"" help:"List attachments for an entity."`
 	Detach      DetachCmd      `cmd:"" help:"Remove the attachment from an entity property."`
@@ -202,7 +204,7 @@ func requiresProject(cmd string) bool {
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
-		"sync":
+		"sync", "history", "restore":
 		return true
 	}
 	return false
