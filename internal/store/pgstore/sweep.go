@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -86,6 +87,12 @@ type sweep struct {
 func (s *Store) StartVersionSweep(provider ProjectionProvider, cfg SweepConfig) {
 	pool, ok := s.db.(*pgxpool.Pool)
 	if !ok || provider == nil {
+		// A production deployment always injects a pool and a provider; hitting
+		// this branch silently disables create/update version capture, so log it
+		// loudly enough to diagnose a misconfiguration (unit-test stores over a
+		// bare handle land here by design and are expected).
+		slog.Warn("pgstore: version sweep not started",
+			"pool", ok, "provider", provider != nil)
 		return
 	}
 	s.mu.Lock()
@@ -157,7 +164,12 @@ func (s *sweep) tick(ctx context.Context) error {
 		// Another process is sweeping — skip this tick.
 		return nil
 	}
-	defer advisoryUnlock(ctx, conn, sweepAdvisoryLockKey)
+	// Unlock on a context detached from cancellation: when Close cancels the
+	// tick ctx mid-tick, the deferred unlock must still run its statement, or
+	// the session-scoped advisory lock rides the pooled connection back into the
+	// pool and locks out OTHER processes until that connection is recycled
+	// (pgxpool does not reset session state on Release).
+	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
 	hash, projJSON := s.provider.Projection()
 	if hash == "" {
@@ -203,20 +215,42 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	// continuously-edited entity is still captured eventually). A brand-new
 	// entity with no version is captured only once it has settled — it debounces
 	// like any other, rather than being snapshotted the instant it is created.
-	// captureOne then dedups by content hash.
+	//
+	// Two LATERALs, because delete and content-dedup need different "latest":
+	//   - `lv` is the latest version of ANY op — its created_at drives the
+	//     staleness ceiling, and whether it is op=delete tells us the current
+	//     live entity is a RE-CREATION after a delete (a new lifecycle).
+	//   - `lvc` is the latest version SINCE the last delete (i.e. the current
+	//     lifecycle's newest snapshot) — its content_hash is what we dedup
+	//     against. Deduping against a pre-delete version would wrongly skip
+	//     re-creating an entity with identical bytes, leaving its timeline
+	//     ending in `delete` while it is live.
 	const q = `
-		SELECT e.id, e.type, e.content, e.properties, lv.content_hash, (lv.vseq IS NOT NULL)
+		SELECT e.id, e.type, e.content, e.properties,
+		       lvc.content_hash,
+		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage
 		FROM entities e
 		LEFT JOIN LATERAL (
-		    SELECT content_hash, vseq, created_at FROM entity_versions ev
+		    SELECT vseq, op, created_at FROM entity_versions ev
 		    WHERE ev.entity_id = e.id ORDER BY ev.vseq DESC LIMIT 1
 		) lv ON true
-		WHERE (e.updated_at < now() - $1::interval
-		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - $2::interval))
+		LEFT JOIN LATERAL (
+		    SELECT content_hash FROM entity_versions ev
+		    WHERE ev.entity_id = e.id
+		      AND ev.vseq > COALESCE(
+		          (SELECT max(vseq) FROM entity_versions d
+		           WHERE d.entity_id = e.id AND d.op = 'delete'), 0)
+		    ORDER BY ev.vseq DESC LIMIT 1
+		) lvc ON true
+		WHERE (e.updated_at < now() - make_interval(secs => $1)
+		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY e.updated_at ASC
 		LIMIT $3`
+	// Pass the windows as float seconds via make_interval, not Duration.String()
+	// as ::interval — Go renders sub-millisecond durations with the micro sign
+	// ("500µs"), which Postgres interval cannot parse.
 	rows, err := conn.Query(ctx, q,
-		s.cfg.Idle.String(), s.cfg.MaxStaleness.String(), s.cfg.Batch)
+		s.cfg.Idle.Seconds(), s.cfg.MaxStaleness.Seconds(), s.cfg.Batch)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +260,7 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	for rows.Next() {
 		var (
 			c          sweepCandidate
-			latestHash *string // NULL when the entity has no version yet
+			latestHash *string // NULL when there is no version in the current lifecycle
 		)
 		if err := rows.Scan(&c.id, &c.typ, &c.content, &c.props, &latestHash, &c.hasVersion); err != nil {
 			return nil, err
@@ -240,8 +274,10 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 }
 
 // captureOne snapshots a single candidate as a create/update version, unless its
-// content is unchanged from its latest version (dedup). op is derived from
-// whether any prior version exists.
+// content is unchanged from the current lifecycle's latest version (dedup). op
+// is create when the current lifecycle has no non-delete version yet (a fresh or
+// re-created entity), else update. c.hasVersion is "the entity has a live
+// lineage" — a version exists AND the latest op is not delete.
 func (s *sweep) captureOne(
 	ctx context.Context, conn *pgxpool.Conn, c sweepCandidate, schemaHash string, projJSON []byte,
 ) error {
@@ -259,8 +295,10 @@ func (s *sweep) captureOne(
 		PrincipalTool: "version-sweep",
 	}
 	contentHash := contentHashOf(in)
-	if c.hasVersion && contentHash == c.latestHash {
-		return nil // unchanged — dedup
+	// Dedup only within the current lifecycle: latestHash is empty when there is
+	// no post-delete version, so a re-creation with identical bytes still records.
+	if c.latestHash != "" && contentHash == c.latestHash {
+		return nil
 	}
 	if c.hasVersion {
 		in.Op = store.VersionOpUpdate
@@ -283,9 +321,15 @@ func tryAdvisoryLock(ctx context.Context, conn *pgxpool.Conn, key int64) (bool, 
 }
 
 func advisoryUnlock(ctx context.Context, conn *pgxpool.Conn, key int64) {
-	// Best-effort: a failed unlock still releases when the connection returns to
-	// the pool and is eventually recycled; log for visibility.
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, key); err != nil && ctx.Err() == nil {
-		slog.Warn("pgstore: version sweep advisory unlock failed", "error", err)
+	// The caller passes a cancellation-detached ctx so this statement runs even
+	// during shutdown, explicitly releasing the session-scoped lock. If the
+	// connection is already closing (shutdown race), the lock releases with the
+	// connection anyway — that specific failure is expected, so don't warn on it.
+	_, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, key)
+	if err == nil || strings.Contains(err.Error(), "conn closed") {
+		// A closing connection releases the lock with itself — expected during
+		// shutdown, not worth a warning.
+		return
 	}
+	slog.Warn("pgstore: version sweep advisory unlock failed", "error", err)
 }

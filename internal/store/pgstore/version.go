@@ -14,10 +14,20 @@ import (
 )
 
 // WriteVersion implements store.VersionWriter: it persists one synchronously
-// captured version (rename/delete) in a single statement pair (schema dedup +
-// version insert). The content hash is computed here from the snapshot.
+// captured version (rename/delete). The schema-dedup INSERT and the
+// entity_versions INSERT run in one transaction so the version row is
+// all-or-nothing (no orphaned schema_versions row, no half-write across a
+// crash). The content hash is computed here from the snapshot.
 func (s *Store) WriteVersion(ctx context.Context, in store.VersionInput) error {
-	return insertVersion(ctx, s.db, in, contentHashOf(in))
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
+	if err := insertVersion(ctx, tx, in, contentHashOf(in)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // ensureSchemaVersion inserts the render-schema projection if its hash is not
@@ -73,52 +83,69 @@ func contentHashOf(in store.VersionInput) string {
 // the queried id. A rename records a row for the NEW id carrying prev_id=oldID,
 // so we follow prev_id links from the newest known id back to the origin.
 //
-// The walk is bounded by a visited set (defensive against a pathological
-// prev_id cycle from hand-edited data) and returns ids oldest-first.
-func lineage(ctx context.Context, q DBTX, id string) ([]string, error) {
-	// Collect the chain newest-first, then reverse.
-	chain := []string{id}
-	visited := map[string]bool{id: true}
-	cur := id
-	for {
-		const sel = `SELECT prev_id FROM entity_versions
-		             WHERE entity_id = $1 AND op = 'rename' AND prev_id IS NOT NULL
-		             ORDER BY vseq ASC LIMIT 1`
-		var prev string
-		err := q.QueryRow(ctx, sel, cur).Scan(&prev)
-		if errors.Is(err, pgx.ErrNoRows) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if prev == "" || visited[prev] {
-			break
-		}
-		chain = append(chain, prev)
-		visited[prev] = true
-		cur = prev
-	}
-	// Reverse to oldest-first.
-	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
-		chain[i], chain[j] = chain[j], chain[i]
-	}
-	return chain, nil
+// # ID reuse and vseq fencing
+//
+// rela permits id reuse: a rename A→B frees id A, which a later, unrelated
+// entity may reclaim. So "all rows with entity_id = A" is NOT a lineage — it can
+// mix the pre-rename A (which became B) with a brand-new A. Every segment is
+// therefore fenced by a vseq upper bound: a rename row (entity_id=B, prev_id=A,
+// vseq=V) means A belonged to THIS lineage only for vseq < V (strictly: A's rows
+// up to but not including the rename that renamed a value INTO B; the rename row
+// itself lives under B). The recursive walk carries that bound down each hop, so
+// a reclaimed id contributes only its in-window rows.
+//
+// lineageCTE is the shared recursive term producing (entity_id, hi) rows where
+// hi is the exclusive vseq upper bound for that id in this lineage (NULL = no
+// upper bound, i.e. the head id). $1 is the queried id.
+const lineageCTE = `
+	WITH RECURSIVE lin(entity_id, lo, hi) AS (
+	    -- Head: the queried id. Its CURRENT lifecycle starts strictly after the
+	    -- most recent rename that renamed this id AWAY (prev_id = the id) — before
+	    -- that, the id belonged to an earlier, unrelated entity that has since
+	    -- been renamed off it. lo is that boundary (0 if the id was never renamed
+	    -- away). Unbounded above (hi = NULL). COLLATE "C" matches
+	    -- entity_versions.entity_id (both recursive terms must agree, else 42P21).
+	    SELECT CAST($1 AS text) COLLATE "C",
+	           COALESCE((SELECT max(vseq) FROM entity_versions
+	                     WHERE prev_id = $1 AND op = 'rename'), 0),
+	           CAST(NULL AS bigint)
+	    UNION
+	    -- Each hop: the rename row that renamed some predecessor INTO the current
+	    -- id. The predecessor's rows belong to this lineage in [its own
+	    -- rename-away boundary, this rename's vseq). hi = r.vseq (exclusive upper);
+	    -- lo = the predecessor's most-recent earlier rename-away, so a
+	    -- doubly-reused predecessor id is also fenced. Guard cycles via hi.
+	    SELECT r.prev_id,
+	           COALESCE((SELECT max(vseq) FROM entity_versions
+	                     WHERE prev_id = r.prev_id AND op = 'rename' AND vseq < r.vseq), 0),
+	           r.vseq
+	    FROM lin
+	    JOIN entity_versions r
+	      ON r.entity_id = lin.entity_id
+	     AND r.op = 'rename'
+	     AND r.prev_id IS NOT NULL
+	     AND (lin.hi IS NULL OR r.vseq < lin.hi)
+	)`
+
+// lineageWhere joins entity_versions rows to their fenced lineage segment: a row
+// belongs if its entity_id is a segment and its vseq is within that segment's
+// [lo, hi) window (lo exclusive lower, hi exclusive upper / NULL = unbounded).
+// DISTINCT at the call site because a rename diamond could match a row twice.
+func lineageWhere() string {
+	return `
+		JOIN lin ON lin.entity_id = ev.entity_id
+		         AND ev.vseq > lin.lo
+		         AND (lin.hi IS NULL OR ev.vseq < lin.hi)`
 }
 
 // ListVersions implements store.HistoryReader.
 func (s *Store) ListVersions(ctx context.Context, id string) ([]store.VersionMeta, error) {
-	ids, err := lineage(ctx, s.db, id)
-	if err != nil {
-		return nil, err
-	}
-	const sel = `
-		SELECT entity_id, op, prev_id, type, content_hash, schema_hash,
-		       principal_user, principal_tool, triggered_by, created_at
-		FROM entity_versions
-		WHERE entity_id = ANY($1)
-		ORDER BY vseq ASC`
-	rows, err := s.db.Query(ctx, sel, ids)
+	sel := lineageCTE + `
+		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.created_at
+		FROM entity_versions ev` + lineageWhere() + `
+		ORDER BY ev.vseq ASC`
+	rows, err := s.db.Query(ctx, sel, id)
 	if err != nil {
 		return nil, err
 	}
@@ -142,35 +169,32 @@ func (s *Store) ListVersions(ctx context.Context, id string) ([]store.VersionMet
 	return metas, nil
 }
 
-// GetVersion implements store.HistoryReader.
+// GetVersion implements store.HistoryReader. version is a 1-based ordinal over
+// the fenced lineage ordered by vseq. NOTE: the ordinal is only meaningful
+// relative to a ListVersions read taken at the same time — the lineage is
+// append-only, so an ordinal a caller already holds stays valid, but callers
+// should treat it as a cursor into a specific ListVersions result.
 func (s *Store) GetVersion(ctx context.Context, id string, version int) (*store.VersionSnapshot, error) {
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}
-	ids, err := lineage(ctx, s.db, id)
-	if err != nil {
-		return nil, err
-	}
-	// version is a 1-based ordinal over the lineage ordered by vseq; use OFFSET.
-	const sel = `
-		SELECT ev.entity_id, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+	sel := lineageCTE + `
+		SELECT ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.created_at,
 		       ev.content, ev.properties, sv.projection
-		FROM entity_versions ev
+		FROM entity_versions ev` + lineageWhere() + `
 		JOIN schema_versions sv ON sv.hash = ev.schema_hash
-		WHERE ev.entity_id = ANY($1)
 		ORDER BY ev.vseq ASC
 		OFFSET $2 LIMIT 1`
-	row := s.db.QueryRow(ctx, sel, ids, version-1)
+	row := s.db.QueryRow(ctx, sel, id, version-1)
 
 	var (
-		snap     store.VersionSnapshot
-		entityID string
-		op       string
-		prev     *string
-		props    []byte
+		snap  store.VersionSnapshot
+		op    string
+		prev  *string
+		props []byte
 	)
-	err = row.Scan(&entityID, &op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
+	err := row.Scan(&op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
 		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy, &snap.CreatedAt,
 		&snap.Content, &props, &snap.Projection)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -190,17 +214,18 @@ func (s *Store) GetVersion(ctx context.Context, id string, version int) (*store.
 	return &snap, nil
 }
 
-// EntityID is a scan target field on VersionMeta only via the snapshot; ListVersions
-// does not expose entity_id per row, so scanVersionMeta discards it.
+// scanVersionMeta scans a version-metadata row. The leading column is vseq,
+// which is not surfaced (the read-time Version ordinal replaces it); it is
+// scanned into a throwaway.
 func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 	var (
-		m        store.VersionMeta
-		entityID string
-		op       string
-		prev     *string
-		created  time.Time
+		m       store.VersionMeta
+		vseq    int64
+		op      string
+		prev    *string
+		created time.Time
 	)
-	if err := row.Scan(&entityID, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
+	if err := row.Scan(&vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
 		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &created); err != nil {
 		return store.VersionMeta{}, err
 	}

@@ -18,7 +18,14 @@ type metaProjectionProvider struct {
 
 func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte) {
 	proj := p.meta.RenderProjection()
-	return proj.Hash(), proj.JSON()
+	b, err := proj.JSON()
+	if err != nil {
+		// Unreachable short of a runtime bug (RenderProjection is trivially
+		// marshalable). Return an empty hash so the sweep tick skips capture
+		// this round rather than stamping an empty projection.
+		return "", nil
+	}
+	return proj.Hash(), b
 }
 
 // startVersionSweepIfSupported starts the pgstore reconciliation sweep. In the

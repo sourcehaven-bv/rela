@@ -56,6 +56,12 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 		return
 	}
 	proj := m.deps.Meta.RenderProjection()
+	projJSON, err := proj.JSON()
+	if err != nil {
+		// Never fail the write over versioning — log and skip this capture.
+		slog.Error("version.projection_marshal_failed", "op", op, "id", e.ID, "error", err)
+		return
+	}
 	p := principal.From(ctx)
 	rec := VersionRecord{
 		EntityID:      e.ID,
@@ -65,7 +71,7 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 		Content:       e.Content,
 		Properties:    e.Properties,
 		SchemaHash:    proj.Hash(),
-		Projection:    proj.JSON(),
+		Projection:    projJSON,
 		PrincipalUser: p.User,
 		PrincipalTool: p.Tool,
 		TriggeredBy:   audit.TriggeredByFrom(ctx),

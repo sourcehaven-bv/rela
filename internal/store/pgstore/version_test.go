@@ -157,6 +157,92 @@ func TestSweepCapturesSettledEntities(t *testing.T) {
 	require.Len(t, metas, 1, "unchanged content must not produce duplicate versions")
 }
 
+// TestReusedIDDoesNotMergeHistories is the regression for the id-reuse hazard:
+// after rename A->B, a brand-new entity reclaiming id A must NOT have its
+// versions bleed into A's old timeline OR into B's lineage.
+func TestReusedIDDoesNotMergeHistories(t *testing.T) {
+	s, err := pgstore.New(newScopedPool(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	// Old A: create + update, then rename A -> B.
+	a1 := newVersionInput("A", "a-content-1", nil)
+	a1.Op = store.VersionOpCreate
+	require.NoError(t, s.WriteVersion(ctx, a1))
+	a2 := newVersionInput("A", "a-content-2", nil)
+	a2.Op = store.VersionOpUpdate
+	require.NoError(t, s.WriteVersion(ctx, a2))
+	ren := newVersionInput("B", "a-content-2", nil)
+	ren.Op = store.VersionOpRename
+	ren.PrevID = "A"
+	require.NoError(t, s.WriteVersion(ctx, ren))
+
+	// A brand-new, unrelated entity reclaims id A.
+	newA := newVersionInput("A", "UNRELATED-new-A", nil)
+	newA.Op = store.VersionOpCreate
+	require.NoError(t, s.WriteVersion(ctx, newA))
+
+	// B's history is A(create) -> A(update) -> B(rename): the pre-rename life,
+	// NOT the unrelated new A.
+	bHist, err := s.ListVersions(ctx, "B")
+	require.NoError(t, err)
+	require.Len(t, bHist, 3, "B lineage must be its pre-rename life only")
+	require.Equal(t, store.VersionOpRename, bHist[2].Op)
+	for _, m := range bHist {
+		snap, gErr := s.GetVersion(ctx, "B", m.Version)
+		require.NoError(t, gErr)
+		require.NotEqual(t, "UNRELATED-new-A", snap.Content,
+			"the unrelated new-A content must not appear in B's history")
+	}
+
+	// The new A's history is ONLY its own create, not the old A's create+update.
+	aHist, err := s.ListVersions(ctx, "A")
+	require.NoError(t, err)
+	require.Len(t, aHist, 1, "reclaimed id A must see only its own lifecycle")
+	snap, err := s.GetVersion(ctx, "A", 1)
+	require.NoError(t, err)
+	require.Equal(t, "UNRELATED-new-A", snap.Content)
+}
+
+// TestDeleteThenRecreateIdenticalContent is the regression for the content-only
+// dedup hazard: after a delete captured with content H, re-creating the entity
+// with the same content H must still record a create — the timeline must not end
+// in `delete` for a live entity.
+func TestDeleteThenRecreateIdenticalContent(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	// A prior lifecycle: create (via sweep-style write) then a delete capturing
+	// the same content.
+	c1 := newVersionInput("X", "same-content", nil)
+	c1.Op = store.VersionOpCreate
+	require.NoError(t, s.WriteVersion(ctx, c1))
+	del := newVersionInput("X", "same-content", nil)
+	del.Op = store.VersionOpDelete
+	require.NoError(t, s.WriteVersion(ctx, del))
+
+	// Re-create the live entity with IDENTICAL content, then sweep it.
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "same-content")))
+	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'X'`)
+	require.NoError(t, err)
+	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
+
+	require.Eventually(t, func() bool {
+		metas, e := s.ListVersions(ctx, "X")
+		if e != nil || len(metas) == 0 {
+			return false
+		}
+		// The newest version must be a create (the re-creation), NOT the delete.
+		return metas[len(metas)-1].Op == store.VersionOpCreate
+	}, 3*time.Second, 25*time.Millisecond,
+		"re-creating with identical content must record a create, not dedup away leaving the timeline at delete")
+}
+
 func mkEntity(id, typ, content string) *entity.Entity {
 	e := entity.New(id, typ)
 	e.Content = content

@@ -153,15 +153,14 @@ func (p RenderProjection) Hash() string {
 // schema_versions.projection. The bytes are content-addressed by [Hash] (a
 // separate length-prefixed digest), so this serialization is for storage and
 // re-render, not identity — encoding/json with sorted map keys is sufficient.
-func (p RenderProjection) JSON() []byte {
-	b, err := json.Marshal(p)
-	if err != nil {
-		// RenderProjection contains only strings, bools, and slices/maps of
-		// them — all trivially marshalable. An error here is impossible short
-		// of a runtime bug; surface it loudly rather than storing nothing.
-		panic("metamodel: RenderProjection.JSON marshal: " + err.Error())
-	}
-	return b
+//
+// It returns an error rather than panicking because it is called on the write
+// path (the entitymanager version hook), where the contract is that versioning
+// must never fail a write — the caller logs and swallows. In practice
+// RenderProjection holds only strings, bools, and slices/maps of them, so an
+// error is not reachable short of a runtime bug.
+func (p RenderProjection) JSON() ([]byte, error) {
+	return json.Marshal(p)
 }
 
 // projectionHasher streams a length-prefixed encoding into a SHA-256 hash. It
