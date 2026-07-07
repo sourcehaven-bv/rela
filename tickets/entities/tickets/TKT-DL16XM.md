@@ -5,7 +5,7 @@ title: Relation filter_controls render as target selector (select → typeahead)
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 ## Problem
