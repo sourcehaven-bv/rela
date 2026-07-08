@@ -214,6 +214,15 @@ func (r *Request) ancestors(ctx context.Context, entityID string) []string {
 	return order
 }
 
+// HoldsPermission reports whether the principal holds the given global
+// named permission. It is the exported entry point for consumers outside
+// the write-side delegate-X gate — e.g. the data-entry history read path
+// gating deleted-entity history on [PermHistoryRead]. Permissions are
+// global-only by design (see [holdsPermission]).
+func (r *Request) HoldsPermission(ctx context.Context, perm string) bool {
+	return r.holdsPermission(ctx, perm)
+}
+
 // holdsPermission reports whether any role in the principal's global
 // role set grants the given permission. Used by the delegate-X gate
 // on role-relation writes; permissions are global-only by design.

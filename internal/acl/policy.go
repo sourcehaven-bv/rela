@@ -32,6 +32,16 @@ const defaultMembershipRelation = "member-of"
 // here when auth lands, so both write and affordance paths see them.)
 const EveryoneRole = "everyone"
 
+// PermHistoryRead is the global named permission that gates reading the
+// version history of a DELETED entity (TKT-9INY0Y). A live entity's history
+// is gated by the ordinary per-entity read verdict; but once an entity is
+// deleted the conferring relations are gone, so there is nothing to evaluate
+// a per-entity verdict against — deleted-history read is therefore an
+// all-or-nothing global capability, granted via a role's `permissions:` list
+// like the delegate-X permissions. Documented in docs/acl-security.md as an
+// "audit-everything-deleted" super-permission.
+const PermHistoryRead = "history:read"
+
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
 // at the project root.
 //
