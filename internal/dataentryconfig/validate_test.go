@@ -2,11 +2,35 @@ package dataentryconfig
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
+
+// TestValidTopLevelKeysMatchConfigStruct guards the same drift class as
+// BUG-5XIN07 (the metamodel loader's whitelist), applied to data-entry.yaml:
+// validTopLevelKeys is a hand-maintained duplicate of the Config struct's
+// top-level yaml tags, so a newly-added field could be silently rejected by
+// checkUnknownKeys. This asserts every top-level yaml tag on Config is
+// whitelisted, so such a field fails this test before it can reach a user.
+func TestValidTopLevelKeysMatchConfigStruct(t *testing.T) {
+	for field := range reflect.TypeFor[Config]().Fields() {
+		tag := field.Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue // computed / non-YAML field
+		}
+		key := strings.Split(tag, ",")[0]
+		if key == "" {
+			continue
+		}
+		if !validTopLevelKeys[key] {
+			t.Errorf("Config field %q (yaml:%q) is not in validTopLevelKeys — "+
+				"checkUnknownKeys will reject a config that uses it", field.Name, key)
+		}
+	}
+}
 
 // testMetamodel returns a metamodel for testing
 func testMetamodel() *metamodel.Metamodel {
