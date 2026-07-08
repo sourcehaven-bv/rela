@@ -31,6 +31,13 @@ type APIIssue struct {
 	Severity   string `json:"severity"` // "error" or "warning"
 	CheckType  string `json:"checkType"`
 
+	// Detail carries optional structured specifics about why the issue
+	// fired, beyond the flat Message. For content required-headers
+	// violations it holds the missing exact headers. Absent (omitempty)
+	// on rows with no structured detail; the frontend reveals it in an
+	// expandable detail row under the message.
+	Detail []string `json:"detail,omitempty"`
+
 	// ScriptError carries the structured Lua-failure envelope for
 	// validation script-error rows. Absent (omitempty) on every
 	// other row. The frontend uses presence as the discriminator:

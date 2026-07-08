@@ -581,7 +581,7 @@ lists:
 | `title`           | string | List heading                                                |
 | `header`          | string | Markdown rendered above the list (info/help; see below)     |
 | `footer`          | string | Markdown rendered below the list                            |
-| `description`     | string | Legacy alias for `header`; used only when `header` is unset  |
+| `description`     | string | Fallback for `header`; used only when `header` is unset      |
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
@@ -620,7 +620,8 @@ Notes:
 - Output is sanitized (DOMPurify), so raw HTML/scripts in the config cannot
   inject executable markup.
 - Use standard Markdown links (`[text](/entity/ID)`) to point at other entities.
-- `description` is the older name for the top region and still works; when both
+- `description` is a fallback for the top region: it was previously unused, so a
+  config that already sets it now renders a header without a rewrite. When both
   `header` and `description` are set, `header` wins.
 
 ### Column Options
@@ -715,7 +716,8 @@ escape it — choose property values that don't start with `$`.
 
 ### Filter Controls
 
-Interactive filters shown above the table:
+Interactive filters shown above the table. A control filters on either a
+**property** or a **relation** (set exactly one):
 
 ```yaml
 filter_controls:
@@ -725,12 +727,36 @@ filter_controls:
     widget: select
   - property: assignee
     widget: search
+  - relation: verantwoordelijk_voor
+    direction: incoming
+    label: Verantwoordelijke
 ```
 
-| Field      | Type   | Description                                              |
-| ---------- | ------ | -------------------------------------------------------- |
-| `property` | string | Property to filter on                                    |
-| `widget`   | string | `"select"`, `"multi-select"`, or `"search"`             |
+| Field       | Type   | Description                                                     |
+| ----------- | ------ | -------------------------------------------------------------- |
+| `property`  | string | Property to filter on                                          |
+| `relation`  | string | Relation to filter on (mutually exclusive with `property`)     |
+| `direction` | string | For `relation`: `"outgoing"` (default) or `"incoming"`         |
+| `widget`    | string | For `property`: `"select"`, `"multi-select"`, or `"search"`    |
+| `label`     | string | Optional display label override                                |
+
+**Relation filter controls** render as a **target selector** populated with the
+display titles of the relation's target entities — a plain `<select>` for a
+small set, upgrading to a typeahead combobox above ~10 options. `direction:
+incoming` pulls candidates from the relation's source types (`from`); `outgoing`
+(default) from its target types (`to`). The selected value the filter matches on
+is the target's **display title** (honoring each type's `display_property`), not
+its ID.
+
+Notes:
+
+- Two targets that resolve to the same display title collapse to one option and
+  the filter matches both (title-based matching).
+- The candidate list is fetched from the target types' entities; a type with
+  more than ~100 entities has its option set truncated.
+- A relation whose name is not a plain identifier (e.g. contains a hyphen)
+  cannot be deep-linked as a filter (the URL parser only accepts
+  `[a-zA-Z_][a-zA-Z0-9_]*` filter keys).
 
 ### URL Sync for Filters
 
@@ -2006,6 +2032,13 @@ with links to affected entities.
 
 When a dashboard is configured, a validation summary card is automatically appended showing the
 total error and warning counts with a link to the full analysis page.
+
+In each issue row the entity title links to that entity, while the message is a
+separate click target that reveals more about the failure. For a
+`content.required-headers` validation, clicking the message expands a detail row
+listing exactly which required headers the entity is missing (only exact-match
+headers; regex `pattern:` checks are not listed). A validation whose Lua script
+failed instead opens the script-error dialog from the same message click.
 
 No configuration is needed — the analysis page is always available in the sidebar.
 

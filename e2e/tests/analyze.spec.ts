@@ -43,7 +43,7 @@ test.describe('Analyze Page', () => {
     }
   });
 
-  test('clicking an issue row navigates to that entity', async ({ appPage, api }) => {
+  test('clicking an issue entity title navigates to that entity', async ({ appPage, api }) => {
     const created = await api.createEntity('features', {
       properties: { title: 'Analyze nav check', status: 'draft', priority: 'high' },
     });
@@ -52,7 +52,7 @@ test.describe('Analyze Page', () => {
       await analyze.navigate();
 
       if ((await analyze.getIssueRowCount()) > 0) {
-        await analyze.clickFirstIssueRow();
+        await analyze.clickFirstIssueEntity();
         await expect(appPage).toHaveURL(/\/entity\//);
       }
     } finally {

@@ -125,6 +125,55 @@ func TestGenericValidator_CheckRule_NoMatches(t *testing.T) {
 	}
 }
 
+func TestGenericValidator_CheckRuleFull_ContentDetail(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.CreateEntity(ctx, &entity.Entity{
+		ID: "NCR-1", Type: "ncr", Content: "# NCR\n## Beschrijving\ntext",
+	})
+
+	rule := metamodel.ValidationRule{
+		Name:        "ncr-standard-headers",
+		Description: "NCR body moet standaardkoppen bevatten",
+		EntityType:  "ncr",
+		Severity:    "error",
+		Content: &metamodel.ContentRule{
+			RequiredHeaders: []metamodel.HeaderCheck{
+				{Header: "## Beschrijving"},
+				{Header: "## Oorzaak"},
+			},
+		},
+	}
+	meta := &metamodel.Metamodel{
+		Entities:    map[string]metamodel.EntityDef{"ncr": {Label: "NCR"}},
+		Validations: []metamodel.ValidationRule{rule},
+	}
+	v := validator.New(s, meta, lua.ReadDeps{Meta: meta})
+
+	full, err := v.CheckRuleFull(ctx, rule)
+	if err != nil {
+		t.Fatalf("CheckRuleFull error: %v", err)
+	}
+	if len(full.Violations) != 1 {
+		t.Fatalf("got %d violations, want 1", len(full.Violations))
+	}
+	if full.Violations[0].EntityID != "NCR-1" {
+		t.Errorf("EntityID = %q, want NCR-1", full.Violations[0].EntityID)
+	}
+	if d := full.Violations[0].Detail; len(d) != 1 || d[0] != "## Oorzaak" {
+		t.Errorf("Detail = %v, want [## Oorzaak]", d)
+	}
+
+	// CheckRule (the []string wrapper) still returns just the ID.
+	ids, err := v.CheckRule(ctx, rule)
+	if err != nil {
+		t.Fatalf("CheckRule error: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "NCR-1" {
+		t.Errorf("CheckRule ids = %v, want [NCR-1]", ids)
+	}
+}
+
 func TestGenericValidator_CheckRule_WrongEntityType(t *testing.T) {
 	v := newTestValidator(t)
 	// Rule scoped to decision type; only DEC-1 is candidate, has owner=""

@@ -2396,6 +2396,69 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 	_ = result
 }
 
+// TestV1Analyze_ContentDetailPassthrough covers TKT-IL499B: a content
+// required-headers violation must carry the missing exact headers to the
+// wire as APIIssue.detail, so the SPA can reveal which headers are
+// missing. Rows without detail must omit the field entirely (omitempty).
+func TestV1Analyze_ContentDetailPassthrough(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ncr": {Label: "NCR", IDPrefix: "NCR-"},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "ncr-standard-headers",
+				Description: "NCR body moet standaardkoppen bevatten",
+				EntityType:  "ncr",
+				Severity:    "error",
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Beschrijving"},
+						{Header: "## Oorzaak"},
+					},
+				},
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{App: dataentryconfig.AppConfig{Name: "Test"}}
+	app := newAppFromParts(cfg, meta, newFixture())
+	seedEntity(app, &entity.Entity{ID: "NCR-001", Type: "ncr", Content: "# NCR\n## Beschrijving\ntext"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var result APIAnalysisResult
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var found *APIIssue
+	for i := range result.Issues {
+		if result.Issues[i].EntityID == "NCR-001" {
+			found = &result.Issues[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no issue for NCR-001; issues=%+v", result.Issues)
+	}
+	if len(found.Detail) != 1 || found.Detail[0] != "## Oorzaak" {
+		t.Errorf("Detail = %v, want [## Oorzaak]", found.Detail)
+	}
+
+	// omitempty: the raw JSON must not carry a "detail" key on rows
+	// without structured detail. Re-encode this issue with no detail
+	// and confirm the key is absent.
+	blank, _ := json.Marshal(APIIssue{EntityID: "X", Message: "m", Severity: "error"})
+	if strings.Contains(string(blank), "detail") {
+		t.Errorf("expected detail omitted when empty, got %s", blank)
+	}
+}
+
 // newAnalyzeScriptErrorApp builds an App with one inline-Lua validation
 // rule that fails to compile, so handleV1Analyze produces a script-error
 // issue. Wires SecurityConfig so allowFullScriptDetail can branch on

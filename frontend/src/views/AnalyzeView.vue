@@ -1,16 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { analyze } from '@/api'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
-import { useSchemaStore } from '@/stores'
-import { useScriptErrorStore } from '@/stores/scriptError'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
+import IssuesTable from '@/components/common/IssuesTable.vue'
 
-const router = useRouter()
-const schemaStore = useSchemaStore()
-const scriptErrorStore = useScriptErrorStore()
 const backTarget = useBackTarget()
 
 // Check type definitions with descriptions. Three-way contract:
@@ -103,10 +98,6 @@ function shouldShowIssues(checkKey: string): boolean {
   return filterCheckType.value === checkKey
 }
 
-function getEntityTitle(issue: AnalyzeIssue): string {
-  return issue.title?.trim() || issue.entityId
-}
-
 // Methods
 async function loadAnalysis() {
   loading.value = true
@@ -116,30 +107,6 @@ async function loadAnalysis() {
     console.error('Analyze error:', err)
   } finally {
     loading.value = false
-  }
-}
-
-function getEntityTypeLabel(type: string): string {
-  const def = schemaStore.entityTypes.get(type)
-  return def?.label || type
-}
-
-// An issue is clickable if it has a structured Lua-failure envelope
-// (opens ScriptErrorDialog) or a real entity (navigates). LoadError
-// rows have neither and stay inert.
-function isClickable(issue: AnalyzeIssue): boolean {
-  if (issue.scriptError) return true
-  return Boolean(issue.entityId && issue.entityType)
-}
-
-function onIssueClick(issue: AnalyzeIssue, ev: Event) {
-  if (issue.scriptError) {
-    const trigger = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
-    scriptErrorStore.show(issue.scriptError, trigger)
-    return
-  }
-  if (issue.entityId && issue.entityType) {
-    router.push(`/entity/${issue.entityType}/${issue.entityId}`)
   }
 }
 
@@ -203,50 +170,10 @@ onMounted(() => {
           </div>
 
           <template v-else>
-            <div v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0" class="issues-table-wrapper">
-            <table class="issues-table">
-              <thead>
-                <tr>
-                  <th>Entity</th>
-                  <th>Type</th>
-                  <th>Message</th>
-                  <th>Severity</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(issue, idx) in getFilteredIssuesForCheck(checkType.key)"
-                  :key="`${checkType.key}-${idx}-${issue.entityType}-${issue.entityId}`"
-                  class="issue-row"
-                  :class="{ clickable: isClickable(issue) }"
-                  :tabindex="isClickable(issue) ? 0 : -1"
-                  @click="onIssueClick(issue, $event)"
-                  @keydown.enter="onIssueClick(issue, $event)"
-                  @keydown.space.prevent="onIssueClick(issue, $event)"
-                >
-                  <td class="entity-cell">
-                    <template v-if="issue.entityId">
-                      <span class="entity-title">{{ getEntityTitle(issue) }}</span>
-                      <span class="entity-id">{{ issue.entityId }}</span>
-                    </template>
-                    <template v-else>
-                      <span class="entity-empty">&mdash;</span>
-                    </template>
-                  </td>
-                  <td>
-                    <span v-if="issue.entityType" class="type-badge">{{ getEntityTypeLabel(issue.entityType) }}</span>
-                    <span v-else class="entity-empty">&mdash;</span>
-                  </td>
-                  <td class="message-cell">{{ issue.message }}</td>
-                  <td>
-                    <span class="severity-badge" :class="issue.severity">
-                      {{ issue.severity.toUpperCase() }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            </div>
+            <IssuesTable
+              v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0"
+              :issues="getFilteredIssuesForCheck(checkType.key)"
+            />
           </template>
         </div>
       </div>
@@ -414,118 +341,5 @@ onMounted(() => {
 
 .check-icon {
   font-size: 16px;
-}
-
-/* Issues table */
-.issues-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.issues-table th {
-  text-align: left;
-  padding: 10px 16px;
-  background: var(--hover-bg);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted-text);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.issues-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  font-size: 14px;
-}
-
-.issue-row {
-  transition: background 0.15s;
-}
-
-.issue-row.clickable {
-  cursor: pointer;
-}
-
-.issue-row.clickable:hover,
-.issue-row.clickable:focus-visible {
-  background: var(--hover-bg);
-  outline: none;
-}
-
-.issue-row:last-child td {
-  border-bottom: none;
-}
-
-/* `display: flex` on the <td> collapses the cell box so its border
- * doesn't span the row height (visible discontinuity between rows).
- * Keep the td as a normal table-cell and stack the two spans with
- * block display + margin instead. */
-.entity-title {
-  display: block;
-  color: var(--accent-color, #6366f1);
-  font-weight: 500;
-}
-
-.entity-id {
-  display: block;
-  margin-top: 2px;
-  font-family: monospace;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.entity-empty {
-  color: var(--muted-text);
-  font-size: 14px;
-}
-
-.type-badge {
-  display: inline-block;
-  padding: 4px 8px;
-  background: var(--hover-bg);
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-}
-
-.message-cell {
-  color: var(--text-color);
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.severity-badge {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.severity-badge.error {
-  background: color-mix(in srgb, var(--error-color) 15%, transparent);
-  color: var(--error-color);
-}
-
-.severity-badge.warning {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
-}
-
-.issues-table-wrapper {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-@media (max-width: 768px) {
-  .issues-table th,
-  .issues-table td {
-    padding: 8px 10px;
-    font-size: 12px;
-  }
 }
 </style>

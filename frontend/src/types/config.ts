@@ -178,6 +178,10 @@ export function getEditFormId(
 export interface FilterControl {
   property?: string
   relation?: string
+  // For relation filters: which edge direction the filter follows.
+  // `outgoing` (default) pulls option candidates from the relation's `to[*]`
+  // types; `incoming` from `from[*]`. Mirrors ListColumn.direction.
+  direction?: 'outgoing' | 'incoming'
   label?: string
 }
 
@@ -276,6 +280,13 @@ export interface AnalyzeIssue {
   message: string
   severity: 'error' | 'warning'
   checkType: string
+  /**
+   * Optional structured specifics about why the issue fired, beyond the
+   * flat message. For content required-headers violations it lists the
+   * missing exact headers. Absent on rows with no structured detail;
+   * the message cell reveals it in an expandable detail row.
+   */
+  detail?: string[]
   /**
    * Present only on validation script-error rows. Carries the same
    * envelope as the action surface so the UI can branch: rows with

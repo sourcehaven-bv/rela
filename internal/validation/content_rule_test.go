@@ -92,6 +92,93 @@ func TestCheckContentRule(t *testing.T) {
 	}
 }
 
+func TestMissingRequiredHeaders(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		rule    *metamodel.ContentRule
+		want    []string
+	}{
+		{
+			name:    "nil rule returns nil",
+			content: "# Title",
+			rule:    nil,
+			want:    nil,
+		},
+		{
+			name:    "all present returns nil",
+			content: "# Title\n## Beschrijving\n## Oorzaak",
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Beschrijving"},
+					{Header: "## Oorzaak"},
+				},
+			},
+			want: nil,
+		},
+		{
+			name:    "one missing returns that one",
+			content: "# Title\n## Beschrijving",
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Beschrijving"},
+					{Header: "## Oorzaak"},
+				},
+			},
+			want: []string{"## Oorzaak"},
+		},
+		{
+			name:    "multiple missing returns all (no short-circuit)",
+			content: "# Title",
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Header: "## Beschrijving"},
+					{Header: "## Oorzaak"},
+				},
+			},
+			want: []string{"## Beschrijving", "## Oorzaak"},
+		},
+		{
+			name:    "pattern check excluded even when missing",
+			content: "# Title",
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{Pattern: "## (Alternative|Alternatives)"},
+					{Header: "## Oorzaak"},
+				},
+			},
+			want: []string{"## Oorzaak"},
+		},
+		{
+			name:    "empty match-string check skipped",
+			content: "# Title",
+			rule: &metamodel.ContentRule{
+				RequiredHeaders: []metamodel.HeaderCheck{
+					{},
+					{Header: "## Oorzaak"},
+				},
+			},
+			want: []string{"## Oorzaak"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := MissingRequiredHeaders(tt.content, tt.rule)
+			if len(got) != len(tt.want) {
+				t.Fatalf("MissingRequiredHeaders() = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("MissingRequiredHeaders()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestCheckChecklistRule(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -28,12 +28,22 @@ type Violation struct {
 	EntityTitle string
 }
 
+// RuleViolation is one entity's violation of a rule, with optional
+// structured detail about why it fired (e.g. which required headers are
+// missing). Detail is nil for violations that carry no structured
+// specifics (Lua, then-filter, property rules).
+type RuleViolation struct {
+	EntityID string
+	Detail   []string
+}
+
 // RuleResult is the full per-rule outcome surfaced to consumers that
 // want to render Lua-script failures (rule did not run) distinctly
 // from violations (rule ran and found a problem with an entity).
 type RuleResult struct {
-	// Violations is the list of entity IDs that violated the rule.
-	Violations []string
+	// Violations is the list of entities that violated the rule, each
+	// with optional structured detail.
+	Violations []RuleViolation
 	// ScriptErrors describe Lua failures (compile, runtime, timeout,
 	// contract). Each carries enough context (path, line, source
 	// slice) to render an actionable message.
@@ -94,7 +104,11 @@ func (v *GenericValidator) CheckRule(ctx context.Context, rule metamodel.Validat
 	if err != nil {
 		return nil, err
 	}
-	return full.Violations, nil
+	ids := make([]string, 0, len(full.Violations))
+	for _, vi := range full.Violations {
+		ids = append(ids, vi.EntityID)
+	}
+	return ids, nil
 }
 
 // CheckRuleFull runs a single rule and returns the full result —
@@ -112,11 +126,14 @@ func (v *GenericValidator) CheckRuleFull(
 
 	result := v.svc.CheckRule(ctx, rule, candidates, nil)
 	out := RuleResult{
-		Violations:   make([]string, 0, len(result.Violations)),
+		Violations:   make([]RuleViolation, 0, len(result.Violations)),
 		ScriptErrors: result.ScriptErrors,
 	}
 	for _, vi := range result.Violations {
-		out.Violations = append(out.Violations, vi.EntityID)
+		out.Violations = append(out.Violations, RuleViolation{
+			EntityID: vi.EntityID,
+			Detail:   vi.Detail,
+		})
 	}
 	for _, le := range result.LoadErrors {
 		out.LoadErrors = append(out.LoadErrors, LoadError{
