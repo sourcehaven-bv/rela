@@ -35,6 +35,7 @@ import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
+import HistoryPanel from '@/components/entity/HistoryPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
@@ -1134,6 +1135,16 @@ watch(
 
       <!-- External documents (renders only when configured for this type). -->
       <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+
+      <!-- Version history (renders as unavailable on non-postgres backends). -->
+      <HistoryPanel
+        :entity-type="entityType"
+        :entity-id="entityId"
+        :current-content="entry?.content ?? ''"
+        :current-properties="entry?.properties ?? {}"
+        :can-restore="canUpdate"
+        @restored="loadView"
+      />
 
       <CommandModal ref="commandModalRef" :entity-id="entityId" />
     </template>
