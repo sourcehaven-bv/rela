@@ -220,7 +220,7 @@ func (s *FSStore) readEntityFile(key, id, entityType string) (*entity.Entity, er
 	}
 
 	for key, value := range doc.frontmatter {
-		if !entity.IsReservedEntityKey(key) {
+		if entity.IsEntityPropertyKey(key) {
 			e.Properties[key] = entity.CloneValue(value)
 		}
 	}
@@ -324,7 +324,7 @@ func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relat
 	}
 
 	for key, value := range doc.frontmatter {
-		if !entity.IsReservedRelationKey(key) {
+		if entity.IsRelationPropertyKey(key) {
 			if r.Properties == nil {
 				r.Properties = make(map[string]interface{})
 			}

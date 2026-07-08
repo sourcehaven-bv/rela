@@ -17,9 +17,23 @@ func IsReservedEntityKey(key string) bool {
 	return key == "id" || key == "type"
 }
 
+// IsEntityPropertyKey reports whether key names a property of an [Entity] —
+// i.e. it belongs in Properties rather than naming an identity field. It is
+// the complement of [IsReservedEntityKey], provided so call sites read
+// positively ("copy the properties") instead of negating the reserved check.
+func IsEntityPropertyKey(key string) bool {
+	return !IsReservedEntityKey(key)
+}
+
 // IsReservedRelationKey reports whether key names an identity field of a
 // [Relation] ("from", "relation", "to") rather than a property. Note the
 // type of a relation is keyed "relation", not "type", in frontmatter.
 func IsReservedRelationKey(key string) bool {
 	return key == "from" || key == "relation" || key == "to"
+}
+
+// IsRelationPropertyKey reports whether key names a property of a [Relation];
+// the complement of [IsReservedRelationKey].
+func IsRelationPropertyKey(key string) bool {
+	return !IsReservedRelationKey(key)
 }

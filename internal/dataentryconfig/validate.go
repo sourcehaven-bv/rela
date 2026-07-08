@@ -454,7 +454,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 					"list %q: filter[%d] has invalid operator %q (valid: %s)",
 					listID, i, f.Operator, joinMapKeys(validFilterOperators)))
 			}
-			if f.Property != "" && !entity.IsReservedEntityKey(f.Property) {
+			if f.HasProperty() && entity.IsEntityPropertyKey(f.Property) {
 				if _, ok := entDef.Properties[f.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
 						"list %q: filter[%d] references unknown property %q",
@@ -986,7 +986,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 					"kanban %q: filters[%d] has invalid operator %q (valid: %s)",
 					kanbanID, i, f.Operator, joinMapKeys(validFilterOperators)))
 			}
-			if f.Property != "" && !entity.IsReservedEntityKey(f.Property) {
+			if f.HasProperty() && entity.IsEntityPropertyKey(f.Property) {
 				if _, ok := entDef.Properties[f.Property]; !ok {
 					errs = append(errs, fmt.Sprintf(
 						"kanban %q: filters[%d] references unknown property %q",

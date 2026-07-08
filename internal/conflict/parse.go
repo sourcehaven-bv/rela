@@ -215,7 +215,7 @@ func docToEntity(doc *markdown.Document, _ string, meta *metamodel.Metamodel) *e
 	}
 
 	for key, value := range doc.Frontmatter {
-		if !entity.IsReservedEntityKey(key) {
+		if entity.IsEntityPropertyKey(key) {
 			e.Properties[key] = value
 		}
 	}
@@ -234,7 +234,7 @@ func docToRelation(doc *markdown.Document, _ string) *entity.Relation {
 	}
 
 	for key, value := range doc.Frontmatter {
-		if !entity.IsReservedRelationKey(key) {
+		if entity.IsRelationPropertyKey(key) {
 			relation.Properties[key] = value
 		}
 	}

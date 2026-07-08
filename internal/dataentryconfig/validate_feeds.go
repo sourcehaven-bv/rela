@@ -112,7 +112,7 @@ func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Me
 			errs = append(errs, fmt.Sprintf("%s: where[%d] %q: %v", prefix, j, clause, err))
 			continue
 		}
-		if !entity.IsReservedEntityKey(f.Property) {
+		if entity.IsEntityPropertyKey(f.Property) {
 			if _, ok := entDef.Properties[f.Property]; !ok {
 				errs = append(errs, fmt.Sprintf("%s: where[%d] references unknown property %q", prefix, j, f.Property))
 			}

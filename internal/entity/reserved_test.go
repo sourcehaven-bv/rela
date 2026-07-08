@@ -22,6 +22,10 @@ func TestIsReservedEntityKey(t *testing.T) {
 			if got := IsReservedEntityKey(tc.key); got != tc.want {
 				t.Errorf("IsReservedEntityKey(%q) = %v, want %v", tc.key, got, tc.want)
 			}
+			// the property predicate is the exact complement
+			if got := IsEntityPropertyKey(tc.key); got == tc.want {
+				t.Errorf("IsEntityPropertyKey(%q) = %v, want %v", tc.key, got, !tc.want)
+			}
 		})
 	}
 }
@@ -45,6 +49,10 @@ func TestIsReservedRelationKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := IsReservedRelationKey(tc.key); got != tc.want {
 				t.Errorf("IsReservedRelationKey(%q) = %v, want %v", tc.key, got, tc.want)
+			}
+			// the property predicate is the exact complement
+			if got := IsRelationPropertyKey(tc.key); got == tc.want {
+				t.Errorf("IsRelationPropertyKey(%q) = %v, want %v", tc.key, got, !tc.want)
 			}
 		})
 	}
