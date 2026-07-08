@@ -8,13 +8,13 @@ import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
 
 // KanbanView fetches its board through the api layer (useQuery over
-// listEntities) and moves cards via updateEntity. Mock the api functions,
+// listAllEntities) and moves cards via updateEntity. Mock the api functions,
 // mirroring EntityList.test.ts.
-const listEntitiesMock = vi.fn()
+const listAllEntitiesMock = vi.fn()
 const updateEntityMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
-  listEntities: (...args: unknown[]) => listEntitiesMock(...args),
+  listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
   updateEntity: (...args: unknown[]) => updateEntityMock(...args),
 }))
 
@@ -73,7 +73,7 @@ function seedBoard(entities: Entity[], included: Record<string, Entity> = {}): L
     meta: { total: entities.length, page: 1, per_page: 25, has_more: false },
     included,
   }
-  listEntitiesMock.mockResolvedValue(response)
+  listAllEntitiesMock.mockResolvedValue(response)
   return response
 }
 
@@ -83,7 +83,7 @@ beforeEach(() => {
   setActivePinia(pinia)
   _setEntityPluralForTest(ENTITY_TYPE, 'tickets')
   _setEntityPluralForTest('person', 'people')
-  listEntitiesMock.mockReset()
+  listAllEntitiesMock.mockReset()
   updateEntityMock.mockReset().mockResolvedValue(undefined)
   routerPush.mockClear()
 })
@@ -106,7 +106,7 @@ async function mountBoard(fields: Array<Record<string, unknown>>, entities: Enti
 
 // NOTE (RR-UKS8BW): these are SPA-only unit tests. They prove that GIVEN the
 // wire shape (a `relations` map with the expected key + an `included` map) the
-// component resolves and renders the target — nothing more. The listEntities
+// component resolves and renders the target — nothing more. The listAllEntities
 // mock injects those maps directly; it is NOT the real endpoint.
 //
 // In particular the two INCOMING cases inject the inverse key
@@ -136,7 +136,11 @@ describe('KanbanView card relation fields (assumes TKT-ODHV2D wire contract)', (
     expect(card.text()).toContain('Owner')
     expect(card.text()).toContain('Alice')
     // Requested includes because a card field is a relation.
-    expect(listEntitiesMock).toHaveBeenCalledWith(ENTITY_TYPE, { include: '*' })
+    expect(listAllEntitiesMock).toHaveBeenCalledWith(
+      ENTITY_TYPE,
+      { include: '*' },
+      expect.any(AbortSignal)
+    )
     wrapper.unmount()
   })
 
@@ -209,7 +213,11 @@ describe('KanbanView card property fields', () => {
     expect(card.text()).toContain('Priority')
     expect(card.text()).toContain('high')
     // No relation field → no include param (property-only boards unchanged).
-    expect(listEntitiesMock).toHaveBeenCalledWith(ENTITY_TYPE, undefined)
+    expect(listAllEntitiesMock).toHaveBeenCalledWith(
+      ENTITY_TYPE,
+      undefined,
+      expect.any(AbortSignal)
+    )
     wrapper.unmount()
   })
 
