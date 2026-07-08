@@ -1916,6 +1916,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 			Message:    issue.Message,
 			Severity:   issue.Severity,
 			CheckType:  section,
+			Detail:     issue.Detail,
 		}
 		if issue.ScriptError != nil {
 			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")

@@ -19,6 +19,13 @@ type Violation struct {
 	Severity    string // "error" or "warning"
 	EntityID    string
 	EntityTitle string
+
+	// Detail carries optional structured specifics about *why* this
+	// violation fired, for surfacing beyond the flat Description. For
+	// content required-headers rules it holds the missing exact
+	// headers (see MissingRequiredHeaders). Nil for violations with no
+	// structured detail (Lua, then-filter, property rules).
+	Detail []string
 }
 
 // Result aggregates the outputs of a validation pass: rule findings,
@@ -299,9 +306,15 @@ func (s *Service) checkEntityAgainstRule(
 		}
 	}
 
-	// Check content rules
+	// Check content rules. On failure, attach the missing exact
+	// headers as structured Detail (nil when the failure is a pattern
+	// or checklist miss, which carry no actionable literal detail).
 	if rule.Content != nil && !CheckContentRule(e.Content, rule.Content) {
-		out.Violations = append(out.Violations, newViolation(rule, e, rule.Description))
+		v := newViolation(rule, e, rule.Description)
+		if missing := MissingRequiredHeaders(e.Content, rule.Content); len(missing) > 0 {
+			v.Detail = missing
+		}
+		out.Violations = append(out.Violations, v)
 	}
 
 	return out

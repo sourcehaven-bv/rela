@@ -37,6 +37,12 @@ type AnalysisIssue struct {
 	Message    string
 	Severity   string // "error" or "warning"
 
+	// Detail carries optional structured specifics about why the issue
+	// fired, beyond the flat Message. For content required-headers
+	// violations it holds the missing exact headers. Nil for issues
+	// with no structured detail.
+	Detail []string
+
 	// ScriptError carries the raw *lua.ScriptError for validation
 	// rules whose Lua script failed. Non-nil only on script-error
 	// rows; the HTTP handler converts it to a wire envelope using
@@ -445,8 +451,8 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 			continue
 		}
 		severity := rule.GetSeverity()
-		for _, id := range full.Violations {
-			e, err := st.GetEntity(ctx, id)
+		for _, v := range full.Violations {
+			e, err := st.GetEntity(ctx, v.EntityID)
 			if err != nil {
 				continue
 			}
@@ -456,6 +462,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
 				Message:    rule.Description,
 				Severity:   severity,
+				Detail:     v.Detail,
 			})
 		}
 		// Surface Lua failures and load failures so the UI shows
