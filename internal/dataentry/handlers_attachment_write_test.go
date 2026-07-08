@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -416,5 +420,116 @@ func TestAttachmentDelete_MultiLeavesSiblings(t *testing.T) {
 	g := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "docs", "b.txt")
 	if g.Code != http.StatusOK || g.Body.String() != "b" {
 		t.Errorf("sibling b.pdf must survive; GET got %d body=%q", g.Code, g.Body)
+	}
+}
+
+// globalAttachmentsMetamodelYAML is a real metamodel with a *global*
+// top-level `attachments:` block (allow: + scan_cmd:). The `report` file
+// property deliberately sets neither accept nor scan_cmd, so both the MIME
+// allowlist and the scan command must fall through from the global block.
+//
+// The scan_cmd is a stub shell command that exits non-zero (reject) when the
+// uploaded bytes contain the marker "INFECTED", and zero (clean) otherwise.
+const globalAttachmentsMetamodelYAML = `
+version: "1.0"
+types: {}
+relations: {}
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+      report:
+        type: file
+attachments:
+  allow: [text/plain]
+  scan_cmd: ["sh", "-c", '! grep -q INFECTED "$1"', "sh", "{in}"]
+`
+
+// newGlobalAttachmentsApp builds an App whose metamodel is parsed from
+// globalAttachmentsMetamodelYAML through the real loader (metamodel.Parse) —
+// so these HTTP integration tests transitively depend on the BUG-5XIN07
+// whitelist fix: revert it and Parse rejects the `attachments:` key here,
+// failing this helper before any upload runs. A real command runner is wired
+// so the global scan command actually executes on the upload path.
+func newGlobalAttachmentsApp(t *testing.T) (*App, *acl.Declarative) {
+	t.Helper()
+
+	meta, err := metamodel.Parse([]byte(globalAttachmentsMetamodelYAML))
+	if err != nil {
+		t.Fatalf("parse global-attachments metamodel: %v", err)
+	}
+
+	cfg := &dataentryconfig.Config{
+		App:        dataentryconfig.AppConfig{Name: "Test App"},
+		Forms:      make(map[string]dataentryconfig.Form),
+		Lists:      make(map[string]dataentryconfig.List),
+		Views:      make(map[string]dataentryconfig.ViewConfig),
+		Kanbans:    make(map[string]dataentryconfig.Kanban),
+		Navigation: []dataentryconfig.NavigationEntry{},
+	}
+
+	app := newAppFromParts(cfg, meta, newFixture())
+	runner, err := attachment.NewCmdRunner(5*time.Second, store.MaxAttachmentBytes)
+	if err != nil {
+		t.Fatalf("NewCmdRunner: %v", err)
+	}
+	app.attachmentRunner = runner
+
+	d := writeACL(t, app)
+	app.acl = d
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	return app, d
+}
+
+// TestAttachmentUpload_GlobalAllowlistEnforced is an end-to-end guard that the
+// global `attachments.allow:` block gates uploads through the real HTTP handler
+// (not via a per-property Accept). A text file passes; a PNG (sniffs as
+// image/png, not in the allowlist) is rejected 422. Regression coverage for
+// BUG-5XIN07: the metamodel here is parsed through the real loader (see
+// newGlobalAttachmentsApp), so reverting the whitelist fix fails this test at
+// parse time; no prior test round-tripped the global allowlist through the
+// upload path.
+func TestAttachmentUpload_GlobalAllowlistEnforced(t *testing.T) {
+	app, d := newGlobalAttachmentsApp(t)
+
+	ok := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "report", "clean.txt", []byte("hello"))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("allowed text upload: got %d, want 200; body=%s", ok.Code, ok.Body)
+	}
+
+	// A real PNG header sniffs as image/png, which the global allowlist omits.
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR")
+	bad := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "report", "pic.png", png)
+	if bad.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("disallowed png upload: got %d, want 422; body=%s", bad.Code, bad.Body)
+	}
+}
+
+// TestAttachmentUpload_GlobalScanCmdRejects is an end-to-end guard that the
+// global `attachments.scan_cmd:` runs on the upload path and rejects an
+// "infected" file. A clean text file passes; a text file containing the
+// marker the stub scanner flags is rejected. Both go through the same real
+// HTTP handler + policy processor + command runner as production.
+func TestAttachmentUpload_GlobalScanCmdRejects(t *testing.T) {
+	app, d := newGlobalAttachmentsApp(t)
+
+	clean := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "report", "clean.txt", []byte("all good"))
+	if clean.Code != http.StatusOK {
+		t.Fatalf("clean upload: got %d, want 200; body=%s", clean.Code, clean.Body)
+	}
+
+	infected := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "report", "virus.txt", []byte("contains INFECTED payload"))
+	if infected.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("scanned-reject upload: got %d, want 422; body=%s", infected.Code, infected.Body)
+	}
+	// The rejected upload must not overwrite the clean attachment.
+	get := getAttachmentAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "report", "clean.txt")
+	if get.Code != http.StatusOK || get.Body.String() != "all good" {
+		t.Errorf("clean attachment must survive a rejected scan; GET got %d body=%q", get.Code, get.Body)
 	}
 }

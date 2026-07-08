@@ -22,6 +22,7 @@ var validTopLevelKeys = map[string]bool{
 	"validations": true,
 	"automations": true,
 	"includes":    true,
+	"attachments": true,
 }
 
 // knownTypos maps common misspellings to the correct key name.

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -880,6 +881,67 @@ widgets:
 				t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+// TestParse_AttachmentsTopLevelKeyAccepted is the regression guard for
+// BUG-5XIN07: a documented top-level `attachments:` block must round-trip
+// through the real loader (not just unmarshal into the struct — the whitelist
+// in checkUnknownKeys is a separate gate that this exercises). Asserting the
+// parsed Attachments field is populated proves the wiring, not merely that no
+// error was returned.
+func TestParse_AttachmentsTopLevelKeyAccepted(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+attachments:
+  allow: [image/png]
+  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
+`
+	m, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("valid attachments block rejected: %v", err)
+	}
+	if m.Attachments == nil {
+		t.Fatal("attachments block parsed but Attachments field is nil")
+	}
+	if got, want := m.Attachments.Allow, []string{"image/png"}; len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("attachments.allow = %v, want %v", got, want)
+	}
+	if len(m.Attachments.ScanCmd) == 0 || m.Attachments.ScanCmd[0] != "clamdscan" {
+		t.Errorf("attachments.scan_cmd = %v, want it to start with clamdscan", m.Attachments.ScanCmd)
+	}
+}
+
+// TestValidTopLevelKeysMatchStruct closes the systemic root cause of BUG-5XIN07:
+// validTopLevelKeys is a hand-maintained duplicate of the Metamodel struct's
+// top-level yaml tags, and the two silently drifted (the attachments field was
+// added without its whitelist entry). This asserts every top-level yaml tag on
+// the struct is whitelisted, so a future top-level field cannot be rejected by
+// its own loader without failing this test first.
+func TestValidTopLevelKeysMatchStruct(t *testing.T) {
+	for field := range reflect.TypeFor[Metamodel]().Fields() {
+		tag := field.Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue // computed field, not loaded from YAML
+		}
+		key := strings.Split(tag, ",")[0]
+		if key == "" {
+			continue
+		}
+		if !validTopLevelKeys[key] {
+			t.Errorf("Metamodel field %q (yaml:%q) is not in validTopLevelKeys — "+
+				"the loader will reject a metamodel that uses it", field.Name, key)
+		}
 	}
 }
 
