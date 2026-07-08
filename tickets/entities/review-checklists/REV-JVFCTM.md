@@ -56,8 +56,8 @@ Skip this section for bugs and internal refactors.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — 19/19 checks green (Build, Test, Lint, Frontend, E2E, Postgres Backend, Fuzz, God-object lint, CodeQL, Vulnerability Check, 6× Cross-Compile, Demos, Docs, Lint Markdown).
+- [x] PR URL documented below
 
-**PR:** pending
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1101
