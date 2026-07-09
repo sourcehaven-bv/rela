@@ -2,42 +2,50 @@
 id: IMPL-DQACKD
 type: implementation-checklist
 title: 'Implementation: pgstore content versioning: time-machine history + diff with principal attribution'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
-## Implementation progress (vertical slices, test-first; DB-verified against real Postgres 15)
+## Implementation — COMPLETE (all 9 slices; DB-verified against real Postgres 15; demoed in-browser)
 
-- [x] **Slice 1 — metamodel render-projection + content hash** (`internal/metamodel/projection.go`). GREEN.
-- [x] **Slice 2 — migration `0004_versions.sql`** (schema_versions, entity_versions, version_seq, entities(updated_at)). DB-verified. Found+filed BUG-TY2XQC (pre-existing double-0003).
-- [x] **Slice 3 — store DTOs + HistoryReader/VersionWriter** + pgstore `version.go` (list/get + vseq-fenced recursive-CTE lineage walk, WriteVersion in a tx). DB-verified.
-- [x] **Slice 4 — synchronous rename/delete capture** (`entitymanager/version_hook.go`, VersionRecorder consumer-side dep, appbuild adapter). GREEN.
-- [x] **Slice 5 — sweep goroutine** (`sweep.go`, one-connection advisory lock, settle+ceiling filter, batch cap, lifecycle-scoped dedup). DB-verified.
-- [x] **Slice 6 — CLI** (`history.go`, `restore.go`). GREEN.
-- [ ] **Slice 7 — data-entry** (history handlers via forWire/RR-YDMJV7, restore _action via validateFieldWrite/RR-VOYXRV, indistinguishable-404/RR-KDXGYK, `history:read` ACL). **NOT STARTED.**
-- [ ] **Slice 8 — frontend** (HistoryPanel.vue + diff + client + mount). **NOT STARTED.**
-- [ ] **Slice 9 — docs** (postgres-backend / cli-reference / acl-security / postgres CLAUDE.md). **NOT STARTED.**
+- [x] **Slice 1** metamodel render-projection + content hash (`internal/metamodel/projection.go`)
+- [x] **Slice 2** migration `0004_versions.sql` (schema_versions, entity_versions, version_seq, entities(updated_at)); found+filed BUG-TY2XQC
+- [x] **Slice 3** store HistoryReader/VersionWriter + pgstore `version.go` (vseq-fenced recursive-CTE lineage)
+- [x] **Slice 4** synchronous rename/delete capture (entitymanager VersionRecorder hook + appbuild adapter)
+- [x] **Slice 5** reconciliation sweep goroutine (`sweep.go`, single-connection advisory lock, settle+ceiling, batch cap, dedup)
+- [x] **Slice 6** CLI `rela history` / `rela restore`
+- [x] **Slice 7** dataentry history read + restore endpoints (forWire redaction RR-YDMJV7, field-validated restore RR-VOYXRV, indistinguishable-404 RR-KDXGYK, `history:read` permission RR-D8NWM4)
+- [x] **Slice 8** frontend HistoryPanel.vue + dependency-free diff + restore, mounted in EntityDetail (1166 FE tests pass)
+- [x] **Slice 9** docs (postgres-backend, cli-reference, acl-security, CLAUDE.md)
 
-## Reviews (cranky-code-reviewer + go-architect) — DONE on core + CLI
+## Verification (final)
 
-- **go-architect: structure approved** — all findings minor/nit, nothing blocks merge. Dependency direction, interface placement (both directions of consumer-side seam), optional-capability type-assert, goroutine ownership, no-storage-type-leak all satisfied. Noted `projectionHasher` duplicates canonical's framing (acceptable per "little copying" until a 3rd copy).
-- **cranky-code-reviewer: found 2 CRITICAL wrong-history bugs** (both real, both mine, now fixed + regression-tested):
-  - RR-7ZBISE reused-id merge → vseq-fenced recursive CTE.
-  - RR-9O9RFZ delete-then-recreate dedup → lifecycle-scoped dedup.
-  - RR-D0L7L0 (significant bundle) advisory-unlock-on-cancel, non-atomic capture, panic-on-write-path, µs interval, dead var, restore TOCTOU message, silent-noop log.
-- All addressed; `golangci-lint` + `just arch-lint` clean; full non-DB suite + pgstore DB suite green.
+- `go build ./...` + `-tags postgres ./...` clean.
+- Full Go non-DB suite passes; **pgstore DB suite passes against real PostgreSQL 15** (conformance + versioning + the 2 critical-bug regressions).
+- `golangci-lint` 0 issues on all changed packages; `just arch-lint` clean.
+- Frontend: 1166 tests pass, `vue-tsc` 0 errors, production `vite build` succeeds.
+- **End-to-end demo verified in-browser** (Puppeteer): built `rela-server-postgres`, seeded a ticket + 3-version history (alice/bob attribution), the Version-history panel renders the timeline + per-version diff + Restore buttons on the entity detail page.
 
-## Verification (core + CLI)
+## Reviews
 
-- `go build ./...` and `-tags postgres ./...` clean.
-- golangci-lint clean; arch-lint clean.
-- Full non-DB suite passes.
-- **pgstore DB suite green against real PostgreSQL 15** — concurrency + the two critical bug regressions exercised for real.
+- 2 design-review rounds + cranky-code-reviewer + go-architect (see linked review-responses). go-architect: structure approved (all minor/nit). cranky: 2 critical wrong-history bugs found + fixed with DB regressions. All slice-7 security findings (RR-YDMJV7/VOYXRV/KDXGYK) implemented and marked addressed.
 
-## Remaining (data-entry + frontend + docs)
+## Follow-ups filed
 
-Slices 7-9 add the *web* surface onto the same verified core. The CLI is a
-complete, DB-verified end-to-end vertical, so the feature works today via CLI.
-Data-entry is additive (a second surface + the field-ACL/redaction wiring the
-security review mandated).
+TKT-N0OWKE (intra-tx atomicity), TKT-VFJKMB (relation history), IDEA-ADI72Q
+(live-entity schema_hash), TKT-BW6UUL (purge-version), BUG-TY2XQC (double-0003
+migration prefix), **TKT-ZIRMGM (author-aware capture: last_edited_by +
+flush-on-author-change — user's follow-up idea)**.
+
+## Manual verification evidence
+
+Demo: `rela-server-postgres` on :8087, project /tmp/relademo, DB
+rela_versiondemo. TKT-YSEM has v1 create (alice) / v2 update (bob) / v3 update
+(alice); GET /api/v1/_history/ticket/TKT-YSEM returns the timeline with
+attribution; the SPA panel shows it with a working diff.
+
+## Note on branch state
+
+All work is on branch `feat/pgstore-versioning-TKT-9INY0Y` (11+ commits), not
+merged/pushed. Next: `/pr`.

@@ -2,6 +2,7 @@
 id: BUG-TY2XQC
 type: bug
 title: Two pgstore migrations share version prefix 0003 — one can be skipped on an already-migrated DB
+description: 'Two pgstore migration files share the integer version prefix 0003 (0003_sync.sql and 0003_attachments_per_file_pk.sql). loadMigrations parses the prefix as the version, and Migrate applies only version > current schema_version, sorting by version; on an already-migrated database whichever 0003 sorts second is skipped. On a fresh DB both apply (both > 0), which is why it hasn''t surfaced. Found while adding the 0004 versioning migration; guarded going forward by TestLoadMigrationsIntegrity (grandfathers the existing pair, fails any NEW duplicate). Fix: renumber is unsafe (changes a released migration''s recorded version); options are a content-hash-based applied-set or accepting the grandfathered pair with the integrity-test guard.'
 priority: medium
 why1: loadMigrations parses the integer filename prefix as the version; 0003_sync.sql and 0003_attachments_per_file_pk.sql both parse to version 3.
 why2: Migrate applies migrations where version > current schema_version and sorts by version; on equal versions the sort order between the two 0003 files is not guaranteed, and once schema_version reaches 3 the second-sorted 0003 is skipped (version <= current).

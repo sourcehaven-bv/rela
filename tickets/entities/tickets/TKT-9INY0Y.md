@@ -5,7 +5,7 @@ title: 'pgstore content versioning: time-machine history + diff with principal a
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 ## Problem
