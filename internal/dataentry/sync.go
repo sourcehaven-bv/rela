@@ -159,7 +159,9 @@ func (a *App) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 //
 // Probes are batched per type via PermitsReadMany so the whole manifest costs
 // one MatchingIDs roundtrip per distinct type, not one per row.
-func (a *App) filterVisibleManifest(ctx context.Context, entries []synctypes.ManifestEntry) ([]synctypes.ManifestEntry, error) {
+func (a *App) filterVisibleManifest(
+	ctx context.Context, entries []synctypes.ManifestEntry,
+) ([]synctypes.ManifestEntry, error) {
 	gate := readGateFromContext(ctx)
 
 	// Resolve the gating (type, id) for each entry, collecting ids per type.
@@ -256,8 +258,11 @@ func validIDSegment(s string) bool {
 	if strings.ContainsAny(s, "/\\") || strings.Contains(s, "..") {
 		return false
 	}
+	// asciiSpace (0x20) is the lowest printable ASCII code point; anything
+	// below it is a C0 control character and is rejected.
+	const asciiSpace = 0x20
 	for _, c := range s {
-		if c < 0x20 { // no control characters
+		if c < asciiSpace { // no control characters
 			return false
 		}
 	}

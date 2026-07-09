@@ -159,7 +159,9 @@ type SectionData struct {
 // Returns a value (not a pointer) so callers can layer on display-mode-
 // specific fields (e.g. `Content`/`HasContent` for the `content`/`cards`
 // branch) without sharing mutation across rows.
-func (a *App) buildSectionEntityData(ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef) SectionEntityData {
+func (a *App) buildSectionEntityData(
+	ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef,
+) SectionEntityData {
 	s := a.State()
 	sed := SectionEntityData{
 		ID:            e.ID,
@@ -190,6 +192,8 @@ func (a *App) buildSectionEntityData(ctx context.Context, e *entity.Entity, secF
 }
 
 // buildSections builds template-ready section data from view sections and a view result.
+//
+//nolint:gocognit,funlen // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
 func (a *App) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := a.State()
 	out := make([]SectionData, 0, len(sections))
@@ -203,7 +207,7 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			Link:         sec.Link,
 		}
 
-		if sec.Source == "entry" {
+		if sec.Source == "entry" { //nolint:nestif // entry-source sections branch by display mode and property shape; the nesting is the per-mode build, not extractable logic.
 			e := result.Entry
 			entDef, _ := s.Meta.GetEntityDef(e.Type)
 
@@ -347,6 +351,8 @@ func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, enti
 // carries these affordances; the read-only entity-detail view path does
 // not call this. The `viewConfig` parameter is a synthetic ViewConfig
 // hand-built from a form's SidePanel config — it is not a generic view.
+//
+//nolint:gocognit // resolves section buttons across traverse targets; the branches are per-source button-resolution cases, not shared logic to extract.
 func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *entity.Entity) {
 	s := a.State()
 	for i, sec := range viewConfig.Sections {

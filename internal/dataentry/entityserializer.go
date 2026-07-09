@@ -41,7 +41,10 @@ type entitySerializer struct {
 // serialize their own already-gated edges keep byte-identical output. The set
 // is computed once per page by visibleRelationIDs (batched by type); this
 // transform only consults it.
-func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation, visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string) v1.Entity {
+func (s entitySerializer) toV1(
+	ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation,
+	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
+) v1.Entity {
 	out := v1.Entity{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -104,7 +107,10 @@ func (s entitySerializer) toV1(ctx context.Context, e *entityPkg.Entity, outgoin
 // v1.Entity should use: toV1 + strip hidden properties + attach the affordance
 // maps. Use forWireRelated for entities that appear as list rows or under
 // `included` (no affordance maps, but still strip).
-func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation, meta *metamodel.Metamodel, plural string) v1.Entity {
+func (s entitySerializer) forWire(
+	ctx context.Context, e *entityPkg.Entity, outgoing []*entityPkg.Relation,
+	meta *metamodel.Metamodel, plural string,
+) v1.Entity {
 	// Per-entity responses carry outgoing edges only; incoming edges reach the
 	// SPA via the dedicated /relations endpoint, not the top-level relations
 	// map. Incoming list columns are served by forWireRelated (list rows).
@@ -129,7 +135,10 @@ func (s entitySerializer) forWire(ctx context.Context, e *entityPkg.Entity, outg
 // threads it here. Pass nil to disable filtering when the caller already
 // serializes only gated edges (e.g. the search/include shapes pass nil
 // relations anyway).
-func (s entitySerializer) forWireRelated(ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation, visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string) v1.Entity {
+func (s entitySerializer) forWireRelated(
+	ctx context.Context, e *entityPkg.Entity, outgoing, incoming []*entityPkg.Relation,
+	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
+) v1.Entity {
 	result := s.toV1(ctx, e, outgoing, incoming, visibleNeighbors, meta, plural)
 	s.affordances.stripHiddenProperties(ctx, e, &result)
 	return result

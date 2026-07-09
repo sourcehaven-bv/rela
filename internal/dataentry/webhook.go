@@ -100,7 +100,9 @@ func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 // request body is the signed JWT (the IdP sends Content-Type: application/jwt).
 // On any verification failure it answers 401 and dispatch is never called. A
 // redelivered webhook (same id) is acknowledged with 200 without re-dispatching.
-func (rec *webhookReceiver) handle(w http.ResponseWriter, r *http.Request, dispatch func(context.Context, WebhookClaims) error) {
+func (rec *webhookReceiver) handle(
+	w http.ResponseWriter, r *http.Request, dispatch func(context.Context, WebhookClaims) error,
+) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, webhookMaxBody))
 	if err != nil {
 		http.Error(w, "read failed", http.StatusBadRequest)

@@ -152,6 +152,8 @@ func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIGetSettings returns the settings data for the settings page.
+//
+//nolint:gocognit // assembles the settings response from many independent optional sources; each block guards a distinct setting, with no shared structure to factor out.
 func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 	s := a.State()
 	ud := s.UserDefaults

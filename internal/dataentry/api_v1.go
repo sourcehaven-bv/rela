@@ -104,6 +104,15 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
 }
 
+// Path-segment counts for the dynamic route dispatcher below. A
+// four-segment path selects a sub-resource collection
+// (relations/_actions/_attachments); a five-segment path targets a
+// single member within one of those.
+const (
+	segmentsSubResource   = 4 // /{plural}/{id}/{sub}/{key}
+	segmentsSubResourceID = 5 // /{plural}/{id}/{sub}/{key}/{member}
+)
+
 // handleV1DynamicRoutes routes requests to the appropriate entity handler
 // based on URL. Read operations work against the snapshot returned by
 // a.State() with no locking; write operations take a.writeMu for the
@@ -153,7 +162,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
-	case 4:
+	case segmentsSubResource:
 		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
 		// or /{plural}/{id}/_attachments/{property}
 		switch parts[2] {
@@ -166,7 +175,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
-	case 5:
+	case segmentsSubResourceID:
 		// /{plural}/{id}/relations/{relType}/{targetId} or
 		// /{plural}/{id}/_attachments/{property}/{fileName}
 		switch parts[2] {
@@ -241,7 +250,11 @@ var errListLoad = errors.New("list load failed")
 // search_failed at the call site); ACL query failures are wrapped in
 // errACLListQuery so call sites map them via writeGateError. Everything
 // else degrades to an empty/whole set as the list endpoint always did.
-func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error) {
+func (a *App) scopedSortedEntities(
+	ctx context.Context,
+	typeName string,
+	query map[string][]string,
+) ([]*entityPkg.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 
 	var entities []*entityPkg.Entity
@@ -326,7 +339,11 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 // A free function (not an App method) taking the already-loaded meta/cfg
 // snapshot: it needs no other App state, and keeping it off the receiver keeps
 // App under its plimsoll method cap.
-func relationFilterClassifier(meta *metamodel.Metamodel, cfg *dataentryconfig.Config, typeName string) func(string) bool {
+func relationFilterClassifier(
+	meta *metamodel.Metamodel,
+	cfg *dataentryconfig.Config,
+	typeName string,
+) func(string) bool {
 	return func(key string) bool {
 		// Explicit property control → property pass.
 		if cfg.HasPropertyFilterControl(typeName, key) {
@@ -722,7 +739,8 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializer.forWire(r.Context(), created, a.reader.outgoingRelations(r.Context(), created.ID), a.Meta(), plural)
+	rels := a.reader.outgoingRelations(r.Context(), created.ID)
+	result := a.serializer.forWire(r.Context(), created, rels, a.Meta(), plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -994,6 +1012,7 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 		"ACL read-permission check failed", "check server logs")
 }
 
+//nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
 func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	// Need write lock
 	a.writeMu.Lock()
@@ -1060,12 +1079,16 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// what the resolver would have surfaced on GET. Runs before any
 	// other validation so the failure mode is identical regardless of
 	// what else the PATCH body would have triggered.
-	if denial := a.affordances.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
+	if denial := a.affordances.validateFieldWrite(
+		r.Context(), entity, req.Properties, req.PropertiesUnset,
+	); denial != nil {
 		a.denyAffordance(r.Context(), w, entity, *denial)
 		return
 	}
 	if req.Relations.Modern != nil {
-		if denial := a.affordances.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
+		if denial := a.affordances.validateRelationsModernAffordances(
+			r.Context(), entityID, entity, req.Relations.Modern,
+		); denial != nil {
 			a.denyAffordance(r.Context(), w, entity, *denial)
 			return
 		}
@@ -1145,7 +1168,8 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializer.forWire(r.Context(), entity, a.reader.outgoingRelations(r.Context(), entity.ID), a.Meta(), plural)
+	rels := a.reader.outgoingRelations(r.Context(), entity.ID)
+	result := a.serializer.forWire(r.Context(), entity, rels, a.Meta(), plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -1459,7 +1483,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
-	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta})
+	_, err := a.entityManager.CreateRelation(
+		r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta},
+	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return
@@ -1471,7 +1497,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (a *App) handleV1RelationTarget(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+func (a *App) handleV1RelationTarget(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+) {
 	switch r.Method {
 	case http.MethodPatch:
 		a.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
@@ -1482,7 +1510,9 @@ func (a *App) handleV1RelationTarget(w http.ResponseWriter, r *http.Request, typ
 	}
 }
 
-func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+func (a *App) handleV1UpdateRelation(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+) {
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
@@ -1563,7 +1593,9 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	writeV1JSON(w, http.StatusOK, result)
 }
 
-func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+func (a *App) handleV1DeleteRelation(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+) {
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
@@ -2013,6 +2045,7 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 
 // --- Helper Functions ---
 
+//nolint:gocognit // resolves the include set (all vs. named relations) then fetches each target; the nesting is the include-expansion algorithm, not shared logic to extract.
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
 	s := a.State()
 	included := make(map[string]v1.Entity)
@@ -2030,7 +2063,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	// filter so hidden neighbors don't trigger hidden nested probes.
 	nestedFor := make(map[string]string)
 
-	if includes == "*" {
+	if includes == "*" { //nolint:nestif // include-all vs. named-include expansion is inherently nested; flattening would obscure the two-mode logic.
 		for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
 			if target, found := a.reader.getEntity(ctx, edge.To); found {
 				candidates = append(candidates, target)
@@ -2103,6 +2136,8 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 // traversal). A relation key would otherwise match no property and nuke the
 // whole result set (TKT-5U7QBR). A nil predicate treats every key as a
 // property filter (the pre-TKT-5U7QBR behavior).
+//
+//nolint:gocognit,funlen // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
 func applyV1Filters(
 	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
 ) []*entityPkg.Entity {
@@ -2674,7 +2709,9 @@ func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban
 // filterCache keys on list/kanban id, not (type, filters); a
 // (type, filters)-keyed memo is the obvious upgrade if sidebar
 // latency ever warrants it.
-func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig) int {
+func (c *sidebarCounts) countWithFilters(
+	ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig,
+) int {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
 	if rqr.DenyAll {
 		return 0
@@ -2707,7 +2744,9 @@ func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string,
 }
 
 // navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
-func (a *App) navEntryToSidebarItem(ctx context.Context, entry dataentryconfig.NavigationEntry, counts sidebarCounts) v1.SidebarItem {
+func (a *App) navEntryToSidebarItem(
+	ctx context.Context, entry dataentryconfig.NavigationEntry, counts sidebarCounts,
+) v1.SidebarItem {
 	s := a.State()
 	item := v1.SidebarItem{
 		Label: entry.Label,
@@ -2961,7 +3000,9 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 // fallback the manager uses). A deny records a `denied-write` audit
 // row and writes the standard 403 body; returns true when the write
 // may proceed.
-func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation) bool {
+func (a *App) authorizeConflictResolve(
+	ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation,
+) bool {
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		var fromType string
@@ -2992,7 +3033,9 @@ func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWrite
 // recordConflictResolveAudit emits the audit row for a successful
 // conflict resolution — the direct-file-write counterpart of the
 // records entitymanager emits for manager-routed writes.
-func (a *App) recordConflictResolveAudit(ctx context.Context, relPath string, e *entityPkg.Entity, rel *entityPkg.Relation) {
+func (a *App) recordConflictResolveAudit(
+	ctx context.Context, relPath string, e *entityPkg.Entity, rel *entityPkg.Relation,
+) {
 	op := audit.OpUpdateEntity
 	if rel != nil {
 		op = audit.OpUpdateRelation
@@ -3260,6 +3303,8 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 // is registered for entityType, a default is synthesized from the
 // metamodel (see buildDefaultViewConfig) and executed through the same
 // pipeline so the response shape is identical.
+//
+//nolint:gocognit,funlen // routes the views sub-API over method and path shape; each branch is a distinct view endpoint, not shared logic to factor out.
 func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -3316,8 +3361,9 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
 
+	entryRels := a.reader.outgoingRelations(r.Context(), result.Entry.ID)
 	resp := v1.ViewResponse{
-		Entry:    a.serializer.forWire(r.Context(), result.Entry, a.reader.outgoingRelations(r.Context(), result.Entry.ID), a.Meta(), plural),
+		Entry:    a.serializer.forWire(r.Context(), result.Entry, entryRels, a.Meta(), plural),
 		Sections: make([]v1.ViewSection, 0, len(sections)),
 	}
 

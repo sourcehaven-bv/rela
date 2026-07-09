@@ -274,6 +274,8 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 }
 
 // analyzeCardinality checks relation cardinality constraints.
+//
+//nolint:gocognit,funlen // cardinality analysis enumerates min/max bounds across every relation def and direction; the branches are the distinct violation cases, not extractable shared logic.
 func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Cardinality",
