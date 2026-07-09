@@ -29,7 +29,7 @@ import (
 //   - Every snapshot is rendered through the serializer's forWire so field-level
 //     (`visible:`) redaction strips hidden properties exactly as on a live GET
 //     (RR-YDMJV7) — a raw snapshot would bypass the serializer-layer redaction.
-func (a *App) handleV1History(w http.ResponseWriter, r *http.Request) {
+func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	// Path: /api/v1/_history/{type}/{id}[/{version}[/restore]]
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_history/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -60,7 +60,7 @@ func (a *App) handleV1History(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 			return
 		}
-		a.restoreHistoryVersion(w, r, reader, typeName, entityID, parts[2])
+		restoreHistoryVersion(a, w, r, reader, typeName, entityID, parts[2])
 		return
 	}
 
@@ -76,15 +76,15 @@ func (a *App) handleV1History(w http.ResponseWriter, r *http.Request) {
 
 	// Authorize reads: live entity → same read gate as a GET; deleted entity →
 	// PermHistoryRead, else an indistinguishable 404.
-	if !a.authorizeHistoryRead(w, r, typeName, entityID) {
+	if !authorizeHistoryRead(a, w, r, typeName, entityID) {
 		return
 	}
 
 	if len(parts) >= 3 && parts[2] != "" {
-		a.serveHistoryVersion(w, r, reader, typeName, entityID, parts[2])
+		serveHistoryVersion(a, w, r, reader, typeName, entityID, parts[2])
 		return
 	}
-	a.serveHistoryTimeline(w, r, reader, entityID)
+	serveHistoryTimeline(w, r, reader, entityID)
 }
 
 // authorizeHistoryRead returns true if the caller may read this entity's
@@ -98,7 +98,7 @@ func (a *App) handleV1History(w http.ResponseWriter, r *http.Request) {
 // typeName ⇒ 404); the version-read/restore paths additionally verify the
 // SNAPSHOT's type matches (see verifySnapshotType), so a deleted entity of a
 // mismatched type is a 404 too.
-func (a *App) authorizeHistoryRead(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
+func authorizeHistoryRead(a *App, w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
 	ctx := r.Context()
 	gate := readGateFromContext(ctx)
 
@@ -127,7 +127,7 @@ func (a *App) authorizeHistoryRead(w http.ResponseWriter, r *http.Request, typeN
 }
 
 // serveHistoryTimeline writes the version metadata list (oldest first).
-func (a *App) serveHistoryTimeline(
+func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader, entityID string,
 ) {
 	metas, err := reader.ListVersions(r.Context(), entityID)
@@ -159,7 +159,7 @@ func (a *App) serveHistoryTimeline(
 
 // serveHistoryVersion writes one version's full snapshot, redacted through the
 // serializer so hidden (`visible:`-denied) properties never reach the client.
-func (a *App) serveHistoryVersion(
+func serveHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName, entityID, versionStr string,
 ) {

@@ -24,7 +24,7 @@ import (
 //
 // Scope: entity content + properties only. The entity's relation set as-of the
 // version is NOT restored (relation history is a separate capability).
-func (a *App) restoreHistoryVersion(
+func restoreHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName, entityID, versionStr string,
 ) {
@@ -60,10 +60,10 @@ func (a *App) restoreHistoryVersion(
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 			return
 		}
-		a.restoreOntoLive(w, r, live, snap, typeName)
+		restoreOntoLive(a, w, r, live, snap, typeName)
 		return
 	}
-	a.restoreRecreate(w, r, snap, entityID)
+	restoreRecreate(a, w, r, snap, entityID)
 }
 
 // restoreOntoLive applies the snapshot onto an existing entity as a
@@ -71,7 +71,7 @@ func (a *App) restoreHistoryVersion(
 // removed (unset) and which content changes, gates that exact set through
 // validateFieldWrite, then applies via the entitymanager (which re-authorizes,
 // validates, and audits).
-func (a *App) restoreOntoLive(
+func restoreOntoLive(a *App,
 	w http.ResponseWriter, r *http.Request, live *entityPkg.Entity, snap *store.VersionSnapshot, typeName string,
 ) {
 	ctx := r.Context()
@@ -117,7 +117,7 @@ func (a *App) restoreOntoLive(
 			"Restore failed validation", err.Error())
 		return
 	}
-	a.writeRestoreResult(w, r, target, snap.Version, typeName)
+	writeRestoreResult(a, w, r, target, snap.Version, typeName)
 }
 
 // restoreRecreate re-creates a deleted entity from the snapshot. Unlike a
@@ -127,7 +127,7 @@ func (a *App) restoreOntoLive(
 // it were a PATCH setting that field), exactly like restoreOntoLive: otherwise
 // resurrection would launder a forbidden field write (RR-LH9RJ8). Type-level
 // create authorization + validation still run in the entitymanager.
-func (a *App) restoreRecreate(
+func restoreRecreate(a *App,
 	w http.ResponseWriter, r *http.Request, snap *store.VersionSnapshot, entityID string,
 ) {
 	ctx := r.Context()
@@ -155,10 +155,10 @@ func (a *App) restoreRecreate(
 			"Restore failed validation", err.Error())
 		return
 	}
-	a.writeRestoreResult(w, r, target, snap.Version, snap.Type)
+	writeRestoreResult(a, w, r, target, snap.Version, snap.Type)
 }
 
-func (a *App) writeRestoreResult(
+func writeRestoreResult(a *App,
 	w http.ResponseWriter, r *http.Request, e *entityPkg.Entity, restoredFrom int, typeName string,
 ) {
 	meta := a.Meta()

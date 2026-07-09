@@ -62,11 +62,15 @@ type DBTX interface {
 
 // Store is a PostgreSQL-backed store.Store.
 //
-// TODO(TKT-N0IKN9): the exported surface (29) is the mandated store.Store
-// interface, which consumers depend on directly by design. Required-interface
-// exception — tracks the interface size, not accreted public API.
+// TODO(TKT-N0IKN9): the exported surface is the mandated store.Store interface
+// (29 methods) PLUS the optional versioning capabilities pgstore also provides
+// — store.HistoryReader (ListVersions/GetVersion), store.VersionWriter
+// (WriteVersion), and StartVersionSweep — which consumers type-assert. All are
+// interface-mandated methods, not accreted public API; Required-interface
+// exception, tracks the interface size.
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=42
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

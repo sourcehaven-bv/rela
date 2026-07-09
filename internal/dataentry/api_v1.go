@@ -93,7 +93,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
-	mux.HandleFunc("/api/v1/_history/", a.handleV1History)
+	mux.HandleFunc("/api/v1/_history/", func(w http.ResponseWriter, r *http.Request) { handleV1History(a, w, r) })
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)

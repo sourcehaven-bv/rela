@@ -58,7 +58,7 @@ func TestHandleV1History_UnsupportedBackend(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/TKT-1", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1History(rec, req)
+	handleV1History(app, rec, req)
 
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("unsupported backend: got %d, want 501; body=%s", rec.Code, rec.Body.String())
@@ -70,7 +70,7 @@ func TestHandleV1History_InvalidPath(t *testing.T) {
 	// Missing the id segment.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1History(rec, req)
+	handleV1History(app, rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid path: got %d, want 400", rec.Code)
 	}
@@ -91,7 +91,7 @@ func TestAuthorizeHistoryRead_AbsentEntityNoPermissionIs404(t *testing.T) {
 	req = req.WithContext(withReadGate(context.Background(), fakeGate{holdsPermission: false}))
 	rec := httptest.NewRecorder()
 
-	ok := app.authorizeHistoryRead(rec, req, "ticket", "GONE-1")
+	ok := authorizeHistoryRead(app, rec, req, "ticket", "GONE-1")
 	if ok {
 		t.Fatal("authorizeHistoryRead should deny an absent entity when the caller lacks history:read")
 	}
@@ -109,7 +109,7 @@ func TestAuthorizeHistoryRead_AbsentEntityWithPermissionAllowed(t *testing.T) {
 	req = req.WithContext(withReadGate(context.Background(), fakeGate{holdsPermission: true}))
 	rec := httptest.NewRecorder()
 
-	if !app.authorizeHistoryRead(rec, req, "ticket", "GONE-1") {
+	if !authorizeHistoryRead(app, rec, req, "ticket", "GONE-1") {
 		t.Fatalf("history:read holder should be allowed to read deleted-entity history; body=%s", rec.Body.String())
 	}
 }
@@ -156,7 +156,7 @@ func TestHandleV1History_CrossTypeIs404(t *testing.T) {
 func doHistoryGet(app *App, typeName, idPath string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/"+typeName+"/"+idPath, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1History(rec, req)
+	handleV1History(app, rec, req)
 	return rec
 }
 

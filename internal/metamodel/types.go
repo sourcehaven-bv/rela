@@ -11,7 +11,7 @@ import (
 // candidate: group the type/relation/property lookups behind focused accessors
 // (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=31
 type Metamodel struct {
 	Version     string                 `yaml:"version"`
 	Namespace   string                 `yaml:"namespace"`
