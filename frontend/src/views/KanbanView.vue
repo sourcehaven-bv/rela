@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { listEntities, updateEntity, getErrorMessage } from '@/api'
+import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type { Entity, KanbanConfig, KanbanCardField } from '@/types'
@@ -57,12 +57,23 @@ const hasRelationFields = computed(
 // refetch while this view is mounted. The template gates its spinner on
 // `isPending` (no data yet), so refetches — including echoes of this
 // client's own writes — never blank the board.
+// listAllEntities, not listEntities: the board partitions the COMPLETE
+// set by column property, and a single list call is one page (default
+// 25) — treating it as the full set silently dropped page 2+ from the
+// board (BUG-5OAQUG).
 const boardQuery = useQuery({
   key: () => entityKeys.list(kanbanConfig.value?.entity ?? ''),
-  query: () => {
+  // The signal matters more here than on single-fetch queries: when a
+  // refetch supersedes this call (drag-drop settle, SSE echo), it also
+  // cancels the remaining page fetches of the superseded loop.
+  query: ({ signal }) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
-    return listEntities(config.entity, hasRelationFields.value ? { include: '*' } : undefined)
+    return listAllEntities(
+      config.entity,
+      hasRelationFields.value ? { include: '*' } : undefined,
+      signal
+    )
   },
   enabled: () => !!kanbanConfig.value,
 })
@@ -73,6 +84,13 @@ const includedEntities = computed<Record<string, Entity>>(
 )
 const collectionActions = computed(() => boardQuery.data.value?._actions)
 const loading = computed(() => boardQuery.isPending.value)
+
+// has_more on the MERGED response means listAllEntities hit its page cap
+// — the one case where the board is knowingly incomplete. Should never
+// occur in practice (~5,000 entities), but silent truncation is exactly
+// this view's bug class, so it gets a visible banner, not a console line.
+const truncated = computed(() => boardQuery.data.value?.meta.has_more === true)
+const totalCount = computed(() => boardQuery.data.value?.meta.total ?? 0)
 const loadError = computed(() => {
   const err = boardQuery.error.value
   if (!err) return null
@@ -441,6 +459,10 @@ function createNew() {
       </div>
     </div>
 
+    <div v-if="truncated" class="truncation-banner" role="alert">
+      Showing {{ entities.length }} of {{ totalCount }} items — the board is incomplete.
+    </div>
+
     <div v-if="loading" class="loading-state">
       <div class="spinner"/>
       <span>Loading board...</span>
@@ -645,6 +667,16 @@ function createNew() {
   min-width: 120px;
   background: var(--input-bg);
   color: var(--text-color);
+}
+
+.truncation-banner {
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--text-color);
+  font-size: 14px;
 }
 
 .loading-state {
