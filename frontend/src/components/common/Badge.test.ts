@@ -195,4 +195,103 @@ describe('Badge', () => {
       expect(wrapper.find('.badge').classes()).toContain('badge--gray')
     })
   })
+
+  describe('enum labels', () => {
+    // Register an entity type whose `status` property is an inline enum with a
+    // label for in_progress, so getEnumLabel resolves via the property def.
+    function withInlineLabel() {
+      const schemaStore = useSchemaStore()
+      schemaStore.entityTypes = new Map([
+        [
+          'ticket',
+          {
+            label: 'Ticket',
+            properties: {
+              status: {
+                type: 'enum',
+                values: ['in_progress', 'done'],
+                labels: { in_progress: 'In Progress' },
+              },
+            },
+          },
+        ],
+      ]) as never
+      return schemaStore
+    }
+
+    it('renders the label when the metamodel configures one', () => {
+      withInlineLabel()
+      const wrapper = mount(Badge, {
+        props: { value: 'in_progress', property: 'status' },
+      })
+      expect(wrapper.text()).toBe('In Progress')
+    })
+
+    it('suppresses CSS capitalize for a labeled value (author chose the casing)', () => {
+      withInlineLabel()
+      const wrapper = mount(Badge, {
+        props: { value: 'in_progress', property: 'status' },
+      })
+      expect(wrapper.find('.badge').classes()).toContain('badge--labeled')
+    })
+
+    it('keeps color styling keyed on the raw value, not the label', () => {
+      const schemaStore = withInlineLabel()
+      schemaStore.styles = { status: { in_progress: 'badge-orange' } }
+      const wrapper = mount(Badge, {
+        props: { value: 'in_progress', property: 'status' },
+      })
+      // Text is the label; color still resolves from the value key.
+      expect(wrapper.text()).toBe('In Progress')
+      expect(wrapper.find('.badge').classes()).toContain('badge--orange')
+    })
+
+    it('falls back to the raw value (with capitalize) when no label configured', () => {
+      withInlineLabel()
+      const wrapper = mount(Badge, {
+        props: { value: 'done', property: 'status' },
+      })
+      expect(wrapper.text()).toBe('done')
+      // No label → capitalize stays on (badge--labeled absent).
+      expect(wrapper.find('.badge').classes()).not.toContain('badge--labeled')
+    })
+
+    it('resolves labels from a referenced custom type', () => {
+      const schemaStore = useSchemaStore()
+      schemaStore.entityTypes = new Map([
+        [
+          'ticket',
+          { label: 'Ticket', properties: { priority: { type: 'priority_t' } } },
+        ],
+      ]) as never
+      schemaStore.customTypes = new Map([
+        ['priority_t', { values: ['hi'], labels: { hi: 'High' } }],
+      ]) as never
+      const wrapper = mount(Badge, {
+        props: { value: 'hi', property: 'priority' },
+      })
+      expect(wrapper.text()).toBe('High')
+    })
+
+    it('escapes label text (no HTML injection from a metamodel label)', () => {
+      const schemaStore = useSchemaStore()
+      schemaStore.entityTypes = new Map([
+        [
+          'ticket',
+          {
+            label: 'Ticket',
+            properties: {
+              status: { type: 'enum', values: ['x'], labels: { x: '<img src=x>' } },
+            },
+          },
+        ],
+      ]) as never
+      const wrapper = mount(Badge, {
+        props: { value: 'x', property: 'status' },
+      })
+      // Rendered as text, not parsed into an element.
+      expect(wrapper.find('img').exists()).toBe(false)
+      expect(wrapper.text()).toBe('<img src=x>')
+    })
+  })
 })

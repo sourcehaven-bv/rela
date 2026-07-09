@@ -64,6 +64,25 @@ describe('MultiSelectWidget', () => {
     expect(tag.props('disabled')).toBe(true)
     expect(tag.props('optionVerdicts')).toEqual({ a: false })
   })
+
+  it('passes inline enum labels to TagSelect as optionLabels (value stays raw)', () => {
+    const w = mount(MultiSelectWidget, {
+      props: {
+        modelValue: [],
+        mode: 'edit' as const,
+        propertyName: 'status',
+        propertyDef: {
+          type: 'enum',
+          values: ['open', 'in_progress'],
+          labels: { in_progress: 'In Progress' },
+        },
+      },
+      global: { stubs },
+    })
+    const tag = w.findComponent({ name: 'TagSelect' })
+    expect(tag.props('options')).toEqual(['open', 'in_progress'])
+    expect(tag.props('optionLabels')).toEqual({ in_progress: 'In Progress' })
+  })
 })
 
 describe('RruleWidget', () => {

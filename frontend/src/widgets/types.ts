@@ -55,10 +55,14 @@ export interface WidgetProps<T = unknown> {
   // The property's attachment cap (metamodel `max`, default 1). Drives the
   // file widget's mode: replace at 1, add-up-to-max above.
   max?: number
-  // Owning entity identity, supplied to the file widget so it can build
-  // the upload/delete URL in edit mode. Optional — present only on the
-  // file-property edit path; other widgets ignore it.
+  // Owning entity type. Two consumers: the file widget builds the
+  // upload/delete URL from it, and the enum widgets pass it as the
+  // disambiguator for enum-label resolution (getEnumLabel) when the same
+  // property name exists on multiple types. Optional — FieldRenderer forwards
+  // the form's entity type; widgets that don't need it ignore it.
   entityType?: string
+  // Owning entity ID, supplied to the file widget for the upload/delete URL
+  // in edit mode. Optional — present only on the file-property edit path.
   entityId?: string
 }
 

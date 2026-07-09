@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import TagSelect from '@/components/ui/TagSelect.vue'
 import Badge from '@/components/common/Badge.vue'
+import { useSchemaStore } from '@/stores/schema'
 import type { WidgetProps } from './types'
 
 const props = defineProps<WidgetProps>()
@@ -10,7 +11,15 @@ const emit = defineEmits<{
   'update:modelValue': [value: unknown]
 }>()
 
+const schemaStore = useSchemaStore()
+
 const options = computed(() => props.propertyDef?.values || [])
+
+// Display labels keyed by value for the edit-mode dropdown (value stays the
+// wire identity). Shared resolver so all enum pickers agree; see the store.
+const optionLabels = computed<Record<string, string>>(() =>
+  schemaStore.resolveOptionLabels(props.propertyDef, props.propertyName, props.entityType)
+)
 
 const arrayValue = computed(() => {
   if (Array.isArray(props.modelValue)) return props.modelValue.map(String)
@@ -54,6 +63,7 @@ function onUpdate(value: string[]) {
     :placeholder="placeholder || 'Select...'"
     :disabled="disabled"
     :option-verdicts="optionVerdicts"
+    :option-labels="optionLabels"
     @update:model-value="onUpdate"
   />
 </template>

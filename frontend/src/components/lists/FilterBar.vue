@@ -47,10 +47,17 @@ interface ResolvedFilter {
   label: string
   widget: 'select' | 'multi-select' | 'text' | 'relation'
   options: string[]
+  // Display labels keyed by option value (display-only; filter value stays raw).
+  optionLabels: Record<string, string>
   isRelation: boolean
   // relation widgets only:
   relationCandidates?: Entity[]
   relationMode?: 'select' | 'typeahead'
+}
+
+// Resolve the display text for an option value in a filter dropdown.
+function optionText(filter: ResolvedFilter, option: string): string {
+  return filter.optionLabels[option] ?? option
 }
 
 // Candidate entities per relation-filter key, fetched on mount. Keyed by the
@@ -74,6 +81,7 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
       label,
       widget: 'relation',
       options: [],
+      optionLabels: {},
       isRelation: true,
       relationCandidates: candidates,
       relationMode: mode,
@@ -83,13 +91,14 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
   // Property filter
   const propDef = props.entityType?.properties[fc.property || '']
   if (!propDef) {
-    return { key, label, widget: 'text', options: [], isRelation: false }
+    return { key, label, widget: 'text', options: [], optionLabels: {}, isRelation: false }
   }
 
   const options = propDef.values || []
   const widget = resolveWidgetType(propDef, options)
+  const optionLabels = schemaStore.resolveOptionLabels(propDef, fc.property || '', props.entityType)
 
-  return { key, label, widget, options, isRelation: false }
+  return { key, label, widget, options, optionLabels, isRelation: false }
 }
 
 // Source entity types for a relation filter's option candidates. Incoming
@@ -324,7 +333,7 @@ onBeforeUnmount(() => {
         >
           <option value="">All</option>
           <option v-for="option in filter.options" :key="option" :value="option">
-            {{ option }}
+            {{ optionText(filter, option) }}
           </option>
         </select>
 
@@ -342,7 +351,7 @@ onBeforeUnmount(() => {
             :value="option"
             :selected="getMultiSelectValues(filter.key).includes(option)"
           >
-            {{ option }}
+            {{ optionText(filter, option) }}
           </option>
         </select>
 

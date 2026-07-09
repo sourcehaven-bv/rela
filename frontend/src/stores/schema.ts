@@ -5,6 +5,7 @@ import { registerEntityPlurals } from '@/api/entities'
 import { getErrorMessage } from '@/api/errors'
 import type {
   EntityType,
+  PropertyDef,
   RelationType,
   CustomType,
   FormConfig,
@@ -80,6 +81,88 @@ export const useSchemaStore = defineStore('schema', () => {
 
   const entityTypeList = computed(() => Array.from(entityTypes.value.entries()))
   const relationTypeList = computed(() => Array.from(relationTypes.value.entries()))
+
+  // Resolve the enum labels map for a property. A property may either name a
+  // custom type (labels live on the custom type) or declare an inline enum
+  // (labels live on the property def). The `entityType` disambiguator may be a
+  // type-name string OR a resolved EntityType object (callers hold one or the
+  // other); when given we look up that type's property first.
+  //
+  // When no entityType is given (e.g. the cross-type search filter, which has
+  // no single owning type — see AdHocFilterMenu's documented union) we scan
+  // entity then relation types and return the FIRST matching property name that
+  // has labels. That is a deliberate first-wins tie-break: if two types define
+  // labels for the same property name with different text, the first-inserted
+  // type wins. Labels are display-only, so this is acceptable for v1; callers
+  // that know their type should pass it to avoid the ambiguity. (Note this is a
+  // per-type-def scan, NOT the flat server-authored `styles` map — the two are
+  // separate mechanisms that merely happen to both collapse by property name.)
+  function labelsForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): Record<string, string> | undefined {
+    const fromDef = (def?: PropertyDef) => {
+      if (!def) return undefined
+      if (def.labels) return def.labels
+      // Property references a custom type → labels live on that custom type.
+      const ct = def.type ? customTypes.value.get(def.type) : undefined
+      return ct?.labels
+    }
+    if (entityType) {
+      const et = typeof entityType === 'string' ? entityTypes.value.get(entityType) : entityType
+      const hit = fromDef(et?.properties?.[property])
+      if (hit) return hit
+    }
+    for (const [, def] of entityTypes.value) {
+      const hit = fromDef(def.properties?.[property])
+      if (hit) return hit
+    }
+    for (const [, def] of relationTypes.value) {
+      const hit = fromDef(def.properties?.[property])
+      if (hit) return hit
+    }
+    return undefined
+  }
+
+  // Return the display label for an enum value, or undefined when no label is
+  // configured (caller falls back to the raw value). Display-only: the value
+  // stays the wire identity.
+  const getEnumLabel = computed(
+    () =>
+      (
+        value: string,
+        property?: string,
+        entityType?: string | EntityType,
+      ): string | undefined => {
+        if (!property) return undefined
+        return labelsForProperty(property, entityType)?.[value]
+      },
+  )
+
+  // Resolve the value→label map to feed an enum picker (select / multi-select /
+  // filter dropdown). Single source of truth so the widgets and filter bars
+  // don't each reimplement the inline-vs-custom-type resolution and drift. A
+  // property def's own `labels` (populated by the server for both inline enums
+  // and custom-type-backed properties) wins; otherwise fall back to a
+  // schema-store lookup by (property, entityType) for callers that only hold a
+  // property name. Values without a label are omitted (caller shows them raw).
+  const resolveOptionLabels = computed(
+    () =>
+      (
+        propertyDef: PropertyDef | undefined,
+        property: string,
+        entityType?: string | EntityType,
+      ): Record<string, string> => {
+        const inline = propertyDef?.labels
+        if (inline && Object.keys(inline).length > 0) return inline
+        const out: Record<string, string> = {}
+        for (const value of propertyDef?.values ?? []) {
+          const label = labelsForProperty(property, entityType)?.[value]
+          if (label !== undefined) out[value] = label
+        }
+        return out
+      },
+  )
 
   // Actions
   async function load(): Promise<void> {
@@ -192,6 +275,8 @@ export const useSchemaStore = defineStore('schema', () => {
     getView,
     getKanban,
     getAction,
+    getEnumLabel,
+    resolveOptionLabels,
     entityTypeList,
     relationTypeList,
 

@@ -146,6 +146,17 @@ const valueOptions = computed((): string[] => {
   return []
 })
 
+// Display label for a value option in the picker. Prefers the selected
+// property's own labels; in search mode falls back to a cross-type lookup via
+// the schema store. Value stays the filter identity — labels are display-only.
+function valueLabel(value: string): string {
+  const sel = selected.value
+  if (!sel) return value
+  const inline = sel.propertyDef?.labels?.[value]
+  if (inline !== undefined) return inline
+  return schemaStore.getEnumLabel(value, sel.property) ?? value
+}
+
 function titleCase(str: string): string {
   return str.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
@@ -300,7 +311,7 @@ defineExpose({ open: openMenu, close })
             @click="commit(value)"
             @mouseenter="menuIndex = index"
           >
-            {{ value }}
+            {{ valueLabel(value) }}
           </div>
         </div>
 

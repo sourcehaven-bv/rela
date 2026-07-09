@@ -377,6 +377,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"required":    BooleanSchema(),
 			"default":     StringSchema(),
 			"values":      ArraySchema(StringSchema()),
+			"labels":      {Type: "object", AdditionalProperties: StringSchema()},
 			"description": StringSchema(),
 			"list":        BooleanSchema(),
 		},
@@ -400,6 +401,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 		Type: "object",
 		Properties: map[string]*Schema{
 			"values":  ArraySchema(StringSchema()),
+			"labels":  {Type: "object", AdditionalProperties: StringSchema()},
 			"default": StringSchema(),
 		},
 	}

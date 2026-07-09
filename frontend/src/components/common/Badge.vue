@@ -39,11 +39,23 @@ const badgeClass = computed(() => {
   }
   return 'badge--gray'
 })
+
+// The metamodel-authored display label for this enum value, if any. Color
+// styling above still keys on the raw `value` (the wire identity); only the
+// text shown changes. When no label is configured we fall back to the raw
+// value and let CSS `capitalize` prettify it as before.
+const label = computed(() =>
+  schemaStore.getEnumLabel(props.value, props.property, props.entityType),
+)
+const displayText = computed(() => label.value ?? props.value)
 </script>
 
 <template>
-  <span class="badge" :class="badgeClass">
-    {{ value }}
+  <!-- When the metamodel supplies a label the author already chose the display
+       form, so we suppress CSS capitalize; label text is interpolated (escaped),
+       never v-html. -->
+  <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined }]">
+    {{ displayText }}
   </span>
 </template>
 
@@ -56,6 +68,19 @@ const badgeClass = computed(() => {
   font-size: 12px;
   font-weight: 500;
   text-transform: capitalize;
+}
+
+/* A metamodel-authored label is already in its intended casing; don't let
+   capitalize override the author's choice (e.g. "iOS", "high priority").
+   Labels can also be arbitrarily long (unlike snake_case values), so guard
+   them from blowing out list columns / kanban cards — scoped to labeled
+   badges only, leaving raw-value badges rendered exactly as before. */
+.badge--labeled {
+  text-transform: none;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .badge--blue {
