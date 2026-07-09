@@ -43,6 +43,12 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/history/:type/:id',
+    name: 'history',
+    component: () => import('@/views/HistoryView.vue'),
+    props: true,
+  },
+  {
     path: '/kanban/:id',
     name: 'kanban',
     component: () => import('@/views/KanbanView.vue'),

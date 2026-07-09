@@ -35,7 +35,6 @@ import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
-import HistoryPanel from '@/components/entity/HistoryPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
@@ -74,6 +73,10 @@ const commands = ref<Command[]>([])
 const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
+
+function openHistory() {
+  router.push(`/history/${props.entityType}/${props.entityId}`)
+}
 const contentRef = ref<HTMLElement | null>(null)
 
 // Computed
@@ -724,6 +727,9 @@ watch(
           >
             Edit <kbd>E</kbd>
           </button>
+          <button class="btn btn-secondary" @click="openHistory">
+            History
+          </button>
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
@@ -1136,15 +1142,6 @@ watch(
       <!-- External documents (renders only when configured for this type). -->
       <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
 
-      <!-- Version history (renders as unavailable on non-postgres backends). -->
-      <HistoryPanel
-        :entity-type="entityType"
-        :entity-id="entityId"
-        :current-content="entry?.content ?? ''"
-        :current-properties="entry?.properties ?? {}"
-        :can-restore="canUpdate"
-        @restored="loadView"
-      />
 
       <CommandModal ref="commandModalRef" :entity-id="entityId" />
     </template>
