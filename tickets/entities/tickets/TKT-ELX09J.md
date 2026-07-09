@@ -5,7 +5,7 @@ title: Apply whitelist-vs-struct parity tests to dataentryconfig + acl loaders
 kind: test
 priority: low
 effort: xs
-status: backlog
+status: done
 ---
 
 ## Problem
