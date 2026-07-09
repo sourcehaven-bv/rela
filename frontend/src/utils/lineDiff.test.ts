@@ -78,7 +78,7 @@ describe('propertyDiff', () => {
   it('reports add, del, and change sorted by key', () => {
     const changes = propertyDiff(
       { kept: 1, removed: 2, changed: 'old' },
-      { kept: 1, added: 3, changed: 'new' },
+      { kept: 1, added: 3, changed: 'new' }
     )
     expect(changes).toEqual([
       { key: 'added', op: 'add', after: 3 },
@@ -95,7 +95,7 @@ describe('propertyDiff', () => {
   it('does not report a change for object values that differ only in key order', () => {
     const changes = propertyDiff(
       { meta: { a: 1, b: 2 } },
-      { meta: { b: 2, a: 1 } }, // same content, reordered keys
+      { meta: { b: 2, a: 1 } } // same content, reordered keys
     )
     expect(changes).toEqual([])
   })

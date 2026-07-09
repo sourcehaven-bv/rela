@@ -155,7 +155,7 @@ const renderedEntryContent = computed(() =>
         refResolver: refResolver.value,
         interactive: true,
       })
-    : '',
+    : ''
 )
 
 // Re-renders re-process mermaid diagrams inside the content body. Checkbox
@@ -174,7 +174,7 @@ watch(
       renderPlantUMLDiagrams(contentRef.value, schemaStore.app?.plantuml_server_url)
     }
   },
-  { flush: 'post' },
+  { flush: 'post' }
 )
 
 // Content-only useAutoSave instance. EntityDetail does not own a form
@@ -215,7 +215,7 @@ const contentAutoSave = useAutoSave({
     const pinned = pinEntityForFlush.value
     if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
     const nextSections = view.sections.map((s) =>
-      isEntryContentSection(s) ? { ...s, content: next } : s,
+      isEntryContentSection(s) ? { ...s, content: next } : s
     )
     viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
   },
@@ -259,7 +259,7 @@ function handleCheckboxToggle(index: number) {
   // same index would each toggle the unchanged server content and
   // net to zero on the next PATCH.
   const nextSections = view.sections.map((s) =>
-    isEntryContentSection(s) ? { ...s, content: newContent } : s,
+    isEntryContentSection(s) ? { ...s, content: newContent } : s
   )
   viewData.value = { ...view, entry: { ...current, content: newContent }, sections: nextSections }
   contentAutoSave.scheduleContentSave(newContent)
@@ -320,7 +320,7 @@ async function loadCommands() {
   try {
     commands.value = await getCommands(
       { pageType: 'entity', entityType: props.entityType },
-      localAbort.signal,
+      localAbort.signal
     )
   } catch (err) {
     if (localAbort.signal.aborted) return
@@ -383,7 +383,7 @@ async function requestDelete() {
         await entitiesStore.remove(props.entityType, props.entityId)
       },
       'Failed to delete entity',
-      uiStore,
+      uiStore
     ),
   })
   if (!ok) return
@@ -431,8 +431,7 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
     // property name when available and fall back to a slugged label so
     // older shapes still render.
     const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
-    const def =
-      entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
+    const def = entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
     return {
       name,
       label: field.label,
@@ -473,7 +472,10 @@ function fieldRowsFor(ent: { fields?: ViewSectionField[] }): FieldRow[] {
 // Memoize per (section reference, entry reference) so the SectionEditForm's
 // `watch(() => props.fields)` only fires when the underlying section or
 // entry identity changes — not on every reactive tick (RR-FB2D NEW-4).
-const sectionEditFieldsCache = new WeakMap<ViewSection, { entry: Entity; fields: SectionEditField[] }>()
+const sectionEditFieldsCache = new WeakMap<
+  ViewSection,
+  { entry: Entity; fields: SectionEditField[] }
+>()
 function memoBuildSectionEditFields(section: ViewSection, ent: Entity): SectionEditField[] {
   const cached = sectionEditFieldsCache.get(section)
   if (cached && cached.entry === ent) return cached.fields
@@ -513,7 +515,7 @@ let pendingRefetch = false
 function handlePropertyApplied(
   prop: string,
   value: unknown,
-  applyOwner: { type: string; id: string },
+  applyOwner: { type: string; id: string }
 ) {
   const view = viewData.value
   const nextEntry = applyPropertyToEntry(view?.entry ?? null, prop, value, applyOwner)
@@ -595,13 +597,13 @@ watch(
     }
     rowIndex.value = next
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 function handleRowPropertyApplied(
   prop: string,
   value: unknown,
-  applyOwner: { type: string; id: string },
+  applyOwner: { type: string; id: string }
 ) {
   const view = viewData.value
   if (!view) return
@@ -670,14 +672,14 @@ watch(
       if (pinEntityForFlush.value === fireWith) pinEntityForFlush.value = null
     })
     loadView()
-  },
+  }
 )
 </script>
 
 <template>
   <div class="entity-detail">
     <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
+      <div class="spinner" />
       <span>Loading...</span>
     </div>
 
@@ -727,9 +729,7 @@ watch(
           >
             Edit <kbd>E</kbd>
           </button>
-          <button class="btn btn-secondary" @click="openHistory">
-            History
-          </button>
+          <button class="btn btn-secondary" @click="openHistory">History</button>
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
@@ -744,10 +744,24 @@ watch(
           >
             Edit
           </button>
-          <button v-if="canDelete" class="btn btn-danger mobile-delete-btn" aria-label="Delete" @click="requestDelete">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+          <button
+            v-if="canDelete"
+            class="btn btn-danger mobile-delete-btn"
+            aria-label="Delete"
+            @click="requestDelete"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
             </svg>
           </button>
           <div v-if="commands.length" class="overflow-menu-wrapper">
@@ -780,15 +794,15 @@ watch(
         <div>
           <strong>This entity is git-crypt encrypted.</strong>
           <p>
-            The file is stored as ciphertext and cannot be read with the
-            current configuration. Run
+            The file is stored as ciphertext and cannot be read with the current configuration. Run
             <code>git-crypt unlock</code>
             in the project root to decrypt it, then reload this page.
             <a
               href="https://github.com/AGWA/git-crypt#readme"
               target="_blank"
               rel="noopener noreferrer"
-            >Learn more about git-crypt.</a>
+              >Learn more about git-crypt.</a
+            >
           </p>
         </div>
       </aside>
@@ -821,10 +835,9 @@ watch(
             class="section-heading"
           >
             {{ section.heading }}
-            <span
-              v-if="section === entryContentSection && checkboxStats"
-              class="cb-stats"
-            >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span>
+            <span v-if="section === entryContentSection && checkboxStats" class="cb-stats"
+              >({{ checkboxStats.checked }}/{{ checkboxStats.total }})</span
+            >
           </h2>
 
           <div v-if="section.isEmpty" class="section-empty">
@@ -840,7 +853,11 @@ watch(
             navigation cleanly (RR-FB1D + RR-FB2A).
           -->
           <SectionEditForm
-            v-else-if="section.display === 'properties' && entry && sectionShouldRouteToInlineEdit(section, entry)"
+            v-else-if="
+              section.display === 'properties' &&
+              entry &&
+              sectionShouldRouteToInlineEdit(section, entry)
+            "
             :key="`${entry.type}/${entry.id}`"
             :heading="section.heading"
             :entity-type="entry.type"
@@ -864,18 +881,31 @@ watch(
                the same name into an array per iteration. -->
           <div
             v-else-if="section === entryContentSection"
-            :ref="(el) => { contentRef = el as HTMLElement | null }"
+            :ref="
+              (el) => {
+                contentRef = el as HTMLElement | null
+              }
+            "
             class="content-body md-body"
             @click="contentClick"
             v-html="renderedEntryContent"
           />
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
-          <div v-else-if="section.display === 'content' && section.hasContent" class="content-block">
-            <div class="markdown-content md-body" v-html="renderMarkdown(section.content || '', refResolver)"/>
+          <div
+            v-else-if="section.display === 'content' && section.hasContent"
+            class="content-block"
+          >
+            <div
+              class="markdown-content md-body"
+              v-html="renderMarkdown(section.content || '', refResolver)"
+            />
           </div>
 
-          <div v-else-if="section.display === 'content' && section.entities?.length" class="content-cards">
+          <div
+            v-else-if="section.display === 'content' && section.entities?.length"
+            class="content-cards"
+          >
             <article
               v-for="ent in section.entities"
               :key="ent.id"
@@ -887,7 +917,11 @@ watch(
                 <span class="entity-title">{{ ent.title }}</span>
                 <span class="entity-id">{{ ent.id }}</span>
               </header>
-              <div v-if="ent.hasContent" class="markdown-content md-body" v-html="renderMarkdown(ent.content || '', refResolver)"/>
+              <div
+                v-if="ent.hasContent"
+                class="markdown-content md-body"
+                v-html="renderMarkdown(ent.content || '', refResolver)"
+              />
             </article>
           </div>
 
@@ -941,11 +975,7 @@ watch(
                 </template>
               </SectionEditForm>
               <div v-else-if="ent.fields?.length" class="card-fields">
-                <div
-                  v-for="row in fieldRowsFor(ent)"
-                  :key="row.field.label"
-                  class="card-field"
-                >
+                <div v-for="row in fieldRowsFor(ent)" :key="row.field.label" class="card-field">
                   <span class="field-label">{{ row.field.label }}:</span>
                   <!-- The wire-level inaccessibleReason map is keyed on
                        the entry's properties, not the per-entity card
@@ -1028,7 +1058,7 @@ watch(
                       <th v-for="col in section.columns" :key="col.property || col.relation">
                         {{ col.label || col.property || col.relation }}
                       </th>
-                      <th class="actions-col"/>
+                      <th class="actions-col" />
                     </tr>
                   </thead>
                   <tbody>
@@ -1037,10 +1067,15 @@ watch(
                         <a
                           v-if="cell.link"
                           :href="cell.link"
-                          @click.prevent="navigateToEntity(
-                            { id: cell.entityId || row.entityId, type: cell.entityType || row.entityType },
-                            cell.link,
-                          )"
+                          @click.prevent="
+                            navigateToEntity(
+                              {
+                                id: cell.entityId || row.entityId,
+                                type: cell.entityType || row.entityType,
+                              },
+                              cell.link
+                            )
+                          "
                         >
                           <template v-for="(val, vidx) in cell.values" :key="vidx">
                             <Badge
@@ -1086,7 +1121,7 @@ watch(
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
-                  <th class="actions-col"/>
+                  <th class="actions-col" />
                 </tr>
               </thead>
               <tbody>
@@ -1095,10 +1130,15 @@ watch(
                     <a
                       v-if="cell.link"
                       :href="cell.link"
-                      @click.prevent="navigateToEntity(
-                        { id: cell.entityId || row.entityId, type: cell.entityType || row.entityType },
-                        cell.link,
-                      )"
+                      @click.prevent="
+                        navigateToEntity(
+                          {
+                            id: cell.entityId || row.entityId,
+                            type: cell.entityType || row.entityType,
+                          },
+                          cell.link
+                        )
+                      "
                     >
                       <template v-for="(val, vidx) in cell.values" :key="vidx">
                         <Badge
@@ -1141,7 +1181,6 @@ watch(
 
       <!-- External documents (renders only when configured for this type). -->
       <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
-
 
       <CommandModal ref="commandModalRef" :entity-id="entityId" />
     </template>

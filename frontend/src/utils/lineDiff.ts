@@ -123,7 +123,7 @@ function stableStringify(v: unknown): string {
  */
 export function propertyDiff(
   before: Record<string, unknown>,
-  after: Record<string, unknown>,
+  after: Record<string, unknown>
 ): PropertyChange[] {
   const keys = new Set<string>([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])
   const changes: PropertyChange[] = []

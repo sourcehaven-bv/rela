@@ -40,7 +40,7 @@ interface RestoreResponse {
  */
 export async function listVersions(entityType: string, entityId: string): Promise<VersionMeta[]> {
   const resp = await api.get<TimelineResponse>(
-    `/_history/${entityType}/${encodeURIComponent(entityId)}`,
+    `/_history/${entityType}/${encodeURIComponent(entityId)}`
   )
   return resp.versions
 }
@@ -49,10 +49,10 @@ export async function listVersions(entityType: string, entityId: string): Promis
 export async function getVersion(
   entityType: string,
   entityId: string,
-  version: number,
+  version: number
 ): Promise<VersionSnapshot> {
   return api.get<VersionSnapshot>(
-    `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}`,
+    `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}`
   )
 }
 
@@ -64,9 +64,9 @@ export async function getVersion(
 export async function restoreVersion(
   entityType: string,
   entityId: string,
-  version: number,
+  version: number
 ): Promise<RestoreResponse> {
   return api.post<RestoreResponse>(
-    `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}/restore`,
+    `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}/restore`
   )
 }

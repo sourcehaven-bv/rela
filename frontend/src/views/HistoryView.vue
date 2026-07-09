@@ -37,7 +37,7 @@ const restoring = ref(false)
 
 // The timeline highlights the base selection (the row the user is "on").
 const selectedVersion = computed<number | null>(() =>
-  typeof baseSel.value === 'number' ? baseSel.value : null,
+  typeof baseSel.value === 'number' ? baseSel.value : null
 )
 
 function sideLabel(s: Side): string {
@@ -101,7 +101,9 @@ async function load() {
 
 // sideState resolves a comparison side to its {content, properties}: the live
 // entity for 'current', or a fetched snapshot for a version ordinal.
-async function sideState(s: Side): Promise<{ content: string; properties: Record<string, unknown> }> {
+async function sideState(
+  s: Side
+): Promise<{ content: string; properties: Record<string, unknown> }> {
   if (s === 'current') {
     return {
       content: current.value?.content ?? '',
@@ -126,7 +128,10 @@ let recomputeSeq = 0
 async function recompute() {
   const seq = ++recomputeSeq
   try {
-    const [before, after] = await Promise.all([sideState(baseSel.value), sideState(targetSel.value)])
+    const [before, after] = await Promise.all([
+      sideState(baseSel.value),
+      sideState(targetSel.value),
+    ])
     if (seq !== recomputeSeq) return // a newer recompute superseded this one
     contentDiff.value = lineDiff(before.content, after.content)
     propDiff.value = propertyDiff(before.properties, after.properties)
@@ -203,9 +208,7 @@ onMounted(load)
       Version history is not available for this deployment.
     </div>
     <div v-else-if="error" class="error-state">{{ error }}</div>
-    <div v-else-if="versions.length === 0" class="loading-state">
-      No versions recorded yet.
-    </div>
+    <div v-else-if="versions.length === 0" class="loading-state">No versions recorded yet.</div>
 
     <div v-else class="history-layout">
       <!-- Timeline -->
@@ -307,7 +310,11 @@ onMounted(load)
         </div>
 
         <p v-if="!propDiff.length && !hasContentChanges" class="loading-state">
-          {{ baseSel === targetSel ? 'Select two different sides to compare.' : 'These two are identical.' }}
+          {{
+            baseSel === targetSel
+              ? 'Select two different sides to compare.'
+              : 'These two are identical.'
+          }}
         </p>
       </section>
     </div>
