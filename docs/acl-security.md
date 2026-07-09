@@ -589,6 +589,18 @@ content later edited out. If you redact content for compliance, understand that
 older versions still hold it; a dedicated version-purge primitive is the
 intended follow-up for hard removal.
 
+**Field-visibility caveat for *conditional* `visible:` grants.** A historical
+snapshot is field-redacted against the **current** ACL context (the live
+relations and roles), not the context as-of the version. For an unconditional
+per-type `visible:` grant this is exactly correct. But if a grant is
+*conditioned* — on a relation (`visible: has_edge(...)`) or on another property
+value — the verdict computed for a snapshot can differ from the entity's verdict
+at write time, and for a **deleted** entity (whose conferring relations/roles no
+longer resolve) it can under-redact. Until the visibility verdict is frozen at
+capture time (a tracked follow-up), a policy that hides fields via *conditional*
+grants should not rely on history-read redaction for those fields. Unconditional
+per-type `visible:` grants are unaffected.
+
 ## Where to read next
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.

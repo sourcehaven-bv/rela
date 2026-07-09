@@ -45,9 +45,21 @@ func (a *App) restoreHistoryVersion(
 		writeGateError(w, r, err)
 		return
 	}
+	// The snapshot's type must match the URL type (see the cross-type leak note
+	// in history_handler.authorizeHistoryRead). A mismatch is an
+	// indistinguishable 404 — the caller must not learn that an entity of a
+	// different type holds this id.
+	if snap.Type != typeName {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
 
 	live, isLive := a.reader.getEntity(ctx, entityID)
 	if isLive {
+		if live.Type != typeName {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
 		a.restoreOntoLive(w, r, live, snap, typeName)
 		return
 	}
@@ -108,9 +120,13 @@ func (a *App) restoreOntoLive(
 	a.writeRestoreResult(w, r, target, snap.Version, typeName)
 }
 
-// restoreRecreate re-creates a deleted entity from the snapshot. Create has no
-// per-field write gate by design (create implies authoring the whole entity),
-// so this is a type-level-authorized create through the entitymanager.
+// restoreRecreate re-creates a deleted entity from the snapshot. Unlike a
+// normal create — where the author types the values — a restore's values come
+// from a historical snapshot the principal may never have been allowed to
+// write. So every snapshot property is gated through validateFieldWrite (as if
+// it were a PATCH setting that field), exactly like restoreOntoLive: otherwise
+// resurrection would launder a forbidden field write (RR-LH9RJ8). Type-level
+// create authorization + validation still run in the entitymanager.
 func (a *App) restoreRecreate(
 	w http.ResponseWriter, r *http.Request, snap *store.VersionSnapshot, entityID string,
 ) {
@@ -118,6 +134,13 @@ func (a *App) restoreRecreate(
 	target := entityPkg.New(entityID, snap.Type)
 	target.Content = snap.Content
 	target.Properties = cloneProps(snap.Properties)
+
+	// Gate every snapshot property as a field write against the (would-be)
+	// entity, so a field the principal cannot write blocks the resurrection.
+	if denial := a.affordances.validateFieldWrite(ctx, target, target.Properties, nil); denial != nil {
+		a.denyAffordance(ctx, w, target, *denial)
+		return
+	}
 
 	if _, err := a.entityManager.CreateEntity(ctx, target, entityPkg.CreateOptions{}); err != nil {
 		if writeForbiddenIfACLDenied(w, err) {

@@ -20,7 +20,7 @@ import (
 //
 // Security (design-review findings):
 //   - A LIVE entity's history is gated by the SAME read verdict as reading the
-//     entity (getVisible / gateReadOrNotFound), so a hidden-or-nonexistent id
+//     entity (getEntity + type check + gateReadOrNotFound), so a hidden-or-nonexistent id
 //     returns an indistinguishable 404 (RR-KDXGYK / RR-NGMI).
 //   - A DELETED entity has no per-entity verdict to evaluate (its conferring
 //     relations are gone), so its history requires the global acl.PermHistoryRead
@@ -89,20 +89,36 @@ func (a *App) handleV1History(w http.ResponseWriter, r *http.Request) {
 
 // authorizeHistoryRead returns true if the caller may read this entity's
 // history, writing the appropriate (indistinguishable-404) response otherwise.
+//
+// The URL {type} is attacker-controlled and the store keys history by ID ONLY,
+// so the type MUST be checked against the entity's real type — otherwise a
+// principal denied type A but allowed type B could request /_history/B/<A-id>
+// and read A's history under B's (permissive) read verdict (a confused-deputy
+// cross-type leak). The live GET handler makes the same check (entity.Type !=
+// typeName ⇒ 404); the version-read/restore paths additionally verify the
+// SNAPSHOT's type matches (see verifySnapshotType), so a deleted entity of a
+// mismatched type is a 404 too.
 func (a *App) authorizeHistoryRead(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool {
 	ctx := r.Context()
 	gate := readGateFromContext(ctx)
 
 	// Live entity: gate exactly as a GET would (PermitsRead), so a hidden or
-	// nonexistent id is an indistinguishable 404.
-	_, found := a.reader.getEntity(ctx, entityID)
-	if found {
+	// nonexistent id is an indistinguishable 404. A type mismatch is ALSO a 404
+	// (indistinguishable), so the URL type can't be used to borrow another
+	// type's read verdict.
+	if live, found := a.reader.getEntity(ctx, entityID); found {
+		if live.Type != typeName {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return false
+		}
 		return a.gateReadOrNotFound(w, r, typeName, entityID)
 	}
 
 	// Not live: either genuinely absent, or deleted-with-surviving-history.
 	// Reading a deleted entity's history requires the global permission; a
 	// non-holder gets the SAME 404 as a nonexistent id (no existence oracle).
+	// The deleted entity's type is verified against the URL when a snapshot is
+	// read (verifySnapshotType); the timeline endpoint exposes only metadata.
 	if !gate.HoldsPermission(ctx, acl.PermHistoryRead) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return false
@@ -163,13 +179,27 @@ func (a *App) serveHistoryVersion(
 		writeGateError(w, r, err)
 		return
 	}
+	// The snapshot's type must match the URL type — otherwise a deleted entity
+	// of type A could be read via /_history/B/<A-id> under B's read verdict
+	// (the cross-type leak, see authorizeHistoryRead). Mismatch → indistinguishable 404.
+	if snap.Type != typeName {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
 
 	// Reconstruct the entity as-of this version and route it through the
 	// serializer so field-level redaction (stripHiddenProperties) applies — a
 	// raw snapshot would leak `visible:`-denied properties (RR-YDMJV7).
+	//
+	// KNOWN LIMITATION (RR-TPATBK): redaction runs against the LIVE ACL context
+	// (relations, roles), not the context as-of the version. For unconditional
+	// per-type `visible:` grants this is exactly correct; for relation- or
+	// property-CONDITIONED grants a deleted entity's snapshot may under-redact.
+	// The sound fix is to freeze the visibility verdict at capture time (like
+	// the stored schema projection) — tracked as a follow-up.
 	snapEntity := entityPkg.New(entityID, snap.Type)
 	snapEntity.Content = snap.Content
-	snapEntity.Properties = snap.Properties
+	snapEntity.Properties = cloneProps(snap.Properties) // N1: don't alias the snapshot map
 	meta := a.Meta()
 	plural := typeName
 	if def, ok := meta.GetEntityDef(snap.Type); ok {
