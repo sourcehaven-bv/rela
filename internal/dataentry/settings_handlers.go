@@ -253,7 +253,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 		AllRelations:  allRelations,
 		EntityTypes:   s.Meta.EntityTypes(),
 	}
-	data.LogoURL = s.LogoURL()
+	data.LogoURL = a.logo.URL()
 
 	writeJSON(w, data)
 }

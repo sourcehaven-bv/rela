@@ -37,15 +37,15 @@ func (a *App) handleAPIThemeLogo(w http.ResponseWriter, r *http.Request) {
 // SVG can't be coerced into a script-execution context, even on direct
 // navigation, and so cache-busting works via the URL alone.
 func (a *App) handleAPIGetThemeLogo(w http.ResponseWriter, _ *http.Request) {
-	s := a.State()
-	if s.UserLogoExt == "" || len(s.UserLogoBytes) == 0 {
+	logoBytes, logoExt, _ := a.logo.Get()
+	if logoExt == "" || len(logoBytes) == 0 {
 		writeJSONError(w, http.StatusNotFound, "no logo set")
 		return
 	}
-	ct := logoContentType(s.UserLogoExt)
+	ct := logoContentType(logoExt)
 	if ct == "" {
-		// Should never happen — saveUserLogo validates the extension
-		// before persisting, and loadUserLogo treats unknown values as
+		// Should never happen — logoStore.Save validates the extension
+		// before persisting, and its load treats unknown values as
 		// "not set". Treat as a server-side bug rather than serving
 		// bytes with no Content-Type.
 		writeJSONError(w, http.StatusInternalServerError, "logo has unknown extension")
@@ -62,12 +62,12 @@ func (a *App) handleAPIGetThemeLogo(w http.ResponseWriter, _ *http.Request) {
 	// The URL contains a content hash — any update produces a different
 	// URL, so the cached response can never go stale.
 	h.Set("Cache-Control", "public, max-age=86400, immutable")
-	_, _ = w.Write(s.UserLogoBytes)
+	_, _ = w.Write(logoBytes)
 }
 
-// handleAPIPutThemeLogo accepts a multipart upload, validates it, and
-// persists the bytes + extension under writeMu via mutateState so the
-// AppState snapshot is coherent for concurrent readers.
+// handleAPIPutThemeLogo accepts a multipart upload, validates it, and persists
+// the bytes + extension via the self-synchronized logo store, which publishes
+// the new bytes atomically for concurrent readers.
 func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLogoUploadBytes)
 
@@ -117,31 +117,14 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := hashLogoBytes(bytes)
-
-	var saveErr error
-	ctx := r.Context()
-	a.mutateState(func(s *AppState) {
-		if err := a.userState.saveUserLogo(ctx, bytes, ext); err != nil {
-			// On failure the snapshot copy is left untouched and
-			// mutateState republishes a bytewise-identical pointer.
-			// Cheap (one struct copy) and keeps the path simple — do
-			// not "optimize" by skipping the publish.
-			saveErr = err
-			return
-		}
-		s.UserLogoBytes = bytes
-		s.UserLogoExt = ext
-		s.UserLogoHash = hash
-	})
-	if saveErr != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+saveErr.Error())
+	if err := a.logo.Save(r.Context(), bytes, ext); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+err.Error())
 		return
 	}
 
 	writeJSON(w, map[string]any{
 		"ok":      true,
-		"logoUrl": logoURLForHash(hash),
+		"logoUrl": logoURLForHash(hashLogoBytes(bytes)),
 	})
 }
 
@@ -150,19 +133,8 @@ func (a *App) handleAPIPutThemeLogo(w http.ResponseWriter, r *http.Request) {
 // idempotent), so callers that don't track current logo state can just
 // hit the endpoint.
 func (a *App) handleAPIDeleteThemeLogo(w http.ResponseWriter, r *http.Request) {
-	var deleteErr error
-	ctx := r.Context()
-	a.mutateState(func(s *AppState) {
-		if err := a.userState.deleteUserLogo(ctx); err != nil {
-			deleteErr = err
-			return
-		}
-		s.UserLogoBytes = nil
-		s.UserLogoExt = ""
-		s.UserLogoHash = ""
-	})
-	if deleteErr != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to delete logo: "+deleteErr.Error())
+	if err := a.logo.Delete(r.Context()); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to delete logo: "+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

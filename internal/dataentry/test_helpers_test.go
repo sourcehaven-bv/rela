@@ -138,6 +138,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
 	app.userState = userStateStore{kv: svc.State()}
+	// logo store over the same kv; fresh fixtures have no logo on disk so the
+	// load can't error (a nil-return matches production's clean-boot path).
+	app.logo, _ = newLogoStore(svc.State())
 	app.acl = svc.ACL()
 	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents

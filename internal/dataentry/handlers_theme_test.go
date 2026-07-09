@@ -104,16 +104,16 @@ func TestThemeLogo_RoundTrip(t *testing.T) {
 		t.Errorf("expected hashed URL, got %q", put.LogoURL)
 	}
 
-	// State should reflect the upload.
-	s := app.State()
-	if s.UserLogoExt != "png" {
-		t.Errorf("expected ext=png, got %q", s.UserLogoExt)
+	// The logo store should reflect the upload.
+	gotBytes, gotExt, gotHash := app.logo.Get()
+	if gotExt != "png" {
+		t.Errorf("expected ext=png, got %q", gotExt)
 	}
-	if !bytes.Equal(s.UserLogoBytes, pngBytes) {
-		t.Error("UserLogoBytes does not match upload")
+	if !bytes.Equal(gotBytes, pngBytes) {
+		t.Error("logo bytes do not match upload")
 	}
-	if s.UserLogoHash == "" {
-		t.Error("UserLogoHash empty after upload")
+	if gotHash == "" {
+		t.Error("logo hash empty after upload")
 	}
 
 	// GET should return the bytes byte-for-byte.
@@ -146,8 +146,8 @@ func TestThemeLogo_RoundTrip(t *testing.T) {
 	if delW.Code != http.StatusNoContent {
 		t.Fatalf("DELETE: expected 204, got %d", delW.Code)
 	}
-	if app.State().UserLogoExt != "" {
-		t.Error("UserLogoExt not cleared after DELETE")
+	if _, ext, _ := app.logo.Get(); ext != "" {
+		t.Error("logo ext not cleared after DELETE")
 	}
 
 	// Subsequent GET should 404.
@@ -182,7 +182,7 @@ func TestThemeLogo_Validation(t *testing.T) {
 			if tt.wantContent != "" && !strings.Contains(w.Body.String(), tt.wantContent) {
 				t.Errorf("body: %q does not contain %q", w.Body.String(), tt.wantContent)
 			}
-			if app.State().UserLogoExt != "" {
+			if _, ext, _ := app.logo.Get(); ext != "" {
 				t.Error("rejected upload should not have mutated state")
 			}
 		})
@@ -207,8 +207,8 @@ func TestThemeLogo_AcceptedFormats(t *testing.T) {
 			if w.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 			}
-			if app.State().UserLogoExt != tt.ext {
-				t.Errorf("ext: got %q, want %q", app.State().UserLogoExt, tt.ext)
+			if _, ext, _ := app.logo.Get(); ext != tt.ext {
+				t.Errorf("ext: got %q, want %q", ext, tt.ext)
 			}
 		})
 	}
@@ -223,7 +223,7 @@ func TestThemeLogo_TooLarge(t *testing.T) {
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("expected 413, got %d body=%s", w.Code, w.Body.String())
 	}
-	if app.State().UserLogoExt != "" {
+	if _, ext, _ := app.logo.Get(); ext != "" {
 		t.Error("oversized upload must not mutate state")
 	}
 }
