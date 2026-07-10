@@ -144,6 +144,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// app.palette after this with newPaletteService(kv, cfgPalette).
 	app.logo, _ = newLogoStore(svc.State())
 	app.palette, _ = newPaletteService(svc.State(), nil)
+	app.settings = newSettingsService(svc.State())
 	app.acl = svc.ACL()
 	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents
@@ -249,12 +250,11 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 		_ = app.palette.Reresolve(cfg.Palette)
 	}
 	app.state.Store(&AppState{
-		Cfg:          cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: &UserDefaults{},
-		OpenAPIGen:   openAPIGen,
+		Cfg:         cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
+		OpenAPIGen:  openAPIGen,
 	})
 	return app
 }
@@ -343,12 +343,11 @@ func newHandlerTestApp(t *testing.T) *App {
 	// router walk test hits every route, including _openapi.json, which
 	// panics on a nil OpenAPIGen.
 	app.state.Store(&AppState{
-		Cfg:          cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: &UserDefaults{},
-		OpenAPIGen:   openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
+		Cfg:         cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
+		OpenAPIGen:  openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
 	})
 	return app
 }

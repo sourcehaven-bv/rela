@@ -322,12 +322,11 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 	}
 
 	a.state.Store(&AppState{
-		Cfg:          newCfg,
-		Meta:         newMeta,
-		StyleMap:     newStyleMap,
-		StyledTypes:  newStyledTypes,
-		UserDefaults: current.UserDefaults,
-		OpenAPIGen:   newOpenAPI,
+		Cfg:         newCfg,
+		Meta:        newMeta,
+		StyleMap:    newStyleMap,
+		StyledTypes: newStyledTypes,
+		OpenAPIGen:  newOpenAPI,
 	})
 }
 

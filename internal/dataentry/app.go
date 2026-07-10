@@ -43,16 +43,17 @@ import (
 //
 // This snapshot is being decomposed: state owned by exactly one service is
 // moving out into that service (self-synchronized), leaving AppState to hold
-// only genuinely co-derived reload state. The user-uploaded logo was the first
-// to move — see [logoStore]. What remains here is the config/metamodel and the
-// fields derived from them together.
+// only genuinely co-derived reload state. The logo ([logoStore]), palette
+// ([paletteService]), and user defaults ([settingsService]) have moved out.
+// What remains is the config/metamodel and the style map derived from them
+// together — the co-derived core that a later PR collapses into a schema
+// provider.
 type AppState struct {
-	Cfg          *Config
-	Meta         *metamodel.Metamodel
-	StyleMap     map[string]map[string]string
-	StyledTypes  map[string]bool
-	UserDefaults *UserDefaults
-	OpenAPIGen   *openapi.Generator
+	Cfg         *Config
+	Meta        *metamodel.Metamodel
+	StyleMap    map[string]map[string]string
+	StyledTypes map[string]bool
+	OpenAPIGen  *openapi.Generator
 }
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -147,7 +148,10 @@ type App struct {
 	// from Cfg.Palette + the override). Self-synchronized; extracted from
 	// AppState. The reload/save paths hand it the current Cfg.Palette so it can
 	// recompute — see paletteService.Reresolve.
-	palette   *paletteService
+	palette *paletteService
+	// settings owns the per-user default values (create-form/relation defaults).
+	// Self-synchronized; extracted from AppState.
+	settings  *settingsService
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -284,23 +288,6 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 		},
 		EntityManager: a.entityManager,
 	}
-}
-
-// mutateState atomically updates the published AppState. It takes
-// writeMu, builds a shallow copy of the current snapshot, runs the
-// caller's mutator on the copy, and publishes the copy via state.Store.
-//
-// This is the canonical way for mutation handlers to change reloadable
-// fields like UserDefaults or UserPalette. Reaching through a.State()
-// to assign field values directly is a bug — it scribbles on the shared
-// snapshot pointer that lock-free readers also hold.
-func (a *App) mutateState(fn func(*AppState)) {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-	cur := a.state.Load()
-	next := *cur // shallow copy of the snapshot
-	fn(&next)
-	a.state.Store(&next)
 }
 
 // SetSecurityConfig configures the HTTP security middlewares applied by
@@ -514,7 +501,7 @@ func NewApp(
 
 	app.serializer = entitySerializer{affordances: app.affordances}
 
-	userDefaults := app.userState.loadUserDefaults()
+	app.settings = newSettingsService(kv)
 
 	// palette owns the user override + resolved palette. Surface a broken
 	// palette rather than silently falling back to defaults (which the next
@@ -538,11 +525,10 @@ func NewApp(
 	// state lives here; there are no convenience aliases on App to keep
 	// in sync.
 	app.state.Store(&AppState{
-		Cfg:          &cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: userDefaults,
+		Cfg:         &cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
 		OpenAPIGen: openapi.New(meta, openapi.Config{
 			Title:       cfg.App.Name + " API",
 			Description: cfg.App.Description,
