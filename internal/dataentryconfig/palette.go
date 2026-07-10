@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"strings"
@@ -90,7 +91,7 @@ func (d *DarkMode) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // MarshalYAML serializes DarkMode back to YAML.
-func (d DarkMode) MarshalYAML() (interface{}, error) {
+func (d DarkMode) MarshalYAML() (any, error) {
 	if d.Explicit != nil {
 		return d.Explicit, nil
 	}
@@ -384,16 +385,12 @@ func applyOver(base, over PaletteColors) PaletteColors {
 
 func copyBadges(src map[string]string) map[string]string {
 	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 
 func mergeBadges(dst, src map[string]string) {
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 }
 
 // deriveTheme produces the full 21-variable CSS map from 8 base colors + 7 badges.

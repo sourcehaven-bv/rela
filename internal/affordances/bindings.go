@@ -133,7 +133,7 @@ func (bc *bindingContext) entityRecord(meta *metamodel.Metamodel) predicate.Valu
 // predicate Value matching its metamodel type. Unconvertible or
 // missing values become Nil. List properties become a List of coerced
 // scalars (single scalar promoted to a one-element list).
-func coerceValue(prop metamodel.PropertyDef, raw interface{}) predicate.Value {
+func coerceValue(prop metamodel.PropertyDef, raw any) predicate.Value {
 	if prop.List {
 		return coerceList(prop, raw)
 	}
@@ -148,10 +148,10 @@ func coerceValue(prop metamodel.PropertyDef, raw interface{}) predicate.Value {
 //     are false, never an Eval error).
 //   - Non-coercible elements (e.g. a non-string in a string list)
 //     become Nil holes rather than failing the whole list.
-func coerceList(prop metamodel.PropertyDef, raw interface{}) predicate.Value {
+func coerceList(prop metamodel.PropertyDef, raw any) predicate.Value {
 	elems := []predicate.Value{}
 	switch v := raw.(type) {
-	case []interface{}:
+	case []any:
 		for _, e := range v {
 			elems = append(elems, coerceScalar(prop.Type, e))
 		}
@@ -164,7 +164,7 @@ func coerceList(prop metamodel.PropertyDef, raw interface{}) predicate.Value {
 	return predicate.NewList(elems)
 }
 
-func coerceScalar(typeName string, raw interface{}) predicate.Value {
+func coerceScalar(typeName string, raw any) predicate.Value {
 	if raw == nil {
 		return predicate.NewNil()
 	}
@@ -182,7 +182,7 @@ func coerceScalar(typeName string, raw interface{}) predicate.Value {
 	}
 }
 
-func coerceNumber(raw interface{}) predicate.Value {
+func coerceNumber(raw any) predicate.Value {
 	switch v := raw.(type) {
 	case int:
 		return predicate.NewNumberFromInt(v)
@@ -198,7 +198,7 @@ func coerceNumber(raw interface{}) predicate.Value {
 	return predicate.NewNil()
 }
 
-func coerceBool(raw interface{}) predicate.Value {
+func coerceBool(raw any) predicate.Value {
 	switch v := raw.(type) {
 	case bool:
 		return predicate.NewBool(v)

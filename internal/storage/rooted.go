@@ -100,7 +100,7 @@ func (r *RootedFS) resolve(key string) (string, error) {
 	if strings.HasPrefix(key, "/") {
 		return "", errors.New("storage: key must be relative")
 	}
-	for _, seg := range strings.Split(key, "/") {
+	for seg := range strings.SplitSeq(key, "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			return "", errors.New("storage: traversal or empty segment not allowed in key")
 		}

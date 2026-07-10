@@ -20,8 +20,8 @@ func resolveEntityType(meta *metamodel.Metamodel, typeName string) (string, erro
 	suffixes := []string{"ies", "es", "s"}
 	replacements := []string{"y", "", ""}
 	for i, suffix := range suffixes {
-		if strings.HasSuffix(typeName, suffix) {
-			singular := strings.TrimSuffix(typeName, suffix) + replacements[i]
+		if before, ok := strings.CutSuffix(typeName, suffix); ok {
+			singular := before + replacements[i]
 			resolved = meta.ResolveAlias(singular)
 			if _, ok := meta.GetEntityDef(resolved); ok {
 				return resolved, nil

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -109,8 +110,8 @@ type Runtime struct {
 // without touching wiring code. Kept unexported: callers still pass
 // *Cache via WithCache and we keep the flexibility internally.
 type cacheStore interface {
-	get(namespacedKey string) ([]interface{}, bool)
-	set(namespacedKey string, values []interface{}, ttl time.Duration)
+	get(namespacedKey string) ([]any, bool)
+	set(namespacedKey string, values []any, ttl time.Duration)
 	delete(namespacedKey string)
 }
 
@@ -488,7 +489,7 @@ var ErrNoReturnValue = errors.New("script did not return a value")
 // RunActionString executes Lua code as an action, returning the script's
 // top-of-stack return value as a Go interface{}. Returns ErrNoReturnValue
 // if the script did not return any values.
-func (r *Runtime) RunActionString(code, name string) (interface{}, error) {
+func (r *Runtime) RunActionString(code, name string) (any, error) {
 	r.applyTimeout()
 
 	cleaned := stripShebang(code)
@@ -1203,7 +1204,7 @@ func traceResultToTable(ls *lua.LState, trace *tracer.TraceResult) *lua.LTable {
 
 // GoToLuaValue converts a Go value to a Lua value.
 // Exported for use by workspace automation execution.
-func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
+func GoToLuaValue(ls *lua.LState, v any) lua.LValue {
 	if v == nil {
 		return lua.LNil
 	}
@@ -1218,7 +1219,7 @@ func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 		return lua.LNumber(val)
 	case bool:
 		return lua.LBool(val)
-	case []interface{}:
+	case []any:
 		t := ls.NewTable()
 		for i, item := range val {
 			t.RawSetInt(i+1, GoToLuaValue(ls, item))
@@ -1230,7 +1231,7 @@ func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 			t.RawSetInt(i+1, lua.LString(item))
 		}
 		return t
-	case map[string]interface{}:
+	case map[string]any:
 		t := ls.NewTable()
 		for k, item := range val {
 			t.RawSetString(k, GoToLuaValue(ls, item))
@@ -1249,7 +1250,7 @@ func GoToLuaValue(ls *lua.LState, v interface{}) lua.LValue {
 // (e.g. `t.self = t`) would overflow the Go stack and crash the entire
 // process — not catchable from PCall. Every caller (rela.output,
 // RunActionString, luaTableToGoMap, and the cache) inherits the guard.
-func luaValueToGo(lv lua.LValue) interface{} {
+func luaValueToGo(lv lua.LValue) any {
 	return luaValueToGoSeen(lv, make(map[*lua.LTable]bool))
 }
 
@@ -1262,7 +1263,7 @@ func luaValueToGo(lv lua.LValue) interface{} {
 // closes the lossy leg. Non-integral or out-of-int64-range values stay
 // float64. (Integers beyond 2^53 can't be held by the float64 LNumber in
 // the first place, so this is type-faithful up to that ceiling.)
-func luaNumberToGo(n lua.LNumber) interface{} {
+func luaNumberToGo(n lua.LNumber) any {
 	f := float64(n)
 	if f == math.Trunc(f) && f >= math.MinInt64 && f <= math.MaxInt64 {
 		return int64(f)
@@ -1270,7 +1271,7 @@ func luaNumberToGo(n lua.LNumber) interface{} {
 	return f
 }
 
-func luaValueToGoSeen(lv lua.LValue, seen map[*lua.LTable]bool) interface{} {
+func luaValueToGoSeen(lv lua.LValue, seen map[*lua.LTable]bool) any {
 	switch v := lv.(type) {
 	case lua.LBool:
 		return bool(v)
@@ -1300,7 +1301,7 @@ const cyclicReferenceMarker = "<cyclic reference>"
 // the ancestry set `seen` to terminate cycles. Callers wanting a fresh
 // conversion should go through luaValueToGo, which bootstraps the
 // seen-set.
-func luaTableToGoSeen(t *lua.LTable, seen map[*lua.LTable]bool) interface{} {
+func luaTableToGoSeen(t *lua.LTable, seen map[*lua.LTable]bool) any {
 	if seen[t] {
 		return cyclicReferenceMarker
 	}
@@ -1331,7 +1332,7 @@ func luaTableToGoSeen(t *lua.LTable, seen map[*lua.LTable]bool) interface{} {
 	})
 
 	if isArray && maxN > 0 {
-		arr := make([]interface{}, maxN)
+		arr := make([]any, maxN)
 		t.ForEach(func(k, v lua.LValue) {
 			if kn, ok := k.(lua.LNumber); ok {
 				idx := int(kn) - 1
@@ -1344,7 +1345,7 @@ func luaTableToGoSeen(t *lua.LTable, seen map[*lua.LTable]bool) interface{} {
 	}
 
 	// It's a map
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	t.ForEach(func(k, v lua.LValue) {
 		var key string
 		switch kv := k.(type) {
@@ -1469,11 +1470,9 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		propsTable := ls.CheckTable(2)
 		newProps := luaTableToGoMap(propsTable)
 		if updated.Properties == nil {
-			updated.Properties = make(map[string]interface{})
+			updated.Properties = make(map[string]any)
 		}
-		for k, v := range newProps {
-			updated.Properties[k] = v
-		}
+		maps.Copy(updated.Properties, newProps)
 	}
 
 	// Update content if provided (nil means not provided, empty string clears content)
@@ -1710,8 +1709,8 @@ func (r *Runtime) luaFindPath(ls *lua.LState) int {
 }
 
 // luaTableToGoMap converts a Lua table to a Go map[string]interface{}.
-func luaTableToGoMap(t *lua.LTable) map[string]interface{} {
-	m := make(map[string]interface{})
+func luaTableToGoMap(t *lua.LTable) map[string]any {
+	m := make(map[string]any)
 	t.ForEach(func(k, v lua.LValue) {
 		var key string
 		switch kv := k.(type) {

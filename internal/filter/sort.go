@@ -85,7 +85,7 @@ func buildEnumIndex(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) m
 }
 
 // compareEnums compares two enum values by their index position.
-func compareEnums(valI, valJ interface{}, enumIndex map[string]int) bool {
+func compareEnums(valI, valJ any, enumIndex map[string]int) bool {
 	sI, okI := valI.(string)
 	sJ, okJ := valJ.(string)
 	if !okI || !okJ {
@@ -119,7 +119,7 @@ func SortByID[T any](items []T, access Accessor[T], descending bool) {
 }
 
 // compareStrings compares two values as strings using natural ordering.
-func compareStrings(valI, valJ interface{}) bool {
+func compareStrings(valI, valJ any) bool {
 	sI, okI := valI.(string)
 	sJ, okJ := valJ.(string)
 	if !okI || !okJ {
@@ -129,7 +129,7 @@ func compareStrings(valI, valJ interface{}) bool {
 }
 
 // compareDates compares two values as dates.
-func compareDates(valI, valJ interface{}, propDef *metamodel.PropertyDef) bool {
+func compareDates(valI, valJ any, propDef *metamodel.PropertyDef) bool {
 	dateI, okI := toTime(valI, propDef)
 	dateJ, okJ := toTime(valJ, propDef)
 	if !okI || !okJ {
@@ -139,7 +139,7 @@ func compareDates(valI, valJ interface{}, propDef *metamodel.PropertyDef) bool {
 }
 
 // toTime converts a property value to time.Time.
-func toTime(val interface{}, propDef *metamodel.PropertyDef) (time.Time, bool) {
+func toTime(val any, propDef *metamodel.PropertyDef) (time.Time, bool) {
 	switch v := val.(type) {
 	case time.Time:
 		return v, true
@@ -155,7 +155,7 @@ func toTime(val interface{}, propDef *metamodel.PropertyDef) (time.Time, bool) {
 }
 
 // compareIntegers compares two values as integers.
-func compareIntegers(valI, valJ interface{}) bool {
+func compareIntegers(valI, valJ any) bool {
 	intI, errI := metamodel.ParseIntegerValue(valI)
 	intJ, errJ := metamodel.ParseIntegerValue(valJ)
 	if errI != nil || errJ != nil {
@@ -165,7 +165,7 @@ func compareIntegers(valI, valJ interface{}) bool {
 }
 
 // compareBooleans compares two values as booleans (false < true).
-func compareBooleans(valI, valJ interface{}) bool {
+func compareBooleans(valI, valJ any) bool {
 	boolI, errI := metamodel.ParseBooleanValue(valI)
 	boolJ, errJ := metamodel.ParseBooleanValue(valJ)
 	if errI != nil || errJ != nil {
@@ -304,7 +304,7 @@ func sortByProperty[T any](
 }
 
 // comparePropValues compares two property values using their respective property definitions.
-func comparePropValues(valI, valJ interface{}, piI, piJ *propInfo, meta *metamodel.Metamodel) bool {
+func comparePropValues(valI, valJ any, piI, piJ *propInfo, meta *metamodel.Metamodel) bool {
 	switch {
 	case piI.def != nil && piJ.def != nil && piI.def.Type == piJ.def.Type:
 		return compareByPropDef(valI, valJ, piI.def, piI.enumIndex)
@@ -325,7 +325,7 @@ func comparePropValues(valI, valJ interface{}, piI, piJ *propInfo, meta *metamod
 }
 
 // compareByPropDef compares two values using the given property definition.
-func compareByPropDef(valI, valJ interface{}, propDef *metamodel.PropertyDef, enumIndex map[string]int) bool {
+func compareByPropDef(valI, valJ any, propDef *metamodel.PropertyDef, enumIndex map[string]int) bool {
 	switch propDef.Type {
 	case metamodel.PropertyTypeDate:
 		return compareDates(valI, valJ, propDef)

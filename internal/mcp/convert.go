@@ -14,11 +14,11 @@ import (
 
 // entityJSON represents an entity for JSON output in MCP responses.
 type entityJSON struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
-	Content    string                 `json:"content,omitempty"`
-	Relations  *relationsJSON         `json:"relations,omitempty"`
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Content    string         `json:"content,omitempty"`
+	Relations  *relationsJSON `json:"relations,omitempty"`
 }
 
 // relationsJSON groups outgoing and incoming relations.
@@ -35,11 +35,11 @@ type relationTargetJSON struct {
 
 // relationJSON represents a relation for JSON output.
 type relationJSON struct {
-	From       string                 `json:"from"`
-	Type       string                 `json:"relation"`
-	To         string                 `json:"to"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
-	Content    string                 `json:"content,omitempty"`
+	From       string         `json:"from"`
+	Type       string         `json:"relation"`
+	To         string         `json:"to"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Content    string         `json:"content,omitempty"`
 }
 
 // traceNodeJSON represents a trace result node for JSON output.
@@ -76,8 +76,8 @@ func convertStoreEntity(ctx context.Context, e *entity.Entity, st store.Store, i
 }
 
 // convertStoreEntitySummary returns a brief summary map from an entity.Entity.
-func convertStoreEntitySummary(e *entity.Entity) map[string]interface{} {
-	result := map[string]interface{}{
+func convertStoreEntitySummary(e *entity.Entity) map[string]any {
+	result := map[string]any{
 		"id":   e.ID,
 		"type": e.Type,
 	}
@@ -210,7 +210,7 @@ func sortStoreRelations(relations []*entity.Relation) {
 	})
 }
 
-func marshalJSON(v interface{}) (string, error) {
+func marshalJSON(v any) (string, error) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal JSON: %w", err)

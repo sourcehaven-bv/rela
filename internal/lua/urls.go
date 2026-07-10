@@ -3,6 +3,7 @@ package lua
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"sort"
 	"strings"
@@ -231,9 +232,7 @@ func (r *Runtime) emitURLFromMap(ls *glua.LState, path string, query map[string]
 		ls.RaiseError("rela.url: invalid query on path %q: %s", path, err.Error())
 		return 0
 	}
-	for k, v := range query {
-		values[k] = v
-	}
+	maps.Copy(values, query)
 	ls.Push(glua.LString(buildURL(base, values, fragment)))
 	return 1
 }
@@ -351,7 +350,7 @@ func existingQueryValues(rawQuery string) (map[string]string, error) {
 	if rawQuery == "" {
 		return out, nil
 	}
-	for _, pair := range strings.Split(rawQuery, "&") {
+	for pair := range strings.SplitSeq(rawQuery, "&") {
 		if pair == "" {
 			continue
 		}

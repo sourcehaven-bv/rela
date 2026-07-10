@@ -107,7 +107,7 @@ type RenameResult struct {
 // express "leave the body alone" vs "set the body to empty"; callers
 // that want to clear must pass a pointer to "".
 type RelationOptions struct {
-	Properties map[string]interface{}
+	Properties map[string]any
 	MetaUnset  []string
 	Content    *string
 }

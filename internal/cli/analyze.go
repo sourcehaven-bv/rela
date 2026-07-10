@@ -41,7 +41,7 @@ func resolveAnalyzeOpts() (*analysis.Options, error) {
 }
 
 // writeAnalysisJSON writes an analysis result if JSON output is enabled.
-func writeAnalysisJSON(count int, details interface{}, successMsg, issuesFmt string) bool {
+func writeAnalysisJSON(count int, details any, successMsg, issuesFmt string) bool {
 	if out.Format != "json" {
 		return false
 	}
@@ -290,7 +290,7 @@ func writePropertyValidationJSON(
 		message = fmt.Sprintf("Found %d property errors across %d entities and %d relations",
 			errorCount, len(allEntityErrors), len(allRelationErrors))
 	}
-	details := make(map[string]interface{})
+	details := make(map[string]any)
 	if len(entityResults) > 0 {
 		details["entities"] = entityResults
 	}
@@ -366,7 +366,7 @@ func writeNoValidationRules() error {
 			Status:  "success",
 			Message: "No custom validation rules defined in metamodel",
 			Count:   0,
-			Details: []interface{}{},
+			Details: []any{},
 		})
 	}
 	out.WriteSuccess("No custom validation rules defined in metamodel")

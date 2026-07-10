@@ -44,10 +44,10 @@ func newOrderableRelationsTestApp(t *testing.T, mode metamodel.OrderableMode) *A
 func seedOrderableFixture(t *testing.T, app *App, prop string) string {
 	t.Helper()
 	const recipeID = "REC-001"
-	seedEntity(app, &entity.Entity{ID: recipeID, Type: "recipe", Properties: map[string]interface{}{"title": "Soup"}})
+	seedEntity(app, &entity.Entity{ID: recipeID, Type: "recipe", Properties: map[string]any{"title": "Soup"}})
 	type stepSeed struct {
 		id    string
-		order interface{}
+		order any
 	}
 	steps := []stepSeed{
 		{"STP-Z", 1.0},
@@ -56,8 +56,8 @@ func seedOrderableFixture(t *testing.T, app *App, prop string) string {
 		{"STP-Y", nil},
 	}
 	for _, s := range steps {
-		seedEntity(app, &entity.Entity{ID: s.id, Type: "step", Properties: map[string]interface{}{"title": s.id}})
-		props := map[string]interface{}{}
+		seedEntity(app, &entity.Entity{ID: s.id, Type: "step", Properties: map[string]any{"title": s.id}})
+		props := map[string]any{}
 		if s.order != nil {
 			props[prop] = s.order
 		}
@@ -79,7 +79,7 @@ func TestV1EntityRelations_OutgoingOrderableSorted(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var grouped map[string][]map[string]interface{}
+	var grouped map[string][]map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &grouped); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestV1GetRelationType_OutgoingOrderableSorted(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var edges []map[string]interface{}
+	var edges []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &edges); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestV1EntityRelations_NonOrderable_NotSortedByOrderProperty(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	var grouped map[string][]map[string]interface{}
+	var grouped map[string][]map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &grouped); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

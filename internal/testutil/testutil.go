@@ -81,7 +81,7 @@ func AssertError(t *testing.T, err error) {
 // AssertEqual checks that two values are deeply equal. DeepEqual (not
 // ==) so that slices, maps, and other uncomparable types diff instead
 // of panicking.
-func AssertEqual(t *testing.T, got, want interface{}) {
+func AssertEqual(t *testing.T, got, want any) {
 	t.Helper()
 
 	if !reflect.DeepEqual(got, want) {
@@ -90,7 +90,7 @@ func AssertEqual(t *testing.T, got, want interface{}) {
 }
 
 // AssertNotEqual checks that two values are not deeply equal.
-func AssertNotEqual(t *testing.T, got, notWant interface{}) {
+func AssertNotEqual(t *testing.T, got, notWant any) {
 	t.Helper()
 
 	if reflect.DeepEqual(got, notWant) {
@@ -117,20 +117,20 @@ func AssertStringNotContains(t *testing.T, s, substr string) {
 }
 
 // AssertLengthEqual checks that a slice or map has the expected length.
-func AssertLengthEqual(t *testing.T, slice interface{}, expectedLen int) {
+func AssertLengthEqual(t *testing.T, slice any, expectedLen int) {
 	t.Helper()
 
 	var actualLen int
 	switch v := slice.(type) {
 	case []string:
 		actualLen = len(v)
-	case []interface{}:
+	case []any:
 		actualLen = len(v)
 	case []error:
 		actualLen = len(v)
 	case map[string]bool:
 		actualLen = len(v)
-	case map[string]interface{}:
+	case map[string]any:
 		actualLen = len(v)
 	default:
 		t.Fatalf("unsupported type for length check: %T", slice)

@@ -15,7 +15,7 @@ func (s *Server) handleGetMetamodel(
 	_ context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	meta := s.deps.Meta
-	result := map[string]interface{}{
+	result := map[string]any{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
 		"entities":  meta.GetEntities(),

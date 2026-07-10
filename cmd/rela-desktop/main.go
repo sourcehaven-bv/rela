@@ -228,18 +228,18 @@ func (d *Desktop) NeedsSetup() bool {
 }
 
 // GetSetupInfo returns information about the project needing setup.
-func (d *Desktop) GetSetupInfo() map[string]interface{} {
+func (d *Desktop) GetSetupInfo() map[string]any {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	if d.pendingSetupPaths == nil {
-		return map[string]interface{}{"error": "No project pending setup"}
+		return map[string]any{"error": "No project pending setup"}
 	}
 
 	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.MetamodelPath)
 	meta, _, err := loader.Load(context.Background())
 	if err != nil {
-		return map[string]interface{}{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
+		return map[string]any{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
 	}
 
 	entityTypes := make([]string, 0, len(meta.Entities))
@@ -247,7 +247,7 @@ func (d *Desktop) GetSetupInfo() map[string]interface{} {
 		entityTypes = append(entityTypes, name)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"path":         d.pendingSetupDir,
 		"entity_types": entityTypes,
 	}
@@ -313,9 +313,9 @@ func (d *Desktop) PickCloneDirectory() string {
 
 // CloneProject clones a git repository and scans for rela projects.
 // Returns a JSON response with status and any discovered projects.
-func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]interface{} {
+func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 	if !git.IsValidRepoURL(repoURL) {
-		return map[string]interface{}{"error": "Invalid repository URL. Use HTTPS format: https://github.com/user/repo"}
+		return map[string]any{"error": "Invalid repository URL. Use HTTPS format: https://github.com/user/repo"}
 	}
 
 	// Use saved token if available
@@ -324,7 +324,7 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]interface{} {
 	// Determine target directory
 	repoName := git.ExtractRepoName(repoURL)
 	if repoName == "" {
-		return map[string]interface{}{"error": "Could not determine repository name from URL"}
+		return map[string]any{"error": "Could not determine repository name from URL"}
 	}
 	if baseDir == "" {
 		baseDir = d.GetDefaultCloneDir()
@@ -342,14 +342,14 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]interface{} {
 		Token: token,
 	})
 	if err != nil {
-		return map[string]interface{}{"error": fmt.Sprintf("Clone failed: %v", err)}
+		return map[string]any{"error": fmt.Sprintf("Clone failed: %v", err)}
 	}
 
 	// Scan for rela projects (directories containing metamodel.yaml)
 	projects := scanForRelaProjects(targetDir)
 
 	if len(projects) == 0 {
-		return map[string]interface{}{
+		return map[string]any{
 			"status":    "no_projects",
 			"clone_dir": targetDir,
 		}
@@ -358,9 +358,9 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]interface{} {
 	if len(projects) == 1 {
 		// Single project found - open it directly
 		if errMsg := d.LoadProject(projects[0]); errMsg != "" {
-			return map[string]interface{}{"error": errMsg}
+			return map[string]any{"error": errMsg}
 		}
-		return map[string]interface{}{"status": "opened"}
+		return map[string]any{"status": "opened"}
 	}
 
 	// Multiple projects found - return list for user to pick
@@ -374,7 +374,7 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]interface{} {
 		relPaths[i] = rel
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"status":    "multiple",
 		"projects":  relPaths,
 		"clone_dir": targetDir,
@@ -742,7 +742,7 @@ func main() {
 			Handler: d,
 		},
 		OnStartup: d.startup,
-		Bind:      []interface{}{d},
+		Bind:      []any{d},
 	})
 	if wailsErr != nil {
 		slog.Error("wails error", "error", wailsErr)

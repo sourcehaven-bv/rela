@@ -140,7 +140,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 
 // checkUnknownKeys detects unknown top-level keys in the config YAML.
 func checkUnknownKeys(data []byte) []string {
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil // struct unmarshal already caught this
 	}

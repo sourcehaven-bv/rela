@@ -29,22 +29,22 @@ func TestParseActionResponse_Nil(t *testing.T) {
 func TestParseActionResponse_Valid(t *testing.T) {
 	tests := []struct {
 		name string
-		in   map[string]interface{}
+		in   map[string]any
 		want ActionResponse
 	}{
 		{
 			name: "redirect only",
-			in:   map[string]interface{}{"redirect": "/foo"},
+			in:   map[string]any{"redirect": "/foo"},
 			want: ActionResponse{Redirect: "/foo"},
 		},
 		{
 			name: "message only",
-			in:   map[string]interface{}{"message": "hi"},
+			in:   map[string]any{"message": "hi"},
 			want: ActionResponse{Message: "hi"},
 		},
 		{
 			name: "all fields",
-			in: map[string]interface{}{
+			in: map[string]any{
 				"redirect":     "/x",
 				"message":      "done",
 				"message_type": "success",
@@ -77,7 +77,7 @@ func TestParseActionResponse_InvalidRedirect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseActionResponse(map[string]interface{}{"redirect": tt.redirect})
+			_, err := parseActionResponse(map[string]any{"redirect": tt.redirect})
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -86,7 +86,7 @@ func TestParseActionResponse_InvalidRedirect(t *testing.T) {
 }
 
 func TestParseActionResponse_InvalidMessageType(t *testing.T) {
-	_, err := parseActionResponse(map[string]interface{}{"message_type": "bogus"})
+	_, err := parseActionResponse(map[string]any{"message_type": "bogus"})
 	if err == nil {
 		t.Fatal("expected error")
 	}

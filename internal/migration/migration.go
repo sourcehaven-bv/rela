@@ -3,7 +3,11 @@
 // comments and formatting using yaml.Node AST manipulation.
 package migration
 
-import "gopkg.in/yaml.v3"
+import (
+	"slices"
+
+	"gopkg.in/yaml.v3"
+)
 
 // MetamodelProvider provides metamodel data for context-aware migrations.
 // This interface is satisfied by *metamodel.Metamodel.
@@ -86,11 +90,8 @@ func All() []Migration {
 func ForFileType(ft FileType) []Migration {
 	var result []Migration
 	for _, m := range registry {
-		for _, t := range m.FileTypes() {
-			if t == ft {
-				result = append(result, m)
-				break
-			}
+		if slices.Contains(m.FileTypes(), ft) {
+			result = append(result, m)
 		}
 	}
 	return result

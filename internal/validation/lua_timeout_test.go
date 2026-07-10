@@ -42,7 +42,7 @@ func TestLuaValidation_PerRuleTimeout(t *testing.T) {
 		},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 	svc := New(meta, ws.services(t.TempDir()))
 
@@ -87,7 +87,7 @@ func TestLuaValidation_AlreadyCancelledContext(t *testing.T) {
 		Validations: rules,
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,7 +129,7 @@ func TestLuaValidation_CheckRulesBailsOnCancellation(t *testing.T) {
 		Validations: rules,
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -165,7 +165,7 @@ func TestLuaValidation_ParentContextCancellation(t *testing.T) {
 		},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 	svc := New(meta, ws.services(t.TempDir()))
 

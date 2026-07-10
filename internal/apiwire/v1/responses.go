@@ -11,16 +11,16 @@ type Warning = entity.Warning
 
 // Entity is the JSON representation of an entity for API v1.
 type Entity struct {
-	ID           string                 `json:"id"`
-	Type         string                 `json:"type"`
-	Title        string                 `json:"_title,omitempty"`
-	Properties   map[string]interface{} `json:"properties"`
-	Content      string                 `json:"content,omitempty"`
-	Relations    map[string][]string    `json:"relations,omitempty"`
-	Included     map[string]Entity      `json:"included,omitempty"`
-	Self         string                 `json:"_self,omitempty"`
-	Actions      map[string]bool        `json:"_actions,omitempty"`
-	Inaccessible []InaccessibleField    `json:"inaccessible,omitempty"`
+	ID           string              `json:"id"`
+	Type         string              `json:"type"`
+	Title        string              `json:"_title,omitempty"`
+	Properties   map[string]any      `json:"properties"`
+	Content      string              `json:"content,omitempty"`
+	Relations    map[string][]string `json:"relations,omitempty"`
+	Included     map[string]Entity   `json:"included,omitempty"`
+	Self         string              `json:"_self,omitempty"`
+	Actions      map[string]bool     `json:"_actions,omitempty"`
+	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	// FieldAffordances carries per-field write affordances on per-entity
 	// GET responses. Sparse: only fields whose verdict deviates from the
 	// permissive default appear. Hidden fields are omitted from
@@ -372,10 +372,10 @@ type Command struct {
 
 // Template represents a template for API responses.
 type Template struct {
-	Name       string                 `json:"name"`
-	Properties map[string]interface{} `json:"properties"`
-	Content    string                 `json:"content"`
-	Relations  []TemplateRelation     `json:"relations"`
+	Name       string             `json:"name"`
+	Properties map[string]any     `json:"properties"`
+	Content    string             `json:"content"`
+	Relations  []TemplateRelation `json:"relations"`
 }
 
 // TemplateRelation represents a pre-filled relation in a template.

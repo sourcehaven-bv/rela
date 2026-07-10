@@ -31,11 +31,11 @@ type Relation struct {
 // variant name (e.g. "epic" for a <type>--epic.md variant). Relation
 // templates don't have variants; Name is always "" for them.
 type Template struct {
-	Name       string                 // "" for default, e.g. "epic" for a variant
-	EntityType string                 // the entity type this template applies to (empty for relation templates)
-	Properties map[string]interface{} // property defaults
-	Content    string                 // markdown body
-	Relations  []Relation             // pre-filled relations (entity templates only)
+	Name       string         // "" for default, e.g. "epic" for a variant
+	EntityType string         // the entity type this template applies to (empty for relation templates)
+	Properties map[string]any // property defaults
+	Content    string         // markdown body
+	Relations  []Relation     // pre-filled relations (entity templates only)
 }
 
 // Templater provides access to entity and relation templates.
@@ -69,13 +69,13 @@ type Templater interface {
 // Returns the (possibly updated) properties map and content. The caller
 // should write both back onto its entity.
 func ApplyEntity(
-	properties map[string]interface{}, content string, t *Template,
-) (mergedProperties map[string]interface{}, mergedContent string) {
+	properties map[string]any, content string, t *Template,
+) (mergedProperties map[string]any, mergedContent string) {
 	if t == nil {
 		return properties, content
 	}
 	if properties == nil {
-		properties = make(map[string]interface{})
+		properties = make(map[string]any)
 	}
 	for k, v := range t.Properties {
 		if _, exists := properties[k]; !exists {
@@ -91,12 +91,12 @@ func ApplyEntity(
 // ApplyRelation merges relation template defaults into the target property
 // map. Content is intentionally not propagated — the relation-creation
 // path does not carry a body through templates today.
-func ApplyRelation(properties map[string]interface{}, t *Template) map[string]interface{} {
+func ApplyRelation(properties map[string]any, t *Template) map[string]any {
 	if t == nil {
 		return properties
 	}
 	if properties == nil {
-		properties = make(map[string]interface{})
+		properties = make(map[string]any)
 	}
 	for k, v := range t.Properties {
 		if _, exists := properties[k]; !exists {

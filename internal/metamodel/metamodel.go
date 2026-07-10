@@ -1,6 +1,9 @@
 package metamodel
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // rebuildAliasMap rebuilds the alias map from all entity definitions.
 // Called after merging includes to ensure aliases from included files are registered.
@@ -48,7 +51,7 @@ func (m *Metamodel) GetEntityDef(entityType string) (*EntityDef, bool) {
 
 // DisplayTitle returns the display title for an entity using its type's primary property.
 // Falls back to entity ID if no entity definition found or no primary property value is set.
-func (m *Metamodel) DisplayTitle(id, entityType string, properties map[string]interface{}) string {
+func (m *Metamodel) DisplayTitle(id, entityType string, properties map[string]any) string {
 	if def, ok := m.GetEntityDef(entityType); ok {
 		return def.DisplayTitle(id, properties)
 	}
@@ -80,13 +83,7 @@ func (m *Metamodel) ValidateRelation(relationType, fromType, toType string) erro
 		return &RelationNotFoundError{Name: relationType}
 	}
 
-	fromValid := false
-	for _, t := range rel.From {
-		if t == fromType {
-			fromValid = true
-			break
-		}
-	}
+	fromValid := slices.Contains(rel.From, fromType)
 	if !fromValid {
 		return &InvalidRelationError{
 			Relation: relationType,
@@ -96,13 +93,7 @@ func (m *Metamodel) ValidateRelation(relationType, fromType, toType string) erro
 		}
 	}
 
-	toValid := false
-	for _, t := range rel.To {
-		if t == toType {
-			toValid = true
-			break
-		}
-	}
+	toValid := slices.Contains(rel.To, toType)
 	if !toValid {
 		return &InvalidRelationError{
 			Relation: relationType,

@@ -64,9 +64,9 @@ func (s *Server) exportJSON(
 	entities []*entity.Entity, relations []*entity.Relation, entityType string,
 ) (*mcp.CallToolResult, error) {
 	if entityType != "" {
-		summaries := make([]map[string]interface{}, len(entities))
+		summaries := make([]map[string]any, len(entities))
 		for i, e := range entities {
-			summaries[i] = map[string]interface{}{
+			summaries[i] = map[string]any{
 				"id":         e.ID,
 				"type":       e.Type,
 				"properties": e.Properties,
@@ -79,24 +79,24 @@ func (s *Server) exportJSON(
 		return mcp.NewToolResultText(text), nil
 	}
 
-	exportEntities := make([]map[string]interface{}, len(entities))
+	exportEntities := make([]map[string]any, len(entities))
 	for i, e := range entities {
-		exportEntities[i] = map[string]interface{}{
+		exportEntities[i] = map[string]any{
 			"id":         e.ID,
 			"type":       e.Type,
 			"properties": e.Properties,
 		}
 	}
-	exportRelations := make([]map[string]interface{}, len(relations))
+	exportRelations := make([]map[string]any, len(relations))
 	for i, r := range relations {
-		exportRelations[i] = map[string]interface{}{
+		exportRelations[i] = map[string]any{
 			"from":     r.From,
 			"relation": r.Type,
 			"to":       r.To,
 		}
 	}
 
-	text, err := marshalJSON(map[string]interface{}{
+	text, err := marshalJSON(map[string]any{
 		"entities":  exportEntities,
 		"relations": exportRelations,
 	})
@@ -109,11 +109,11 @@ func (s *Server) exportJSON(
 func (s *Server) exportYAML(
 	entities []*entity.Entity, relations []*entity.Relation, entityType string,
 ) (*mcp.CallToolResult, error) {
-	var data interface{}
+	var data any
 	if entityType != "" {
-		summaries := make([]map[string]interface{}, len(entities))
+		summaries := make([]map[string]any, len(entities))
 		for i, e := range entities {
-			summaries[i] = map[string]interface{}{
+			summaries[i] = map[string]any{
 				"id":         e.ID,
 				"type":       e.Type,
 				"properties": e.Properties,
@@ -121,23 +121,23 @@ func (s *Server) exportYAML(
 		}
 		data = summaries
 	} else {
-		exportRelations := make([]map[string]interface{}, len(relations))
+		exportRelations := make([]map[string]any, len(relations))
 		for i, r := range relations {
-			exportRelations[i] = map[string]interface{}{
+			exportRelations[i] = map[string]any{
 				"from":     r.From,
 				"relation": r.Type,
 				"to":       r.To,
 			}
 		}
-		exportEntities := make([]map[string]interface{}, len(entities))
+		exportEntities := make([]map[string]any, len(entities))
 		for i, e := range entities {
-			exportEntities[i] = map[string]interface{}{
+			exportEntities[i] = map[string]any{
 				"id":         e.ID,
 				"type":       e.Type,
 				"properties": e.Properties,
 			}
 		}
-		data = map[string]interface{}{
+		data = map[string]any{
 			"entities":  exportEntities,
 			"relations": exportRelations,
 		}

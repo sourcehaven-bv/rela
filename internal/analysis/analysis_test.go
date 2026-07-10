@@ -17,7 +17,7 @@ import (
 // addEntity / addRelation: terse seed helpers that panic on error.
 // Used widely below; tests stay focused on the behavior under check.
 
-func addEntity(s store.Store, id, entityType string, props map[string]interface{}) {
+func addEntity(s store.Store, id, entityType string, props map[string]any) {
 	if err := s.CreateEntity(context.Background(), &entity.Entity{
 		ID: id, Type: entityType, Properties: props,
 	}); err != nil {
@@ -109,9 +109,9 @@ func TestFindDuplicates(t *testing.T) {
 	}
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "DOC-001", "doc", map[string]interface{}{"title": "Test Document"})
-		addEntity(s, "DOC-002", "doc", map[string]interface{}{"title": "test document"})
-		addEntity(s, "DOC-003", "doc", map[string]interface{}{"title": "Different"})
+		addEntity(s, "DOC-001", "doc", map[string]any{"title": "Test Document"})
+		addEntity(s, "DOC-002", "doc", map[string]any{"title": "test document"})
+		addEntity(s, "DOC-003", "doc", map[string]any{"title": "Different"})
 	})
 
 	t.Run("finds duplicates", func(t *testing.T) {
@@ -226,7 +226,7 @@ func TestRunValidations(t *testing.T) {
 	meta.InitAliases()
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "TKT-001", "ticket", map[string]interface{}{"status": "in-progress"})
+		addEntity(s, "TKT-001", "ticket", map[string]any{"status": "in-progress"})
 	})
 
 	violations := svc.RunValidations(context.Background(), analysis.Options{}).Violations
@@ -272,8 +272,8 @@ func TestRunValidationsFiltered(t *testing.T) {
 	meta.InitAliases()
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "TKT-001", "ticket", map[string]interface{}{"status": "bad"})
-		addEntity(s, "BUG-001", "bug", map[string]interface{}{"status": "bad"})
+		addEntity(s, "TKT-001", "ticket", map[string]any{"status": "bad"})
+		addEntity(s, "BUG-001", "bug", map[string]any{"status": "bad"})
 	})
 
 	t.Run("filter by rule name", func(t *testing.T) {

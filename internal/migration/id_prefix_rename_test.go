@@ -119,7 +119,7 @@ func TestIDPrefixRenameMigration_Apply(t *testing.T) {
 	tests := []struct {
 		name       string
 		yaml       string
-		wantValues map[string]interface{} // entity name -> expected field (id_prefix string or id_prefixes []string)
+		wantValues map[string]any // entity name -> expected field (id_prefix string or id_prefixes []string)
 	}{
 		{
 			name: "converts single pattern to id_prefix scalar",
@@ -130,7 +130,7 @@ entities:
     label: Requirement
     id_patterns: ["REQ-"]
 `,
-			wantValues: map[string]interface{}{"requirement": "REQ-"},
+			wantValues: map[string]any{"requirement": "REQ-"},
 		},
 		{
 			name: "converts multiple patterns to id_prefixes",
@@ -141,7 +141,7 @@ entities:
     label: Component
     id_patterns: ["COMP-", "CMP-"]
 `,
-			wantValues: map[string]interface{}{"component": []string{"COMP-", "CMP-"}},
+			wantValues: map[string]any{"component": []string{"COMP-", "CMP-"}},
 		},
 		{
 			name: "handles multiple entities with different patterns",
@@ -155,7 +155,7 @@ entities:
     label: Component
     id_patterns: ["COMP-", "CMP-"]
 `,
-			wantValues: map[string]interface{}{
+			wantValues: map[string]any{
 				"requirement": "REQ-",
 				"component":   []string{"COMP-", "CMP-"},
 			},
@@ -169,7 +169,7 @@ entities:
     label: Requirement
     id_prefix: "REQ-"
 `,
-			wantValues: map[string]interface{}{"requirement": "REQ-"},
+			wantValues: map[string]any{"requirement": "REQ-"},
 		},
 		{
 			name: "leaves id_prefixes unchanged",
@@ -180,7 +180,7 @@ entities:
     label: Component
     id_prefixes: ["COMP-", "CMP-"]
 `,
-			wantValues: map[string]interface{}{"component": []string{"COMP-", "CMP-"}},
+			wantValues: map[string]any{"component": []string{"COMP-", "CMP-"}},
 		},
 	}
 

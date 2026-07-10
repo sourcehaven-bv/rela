@@ -61,7 +61,7 @@ func TestGetAttributeStrings(t *testing.T) {
 	e.Properties["tags"] = []string{"bug", "urgent"}
 	assert.Equal(t, []string{"bug", "urgent"}, e.GetAttributeStrings("tags"))
 
-	e.Properties["mixed"] = []interface{}{"a", "b"}
+	e.Properties["mixed"] = []any{"a", "b"}
 	assert.Equal(t, []string{"a", "b"}, e.GetAttributeStrings("mixed"))
 
 	assert.Nil(t, e.GetAttributeStrings("missing"))
@@ -104,7 +104,7 @@ func TestRelationKey(t *testing.T) {
 func TestRelationClone(t *testing.T) {
 	now := time.Now()
 	r := entity.NewRelation("A", "links", "B")
-	r.Properties = map[string]interface{}{"weight": 1}
+	r.Properties = map[string]any{"weight": 1}
 	r.Content = "note"
 	r.UpdatedAt = now
 

@@ -375,8 +375,8 @@ func parseChecks(checks []string, meta metamodelAccessor) (*parsedChecks, error)
 }
 
 func parseValidationFilter(filterStr string, meta metamodelAccessor) (analysis.ValidationFilter, error) {
-	if strings.HasPrefix(filterStr, "@") {
-		entityType := strings.TrimPrefix(filterStr, "@")
+	if after, ok := strings.CutPrefix(filterStr, "@"); ok {
+		entityType := after
 		if entityType == "" {
 			return analysis.ValidationFilter{}, stderrors.New("empty entity type in validation filter")
 		}

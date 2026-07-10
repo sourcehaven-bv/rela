@@ -129,7 +129,7 @@ func (s *Store) CreateRelation(
 		return nil, err
 	}
 
-	var props map[string]interface{}
+	var props map[string]any
 	content := ""
 	if data != nil {
 		content = data.Content

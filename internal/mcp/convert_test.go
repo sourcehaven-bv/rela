@@ -54,7 +54,7 @@ func testMeta() *metamodel.Metamodel {
 }
 
 // makeToolRequest creates a CallToolRequest with the given arguments.
-func makeToolRequest(args map[string]interface{}) mcp.CallToolRequest {
+func makeToolRequest(args map[string]any) mcp.CallToolRequest {
 	return mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Arguments: args,
@@ -216,7 +216,7 @@ func TestConvertStoreRelation(t *testing.T) {
 		From:       "SOL-001",
 		Type:       "addresses",
 		To:         "REQ-001",
-		Properties: map[string]interface{}{"rationale": "because"},
+		Properties: map[string]any{"rationale": "because"},
 		Content:    "Relation content",
 	}
 
@@ -467,7 +467,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 func TestConvertStoreRelationsList(t *testing.T) {
 	t.Parallel()
 	relations := []*entity.Relation{
-		{From: "SOL-001", Type: "addresses", To: "REQ-001", Properties: map[string]interface{}{"weight": "high"}},
+		{From: "SOL-001", Type: "addresses", To: "REQ-001", Properties: map[string]any{"weight": "high"}},
 		{From: "CMP-001", Type: "implements", To: "SOL-001"},
 	}
 
@@ -563,7 +563,7 @@ func TestMarshalJSON(t *testing.T) {
 
 func TestMarshalJSON_Indented(t *testing.T) {
 	t.Parallel()
-	data := map[string]interface{}{
+	data := map[string]any{
 		"a": "b",
 	}
 	result, err := marshalJSON(data)
@@ -652,8 +652,8 @@ func TestConvertStoreEntity_WithProperties(t *testing.T) {
 
 func TestExtractProperties_MapArgument(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
-		"properties": map[string]interface{}{
+	req := makeToolRequest(map[string]any{
+		"properties": map[string]any{
 			"title":  "Test",
 			"status": "draft",
 		},
@@ -673,7 +673,7 @@ func TestExtractProperties_MapArgument(t *testing.T) {
 
 func TestExtractProperties_JSONString(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"properties": `{"title":"From JSON","priority":"high"}`,
 	})
 
@@ -688,7 +688,7 @@ func TestExtractProperties_JSONString(t *testing.T) {
 
 func TestExtractProperties_NoProperties(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id": "REQ-001",
 	})
 
@@ -700,7 +700,7 @@ func TestExtractProperties_NoProperties(t *testing.T) {
 
 func TestExtractProperties_InvalidJSON(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"properties": "not valid json",
 	})
 
@@ -712,7 +712,7 @@ func TestExtractProperties_InvalidJSON(t *testing.T) {
 
 func TestExtractProperties_UnsupportedType(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"properties": 42,
 	})
 
@@ -724,8 +724,8 @@ func TestExtractProperties_UnsupportedType(t *testing.T) {
 
 func TestExtractPropertiesAllowNil_PreservesNil(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
-		"properties": map[string]interface{}{
+	req := makeToolRequest(map[string]any{
+		"properties": map[string]any{
 			"foo": nil,
 			"bar": "value",
 		},
@@ -749,8 +749,8 @@ func TestExtractPropertiesAllowNil_OnlyNilEntriesStillReturnsMap(t *testing.T) {
 	t.Parallel()
 	// Critical: a delete-only call must yield len()>0 so the "no updates specified"
 	// guard does not reject it.
-	req := makeToolRequest(map[string]interface{}{
-		"properties": map[string]interface{}{"foo": nil},
+	req := makeToolRequest(map[string]any{
+		"properties": map[string]any{"foo": nil},
 	})
 	props := extractPropertiesAllowNil(req)
 	if len(props) != 1 {
@@ -761,7 +761,7 @@ func TestExtractPropertiesAllowNil_OnlyNilEntriesStillReturnsMap(t *testing.T) {
 func TestExtractPropertiesAllowNil_StringJSONNullDeletes(t *testing.T) {
 	t.Parallel()
 	// JSON-string fallback must preserve null as nil entry.
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"properties": `{"foo": null, "bar": "x"}`,
 	})
 	props := extractPropertiesAllowNil(req)
@@ -778,8 +778,8 @@ func TestExtractPropertiesAllowNil_StringJSONNullDeletes(t *testing.T) {
 
 func TestExtractPropertiesAllowNil_FiltersEmptyString(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
-		"properties": map[string]interface{}{"foo": ""},
+	req := makeToolRequest(map[string]any{
+		"properties": map[string]any{"foo": ""},
 	})
 	props := extractPropertiesAllowNil(req)
 	if props != nil {
@@ -789,7 +789,7 @@ func TestExtractPropertiesAllowNil_FiltersEmptyString(t *testing.T) {
 
 func TestExtractPropertiesAllowNil_NoArg(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	req := makeToolRequest(map[string]any{"id": "REQ-001"})
 	props := extractPropertiesAllowNil(req)
 	if props != nil {
 		t.Errorf("expected nil when properties arg is missing, got %v", props)
@@ -798,7 +798,7 @@ func TestExtractPropertiesAllowNil_NoArg(t *testing.T) {
 
 func TestExtractPropertiesAllowNil_InvalidJSON(t *testing.T) {
 	t.Parallel()
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"properties": "not valid json",
 	})
 	props := extractPropertiesAllowNil(req)
@@ -811,7 +811,7 @@ func TestExtractPropertiesAllowNil_JSONNullArg(t *testing.T) {
 	t.Parallel()
 	// JSON `null` as the entire properties value: ambiguous (no map to interpret).
 	// Treat as missing/malformed, not as an empty map.
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"properties": "null",
 	})
 	props := extractPropertiesAllowNil(req)

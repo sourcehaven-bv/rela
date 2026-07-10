@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -16,11 +17,11 @@ import (
 // automation + cascade) and [cascadeHost.CreateEntity] (which calls
 // it directly to avoid recursive cascade).
 type createCoreOpts struct {
-	ID              string                 // Custom ID (empty = auto-generate)
-	IDPrefix        string                 // Prefix for auto-generated ID
-	TemplateVariant string                 // Template variant name (empty = default)
-	Properties      map[string]interface{} // Properties to set (overrides template defaults)
-	Content         string                 // Body content (overrides template content when non-empty)
+	ID              string         // Custom ID (empty = auto-generate)
+	IDPrefix        string         // Prefix for auto-generated ID
+	TemplateVariant string         // Template variant name (empty = default)
+	Properties      map[string]any // Properties to set (overrides template defaults)
+	Content         string         // Body content (overrides template content when non-empty)
 	// SkipIDGeneration tells [buildCandidateEntity] to skip real ID
 	// allocation when ID is empty and the type uses auto-IDs.
 	// [Manager.ValidateCreate] sets this so a per-keystroke dry-run does
@@ -150,9 +151,7 @@ func buildCandidateEntity(
 		e.Properties, e.Content = templating.ApplyEntity(e.Properties, e.Content, tmpl)
 	}
 
-	for k, v := range opts.Properties {
-		e.Properties[k] = v
-	}
+	maps.Copy(e.Properties, opts.Properties)
 
 	if opts.Content != "" {
 		e.Content = opts.Content

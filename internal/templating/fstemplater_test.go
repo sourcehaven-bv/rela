@@ -186,7 +186,7 @@ func TestFSTemplater_GenerateEntity(t *testing.T) {
 
 func TestApplyEntity(t *testing.T) {
 	t.Run("nil template returns inputs unchanged", func(t *testing.T) {
-		props := map[string]interface{}{"k": "v"}
+		props := map[string]any{"k": "v"}
 		gotProps, gotContent := ApplyEntity(props, "body", nil)
 		if gotContent != "body" {
 			t.Errorf("content = %q, want body", gotContent)
@@ -198,13 +198,13 @@ func TestApplyEntity(t *testing.T) {
 
 	t.Run("fills in missing properties and empty content", func(t *testing.T) {
 		tmpl := &Template{
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"status":   "draft",
 				"priority": "medium",
 			},
 			Content: "# Template body",
 		}
-		props := map[string]interface{}{"status": "open"}
+		props := map[string]any{"status": "open"}
 		gotProps, gotContent := ApplyEntity(props, "", tmpl)
 		// Existing key is preserved.
 		if gotProps["status"] != "open" {
@@ -231,7 +231,7 @@ func TestApplyEntity(t *testing.T) {
 
 func TestApplyRelation(t *testing.T) {
 	t.Run("nil template returns inputs unchanged", func(t *testing.T) {
-		props := map[string]interface{}{"k": "v"}
+		props := map[string]any{"k": "v"}
 		got := ApplyRelation(props, nil)
 		if got["k"] != "v" {
 			t.Errorf("got %+v", got)
@@ -240,12 +240,12 @@ func TestApplyRelation(t *testing.T) {
 
 	t.Run("merges defaults", func(t *testing.T) {
 		tmpl := &Template{
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"severity": "high",
 				"reason":   "template default",
 			},
 		}
-		props := map[string]interface{}{"severity": "low"}
+		props := map[string]any{"severity": "low"}
 		got := ApplyRelation(props, tmpl)
 		if got["severity"] != "low" {
 			t.Errorf("severity = %v, want existing low", got["severity"])

@@ -146,10 +146,7 @@ func applyHeaderShift(source []byte, headers []headerInfo, shift int) string {
 	// Process in reverse order to maintain correct positions
 	for i := len(headers) - 1; i >= 0; i-- {
 		h := headers[i]
-		newLevel := h.level + shift
-		if newLevel > maxHeaderLevel {
-			newLevel = maxHeaderLevel
-		}
+		newLevel := min(h.level+shift, maxHeaderLevel)
 
 		if h.isSetext {
 			newHeader := strings.Repeat("#", newLevel) + " " + h.text

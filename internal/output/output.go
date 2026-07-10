@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/fatih/color"
@@ -63,7 +64,7 @@ type Writer struct {
 // properties. Implemented by *metamodel.Metamodel; the CLI wires it onto the
 // Writer once the project's metamodel is loaded.
 type TitleResolver interface {
-	DisplayTitle(id, entityType string, properties map[string]interface{}) string
+	DisplayTitle(id, entityType string, properties map[string]any) string
 }
 
 // entityTitle returns the entity's display title via the resolver when one is
@@ -81,7 +82,7 @@ func (w *Writer) entityTitle(e *entity.Entity) string {
 // its literal `title`; here we resolve display_property via the resolver when
 // set, falling back to the literal title otherwise. Keeps trace tree output
 // consistent with the entity table.
-func (w *Writer) traceTitle(id, entityType, literalTitle string, properties map[string]interface{}) string {
+func (w *Writer) traceTitle(id, entityType, literalTitle string, properties map[string]any) string {
 	if w.Titles != nil {
 		return w.Titles.DisplayTitle(id, entityType, properties)
 	}
@@ -171,13 +172,7 @@ func (w *Writer) buildEntitySummary(total int, statusCounts map[string]int) stri
 	}
 	// Add any other statuses not in our predefined order
 	for status, count := range statusCounts {
-		found := false
-		for _, s := range statusOrder {
-			if s == status {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(statusOrder, status)
 		if !found && status != "" && count > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", count, status))
 		}
@@ -192,7 +187,7 @@ func (w *Writer) buildEntitySummary(total int, statusCounts map[string]int) stri
 // WriteEntity outputs a single entity with details
 func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity.Relation) error {
 	if w.Format == FormatJSON {
-		data := map[string]interface{}{
+		data := map[string]any{
 			"entity":   entity,
 			"incoming": incoming,
 			"outgoing": outgoing,
@@ -393,35 +388,35 @@ func (w *Writer) WritePath(path []tracer.PathStep) error {
 }
 
 // WriteMessage outputs a simple message
-func (w *Writer) WriteMessage(format string, args ...interface{}) {
+func (w *Writer) WriteMessage(format string, args ...any) {
 	fmt.Fprintf(w.Out, format+"\n", args...)
 }
 
 // WriteSuccess outputs a success message
-func (w *Writer) WriteSuccess(format string, args ...interface{}) {
+func (w *Writer) WriteSuccess(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintln(w.Out, color.GreenString("✓ ")+msg)
 }
 
 // WriteError outputs an error message
-func (w *Writer) WriteError(format string, args ...interface{}) {
+func (w *Writer) WriteError(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintln(w.Out, color.RedString("✗ ")+msg)
 }
 
 // WriteWarning outputs a warning message
-func (w *Writer) WriteWarning(format string, args ...interface{}) {
+func (w *Writer) WriteWarning(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintln(w.Out, color.YellowString("⚠ ")+msg)
 }
 
 // WriteInfo outputs an info message
-func (w *Writer) WriteInfo(format string, args ...interface{}) {
+func (w *Writer) WriteInfo(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintln(w.Out, color.CyanString("ℹ ")+msg)
 }
 
-func (w *Writer) writeJSON(data interface{}) error {
+func (w *Writer) writeJSON(data any) error {
 	encoder := json.NewEncoder(w.Out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(data)
@@ -555,10 +550,10 @@ type RelationPropertyValidationResult struct {
 
 // AnalysisResult represents the result of an analysis command for JSON output
 type AnalysisResult struct {
-	Status  string      `json:"status"` // "success", "warning", "error"
-	Message string      `json:"message"`
-	Count   int         `json:"count,omitempty"`
-	Details interface{} `json:"details,omitempty"`
+	Status  string `json:"status"` // "success", "warning", "error"
+	Message string `json:"message"`
+	Count   int    `json:"count,omitempty"`
+	Details any    `json:"details,omitempty"`
 }
 
 // WriteAnalysisResult outputs an analysis result in the appropriate format
@@ -585,7 +580,7 @@ func (w *Writer) WriteAnalysisResult(result AnalysisResult) error {
 
 // WriteSchemaOverview outputs the metamodel overview as JSON
 func (w *Writer) WriteSchemaOverview(m SchemaMetamodel) error {
-	data := map[string]interface{}{
+	data := map[string]any{
 		"version":   m.GetVersion(),
 		"namespace": m.GetNamespace(),
 		"entities":  m.GetEntities(),
@@ -612,7 +607,7 @@ func (w *Writer) WriteSchemaTypes(m SchemaMetamodel) error {
 
 // WriteSchemaEntityDetail outputs a single entity type as JSON
 func (w *Writer) WriteSchemaEntityDetail(name string, def SchemaEntityDef, _ SchemaMetamodel) error {
-	data := map[string]interface{}{
+	data := map[string]any{
 		"name":        name,
 		"label":       def.GetLabel(),
 		"aliases":     def.GetAliases(),
@@ -633,7 +628,7 @@ func (w *Writer) WriteSchemaEntityDetail(name string, def SchemaEntityDef, _ Sch
 
 // WriteSchemaRelationDetail outputs a single relation type as JSON
 func (w *Writer) WriteSchemaRelationDetail(name string, def SchemaRelationDef) error {
-	data := map[string]interface{}{
+	data := map[string]any{
 		"name":  name,
 		"label": def.GetLabel(),
 		"from":  def.GetFrom(),
@@ -667,9 +662,9 @@ func (w *Writer) WriteSchemaRelationDetail(name string, def SchemaRelationDef) e
 type SchemaMetamodel interface {
 	GetVersion() string
 	GetNamespace() string
-	GetEntities() interface{}
-	GetRelations() interface{}
-	GetTypes() interface{}
+	GetEntities() any
+	GetRelations() any
+	GetTypes() any
 }
 
 // SchemaEntityDef interface for entity definition output
@@ -677,7 +672,7 @@ type SchemaEntityDef interface {
 	GetLabel() string
 	GetAliases() []string
 	GetIDPatterns() []string
-	GetProperties() interface{}
+	GetProperties() any
 	GetRDFType() string
 	GetColor() string
 	GetBorderColor() string
@@ -689,7 +684,7 @@ type SchemaRelationDef interface {
 	GetFrom() []string
 	GetTo() []string
 	GetDescription() string
-	GetInverse() interface{}
+	GetInverse() any
 	IsSymmetric() bool
 	GetMinOutgoing() *int
 	GetMaxOutgoing() *int

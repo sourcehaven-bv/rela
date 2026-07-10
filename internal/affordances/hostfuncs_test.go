@@ -99,15 +99,15 @@ assignments:
 	}
 	// status "open" is in labels → writable.
 	if _, denied := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-1", map[string]interface{}{
-			"status": "open", "labels": []interface{}{"open", "review"},
+		ticket("T-1", map[string]any{
+			"status": "open", "labels": []any{"open", "review"},
 		})).Writable["status"]; denied {
 		t.Errorf("status in labels → writable")
 	}
 	// status "done" not in labels → denied.
 	if v, ok := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-2", map[string]interface{}{
-			"status": "done", "labels": []interface{}{"open", "review"},
+		ticket("T-2", map[string]any{
+			"status": "done", "labels": []any{"open", "review"},
 		})).Writable["status"]; !ok || v {
 		t.Errorf("status not in labels → denied")
 	}
@@ -132,12 +132,12 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 	if _, denied := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-1", map[string]interface{}{"urgent": true})).Writable["status"]; denied {
+		ticket("T-1", map[string]any{"urgent": true})).Writable["status"]; denied {
 		t.Errorf("urgent=true → status writable")
 	}
 	// stored as the string "false" → coerces to bool false → denied.
 	if v, ok := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-2", map[string]interface{}{"urgent": "false"})).Writable["status"]; !ok || v {
+		ticket("T-2", map[string]any{"urgent": "false"})).Writable["status"]; !ok || v {
 		t.Errorf("urgent='false' coerces to false → status denied")
 	}
 }
@@ -163,8 +163,8 @@ assignments:
 	}
 	// labels mixes a string and a number; "vip" is still found.
 	if _, denied := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-1", map[string]interface{}{
-			"labels": []interface{}{"vip", 42},
+		ticket("T-1", map[string]any{
+			"labels": []any{"vip", 42},
 		})).Writable["status"]; denied {
 		t.Errorf("vip present among mixed elements → status writable, no Eval failure")
 	}
@@ -188,12 +188,12 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 	if _, denied := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-1", map[string]interface{}{"labels": []interface{}{"vip", "urgent"}})).Writable["status"]; denied {
+		ticket("T-1", map[string]any{"labels": []any{"vip", "urgent"}})).Writable["status"]; denied {
 		t.Errorf("labels contains vip → status writable")
 	}
 	// single scalar promoted to one-element list; "vip" not present.
 	if v, ok := r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-2", map[string]interface{}{"labels": "other"})).Writable["status"]; !ok || v {
+		ticket("T-2", map[string]any{"labels": "other"})).Writable["status"]; !ok || v {
 		t.Errorf("labels=[other] lacks vip → status denied")
 	}
 }

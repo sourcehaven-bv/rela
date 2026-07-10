@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -275,7 +276,7 @@ func TestBuildEntityInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
-	var decoded map[string]interface{}
+	var decoded map[string]any
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
@@ -921,21 +922,17 @@ func cmdIDs(cmds []ResolvedCommand) []string {
 
 func assertContains(t *testing.T, ids []string, expected string) {
 	t.Helper()
-	for _, id := range ids {
-		if id == expected {
-			return
-		}
+	if slices.Contains(ids, expected) {
+		return
 	}
 	t.Errorf("expected %q in %v", expected, ids)
 }
 
 func assertNotContains(t *testing.T, ids []string, unexpected string) {
 	t.Helper()
-	for _, id := range ids {
-		if id == unexpected {
-			t.Errorf("did not expect %q in %v", unexpected, ids)
-			return
-		}
+	if slices.Contains(ids, unexpected) {
+		t.Errorf("did not expect %q in %v", unexpected, ids)
+		return
 	}
 }
 

@@ -138,8 +138,8 @@ func TestMidpoint_RepeatedInsertsTriggerCollapse(t *testing.T) {
 
 func TestSortRelations_StableMissingLast(t *testing.T) {
 	t.Parallel()
-	mkRel := func(id string, order interface{}) entity.Relation {
-		props := map[string]interface{}{}
+	mkRel := func(id string, order any) entity.Relation {
+		props := map[string]any{}
 		if order != nil {
 			props["_order_out"] = order
 		}
@@ -215,8 +215,8 @@ func TestSortRelations_StableMissingLast(t *testing.T) {
 func TestSortRelations_EmptyPropertyName(t *testing.T) {
 	t.Parallel()
 	in := []entity.Relation{
-		{To: "a", Properties: map[string]interface{}{"_order_out": 3.0}},
-		{To: "b", Properties: map[string]interface{}{"_order_out": 1.0}},
+		{To: "a", Properties: map[string]any{"_order_out": 3.0}},
+		{To: "b", Properties: map[string]any{"_order_out": 1.0}},
 	}
 	got := SortRelations(in, "")
 	if len(got) != 2 || got[0].To != "a" || got[1].To != "b" {

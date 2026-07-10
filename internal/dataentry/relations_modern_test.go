@@ -101,16 +101,16 @@ func newRelationsTestApp(t *testing.T) *App {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Sample ticket",
 			"status": "open",
 		},
 	})
-	seedEntity(app, &entity.Entity{ID: "L-001", Type: "label", Properties: map[string]interface{}{"title": "bug"}})
-	seedEntity(app, &entity.Entity{ID: "L-002", Type: "label", Properties: map[string]interface{}{"title": "ui"}})
-	seedEntity(app, &entity.Entity{ID: "L-003", Type: "label", Properties: map[string]interface{}{"title": "perf"}})
-	seedEntity(app, &entity.Entity{ID: "C-001", Type: "category", Properties: map[string]interface{}{"title": "Backend"}})
-	seedEntity(app, &entity.Entity{ID: "R-001", Type: "reviewer", Properties: map[string]interface{}{"title": "Alice"}})
+	seedEntity(app, &entity.Entity{ID: "L-001", Type: "label", Properties: map[string]any{"title": "bug"}})
+	seedEntity(app, &entity.Entity{ID: "L-002", Type: "label", Properties: map[string]any{"title": "ui"}})
+	seedEntity(app, &entity.Entity{ID: "L-003", Type: "label", Properties: map[string]any{"title": "perf"}})
+	seedEntity(app, &entity.Entity{ID: "C-001", Type: "category", Properties: map[string]any{"title": "Backend"}})
+	seedEntity(app, &entity.Entity{ID: "R-001", Type: "reviewer", Properties: map[string]any{"title": "Alice"}})
 	return app
 }
 
@@ -176,7 +176,7 @@ func TestModern_AC1_AddEdgeWithMeta(t *testing.T) {
 func TestModern_AC2_UpsertMeta(t *testing.T) {
 	app := newRelationsTestApp(t)
 	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001",
-		&store.RelationData{Properties: map[string]interface{}{"weight": float64(5)}}); err != nil {
+		&store.RelationData{Properties: map[string]any{"weight": float64(5)}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"relations": {"tagged": {"data": [{"type":"label","id":"L-001","meta":{"weight":7}}]}}}`
@@ -197,7 +197,7 @@ func TestModern_AC2_UpsertMeta(t *testing.T) {
 func TestModern_AC3_MetaUnset(t *testing.T) {
 	app := newRelationsTestApp(t)
 	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001",
-		&store.RelationData{Properties: map[string]interface{}{
+		&store.RelationData{Properties: map[string]any{
 			"weight":   float64(5),
 			"added_by": "alice",
 		}}); err != nil {
@@ -270,7 +270,7 @@ func TestModern_AC6_Replacement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	seedEntity(app, &entity.Entity{ID: "L-004", Type: "label", Properties: map[string]interface{}{"title": "new"}})
+	seedEntity(app, &entity.Entity{ID: "L-004", Type: "label", Properties: map[string]any{"title": "new"}})
 
 	body := `{"relations": {"tagged": {"data": [
 		{"type":"label","id":"L-001"},
@@ -302,7 +302,7 @@ func TestModern_AC7_AbsentTypeLeavesAlone(t *testing.T) {
 	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001", nil); err != nil {
 		t.Fatal(err)
 	}
-	seedEntity(app, &entity.Entity{ID: "C-002", Type: "category", Properties: map[string]interface{}{"title": "Frontend"}})
+	seedEntity(app, &entity.Entity{ID: "C-002", Type: "category", Properties: map[string]any{"title": "Frontend"}})
 	body := `{"relations": {"belongs-to": {"data": [{"type":"category","id":"C-002"}]}}}`
 	rec := patch(t, app, "tickets", "TKT-001", body)
 	if rec.Code != http.StatusOK {
@@ -457,7 +457,7 @@ func TestModern_AC13_ContentOnNonContentTypeReturns422(t *testing.T) {
 func TestModern_AC14_ValueBasedNoOp(t *testing.T) {
 	app := newRelationsTestApp(t)
 	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "tagged", "L-001",
-		&store.RelationData{Properties: map[string]interface{}{"weight": float64(5)}}); err != nil {
+		&store.RelationData{Properties: map[string]any{"weight": float64(5)}}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -106,7 +106,7 @@ func reqEntity() *entity.Entity {
 	return &entity.Entity{
 		ID:         "REQ-001",
 		Type:       "requirement",
-		Properties: map[string]interface{}{"title": "a req"},
+		Properties: map[string]any{"title": "a req"},
 	}
 }
 
@@ -280,14 +280,12 @@ func TestDocumentService_SingleflightCollapsesSameConfig(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = s.Render(context.Background(), "REQ-001", documentRenderConfig{
 				ConfigID: "same",
 				Script:   "docs/same.lua",
 			})
-		}()
+		})
 	}
 	wg.Wait()
 

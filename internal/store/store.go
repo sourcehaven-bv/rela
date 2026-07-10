@@ -335,7 +335,7 @@ type RelationWriter interface {
 
 // RelationData holds optional properties and content for a relation.
 type RelationData struct {
-	Properties map[string]interface{}
+	Properties map[string]any
 	Content    string
 }
 

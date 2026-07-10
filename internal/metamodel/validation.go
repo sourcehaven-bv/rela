@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +102,7 @@ func (e *ValidationError) IsSoft() bool {
 
 // ValidateProperties validates a properties map against a PropertySchema.
 // This is shared between entity and relation validation.
-func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema PropertySchema) []*ValidationError {
+func (m *Metamodel) ValidateProperties(props map[string]any, schema PropertySchema) []*ValidationError {
 	var errs []*ValidationError
 
 	// Check required properties
@@ -140,7 +141,7 @@ func (m *Metamodel) ValidateProperties(props map[string]interface{}, schema Prop
 }
 
 // ValidateEntity validates an entity's type, properties, and ID prefix against the metamodel.
-func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]interface{}) []*ValidationError {
+func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]any) []*ValidationError {
 	var errs []*ValidationError
 
 	def, ok := m.GetEntityDef(entityType)
@@ -178,7 +179,7 @@ func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]
 
 // ValidateRelationProperties validates a relation's properties against the metamodel.
 func (m *Metamodel) ValidateRelationProperties(
-	relationType string, properties map[string]interface{},
+	relationType string, properties map[string]any,
 ) []*ValidationError {
 	def, ok := m.Relations[relationType]
 	if !ok {
@@ -195,11 +196,11 @@ func (m *Metamodel) ValidateRelationProperties(
 // isEmptyList reports whether val is a zero-length slice. Both []string
 // (coerced from form submissions) and []interface{} (from YAML frontmatter)
 // are treated as list values.
-func isEmptyList(val interface{}) bool {
+func isEmptyList(val any) bool {
 	switch v := val.(type) {
 	case []string:
 		return len(v) == 0
-	case []interface{}:
+	case []any:
 		return len(v) == 0
 	}
 	return false
@@ -210,7 +211,7 @@ func isEmptyList(val interface{}) bool {
 //
 // Note: The explicit nil check is required because returning a nil *ValidationError
 // directly as error creates a non-nil interface with nil value (Go interface gotcha).
-func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef, val interface{}) error {
+func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef, val any) error {
 	err := m.validatePropertyValue(propName, propDef, val)
 	if err != nil {
 		return err
@@ -221,7 +222,7 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 // validatePropertyValue validates a single property value and returns a structured ValidationError.
 //
 //nolint:funlen // large switch for property type validation; splitting would reduce readability
-func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef, val interface{}) *ValidationError {
+func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef, val any) *ValidationError {
 	switch propDef.Type {
 	case PropertyTypeString:
 		if _, ok := val.(string); !ok {
@@ -313,13 +314,7 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 					Message:  "Must be a string",
 				}
 			}
-			valid := false
-			for _, v := range propDef.Values {
-				if v == s {
-					valid = true
-					break
-				}
-			}
+			valid := slices.Contains(propDef.Values, s)
 			if !valid {
 				return &ValidationError{
 					Type:     ValidationErrorInvalidValue,
@@ -378,7 +373,7 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 // rela's permissive-storage philosophy); the list length must not exceed
 // the cap. Content-level checks (the blob exists, hash matches) are the
 // attachment store's concern, not this.
-func validateFileValue(propName string, propDef *PropertyDef, val interface{}) *ValidationError {
+func validateFileValue(propName string, propDef *PropertyDef, val any) *ValidationError {
 	maxCount := propDef.FileMax()
 
 	// Coerce to a list of paths regardless of scalar/list shape so the
@@ -389,7 +384,7 @@ func validateFileValue(propName string, propDef *PropertyDef, val interface{}) *
 		paths = []string{v}
 	case []string:
 		paths = v
-	case []interface{}:
+	case []any:
 		for i, item := range v {
 			s, ok := item.(string)
 			if !ok {
@@ -419,7 +414,7 @@ func validateFileValue(propName string, propDef *PropertyDef, val interface{}) *
 	return nil
 }
 
-func validateCustomTypeValue(propName string, customType CustomType, val interface{}) *ValidationError {
+func validateCustomTypeValue(propName string, customType CustomType, val any) *ValidationError {
 	hasEnumValues := len(customType.Values) > 0
 	hasValidations := len(customType.Validations) > 0
 
@@ -468,7 +463,7 @@ func validateCustomTypeValue(propName string, customType CustomType, val interfa
 
 	// Handle []interface{} (from YAML parsing).
 	// An empty list is treated as "no value" — see []string branch above.
-	if list, ok := val.([]interface{}); ok {
+	if list, ok := val.([]any); ok {
 		// Collect all errors from all list items
 		var allErrors []string
 		for i, item := range list {
@@ -608,7 +603,7 @@ func ParseDateValue(s string, propDef *PropertyDef) (time.Time, error) {
 // float64 is accepted only when it has no fractional part — truncating
 // 3.5 to 3 would silently corrupt the value (matching the integer
 // property-validation rule).
-func ParseIntegerValue(val interface{}) (int, error) {
+func ParseIntegerValue(val any) (int, error) {
 	switch v := val.(type) {
 	case int:
 		return v, nil
@@ -627,7 +622,7 @@ func ParseIntegerValue(val interface{}) (int, error) {
 }
 
 // ParseBooleanValue parses a boolean from various input types
-func ParseBooleanValue(val interface{}) (bool, error) {
+func ParseBooleanValue(val any) (bool, error) {
 	switch v := val.(type) {
 	case bool:
 		return v, nil

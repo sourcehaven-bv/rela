@@ -343,8 +343,8 @@ status: approved
 }
 
 func TestCollectPropertyKeys(t *testing.T) {
-	a := map[string]interface{}{"foo": 1, "bar": 2}
-	b := map[string]interface{}{"bar": 3, "baz": 4}
+	a := map[string]any{"foo": 1, "bar": 2}
+	b := map[string]any{"bar": 3, "baz": 4}
 
 	keys := collectPropertyKeys(a, b)
 

@@ -88,7 +88,7 @@ assignments:
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "locked", "status": "open"},
+		Properties: map[string]any{"title": "locked", "status": "open"},
 	})
 
 	// GET: status is denied (title != "editable") → writable=false.
@@ -133,7 +133,7 @@ assignments:
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "locked", "status": "open"},
+		Properties: map[string]any{"title": "locked", "status": "open"},
 	})
 
 	// PATCH directly, with NO prior GET — attribution rides on the
@@ -174,12 +174,12 @@ assignments:
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-002",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "y", "status": "open"},
+		Properties: map[string]any{"title": "y", "status": "open"},
 	})
 
 	// Wire shape: creatable=false (sparse).
@@ -230,7 +230,7 @@ assignments:
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 
 	got := getAs(t, app, "alice", "TKT-001")

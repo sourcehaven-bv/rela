@@ -292,7 +292,7 @@ func TestExportEmptyResult(t *testing.T) {
 
 func TestFormatValue(t *testing.T) {
 	tests := []struct {
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{"simple string", "simple string"},
@@ -349,8 +349,8 @@ func TestFormatRelationsMap(t *testing.T) {
 
 func TestCollectPropertyKeys(t *testing.T) {
 	entities := []*entity.Entity{
-		{Properties: map[string]interface{}{"title": "A", "foo": "bar"}},
-		{Properties: map[string]interface{}{"title": "B", "status": "draft", "baz": "qux"}},
+		{Properties: map[string]any{"title": "A", "foo": "bar"}},
+		{Properties: map[string]any{"title": "B", "status": "draft", "baz": "qux"}},
 	}
 
 	keys := collectPropertyKeys(entities)

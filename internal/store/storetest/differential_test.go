@@ -266,7 +266,7 @@ func FuzzDifferential(f *testing.F) {
 
 // assertSameError checks that both errors are either both nil or both non-nil
 // with the same sentinel.
-func assertSameError(t *testing.T, err1, err2 error, msg string, args ...interface{}) {
+func assertSameError(t *testing.T, err1, err2 error, msg string, args ...any) {
 	t.Helper()
 	prefix := fmt.Sprintf(msg, args...)
 	if err1 == nil && err2 == nil {

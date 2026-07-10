@@ -4,6 +4,7 @@
 package schema
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -141,25 +142,19 @@ func findEntityTypeReferences(
 
 	// Check metamodel relations (from/to)
 	for relName, relDef := range meta.Relations {
-		for _, from := range relDef.From {
-			if from == entityType {
-				refs = append(refs, Reference{
-					File:    "metamodel.yaml",
-					Section: "relations." + relName + ".from",
-					Kind:    "relation_from",
-				})
-				break
-			}
+		if slices.Contains(relDef.From, entityType) {
+			refs = append(refs, Reference{
+				File:    "metamodel.yaml",
+				Section: "relations." + relName + ".from",
+				Kind:    "relation_from",
+			})
 		}
-		for _, to := range relDef.To {
-			if to == entityType {
-				refs = append(refs, Reference{
-					File:    "metamodel.yaml",
-					Section: "relations." + relName + ".to",
-					Kind:    "relation_to",
-				})
-				break
-			}
+		if slices.Contains(relDef.To, entityType) {
+			refs = append(refs, Reference{
+				File:    "metamodel.yaml",
+				Section: "relations." + relName + ".to",
+				Kind:    "relation_to",
+			})
 		}
 	}
 
@@ -176,15 +171,12 @@ func findEntityTypeReferences(
 
 	// Check metamodel automations
 	for _, a := range meta.Automations {
-		for _, et := range a.On.Entity {
-			if et == entityType {
-				refs = append(refs, Reference{
-					File:    "metamodel.yaml",
-					Section: "automations." + a.Name,
-					Kind:    "automation",
-				})
-				break
-			}
+		if slices.Contains(a.On.Entity, entityType) {
+			refs = append(refs, Reference{
+				File:    "metamodel.yaml",
+				Section: "automations." + a.Name,
+				Kind:    "automation",
+			})
 		}
 	}
 

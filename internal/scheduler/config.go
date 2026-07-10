@@ -118,7 +118,7 @@ func (s *Schedule) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // MarshalYAML implements yaml.Marshaler for Schedule.
-func (s Schedule) MarshalYAML() (interface{}, error) {
+func (s Schedule) MarshalYAML() (any, error) {
 	return s.String(), nil
 }
 

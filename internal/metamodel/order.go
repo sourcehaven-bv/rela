@@ -12,7 +12,7 @@ import "math"
 // data-entry sort and wire validators, the analyzer, and the CLI
 // commands. Keep one canonical implementation to avoid drift; do not
 // redefine variants in callers.
-func FiniteOrder(v interface{}) (float64, bool) {
+func FiniteOrder(v any) (float64, bool) {
 	if v == nil {
 		return 0, false
 	}

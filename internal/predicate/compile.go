@@ -186,11 +186,11 @@ func translateParseError(err error) error {
 // gopher-lua-formatted parse error. Matches the canonical pattern
 // `... line:N(column:M) near 'X': ...` lenient on surrounding text.
 func parseGopherLuaError(s string) (line, col int, near string, ok bool) {
-	i := strings.Index(s, "line:")
-	if i < 0 {
+	_, after, ok := strings.Cut(s, "line:")
+	if !ok {
 		return 0, 0, "", false
 	}
-	rest := s[i+len("line:"):]
+	rest := after
 	var n int
 	if _, e := fmt.Sscanf(rest, "%d", &n); e != nil {
 		return 0, 0, "", false
@@ -213,11 +213,11 @@ func parseGopherLuaError(s string) (line, col int, near string, ok bool) {
 		return line, col, "", true
 	}
 	rest = rest[k+len("near '"):]
-	end := strings.IndexByte(rest, '\'')
-	if end < 0 {
+	before0, _, ok0 := strings.Cut(rest, "'")
+	if !ok0 {
 		return line, col, "", true
 	}
-	near = rest[:end]
+	near = before0
 	return line, col, near, true
 }
 
