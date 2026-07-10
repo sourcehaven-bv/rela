@@ -3,6 +3,7 @@ package pgstore_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -144,4 +145,44 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 	snap, err := s.GetRelationVersion(ctx, "A", "links", "B", 1)
 	require.NoError(t, err)
 	require.Equal(t, "gen2", snap.Content)
+}
+
+// TestSweepCapturesSettledRelations drives the sweep against a settled relation
+// and asserts it snapshots it once (as create), dedups a no-op re-run, and skips
+// a relation that hasn't settled.
+func TestSweepCapturesSettledRelations(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	_, err = s.CreateRelation(ctx, "SET-A", "blocks", "SET-B",
+		&store.RelationData{Content: "settled"})
+	require.NoError(t, err)
+	_, err = s.CreateRelation(ctx, "FRESH-A", "blocks", "FRESH-B",
+		&store.RelationData{Content: "fresh"})
+	require.NoError(t, err)
+	// Backdate the settled relation so the idle filter admits it.
+	_, err = pool.Exec(ctx,
+		`UPDATE relations SET updated_at = now() - interval '1 hour' WHERE from_id = 'SET-A'`)
+	require.NoError(t, err)
+
+	s.StartVersionSweep(stubProvider{hash: "schema-rel", json: []byte(`{"relations":{}}`)},
+		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
+
+	require.Eventually(t, func() bool {
+		metas, e := s.ListRelationVersions(ctx, "SET-A", "blocks", "SET-B")
+		return e == nil && len(metas) == 1 && metas[0].Op == store.VersionOpCreate
+	}, 3*time.Second, 25*time.Millisecond, "sweep should capture the settled relation once as create")
+
+	fresh, err := s.ListRelationVersions(ctx, "FRESH-A", "blocks", "FRESH-B")
+	require.NoError(t, err)
+	require.Empty(t, fresh, "fresh relation should not be versioned yet")
+
+	// Dedup: unchanged content produces no further versions across ticks.
+	time.Sleep(200 * time.Millisecond)
+	metas, err := s.ListRelationVersions(ctx, "SET-A", "blocks", "SET-B")
+	require.NoError(t, err)
+	require.Len(t, metas, 1, "unchanged relation content must not duplicate versions")
 }
