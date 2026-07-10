@@ -325,6 +325,14 @@ func writeSyncApplyError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "The content is invalid", err.Error())
 		return
 	}
+	// A body type that contradicts the stored type on update is a structural
+	// impossibility (one ID cannot be two types) and a cross-type write
+	// escalation vector — 422, not a conflict (BUG-ZWTDH9).
+	if errors.Is(err, entitymanager.ErrTypeImmutable) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "type_immutable",
+			"The entity type is immutable on update", err.Error())
+		return
+	}
 	var forbidden *acl.ForbiddenError
 	if errors.As(err, &forbidden) {
 		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", "")

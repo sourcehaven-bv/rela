@@ -87,15 +87,30 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: entity %s has inaccessible fields", e.ID)
 	}
 
-	_, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	stored, getErr := m.deps.Store.GetEntity(ctx, e.ID)
 	op, err := resolveUpsertOp(getErr, audit.OpCreateEntity, audit.OpUpdateEntity)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: existence check for %s: %w", e.ID, err)
 	}
 
+	// On UPDATE, the authorization subject must be bound to the RESOURCE, not
+	// the body. Type is immutable on update: authorize (and below, validate)
+	// against the stored type, and hard-reject a body type that differs — a
+	// mismatch is a cross-type write-privilege escalation, not a legal edit
+	// (BUG-ZWTDH9). On CREATE (entity does not yet exist) the body type IS the
+	// new entity's type, so subjectType is simply e.Type.
+	subjectType := e.Type
+	if op.aclOp == acl.OpUpdate {
+		if e.Type != stored.Type {
+			return nil, fmt.Errorf("entitymanager: ApplyEntity: %s: %w (stored %q, body %q)",
+				e.ID, ErrTypeImmutable, stored.Type, e.Type)
+		}
+		subjectType = stored.Type
+	}
+
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      op.aclOp,
-		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID},
+		Subject: acl.EntitySubject{Type: subjectType, ID: e.ID},
 	}); err != nil {
 		return nil, err
 	}

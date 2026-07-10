@@ -24,6 +24,21 @@ var ErrRelationNotFound = errors.New("relation not found")
 // or generated ID collides with an existing entity.
 var ErrEntityAlreadyExists = errors.New("entity already exists")
 
+// ErrTypeImmutable is returned by the upsert/apply path when the caller
+// supplies a type that differs from the STORED type of an existing entity.
+// An entity's type is immutable on update: an UPDATE is authorized and
+// validated against the resource's stored type, so re-typing it via the
+// body would (a) escalate a cross-type write past the ACL — a principal
+// permitted to write type B could overwrite a stored type-A record by
+// claiming type B in the body — and (b) corrupt the store (fsstore would
+// write the record under a second type's path, orphaning the original).
+// The v1 PATCH contract omits `type` from the body entirely for the same
+// reason; sync PUT carries a type (it is a create-or-update upsert) but
+// must reject a body type that contradicts the stored one. Surfaced by the
+// sync handler as HTTP 422 (a structural impossibility per DEC-HWZHA — the
+// storage layer cannot persist one ID as two types).
+var ErrTypeImmutable = errors.New("entity type is immutable on update; body type differs from the stored type")
+
 // ErrRelationAlreadyExists is returned by [Manager.CreateRelation]
 // when the (from, type, to) tuple already exists.
 var ErrRelationAlreadyExists = errors.New("relation already exists")
