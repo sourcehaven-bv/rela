@@ -62,9 +62,11 @@ func resolveUpsertOp(getErr error, createAudit, updateAudit string) (upsertOp, e
 //   - Like every write path, it authorizes against the ACL, validates against
 //     the metamodel (hard errors abort; soft conditions ride along as
 //     warnings), and emits an audit record AFTER the durable write (consistent
-//     with Create/Update — a committed write is never left unaudited). It must
-//     not be confused with the internal upsertEntity, a raw store write with
-//     none of that.
+//     with Create/Update — a committed write is never left unaudited). The
+//     durable write is a direct CreateEntity or UpdateEntity chosen by the
+//     resolved intent — never an upsert: a create-intent write that races a
+//     concurrent create is rejected (ErrEntityAlreadyExists), not silently
+//     turned into a re-typing overwrite (BUG-ZWTDH9).
 //
 // ID-prefix note: validation includes the metamodel's ID-prefix check, which is
 // a HARD error. Sync therefore assumes peers share a metamodel (so a
@@ -128,12 +130,44 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, err
 	}
 
-	if err := upsertEntity(ctx, m.deps.Store, e); err != nil {
-		return nil, fmt.Errorf("entitymanager: ApplyEntity: %w", err)
+	// Write by RESOLVED intent — never upsert. A create that conflicts
+	// (a concurrent create of the same ID landed since the existence
+	// probe) is a lost-update + type-re-type vector if it silently
+	// updates: reject it as ErrEntityAlreadyExists so the caller re-reads
+	// (the sync handler maps it to 409). An update whose row vanished
+	// concurrently surfaces as ErrEntityNotFound (mapped to a 412
+	// conflict). This is what closes the residual on the postgres
+	// multi-writer backend (BUG-ZWTDH9).
+	if err := m.persistApplyEntity(ctx, op.aclOp, e); err != nil {
+		return nil, err
 	}
 	m.recordEntityAudit(ctx, op.auditOp, e, op.summary)
 
 	return &entity.UpdateResult{Entity: e, Warnings: soft}, nil
+}
+
+// persistApplyEntity writes e by the resolved apply intent: OpCreate ->
+// CreateEntity (a conflict is ErrEntityAlreadyExists — never overwrite);
+// OpUpdate -> UpdateEntity (a vanished row is ErrEntityNotFound). Neither
+// branch falls back to the other, so a create-intent write that races a
+// concurrent create can never become a blind, re-typing update.
+func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.Entity) error {
+	if op == acl.OpCreate {
+		if err := m.deps.Store.CreateEntity(ctx, e); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
+			}
+			return fmt.Errorf("entitymanager: ApplyEntity: %w", err)
+		}
+		return nil
+	}
+	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+		}
+		return fmt.Errorf("entitymanager: ApplyEntity: %w", err)
+	}
+	return nil
 }
 
 // ApplyRelation upserts a relation by its from/type/to triple, with the same
@@ -191,12 +225,38 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: invalid relation: %w", vErr)
 	}
 
-	if err := upsertRelation(ctx, m.deps.Store, r); err != nil {
-		return nil, fmt.Errorf("entitymanager: ApplyRelation: %w", err)
+	// Write by RESOLVED intent — never upsert (BUG-ZWTDH9). OpCreate ->
+	// CreateRelation (a conflict is ErrRelationAlreadyExists); OpUpdate ->
+	// UpdateRelation (a vanished row is ErrRelationNotFound).
+	if err := m.persistApplyRelation(ctx, op.aclOp, r); err != nil {
+		return nil, err
 	}
 	m.recordRelationAudit(ctx, op.auditOp, r, op.summary)
 
 	return r, nil
+}
+
+// persistApplyRelation writes r by the resolved apply intent, mirroring
+// persistApplyEntity: no create-then-update fallback, so a create-intent
+// write that races a concurrent create is rejected, not silently merged.
+func (m *Manager) persistApplyRelation(ctx context.Context, op acl.Op, r *entity.Relation) error {
+	data := store.RelationData{Properties: r.Properties, Content: r.Content}
+	if op == acl.OpCreate {
+		if _, err := m.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &data); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				return fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, r.From, r.Type, r.To)
+			}
+			return fmt.Errorf("entitymanager: ApplyRelation: %w", err)
+		}
+		return nil
+	}
+	if _, err := m.deps.Store.UpdateRelation(ctx, r.From, r.Type, r.To, data); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, r.From, r.Type, r.To)
+		}
+		return fmt.Errorf("entitymanager: ApplyRelation: %w", err)
+	}
+	return nil
 }
 
 // requireEndpoint loads a relation endpoint, distinguishing a genuine

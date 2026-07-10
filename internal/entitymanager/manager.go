@@ -386,7 +386,11 @@ func (m *Manager) CreateEntity(
 		if err := checkUniqueProperties(ctx, m.deps, created, created.ID); err != nil {
 			return nil, err
 		}
-		if writeErr := upsertEntity(ctx, m.deps.Store, created); writeErr != nil {
+		// UpdateEntity, not upsert: createCore already persisted this row
+		// above, so the post-automation re-write is unambiguously an
+		// update of an existing entity (BUG-ZWTDH9 — no create-then-
+		// update fallback anywhere).
+		if writeErr := m.deps.Store.UpdateEntity(ctx, created); writeErr != nil {
 			return nil, fmt.Errorf("write entity after automation: %w", writeErr)
 		}
 		// Recompute warnings against the post-automation state
@@ -524,7 +528,10 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, err
 	}
 
-	if err := upsertEntity(ctx, m.deps.Store, e); err != nil {
+	// UpdateEntity, not upsert: the GetEntity above already established
+	// the row exists (else we returned ErrEntityNotFound), so this is
+	// unambiguously an update (BUG-ZWTDH9).
+	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
@@ -733,7 +740,18 @@ func (m *Manager) CreateRelation(
 		return nil, err
 	}
 
-	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
+	// CreateRelation, not upsert: a create must never fall through to an
+	// update (that would clobber a racing create of the same triple).
+	// The GetRelation pre-check above is advisory; the store's atomic
+	// create is the real guard, and a conflict surfaces as
+	// ErrRelationAlreadyExists (BUG-ZWTDH9).
+	if _, err := m.deps.Store.CreateRelation(ctx, from, relType, to, &store.RelationData{
+		Properties: rel.Properties,
+		Content:    rel.Content,
+	}); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, from, relType, to)
+		}
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
@@ -794,7 +812,13 @@ func (m *Manager) UpdateRelation(
 		rel.Content = *opts.Content
 	}
 
-	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
+	// UpdateRelation, not upsert: the GetRelation above established the
+	// triple exists (else we returned ErrRelationNotFound), so this is
+	// unambiguously an update (BUG-ZWTDH9).
+	if _, err := m.deps.Store.UpdateRelation(ctx, from, relType, to, store.RelationData{
+		Properties: rel.Properties,
+		Content:    rel.Content,
+	}); err != nil {
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))

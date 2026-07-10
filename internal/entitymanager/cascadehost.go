@@ -2,6 +2,7 @@ package entitymanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,8 +28,8 @@ import (
 //
 // Audit: cascadeHost emits audit records directly (bypassing
 // Manager's recordEntityAudit / recordRelationAudit) because it
-// bypasses Manager itself — going through createCore / upsertEntity
-// to avoid double-cascading. Records carry triggered_by="automation"
+// bypasses Manager itself — going through createCore / direct store
+// writes to avoid double-cascading. Records carry triggered_by="automation"
 // (or the cascade-delete label when invoked from IfExistsReplace) to
 // distinguish them from direct writes.
 type cascadeHost struct {
@@ -63,17 +64,23 @@ func (h *cascadeHost) CreateEntity(
 	return e, err
 }
 
-// WriteEntity satisfies [autocascade.Host.WriteEntity] by performing
-// a bare upsert against the store.
+// WriteEntity satisfies [autocascade.Host.WriteEntity] by updating an
+// already-persisted entity.
 //
-// Note: no audit record here. WriteEntity is invoked by the Runner
-// to persist post-cascade property changes onto an entity that was
-// just created via CreateEntity in the same cascade — the create
-// already produced one audit record. Emitting another for the
-// property-set step would double-count the same entity creation in
-// the audit log.
+// It is an UPDATE, never an upsert: the Runner only calls WriteEntity to
+// persist post-cascade property changes onto an entity it created via
+// CreateEntity earlier in the SAME cascade, so the row is guaranteed to
+// exist. A create-then-update fallback here would be the lost-update /
+// type-re-type vector removed in BUG-ZWTDH9.
+//
+// Note: no audit record here. The earlier CreateEntity already produced
+// one audit record for this entity; emitting another for the property-set
+// step would double-count the same creation in the audit log.
 func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity) error {
-	return upsertEntity(ctx, h.deps.Store, e)
+	if e == nil {
+		return nil
+	}
+	return h.deps.Store.UpdateEntity(ctx, e)
 }
 
 // GetEntity satisfies [autocascade.Host.GetEntity] by forwarding to
@@ -82,10 +89,29 @@ func (h *cascadeHost) GetEntity(ctx context.Context, id string) (*entity.Entity,
 	return h.deps.Store.GetEntity(ctx, id)
 }
 
-// WriteRelation satisfies [autocascade.Host.WriteRelation] by
-// performing a bare upsert against the store.
+// WriteRelation satisfies [autocascade.Host.WriteRelation] by CREATING
+// the automation-generated relation.
+//
+// It is a create, never an upsert: the Runner only calls WriteRelation
+// for freshly built [automation.Result.RelationsToCreate] and trigger
+// relations, so the intent is always create. A store.ErrConflict means
+// the identical triple already exists — an idempotent re-trigger of the
+// same automation, not a lost-update race (cascades run in-process under
+// the write lock). Treat that as a no-op success rather than blindly
+// overwriting it (which was the removed create-then-update fallback,
+// BUG-ZWTDH9); no audit record is emitted for the no-op since nothing
+// was written.
 func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) error {
-	if err := upsertRelation(ctx, h.deps.Store, r); err != nil {
+	if r == nil {
+		return nil
+	}
+	if _, err := h.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &store.RelationData{
+		Properties: r.Properties,
+		Content:    r.Content,
+	}); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil
+		}
 		return err
 	}
 	h.recordCascade(ctx, audit.OpCreateRelation, relationSubject(r), "created")
