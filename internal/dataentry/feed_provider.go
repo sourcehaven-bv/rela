@@ -68,7 +68,9 @@ type declarativeFeed struct {
 // newDeclarativeFeed builds a provider for one configured feed. It pre-parses
 // each source's filter clauses so a malformed clause is caught before any
 // entity is read (config validation catches this earlier still).
-func newDeclarativeFeed(feedID string, cfg dataentryconfig.Feed, meta *metamodel.Metamodel, src entitySource, link deepLinker) (*declarativeFeed, error) {
+func newDeclarativeFeed(
+	feedID string, cfg dataentryconfig.Feed, meta *metamodel.Metamodel, src entitySource, link deepLinker,
+) (*declarativeFeed, error) {
 	// Validate sources reference known types up front so List/Get can assume it.
 	for i, s := range cfg.Sources {
 		if _, ok := meta.GetEntityDef(s.EntityType); !ok {
@@ -189,7 +191,9 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 // a date value, maps its properties to a calendar event. ok=false means the
 // entity is filtered out or has no usable date (it is silently skipped, not an
 // error — a task with no due date is simply not on the calendar).
-func (d *declarativeFeed) mapEntity(e *entity.Entity, s dataentryconfig.FeedSource, entDef *metamodel.EntityDef, filters []*filter.Filter) (calfeed.Event, bool, error) {
+func (d *declarativeFeed) mapEntity(
+	e *entity.Entity, s dataentryconfig.FeedSource, entDef *metamodel.EntityDef, filters []*filter.Filter,
+) (calfeed.Event, bool, error) {
 	matched, err := filter.MatchAll(entityRecord(e), filters, entDef, d.meta)
 	if err != nil {
 		return calfeed.Event{}, false, err

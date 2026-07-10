@@ -257,6 +257,8 @@ func (a *App) collectEdgeWarnings(
 // that prevented further writes. On a write-loop error, the relations
 // already written stay written — the caller treats this as the
 // documented atomicity gap.
+//
+//nolint:gocognit // diffs desired vs. existing relation sets and issues add/remove ops per peer; the branches are the set-reconciliation cases, not shared logic to extract.
 func (a *App) applyRelationsModern(
 	ctx context.Context, entityID string, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
@@ -530,7 +532,9 @@ func requiredMetaWarnings(
 // order properties (_order_out / _order_in) are finite numeric. Non-finite
 // or non-numeric values are wire-format violations (400) — the engine's
 // midpoint and sort logic depends on finite float64 values.
-func validateManagedOrderMeta(relType string, ref v1.ResourceIdentifier, edgePath string, relDef *metamodel.RelationDef) error {
+func validateManagedOrderMeta(
+	relType string, ref v1.ResourceIdentifier, edgePath string, relDef *metamodel.RelationDef,
+) error {
 	check := func(prop string) error {
 		v, present := ref.Meta[prop]
 		if !present {

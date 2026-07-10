@@ -62,7 +62,11 @@ func appSDKSource() string {
     if (!p) return;
     delete pending[res.id];
     if (res.ok) { p.resolve(res.result); }
-    else { var e = new Error(res.error ? res.error.message : 'request failed'); e.code = res.error ? res.error.code : 'error'; p.reject(e); }
+    else {
+      var e = new Error(res.error ? res.error.message : 'request failed');
+      e.code = res.error ? res.error.code : 'error';
+      p.reject(e);
+    }
   }
   // Accept the port only from our parent (the host), one time, first wins —
   // so a nested frame the app creates cannot race the handshake and MITM us.

@@ -176,15 +176,18 @@ func (s *security) requireSameOrigin(next http.Handler) http.Handler {
 // Origin/Referer/Host with embedded newlines cannot inject fake log lines
 // into structured log destinations.
 func (s *security) reject(w http.ResponseWriter, r *http.Request, reason string) {
+	// Cap each attacker-controlled log field so a huge header can't bloat the
+	// log line.
+	const maxLogFieldLen = 200
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		origin = r.Header.Get("Referer")
 	}
 	slog.Warn("security blocked request",
 		"rule", reason,
-		"host", strconv.Quote(truncate(r.Host, 200)),
-		"origin", strconv.Quote(truncate(origin, 200)),
-		"path", strconv.Quote(truncate(r.URL.Path, 200)),
+		"host", strconv.Quote(truncate(r.Host, maxLogFieldLen)),
+		"origin", strconv.Quote(truncate(origin, maxLogFieldLen)),
+		"path", strconv.Quote(truncate(r.URL.Path, maxLogFieldLen)),
 	)
 
 	w.Header().Set("Content-Type", "application/json")

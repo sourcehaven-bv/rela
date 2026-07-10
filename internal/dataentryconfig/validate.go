@@ -217,6 +217,8 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 }
 
 // validateForms validates form definitions.
+//
+//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -301,7 +303,9 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 // one must be authored from a `To:` type. Mismatch returns an error;
 // when the entity is on the opposite side the message hints at
 // flipping the direction.
-func validateFormRelationSide(formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef) []string {
+func validateFormRelationSide(
+	formID string, i int, entityType string, r FormRelation, relDef *metamodel.RelationDef,
+) []string {
 	if entityType == "" {
 		return nil
 	}
@@ -327,7 +331,9 @@ func validateFormRelationSide(formID string, i int, entityType string, r FormRel
 }
 
 // validateTransitions checks that transition values are valid for the property's type.
-func validateTransitions(formID string, fieldIdx int, field FormField, propDef metamodel.PropertyDef, meta *metamodel.Metamodel) []string {
+func validateTransitions(
+	formID string, fieldIdx int, field FormField, propDef metamodel.PropertyDef, meta *metamodel.Metamodel,
+) []string {
 	var errs []string
 
 	// Get valid values for this property type
@@ -403,6 +409,8 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 }
 
 // validateLists validates list definitions.
+//
+//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -643,6 +651,8 @@ func sortedListIDs(cfg *Config) []string {
 }
 
 // validateViews validates view definitions with their traversal rules and sections.
+//
+//nolint:gocognit,gocyclo,funlen // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -770,7 +780,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 
 			// Validate fields (if source type is known)
-			if sourceType != "" {
+			if sourceType != "" { //nolint:nestif // nested guards each check a distinct optional field of the source config.
 				if sourceDef, ok := meta.GetEntityDef(sourceType); ok {
 					for j, f := range s.Fields {
 						if f.Property != "" && f.Property != "title" && f.Property != "id" {
@@ -875,6 +885,8 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 }
 
 // validateKanbans validates kanban board definitions.
+//
+//nolint:gocognit,gocyclo,funlen // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -887,7 +899,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate column_property exists and is enum type
-		if kanban.ColumnProperty == "" {
+		if kanban.ColumnProperty == "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
 			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
 		} else {
 			propDef, ok := entDef.Properties[kanban.ColumnProperty]
@@ -920,7 +932,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate swimlane_property if specified
-		if kanban.SwimlaneProperty != "" {
+		if kanban.SwimlaneProperty != "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
 			propDef, ok := entDef.Properties[kanban.SwimlaneProperty]
 			if !ok {
 				errs = append(errs, fmt.Sprintf(
@@ -1109,6 +1121,8 @@ var actionKeyRegex = regexp.MustCompile(`^[a-z0-9]$`)
 
 // validateActions checks action definitions: ID format, set/script exclusivity,
 // script path safety, and key shortcut validity.
+//
+//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateActions(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -1289,7 +1303,7 @@ func validateDocuments(cfg *Config) []string {
 				"document %q: one of command or script must be set", docID))
 		}
 
-		if doc.Edit != nil {
+		if doc.Edit != nil { //nolint:nestif // nested branches validate distinct doc.Edit sub-fields.
 			if doc.Edit.Form == "" {
 				errs = append(errs, fmt.Sprintf(
 					"document %q: edit.form is required when edit is set", docID))
@@ -1346,6 +1360,8 @@ func validateStyles(cfg *Config, meta *metamodel.Metamodel) []string {
 }
 
 // validateCrossReferences validates that all cross-references between config sections are valid.
+//
+//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateCrossReferences(cfg *Config) []string {
 	var errs []string
 

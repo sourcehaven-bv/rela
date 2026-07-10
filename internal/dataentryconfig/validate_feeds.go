@@ -70,6 +70,7 @@ func validateFeeds(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Metamodel) []string {
 	var errs []string
 	prefix := fmt.Sprintf("feed %q: source[%d]", feedID, i)

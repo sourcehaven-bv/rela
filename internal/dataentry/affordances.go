@@ -104,7 +104,9 @@ type affordanceService struct {
 	getEntity func(ctx context.Context, id string) (*entityPkg.Entity, bool)
 	// currentEdgesByPeer returns the current edges of entityID for a relation
 	// type/direction, keyed by peer ID. Used to diff desired-vs-current edges.
-	currentEdgesByPeer func(ctx context.Context, entityID, canonical string, incoming bool) map[string]*entityPkg.Relation
+	currentEdgesByPeer func(
+		ctx context.Context, entityID, canonical string, incoming bool,
+	) map[string]*entityPkg.Relation
 }
 
 // perItemVerbs are the verbs computed per entity instance.
@@ -280,7 +282,9 @@ func (d AffordanceDenialError) Error() string {
 // Values are required only for the enum-filter check; pass the
 // requested value for each key in setValues. Unknown values default
 // to allowed (an option entry of `nil` means "no override").
-func (svc affordanceService) validateFieldWrite(ctx context.Context, e *entityPkg.Entity, setKeys map[string]interface{}, unsetKeys []string) *AffordanceDenialError {
+func (svc affordanceService) validateFieldWrite(
+	ctx context.Context, e *entityPkg.Entity, setKeys map[string]interface{}, unsetKeys []string,
+) *AffordanceDenialError {
 	if e == nil {
 		return nil
 	}
@@ -447,7 +451,9 @@ func writeAffordanceDenialError(w http.ResponseWriter, denial AffordanceDenialEr
 // `target` is the entity the gate fired on — used to populate the
 // audit Subject so log readers can attribute the denial. Nil is
 // tolerated (subject left empty); callers always have it in practice.
-func (a *App) denyAffordance(ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError) {
+func (a *App) denyAffordance(
+	ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
+) {
 	var subject *audit.Subject
 	if target != nil {
 		subject = &audit.Subject{
@@ -510,7 +516,9 @@ func (svc affordanceService) relationSourceEntity(
 // `relType` is the canonical relation type; `op` selects between
 // create / remove. The verdict is per-relation-type uniform —
 // per-link affordances are predicate territory.
-func (svc affordanceService) validateRelationOp(ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp) *AffordanceDenialError {
+func (svc affordanceService) validateRelationOp(
+	ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp,
+) *AffordanceDenialError {
 	if e == nil {
 		return nil
 	}
@@ -551,6 +559,8 @@ func (svc affordanceService) validateRelationOp(ctx context.Context, e *entityPk
 // Called from the unified PATCH handler before
 // [App.applyRelationsModern]. Returns nil when every relation
 // operation is permitted.
+//
+//nolint:gocognit // walks every relation op against per-op ACL affordances; each branch is an independent verb check, not shared logic to extract.
 func (svc affordanceService) validateRelationsModernAffordances(
 	ctx context.Context, entityID string, e *entityPkg.Entity,
 	desired map[string]v1.RelationsUpdate,
@@ -588,7 +598,8 @@ func (svc affordanceService) validateRelationsModernAffordances(
 			source := svc.relationSourceEntity(ctx, e, ref.ID, direction)
 			if _, exists := current[ref.ID]; exists {
 				// Upsert path: not a create, but the meta may change.
-				if denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
+				denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset)
+				if denial != nil {
 					return denial
 				}
 				continue
@@ -625,7 +636,9 @@ func (svc affordanceService) validateRelationsModernAffordances(
 // rejected here — they're a separate concern handled by the existing
 // relation validation. The affordance check focuses on rejecting
 // keys explicitly marked non-writable.
-func (svc affordanceService) validateRelationMetaWrite(ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]interface{}, metaUnset []string) *AffordanceDenialError {
+func (svc affordanceService) validateRelationMetaWrite(
+	ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]interface{}, metaUnset []string,
+) *AffordanceDenialError {
 	if e == nil {
 		return nil
 	}
@@ -667,7 +680,9 @@ func (svc affordanceService) validateRelationMetaWrite(ctx context.Context, e *e
 // Empty input verdicts yield an empty (non-nil) map so the wire shape
 // is consistent: `_fields: {}` under the nop resolver, sparse entries
 // under any other.
-func (svc affordanceService) computeFieldAffordances(ctx context.Context, e *entityPkg.Entity) map[string]v1.FieldAffordance {
+func (svc affordanceService) computeFieldAffordances(
+	ctx context.Context, e *entityPkg.Entity,
+) map[string]v1.FieldAffordance {
 	return computeFieldAffordancesFrom(svc.resolver().FieldVerdicts(ctx, e))
 }
 
@@ -784,7 +799,9 @@ func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.
 // (creatable=false, removable=false, or any meta-field writable=false)
 // appear in the map. Default-permissive types are absent — the SPA's
 // "no entry = default" path handles them.
-func (svc affordanceService) computeRelationAffordances(ctx context.Context, e *entityPkg.Entity) map[string]v1.RelationAffordance {
+func (svc affordanceService) computeRelationAffordances(
+	ctx context.Context, e *entityPkg.Entity,
+) map[string]v1.RelationAffordance {
 	v := svc.resolver().RelationVerdicts(ctx, e)
 	out := make(map[string]v1.RelationAffordance)
 	for relType, rv := range v.Types {
@@ -909,7 +926,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 // The value per property is a LIST: a property may hold several files, and
 // even a single file is reported as a 1-element list (always-array wire
 // shape).
-func (svc affordanceService) computeAttachments(ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts) map[string][]v1.Attachment {
+func (svc affordanceService) computeAttachments(
+	ctx context.Context, e *entityPkg.Entity, selfHref string, verdicts FieldVerdicts,
+) map[string][]v1.Attachment {
 	out := make(map[string][]v1.Attachment)
 	if selfHref == "" {
 		return out

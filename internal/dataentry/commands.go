@@ -281,6 +281,8 @@ var (
 // Restricted to POST: this endpoint runs configured shell commands and a GET
 // would let `<img src=/api/command/X>` invoke them cross-origin from any
 // browser tab, bypassing same-origin policy entirely.
+//
+//nolint:funlen // dispatches over every command context and argument shape inline; each branch is one command variant, and extracting them would fragment the request lifecycle.
 func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

@@ -177,13 +177,14 @@ var unsafeFilenameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 // manifest's Name. Browsers will let users override it via "Save as..."
 // so this is purely cosmetic.
 func safeThemeFilename(name string) string {
+	const maxThemeFilenameLen = 64
 	cleaned := unsafeFilenameRe.ReplaceAllString(name, "_")
 	cleaned = strings.Trim(cleaned, "_")
 	if cleaned == "" {
 		return "theme"
 	}
-	if len(cleaned) > 64 {
-		cleaned = cleaned[:64]
+	if len(cleaned) > maxThemeFilenameLen {
+		cleaned = cleaned[:maxThemeFilenameLen]
 	}
 	return cleaned
 }

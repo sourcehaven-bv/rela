@@ -49,9 +49,10 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	// come from the request (matching however the client reached us — loopback,
 	// LAN, or a proxied hostname), mirroring appBaseURL.
 	base := feedBaseURL(r)
-	provider, err := newDeclarativeFeed(name, cfg, s.Meta, feedEntitySource{app: a}, func(entityType, id string) string {
+	link := func(entityType, id string) string {
 		return base + "/entity/" + entityType + "/" + id
-	})
+	}
+	provider, err := newDeclarativeFeed(name, cfg, s.Meta, feedEntitySource{app: a}, link)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Feed misconfigured", "")
 		return

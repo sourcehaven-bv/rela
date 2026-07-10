@@ -344,6 +344,8 @@ func (a *App) SetPrincipalHeader(name string) {
 // relation edits) is feature-detected on `st` inside
 // [App.StartWatching] via the [storeWatcher] interface; callers do
 // not wire it.
+//
+//nolint:gocognit,funlen // composition root: validates and wires many optional collaborators, each guarded independently; the branches are wiring steps, not shared logic to extract.
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -820,7 +822,9 @@ var colorToCSSClass = map[string]string{
 // autoColors assigns colors to enum values that have no explicit style.
 var autoColors = []string{"blue", "purple", "green", "orange", "yellow", "red", "gray"}
 
-func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]map[string]string, styledTypes map[string]bool) {
+func buildStyleMap(
+	cfg *Config, meta *metamodel.Metamodel,
+) (styleMap map[string]map[string]string, styledTypes map[string]bool) {
 	sm := make(map[string]map[string]string)
 	st := make(map[string]bool)
 

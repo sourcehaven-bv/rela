@@ -29,7 +29,9 @@ import (
 // unknown-ID UX. Context cancellation is honored — callers (HTTP handlers)
 // have already bound the request context and abandoning further lookups
 // after the client disconnects saves wasted work.
-func collectMentions(ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string) map[string]v1.Mention {
+func collectMentions(
+	ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string,
+) map[string]v1.Mention {
 	candidates := scanCodeSpanCandidates(contents...)
 	if len(candidates) == 0 {
 		return nil

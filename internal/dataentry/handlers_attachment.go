@@ -39,7 +39,9 @@ const maxAttachmentUploadHeadroom = 16 * 1024
 // (the entity's `_attachments` map already lists the files; downloads use
 // the per-file route below). Writes inherit the entity's `update`
 // permission.
-func (a *App) handleV1AttachmentRoute(w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string) {
+func (a *App) handleV1AttachmentRoute(
+	w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string,
+) {
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
 		a.handleV1PutAttachment(w, r, typeName, plural, entityID, property)
@@ -52,7 +54,9 @@ func (a *App) handleV1AttachmentRoute(w http.ResponseWriter, r *http.Request, ty
 // /api/v1/{plural}/{id}/_attachments/{property}/{fileName}: GET downloads
 // that file's bytes, DELETE detaches it. Reads inherit the entity's read
 // permission, deletes inherit `update`.
-func (a *App) handleV1AttachmentFileRoute(w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string) {
+func (a *App) handleV1AttachmentFileRoute(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+) {
 	switch r.Method {
 	case http.MethodGet:
 		a.handleV1GetAttachment(w, r, typeName, entityID, property, fileName)
@@ -80,7 +84,9 @@ func (a *App) handleV1AttachmentFileRoute(w http.ResponseWriter, r *http.Request
 // there is no caller-supplied-path traversal surface. The fileName comes
 // from the URL but is only ever a store key (never a filesystem path the
 // handler builds), and the store's ValidateFileName rejects separators.
-func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string) {
+func (a *App) handleV1GetAttachment(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+) {
 	ctx := r.Context()
 
 	// ACL gate first — before any store access (see handleV1GetEntity).
@@ -146,7 +152,9 @@ func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, type
 // inherits the entity's `update` permission. The write is authorized
 // up front (before any bytes are written) to avoid orphaning a file on a
 // late deny — see attachment.Service.Attach's orphan note.
-func (a *App) handleV1PutAttachment(w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string) {
+func (a *App) handleV1PutAttachment(
+	w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string,
+) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	ctx := r.Context()
@@ -321,7 +329,9 @@ func filePropertyDef(s *AppState, typeName, property string) metamodel.PropertyD
 // removed, then the property is re-stamped from the store's remaining
 // files and persisted. Idempotent: deleting a missing file still
 // re-stamps and returns 204.
-func (a *App) handleV1DeleteAttachment(w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string) {
+func (a *App) handleV1DeleteAttachment(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	ctx := r.Context()
@@ -358,7 +368,9 @@ func (a *App) handleV1DeleteAttachment(w http.ResponseWriter, r *http.Request, t
 // is a declared `file` type, reject a locked (inaccessible) entity, and
 // authorize the `update` write UP FRONT so a deny never reaches the store.
 // Returns the loaded entity and true when the write may proceed.
-func (a *App) attachmentWritePreflight(w http.ResponseWriter, r *http.Request, typeName, entityID, property string) (*entityPkg.Entity, bool) {
+func (a *App) attachmentWritePreflight(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property string,
+) (*entityPkg.Entity, bool) {
 	ctx := r.Context()
 
 	// Read-gate first: a hidden or nonexistent id yields a uniform 404

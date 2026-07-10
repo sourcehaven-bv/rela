@@ -285,22 +285,6 @@ linters:
           - unparam
         path: internal/mcp/tools_.*\.go
       - linters:
-          - funlen
-          - gocognit
-          - gocyclo
-          - lll
-          - mnd
-          - nestif
-        path: internal/dataentry/.*\.go
-      - linters:
-          - funlen
-          - gocognit
-          - gocyclo
-          - lll
-          - mnd
-          - nestif
-        path: internal/dataentryconfig/.*\.go
-      - linters:
           - gocritic
         text: evalOrder
       - linters:

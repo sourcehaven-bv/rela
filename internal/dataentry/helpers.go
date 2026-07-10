@@ -200,6 +200,8 @@ func propertyIsEmpty(prop interface{}) bool {
 }
 
 // applyFilters filters entities by a set of filter conditions.
+//
+//nolint:gocognit // applies each filter operator against each entity property; the branches are per-operator match semantics, not shared logic to extract.
 func applyFilters(entities []*entity.Entity, filters []FilterConfig) []*entity.Entity {
 	if len(filters) == 0 {
 		return entities
@@ -662,7 +664,9 @@ const maxFreeTextSearchResults = 1000
 // searcher's text layer can rebuild the same fuzzy-words + exact-phrases
 // compound query the dataentry UI used to build upstream. Backend failures
 // surface to the caller.
-func runFreeTextSearchE(ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int) ([]*entity.Entity, error) {
+func runFreeTextSearchE(
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int,
+) ([]*entity.Entity, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
 	for _, p := range sq.FreeTextPhrases {
