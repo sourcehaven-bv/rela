@@ -172,6 +172,12 @@ type Deps struct {
 	// version capture (fs/mem builds, and the postgres build's create/update
 	// versions are handled by the store's periodic sweep, not this hook).
 	VersionRecorder VersionRecorder
+
+	// RelationVersionRecorder captures a synchronous relation version for
+	// relation delete (explicit and entity-cascade) and endpoint rename (see
+	// [RelationVersionRecorder]). Optional: nil disables it (fs/mem builds; the
+	// postgres build's relation create/update versions come from the sweep).
+	RelationVersionRecorder RelationVersionRecorder
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -601,6 +607,23 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// this capture; strict atomicity is a future hardening).
 	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
 
+	// Capture a final version for every relation this cascade destroys, BEFORE
+	// the store delete removes them. This is the ONLY place cascade-deleted
+	// relations get versioned: the store's DeleteEntity bulk-deletes them below
+	// the write choke-point, so without this their history would silently end
+	// with no `delete` marker and no restore path (RR-181AFY). Each is attributed
+	// to the triggering entity delete. Live rows still exist here, so
+	// WriteRelationVersion resolves rel_record_id from the key.
+	if cascade && totalRelations > 0 {
+		cascadeTB := "cascade:delete-entity:" + id
+		for _, rel := range incoming {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
+		for _, rel := range outgoing {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
+	}
+
 	// Delegate the actual deletion to the store's cascade, which removes
 	// the relation files and the entity file under a single lock and aborts
 	// fail-secure if any relation file cannot be removed — so the entity is
@@ -667,6 +690,18 @@ func (m *Manager) RenameEntity(
 	case !errors.Is(getErr, store.ErrNotFound):
 		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, getErr)
 	}
+
+	// Collect incident relations (with their content) BEFORE the rename: the
+	// rename rewrites each relation as create-new-triple + delete-old-triple at
+	// the store level, so afterward the old endpoints are gone. We capture the
+	// pre-rename state here to emit a `rename` version per relation below, so a
+	// renamed endpoint's relation history stays continuous instead of reading as
+	// a mass delete+create.
+	var preRenameRels []*entity.Relation
+	if !opts.DryRun && m.deps.RelationVersionRecorder != nil {
+		preRenameRels = collectRenameAffectedRelations(ctx, m.deps.Store, oldID)
+	}
+
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {
 		return res, err
@@ -691,7 +726,55 @@ func (m *Manager) RenameEntity(
 	// choke-point knows old->new; a later sweep sees the renamed entity as an
 	// ordinary update and cannot reconstruct this link.
 	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
+
+	// Capture a `rename` version for each incident relation, on its NEW triple,
+	// carrying the pre-rename endpoints (prev_from/prev_to). This stitches the
+	// relation's history across the endpoint rename so it reads as one continuous
+	// timeline rather than a delete of the old triple + create of the new one.
+	// The new triples exist now (rename.Rename created them); the version's key
+	// is the post-rename endpoint, so WriteRelationVersion resolves the new
+	// rel_record_id. triggered_by attributes the versions to this rename.
+	if len(preRenameRels) > 0 {
+		renameTB := "rename-entity:" + oldID + "->" + newID
+		for _, rel := range preRenameRels {
+			newFrom, newTo := rel.From, rel.To
+			if newFrom == oldID {
+				newFrom = newID
+			}
+			if newTo == oldID {
+				newTo = newID
+			}
+			after := &entity.Relation{
+				From: newFrom, Type: rel.Type, To: newTo,
+				Properties: rel.Properties, Content: rel.Content,
+			}
+			m.recordRelationVersion(ctx, store.VersionOpRename, after, rel.From, rel.To, renameTB)
+		}
+	}
 	return res, nil
+}
+
+// collectRenameAffectedRelations gathers the incident relations of id (both
+// directions) with their content, for pre-rename version capture. Self-
+// referential relations appear once (outgoing). Errors are swallowed — a
+// best-effort capture must never fail the rename.
+func collectRenameAffectedRelations(ctx context.Context, st store.Store, id string) []*entity.Relation {
+	seen := make(map[string]struct{})
+	out := make([]*entity.Relation, 0)
+	for _, dir := range []store.Direction{store.DirectionOutgoing, store.DirectionIncoming} {
+		for r, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: dir}) {
+			if err != nil {
+				continue
+			}
+			key := r.From + "\x00" + r.Type + "\x00" + r.To
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // CreateRelation creates a new relation, validating endpoints and
@@ -844,6 +927,12 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 		},
 	}); aclErr != nil {
 		return aclErr
+	}
+	// Capture the final pre-delete version BEFORE the store delete, while the
+	// live row (and its rel_record_id) still exists — the same order-before
+	// rationale as entity delete. Skipped if the relation was already gone.
+	if getErr == nil {
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
 	}
 	if err := m.deps.Store.DeleteRelation(ctx, from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)

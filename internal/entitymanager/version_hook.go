@@ -80,3 +80,79 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 		slog.Error("version.record_failed", "op", op, "id", e.ID, "error", err)
 	}
 }
+
+// RelationVersionRecorder captures a synchronous relation version at the write
+// choke-point. Like VersionRecorder it records only rename/delete — the ops the
+// backend's reconciliation sweep cannot reconstruct (a delete's pre-delete state,
+// since the row is gone before any sweep runs; a rename's pre-rename endpoints).
+// create/update are captured by the sweep. A consumer-side interface: Manager
+// depends on exactly the one method it calls; the postgres wiring supplies a
+// pgstore-backed recorder, other backends a nil.
+type RelationVersionRecorder interface {
+	// RecordRelationVersion persists one relation version. Best-effort — an
+	// error is returned only for the hook to log, never to fail the write.
+	RecordRelationVersion(ctx context.Context, v RelationVersionRecord) error
+}
+
+// RelationVersionRecord is one relation version to capture: the snapshot state,
+// the op, the pre-rename endpoints (rename only), attribution, and the
+// render-schema projection the snapshot was taken under.
+type RelationVersionRecord struct {
+	From          string
+	Type          string
+	To            string
+	Op            store.VersionOp
+	PrevFrom      string // rename only: the relation's former from endpoint
+	PrevTo        string // rename only: the relation's former to endpoint
+	Content       string
+	Properties    map[string]interface{}
+	SchemaHash    string
+	Projection    []byte
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+}
+
+// recordRelationVersion builds a RelationVersionRecord from a relation's state
+// and dispatches it. No-op when no recorder is wired. Attribution is read from
+// ctx (never a caller-supplied field). triggeredBy overrides the ctx-derived
+// value when non-empty (a cascade delete attributes each relation to the entity
+// delete that triggered it). Failure is logged, never propagated.
+func (m *Manager) recordRelationVersion(
+	ctx context.Context, op store.VersionOp, r *entity.Relation, prevFrom, prevTo, triggeredBy string,
+) {
+	if m.deps.RelationVersionRecorder == nil {
+		return
+	}
+	proj := m.deps.Meta.RenderProjection()
+	projJSON, err := proj.JSON()
+	if err != nil {
+		slog.Error("relation_version.projection_marshal_failed",
+			"op", op, "from", r.From, "type", r.Type, "to", r.To, "error", err)
+		return
+	}
+	tb := audit.TriggeredByFrom(ctx)
+	if triggeredBy != "" {
+		tb = triggeredBy
+	}
+	p := principal.From(ctx)
+	rec := RelationVersionRecord{
+		From:          r.From,
+		Type:          r.Type,
+		To:            r.To,
+		Op:            op,
+		PrevFrom:      prevFrom,
+		PrevTo:        prevTo,
+		Content:       r.Content,
+		Properties:    r.Properties,
+		SchemaHash:    proj.Hash(),
+		Projection:    projJSON,
+		PrincipalUser: p.User,
+		PrincipalTool: p.Tool,
+		TriggeredBy:   tb,
+	}
+	if err := m.deps.RelationVersionRecorder.RecordRelationVersion(ctx, rec); err != nil {
+		slog.Error("relation_version.record_failed",
+			"op", op, "from", r.From, "type", r.Type, "to", r.To, "error", err)
+	}
+}

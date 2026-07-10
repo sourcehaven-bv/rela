@@ -147,6 +147,53 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 	require.Equal(t, "gen2", snap.Content)
 }
 
+// TestRelationVersionRenameStitchesLineage proves the prev_from/prev_to rename
+// link stitches a renamed relation's history into one continuous timeline
+// across the fresh rel_record_id the new triple gets. Mirrors what the
+// entitymanager does on an endpoint rename (old triple deleted, new triple
+// created + a rename version carrying the old endpoints).
+func TestRelationVersionRenameStitchesLineage(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	// Old edge A--links-->B: create + a captured version.
+	_, err = s.CreateRelation(ctx, "A", "links", "B", &store.RelationData{Content: "v1"})
+	require.NoError(t, err)
+	oldRID := relRecordID(ctx, t, pool, "A", "links", "B")
+	c := newRelVersionInput(oldRID, "A", "links", "B", "v1")
+	c.Op = store.VersionOpCreate
+	require.NoError(t, s.WriteRelationVersion(ctx, c))
+
+	// Rename A->A2: the new triple A2--links-->B is created (fresh rel_record_id)
+	// and the old one deleted, exactly as rename.Rename does.
+	_, err = s.CreateRelation(ctx, "A2", "links", "B", &store.RelationData{Content: "v1"})
+	require.NoError(t, err)
+	require.NoError(t, s.DeleteRelation(ctx, "A", "links", "B"))
+	newRID := relRecordID(ctx, t, pool, "A2", "links", "B")
+	require.NotEqual(t, oldRID, newRID)
+
+	// The rename version lands on the NEW lineage, carrying the old endpoints.
+	ren := newRelVersionInput(newRID, "A2", "links", "B", "v1")
+	ren.Op = store.VersionOpRename
+	ren.PrevFrom = "A"
+	ren.PrevTo = "B"
+	require.NoError(t, s.WriteRelationVersion(ctx, ren))
+
+	// Reading history via the NEW key must include BOTH the pre-rename create
+	// (old lineage) and the rename row — one continuous timeline.
+	metas, err := s.ListRelationVersions(ctx, "A2", "links", "B")
+	require.NoError(t, err)
+	require.Len(t, metas, 2, "history stitches old create + new rename")
+	require.Equal(t, store.VersionOpCreate, metas[0].Op)
+	require.Equal(t, "A", metas[0].From, "oldest version carries the pre-rename endpoint")
+	require.Equal(t, store.VersionOpRename, metas[1].Op)
+	require.Equal(t, "A2", metas[1].From)
+	require.Equal(t, "A", metas[1].PrevFrom)
+}
+
 // TestSweepCapturesSettledRelations drives the sweep against a settled relation
 // and asserts it snapshots it once (as create), dedups a no-op re-run, and skips
 // a relation that hasn't settled.

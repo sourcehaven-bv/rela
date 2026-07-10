@@ -18,11 +18,20 @@ import (
 // INSERT and the relation_versions INSERT run in one transaction so the row is
 // all-or-nothing. The content hash is computed here from the snapshot.
 //
-// RecordID must be the surrogate rel_record_id read off the (now possibly gone)
-// relations row at capture time — the store never reconstructs it here.
+// RecordID is the surrogate lineage id. When it is 0 the store resolves it from
+// the composite key via recordIDForKey — which is correct for a SYNCHRONOUS
+// capture taken BEFORE a delete (the live row still carries the id) or during a
+// rename (resolved from the pre-rename key). Callers that capture after the row
+// is gone must supply a non-zero RecordID read earlier.
 func (s *Store) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
 	if in.RecordID == 0 {
-		return errors.New("pgstore: WriteRelationVersion requires a non-zero RecordID")
+		// Resolve from the (still-live, pre-delete) row or the most-recent lineage.
+		id, err := s.recordIDForKey(ctx, in.From, in.Type, in.To)
+		if err != nil {
+			return fmt.Errorf("pgstore: resolve rel_record_id for %s--%s--%s: %w",
+				in.From, in.Type, in.To, err)
+		}
+		in.RecordID = id
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -84,10 +93,77 @@ func contentHashOfRelation(in store.RelationVersionInput) string {
 // --- store.RelationHistoryReader ---
 //
 // Unlike entity history, relation lineage needs NO recursive rename-fencing CTE:
-// rel_record_id is a stable surrogate carried across renames and freshly minted
-// on delete+recreate, so a lineage is exactly "all relation_versions rows WHERE
-// rel_record_id = $1". The only subtlety is resolving a composite (from,type,to)
-// key to its CURRENT rel_record_id — see recordIDForKey.
+// rel_record_id is a stable surrogate carried across delete+recreate (a fresh id
+// is minted), so it fences those lifecycles apart for free. An endpoint RENAME,
+// however, rewrites a relation as create-new-triple + delete-old-triple at the
+// store level, so the new triple gets a FRESH rel_record_id and a `rename`
+// version row (on the new lineage) carries prev_from/prev_to = the old triple.
+// A relation's full history is therefore the current rel_record_id PLUS every
+// predecessor lineage reachable by following those rename links back — see
+// relationLineageIDs.
+
+// relationLineageIDs returns every rel_record_id that makes up a relation's
+// history, starting from headID and walking `rename` rows backward: a rename row
+// (rel_record_id=N, op='rename', prev_from/prev_to=old triple) links N's lineage
+// to the predecessor lineage that ended at that old triple. The predecessor is
+// the lineage whose latest row BEFORE the rename carried (prev_from, type,
+// prev_to). Cycles are impossible (each hop strictly decreases the rel_record_id
+// frontier's max vseq), but a visited-set guards regardless.
+func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, error) {
+	ids := []int64{headID}
+	seen := map[int64]struct{}{headID: {}}
+	frontier := []int64{headID}
+	for len(frontier) > 0 {
+		id := frontier[0]
+		frontier = frontier[1:]
+		// Predecessor lineages linked from id's rename rows.
+		const q = `
+			SELECT DISTINCT pred.rel_record_id
+			FROM relation_versions ren
+			JOIN LATERAL (
+			    -- the predecessor lineage: rows carrying the old triple, whose OWN
+			    -- latest row precedes this rename. Pick the newest such lineage.
+			    SELECT rv.rel_record_id
+			    FROM relation_versions rv
+			    WHERE rv.from_id = ren.prev_from
+			      AND rv.rel_type = ren.rel_type
+			      AND rv.to_id   = ren.prev_to
+			      AND rv.vseq < ren.vseq
+			    ORDER BY rv.vseq DESC
+			    LIMIT 1
+			) pred ON true
+			WHERE ren.rel_record_id = $1
+			  AND ren.op = 'rename'
+			  AND ren.prev_from IS NOT NULL
+			  AND ren.prev_to IS NOT NULL`
+		rows, err := s.db.Query(ctx, q, id)
+		if err != nil {
+			return nil, err
+		}
+		var preds []int64
+		for rows.Next() {
+			var p int64
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			preds = append(preds, p)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		for _, p := range preds {
+			if _, dup := seen[p]; dup {
+				continue
+			}
+			seen[p] = struct{}{}
+			ids = append(ids, p)
+			frontier = append(frontier, p)
+		}
+	}
+	return ids, nil
+}
 
 // recordIDForKey resolves a relation's composite key to the rel_record_id of its
 // current (or most-recent) lineage. For a LIVE relation it reads the id off the
@@ -142,15 +218,19 @@ func (s *Store) ListRelationVersions(
 	if err != nil {
 		return nil, err
 	}
+	ids, err := s.relationLineageIDs(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 
 	const sel = `
 		SELECT vseq, op, from_id, rel_type, to_id, prev_from, prev_to,
 		       content_hash, schema_hash, principal_user, principal_tool,
 		       triggered_by, created_at
 		FROM relation_versions
-		WHERE rel_record_id = $1
+		WHERE rel_record_id = ANY($1)
 		ORDER BY vseq ASC`
-	rows, err := s.db.Query(ctx, sel, id)
+	rows, err := s.db.Query(ctx, sel, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +265,10 @@ func (s *Store) GetRelationVersion(
 	if err != nil {
 		return nil, err // ErrNotFound propagates
 	}
+	ids, err := s.relationLineageIDs(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 
 	const sel = `
 		SELECT rv.op, rv.from_id, rv.rel_type, rv.to_id, rv.prev_from, rv.prev_to,
@@ -192,10 +276,10 @@ func (s *Store) GetRelationVersion(
 		       rv.triggered_by, rv.created_at, rv.content, rv.properties, sv.projection
 		FROM relation_versions rv
 		JOIN schema_versions sv ON sv.hash = rv.schema_hash
-		WHERE rv.rel_record_id = $1
+		WHERE rv.rel_record_id = ANY($1)
 		ORDER BY rv.vseq ASC
 		OFFSET $2 LIMIT 1`
-	row := s.db.QueryRow(ctx, sel, id, version-1)
+	row := s.db.QueryRow(ctx, sel, ids, version-1)
 
 	var (
 		snap     store.RelationVersionSnapshot
