@@ -13,7 +13,7 @@ why3: It already reads the entity via GetEntity(e.ID) but discards it (apply.go:
 why4: 'The sync API and the v1 PATCH path were built at different times with different contracts: v1 PATCH has no type field (type structurally immutable); sync accepts a full entity body including type. No shared ''type is immutable on update'' invariant is enforced across both, and sync''s stance was never audited against the ACL.'
 why5: 'Systemic: the authorization subject is assembled from client-controlled input at each call site, with no single chokepoint binding the ACL subject to the STORED resource. Every new write path re-decides what it authorizes against, and no test asserts ''authz subject type == the resource actually mutated''.'
 prevention: 'P2: derive Subject.Type from the loaded entity on update and reject a differing body type, via one helper used by every write entry point. P4 (automated measure): an integration test asserting, for every entity-write entry point (v1 PATCH, sync PUT, ...), that the ACL subject type equals the stored entity''s type and a mismatched body type is rejected.'
-status: review
+status: done
 ---
 
 Fix implemented on branch `fix/acl-sync-put-type-confusion` (commit 1c5e94eb).
