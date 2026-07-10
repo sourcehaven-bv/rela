@@ -56,5 +56,5 @@ methods. The method-count ratchet is the handler-split follow-up
 
 - [x] `logoStore` (PR #1105)
 - [x] `paletteService` (PR #1107)
-- [ ] `settingsService` + delete `mutateState` (PR #1109)
+- [x] `settingsService` + delete `mutateState` (PR #1109)
 - [ ] `schemaProvider` collapses `AppState` (PR #1110)
