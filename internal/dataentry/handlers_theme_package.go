@@ -38,7 +38,7 @@ func (a *App) handleAPIThemeExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logoBytes, logoExt, _ := a.logo.Get()
-	manifest := buildExportManifest(a.State(), logoExt)
+	manifest := buildExportManifest(a.State(), a.palette.UserPalette(), logoExt)
 	zipBytes, err := buildThemeZip(manifest, logoBytes, logoExt)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to build theme package: "+err.Error())
@@ -116,7 +116,7 @@ func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 // buildExportManifest composes the manifest written into the zip,
 // drawing the palette from user state when available and falling back
 // to the project palette otherwise.
-func buildExportManifest(s *AppState, logoExt string) *dataentryconfig.ThemeManifest {
+func buildExportManifest(s *AppState, userPalette *PaletteConfig, logoExt string) *dataentryconfig.ThemeManifest {
 	m := &dataentryconfig.ThemeManifest{
 		Name:    s.Cfg.App.Name,
 		Version: "1.0.0",
@@ -126,8 +126,8 @@ func buildExportManifest(s *AppState, logoExt string) *dataentryconfig.ThemeMani
 	}
 
 	switch {
-	case s.UserPalette != nil:
-		m.PaletteConfig = *s.UserPalette
+	case userPalette != nil:
+		m.PaletteConfig = *userPalette
 	case s.Cfg.Palette != nil:
 		m.PaletteConfig = *s.Cfg.Palette
 	}

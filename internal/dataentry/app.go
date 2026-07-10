@@ -52,8 +52,6 @@ type AppState struct {
 	StyleMap     map[string]map[string]string
 	StyledTypes  map[string]bool
 	UserDefaults *UserDefaults
-	Palette      *ResolvedPalette
-	UserPalette  *PaletteConfig
 	OpenAPIGen   *openapi.Generator
 }
 
@@ -144,7 +142,12 @@ type App struct {
 	// logo owns the user-uploaded sidebar logo — persistence AND the served
 	// in-memory cache — self-synchronized. Extracted from AppState so the
 	// logo no longer rides the App-wide snapshot + writeMu.
-	logo      *logoStore
+	logo *logoStore
+	// palette owns the user palette override and the resolved palette (derived
+	// from Cfg.Palette + the override). Self-synchronized; extracted from
+	// AppState. The reload/save paths hand it the current Cfg.Palette so it can
+	// recompute — see paletteService.Reresolve.
+	palette   *paletteService
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -512,13 +515,15 @@ func NewApp(
 	app.serializer = entitySerializer{affordances: app.affordances}
 
 	userDefaults := app.userState.loadUserDefaults()
-	userPalette, paletteErr := app.userState.loadUserPalette()
+
+	// palette owns the user override + resolved palette. Surface a broken
+	// palette rather than silently falling back to defaults (which the next
+	// save would then persist, destroying the user's data).
+	palette, paletteErr := newPaletteService(kv, cfg.Palette)
 	if paletteErr != nil {
-		// Surface the error so users notice their palette is broken
-		// rather than silently falling back to defaults (which would
-		// then be persisted on the next save, destroying their data).
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
+	app.palette = palette
 
 	// logo owns its own persistence + served cache. Same read-error policy as
 	// palette: surface a corrupt .rela/theme/ rather than silently overwriting
@@ -538,8 +543,6 @@ func NewApp(
 		StyleMap:     styleMap,
 		StyledTypes:  styledTypes,
 		UserDefaults: userDefaults,
-		Palette:      ResolvePalette(cfg.Palette, userPalette),
-		UserPalette:  userPalette,
 		OpenAPIGen: openapi.New(meta, openapi.Config{
 			Title:       cfg.App.Name + " API",
 			Description: cfg.App.Description,

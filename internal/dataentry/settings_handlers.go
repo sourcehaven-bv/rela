@@ -250,7 +250,7 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 
 	data := APISettingsData{
 		UserDefaults:  apiDefaults,
-		UserPalette:   s.UserPalette,
+		UserPalette:   a.palette.UserPalette(),
 		AllProperties: allProperties,
 		AllRelations:  allRelations,
 		EntityTypes:   s.Meta.EntityTypes(),
@@ -320,7 +320,7 @@ func (a *App) handleAPIPaletteCRUD(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIGetPalette returns the current user palette.
 func (a *App) handleAPIGetPalette(w http.ResponseWriter, _ *http.Request) {
-	p := a.State().UserPalette
+	p := a.palette.UserPalette()
 	if p == nil {
 		p = &dataentryconfig.PaletteConfig{}
 	}
@@ -335,26 +335,15 @@ func (a *App) handleAPISavePalette(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := dataentryconfig.ValidatePalette(&input); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid palette: "+err.Error())
-		return
-	}
-
-	// Save to file and publish a new AppState atomically so concurrent
-	// readers see the new palette via state.Load() rather than
-	// observing torn writes through a shared snapshot pointer.
-	var saveErr error
-	ctx := r.Context()
-	a.mutateState(func(s *AppState) {
-		if err := a.userState.saveUserPalette(ctx, &input); err != nil {
-			saveErr = err
+	// The service validates, persists, and republishes the resolved palette
+	// (against the current project palette) atomically. A validation failure
+	// is a 400; a persistence failure is a 500.
+	if err := a.palette.Save(r.Context(), a.Cfg().Palette, &input); err != nil {
+		if errors.Is(err, errInvalidPalette) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		s.UserPalette = &input
-		s.Palette = dataentryconfig.ResolvePalette(s.Cfg.Palette, &input)
-	})
-	if saveErr != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save palette: "+saveErr.Error())
+		writeJSONError(w, http.StatusInternalServerError, "failed to save palette: "+err.Error())
 		return
 	}
 

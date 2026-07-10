@@ -96,7 +96,6 @@ func newIncomingRelApp(t *testing.T, entities []*entity.Entity, relations []*ent
 	app.state.Store(&AppState{
 		Cfg:        cfg,
 		Meta:       meta,
-		Palette:    ResolvePalette(cfg.Palette, nil),
 		OpenAPIGen: openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
 	})
 	return app

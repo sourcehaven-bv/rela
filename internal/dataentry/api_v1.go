@@ -1861,7 +1861,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Navigation:  s.Cfg.Navigation,
 		Documents:   s.Cfg.Documents,
 		Apps:        appsToV1(a.scanAppsOrLog()),
-		Palette:     s.Palette,
+		Palette:     a.palette.Resolved(),
 	}
 
 	writeV1JSON(w, http.StatusOK, config)
