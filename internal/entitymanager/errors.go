@@ -20,6 +20,16 @@ var ErrEntityNotFound = errors.New("entity not found")
 // ErrRelationNotFound is returned when a relation lookup fails.
 var ErrRelationNotFound = errors.New("relation not found")
 
+// ErrEntityVanishedOnUpdate is returned by the sync apply path when an
+// update-intent write finds its target row gone at write time: the existence
+// probe observed the entity, but the durable UpdateEntity hit
+// [store.ErrNotFound] because a concurrent delete landed in between. It wraps
+// [ErrEntityNotFound] via %w so existing errors.Is(err, ErrEntityNotFound)
+// callers still match, while the sync handler can single it out and map it to
+// a 412 conflict (symmetric with the relation vanished-on-update case) rather
+// than the 404 reserved for a genuinely missing relation endpoint.
+var ErrEntityVanishedOnUpdate = fmt.Errorf("%w (vanished concurrently on update)", ErrEntityNotFound)
+
 // ErrEntityAlreadyExists is returned by create paths when the supplied
 // or generated ID collides with an existing entity.
 var ErrEntityAlreadyExists = errors.New("entity already exists")

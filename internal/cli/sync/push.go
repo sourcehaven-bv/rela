@@ -12,8 +12,10 @@ type PushOutcome int
 const (
 	// OutcomePushed: the record was applied on the server and the index updated.
 	OutcomePushed PushOutcome = iota
-	// OutcomeConflict: the server moved since the client's base (412) — the
-	// record was HALTED, not applied. Resolve with `push --force <id>`.
+	// OutcomeConflict: the record was HALTED, not applied, because it
+	// conflicted on the server — either the server moved since the client's
+	// base (412) or a create raced a concurrent first-create of the same id
+	// (409). Other records still proceed; resolve with `push --force <id>`.
 	OutcomeConflict
 	// OutcomeInvalid: the server rejected the content as invalid (422).
 	OutcomeInvalid
@@ -190,8 +192,17 @@ func (e *Engine) recordPush(key, localHash string, res *PushResult) PushRecordRe
 }
 
 // classifyConflict turns a non-applied PushResult into a halt report entry.
+// A conflict (412 or 409) halts ONLY this record — the push loop continues to
+// the next — and the index is left untouched so a re-run replays it after the
+// operator resolves it. A 409 (concurrent first-create) gets a create-specific
+// message; a 412 (base moved) gets the base-changed message.
 func classifyConflict(key string, res *PushResult) PushRecordResult {
 	switch {
+	case res.CreatedConcurrently:
+		return PushRecordResult{
+			Key: key, Outcome: OutcomeConflict,
+			Detail: "created concurrently by a peer since your last sync; resolve with `rela sync push --force " + key + "` (local wins) or `rela sync pull --force " + key + "` (remote wins)",
+		}
 	case res.Conflict:
 		return PushRecordResult{
 			Key: key, Outcome: OutcomeConflict,

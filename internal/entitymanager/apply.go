@@ -135,9 +135,11 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 	// probe) is a lost-update + type-re-type vector if it silently
 	// updates: reject it as ErrEntityAlreadyExists so the caller re-reads
 	// (the sync handler maps it to 409). An update whose row vanished
-	// concurrently surfaces as ErrEntityNotFound (mapped to a 412
-	// conflict). This is what closes the residual on the postgres
-	// multi-writer backend (BUG-ZWTDH9).
+	// concurrently surfaces as ErrEntityVanishedOnUpdate (wrapping
+	// ErrEntityNotFound; the sync handler maps it to a 412 conflict,
+	// symmetric with the relation vanished-on-update case). This is what
+	// closes the residual on the postgres multi-writer backend
+	// (BUG-ZWTDH9).
 	if err := m.persistApplyEntity(ctx, op.aclOp, e); err != nil {
 		return nil, err
 	}
@@ -148,9 +150,10 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 
 // persistApplyEntity writes e by the resolved apply intent: OpCreate ->
 // CreateEntity (a conflict is ErrEntityAlreadyExists — never overwrite);
-// OpUpdate -> UpdateEntity (a vanished row is ErrEntityNotFound). Neither
-// branch falls back to the other, so a create-intent write that races a
-// concurrent create can never become a blind, re-typing update.
+// OpUpdate -> UpdateEntity (a vanished row is ErrEntityVanishedOnUpdate, which
+// wraps ErrEntityNotFound). Neither branch falls back to the other, so a
+// create-intent write that races a concurrent create can never become a blind,
+// re-typing update.
 func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.Entity) error {
 	if op == acl.OpCreate {
 		if err := m.deps.Store.CreateEntity(ctx, e); err != nil {
@@ -163,7 +166,13 @@ func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.E
 	}
 	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+			// The probe saw the entity but the row vanished before the write
+			// (a concurrent delete). Surface ErrEntityVanishedOnUpdate, which
+			// wraps ErrEntityNotFound so existing errors.Is callers still match
+			// while the sync handler can map this narrow race to a 412 conflict
+			// (symmetric with the relation vanished-on-update case), distinct
+			// from the 404 reserved for a missing relation endpoint.
+			return fmt.Errorf("%w: %s", ErrEntityVanishedOnUpdate, e.ID)
 		}
 		return fmt.Errorf("entitymanager: ApplyEntity: %w", err)
 	}

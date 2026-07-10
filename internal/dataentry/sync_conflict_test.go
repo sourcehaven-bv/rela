@@ -37,6 +37,75 @@ func (s *createConflictStore) CreateEntity(_ context.Context, _ *entity.Entity) 
 	return store.ErrConflict
 }
 
+// vanishOnUpdateStore reports a fixed entity PRESENT via GetEntity — so the
+// sync PUT precondition (If-Match matching the current hash) passes AND
+// ApplyEntity resolves UPDATE intent — but returns store.ErrNotFound on
+// UpdateEntity, modeling a concurrent DELETE landing between the probe and the
+// durable write. This is the narrow probe-said-present-then-deleted race; the
+// server must map it to 412 (symmetric with the relation vanished-on-update
+// case), not 404.
+type vanishOnUpdateStore struct {
+	store.Store
+	present *entity.Entity
+}
+
+func (s *vanishOnUpdateStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
+	if id == s.present.ID {
+		return s.present, nil
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *vanishOnUpdateStore) UpdateEntity(_ context.Context, _ *entity.Entity) error {
+	return store.ErrNotFound
+}
+
+// TestSyncPut_UpdateVanishedReturns412 pins M1 (BUG-ZWTDH9): an update-intent
+// sync PUT (If-Match matches, so the record probed as present) whose durable
+// UpdateEntity finds the row gone (a concurrent delete) returns 412 Conflict —
+// symmetric with the relation vanished-on-update case — NOT the 404 that would
+// abort the CLI push run. The narrow race the ordinary preconditionOK->412
+// check does not catch.
+func TestSyncPut_UpdateVanishedReturns412(t *testing.T) {
+	meta := secretNoteMeta()
+	cfg := &Config{App: AppConfig{Name: "sec"}}
+	app := newAppFromParts(cfg, meta, &fixture{})
+
+	fs := storage.NewMemFS()
+	ctx := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
+	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
+
+	present := &entity.Entity{ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "base"}}
+	st := &vanishOnUpdateStore{Store: memstore.New(), present: present}
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx), appbuildtest.WithStore(st), appbuildtest.WithACL(acl.NopACL{}))
+	rebindApp(app, fs, ctx, svc)
+	app.broker = newEventBroker()
+	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
+		return principal.Principal{User: "peer", Tool: principal.ToolSync}
+	})
+
+	// If-Match matches the current hash → precondition passes and ApplyEntity
+	// resolves UPDATE intent. The conflict only surfaces on UpdateEntity.
+	cur, exists := app.currentEntityHash(context.Background(), "NOTE-1")
+	if !exists {
+		t.Fatal("seed missing: store should report NOTE-1 present")
+	}
+	body := syncEntityBody{ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "edited"}}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPut, "/api/sync/entities/NOTE-1", bytes.NewReader(b))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("If-Match", cur)
+	w := httptest.NewRecorder()
+	app.NewRouter().ServeHTTP(w, r)
+
+	if w.Code != http.StatusPreconditionFailed {
+		t.Fatalf("update-vanished sync PUT returned %d, want 412: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestSyncPut_CreateConflictReturns409 pins that when a create-intent sync PUT
 // (no If-Match, record probes as absent) reaches ApplyEntity and the durable
 // CreateEntity conflicts (a peer created the same id concurrently), the handler
@@ -100,6 +169,11 @@ func TestWriteSyncApplyError_CreateConflictMaps409(t *testing.T) {
 		{"entity create conflict", entitymanager.ErrEntityAlreadyExists, http.StatusConflict},
 		{"relation create conflict", entitymanager.ErrRelationAlreadyExists, http.StatusConflict},
 		{"relation vanished on update", entitymanager.ErrRelationNotFound, http.StatusPreconditionFailed},
+		// Entity vanished-on-update wraps ErrEntityNotFound but must map to 412
+		// (symmetric with the relation case), NOT the 404 reserved for a missing
+		// relation endpoint. The order of the errors.Is checks in
+		// writeSyncApplyError is load-bearing for this — pin it here.
+		{"entity vanished on update", entitymanager.ErrEntityVanishedOnUpdate, http.StatusPreconditionFailed},
 		{"type immutable", entitymanager.ErrTypeImmutable, http.StatusUnprocessableEntity},
 		{"endpoint missing", entitymanager.ErrEntityNotFound, http.StatusNotFound},
 	}
