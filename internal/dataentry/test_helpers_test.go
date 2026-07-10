@@ -205,13 +205,13 @@ func reseedStore(dst, src store.Store) {
 	}
 }
 
-// newAppFromParts builds an App with a populated AppState snapshot for
+// newAppFromParts builds an App with a populated Schema snapshot for
 // tests that previously used the struct-literal pattern
 // `&App{Cfg: cfg, meta: meta, g: g}`. The App.state pointer must be
 // populated because handlers now read from it; a nil snapshot would
 // nil-deref inside a.State().
 //
-// Populates ALL AppState fields with safe defaults (UserDefaults,
+// Populates the co-derived Schema fields with safe defaults (UserDefaults,
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
@@ -249,7 +249,7 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 	if app.palette != nil {
 		_ = app.palette.Reresolve(cfg.Palette)
 	}
-	app.state.Store(&AppState{
+	app.schema.Publish(&Schema{
 		Cfg:         cfg,
 		Meta:        meta,
 		StyleMap:    styleMap,
@@ -342,7 +342,7 @@ func newHandlerTestApp(t *testing.T) *App {
 	// Populate the snapshot fields handlers deref unconditionally — the
 	// router walk test hits every route, including _openapi.json, which
 	// panics on a nil OpenAPIGen.
-	app.state.Store(&AppState{
+	app.schema.Publish(&Schema{
 		Cfg:         cfg,
 		Meta:        meta,
 		StyleMap:    styleMap,

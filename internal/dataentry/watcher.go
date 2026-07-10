@@ -274,9 +274,9 @@ func (a *App) StartGitFetch() (stop func()) {
 	}
 }
 
-// rebuildState re-reads changed inputs and publishes a fresh AppState
-// snapshot atomically. Readers observe either the pre-reload or the
-// post-reload snapshot, never a torn state.
+// rebuildState re-reads changed inputs and publishes a fresh Schema snapshot
+// atomically. Readers observe either the pre-reload or the post-reload
+// snapshot, never a torn state.
 func (a *App) rebuildState(configChanged, metaChanged bool) {
 	current := a.State()
 	if current == nil {
@@ -301,12 +301,12 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 
 	newMeta := a.Meta()
 
-	newStyleMap := current.StyleMap
-	newStyledTypes := current.StyledTypes
-	newOpenAPI := current.OpenAPIGen
+	// The provider recomputes the style map + OpenAPI generator (co-derived
+	// from cfg/meta) when either changed, and publishes atomically.
+	derive := configChanged || metaChanged
+	a.schema.Reload(newCfg, newMeta, derive)
 
-	if configChanged || metaChanged {
-		newStyleMap, newStyledTypes = buildStyleMap(newCfg, newMeta)
+	if derive {
 		// Re-resolve the palette against the new project palette. The service
 		// keeps the previous user override if the on-disk file is broken —
 		// better to show stale colors than crash or wipe.
@@ -314,20 +314,7 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 			slog.Warn("watcher: keeping previous user palette",
 				"file", userPaletteFile, "error", err)
 		}
-		// Update OpenAPI generator with new metamodel (the generator
-		// is internally synchronized; we reuse the same instance).
-		if newOpenAPI != nil {
-			newOpenAPI.UpdateMetamodel(newMeta)
-		}
 	}
-
-	a.state.Store(&AppState{
-		Cfg:         newCfg,
-		Meta:        newMeta,
-		StyleMap:    newStyleMap,
-		StyledTypes: newStyledTypes,
-		OpenAPIGen:  newOpenAPI,
-	})
 }
 
 // handleSSE serves Server-Sent Events for live-reload notifications.
