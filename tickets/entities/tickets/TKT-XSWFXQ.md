@@ -51,3 +51,10 @@ concern, belongs behind the store.
 - The plimsoll `App` method-line is unchanged: this arc cuts state/fields, not
 methods. The method-count ratchet is the handler-split follow-up
 ([[TKT-R68TV8]]).
+
+## Delivery (stacked PRs)
+
+- [x] `logoStore` (PR #1105)
+- [x] `paletteService` (PR #1107)
+- [ ] `settingsService` + delete `mutateState` (PR #1109)
+- [ ] `schemaProvider` collapses `AppState` (PR #1110)
