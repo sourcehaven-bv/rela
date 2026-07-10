@@ -659,7 +659,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Prefix     string            `json:"prefix,omitempty"`
 		Properties map[string]any    `json:"properties"`
 		Content    string            `json:"content,omitempty"`
-		Relations  v1.RelationsField `json:"relations,omitempty"`
+		Relations  v1.RelationsField `json:"relations"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1059,7 +1059,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Properties      map[string]any    `json:"properties,omitempty"`
 		PropertiesUnset []string          `json:"properties_unset,omitempty"`
 		Content         *string           `json:"content,omitempty"`
-		Relations       v1.RelationsField `json:"relations,omitempty"`
+		Relations       v1.RelationsField `json:"relations"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
