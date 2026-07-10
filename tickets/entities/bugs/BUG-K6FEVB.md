@@ -13,7 +13,7 @@ why3: Bypassing entitymanager also dropped authorization because in entitymanage
 why4: DEC-HWZHA was reasoned about purely as a validation policy (hard-400/422 vs soft-warn); the authorization boundary was never part of that mental model, so nobody asked whether the soft-condition fallback preserved the authz invariant.
 why5: 'Systemic: authorization is enforced by convention at each call site rather than by construction at a mandatory chokepoint, and no invariant test fails when a code path reaches the store without an ACL decision. --read-only is only ReadOnlyACL, so any un-gated store path silently defeats it. (Same class as prior BUG-JME1DI: conflict endpoints bypassed ACL/audit.)'
 prevention: 'P1: authorize FIRST in every entitymanager write method, from inputs independent of peer/entity existence, so a soft not-found can never precede/skip authz. P4 (this bug''s automated measure): an integration test that enumerates every registered /api write route and asserts each produces a denied-write / no store mutation under ReadOnlyACL. P5: consider a store-level read-only guard so --read-only is defense-in-depth, not ACL-only.'
-status: review
+status: done
 ---
 
 Fix implemented on branch `fix/acl-relation-write-bypass`. PR: (opening)

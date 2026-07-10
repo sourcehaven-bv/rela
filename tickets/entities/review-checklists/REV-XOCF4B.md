@@ -2,55 +2,51 @@
 id: REV-XOCF4B
 type: review-checklist
 title: 'Review: Relation write bypasses ACL (incl. --read-only) when peer entity does not exist'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (CI green: Test, Postgres Backend, Fuzz, E2E)
+- [x] Lint clean (CI green: Lint, Architecture, God-object lint; golangci-lint 0 issues)
+- [x] Coverage maintained (entitymanager 87.2%, dataentry 80.7% — above floors)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Ran cranky-code-reviewer on PR #1115
+- [x] ~~All critical review-responses addressed~~ (N/A: no critical findings)
+- [x] ~~All significant review-responses addressed~~ (N/A: no significant findings)
+- [x] Self-reviewed the diff for unrelated changes (fix + tests only)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-4F3ETV, RR-TQAH7F, RR-TCBQTQ — all minor, deferred to
+follow-up polish (stale warning text, string-matching fragility, cross-route
+status inconsistency). None blocking.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested: authz runs before peer-existence in Create/Update/DeleteRelation; dangling-peer allowed write → 422; dangling-peer denied write → 403; existing-peer denied → 403; no ungated store write; exactly one audit record
+- [x] Test evidence: TestReadOnlyACL_DanglingPeerRelationWrite_Refused, TestDanglingPeerRelationWrite_AllowedACL_422, TestManager_RelationWrite_AuthorizesBeforePeerExistence, TestReadOnlyACL_EveryWriteRoute_DeniesAndDoesNotMutate (P4). demo_a flips to NOT-REPRODUCED
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+**Acceptance Status:** PASS — reviewer verdict "correct, hole closed, ship it",
+no security false-negative. Verified the empty-FromType concern is strictly
+equal-or-more-restrictive (cannot manufacture an ALLOW).
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
-
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+- [x] ~~Docs section~~ (N/A: security bugfix, no user-facing API change)
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why (authz-before-existence + the deliberate DEC-HWZHA reversal for the missing-peer case)
+- [x] No TODOs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] PR created: https://github.com/sourcehaven-bv/rela/pull/1115
+- [x] All code CI checks pass (Rela Tickets gate clears on this bug reaching done)
+- [x] PR URL documented above
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1115
