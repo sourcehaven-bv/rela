@@ -48,7 +48,7 @@ var (
 // so growth is structural here) — over the 20-field load line. Revisit grouping
 // subcommands into sub-structs; ratchet this number down if/when that lands.
 //
-//plimsoll:max-fields=41
+//plimsoll:max-fields=43
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -87,6 +87,9 @@ type CLI struct {
 	Rename      RenameCmd      `cmd:"" help:"Rename entities or relations."`
 	History     HistoryCmd     `cmd:"" help:"Show an entity's version history (postgres build)."`
 	Restore     RestoreCmd     `cmd:"" help:"Restore an entity to a past version (postgres build)."`
+
+	RelationHistory RelationHistoryCmd `cmd:"" name:"relation-history" help:"Show a relation's version history (postgres build)."`
+	RelationRestore RelationRestoreCmd `cmd:"" name:"relation-restore" help:"Restore a relation to a past version (postgres build)."`
 	Attach      AttachCmd      `cmd:"" help:"Attach file(s) to an entity."`
 	Attachments AttachmentsCmd `cmd:"" help:"List attachments for an entity."`
 	Detach      DetachCmd      `cmd:"" help:"Remove the attachment from an entity property."`
