@@ -68,10 +68,10 @@ func TestApplyEntity_RejectsTypeChangeOnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed New: %v", err)
 	}
-	if _, err := seedMgr.ApplyEntity(context.Background(), &entity.Entity{
+	if _, seedErr := seedMgr.ApplyEntity(context.Background(), &entity.Entity{
 		ID: "SECRET-1", Type: "secret", Properties: map[string]any{"title": "top secret"},
-	}); err != nil {
-		t.Fatalf("seed secret: %v", err)
+	}); seedErr != nil {
+		t.Fatalf("seed secret: %v", seedErr)
 	}
 
 	// Policy: mallory may UPDATE notes and READ secrets — but NOT update secrets.
@@ -152,10 +152,10 @@ func TestApplyEntity_SameTypeUpdateStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed New: %v", err)
 	}
-	if _, err := seedMgr.ApplyEntity(context.Background(), &entity.Entity{
+	if _, seedErr := seedMgr.ApplyEntity(context.Background(), &entity.Entity{
 		ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "v1"},
-	}); err != nil {
-		t.Fatalf("seed note: %v", err)
+	}); seedErr != nil {
+		t.Fatalf("seed note: %v", seedErr)
 	}
 
 	policy, err := acl.LoadPolicyBytes([]byte(`
@@ -182,10 +182,10 @@ assignments:
 	malloryCtx := principal.With(context.Background(),
 		principal.Principal{User: "mallory", Tool: principal.ToolSync})
 
-	if _, err := mgr.ApplyEntity(malloryCtx, &entity.Entity{
+	if _, updErr := mgr.ApplyEntity(malloryCtx, &entity.Entity{
 		ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "v2"},
-	}); err != nil {
-		t.Fatalf("legitimate same-type update was rejected: %v", err)
+	}); updErr != nil {
+		t.Fatalf("legitimate same-type update was rejected: %v", updErr)
 	}
 	got, err := st.GetEntity(context.Background(), "NOTE-1")
 	if err != nil {
