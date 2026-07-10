@@ -3,6 +3,7 @@ package fsstore
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -55,7 +56,7 @@ func hasLineAnchoredConflict(raw string) bool {
 
 // document represents a parsed markdown file with YAML frontmatter.
 type document struct {
-	frontmatter map[string]interface{}
+	frontmatter map[string]any
 	content     string
 }
 
@@ -79,7 +80,7 @@ func parseDocument(raw string) (*document, error) {
 
 	fm, body := frontmatter.Split(raw)
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if fm != "" {
 		if err := yaml.Unmarshal([]byte(fm), &parsed); err != nil {
 			return nil, fmt.Errorf("failed to parse frontmatter: %w", err)
@@ -91,7 +92,7 @@ func parseDocument(raw string) (*document, error) {
 
 // --- document formatting ---
 
-func formatDocumentOrdered(fm map[string]interface{}, content string, keyOrder []string) (string, error) {
+func formatDocumentOrdered(fm map[string]any, content string, keyOrder []string) (string, error) {
 	var sb strings.Builder
 
 	if len(fm) > 0 {
@@ -125,7 +126,7 @@ func formatDocumentOrdered(fm map[string]interface{}, content string, keyOrder [
 	return sb.String(), nil
 }
 
-func marshalOrdered(data map[string]interface{}, keyOrder []string) ([]byte, error) {
+func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	node := &yaml.Node{Kind: yaml.MappingNode}
 	added := make(map[string]bool)
 
@@ -167,7 +168,7 @@ func marshalOrdered(data map[string]interface{}, keyOrder []string) ([]byte, err
 	return yaml.Marshal(node)
 }
 
-func valueToNode(val interface{}) (*yaml.Node, error) {
+func valueToNode(val any) (*yaml.Node, error) {
 	var node yaml.Node
 	if err := node.Encode(val); err != nil {
 		return nil, err
@@ -259,12 +260,10 @@ func (s *FSStore) buildInaccessibleEntity(key, id, entityType string, reason ent
 
 // formatEntity formats an entity as markdown with YAML frontmatter.
 func formatEntity(e *entity.Entity, propertyOrder []string) (string, error) {
-	fm := make(map[string]interface{})
+	fm := make(map[string]any)
 	fm["id"] = e.ID
 	fm["type"] = e.Type
-	for key, value := range e.Properties {
-		fm[key] = value
-	}
+	maps.Copy(fm, e.Properties)
 
 	keyOrder := []string{"id", "type"}
 	if len(propertyOrder) > 0 {
@@ -326,7 +325,7 @@ func (s *FSStore) readRelationFile(key, from, relType, to string) (*entity.Relat
 	for key, value := range doc.frontmatter {
 		if key != "from" && key != "relation" && key != "to" {
 			if r.Properties == nil {
-				r.Properties = make(map[string]interface{})
+				r.Properties = make(map[string]any)
 			}
 			r.Properties[key] = entity.CloneValue(value)
 		}
@@ -355,14 +354,12 @@ func (s *FSStore) buildInaccessibleRelation(
 
 // formatRelation formats a relation as markdown with YAML frontmatter.
 func formatRelation(r *entity.Relation) (string, error) {
-	fm := map[string]interface{}{
+	fm := map[string]any{
 		"from":     r.From,
 		"relation": r.Type,
 		"to":       r.To,
 	}
-	for key, value := range r.Properties {
-		fm[key] = value
-	}
+	maps.Copy(fm, r.Properties)
 
 	keyOrder := []string{"from", "relation", "to"}
 

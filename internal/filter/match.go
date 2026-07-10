@@ -3,6 +3,7 @@ package filter
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -16,7 +17,7 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 	if list, ok := val.([]string); ok {
 		return matchList(list, filter, propDef, m)
 	}
-	if list, ok := val.([]interface{}); ok {
+	if list, ok := val.([]any); ok {
 		strList := make([]string, 0, len(list))
 		for _, item := range list {
 			if s, ok := item.(string); ok {
@@ -105,10 +106,8 @@ func matchList(list []string, filter *Filter, _ *metamodel.PropertyDef, _ *metam
 
 	// For != operator, we want to return true only if NO element matches
 	if filter.Operator == OpNotEqual {
-		for _, s := range list {
-			if s == filter.Value {
-				return false, nil // Found a match, so != is false
-			}
+		if slices.Contains(list, filter.Value) {
+			return false, nil // Found a match, so != is false
 		}
 		return true, nil // No element matched, so != is true
 	}
@@ -191,7 +190,7 @@ func validateOperatorForType(op Operator, propDef *metamodel.PropertyDef, m *met
 }
 
 // matchString matches a string property value
-func matchString(val interface{}, filter *Filter) (bool, error) {
+func matchString(val any, filter *Filter) (bool, error) {
 	s, ok := val.(string)
 	if !ok {
 		return false, fmt.Errorf("expected string value, got %T", val)
@@ -261,7 +260,7 @@ func matchString(val interface{}, filter *Filter) (bool, error) {
 }
 
 // matchDate matches a date property value
-func matchDate(val interface{}, filter *Filter, propDef *metamodel.PropertyDef) (bool, error) {
+func matchDate(val any, filter *Filter, propDef *metamodel.PropertyDef) (bool, error) {
 	s, ok := val.(string)
 	if !ok {
 		return false, fmt.Errorf("expected date string value, got %T", val)
@@ -299,7 +298,7 @@ func matchDate(val interface{}, filter *Filter, propDef *metamodel.PropertyDef) 
 }
 
 // matchInteger matches an integer property value
-func matchInteger(val interface{}, filter *Filter) (bool, error) {
+func matchInteger(val any, filter *Filter) (bool, error) {
 	entityVal, err := metamodel.ParseIntegerValue(val)
 	if err != nil {
 		return false, fmt.Errorf("invalid integer value: %w", err)
@@ -329,7 +328,7 @@ func matchInteger(val interface{}, filter *Filter) (bool, error) {
 }
 
 // matchBoolean matches a boolean property value
-func matchBoolean(val interface{}, filter *Filter) (bool, error) {
+func matchBoolean(val any, filter *Filter) (bool, error) {
 	entityVal, err := metamodel.ParseBooleanValue(val)
 	if err != nil {
 		return false, fmt.Errorf("invalid boolean value: %w", err)
@@ -351,7 +350,7 @@ func matchBoolean(val interface{}, filter *Filter) (bool, error) {
 }
 
 // matchEnum matches an enum property value
-func matchEnum(val interface{}, filter *Filter, allowedValues []string) (bool, error) {
+func matchEnum(val any, filter *Filter, allowedValues []string) (bool, error) {
 	s, ok := val.(string)
 	if !ok {
 		return false, fmt.Errorf("expected string value for enum, got %T", val)
@@ -371,13 +370,7 @@ func matchEnum(val interface{}, filter *Filter, allowedValues []string) (bool, e
 	}
 
 	// Validate filter value is a valid enum value
-	filterValid := false
-	for _, v := range allowedValues {
-		if v == filter.Value {
-			filterValid = true
-			break
-		}
-	}
+	filterValid := slices.Contains(allowedValues, filter.Value)
 	if !filterValid {
 		return false, fmt.Errorf("invalid value %q (allowed: %s)", filter.Value, strings.Join(allowedValues, ", "))
 	}
@@ -393,7 +386,7 @@ func matchEnum(val interface{}, filter *Filter, allowedValues []string) (bool, e
 }
 
 // matchEnumLegacy matches legacy status/priority types
-func matchEnumLegacy(val interface{}, filter *Filter, legacyType string, m *metamodel.Metamodel) (bool, error) {
+func matchEnumLegacy(val any, filter *Filter, legacyType string, m *metamodel.Metamodel) (bool, error) {
 	s, ok := val.(string)
 	if !ok {
 		return false, fmt.Errorf("expected string value, got %T", val)

@@ -67,7 +67,7 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 	m.seedEntity(&entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -76,7 +76,7 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 	m.seedEntity(&entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Done Ticket",
 			"status": "done",
 		},
@@ -84,7 +84,7 @@ func newMockWorkspace(t *testing.T) *mockWorkspace {
 	m.seedEntity(&entity.Entity{
 		ID:   "FEAT-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
@@ -273,7 +273,7 @@ func TestRunFile_BasicOutput(t *testing.T) {
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestRunFile_Args(t *testing.T) {
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result []interface{}
+	var result []any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -340,7 +340,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -384,7 +384,7 @@ end
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -415,7 +415,7 @@ rela.output({count = #tickets})
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -446,7 +446,7 @@ rela.output({count = #tickets})
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -493,7 +493,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -502,7 +502,7 @@ rela.output({
 		t.Errorf("Expected count=1, got %v", result["count"])
 	}
 
-	first := result["first"].(map[string]interface{})
+	first := result["first"].(map[string]any)
 	if first["from"] != testRel.From {
 		t.Errorf("Expected from=%s, got %v", testRel.From, first["from"])
 	}
@@ -715,7 +715,7 @@ rela.output({count = #rels})
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -751,7 +751,7 @@ end
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -783,7 +783,7 @@ rela.output({count = #results})
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -841,7 +841,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -905,7 +905,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -962,7 +962,7 @@ rela.output({success = success})
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1029,7 +1029,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1086,7 +1086,7 @@ rela.output({success = success})
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1121,7 +1121,7 @@ end
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1160,7 +1160,7 @@ end
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1217,7 +1217,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1257,7 +1257,7 @@ rela.output({
 		t.Fatalf("RunFile failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1420,7 +1420,7 @@ func TestSetArgs(t *testing.T) {
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result []interface{}
+	var result []any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1453,7 +1453,7 @@ rela.output(result)
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result []interface{}
+	var result []any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1479,10 +1479,10 @@ func TestSortEntities_ByNumericProperty(t *testing.T) {
 		},
 	}
 	ws := newMockWorkspaceWith(meta)
-	ws.seedEntity(&entity.Entity{ID: "DOC-001", Type: "doc", Properties: map[string]interface{}{"title": "Third", "order": "3"}})
-	ws.seedEntity(&entity.Entity{ID: "DOC-002", Type: "doc", Properties: map[string]interface{}{"title": "First", "order": "1"}})
-	ws.seedEntity(&entity.Entity{ID: "DOC-003", Type: "doc", Properties: map[string]interface{}{"title": "Second", "order": "2"}})
-	ws.seedEntity(&entity.Entity{ID: "DOC-010", Type: "doc", Properties: map[string]interface{}{"title": "Tenth", "order": "10"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-001", Type: "doc", Properties: map[string]any{"title": "Third", "order": "3"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-002", Type: "doc", Properties: map[string]any{"title": "First", "order": "1"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-003", Type: "doc", Properties: map[string]any{"title": "Second", "order": "2"}})
+	ws.seedEntity(&entity.Entity{ID: "DOC-010", Type: "doc", Properties: map[string]any{"title": "Tenth", "order": "10"}})
 
 	var buf bytes.Buffer
 	r := NewWriter(ws.services("/tmp"), &buf)
@@ -1502,7 +1502,7 @@ rela.output(result)
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result []interface{}
+	var result []any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1541,7 +1541,7 @@ rela.output(result)
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result []interface{}
+	var result []any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1591,7 +1591,7 @@ rela.output({
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1625,7 +1625,7 @@ func TestEntityProp_EmptyStringUsesDefault(t *testing.T) {
 	ws.seedEntity(&entity.Entity{
 		ID:   "TEST-001",
 		Type: "test",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":   "Has Title",
 			"summary": "", // empty string
 		},
@@ -1646,7 +1646,7 @@ rela.output({
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1755,7 +1755,7 @@ rela.output({slug = e:strip_prefix()})
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1777,7 +1777,7 @@ func TestEntityStripPrefix_NoHyphen(t *testing.T) {
 	ws.seedEntity(&entity.Entity{
 		ID:         "NOHYPHEN",
 		Type:       "test",
-		Properties: map[string]interface{}{},
+		Properties: map[string]any{},
 	})
 
 	var buf bytes.Buffer
@@ -1793,7 +1793,7 @@ rela.output({slug = e:strip_prefix()})
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1818,7 +1818,7 @@ func TestMdLink(t *testing.T) {
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1843,7 +1843,7 @@ func TestMdRef(t *testing.T) {
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1877,7 +1877,7 @@ rela.output({table = tbl})
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1909,7 +1909,7 @@ rela.output({table = tbl})
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1950,7 +1950,7 @@ rela.output({table = tbl})
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -1980,7 +1980,7 @@ func TestMdEntityTable_DefaultValue(t *testing.T) {
 	ws.seedEntity(&entity.Entity{
 		ID:   "TEST-001",
 		Type: "test",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Has Title",
 			// no "status" property
 		},
@@ -2003,7 +2003,7 @@ rela.output({table = tbl})
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("Failed to parse output: %v", err)
 	}
@@ -2060,7 +2060,7 @@ func TestShebangExecution(t *testing.T) {
 			t.Fatalf("RunString with shebang failed: %v", err)
 		}
 
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 			t.Fatalf("Failed to parse output: %v", err)
 		}
@@ -2085,7 +2085,7 @@ func TestShebangExecution(t *testing.T) {
 			t.Fatalf("RunFile with shebang failed: %v", err)
 		}
 
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 			t.Fatalf("Failed to parse output: %v", err)
 		}
@@ -2212,7 +2212,7 @@ func TestRunActionString_ReturnTable(t *testing.T) {
 		t.Fatalf("RunActionString failed: %v", err)
 	}
 
-	m, ok := ret.(map[string]interface{})
+	m, ok := ret.(map[string]any)
 	if !ok {
 		t.Fatalf("expected map, got %T", ret)
 	}
@@ -2668,7 +2668,7 @@ func TestReaderRuntime_MutationBindingsAbsent(t *testing.T) {
 		if err := r.RunString(script); err != nil {
 			t.Fatalf("probe for %q failed: %v", name, err)
 		}
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 			t.Fatalf("parse output for %q: %v", name, err)
 		}
@@ -2744,7 +2744,7 @@ func TestWriterRuntime_MutationBindingsPresent(t *testing.T) {
 		if err := r.RunString(script); err != nil {
 			t.Fatalf("probe for %q failed: %v", name, err)
 		}
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 			t.Fatalf("parse output for %q: %v", name, err)
 		}
@@ -2807,7 +2807,7 @@ func TestDocumentMode_AbsentInOtherContexts(t *testing.T) {
 		t.Fatalf("RunString failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("parse output: %v — buf=%q", err, buf.String())
 	}

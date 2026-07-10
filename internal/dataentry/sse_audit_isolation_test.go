@@ -43,7 +43,7 @@ func TestSSE_DoesNotFlowAuditEvents(t *testing.T) {
 	_, err := app.entityManager.CreateEntity(ctx, &entity.Entity{
 		ID:         "TKT-DENIED",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "should never broadcast"},
+		Properties: map[string]any{"title": "should never broadcast"},
 	}, entity.CreateOptions{})
 	if err == nil {
 		t.Fatal("expected denied write, got success")

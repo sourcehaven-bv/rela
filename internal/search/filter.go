@@ -59,7 +59,7 @@ func MatchFilters(e *entity.Entity, filters []PropertyFilter) bool {
 			return false
 		case FilterIn:
 			found := false
-			for _, v := range strings.Split(f.Value, ",") {
+			for v := range strings.SplitSeq(f.Value, ",") {
 				if val == strings.TrimSpace(v) {
 					found = true
 					break

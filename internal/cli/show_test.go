@@ -95,12 +95,12 @@ func TestShowEntityJSON(t *testing.T) {
 		t.Fatalf("show command failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
-	entityData, ok := result["entity"].(map[string]interface{})
+	entityData, ok := result["entity"].(map[string]any)
 	if !ok {
 		t.Fatal("expected 'entity' key in JSON output")
 	}
@@ -112,7 +112,7 @@ func TestShowEntityJSON(t *testing.T) {
 		t.Errorf("expected type='requirement', got: %v", entityData["type"])
 	}
 
-	props, ok := entityData["properties"].(map[string]interface{})
+	props, ok := entityData["properties"].(map[string]any)
 	if !ok {
 		t.Fatal("expected properties to be a map")
 	}

@@ -39,15 +39,15 @@ func ParseQuery(query string) *SearchQuery {
 
 	for _, token := range tokens {
 		// Check for type filter
-		if strings.HasPrefix(token, "type:") {
-			typeStr := strings.TrimPrefix(token, "type:")
+		if after, ok := strings.CutPrefix(token, "type:"); ok {
+			typeStr := after
 			if typeStr == "" {
 				sq.ParseErrors = append(sq.ParseErrors, "type: filter requires a value")
 				continue
 			}
 			// Support comma-separated types
-			types := strings.Split(typeStr, ",")
-			for _, t := range types {
+			types := strings.SplitSeq(typeStr, ",")
+			for t := range types {
 				t = strings.TrimSpace(t)
 				if t != "" {
 					sq.EntityTypes = append(sq.EntityTypes, t)
@@ -57,8 +57,8 @@ func ParseQuery(query string) *SearchQuery {
 		}
 
 		// Check for property filter
-		if strings.HasPrefix(token, "prop:") {
-			propStr := strings.TrimPrefix(token, "prop:")
+		if after, ok := strings.CutPrefix(token, "prop:"); ok {
+			propStr := after
 			if propStr == "" {
 				sq.ParseErrors = append(sq.ParseErrors, "prop: filter requires a value")
 				continue
@@ -74,8 +74,8 @@ func ParseQuery(query string) *SearchQuery {
 		}
 
 		// Check for status shortcut (maps to prop:status=)
-		if strings.HasPrefix(token, "status:") {
-			statusStr := strings.TrimPrefix(token, "status:")
+		if after, ok := strings.CutPrefix(token, "status:"); ok {
+			statusStr := after
 			if statusStr == "" {
 				sq.ParseErrors = append(sq.ParseErrors, "status: filter requires a value")
 				continue
@@ -91,8 +91,8 @@ func ParseQuery(query string) *SearchQuery {
 		}
 
 		// Check for sort clause
-		if strings.HasPrefix(token, "sort:") {
-			sortStr := strings.TrimPrefix(token, "sort:")
+		if after, ok := strings.CutPrefix(token, "sort:"); ok {
+			sortStr := after
 			if sortStr == "" {
 				sq.ParseErrors = append(sq.ParseErrors, "sort: requires a property name")
 				continue
@@ -240,8 +240,8 @@ func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
 	}
 
 	// Check if we're in the middle of a type: filter
-	if strings.HasPrefix(currentToken, "type:") {
-		prefix := strings.TrimPrefix(currentToken, "type:")
+	if after, ok := strings.CutPrefix(currentToken, "type:"); ok {
+		prefix := after
 		return &AutocompleteContext{
 			Type:   "type",
 			Prefix: prefix,
@@ -249,8 +249,8 @@ func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
 	}
 
 	// Check if we're in the middle of a prop: filter
-	if strings.HasPrefix(currentToken, "prop:") {
-		propPart := strings.TrimPrefix(currentToken, "prop:")
+	if after, ok := strings.CutPrefix(currentToken, "prop:"); ok {
+		propPart := after
 		// Check if there's an operator and we're typing the value
 		for _, op := range []string{"!=", "<=", ">=", "=~", "=", "<", ">"} {
 			if idx := strings.Index(propPart, op); idx > 0 {
@@ -272,8 +272,8 @@ func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
 	}
 
 	// Check if we're in the middle of a status: filter
-	if strings.HasPrefix(currentToken, "status:") {
-		prefix := strings.TrimPrefix(currentToken, "status:")
+	if after, ok := strings.CutPrefix(currentToken, "status:"); ok {
+		prefix := after
 		return &AutocompleteContext{
 			Type:   "status",
 			Prefix: prefix,
@@ -281,8 +281,8 @@ func GetAutocompleteContext(query string, cursorPos int) *AutocompleteContext {
 	}
 
 	// Check if we're in the middle of a sort: clause
-	if strings.HasPrefix(currentToken, "sort:") {
-		sortPart := strings.TrimPrefix(currentToken, "sort:")
+	if after, ok := strings.CutPrefix(currentToken, "sort:"); ok {
+		sortPart := after
 		parts := strings.SplitN(sortPart, ":", 2)
 		if len(parts) == 2 {
 			// After property name, completing direction

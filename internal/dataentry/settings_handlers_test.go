@@ -209,12 +209,12 @@ func TestFormatCardinality(t *testing.T) {
 		want     string
 	}{
 		{"nil both", nil, nil, ""},
-		{"min only zero", intPtr(0), nil, ""},
-		{"min only nonzero", intPtr(1), nil, "min 1"},
-		{"max only", nil, intPtr(5), "max 5"},
-		{"exact", intPtr(3), intPtr(3), "exactly 3"},
-		{"range", intPtr(1), intPtr(5), "1-5"},
-		{"zero to max", intPtr(0), intPtr(3), "max 3"},
+		{"min only zero", new(0), nil, ""},
+		{"min only nonzero", new(1), nil, "min 1"},
+		{"max only", nil, new(5), "max 5"},
+		{"exact", new(3), new(3), "exactly 3"},
+		{"range", new(1), new(5), "1-5"},
+		{"zero to max", new(0), new(3), "max 3"},
 	}
 
 	for _, tt := range tests {
@@ -226,5 +226,3 @@ func TestFormatCardinality(t *testing.T) {
 		})
 	}
 }
-
-func intPtr(i int) *int { return &i }

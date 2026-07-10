@@ -125,7 +125,7 @@ func AnalyzeConflict(cf *ConflictedFile) *Info {
 	}
 
 	// Get properties and content from each side
-	var oursProps, theirsProps map[string]interface{}
+	var oursProps, theirsProps map[string]any
 	var oursContent, theirsContent string
 
 	if cf.Ours != nil {
@@ -210,7 +210,7 @@ func docToEntity(doc *markdown.Document, _ string, meta *metamodel.Metamodel) *e
 	e := &entity.Entity{
 		ID:         id,
 		Type:       entityType,
-		Properties: make(map[string]interface{}),
+		Properties: make(map[string]any),
 		Content:    doc.Content,
 	}
 
@@ -230,7 +230,7 @@ func docToRelation(doc *markdown.Document, _ string) *entity.Relation {
 		Type:       doc.GetString("relation"),
 		To:         doc.GetString("to"),
 		Content:    doc.Content,
-		Properties: make(map[string]interface{}),
+		Properties: make(map[string]any),
 	}
 
 	for key, value := range doc.Frontmatter {

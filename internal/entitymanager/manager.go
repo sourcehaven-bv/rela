@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"time"
 
@@ -716,11 +717,9 @@ func (m *Manager) CreateRelation(
 	}
 
 	if len(opts.Properties) > 0 && rel.Properties == nil {
-		rel.Properties = make(map[string]interface{})
+		rel.Properties = make(map[string]any)
 	}
-	for k, v := range opts.Properties {
-		rel.Properties[k] = v
-	}
+	maps.Copy(rel.Properties, opts.Properties)
 	if opts.Content != nil {
 		rel.Content = *opts.Content
 	}
@@ -782,11 +781,9 @@ func (m *Manager) UpdateRelation(
 	}
 
 	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
-		rel.Properties = make(map[string]interface{})
+		rel.Properties = make(map[string]any)
 	}
-	for k, v := range opts.Properties {
-		rel.Properties[k] = v
-	}
+	maps.Copy(rel.Properties, opts.Properties)
 	for _, k := range opts.MetaUnset {
 		delete(rel.Properties, k)
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"strings"
 
@@ -77,17 +78,17 @@ type ImportData struct {
 
 // EntityData represents an entity to import
 type EntityData struct {
-	ID         string                 `json:"id" yaml:"id"`
-	Type       string                 `json:"type" yaml:"type"`
-	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
+	ID         string         `json:"id" yaml:"id"`
+	Type       string         `json:"type" yaml:"type"`
+	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
 // RelationData represents a relation to import
 type RelationData struct {
-	From       string                 `json:"from" yaml:"from"`
-	Relation   string                 `json:"relation" yaml:"relation"`
-	To         string                 `json:"to" yaml:"to"`
-	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
+	From       string         `json:"from" yaml:"from"`
+	Relation   string         `json:"relation" yaml:"relation"`
+	To         string         `json:"to" yaml:"to"`
+	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
 // ImportSource provides filesystem access for reading import input files.
@@ -335,9 +336,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 
 	// Build entity for validation
 	e := entity.New(ed.ID, ed.Type)
-	for k, v := range ed.Properties {
-		e.Properties[k] = v
-	}
+	maps.Copy(e.Properties, ed.Properties)
 
 	// Apply default status if not provided
 	if _, hasStatus := e.Properties["status"]; !hasStatus {
@@ -406,9 +405,7 @@ func (imp *Importer) importEntity(ed *EntityData) (created bool, err error) {
 	ctx := context.Background()
 
 	e := entity.New(ed.ID, ed.Type)
-	for k, v := range ed.Properties {
-		e.Properties[k] = v
-	}
+	maps.Copy(e.Properties, ed.Properties)
 
 	// Apply default status if not provided
 	if _, hasStatus := e.Properties["status"]; !hasStatus {
@@ -585,7 +582,7 @@ func parseCSV(r io.Reader) (*ImportData, error) {
 		ed := EntityData{
 			ID:         strings.TrimSpace(row[idCol]),
 			Type:       strings.TrimSpace(row[typeCol]),
-			Properties: make(map[string]interface{}),
+			Properties: make(map[string]any),
 		}
 
 		// Add other columns as properties

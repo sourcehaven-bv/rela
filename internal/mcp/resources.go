@@ -48,7 +48,7 @@ func (s *Server) handleReadMetamodel(
 	_ context.Context, _ mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
 	meta := s.deps.Meta
-	result := map[string]interface{}{
+	result := map[string]any{
 		"version":   meta.GetVersion(),
 		"namespace": meta.GetNamespace(),
 		"entities":  meta.GetEntities(),

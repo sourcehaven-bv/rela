@@ -429,8 +429,8 @@ func (e *originError) Error() string { return e.msg }
 // "0.0.0.0:port" — and we preserve that intent so the caller can detect
 // the unspecified address case via isUnspecified.
 func splitBindAddress(addr string) (host, port string, err error) {
-	if strings.HasPrefix(addr, ":") {
-		return "0.0.0.0", strings.TrimPrefix(addr, ":"), nil
+	if after, ok := strings.CutPrefix(addr, ":"); ok {
+		return "0.0.0.0", after, nil
 	}
 	host, port, err = net.SplitHostPort(addr)
 	if err != nil {

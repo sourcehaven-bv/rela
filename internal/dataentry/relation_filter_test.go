@@ -78,16 +78,16 @@ func relationFilterApp(t *testing.T) *App {
 
 	f := newFixture()
 	// People
-	f.AddNode(&entity.Entity{ID: "PER-001", Type: "persoon", Properties: map[string]interface{}{"name": "Jeroen Vloothuis"}})
-	f.AddNode(&entity.Entity{ID: "PER-002", Type: "persoon", Properties: map[string]interface{}{"name": "Alice"}})
+	f.AddNode(&entity.Entity{ID: "PER-001", Type: "persoon", Properties: map[string]any{"name": "Jeroen Vloothuis"}})
+	f.AddNode(&entity.Entity{ID: "PER-002", Type: "persoon", Properties: map[string]any{"name": "Alice"}})
 	// Projects
-	f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]interface{}{"name": "Apollo"}})
-	f.AddNode(&entity.Entity{ID: "PRJ-002", Type: "project", Properties: map[string]interface{}{"name": "Gemini"}})
+	f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]any{"name": "Apollo"}})
+	f.AddNode(&entity.Entity{ID: "PRJ-002", Type: "project", Properties: map[string]any{"name": "Gemini"}})
 	// Tasks (seeded out of title order to prove sort wins)
-	f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]interface{}{"title": "B task"}})
-	f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]interface{}{"title": "A task"}})
-	f.AddNode(&entity.Entity{ID: "TAAK-003", Type: "taak", Properties: map[string]interface{}{"title": "C task"}})
-	f.AddNode(&entity.Entity{ID: "TAAK-004", Type: "taak", Properties: map[string]interface{}{"title": "D task"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]any{"title": "B task"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]any{"title": "A task"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-003", Type: "taak", Properties: map[string]any{"title": "C task"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-004", Type: "taak", Properties: map[string]any{"title": "D task"}})
 
 	// Jeroen is responsible for TAAK-001 and TAAK-003; Alice for TAAK-002.
 	f.AddEdge(entity.NewRelation("PER-001", "verantwoordelijk_voor", "TAAK-001"))
@@ -330,11 +330,11 @@ func TestV1ListPropertyRelationNameCollision(t *testing.T) {
 	}
 
 	f := newFixture()
-	f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]interface{}{"name": "Apollo"}})
+	f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]any{"name": "Apollo"}})
 	// Two tasks: property belongs_to differs, and each ALSO has a belongs_to
 	// EDGE to Apollo, so a mis-route to the relation pass would match BOTH.
-	f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]interface{}{"title": "A", "belongs_to": "team-x"}})
-	f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]interface{}{"title": "B", "belongs_to": "team-y"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]any{"title": "A", "belongs_to": "team-x"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]any{"title": "B", "belongs_to": "team-y"}})
 	f.AddEdge(entity.NewRelation("TAAK-001", "belongs_to", "PRJ-001"))
 	f.AddEdge(entity.NewRelation("TAAK-002", "belongs_to", "PRJ-001"))
 
@@ -366,9 +366,9 @@ func TestV1ListUncontrolledRelationNotFilterable(t *testing.T) {
 	}
 
 	f := newFixture()
-	f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]interface{}{"name": "Apollo"}})
-	f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]interface{}{"title": "A"}})
-	f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]interface{}{"title": "B"}})
+	f.AddNode(&entity.Entity{ID: "PRJ-001", Type: "project", Properties: map[string]any{"name": "Apollo"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-001", Type: "taak", Properties: map[string]any{"title": "A"}})
+	f.AddNode(&entity.Entity{ID: "TAAK-002", Type: "taak", Properties: map[string]any{"title": "B"}})
 	f.AddEdge(entity.NewRelation("TAAK-001", "belongs_to", "PRJ-001")) // Apollo
 	// TAAK-002 has no belongs_to edge.
 

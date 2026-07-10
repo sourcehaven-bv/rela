@@ -6,7 +6,7 @@ import (
 
 // assertEqualID is a local helper (entity_test.go uses testify but this
 // internal test file uses the in-package t.Helper style like the original model tests).
-func assertEqualID(t *testing.T, got, want interface{}) {
+func assertEqualID(t *testing.T, got, want any) {
 	t.Helper()
 	if got != want {
 		t.Errorf("got %v, want %v", got, want)

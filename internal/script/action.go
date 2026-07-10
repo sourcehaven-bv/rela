@@ -219,12 +219,12 @@ func isLocalPath(p string) bool {
 // parseActionResponse converts a Lua return value (already converted to Go
 // via luaValueToGo) into an ActionResponse. Validates redirect format and
 // message_type enum.
-func parseActionResponse(ret interface{}) (*ActionResponse, error) {
+func parseActionResponse(ret any) (*ActionResponse, error) {
 	if ret == nil {
 		return &ActionResponse{}, nil
 	}
 
-	m, ok := ret.(map[string]interface{})
+	m, ok := ret.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("action script must return a table, got %T", ret)
 	}

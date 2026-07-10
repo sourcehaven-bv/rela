@@ -350,6 +350,6 @@ func TestSettings_ExposesLogoURL(t *testing.T) {
 }
 
 // decodeJSON is a tiny helper to keep the assertions concise.
-func decodeJSON(r io.Reader, out interface{}) error {
+func decodeJSON(r io.Reader, out any) error {
 	return json.NewDecoder(r).Decode(out)
 }

@@ -89,7 +89,7 @@ func FuzzFormatDocument(f *testing.F) {
 	f.Add(string(make([]byte, 1000)))
 
 	f.Fuzz(func(t *testing.T, content string) {
-		frontmatter := map[string]interface{}{
+		frontmatter := map[string]any{
 			"title": "test",
 		}
 

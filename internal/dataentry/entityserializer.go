@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -49,15 +50,13 @@ func (s entitySerializer) toV1(
 		ID:         e.ID,
 		Type:       e.Type,
 		Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
-		Properties: make(map[string]interface{}),
+		Properties: make(map[string]any),
 		Content:    e.Content,
 		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
 		Actions:    s.affordances.computeActions(ctx, e),
 	}
 
-	for k, v := range e.Properties {
-		out.Properties[k] = v
-	}
+	maps.Copy(out.Properties, e.Properties)
 
 	if e.IsLocked() {
 		out.Inaccessible = make([]v1.InaccessibleField, 0, len(e.Inaccessible))

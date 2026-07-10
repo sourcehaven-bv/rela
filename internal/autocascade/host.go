@@ -100,7 +100,7 @@ type CreateEntityOptions struct {
 
 	// Properties seeds the new entity's properties, overriding
 	// template defaults.
-	Properties map[string]interface{}
+	Properties map[string]any
 
 	// Content is the markdown body content. Overrides the template's
 	// content when non-empty.

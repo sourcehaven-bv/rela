@@ -118,7 +118,7 @@ This content should be part of body since frontmatter was never closed.
 }
 
 func TestFormatDocument(t *testing.T) {
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"id":       "REQ-001",
 		"type":     "requirement",
 		"title":    "Test Requirement",
@@ -143,7 +143,7 @@ func TestFormatDocument(t *testing.T) {
 }
 
 func TestFormatDocument_EmptyFrontmatter(t *testing.T) {
-	frontmatter := map[string]interface{}{}
+	frontmatter := map[string]any{}
 	content := "Just content without frontmatter."
 
 	formatted, err := FormatDocument(frontmatter, content)
@@ -156,7 +156,7 @@ func TestFormatDocument_EmptyFrontmatter(t *testing.T) {
 }
 
 func TestFormatDocument_NoContent(t *testing.T) {
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"id":   "REQ-001",
 		"type": "requirement",
 	}
@@ -199,7 +199,7 @@ func TestFormatDocument_NoContent(t *testing.T) {
 }
 
 func TestFormatDocument_ContentWithoutTrailingNewline(t *testing.T) {
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"id": "REQ-001",
 	}
 	content := "Content without newline"
@@ -214,7 +214,7 @@ func TestFormatDocument_ContentWithoutTrailingNewline(t *testing.T) {
 
 func TestDocumentGetString(t *testing.T) {
 	doc := &Document{
-		Frontmatter: map[string]interface{}{
+		Frontmatter: map[string]any{
 			"string_field": "value",
 			"int_field":    42,
 			"bool_field":   true,
@@ -241,14 +241,14 @@ func TestDocumentGetString_NilFrontmatter(t *testing.T) {
 
 func TestDocumentGetStringSlice(t *testing.T) {
 	doc := &Document{
-		Frontmatter: map[string]interface{}{
+		Frontmatter: map[string]any{
 			"string_slice": []string{"a", "b", "c"},
-			"interface_slice": []interface{}{
+			"interface_slice": []any{
 				"x",
 				"y",
 				"z",
 			},
-			"mixed_slice": []interface{}{
+			"mixed_slice": []any{
 				"string",
 				42,
 				"another",
@@ -541,7 +541,7 @@ More content here.
 }
 
 func TestFormatDocumentOrdered(t *testing.T) {
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"id":       "REQ-001",
 		"type":     "requirement",
 		"title":    "Some title",
@@ -578,7 +578,7 @@ func TestFormatDocumentOrdered(t *testing.T) {
 
 func TestFormatDocumentOrdered_EmptyKeyOrder(t *testing.T) {
 	// No keyOrder should fall back to default yaml.Marshal.
-	fm := map[string]interface{}{"a": "1", "b": "2"}
+	fm := map[string]any{"a": "1", "b": "2"}
 	output, err := FormatDocumentOrdered(fm, "body", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
@@ -590,7 +590,7 @@ func TestFormatDocumentOrdered_EmptyKeyOrder(t *testing.T) {
 
 func TestFormatDocumentOrdered_KeyNotInData(t *testing.T) {
 	// Ordered keys that don't exist in data should be silently skipped.
-	fm := map[string]interface{}{"a": "1"}
+	fm := map[string]any{"a": "1"}
 	output, err := FormatDocumentOrdered(fm, "", []string{"missing", "a"})
 	if err != nil {
 		t.Fatalf("error: %v", err)

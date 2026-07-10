@@ -219,9 +219,7 @@ func TestEventBrokerConcurrency(t *testing.T) {
 
 	// Concurrently subscribe, broadcast, and unsubscribe
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ch := b.subscribe()
 			b.broadcast("test")
 			// drain
@@ -230,7 +228,7 @@ func TestEventBrokerConcurrency(t *testing.T) {
 			default:
 			}
 			b.unsubscribe(ch)
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -507,9 +505,7 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for range readers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -536,12 +532,10 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -553,7 +547,7 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 			// would be observable.
 			app.rebuildState(true, false)
 		}
-	}()
+	})
 
 	time.Sleep(duration)
 	close(stop)

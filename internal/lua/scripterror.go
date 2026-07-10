@@ -305,14 +305,8 @@ func readSourceSlice(srcFS fs.FS, path string, failingLine, context int) []Sourc
 		return nil
 	}
 
-	from := failingLine - context
-	if from < 1 {
-		from = 1
-	}
-	to := failingLine + context
-	if to > len(lines) {
-		to = len(lines)
-	}
+	from := max(failingLine-context, 1)
+	to := min(failingLine+context, len(lines))
 
 	out := make([]SourceLine, 0, to-from+1)
 	for n := from; n <= to; n++ {

@@ -20,6 +20,7 @@ package secrets
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -74,14 +75,10 @@ func readFile(relaDir string) (*rawConfig, error) {
 // resolve merges global secrets with per-script overrides.
 func resolve(raw *rawConfig, scriptPath string) map[string]string {
 	result := make(map[string]string, len(raw.Global))
-	for k, v := range raw.Global {
-		result[k] = v
-	}
+	maps.Copy(result, raw.Global)
 
 	if overrides, ok := raw.Overrides[scriptPath]; ok {
-		for k, v := range overrides {
-			result[k] = v
-		}
+		maps.Copy(result, overrides)
 	}
 
 	return result

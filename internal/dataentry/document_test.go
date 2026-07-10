@@ -16,7 +16,7 @@ func TestHashEntities(t *testing.T) {
 	e1 := &entity.Entity{
 		ID:   "REQ-001",
 		Type: "requirement",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "First requirement",
 			"status": "draft",
 		},
@@ -25,7 +25,7 @@ func TestHashEntities(t *testing.T) {
 	e2 := &entity.Entity{
 		ID:   "REQ-002",
 		Type: "requirement",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Second requirement",
 			"status": "approved",
 		},
@@ -66,7 +66,7 @@ func TestHashEntities(t *testing.T) {
 		e1Modified := &entity.Entity{
 			ID:   e1.ID,
 			Type: e1.Type,
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Modified title",
 				"status": "draft",
 			},

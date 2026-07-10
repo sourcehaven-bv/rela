@@ -111,7 +111,7 @@ func orderValue(r entity.Relation, prop string) (float64, bool) {
 // FiniteOrder is re-exported from metamodel for callers that already
 // import entitymanager. The canonical implementation lives in metamodel
 // so the analyzer (which can't depend on entitymanager) shares it.
-func FiniteOrder(v interface{}) (float64, bool) {
+func FiniteOrder(v any) (float64, bool) {
 	return metamodel.FiniteOrder(v)
 }
 

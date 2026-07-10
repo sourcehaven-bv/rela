@@ -68,7 +68,7 @@ func (t *FSTemplater) GenerateRelation(
 // entityDocToTemplate converts a parsed markdown document into an entity
 // Template.
 func entityDocToTemplate(doc *markdown.Document, entityType, variant string) *Template {
-	properties := make(map[string]interface{}, len(doc.Frontmatter))
+	properties := make(map[string]any, len(doc.Frontmatter))
 	for k, v := range doc.Frontmatter {
 		if k == "id" || k == "type" || k == "_template_relations" {
 			continue
@@ -87,7 +87,7 @@ func entityDocToTemplate(doc *markdown.Document, entityType, variant string) *Te
 // relationDocToTemplate converts a relation template document.
 // from/relation/to are dropped because they're structural, not defaults.
 func relationDocToTemplate(doc *markdown.Document) *Template {
-	properties := make(map[string]interface{}, len(doc.Frontmatter))
+	properties := make(map[string]any, len(doc.Frontmatter))
 	for k, v := range doc.Frontmatter {
 		if k == "from" || k == "relation" || k == "to" {
 			continue
@@ -102,18 +102,18 @@ func relationDocToTemplate(doc *markdown.Document) *Template {
 
 // docTemplateRelations reads _template_relations from the frontmatter
 // and returns them in the top-level Relation shape used by Template.
-func docTemplateRelations(frontmatter map[string]interface{}) []Relation {
+func docTemplateRelations(frontmatter map[string]any) []Relation {
 	raw, ok := frontmatter["_template_relations"]
 	if !ok || raw == nil {
 		return nil
 	}
-	list, ok := raw.([]interface{})
+	list, ok := raw.([]any)
 	if !ok {
 		return nil
 	}
 	out := make([]Relation, 0, len(list))
 	for _, item := range list {
-		m, ok := item.(map[string]interface{})
+		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}

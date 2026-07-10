@@ -13,7 +13,7 @@ import (
 type Record struct {
 	ID         string
 	Type       string
-	Properties map[string]interface{}
+	Properties map[string]any
 	ModifiedAt time.Time // optional; used by "modified" virtual sort property
 }
 

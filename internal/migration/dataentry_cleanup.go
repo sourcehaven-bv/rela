@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 
@@ -435,12 +436,7 @@ func getScalarValue(node *yaml.Node, key string) string {
 }
 
 func containsStr(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, s)
 }
 
 // titleCase converts snake_case or kebab-case to Title Case.

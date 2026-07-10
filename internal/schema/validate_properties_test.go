@@ -31,8 +31,8 @@ func TestValidateEntityProperties(t *testing.T) {
 	st := memstore.New()
 	ctx := context.Background()
 	for _, e := range []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "open"}},
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"status": "open"}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"status": "invalid"}},
 	} {
 		if err := st.CreateEntity(ctx, e); err != nil {
 			t.Fatalf("seed entity %s: %v", e.ID, err)
@@ -76,7 +76,7 @@ func TestValidateRelationProperties(t *testing.T) {
 		}
 	}
 	if _, err := st.CreateRelation(ctx, "TKT-001", "blocks", "TKT-002", &store.RelationData{
-		Properties: map[string]interface{}{"since": "not-a-date"},
+		Properties: map[string]any{"since": "not-a-date"},
 	}); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}

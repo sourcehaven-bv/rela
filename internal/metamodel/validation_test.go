@@ -33,7 +33,7 @@ func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 		},
 	}
 
-	errs := meta.ValidateEntity("REQ-001", "requirement", map[string]interface{}{
+	errs := meta.ValidateEntity("REQ-001", "requirement", map[string]any{
 		"title":  "", // Empty string - should only trigger ONE error
 		"status": "draft",
 	})
@@ -120,7 +120,7 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := meta.ValidateEntity("TASK-001", "task", map[string]interface{}{
+			errs := meta.ValidateEntity("TASK-001", "task", map[string]any{
 				"title":    "Test Task",
 				"due_date": tt.dateValue,
 			})
@@ -184,7 +184,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 
 	t.Run("empty []string for optional list passes", func(t *testing.T) {
 		errs := meta.ValidateProperties(
-			map[string]interface{}{
+			map[string]any{
 				"optional_tags": []string{},
 				"required_tags": []string{"bug"},
 			},
@@ -197,8 +197,8 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 
 	t.Run("empty []interface{} for optional list passes", func(t *testing.T) {
 		errs := meta.ValidateProperties(
-			map[string]interface{}{
-				"optional_tags": []interface{}{},
+			map[string]any{
+				"optional_tags": []any{},
 				"required_tags": []string{"bug"},
 			},
 			schema,
@@ -210,7 +210,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 
 	t.Run("missing optional list passes", func(t *testing.T) {
 		errs := meta.ValidateProperties(
-			map[string]interface{}{"required_tags": []string{"bug"}},
+			map[string]any{"required_tags": []string{"bug"}},
 			schema,
 		)
 		if len(errs) != 0 {
@@ -220,7 +220,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 
 	t.Run("empty []string for required list reports required error", func(t *testing.T) {
 		errs := meta.ValidateProperties(
-			map[string]interface{}{
+			map[string]any{
 				"optional_tags": []string{"bug"},
 				"required_tags": []string{},
 			},
@@ -236,7 +236,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 
 	t.Run("non-empty list with valid items passes", func(t *testing.T) {
 		errs := meta.ValidateProperties(
-			map[string]interface{}{
+			map[string]any{
 				"optional_tags": []string{"bug", "ui"},
 				"required_tags": []string{"infra"},
 			},
@@ -249,7 +249,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 
 	t.Run("non-empty list with invalid item still fails", func(t *testing.T) {
 		errs := meta.ValidateProperties(
-			map[string]interface{}{
+			map[string]any{
 				"optional_tags": []string{"bogus"},
 				"required_tags": []string{"infra"},
 			},
@@ -297,7 +297,7 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := meta.ValidateEntity(tt.id, "requirement", map[string]interface{}{
+			errs := meta.ValidateEntity(tt.id, "requirement", map[string]any{
 				"title": "Test Requirement",
 			})
 
@@ -343,7 +343,7 @@ func TestValidateRelationEntities(t *testing.T) {
 func TestParseIntegerValue(t *testing.T) {
 	tests := []struct {
 		name      string
-		val       interface{}
+		val       any
 		expected  int
 		expectErr bool
 	}{
@@ -377,7 +377,7 @@ func TestParseIntegerValue(t *testing.T) {
 func TestParseBooleanValue(t *testing.T) {
 	tests := []struct {
 		name      string
-		val       interface{}
+		val       any
 		expected  bool
 		expectErr bool
 	}{
@@ -442,7 +442,7 @@ func TestValidatePropertyValue_Integer(t *testing.T) {
 	propDef := &PropertyDef{Type: PropertyTypeInteger}
 
 	// Valid int types
-	validValues := []interface{}{42, int64(123), 99.0}
+	validValues := []any{42, int64(123), 99.0}
 	for _, val := range validValues {
 		err := meta.ValidatePropertyValue("count", propDef, val)
 		if err != nil {
@@ -520,11 +520,11 @@ func TestValidatePropertyValue_FileMax(t *testing.T) {
 			t.Error("4 files in a max:3 property should be rejected")
 		}
 		// []interface{} of strings (form/JSON shape) also accepted.
-		if err := meta.ValidatePropertyValue("docs", multi, []interface{}{"a", "b"}); err != nil {
+		if err := meta.ValidatePropertyValue("docs", multi, []any{"a", "b"}); err != nil {
 			t.Errorf("[]interface{} of strings rejected: %v", err)
 		}
 		// Non-string item rejected.
-		if err := meta.ValidatePropertyValue("docs", multi, []interface{}{"a", 7}); err == nil {
+		if err := meta.ValidatePropertyValue("docs", multi, []any{"a", 7}); err == nil {
 			t.Error("non-string list item should be rejected")
 		}
 	})
@@ -924,13 +924,13 @@ func TestValidatePropertyValue_RegexOnInterfaceList(t *testing.T) {
 	propDef := &PropertyDef{Type: "semver", List: true}
 
 	// All valid ([]interface{} as from YAML parsing)
-	err := meta.ValidatePropertyValue("versions", propDef, []interface{}{"1.0.0", "2.0.0"})
+	err := meta.ValidatePropertyValue("versions", propDef, []any{"1.0.0", "2.0.0"})
 	if err != nil {
 		t.Errorf("expected valid list, got: %v", err)
 	}
 
 	// One invalid
-	err = meta.ValidatePropertyValue("versions", propDef, []interface{}{"1.0.0", "bad"})
+	err = meta.ValidatePropertyValue("versions", propDef, []any{"1.0.0", "bad"})
 	if err == nil {
 		t.Fatal("expected error for invalid list item")
 	}
@@ -939,7 +939,7 @@ func TestValidatePropertyValue_RegexOnInterfaceList(t *testing.T) {
 	}
 
 	// Non-string item in list
-	err = meta.ValidatePropertyValue("versions", propDef, []interface{}{"1.0.0", 123})
+	err = meta.ValidatePropertyValue("versions", propDef, []any{"1.0.0", 123})
 	if err == nil {
 		t.Fatal("expected error for non-string list item")
 	}
@@ -982,7 +982,7 @@ func TestValidatePropertyValue_Rrule(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		wantErr bool
 		errMsg  string
 	}{
@@ -1030,21 +1030,21 @@ func TestValidateRelationProperties(t *testing.T) {
 	}
 
 	t.Run("unknown relation returns nil", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("nope", map[string]interface{}{"x": "y"})
+		errs := m.ValidateRelationProperties("nope", map[string]any{"x": "y"})
 		if errs != nil {
 			t.Errorf("expected nil, got %v", errs)
 		}
 	})
 
 	t.Run("relation without property schema returns nil", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("plain", map[string]interface{}{"anything": "goes"})
+		errs := m.ValidateRelationProperties("plain", map[string]any{"anything": "goes"})
 		if errs != nil {
 			t.Errorf("expected nil, got %v", errs)
 		}
 	})
 
 	t.Run("missing required property is reported", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("blocks", map[string]interface{}{
+		errs := m.ValidateRelationProperties("blocks", map[string]any{
 			"severity": "high",
 		})
 		if len(errs) != 1 {
@@ -1056,7 +1056,7 @@ func TestValidateRelationProperties(t *testing.T) {
 	})
 
 	t.Run("valid properties pass", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("blocks", map[string]interface{}{
+		errs := m.ValidateRelationProperties("blocks", map[string]any{
 			"reason":   "cascading dep",
 			"severity": "high",
 		})
@@ -1066,7 +1066,7 @@ func TestValidateRelationProperties(t *testing.T) {
 	})
 
 	t.Run("wrong type is reported", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("blocks", map[string]interface{}{
+		errs := m.ValidateRelationProperties("blocks", map[string]any{
 			"reason":   123, // should be string
 			"severity": "high",
 		})

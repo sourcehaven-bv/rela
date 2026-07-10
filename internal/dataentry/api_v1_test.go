@@ -147,7 +147,7 @@ func TestV1ListEntities(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -190,7 +190,7 @@ func TestV1GetEntity(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -247,7 +247,7 @@ func TestV1DynamicRouting(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -282,7 +282,7 @@ func TestV1Filtering(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Open Ticket",
 			"status": "open",
 		},
@@ -290,7 +290,7 @@ func TestV1Filtering(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Closed Ticket",
 			"status": "closed",
 		},
@@ -324,7 +324,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Open Ticket",
 			"status": "open",
 		},
@@ -332,7 +332,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Completed Ticket",
 			"status": "completed",
 		},
@@ -340,7 +340,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Superseded Ticket",
 			"status": "superseded",
 		},
@@ -348,7 +348,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-004",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "In Progress Ticket",
 			"status": "in_progress",
 		},
@@ -425,8 +425,8 @@ func (f *fakeSearcher) Search(_ context.Context, q search.Query) iter.Seq2[searc
 func TestV1ListEntitiesSearchQuery(t *testing.T) {
 	t.Run("empty q is a no-op", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
-		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "B"}})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -448,9 +448,9 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		// B-titled ticket is hit by search; A-titled ticket is not. With sort=title
 		// ascending the result is just the B ticket — and absence of A confirms the
 		// intersection happens before sort/paginate.
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "B Ticket"}})
-		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "A Ticket"}})
-		seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{"title": "C Ticket"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "B Ticket"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "A Ticket"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket", Properties: map[string]any{"title": "C Ticket"}})
 		// Searcher returns TKT-001 and TKT-003 only. List sort must reorder them
 		// (C → 003) — proving Bleve ranking is discarded.
 		app.searcher = &fakeSearcher{hits: []search.Hit{
@@ -480,7 +480,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 	t.Run("q with no matching ids returns empty page", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		app.searcher = &fakeSearcher{hits: nil}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
@@ -500,8 +500,8 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 	t.Run("q AND-combines with property filter", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A", "status": "open"}})
-		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B", "status": "closed"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A", "status": "open"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "B", "status": "closed"}})
 		// Searcher hits both; the filter must still narrow to "open".
 		app.searcher = &fakeSearcher{hits: []search.Hit{
 			{ID: "TKT-001", Type: "ticket"},
@@ -522,7 +522,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 	t.Run("whitespace-only q is treated as empty", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		// Force a fakeSearcher that would return zero hits if invoked, so the
 		// test can prove the searcher was never called.
 		fake := &fakeSearcher{hits: nil}
@@ -553,8 +553,8 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		// test pins that behavior so a future change to also intersect on
 		// prop-only queries doesn't slip through silently.
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
-		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "B"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-999", Type: "ticket"}}}
 		app.searcher = fake
 
@@ -575,7 +575,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 	t.Run("searcher pins type to the list type, ignoring stray type: in q", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Hit"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Hit"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
 		app.searcher = fake
 
@@ -592,7 +592,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 	t.Run("searcher error surfaces as 500", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		app.searcher = &fakeSearcher{err: errors.New("index unavailable")}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=anything", http.NoBody)
@@ -609,7 +609,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		hits := make([]search.Hit, 0)
 		for i := 1; i <= 12; i++ {
 			id := "TKT-" + padInt(i)
-			seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]interface{}{"title": "T " + padInt(i)}})
+			seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": "T " + padInt(i)}})
 			if i <= 7 {
 				hits = append(hits, search.Hit{ID: id, Type: "ticket"})
 			}
@@ -637,7 +637,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 
 	t.Run("quoted phrase in q is forwarded to the searcher", func(t *testing.T) {
 		app := newTestAppV1(t)
-		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Hit"}})
+		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Hit"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
 		app.searcher = fake
 
@@ -667,14 +667,14 @@ func TestV1Sorting(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "B Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "A Ticket",
 		},
 	})
@@ -705,7 +705,7 @@ func TestV1Pagination(t *testing.T) {
 		seedEntity(app, &entity.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title": "Ticket " + padInt(i),
 			},
 		})
@@ -827,7 +827,7 @@ func TestV1SearchWithQuery(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Search Test Ticket",
 			"status": "open",
 		},
@@ -847,14 +847,14 @@ func TestV1SearchWithTypeFilter(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
@@ -938,14 +938,14 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
@@ -978,14 +978,14 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
@@ -1018,7 +1018,7 @@ func TestV1GetEntityIfNoneMatch(t *testing.T) {
 	entity := &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	}
@@ -1058,7 +1058,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -1090,7 +1090,7 @@ func TestV1SingleEntityOptions(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
@@ -1114,7 +1114,7 @@ func TestV1SingleEntityMethodNotAllowed(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
@@ -1153,14 +1153,14 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "A Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "B Ticket",
 		},
 	})
@@ -1189,14 +1189,14 @@ func TestV1FilteringContains(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Bug Fix Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Feature Request",
 		},
 	})
@@ -1224,21 +1224,21 @@ func TestV1FilteringIn(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "in_progress",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "closed",
 		},
 	})
@@ -1266,14 +1266,14 @@ func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "closed",
 		},
 	})
@@ -1288,14 +1288,14 @@ func TestV1FilteringPercentEncodedBrackets(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"due_date": "2026-01-01",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-004",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"due_date": "2027-01-01",
 		},
 	})
@@ -1315,21 +1315,21 @@ func TestV1FilteringMultiValueRepeatedParams(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "in_progress",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "closed",
 		},
 	})
@@ -1372,11 +1372,11 @@ func TestV1FilteringLte(t *testing.T) {
 	laterID := "TKT-later"
 
 	seedEntity(app, &entity.Entity{ID: earlierID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": earlier}})
+		Properties: map[string]any{"due_date": earlier}})
 	seedEntity(app, &entity.Entity{ID: thresholdID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": threshold}})
+		Properties: map[string]any{"due_date": threshold}})
 	seedEntity(app, &entity.Entity{ID: laterID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": later}})
+		Properties: map[string]any{"due_date": later}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]="+threshold)
 	gotSet := map[string]bool{}
@@ -1397,9 +1397,9 @@ func TestV1FilteringGte(t *testing.T) {
 	laterID := "TKT-later"
 
 	seedEntity(app, &entity.Entity{ID: earlierID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": earlier}})
+		Properties: map[string]any{"due_date": earlier}})
 	seedEntity(app, &entity.Entity{ID: laterID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": later}})
+		Properties: map[string]any{"due_date": later}})
 
 	got := runListFilter(t, app, "filter[due_date][gte]=2026-01-01")
 	if len(got) != 1 || got[0] != laterID {
@@ -1421,11 +1421,11 @@ func TestV1FilteringTodaySubstitution(t *testing.T) {
 	futureID := "TKT-future"
 
 	seedEntity(app, &entity.Entity{ID: overdueID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
+		Properties: map[string]any{"due_date": "2026-04-06"}})
 	seedEntity(app, &entity.Entity{ID: todayID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+		Properties: map[string]any{"due_date": "2026-04-07"}})
 	seedEntity(app, &entity.Entity{ID: futureID, Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-08"}})
+		Properties: map[string]any{"due_date": "2026-04-08"}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]=$today")
 	gotSet := map[string]bool{}
@@ -1442,7 +1442,7 @@ func TestV1FilteringTodaySubstitution(t *testing.T) {
 func TestV1FilteringTypeMismatch(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+		Properties: map[string]any{"due_date": "2026-04-07"}})
 
 	// "tomorrow" is not a date and not a known variable; should NOT silently
 	// match via lexicographic comparison.
@@ -1457,9 +1457,9 @@ func TestV1FilteringTypeMismatch(t *testing.T) {
 func TestV1FilteringMissingProperty(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-no-due", Type: "ticket",
-		Properties: map[string]interface{}{"title": "no due date"}})
+		Properties: map[string]any{"title": "no due date"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-with-due", Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+		Properties: map[string]any{"due_date": "2026-04-07"}})
 
 	got := runListFilter(t, app, "filter[due_date][lte]=2026-12-31")
 	if len(got) != 1 || got[0] != "TKT-with-due" {
@@ -1477,11 +1477,11 @@ func TestV1FilteringInWithVariableTokens(t *testing.T) {
 
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-yesterday", Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-06"}})
+		Properties: map[string]any{"due_date": "2026-04-06"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-today", Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-07"}})
+		Properties: map[string]any{"due_date": "2026-04-07"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-other", Type: "ticket",
-		Properties: map[string]interface{}{"due_date": "2026-04-09"}})
+		Properties: map[string]any{"due_date": "2026-04-09"}})
 
 	got := runListFilter(t, app, "filter[due_date][in]=$yesterday,$today")
 	gotSet := map[string]bool{}
@@ -1499,14 +1499,14 @@ func TestV1FilteringEmptyValue(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Has Title",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			// No status property
 			"title": "No Status",
 		},
@@ -1527,7 +1527,7 @@ func TestV1MultipleSort(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",
 			"title":  "B Ticket",
 		},
@@ -1535,7 +1535,7 @@ func TestV1MultipleSort(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",
 			"title":  "A Ticket",
 		},
@@ -1543,7 +1543,7 @@ func TestV1MultipleSort(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "closed",
 			"title":  "C Ticket",
 		},
@@ -1569,21 +1569,21 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-002",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Another Feature",
 		},
 	})
@@ -1632,14 +1632,14 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
@@ -1895,7 +1895,7 @@ func TestV1PaginationLinkHeaders(t *testing.T) {
 		seedEntity(app, &entity.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title": "Ticket " + padInt(i),
 			},
 		})
@@ -1967,8 +1967,8 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Add entities to get counts
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "Test"}})
-	seedEntity(app, &entity.Entity{ID: "FEA-001", Type: "feature", Properties: map[string]interface{}{"title": "Test Feature"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Test"}})
+	seedEntity(app, &entity.Entity{ID: "FEA-001", Type: "feature", Properties: map[string]any{"title": "Test Feature"}})
 
 	// Set up navigation with groups using actual struct fields
 	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
@@ -2014,15 +2014,15 @@ func TestV1SidebarAppliesListFilters(t *testing.T) {
 
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
-		Properties: map[string]interface{}{"title": "Open A", "status": "open"},
+		Properties: map[string]any{"title": "Open A", "status": "open"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-002", Type: "ticket",
-		Properties: map[string]interface{}{"title": "Open B", "status": "open"},
+		Properties: map[string]any{"title": "Open B", "status": "open"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-003", Type: "ticket",
-		Properties: map[string]interface{}{"title": "Closed", "status": "closed"},
+		Properties: map[string]any{"title": "Closed", "status": "closed"},
 	})
 
 	app.Cfg().Lists = map[string]dataentryconfig.List{
@@ -2081,15 +2081,15 @@ func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
 
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
-		Properties: map[string]interface{}{"title": "P0 open", "status": "open", "priority": "high"},
+		Properties: map[string]any{"title": "P0 open", "status": "open", "priority": "high"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-002", Type: "ticket",
-		Properties: map[string]interface{}{"title": "P0 closed", "status": "closed", "priority": "high"},
+		Properties: map[string]any{"title": "P0 closed", "status": "closed", "priority": "high"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-003", Type: "ticket",
-		Properties: map[string]interface{}{"title": "P1 open", "status": "open", "priority": "low"},
+		Properties: map[string]any{"title": "P1 open", "status": "open", "priority": "low"},
 	})
 
 	app.Cfg().Kanbans = map[string]dataentryconfig.Kanban{
@@ -2144,7 +2144,7 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -2178,14 +2178,14 @@ func TestV1FilterUnknownOperator(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Another Ticket",
 		},
 	})
@@ -2209,12 +2209,12 @@ func TestV1FilterMalformedKeySkipped(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"status": "open"},
+		Properties: map[string]any{"status": "open"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-002",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"status": "closed"},
+		Properties: map[string]any{"status": "closed"},
 	})
 
 	// Malformed keys: should be dropped, so another valid filter on the
@@ -2278,14 +2278,14 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:   "FEA-001",
 		Type: "feature",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Feature",
 		},
 	})
@@ -2320,7 +2320,7 @@ func TestV1DynamicRoutesMethodNotAllowed(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
@@ -2342,7 +2342,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 		seedEntity(app, &entity.Entity{
 			ID:   "TKT-" + padInt(i),
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title": "Ticket " + padInt(i),
 			},
 		})
@@ -2373,7 +2373,7 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			// Missing required "title" property
 		},
 	})
@@ -2491,7 +2491,7 @@ func newAnalyzeScriptErrorApp(t *testing.T) *App {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x"},
+		Properties: map[string]any{"title": "x"},
 	})
 	if err := app.SetSecurityConfig(SecurityConfig{BindAddress: "127.0.0.1:8080"}); err != nil {
 		t.Fatalf("SetSecurityConfig: %v", err)
@@ -2599,7 +2599,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",
 			"title":  "A Ticket",
 		},
@@ -2607,7 +2607,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open", // Same status as TKT-001
 			"title":  "B Ticket",
 		},
@@ -2615,7 +2615,7 @@ func TestV1SortMultipleSpecsWithSameValue(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-003",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "open",     // Same status
 			"title":  "A Ticket", // Same title as TKT-001
 		},
@@ -2635,7 +2635,7 @@ func TestV1ResolveIncludesEmptyPart(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 	})
@@ -2688,7 +2688,7 @@ func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "Test Ticket",
 		},
 		Content: "Some markdown content",
@@ -2891,7 +2891,7 @@ func TestV1EntityRelationsWrongType(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -2945,12 +2945,12 @@ func newReverseRelationsTestApp(t *testing.T) *App {
 func seedBlocksReverseFixture(t *testing.T, app *App) (sourceID, targetID string) {
 	t.Helper()
 	sourceID, targetID = "FEAT-001", "FEAT-003"
-	seedEntity(app, &entity.Entity{ID: sourceID, Type: "feature", Properties: map[string]interface{}{"title": "source"}})
-	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]interface{}{"title": "target"}})
+	seedEntity(app, &entity.Entity{ID: sourceID, Type: "feature", Properties: map[string]any{"title": "source"}})
+	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]any{"title": "target"}})
 	if _, err := app.store.CreateRelation(
 		t.Context(),
 		sourceID, "blocks", targetID,
-		&store.RelationData{Properties: map[string]interface{}{"reason": "test block"}},
+		&store.RelationData{Properties: map[string]any{"reason": "test block"}},
 	); err != nil {
 		t.Fatalf("seed blocks relation: %v", err)
 	}
@@ -2974,7 +2974,7 @@ func TestV1GetRelationType_IncomingReturnsEdgeWithMeta(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var edges []map[string]interface{}
+	var edges []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &edges); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
@@ -2987,7 +2987,7 @@ func TestV1GetRelationType_IncomingReturnsEdgeWithMeta(t *testing.T) {
 	if got := edges[0]["type"]; got != "feature" {
 		t.Errorf("incoming edge peer type = %v, want %q", got, "feature")
 	}
-	meta, ok := edges[0]["meta"].(map[string]interface{})
+	meta, ok := edges[0]["meta"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected meta object on edge, got %T: %v", edges[0]["meta"], edges[0])
 	}
@@ -3013,7 +3013,7 @@ func TestV1EntityRelations_GroupsIncomingUnderInverseName(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var grouped map[string][]map[string]interface{}
+	var grouped map[string][]map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &grouped); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
@@ -3051,7 +3051,7 @@ func TestV1GetRelationType_OutgoingIncludesPeerType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var edges []map[string]interface{}
+	var edges []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &edges); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
@@ -3066,7 +3066,7 @@ func TestV1GetRelationType_OutgoingIncludesPeerType(t *testing.T) {
 	}
 }
 
-func keysOf(m map[string][]map[string]interface{}) []string {
+func keysOf(m map[string][]map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -3108,7 +3108,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -3147,12 +3147,12 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-001",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "Feature One"},
+		Properties: map[string]any{"title": "Feature One"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-002",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "Feature Two"},
+		Properties: map[string]any{"title": "Feature Two"},
 	})
 
 	body := `{
@@ -3199,7 +3199,7 @@ func TestV1UpdateEntity_SavesRelations(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -3207,12 +3207,12 @@ func TestV1UpdateEntity_SavesRelations(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-001",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "Feature One"},
+		Properties: map[string]any{"title": "Feature One"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-002",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "Feature Two"},
+		Properties: map[string]any{"title": "Feature Two"},
 	})
 
 	patch := func(t *testing.T, body string) {
@@ -3274,10 +3274,10 @@ func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
-	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "U"}})
-	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F1"}})
-	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]interface{}{"title": "F2"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "U"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F1"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]any{"title": "F2"}})
 	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
 	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "blocks", To: "TKT-002"})
 
@@ -3315,9 +3315,9 @@ func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
-	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "U"}})
-	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "U"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]},"blocks":{"data":[{"type":"ticket","id":"TKT-002"}]}}}`))
@@ -3344,7 +3344,7 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"bogus":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
@@ -3371,7 +3371,7 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-999"}]}}}`))
@@ -3397,8 +3397,8 @@ func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
 
 	// `implements` is ticket -> feature. Call the update on a feature and
 	// try to add an `implements` edge from it.
-	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
-	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]interface{}{"title": "F2"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]any{"title": "F2"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`))
@@ -3423,8 +3423,8 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
-	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F"}})
 
 	entityBefore, _ := app.reader.getEntity(context.Background(), "TKT-001")
 	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
@@ -3487,7 +3487,7 @@ func TestHandleV1Documents_EntityTypeMismatch(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "a ticket",
 		},
 	})
@@ -3522,7 +3522,7 @@ func TestHandleV1Documents_EntityTypeMatch(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title": "a ticket",
 		},
 	})
@@ -3573,7 +3573,7 @@ func TestHandleV1Documents_CacheInvariance(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "cache test"},
+		Properties: map[string]any{"title": "cache test"},
 	})
 	// Command emits a minimal markdown link that the rewriter will
 	// append return_to to. Anchor shape matches what goldmark produces.
@@ -3974,7 +3974,7 @@ func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -4019,7 +4019,7 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -4129,11 +4129,11 @@ func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
 
 			seedEntity(app, &entity.Entity{
 				ID: entryID, Type: entryType,
-				Properties: map[string]interface{}{"title": "entry"},
+				Properties: map[string]any{"title": "entry"},
 			})
 			seedEntity(app, &entity.Entity{
 				ID: otherID, Type: otherType,
-				Properties: map[string]interface{}{"title": "other"},
+				Properties: map[string]any{"title": "other"},
 			})
 			// Edge always points TKT → FEAT regardless of which is entry.
 			seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
@@ -4214,7 +4214,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 	target := &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Target Ticket",
 			"status": "open",
 		},
@@ -4223,7 +4223,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Origin Ticket",
 			"status": "open",
 		},
@@ -4254,7 +4254,7 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Plain Ticket",
 			"status": "open",
 		},
@@ -4289,7 +4289,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Test Ticket",
 			"status": "open",
 		},
@@ -4370,7 +4370,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":    "Demo Ticket",
 			"status":   "open",
 			"priority": "high",
@@ -4462,7 +4462,7 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "secret", "status": "open"},
+		Properties: map[string]any{"title": "secret", "status": "open"},
 	})
 
 	// PATCH an unrelated property (status) and inspect the echo.
@@ -4495,12 +4495,12 @@ func TestV1Affordance_Includes_StripHidden(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "ticket-secret"},
+		Properties: map[string]any{"title": "ticket-secret"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-001",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "feature-secret"},
+		Properties: map[string]any{"title": "feature-secret"},
 	})
 	bindEdge(app, "TKT-001", "implements", "FEAT-001")
 
@@ -4535,7 +4535,7 @@ func TestV1Affordance_CollectionList_StripHidden(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "list-secret"},
+		Properties: map[string]any{"title": "list-secret"},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
@@ -4565,7 +4565,7 @@ func seedDemoTicketForPatch(t *testing.T) *App {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Original",
 			"status": "open",
 		},
@@ -4587,7 +4587,7 @@ func TestV1Affordance_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 
 	hiddenCode, hiddenBody := patchTicketRaw(t, app, `{"properties":{"title":"new"}}`)
@@ -4680,7 +4680,7 @@ func TestV1Affordance_AffordanceDenial_EmitsAudit(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 
 	// Trigger a read-only denial via PATCH.
@@ -4753,7 +4753,7 @@ func TestV1Affordance_PatchFilteredListEnum_Forbidden(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 
 	t.Run("forbidden element rejects the whole list", func(t *testing.T) {
@@ -5138,12 +5138,12 @@ func seedTicketWithRelationVerdicts(t *testing.T, rv RelationVerdicts) *App {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-001",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "Feature"},
+		Properties: map[string]any{"title": "Feature"},
 	})
 	return app
 }
@@ -5241,8 +5241,8 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 	// metamodel does. We seed both ticket + concept entities; the
 	// relation create path doesn't validate against the metamodel
 	// here — it's the resolver's job that we're testing.
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
-	seedEntity(app, &entity.Entity{ID: "CONC-001", Type: "concept", Properties: map[string]interface{}{"title": "C"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "CONC-001", Type: "concept", Properties: map[string]any{"title": "C"}})
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/concepts/CONC-001/relations/affects",
@@ -5378,7 +5378,7 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)

@@ -244,15 +244,8 @@ func (r *Runtime) luaMdShiftHeaders(ls *lua.LState) int {
 // Usage: ast = rela.md.set_min_header_level(ast, 2)  -- min becomes ##
 func (r *Runtime) luaMdSetMinHeaderLevel(ls *lua.LState) int {
 	astTable := ls.CheckTable(1)
-	targetLevel := ls.CheckInt(2)
-
 	// Clamp target level to valid range
-	if targetLevel < minHeaderLevel {
-		targetLevel = minHeaderLevel
-	}
-	if targetLevel > maxHeaderLevel {
-		targetLevel = maxHeaderLevel
-	}
+	targetLevel := min(max(ls.CheckInt(2), minHeaderLevel), maxHeaderLevel)
 
 	// Find current minimum level
 	minLevel := r.findMinHeaderLevel(astTable)
@@ -509,13 +502,7 @@ func (r *Runtime) luaMdConcat(ls *lua.LState) int {
 //
 //	local node = rela.md.heading(2, {rela.md.text("a "), rela.md.code_span("b")})
 func luaMdHeading(ls *lua.LState) int {
-	level := ls.CheckInt(1)
-	if level < minHeaderLevel {
-		level = minHeaderLevel
-	}
-	if level > maxHeaderLevel {
-		level = maxHeaderLevel
-	}
+	level := min(max(ls.CheckInt(1), minHeaderLevel), maxHeaderLevel)
 	inlines := acceptInlinesArg(ls, 2)
 
 	node := ls.NewTable()
@@ -1427,13 +1414,7 @@ func (r *Runtime) shiftNodeHeaders(node *lua.LTable, offset int) *lua.LTable {
 
 	if nodeType := newNode.RawGetString("type"); nodeType == lua.LString(nodeTypeHeading) {
 		if level, ok := newNode.RawGetString("level").(lua.LNumber); ok {
-			newLevel := int(level) + offset
-			if newLevel < minHeaderLevel {
-				newLevel = minHeaderLevel
-			}
-			if newLevel > maxHeaderLevel {
-				newLevel = maxHeaderLevel
-			}
+			newLevel := min(max(int(level)+offset, minHeaderLevel), maxHeaderLevel)
 			newNode.RawSetString("level", lua.LNumber(newLevel))
 		}
 	}
@@ -1692,7 +1673,7 @@ func prefixLines(sb *strings.Builder, prefix, s string) {
 	}
 	body := s[:end]
 	trimmed := strings.TrimRight(prefix, " \t")
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if line == "" {
 			sb.WriteString(trimmed)
 		} else {

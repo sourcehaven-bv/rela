@@ -156,7 +156,7 @@ func compareOrdered[T cmp.Ordered](left, right T, operator string) bool {
 
 // propertyContains checks if a property value contains the given string.
 // Handles string, []string, and []interface{} property types.
-func propertyContains(prop interface{}, value string) bool {
+func propertyContains(prop any, value string) bool {
 	if prop == nil {
 		return value == ""
 	}
@@ -164,13 +164,8 @@ func propertyContains(prop interface{}, value string) bool {
 	case string:
 		return v == value
 	case []string:
-		for _, s := range v {
-			if s == value {
-				return true
-			}
-		}
-		return false
-	case []interface{}:
+		return slices.Contains(v, value)
+	case []any:
 		for _, item := range v {
 			if s, ok := item.(string); ok && s == value {
 				return true
@@ -183,7 +178,7 @@ func propertyContains(prop interface{}, value string) bool {
 }
 
 // propertyIsEmpty checks if a property value is empty/nil.
-func propertyIsEmpty(prop interface{}) bool {
+func propertyIsEmpty(prop any) bool {
 	if prop == nil {
 		return true
 	}
@@ -192,7 +187,7 @@ func propertyIsEmpty(prop interface{}) bool {
 		return v == ""
 	case []string:
 		return len(v) == 0
-	case []interface{}:
+	case []any:
 		return len(v) == 0
 	default:
 		return false
@@ -292,12 +287,7 @@ func coalesce(vals ...string) string {
 
 // containsString returns true if slice contains the given string.
 func containsString(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, s)
 }
 
 // slugify converts a string to a URL-safe slug (lowercase, hyphens, no special chars).

@@ -142,10 +142,10 @@ func TestListIncomingRelationColumn(t *testing.T) {
 	)
 
 	entities := []*entity.Entity{
-		{ID: taakID, Type: "taak", Properties: map[string]interface{}{"title": "Ship it"}},
-		{ID: otherTID, Type: "taak", Properties: map[string]interface{}{"title": "Other"}},
-		{ID: persAID, Type: "persoon", Properties: map[string]interface{}{"title": "Jeroen Vloothuis"}},
-		{ID: persBID, Type: "persoon", Properties: map[string]interface{}{"title": "Alice B"}},
+		{ID: taakID, Type: "taak", Properties: map[string]any{"title": "Ship it"}},
+		{ID: otherTID, Type: "taak", Properties: map[string]any{"title": "Other"}},
+		{ID: persAID, Type: "persoon", Properties: map[string]any{"title": "Jeroen Vloothuis"}},
+		{ID: persBID, Type: "persoon", Properties: map[string]any{"title": "Alice B"}},
 	}
 
 	t.Run("single incoming source keyed under inverse", func(t *testing.T) {
@@ -232,10 +232,10 @@ func TestListIncomingRelationColumn(t *testing.T) {
 func TestListOutgoingRelationsByteIdentical(t *testing.T) {
 	const persID = "PERS-JV"
 	entities := []*entity.Entity{
-		{ID: persID, Type: "persoon", Properties: map[string]interface{}{"title": "Jeroen"}},
+		{ID: persID, Type: "persoon", Properties: map[string]any{"title": "Jeroen"}},
 	}
 	// One outgoing edge from the persoon to a taak.
-	taak := &entity.Entity{ID: "TASK-1", Type: "taak", Properties: map[string]interface{}{"title": "T"}}
+	taak := &entity.Entity{ID: "TASK-1", Type: "taak", Properties: map[string]any{"title": "T"}}
 	entities = append(entities, taak)
 	rels := []*entity.Relation{entity.NewRelation(persID, "verantwoordelijk_voor", "TASK-1")}
 

@@ -39,9 +39,9 @@ func TestAnalyzeOrphans(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Orphan"}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Connected A"}})
-	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Connected B"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Orphan"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "Connected A"}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]any{"title": "Connected B"}})
 	g.AddEdge(&entity.Relation{From: "T-002", Type: "blocks", To: "T-003"})
 
 	svc := newAnalyzeService(t, g, meta)
@@ -69,8 +69,8 @@ func TestAnalyzeOrphans_NoOrphans(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{}})
 	g.AddEdge(&entity.Relation{From: "T-001", Type: "blocks", To: "T-002"})
 
 	svc := newAnalyzeService(t, g, meta)
@@ -91,9 +91,9 @@ func TestAnalyzeDuplicates(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Setup CI"}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "setup ci"}})
-	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"title": "Unique"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Setup CI"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "setup ci"}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]any{"title": "Unique"}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeDuplicates(context.Background(), meta)
@@ -118,8 +118,8 @@ func TestAnalyzeDuplicates_NoDuplicates(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Alpha"}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Beta"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Alpha"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "Beta"}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeDuplicates(context.Background(), meta)
@@ -137,9 +137,9 @@ func TestAnalyzeGaps(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
 	// T-002 missing
-	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeGaps(context.Background(), meta)
@@ -171,8 +171,8 @@ func TestAnalyzeGaps_ManualIDsSkipped(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{}})
-	g.AddNode(&entity.Entity{ID: "C-005", Type: "component", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]any{}})
+	g.AddNode(&entity.Entity{ID: "C-005", Type: "component", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeGaps(context.Background(), meta)
@@ -195,9 +195,9 @@ func TestAnalyzeGaps_MultiplePrefixes(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{}})
 	// FEAT-002 missing
-	g.AddNode(&entity.Entity{ID: "FEAT-003", Type: "feature", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "FEAT-003", Type: "feature", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeGaps(context.Background(), meta)
@@ -231,9 +231,9 @@ func TestAnalyzeCardinality(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "A"}})
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "B"}})
-	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{"name": "Auth"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "B"}})
+	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]any{"name": "Auth"}})
 	// Only T-001 implements C-001; T-002 has no implements relation
 	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
 
@@ -268,8 +268,8 @@ func TestAnalyzeCardinality_AllSatisfied(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
-	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
+	g.AddNode(&entity.Entity{ID: "C-001", Type: "component", Properties: map[string]any{}})
 	g.AddEdge(&entity.Relation{From: "T-001", Type: "implements", To: "C-001"})
 
 	svc := newAnalyzeService(t, g, meta)
@@ -295,9 +295,9 @@ func TestAnalyzeProperties(t *testing.T) {
 	}
 
 	// Missing required title, invalid enum value
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"status": "invalid"}})
 	// Valid entity
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"title": "Good", "status": "open"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"title": "Good", "status": "open"}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeProperties(context.Background(), meta)
@@ -329,7 +329,7 @@ func TestAnalyzeProperties_AllValid(t *testing.T) {
 		},
 	}
 
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"title": "Valid"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"title": "Valid"}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeProperties(context.Background(), meta)
@@ -361,11 +361,11 @@ func TestAnalyzeValidations(t *testing.T) {
 	}
 
 	// Accepted without priority — violation
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{"status": "accepted"}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{"status": "accepted"}})
 	// Accepted with priority — OK
-	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]interface{}{"status": "accepted", "priority": "high"}})
+	g.AddNode(&entity.Entity{ID: "T-002", Type: "ticket", Properties: map[string]any{"status": "accepted", "priority": "high"}})
 	// Draft — rule doesn't apply
-	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}})
+	g.AddNode(&entity.Entity{ID: "T-003", Type: "ticket", Properties: map[string]any{"status": "draft"}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeValidations(context.Background(), meta)
@@ -439,7 +439,7 @@ func TestAnalyzeValidations_SurfacesScriptError(t *testing.T) {
 			},
 		},
 	}
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeValidations(context.Background(), meta)
@@ -484,7 +484,7 @@ func TestAnalyzeValidations_SurfacesLoadError(t *testing.T) {
 			},
 		},
 	}
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	section := svc.analyzeValidations(context.Background(), meta)
@@ -542,7 +542,7 @@ func TestRunAnalysis(t *testing.T) {
 	}
 
 	// Orphan with missing required property
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	result := svc.runAnalysis(context.Background(), meta)
@@ -609,7 +609,7 @@ func TestAnalysisIssueCounts(t *testing.T) {
 	}
 
 	// Orphan (warning) + missing required title (error)
-	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]interface{}{}})
+	g.AddNode(&entity.Entity{ID: "T-001", Type: "ticket", Properties: map[string]any{}})
 
 	svc := newAnalyzeService(t, g, meta)
 	errors, warnings := svc.analysisIssueCounts(context.Background(), meta)
@@ -669,21 +669,21 @@ func TestAnalyzeValidationsWithContentRules(t *testing.T) {
 	g.AddNode(&entity.Entity{
 		ID:         "DEC-001",
 		Type:       "decision",
-		Properties: map[string]interface{}{"title": "Auth", "status": "accepted"},
+		Properties: map[string]any{"title": "Auth", "status": "accepted"},
 		Content:    "# Decision\nSome text without context section",
 	})
 	// Accepted with Context section — OK
 	g.AddNode(&entity.Entity{
 		ID:         "DEC-002",
 		Type:       "decision",
-		Properties: map[string]interface{}{"title": "Database", "status": "accepted"},
+		Properties: map[string]any{"title": "Database", "status": "accepted"},
 		Content:    "# Decision\n## Context\nWe need to decide...",
 	})
 	// Draft — rule doesn't apply
 	g.AddNode(&entity.Entity{
 		ID:         "DEC-003",
 		Type:       "decision",
-		Properties: map[string]interface{}{"title": "Draft", "status": "draft"},
+		Properties: map[string]any{"title": "Draft", "status": "draft"},
 		Content:    "# Draft decision",
 	})
 
@@ -732,21 +732,21 @@ func TestAnalyzeValidationsWithCombinedRules(t *testing.T) {
 	g.AddNode(&entity.Entity{
 		ID:         "DEC-001",
 		Type:       "decision",
-		Properties: map[string]interface{}{"title": "No owner", "status": "accepted"},
+		Properties: map[string]any{"title": "No owner", "status": "accepted"},
 		Content:    "# Decision\n## Context\nHas context",
 	})
 	// Has owner but missing Context — content fails
 	g.AddNode(&entity.Entity{
 		ID:         "DEC-002",
 		Type:       "decision",
-		Properties: map[string]interface{}{"title": "No context", "status": "accepted", "owner": "Alice"},
+		Properties: map[string]any{"title": "No context", "status": "accepted", "owner": "Alice"},
 		Content:    "# Decision\nNo context section",
 	})
 	// Has both — OK
 	g.AddNode(&entity.Entity{
 		ID:         "DEC-003",
 		Type:       "decision",
-		Properties: map[string]interface{}{"title": "Complete", "status": "accepted", "owner": "Bob"},
+		Properties: map[string]any{"title": "Complete", "status": "accepted", "owner": "Bob"},
 		Content:    "# Decision\n## Context\nAll good",
 	})
 
@@ -799,21 +799,21 @@ func TestAnalyzeValidationsWithChecklistRule(t *testing.T) {
 	g.AddNode(&entity.Entity{
 		ID:         "CHK-001",
 		Type:       "checklist",
-		Properties: map[string]interface{}{"title": "Incomplete", "status": "done"},
+		Properties: map[string]any{"title": "Incomplete", "status": "done"},
 		Content:    "- [x] Done item\n- [ ] Not done item",
 	})
 	// Done with all checked — OK
 	g.AddNode(&entity.Entity{
 		ID:         "CHK-002",
 		Type:       "checklist",
-		Properties: map[string]interface{}{"title": "Complete", "status": "done"},
+		Properties: map[string]any{"title": "Complete", "status": "done"},
 		Content:    "- [x] Done 1\n- [x] Done 2",
 	})
 	// In-progress — rule doesn't apply
 	g.AddNode(&entity.Entity{
 		ID:         "CHK-003",
 		Type:       "checklist",
-		Properties: map[string]interface{}{"title": "WIP", "status": "in-progress"},
+		Properties: map[string]any{"title": "WIP", "status": "in-progress"},
 		Content:    "- [ ] Not started",
 	})
 
@@ -861,14 +861,14 @@ func TestAnalyzeValidationsWithChecklistAllowSkipped(t *testing.T) {
 	g.AddNode(&entity.Entity{
 		ID:         "CHK-001",
 		Type:       "checklist",
-		Properties: map[string]interface{}{"title": "Skipped", "status": "done"},
+		Properties: map[string]any{"title": "Skipped", "status": "done"},
 		Content:    "- [x] Done item\n- [x] ~~Skipped item~~ (N/A: reason)",
 	})
 	// Done with unchecked non-skipped — violation
 	g.AddNode(&entity.Entity{
 		ID:         "CHK-002",
 		Type:       "checklist",
-		Properties: map[string]interface{}{"title": "Incomplete", "status": "done"},
+		Properties: map[string]any{"title": "Incomplete", "status": "done"},
 		Content:    "- [x] Done item\n- [ ] Not done, not skipped",
 	})
 

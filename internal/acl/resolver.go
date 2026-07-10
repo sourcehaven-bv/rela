@@ -2,6 +2,7 @@ package acl
 
 import (
 	"context"
+	"slices"
 	"sort"
 )
 
@@ -223,10 +224,8 @@ func (r *Request) holdsPermission(ctx context.Context, perm string) bool {
 		if !ok {
 			continue
 		}
-		for _, p := range role.Permissions {
-			if p == perm {
-				return true
-			}
+		if slices.Contains(role.Permissions, perm) {
+			return true
 		}
 	}
 	return false

@@ -48,7 +48,7 @@ type APIIssue struct {
 }
 
 // writeJSON writes a JSON response with 200 OK status.
-func writeJSON(w http.ResponseWriter, data interface{}) {
+func writeJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(data)

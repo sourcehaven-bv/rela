@@ -3,6 +3,7 @@ package predicate
 import (
 	"context"
 	"fmt"
+	"maps"
 )
 
 // Eval evaluates the program against bindings and returns the result
@@ -158,9 +159,7 @@ func (s *evalState) evalCall(ctx context.Context, n *callNode) (Value, error) {
 
 func copyEntries(in map[string]Value) map[string]Value {
 	out := make(map[string]Value, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

@@ -535,7 +535,7 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
-func marshalProps(p map[string]interface{}) ([]byte, error) {
+func marshalProps(p map[string]any) ([]byte, error) {
 	if len(p) == 0 {
 		return []byte("{}"), nil
 	}
@@ -545,18 +545,18 @@ func marshalProps(p map[string]interface{}) ([]byte, error) {
 // unmarshalProps decodes a JSONB properties blob into a Go map, normalizing
 // numbers so whole values are int (see normalizeJSONNumbers). An empty blob
 // yields an empty (non-nil) map.
-func unmarshalProps(raw []byte) (map[string]interface{}, error) {
+func unmarshalProps(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 {
-		return map[string]interface{}{}, nil
+		return map[string]any{}, nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	var m map[string]interface{}
+	var m map[string]any
 	if err := dec.Decode(&m); err != nil {
 		return nil, err
 	}
 	if m == nil {
-		return map[string]interface{}{}, nil
+		return map[string]any{}, nil
 	}
 	return normalizeJSONMap(m), nil
 }
@@ -567,7 +567,7 @@ func unmarshalProps(raw []byte) (map[string]interface{}, error) {
 // (and the conformance suite) store and expect plain int for whole numbers,
 // matching the in-memory backends. Strings, bools, and nested
 // maps/slices are preserved structurally.
-func normalizeJSONNumbers(v interface{}) interface{} {
+func normalizeJSONNumbers(v any) any {
 	switch t := v.(type) {
 	case json.Number:
 		if i, err := t.Int64(); err == nil {
@@ -577,9 +577,9 @@ func normalizeJSONNumbers(v interface{}) interface{} {
 			return f
 		}
 		return t.String()
-	case map[string]interface{}:
+	case map[string]any:
 		return normalizeJSONMap(t)
-	case []interface{}:
+	case []any:
 		for i := range t {
 			t[i] = normalizeJSONNumbers(t[i])
 		}
@@ -589,7 +589,7 @@ func normalizeJSONNumbers(v interface{}) interface{} {
 	}
 }
 
-func normalizeJSONMap(m map[string]interface{}) map[string]interface{} {
+func normalizeJSONMap(m map[string]any) map[string]any {
 	for k, v := range m {
 		m[k] = normalizeJSONNumbers(v)
 	}
@@ -601,7 +601,7 @@ func normalizeJSONMap(m map[string]interface{}) map[string]interface{} {
 // JSON strings render without quotes; numbers without scientific notation where
 // possible; everything else falls back to its JSON text.
 func stringifyJSONValue(raw []byte) string {
-	var v interface{}
+	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return strings.TrimSpace(string(raw))
 	}

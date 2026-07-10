@@ -36,6 +36,7 @@ linters:
     - mirror
     - misspell
     - mnd
+    - modernize
     - nakedret
     - nestif
     - nilerr
@@ -170,6 +171,13 @@ linters:
       ignored-functions:
         - strings.SplitN
         - make
+    modernize:
+      # omitzero flags `omitempty` on nested struct fields (a latent
+      # marshaling bug, not a mechanical simplification). It needs a
+      # per-site decision about the intended wire shape, so it is
+      # triaged separately rather than auto-fixed. See TKT (omitzero triage).
+      disable:
+        - omitzero
     nakedret:
       max-func-lines: 30
     nestif:

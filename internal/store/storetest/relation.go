@@ -34,7 +34,7 @@ func RunRelationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
 
 		data := &store.RelationData{
-			Properties: map[string]interface{}{"weight": 5},
+			Properties: map[string]any{"weight": 5},
 			Content:    "important link",
 		}
 		r, err := s.CreateRelation(ctx(), "A", "requires", "B", data)
@@ -266,7 +266,7 @@ func RunRelationTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 
 		updated, err := s.UpdateRelation(ctx(), "A", "requires", "B", store.RelationData{
-			Properties: map[string]interface{}{"weight": 10, "note": "critical"},
+			Properties: map[string]any{"weight": 10, "note": "critical"},
 			Content:    "updated",
 		})
 		require.NoError(t, err)
@@ -283,12 +283,12 @@ func RunRelationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
 		_, _ = s.CreateRelation(ctx(), "A", "requires", "B", &store.RelationData{
-			Properties: map[string]interface{}{"k": "v"},
+			Properties: map[string]any{"k": "v"},
 			Content:    "original",
 		})
 
 		updated, err := s.UpdateRelation(ctx(), "A", "requires", "B", store.RelationData{
-			Properties: map[string]interface{}{"k": "new"},
+			Properties: map[string]any{"k": "new"},
 			Content:    "new",
 		})
 		require.NoError(t, err)

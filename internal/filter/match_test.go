@@ -17,7 +17,7 @@ func TestMatchString(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -37,7 +37,7 @@ func TestMatchString(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"title": tt.value},
+				Properties: map[string]any{"title": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -71,7 +71,7 @@ func TestMatchDate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -93,7 +93,7 @@ func TestMatchDate(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"valid_until": tt.value},
+				Properties: map[string]any{"valid_until": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -124,7 +124,7 @@ func TestMatchInteger(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -147,7 +147,7 @@ func TestMatchInteger(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"score": tt.value},
+				Properties: map[string]any{"score": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -178,7 +178,7 @@ func TestMatchBoolean(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -196,7 +196,7 @@ func TestMatchBoolean(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"archived": tt.value},
+				Properties: map[string]any{"archived": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -230,7 +230,7 @@ func TestMatchEnum(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -246,7 +246,7 @@ func TestMatchEnum(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"status": tt.value},
+				Properties: map[string]any{"status": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -278,7 +278,7 @@ func TestMatchNilValue(t *testing.T) {
 	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
-		Properties: map[string]interface{}{},
+		Properties: map[string]any{},
 	}
 
 	// Test that missing property with empty filter value matches
@@ -412,7 +412,7 @@ func TestMatchMissingProperty(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{},
+				Properties: map[string]any{},
 			}
 
 			f, err := Parse(tt.filter)
@@ -503,7 +503,7 @@ func TestMatchEmptyStringProperty(t *testing.T) {
 			entity := &entity.Entity{
 				ID:   "TEST-001",
 				Type: "test",
-				Properties: map[string]interface{}{
+				Properties: map[string]any{
 					tt.propDef.Type: "", // empty string
 				},
 			}
@@ -543,7 +543,7 @@ func TestMatchAllAND(t *testing.T) {
 	entity := &entity.Entity{
 		ID:   "TEST-001",
 		Type: "test",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status":   "accepted",
 			"priority": "high",
 		},
@@ -614,7 +614,7 @@ func TestOperatorValidation(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"title": "test", "date": "2025-01-01", "flag": true, "status": "a"},
+				Properties: map[string]any{"title": "test", "date": "2025-01-01", "flag": true, "status": "a"},
 			}
 
 			f, err := Parse(tt.filter)
@@ -640,7 +640,7 @@ func TestMatchEnumLegacy(t *testing.T) {
 	tests := []struct {
 		name     string
 		propType string
-		value    interface{}
+		value    any
 		filter   string
 		want     bool
 		wantErr  bool
@@ -662,7 +662,7 @@ func TestMatchEnumLegacy(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{tt.propType: tt.value},
+				Properties: map[string]any{tt.propType: tt.value},
 			}
 
 			propDef := &metamodel.PropertyDef{Type: tt.propType}
@@ -702,7 +702,7 @@ func TestMatchEnumLegacyWithCustomType(t *testing.T) {
 	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
-		Properties: map[string]interface{}{"status": "open"},
+		Properties: map[string]any{"status": "open"},
 	}
 
 	propDef := &metamodel.PropertyDef{Type: "status"}
@@ -732,7 +732,7 @@ func TestMatchStringEdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -754,7 +754,7 @@ func TestMatchStringEdgeCases(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"title": tt.value},
+				Properties: map[string]any{"title": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -786,7 +786,7 @@ func TestMatchBooleanEdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -807,7 +807,7 @@ func TestMatchBooleanEdgeCases(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"archived": tt.value},
+				Properties: map[string]any{"archived": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -842,7 +842,7 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -865,7 +865,7 @@ func TestMatchEnumEdgeCases(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"status": tt.value},
+				Properties: map[string]any{"status": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -903,7 +903,7 @@ func TestMatchCustomType(t *testing.T) {
 	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
-		Properties: map[string]interface{}{"risk": "high"},
+		Properties: map[string]any{"risk": "high"},
 	}
 
 	propDef := &metamodel.PropertyDef{Type: "risk_level"}
@@ -943,7 +943,7 @@ func TestMatchUnknownTypeFallback(t *testing.T) {
 	entity := &entity.Entity{
 		ID:         "TEST-001",
 		Type:       "test",
-		Properties: map[string]interface{}{"unknown_prop": "some value"},
+		Properties: map[string]any{"unknown_prop": "some value"},
 	}
 
 	propDef := &metamodel.PropertyDef{Type: "unknown_type"}
@@ -981,7 +981,7 @@ func TestMatchAllUnknownProperty(t *testing.T) {
 	entity := &entity.Entity{
 		ID:   "TEST-001",
 		Type: "test",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"status": "accepted",
 		},
 	}
@@ -1001,7 +1001,7 @@ func TestMatchFuzzy(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -1027,7 +1027,7 @@ func TestMatchFuzzy(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"id": tt.value},
+				Properties: map[string]any{"id": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -1059,7 +1059,7 @@ func TestMatchFuzzyWithWildcard(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		value  interface{}
+		value  any
 		filter string
 		want   bool
 	}{
@@ -1093,7 +1093,7 @@ func TestMatchFuzzyWithWildcard(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"id": tt.value},
+				Properties: map[string]any{"id": tt.value},
 			}
 
 			f, err := Parse(tt.filter)
@@ -1153,7 +1153,7 @@ func TestMatchFuzzyOperatorValidation(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{"score": 5, "date": "2025-01-01", "flag": true, "status": "a"},
+				Properties: map[string]any{"score": 5, "date": "2025-01-01", "flag": true, "status": "a"},
 			}
 
 			f, err := Parse(tt.filter)
@@ -1179,7 +1179,7 @@ func TestMatchEmptyFilterValueNonStringTypes(t *testing.T) {
 	tests := []struct {
 		name    string
 		propDef *metamodel.PropertyDef
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -1292,7 +1292,7 @@ func TestMatchEmptyFilterValueNonStringTypes(t *testing.T) {
 			entity := &entity.Entity{
 				ID:         "TEST-001",
 				Type:       "test",
-				Properties: map[string]interface{}{f.Property: tt.value},
+				Properties: map[string]any{f.Property: tt.value},
 			}
 
 			got, err := Match(toRecord(entity), f, tt.propDef, mm)

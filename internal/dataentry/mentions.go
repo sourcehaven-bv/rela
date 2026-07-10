@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -117,10 +118,8 @@ func lockedReasonFor(e *entityPkg.Entity, displayProps []string) (string, bool) 
 		if f.Name == entityPkg.InaccessibleFieldContent {
 			return string(f.Reason), true
 		}
-		for _, dp := range displayProps {
-			if f.Name == dp {
-				return string(f.Reason), true
-			}
+		if slices.Contains(displayProps, f.Name) {
+			return string(f.Reason), true
 		}
 	}
 	return "", false

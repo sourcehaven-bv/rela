@@ -278,7 +278,7 @@ func TestParseFuzzyWithWildcard(t *testing.T) {
 func TestMatchValue(t *testing.T) {
 	tests := []struct {
 		name  string
-		value interface{}
+		value any
 		op    Operator
 		want  string
 		match bool
@@ -391,14 +391,14 @@ func TestMatchValue(t *testing.T) {
 		},
 		{
 			name:  "[]interface{} contains matching value",
-			value: []interface{}{"admin", "editor"},
+			value: []any{"admin", "editor"},
 			op:    OpEqual,
 			want:  "editor",
 			match: true,
 		},
 		{
 			name:  "[]interface{} does not contain value",
-			value: []interface{}{"admin", "editor"},
+			value: []any{"admin", "editor"},
 			op:    OpEqual,
 			want:  "viewer",
 			match: false,
