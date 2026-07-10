@@ -167,3 +167,66 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 		t.Fatalf("nested-cascade write error = %v, want *acl.ForbiddenError (gated)", wErr)
 	}
 }
+
+// TestManager_RelationWrite_AuthorizesBeforePeerExistence pins BUG-K6FEVB at
+// the engine level: under ReadOnlyACL, CreateRelation / UpdateRelation /
+// DeleteRelation must return *acl.ForbiddenError EVEN when the peer does not
+// exist. Pre-fix the peer-existence lookup ran first, so a missing peer
+// returned a soft "entity not found" that the dataentry layer then treated as
+// a DEC-HWZHA soft condition and wrote directly to the store, bypassing the
+// ACL. Authorization must precede existence for all three verbs.
+func TestManager_RelationWrite_AuthorizesBeforePeerExistence(t *testing.T) {
+	t.Parallel()
+
+	denyCtx := func() context.Context {
+		return principal.With(context.Background(),
+			principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	}
+	assertForbidden := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("expected denial, got nil")
+		}
+		var forbidden *acl.ForbiddenError
+		if !errors.As(err, &forbidden) {
+			t.Fatalf("error = %v, want *acl.ForbiddenError (authz must run before existence)", err)
+		}
+	}
+
+	t.Run("create with missing target", func(t *testing.T) {
+		t.Parallel()
+		mgr, cs := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
+		seedEntity(t, cs, "decision", "From decision") // DEC-001 exists; REQ-999 does not
+		_, err := mgr.CreateRelation(denyCtx(), "DEC-001", "addresses", "REQ-999", entity.RelationOptions{})
+		assertForbidden(t, err)
+	})
+
+	t.Run("create with missing source", func(t *testing.T) {
+		t.Parallel()
+		mgr, cs := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
+		seedEntity(t, cs, "requirement", "To requirement") // REQ-001 exists; DEC-999 does not
+		_, err := mgr.CreateRelation(denyCtx(), "DEC-999", "addresses", "REQ-001", entity.RelationOptions{})
+		assertForbidden(t, err)
+	})
+
+	t.Run("create with both endpoints missing", func(t *testing.T) {
+		t.Parallel()
+		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
+		_, err := mgr.CreateRelation(denyCtx(), "DEC-999", "addresses", "REQ-999", entity.RelationOptions{})
+		assertForbidden(t, err)
+	})
+
+	t.Run("update missing relation", func(t *testing.T) {
+		t.Parallel()
+		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
+		_, err := mgr.UpdateRelation(denyCtx(), "DEC-999", "addresses", "REQ-999", entity.RelationOptions{})
+		assertForbidden(t, err)
+	})
+
+	t.Run("delete missing relation", func(t *testing.T) {
+		t.Parallel()
+		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
+		err := mgr.DeleteRelation(denyCtx(), "DEC-999", "addresses", "REQ-999")
+		assertForbidden(t, err)
+	})
+}
