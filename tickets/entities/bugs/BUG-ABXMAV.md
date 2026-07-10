@@ -13,7 +13,7 @@ why3: The fix (RR-HJV8CP) was framed and tested against the surface where the le
 why4: 'Neighbor gating is a per-handler responsibility rather than a structural one: entityType is deliberately ungated and neighbor visibility depends on each handler remembering to call the filter. There is no single ''serialize a neighbor for the wire'' chokepoint that gates by construction.'
 why5: 'Systemic: read filtering is applied at leaf handlers, not at a mandatory serialization boundary, so ''did this response leak an unreadable entity?'' is not enforced by construction and not covered by a cross-endpoint test. A new or overlooked neighbor-emitting endpoint fails open by default.'
 prevention: 'P3: route every neighbor-to-wire emission through one function that takes the read gate and drops unreadable peers (id, type, meta), so new endpoints inherit the gate. P4 (automated measure): an integration test enumerating every neighbor-emitting read endpoint (list, ?include=, /relations, /relations/{type}, single-GET) that asserts a hidden neighbor never appears (id/type/meta).'
-status: review
+status: done
 ---
 
 Fix implemented on branch `fix/acl-relations-neighbor-leak` (commit 0ce4f18d).

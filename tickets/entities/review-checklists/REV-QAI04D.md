@@ -2,55 +2,50 @@
 id: REV-QAI04D
 type: review-checklist
 title: 'Review: /relations endpoints leak hidden-neighbor type + edge meta past the read gate'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (CI green: Test, Postgres Backend, Fuzz, E2E)
+- [x] Lint clean (CI green: Lint, Architecture, God-object lint)
+- [x] Coverage maintained (dataentry above floor)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Ran cranky-code-reviewer on PR #1113
+- [x] ~~All critical review-responses addressed~~ (N/A: no critical findings)
+- [x] ~~All significant review-responses addressed~~ (N/A: no significant findings)
+- [x] Self-reviewed the diff for unrelated changes (fix + tests only; verified diffstat)
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-78Q9S0 (nit, deferred), RR-QD5BSI (nit, deferred) —
+both non-blocking, tied to the existing TODO(BUG-ABXMAV) shared-chokepoint
+follow-up.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested: hidden neighbor's id/type/meta dropped on both `/relations` and `/relations/{type}`, both directions; visible neighbor still returned
+- [x] Test evidence: `TestACLRelations_HiddenNeighborExcluded` (reproduction, failing-first confirmed) + `TestACLNeighborReadLeakInvariant` (P4 cross-endpoint invariant); demo_c flips to NOT-REPRODUCED
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+**Acceptance Status:** PASS — reviewer verdict "correct, complete, ship it", no
+security false-negative.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
-
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+- [x] ~~Docs section~~ (N/A: security bugfix, no user-facing API change)
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why (the leak + the mirrored list-path fix)
+- [x] No TODOs left unaddressed (the one TODO(BUG-ABXMAV) is an intentional deferred follow-up, tracked via RR-78Q9S0/RR-QD5BSI)
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] PR created: https://github.com/sourcehaven-bv/rela/pull/1113
+- [x] All code CI checks pass (Rela Tickets gate clears on this bug reaching done)
+- [x] PR URL documented above
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1113
