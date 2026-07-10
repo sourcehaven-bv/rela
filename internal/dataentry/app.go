@@ -37,16 +37,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// AppState bundles the reloadable fields of App into an immutable snapshot.
+// AppState bundles the reloadable fields of App into an immutable snapshot,
+// published via atomic.Pointer. Callers Load() once and work against a
+// coherent snapshot, instead of holding a read lock around the entire request.
 //
-// During this PR, App still holds the same fields as plain struct fields
-// (Cfg, meta, g, styleMap, styledTypes, userDefaults, palette, userPalette,
-// openAPIGen) and the AppState is published in parallel via atomic.Pointer.
-// Handlers will be migrated to read from the snapshot in a subsequent PR.
-//
-// The fields here mirror the workspace.workspaceState pattern: callers
-// Load() once and work against a coherent snapshot, instead of holding a
-// read lock around the entire request.
+// This snapshot is being decomposed: state owned by exactly one service is
+// moving out into that service (self-synchronized), leaving AppState to hold
+// only genuinely co-derived reload state. The user-uploaded logo was the first
+// to move — see [logoStore]. What remains here is the config/metamodel and the
+// fields derived from them together.
 type AppState struct {
 	Cfg          *Config
 	Meta         *metamodel.Metamodel
@@ -56,14 +55,6 @@ type AppState struct {
 	Palette      *ResolvedPalette
 	UserPalette  *PaletteConfig
 	OpenAPIGen   *openapi.Generator
-
-	// User-uploaded sidebar logo. Empty UserLogoExt means "no logo
-	// configured"; UserLogoBytes/UserLogoHash are populated together.
-	// Bytes live in-memory (≤256 KiB) so GET /_theme/logo doesn't hit
-	// disk on every request.
-	UserLogoBytes []byte
-	UserLogoExt   string
-	UserLogoHash  string
 }
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -147,9 +138,13 @@ type App struct {
 	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
 	// loaded outgoing relations, the serializer does no loading.
 	serializer entitySerializer
-	// userState persists per-user UI state (logo, UI state, defaults, palette)
+	// userState persists per-user UI state (UI state, defaults, palette)
 	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
 	userState userStateStore
+	// logo owns the user-uploaded sidebar logo — persistence AND the served
+	// in-memory cache — self-synchronized. Extracted from AppState so the
+	// logo no longer rides the App-wide snapshot + writeMu.
+	logo      *logoStore
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -523,31 +518,26 @@ func NewApp(
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
 
-	logoBytes, logoExt, logoErr := app.userState.loadUserLogo()
+	// logo owns its own persistence + served cache. Same read-error policy as
+	// palette: surface a corrupt .rela/theme/ rather than silently overwriting
+	// it on the next save.
+	logo, logoErr := newLogoStore(kv)
 	if logoErr != nil {
-		// Same policy as palette: surface read errors so a corrupt
-		// .rela/theme/ doesn't get silently overwritten on next save.
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
-	var logoHash string
-	if logoExt != "" {
-		logoHash = hashLogoBytes(logoBytes)
-	}
+	app.logo = logo
 
 	// Build and publish the initial AppState snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep
 	// in sync.
 	app.state.Store(&AppState{
-		Cfg:           &cfg,
-		Meta:          meta,
-		StyleMap:      styleMap,
-		StyledTypes:   styledTypes,
-		UserDefaults:  userDefaults,
-		Palette:       ResolvePalette(cfg.Palette, userPalette),
-		UserPalette:   userPalette,
-		UserLogoBytes: logoBytes,
-		UserLogoExt:   logoExt,
-		UserLogoHash:  logoHash,
+		Cfg:          &cfg,
+		Meta:         meta,
+		StyleMap:     styleMap,
+		StyledTypes:  styledTypes,
+		UserDefaults: userDefaults,
+		Palette:      ResolvePalette(cfg.Palette, userPalette),
+		UserPalette:  userPalette,
 		OpenAPIGen: openapi.New(meta, openapi.Config{
 			Title:       cfg.App.Name + " API",
 			Description: cfg.App.Description,

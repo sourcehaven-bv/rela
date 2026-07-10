@@ -37,9 +37,9 @@ func (a *App) handleAPIThemeExport(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	s := a.State()
-	manifest := buildExportManifest(s)
-	zipBytes, err := buildThemeZip(manifest, s.UserLogoBytes, s.UserLogoExt)
+	logoBytes, logoExt, _ := a.logo.Get()
+	manifest := buildExportManifest(a.State(), logoExt)
+	zipBytes, err := buildThemeZip(manifest, logoBytes, logoExt)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to build theme package: "+err.Error())
 		return
@@ -100,23 +100,11 @@ func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 
 	logoURL := ""
 	if pkg.Logo != nil {
-		hash := hashLogoBytes(pkg.Logo.Bytes)
-		var saveErr error
-		ctx := r.Context()
-		a.mutateState(func(s *AppState) {
-			if err := a.userState.saveUserLogo(ctx, pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
-				saveErr = err
-				return
-			}
-			s.UserLogoBytes = pkg.Logo.Bytes
-			s.UserLogoExt = pkg.Logo.Ext
-			s.UserLogoHash = hash
-		})
-		if saveErr != nil {
-			writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+saveErr.Error())
+		if err := a.logo.Save(r.Context(), pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+err.Error())
 			return
 		}
-		logoURL = logoURLForHash(hash)
+		logoURL = logoURLForHash(hashLogoBytes(pkg.Logo.Bytes))
 	}
 
 	writeJSON(w, APIThemeImportResponse{
@@ -128,7 +116,7 @@ func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 // buildExportManifest composes the manifest written into the zip,
 // drawing the palette from user state when available and falling back
 // to the project palette otherwise.
-func buildExportManifest(s *AppState) *dataentryconfig.ThemeManifest {
+func buildExportManifest(s *AppState, logoExt string) *dataentryconfig.ThemeManifest {
 	m := &dataentryconfig.ThemeManifest{
 		Name:    s.Cfg.App.Name,
 		Version: "1.0.0",
@@ -144,8 +132,8 @@ func buildExportManifest(s *AppState) *dataentryconfig.ThemeManifest {
 		m.PaletteConfig = *s.Cfg.Palette
 	}
 
-	if s.UserLogoExt != "" {
-		m.Logo = "logo." + s.UserLogoExt
+	if logoExt != "" {
+		m.Logo = "logo." + logoExt
 	}
 	return m
 }

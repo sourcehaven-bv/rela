@@ -73,16 +73,3 @@ func hashLogoBytes(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:6])
 }
-
-// LogoURL returns the public URL for the user-uploaded logo (including
-// the cache-busting query parameter), or nil when no logo is set. The
-// single source of truth for handlers that surface the URL to the SPA,
-// so a future change (signing, expiry, alternate cache strategy) lands
-// in one place.
-func (s *AppState) LogoURL() *string {
-	if s.UserLogoHash == "" {
-		return nil
-	}
-	u := logoURLForHash(s.UserLogoHash)
-	return &u
-}

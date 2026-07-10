@@ -2611,7 +2611,7 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		},
 		Navigation: navigation,
 	}
-	resp.LogoURL = s.LogoURL()
+	resp.LogoURL = a.logo.URL()
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
