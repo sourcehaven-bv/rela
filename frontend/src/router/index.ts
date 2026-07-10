@@ -49,6 +49,12 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/relation-history/:fromType/:from/:relType/:to',
+    name: 'relation-history',
+    component: () => import('@/views/RelationHistoryView.vue'),
+    props: true,
+  },
+  {
     path: '/kanban/:id',
     name: 'kanban',
     component: () => import('@/views/KanbanView.vue'),

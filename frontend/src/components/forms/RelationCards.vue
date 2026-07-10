@@ -4,12 +4,7 @@ import { useRouter } from 'vue-router'
 import SlimSelect from 'slim-select/vue'
 import 'slim-select/styles'
 import { useSchemaStore } from '@/stores'
-import {
-  getEntityRelations,
-  searchEntities,
-  getEntity,
-  getErrorMessage,
-} from '@/api'
+import { getEntityRelations, searchEntities, getEntity, getErrorMessage } from '@/api'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
@@ -115,7 +110,12 @@ async function loadRelations() {
   error.value = null
   try {
     const direction = props.field.direction === 'incoming' ? 'incoming' : undefined
-    const loaded = await getEntityRelations(props.entityType, props.entityId, props.field.relation, direction)
+    const loaded = await getEntityRelations(
+      props.entityType,
+      props.entityId,
+      props.field.relation,
+      direction
+    )
     entries.value = loaded
     // Deep copy for diffing
     originalEntries.value = JSON.parse(JSON.stringify(loaded))
@@ -162,6 +162,19 @@ function navigateToEntity(id: string) {
   if (entity) {
     router.push(`/entity/${entity.type}/${id}`)
   }
+}
+
+// openRelationHistory navigates to the relation's version history. Only offered
+// for OUTGOING relations: the FROM entity owns a relation's history (the current
+// entity is the `from`, the entry is the `to`), so an incoming card would be
+// looking at an edge owned by the OTHER endpoint.
+function openRelationHistory(targetId: string) {
+  const relType = props.field.relation
+  if (!relType) return
+  router.push(
+    `/relation-history/${encodeURIComponent(props.entityType)}/${encodeURIComponent(props.entityId)}` +
+      `/${encodeURIComponent(relType)}/${encodeURIComponent(targetId)}`
+  )
 }
 
 function emitUpdate() {
@@ -221,7 +234,6 @@ function getInputType(propName: string): string {
   return 'text'
 }
 
-
 // Memoized SlimSelect data per property name — stable references prevent
 // the deep watcher on :data from calling setData and resetting selection.
 const slimDataCache = new Map<string, { text: string; value: string; placeholder?: boolean }[]>()
@@ -248,7 +260,6 @@ function handleSlimUpdate(entryId: string, property: string, value: string | str
 function isEnum(propName: string): boolean {
   return getEnumValues(propName).length > 0
 }
-
 
 function isBoolean(propName: string): boolean {
   const def = getPropertyDef(propName)
@@ -350,9 +361,7 @@ function cancelAdd() {
 }
 
 function formatLabel(name: string): string {
-  return name
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+  return name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 function entryStatus(id: string): 'added' | 'updated' | null {
@@ -486,7 +495,9 @@ function onDragEnd() {
         @dragend="onDragEnd"
       >
         <div class="card-header">
-          <span v-if="isOrderable" class="drag-handle" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
+          <span v-if="isOrderable" class="drag-handle" title="Drag to reorder" aria-hidden="true"
+            >⋮⋮</span
+          >
           <div class="card-identity">
             <span class="entity-id" @click="navigateToEntity(entry.id)">
               {{ entry.id }}
@@ -495,6 +506,15 @@ function onDragEnd() {
               {{ getEntityTitle(entry.id) }}
             </span>
           </div>
+          <button
+            v-if="!isIncoming"
+            type="button"
+            class="history-btn"
+            title="Relation history"
+            @click="openRelationHistory(entry.id)"
+          >
+            History
+          </button>
           <button
             v-if="canRemove"
             type="button"
@@ -529,7 +549,9 @@ function onDragEnd() {
               type="checkbox"
               class="inline-edit-checkbox"
               :disabled="isMetaFieldDisabled(prop.property)"
-              @change="updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).checked)"
+              @change="
+                updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).checked)
+              "
             />
 
             <!-- Date / text / number input -->
@@ -539,7 +561,9 @@ function onDragEnd() {
               :type="getInputType(prop.property)"
               class="inline-edit"
               :disabled="isMetaFieldDisabled(prop.property)"
-              @input="updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).value)"
+              @input="
+                updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).value)
+              "
             />
           </div>
         </div>
@@ -604,7 +628,11 @@ function onDragEnd() {
               :model-value="String(newMeta[prop.property] || '')"
               :data="slimSelectData(prop.property)"
               :settings="slimSettings"
-              @update:model-value="(v: string | string[]) => { newMeta[prop.property] = Array.isArray(v) ? v[0] || '' : v }"
+              @update:model-value="
+                (v: string | string[]) => {
+                  newMeta[prop.property] = Array.isArray(v) ? v[0] || '' : v
+                }
+              "
             />
 
             <input
@@ -624,23 +652,28 @@ function onDragEnd() {
 
         <div class="new-relation-actions">
           <button type="button" class="btn btn-secondary" @click="cancelAdd">Cancel</button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="!canLink"
-            @click="addRelation"
-          >
+          <button type="button" class="btn btn-primary" :disabled="!canLink" @click="addRelation">
             Link
           </button>
         </div>
       </div>
 
-      <button v-if="!selectedTarget" type="button" class="btn btn-secondary cancel-search" @click="cancelAdd">
+      <button
+        v-if="!selectedTarget"
+        type="button"
+        class="btn btn-secondary cancel-search"
+        @click="cancelAdd"
+      >
         Cancel
       </button>
     </div>
 
-    <button v-if="!showAddSearch && canCreate" type="button" class="add-btn" @click="showAddSearch = true">
+    <button
+      v-if="!showAddSearch && canCreate"
+      type="button"
+      class="add-btn"
+      @click="showAddSearch = true"
+    >
       + Add {{ field.label || field.relation }}
     </button>
   </div>
@@ -682,7 +715,9 @@ function onDragEnd() {
   border-radius: 6px;
   padding: 12px;
   background: var(--card-bg);
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .relation-card.card-added {
@@ -776,6 +811,23 @@ function onDragEnd() {
 
 .remove-btn:hover {
   color: var(--error-color, #ef4444);
+}
+
+.history-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--muted-text);
+  font-size: 0.72em;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.history-btn:hover {
+  color: var(--text-color);
+  border-color: var(--accent-color, var(--text-color));
 }
 
 .card-properties {
@@ -915,7 +967,9 @@ function onDragEnd() {
 }
 
 @keyframes spin {
-  to { transform: translateY(-50%) rotate(360deg); }
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
 }
 
 .search-results {
@@ -1022,9 +1076,9 @@ function onDragEnd() {
   color: var(--text-color);
 }
 
-.form-field input[type="text"],
-.form-field input[type="number"],
-.form-field input[type="date"],
+.form-field input[type='text'],
+.form-field input[type='number'],
+.form-field input[type='date'],
 .form-field select {
   padding: 8px 10px;
   border: 1px solid var(--border-color);
