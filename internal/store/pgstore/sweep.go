@@ -182,10 +182,10 @@ func (s *sweep) tick(ctx context.Context) error {
 		return err
 	}
 	for _, c := range candidates {
-		if err := s.captureOne(ctx, conn, c, hash, projJSON); err != nil {
+		if capErr := s.captureOne(ctx, conn, c, hash, projJSON); capErr != nil {
 			// Best-effort per entity: log and continue so one bad row doesn't
 			// abort the whole tick. Next tick retries (idempotent via dedup).
-			slog.Warn("pgstore: version sweep capture failed", "id", c.id, "error", err)
+			slog.Warn("pgstore: version sweep capture failed", "id", c.id, "error", capErr)
 		}
 	}
 
@@ -198,9 +198,9 @@ func (s *sweep) tick(ctx context.Context) error {
 		return err
 	}
 	for _, rc := range relCandidates {
-		if err := s.captureRelation(ctx, conn, rc, hash, projJSON); err != nil {
+		if capErr := s.captureRelation(ctx, conn, rc, hash, projJSON); capErr != nil {
 			slog.Warn("pgstore: relation version sweep capture failed",
-				"from", rc.from, "type", rc.relType, "to", rc.to, "error", err)
+				"from", rc.from, "type", rc.relType, "to", rc.to, "error", capErr)
 		}
 	}
 	return nil

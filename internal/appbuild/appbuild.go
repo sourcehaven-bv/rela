@@ -669,14 +669,14 @@ func assemble(
 	}
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:           st,
-		Meta:            base.meta,
-		Templater:       templater,
-		Audit:           cfg.Audit,
-		ACL:             resolvedACL,
-		Automations:     autoEngine,
-		Cascade:         cascadeRunner,
-		ScriptRunner:    script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
 		VersionRecorder:         versionRecorderFor(st),
 		RelationVersionRecorder: relationVersionRecorderFor(st),
 	})

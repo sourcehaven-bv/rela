@@ -52,7 +52,7 @@ type perEndpointGate struct {
 	holdsPermission bool
 }
 
-func (g perEndpointGate) PermitsRead(_ context.Context, _ string, id string) (bool, error) {
+func (g perEndpointGate) PermitsRead(_ context.Context, _, id string) (bool, error) {
 	return g.allow[id], nil
 }
 

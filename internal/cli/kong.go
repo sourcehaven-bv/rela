@@ -67,37 +67,37 @@ type CLI struct {
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 
-	Show        ShowCmd        `cmd:"" help:"Show entity details."`
-	List        ListCmd        `cmd:"" help:"List entities."`
-	Create      CreateCmd      `cmd:"" help:"Create a new entity."`
-	Update      UpdateCmd      `cmd:"" help:"Update an entity."`
-	Delete      DeleteCmd      `cmd:"" help:"Delete an entity."`
-	Link        LinkCmd        `cmd:"" help:"Create a relation between entities."`
-	Unlink      UnlinkCmd      `cmd:"" help:"Remove a relation between entities."`
-	Trace       TraceCmd       `cmd:"" help:"Trace dependencies between entities."`
-	Graph       GraphCmd       `cmd:"" help:"Export graph to Graphviz DOT format."`
-	Export      ExportCmd      `cmd:"" help:"Export entities in JSON, CSV, or YAML format."`
-	Import      ImportCmd      `cmd:"" help:"Import entities and relations from JSON, YAML, or CSV."`
-	Fmt         FmtCmd         `cmd:"" help:"Format entity and relation files."`
-	Normalize   NormalizeCmd   `cmd:"" help:"Normalize markdown headers in entity files."`
-	Schema      SchemaCmd      `cmd:"" help:"View the metamodel schema."`
-	Template    TemplateCmd    `cmd:"" help:"Manage entity and relation templates."`
-	Analyze     AnalyzeCmd     `cmd:"" help:"Analyze the entity graph."`
-	ACL         ACLCmd         `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
-	Rename      RenameCmd      `cmd:"" help:"Rename entities or relations."`
-	History     HistoryCmd     `cmd:"" help:"Show an entity's version history (postgres build)."`
-	Restore     RestoreCmd     `cmd:"" help:"Restore an entity to a past version (postgres build)."`
+	Show      ShowCmd      `cmd:"" help:"Show entity details."`
+	List      ListCmd      `cmd:"" help:"List entities."`
+	Create    CreateCmd    `cmd:"" help:"Create a new entity."`
+	Update    UpdateCmd    `cmd:"" help:"Update an entity."`
+	Delete    DeleteCmd    `cmd:"" help:"Delete an entity."`
+	Link      LinkCmd      `cmd:"" help:"Create a relation between entities."`
+	Unlink    UnlinkCmd    `cmd:"" help:"Remove a relation between entities."`
+	Trace     TraceCmd     `cmd:"" help:"Trace dependencies between entities."`
+	Graph     GraphCmd     `cmd:"" help:"Export graph to Graphviz DOT format."`
+	Export    ExportCmd    `cmd:"" help:"Export entities in JSON, CSV, or YAML format."`
+	Import    ImportCmd    `cmd:"" help:"Import entities and relations from JSON, YAML, or CSV."`
+	Fmt       FmtCmd       `cmd:"" help:"Format entity and relation files."`
+	Normalize NormalizeCmd `cmd:"" help:"Normalize markdown headers in entity files."`
+	Schema    SchemaCmd    `cmd:"" help:"View the metamodel schema."`
+	Template  TemplateCmd  `cmd:"" help:"Manage entity and relation templates."`
+	Analyze   AnalyzeCmd   `cmd:"" help:"Analyze the entity graph."`
+	ACL       ACLCmd       `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
+	Rename    RenameCmd    `cmd:"" help:"Rename entities or relations."`
+	History   HistoryCmd   `cmd:"" help:"Show an entity's version history (postgres build)."`
+	Restore   RestoreCmd   `cmd:"" help:"Restore an entity to a past version (postgres build)."`
 
 	RelationHistory RelationHistoryCmd `cmd:"" name:"relation-history" help:"Show a relation's version history (postgres build)."`
 	RelationRestore RelationRestoreCmd `cmd:"" name:"relation-restore" help:"Restore a relation to a past version (postgres build)."`
-	Attach      AttachCmd      `cmd:"" help:"Attach file(s) to an entity."`
-	Attachments AttachmentsCmd `cmd:"" help:"List attachments for an entity."`
-	Detach      DetachCmd      `cmd:"" help:"Remove the attachment from an entity property."`
-	Gc          GcCmd          `cmd:"" name:"gc" help:"Garbage collect orphaned files."`
-	Script      ScriptCmd      `cmd:"" help:"Execute a Lua script against the graph."`
-	Scheduler   SchedulerCmd   `cmd:"" help:"Run scheduled Lua tasks."`
-	Renumber    RenumberCmd    `cmd:"" help:"Renumber managed order properties on orderable relations."`
-	Sync        SyncCmd        `cmd:"" help:"Sync local changes with a remote rela-server."`
+	Attach          AttachCmd          `cmd:"" help:"Attach file(s) to an entity."`
+	Attachments     AttachmentsCmd     `cmd:"" help:"List attachments for an entity."`
+	Detach          DetachCmd          `cmd:"" help:"Remove the attachment from an entity property."`
+	Gc              GcCmd              `cmd:"" name:"gc" help:"Garbage collect orphaned files."`
+	Script          ScriptCmd          `cmd:"" help:"Execute a Lua script against the graph."`
+	Scheduler       SchedulerCmd       `cmd:"" help:"Run scheduled Lua tasks."`
+	Renumber        RenumberCmd        `cmd:"" help:"Renumber managed order properties on orderable relations."`
+	Sync            SyncCmd            `cmd:"" help:"Sync local changes with a remote rela-server."`
 }
 
 // VersionCmd needs no services.
