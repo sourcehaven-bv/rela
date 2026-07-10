@@ -223,6 +223,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 			name:        "list rows",
 			allowBareID: true, // top-level relations map is IDs-only; type/meta never emitted here
 			body: func(t *testing.T, app *App, d *acl.Declarative) string {
+				t.Helper()
 				_, rec := listEntitiesAs(aliceCtx(), t, app, d, "feature", "features", "")
 				return rec.Body.String()
 			},
@@ -231,6 +232,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 			name:        "list rows with include",
 			allowBareID: true, // include map is visibility-filtered; bare ID may still key the relations map
 			body: func(t *testing.T, app *App, d *acl.Declarative) string {
+				t.Helper()
 				_, rec := listEntitiesAs(aliceCtx(), t, app, d, "feature", "features", "include=*")
 				return rec.Body.String()
 			},
@@ -239,6 +241,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 			name:        "single-entity GET",
 			allowBareID: true, // per-entity GET ships an IDs-only relations map (accepted, CLAUDE.md)
 			body: func(t *testing.T, app *App, d *acl.Declarative) string {
+				t.Helper()
 				rec := getEntityAs(aliceCtx(), t, app, d, "feature", "features", "FEAT-VIS", "include=*")
 				return rec.Body.String()
 			},
@@ -247,6 +250,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 			name:        "/relations grouped",
 			allowBareID: false, // dedicated endpoint must leak nothing about a hidden peer
 			body: func(t *testing.T, app *App, d *acl.Declarative) string {
+				t.Helper()
 				req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEAT-VIS/relations", http.NoBody)
 				req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 				rec := httptest.NewRecorder()
@@ -258,6 +262,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 			name:        "/relations/{relType} incoming",
 			allowBareID: false,
 			body: func(t *testing.T, app *App, d *acl.Declarative) string {
+				t.Helper()
 				req := httptest.NewRequest(http.MethodGet,
 					"/api/v1/features/FEAT-VIS/relations/implements?direction=incoming", http.NoBody)
 				req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -270,6 +275,7 @@ func TestACLNeighborReadLeakInvariant(t *testing.T) {
 			name:        "/relations/{relType} outgoing",
 			allowBareID: false,
 			body: func(t *testing.T, app *App, d *acl.Declarative) string {
+				t.Helper()
 				req := httptest.NewRequest(http.MethodGet,
 					"/api/v1/tickets/TKT-VIS/relations/implements", http.NoBody)
 				req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
