@@ -169,9 +169,43 @@ entity requires the global `history:read` permission — see
 [ACL security](acl-security.md). Restore is a normal write: it is authorized,
 validated, and audited like any edit, and produces a new version.
 
-Scope: entity content and properties are versioned. An entity's *relation set*
-as-of a version is not (relation history is a separate future capability), so a
-restore recovers content and properties, not the historical relations.
+Scope: an entity version captures that entity's content and properties. Its
+*relation set* as-of the version is not part of the entity snapshot, so an entity
+restore recovers content and properties — relations are versioned separately (see
+below).
+
+### Relation history
+
+Relations carry their own rich content (a property set plus a markdown body), and
+the PostgreSQL build versions them too, with the same time-machine model. Capture
+is the same hybrid: relation create/update are debounced by the sweep;
+**relation delete is captured immediately** — including when a relation is
+destroyed by an entity **cascade delete** (deleting a hub entity records a final
+version for every edge it removes, so an edge's history never just vanishes).
+
+An endpoint **rename** stitches, rather than forks: when an entity is renamed, its
+incident relations are recorded as a continuous timeline across the new endpoint
+(the version carries the pre-rename endpoints), so a rename reads as a rename —
+not as a mass delete-and-recreate.
+
+Each relation has a stable internal record id, so a delete-then-recreate of the
+same `from--type--to` starts a **fresh** history (the two lifetimes are not
+merged).
+
+From the CLI (PostgreSQL build):
+
+```bash
+rela relation-history TKT-42 blocks TKT-99            # the relation's timeline
+rela relation-history TKT-42 blocks TKT-99 --version 2  # print version 2 (JSON)
+rela relation-restore TKT-42 blocks TKT-99 2          # restore to version 2
+```
+
+Access control: relation history is read-gated on **both** endpoints — you must
+be able to read the `from` AND the `to` entity (a deleted relation uses the same
+global `history:read`). In the web UI, a relation's history is owned by its
+**source** (`from`) entity: each outgoing relation on an entity's detail page has
+a History affordance. Restore goes through the normal write path; re-creating a
+relation whose endpoint entity no longer exists is refused (409).
 
 ## Other scope notes
 

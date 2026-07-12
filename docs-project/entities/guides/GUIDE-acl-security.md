@@ -607,6 +607,22 @@ capture time (a tracked follow-up), a policy that hides fields via *conditional*
 grants should not rely on history-read redaction for those fields. Unconditional
 per-type `visible:` grants are unaffected.
 
+### Relation history: dual-endpoint gating
+
+Relation version history (the PostgreSQL build versions relation properties and
+body too) is read-gated on **both** endpoints: a caller must be able to read the
+`from` AND the `to` entity. Gating on the `from` alone would make the `to`
+endpoint an existence/content oracle — a principal allowed to read `from` but
+denied `to` could enumerate `from`'s outgoing relation histories and learn about
+the hidden `to` endpoint. A deleted relation (endpoints gone) uses the same global
+`history:read`; a non-holder gets the same 404 as a nonexistent relation.
+
+Note that relations have **no field-level (`visible:`) redaction** anywhere today
+— a live relation GET returns its properties in full — so relation history
+exposes exactly what a live relation read exposes, no more. A relation
+field-redaction path is a separate follow-up; the dual-endpoint gate is what
+bounds relation-history visibility today.
+
 ## Where to read next
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.

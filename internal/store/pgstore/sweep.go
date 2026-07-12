@@ -182,10 +182,25 @@ func (s *sweep) tick(ctx context.Context) error {
 		return err
 	}
 	for _, c := range candidates {
-		if err := s.captureOne(ctx, conn, c, hash, projJSON); err != nil {
+		if capErr := s.captureOne(ctx, conn, c, hash, projJSON); capErr != nil {
 			// Best-effort per entity: log and continue so one bad row doesn't
 			// abort the whole tick. Next tick retries (idempotent via dedup).
-			slog.Warn("pgstore: version sweep capture failed", "id", c.id, "error", err)
+			slog.Warn("pgstore: version sweep capture failed", "id", c.id, "error", capErr)
+		}
+	}
+
+	// Relations are swept AFTER entities within the same locked tick (a fixed,
+	// deterministic order — no interleaving). Relation create/update capture
+	// mirrors the entity path; rename/delete are captured synchronously (see the
+	// entitymanager version hook and the cascade-delete path in Store.DeleteEntity).
+	relCandidates, err := s.selectRelationCandidates(ctx, conn)
+	if err != nil {
+		return err
+	}
+	for _, rc := range relCandidates {
+		if capErr := s.captureRelation(ctx, conn, rc, hash, projJSON); capErr != nil {
+			slog.Warn("pgstore: relation version sweep capture failed",
+				"from", rc.from, "type", rc.relType, "to", rc.to, "error", capErr)
 		}
 	}
 	return nil
@@ -306,6 +321,104 @@ func (s *sweep) captureOne(
 		in.Op = store.VersionOpCreate
 	}
 	return insertVersion(ctx, conn, in, contentHash)
+}
+
+// relationSweepCandidate is one relation the sweep may snapshot: its current
+// state plus the surrogate rel_record_id off the live row and the content hash
+// of its latest existing version in that lineage (empty if none).
+type relationSweepCandidate struct {
+	recordID   int64
+	from       string
+	relType    string
+	to         string
+	content    string
+	props      []byte
+	latestHash string
+	hasVersion bool
+}
+
+// selectRelationCandidates returns up to Batch relations that have settled (or
+// whose latest version aged past MaxStaleness) and whose current content differs
+// from their latest version's.
+//
+// Unlike the entity query this needs only ONE LATERAL: the relation carries its
+// stable rel_record_id on the row, and a delete+recreate mints a FRESH
+// rel_record_id, so "the latest version for THIS lineage" (matched by
+// rel_record_id) is already delete-fenced by construction — no second
+// since-last-delete probe is needed. A relation with no version in its lineage
+// is a create; otherwise an update.
+func (s *sweep) selectRelationCandidates(
+	ctx context.Context, conn *pgxpool.Conn,
+) ([]relationSweepCandidate, error) {
+	const q = `
+		SELECT r.rel_record_id, r.from_id, r.rel_type, r.to_id, r.content, r.properties,
+		       lv.content_hash,
+		       (lv.vseq IS NOT NULL) AS has_version
+		FROM relations r
+		LEFT JOIN LATERAL (
+		    SELECT vseq, content_hash, created_at FROM relation_versions rv
+		    WHERE rv.rel_record_id = r.rel_record_id ORDER BY rv.vseq DESC LIMIT 1
+		) lv ON true
+		WHERE (r.updated_at < now() - make_interval(secs => $1)
+		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
+		ORDER BY r.updated_at ASC
+		LIMIT $3`
+	rows, err := conn.Query(ctx, q,
+		s.cfg.Idle.Seconds(), s.cfg.MaxStaleness.Seconds(), s.cfg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []relationSweepCandidate
+	for rows.Next() {
+		var (
+			c          relationSweepCandidate
+			latestHash *string // NULL when the lineage has no version yet
+		)
+		if err := rows.Scan(&c.recordID, &c.from, &c.relType, &c.to,
+			&c.content, &c.props, &latestHash, &c.hasVersion); err != nil {
+			return nil, err
+		}
+		if latestHash != nil {
+			c.latestHash = *latestHash
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// captureRelation snapshots a single relation candidate as a create/update
+// version, unless its content is unchanged from the lineage's latest version
+// (dedup). op is create when the lineage has no version yet, else update.
+func (s *sweep) captureRelation(
+	ctx context.Context, conn *pgxpool.Conn, c relationSweepCandidate, schemaHash string, projJSON []byte,
+) error {
+	props, err := unmarshalProps(c.props)
+	if err != nil {
+		return err
+	}
+	in := store.RelationVersionInput{
+		RecordID:      c.recordID,
+		From:          c.from,
+		Type:          c.relType,
+		To:            c.to,
+		Content:       c.content,
+		Properties:    props,
+		SchemaHash:    schemaHash,
+		Projection:    projJSON,
+		PrincipalTool: "version-sweep",
+	}
+	contentHash := contentHashOfRelation(in)
+	if c.latestHash != "" && contentHash == c.latestHash {
+		return nil
+	}
+	if c.hasVersion {
+		in.Op = store.VersionOpUpdate
+	} else {
+		in.Op = store.VersionOpCreate
+	}
+	return insertRelationVersion(ctx, conn, in, contentHash)
 }
 
 // tryAdvisoryLock takes a non-blocking session advisory lock on conn, returning

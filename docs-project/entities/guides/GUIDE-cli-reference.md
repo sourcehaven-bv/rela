@@ -398,12 +398,75 @@ rela restore <id> <version>
 - `version` - The version ordinal to restore to (see `rela history <id>`)
 
 Only entity content and properties are restored; the entity's relations
-as-of that version are not (relation history is a separate capability).
+as-of that version are versioned separately (see `rela relation-history`).
 
 **Examples:**
 
 ```bash
 rela restore TKT-42 3
+```
+
+---
+
+### rela relation-history
+
+Show a relation's version history, or print a past version's snapshot for piping
+to a diff tool. A relation is addressed by its three-part key. **PostgreSQL build
+only** (filesystem projects use git). Relations carry their own properties and
+markdown body, versioned with the same time-machine model as entities.
+
+```bash
+rela relation-history <from> <type> <to> [--version N]
+```
+
+**Arguments:**
+
+- `from` - Source entity ID (the relation's `from`)
+- `type` - Relation type (e.g. `blocks`)
+- `to` - Target entity ID (the relation's `to`)
+
+**Flags:**
+
+- `--version N` - Print the full snapshot for version ordinal N (as JSON) for
+  piping to an external diff tool, instead of the timeline
+
+Each row shows the version, timestamp, operation (create/update/rename/delete),
+and principal. A rename row shows the pre-rename endpoints so a renamed edge's
+history reads as one continuous timeline. Reading a relation's history requires
+read access to **both** endpoints (a deleted relation requires `history:read`).
+
+**Examples:**
+
+```bash
+rela relation-history TKT-42 blocks TKT-99
+
+# Diff two versions with any external tool (Unix-style):
+diff <(rela relation-history TKT-42 blocks TKT-99 --version 2) \
+     <(rela relation-history TKT-42 blocks TKT-99 --version 4)
+```
+
+---
+
+### rela relation-restore
+
+Restore a relation's content and properties to a past version. **PostgreSQL build
+only.** Applied as a normal write (authorized, validated, audited, re-versioned).
+If the relation was deleted it is re-created — which fails with a conflict if an
+endpoint entity no longer exists.
+
+```bash
+rela relation-restore <from> <type> <to> <version>
+```
+
+**Arguments:**
+
+- `from` / `type` / `to` - The relation's three-part key
+- `version` - The version ordinal to restore to (see `rela relation-history`)
+
+**Examples:**
+
+```bash
+rela relation-restore TKT-42 blocks TKT-99 2
 ```
 
 ---

@@ -215,6 +215,26 @@ Rules when touching this:
   unbounded `entity_id = ANY(...)` read would merge two entities' histories — see
   the version.go doc). `HistoryReader`/`VersionWriter` are optional store
   capabilities (type-asserted like `store.Formatter`), NOT part of `store.Store`.
+- **Relation versioning** (TKT-92JL8P, postgres only) extends the above to
+  relations, which carry their own props + body. A `relation_versions` table
+  reuses `version_seq` + `schema_versions`; identity is a surrogate
+  `rel_record_id` **column ON the `relations` row** (`DEFAULT nextval(...)`,
+  carried through writes) — NOT reconstructed per sweep-tick, which would race the
+  sync path and merge/fork lineages. Delete+recreate of the same `(from,type,to)`
+  mints a fresh id (histories don't merge). Capture: create/update via the sweep's
+  second `FROM relations` scan (entities-then-relations, same tick/lock);
+  **delete synchronously via `DeleteResult.DeletedRelations`** — the single path
+  for BOTH explicit `DeleteRelation` and entity **cascade** delete (the store
+  bulk-deletes relations below the entitymanager, so cascade edges would otherwise
+  lose history). Rename **stitches** (not forks): the entitymanager captures a
+  `rename` version per incident relation on the new triple carrying
+  `prev_from`/`prev_to`, and `relationLineageIDs` walks those links so history is
+  continuous. Read/restore is gated on **both** endpoints (FROM ∧ TO) — the FROM
+  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
+  oracle otherwise). Relations have NO field-level redaction today; relation
+  history exposes exactly what a live relation GET does. `RelationHistoryReader`/
+  `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
+  independently of the entity ones.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the

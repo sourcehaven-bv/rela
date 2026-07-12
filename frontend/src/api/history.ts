@@ -70,3 +70,95 @@ export async function restoreVersion(
     `/_history/${entityType}/${encodeURIComponent(entityId)}/${version}/restore`
   )
 }
+
+// --- Relation versioning (TKT-92JL8P) ---
+
+/** One row of a relation's version timeline (metadata only). */
+export interface RelationVersionMeta {
+  version: number
+  op: 'create' | 'update' | 'rename' | 'delete'
+  from: string
+  type: string
+  to: string
+  created_at: string
+  principal: { user: string; tool: string }
+  prev_from?: string
+  prev_to?: string
+  triggered_by?: string
+}
+
+/** A full relation version snapshot: metadata plus the relation as it was. */
+export interface RelationVersionSnapshot {
+  from: string
+  type: string
+  to: string
+  version: number
+  op: string
+  created_at: string
+  principal: { user: string; tool: string }
+  relation: {
+    from: string
+    type: string
+    to: string
+    content: string
+    meta: Record<string, unknown>
+  }
+}
+
+interface RelationTimelineResponse {
+  from: string
+  type: string
+  to: string
+  versions: RelationVersionMeta[]
+}
+
+interface RelationRestoreResponse {
+  restored_from_version: number
+  relation: { from: string; type: string; to: string }
+}
+
+function relPath(fromType: string, from: string, relType: string, to: string): string {
+  return (
+    `/_relation_history/${encodeURIComponent(fromType)}/${encodeURIComponent(from)}` +
+    `/${encodeURIComponent(relType)}/${encodeURIComponent(to)}`
+  )
+}
+
+/**
+ * listRelationVersions returns a relation's version timeline (oldest first).
+ * fromType is the FROM entity's type (the read gate needs it). PostgreSQL-build
+ * capability; other backends respond 501.
+ */
+export async function listRelationVersions(
+  fromType: string,
+  from: string,
+  relType: string,
+  to: string
+): Promise<RelationVersionMeta[]> {
+  const resp = await api.get<RelationTimelineResponse>(relPath(fromType, from, relType, to))
+  return resp.versions
+}
+
+/** getRelationVersion returns one relation version's full snapshot. */
+export async function getRelationVersion(
+  fromType: string,
+  from: string,
+  relType: string,
+  to: string,
+  version: number
+): Promise<RelationVersionSnapshot> {
+  return api.get<RelationVersionSnapshot>(`${relPath(fromType, from, relType, to)}/${version}`)
+}
+
+/** restoreRelationVersion restores a relation to a past version (may 409 on a dangling endpoint). */
+export async function restoreRelationVersion(
+  fromType: string,
+  from: string,
+  relType: string,
+  to: string,
+  version: number
+): Promise<RelationRestoreResponse> {
+  return api.post<RelationRestoreResponse>(
+    `${relPath(fromType, from, relType, to)}/${version}/restore`
+  )
+}

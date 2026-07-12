@@ -465,6 +465,102 @@ type HistoryReader interface {
 	GetVersion(ctx context.Context, id string, version int) (*VersionSnapshot, error)
 }
 
+// --- Relation versioning (TKT-92JL8P) ---
+//
+// Relation versioning mirrors entity versioning but is a SEPARATE optional
+// capability: the DTOs and the RelationHistoryReader / RelationVersionWriter
+// interfaces are distinct from the entity ones, and consumers type-assert them
+// independently. This keeps each optional interface narrow (a store may support
+// entity history without relation history, or vice versa) and keeps relation
+// methods off the entity HistoryReader/VersionWriter surface. See the ticket's
+// design notes for why relations need a surrogate lineage id (they have no
+// stable key — the composite (from,type,to) mutates on endpoint rename).
+
+// RelationVersionMeta is a single row of a relation's version timeline, without
+// the snapshot body/properties. From/Type/To are the composite AS-OF this
+// version; PrevFrom/PrevTo are set only for VersionOpRename (the pre-rename
+// endpoints). Version is the 1-based ordinal within the relation's lineage
+// (keyed by the surrogate rel_record_id), computed at read time, newest last.
+type RelationVersionMeta struct {
+	Version       int
+	Op            VersionOp
+	From          string
+	Type          string
+	To            string
+	PrevFrom      string // set only for VersionOpRename
+	PrevTo        string // set only for VersionOpRename
+	ContentHash   string
+	SchemaHash    string
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+	CreatedAt     time.Time
+}
+
+// RelationVersionSnapshot is a full captured relation version: its metadata plus
+// the relation content and properties as they were, and the render-schema
+// projection (as stored JSON) the snapshot was taken under.
+type RelationVersionSnapshot struct {
+	RelationVersionMeta
+	Content    string
+	Properties map[string]interface{}
+	Projection []byte // the schema_versions.projection JSON for SchemaHash
+}
+
+// RelationVersionInput is one relation version to persist via
+// [RelationVersionWriter]. RecordID is the surrogate lineage id read off the
+// live relations row (0 is invalid — the caller must supply the row's
+// rel_record_id). PrevFrom/PrevTo are set only for VersionOpRename. Attribution
+// arrives here, populated from ctx at the boundary — the store learns the
+// Principal by no other route.
+type RelationVersionInput struct {
+	RecordID      int64
+	Op            VersionOp
+	From          string
+	Type          string
+	To            string
+	PrevFrom      string
+	PrevTo        string
+	Content       string
+	Properties    map[string]interface{}
+	SchemaHash    string
+	Projection    []byte
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+}
+
+// RelationVersionWriter persists a captured relation version. An optional,
+// backend-specific capability (pgstore only), type-asserted independently of the
+// entity VersionWriter. The entitymanager's synchronous version hook dispatches
+// delete/rename captures here via a wiring-supplied adapter.
+type RelationVersionWriter interface {
+	// WriteRelationVersion persists one relation_versions row. Best-effort from
+	// the caller's perspective (the entitymanager logs and swallows the error),
+	// but the implementation should still return a real error for diagnosis.
+	WriteRelationVersion(ctx context.Context, in RelationVersionInput) error
+}
+
+// RelationHistoryReader reads a relation's captured version history. Optional,
+// backend-specific (pgstore only), type-asserted independently of the entity
+// HistoryReader. A relation is addressed by its current (or last-known, for a
+// deleted relation) composite key; the reader resolves that to a surrogate
+// rel_record_id lineage internally.
+type RelationHistoryReader interface {
+	// ListRelationVersions returns the version timeline for a relation's
+	// composite key, oldest first. Returns an empty slice (not an error) when
+	// the key has no history. The key may name a live or an already-deleted
+	// relation. Because a re-created (from,type,to) after delete gets a fresh
+	// rel_record_id, this returns only the CURRENT (or most recent) lineage for
+	// that key, not merged across a delete boundary.
+	ListRelationVersions(ctx context.Context, from, relType, to string) ([]RelationVersionMeta, error)
+
+	// GetRelationVersion returns the full snapshot for a 1-based version ordinal
+	// in the relation's lineage. Returns ErrNotFound if the key has no such
+	// version.
+	GetRelationVersion(ctx context.Context, from, relType, to string, version int) (*RelationVersionSnapshot, error)
+}
+
 // EntityObserver receives notifications when entities are created, updated,
 // deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.

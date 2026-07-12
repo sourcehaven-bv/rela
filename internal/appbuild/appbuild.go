@@ -669,15 +669,16 @@ func assemble(
 	}
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:           st,
-		Meta:            base.meta,
-		Templater:       templater,
-		Audit:           cfg.Audit,
-		ACL:             resolvedACL,
-		Automations:     autoEngine,
-		Cascade:         cascadeRunner,
-		ScriptRunner:    script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
-		VersionRecorder: versionRecorderFor(st),
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		VersionRecorder:         versionRecorderFor(st),
+		RelationVersionRecorder: relationVersionRecorderFor(st),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -748,6 +749,42 @@ func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.Vers
 func versionRecorderFor(st store.Store) entitymanager.VersionRecorder {
 	if w, ok := st.(store.VersionWriter); ok {
 		return versionRecorder{w: w}
+	}
+	return nil
+}
+
+// relationVersionRecorder adapts a store.RelationVersionWriter to the
+// entitymanager's consumer-side RelationVersionRecorder. RecordID is left 0 so
+// the store resolves the surrogate lineage id from the composite key at write
+// time (correct for the synchronous pre-delete / post-rename capture).
+type relationVersionRecorder struct {
+	w store.RelationVersionWriter
+}
+
+func (r relationVersionRecorder) RecordRelationVersion(
+	ctx context.Context, v entitymanager.RelationVersionRecord,
+) error {
+	return r.w.WriteRelationVersion(ctx, store.RelationVersionInput{
+		From:          v.From,
+		Type:          v.Type,
+		To:            v.To,
+		Op:            v.Op,
+		PrevFrom:      v.PrevFrom,
+		PrevTo:        v.PrevTo,
+		Content:       v.Content,
+		Properties:    v.Properties,
+		SchemaHash:    v.SchemaHash,
+		Projection:    v.Projection,
+		PrincipalUser: v.PrincipalUser,
+		PrincipalTool: v.PrincipalTool,
+		TriggeredBy:   v.TriggeredBy,
+	})
+}
+
+// relationVersionRecorderFor mirrors versionRecorderFor for relation versions.
+func relationVersionRecorderFor(st store.Store) entitymanager.RelationVersionRecorder {
+	if w, ok := st.(store.RelationVersionWriter); ok {
+		return relationVersionRecorder{w: w}
 	}
 	return nil
 }
