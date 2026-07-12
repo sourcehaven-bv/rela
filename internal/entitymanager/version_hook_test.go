@@ -49,7 +49,7 @@ func TestVersionHook_DeleteCapturesFinalState(t *testing.T) {
 
 	e := entity.New("", "requirement")
 	e.Content = "the requirement body"
-	e.Properties = map[string]interface{}{"title": "R1"}
+	e.Properties = map[string]any{"title": "R1"}
 	created, err := mgr.CreateEntity(ctx, e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
@@ -91,7 +91,7 @@ func TestVersionHook_RenameCarriesPrevID(t *testing.T) {
 	ctx := ctxWithPrincipal("bob", principal.ToolMCP)
 
 	e := entity.New("", "requirement")
-	e.Properties = map[string]interface{}{"title": "R1"}
+	e.Properties = map[string]any{"title": "R1"}
 	created, err := mgr.CreateEntity(ctx, e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
@@ -128,7 +128,7 @@ func TestVersionHook_NilRecorderNoPanic(t *testing.T) {
 	ctx := ctxWithPrincipal("alice", principal.ToolCLI)
 
 	e := entity.New("", "requirement")
-	e.Properties = map[string]interface{}{"title": "R1"}
+	e.Properties = map[string]any{"title": "R1"}
 	created, err := mgr.CreateEntity(ctx, e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)

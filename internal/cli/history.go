@@ -76,7 +76,7 @@ func (c *HistoryCmd) printSnapshot(ctx context.Context, reader store.HistoryRead
 	if err != nil {
 		return fmt.Errorf("read version %d for %q: %w", c.Version, c.ID, err)
 	}
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"id":         c.ID,
 		"version":    snap.Version,
 		"op":         snap.Op,

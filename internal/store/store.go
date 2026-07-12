@@ -413,7 +413,7 @@ type VersionMeta struct {
 type VersionSnapshot struct {
 	VersionMeta
 	Content    string
-	Properties map[string]interface{}
+	Properties map[string]any
 	Projection []byte // the schema_versions.projection JSON for SchemaHash
 }
 
@@ -428,7 +428,7 @@ type VersionInput struct {
 	PrevID        string
 	Type          string
 	Content       string
-	Properties    map[string]interface{}
+	Properties    map[string]any
 	SchemaHash    string
 	Projection    []byte
 	PrincipalUser string
@@ -503,7 +503,7 @@ type RelationVersionMeta struct {
 type RelationVersionSnapshot struct {
 	RelationVersionMeta
 	Content    string
-	Properties map[string]interface{}
+	Properties map[string]any
 	Projection []byte // the schema_versions.projection JSON for SchemaHash
 }
 
@@ -522,7 +522,7 @@ type RelationVersionInput struct {
 	PrevFrom      string
 	PrevTo        string
 	Content       string
-	Properties    map[string]interface{}
+	Properties    map[string]any
 	SchemaHash    string
 	Projection    []byte
 	PrincipalUser string

@@ -20,7 +20,7 @@ type stubProvider struct {
 
 func (p stubProvider) Projection() (hash string, projectionJSON []byte) { return p.hash, p.json }
 
-func newVersionInput(id, content string, props map[string]interface{}) store.VersionInput {
+func newVersionInput(id, content string, props map[string]any) store.VersionInput {
 	return store.VersionInput{
 		EntityID:      id,
 		Type:          "ticket",
@@ -41,11 +41,11 @@ func TestWriteVersionAndList(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	in := newVersionInput("TKT-1", "first", map[string]interface{}{"title": "one"})
+	in := newVersionInput("TKT-1", "first", map[string]any{"title": "one"})
 	in.Op = store.VersionOpCreate
 	require.NoError(t, s.WriteVersion(ctx, in))
 
-	in2 := newVersionInput("TKT-1", "second", map[string]interface{}{"title": "two"})
+	in2 := newVersionInput("TKT-1", "second", map[string]any{"title": "two"})
 	in2.Op = store.VersionOpUpdate
 	require.NoError(t, s.WriteVersion(ctx, in2))
 

@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -606,9 +608,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 
 		// Resolve includes if requested
 		if wantIncludes {
-			for id, inc := range a.resolveV1Includes(r.Context(), e, includes) {
-				included[id] = inc
-			}
+			maps.Copy(included, a.resolveV1Includes(r.Context(), e, includes))
 		}
 	}
 
@@ -658,11 +658,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	defer a.writeMu.Unlock()
 
 	var req struct {
-		ID         string                 `json:"id,omitempty"`
-		Prefix     string                 `json:"prefix,omitempty"`
-		Properties map[string]interface{} `json:"properties"`
-		Content    string                 `json:"content,omitempty"`
-		Relations  v1.RelationsField      `json:"relations,omitempty"`
+		ID         string            `json:"id,omitempty"`
+		Prefix     string            `json:"prefix,omitempty"`
+		Properties map[string]any    `json:"properties"`
+		Content    string            `json:"content,omitempty"`
+		Relations  v1.RelationsField `json:"relations"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -792,10 +792,10 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// create body, decide explicitly whether dry-run should accept it
 	// and update both structs together (RR-GOR8 drift guard).
 	var req struct {
-		ID         string                 `json:"id,omitempty"`
-		Prefix     string                 `json:"prefix,omitempty"`
-		Properties map[string]interface{} `json:"properties"`
-		Content    string                 `json:"content,omitempty"`
+		ID         string         `json:"id,omitempty"`
+		Prefix     string         `json:"prefix,omitempty"`
+		Properties map[string]any `json:"properties"`
+		Content    string         `json:"content,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
@@ -842,7 +842,7 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// `properties` (no value yet), so the filter would drop it.
 	if def, ok := s.Meta.Entities[typeName]; ok {
 		if candidate.Properties == nil {
-			candidate.Properties = make(map[string]interface{})
+			candidate.Properties = make(map[string]any)
 		}
 		for name := range def.Properties {
 			if _, present := candidate.Properties[name]; !present {
@@ -1059,10 +1059,10 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	var req struct {
-		Properties      map[string]interface{} `json:"properties,omitempty"`
-		PropertiesUnset []string               `json:"properties_unset,omitempty"`
-		Content         *string                `json:"content,omitempty"`
-		Relations       v1.RelationsField      `json:"relations,omitempty"`
+		Properties      map[string]any    `json:"properties,omitempty"`
+		PropertiesUnset []string          `json:"properties_unset,omitempty"`
+		Content         *string           `json:"content,omitempty"`
+		Relations       v1.RelationsField `json:"relations"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1115,9 +1115,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// to avoid bumping the file mtime and broadcasting a misleading
 	// "entity updated" SSE event with no byte-level change.
 	if req.Properties != nil {
-		for k, v := range req.Properties {
-			entity.Properties[k] = v
-		}
+		maps.Copy(entity.Properties, req.Properties)
 	}
 	// Apply properties_unset AFTER property upserts so a body that
 	// both sets and unsets the same key behaves like the last-write-
@@ -1288,7 +1286,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader,
 		neighborIDsOf(outgoing, incoming))
 
-	relations := make(map[string][]map[string]interface{})
+	relations := make(map[string][]map[string]any)
 
 	// Track the sort property per group, derived from the relation type's
 	// Orderable mode. Empty string disables sorting for that group.
@@ -1298,7 +1296,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		if !visibleNeighbors[edge.To] {
 			continue
 		}
-		rel := map[string]interface{}{
+		rel := map[string]any{
 			"id":        edge.To,
 			"type":      a.reader.entityType(r.Context(), edge.To),
 			"direction": "outgoing",
@@ -1323,7 +1321,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 			continue
 		}
 		inverseName := inverseRelationKey(edge.Type, relDef)
-		rel := map[string]interface{}{
+		rel := map[string]any{
 			"id":        edge.From,
 			"type":      a.reader.entityType(r.Context(), edge.From),
 			"direction": "incoming",
@@ -1351,12 +1349,12 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 
 // sortRelationGroup sorts a relation group in place by a numeric meta key.
 // Entries without a finite numeric value at prop sort last; ties stable.
-func sortRelationGroup(group []map[string]interface{}, prop string) {
+func sortRelationGroup(group []map[string]any, prop string) {
 	if len(group) < 2 || prop == "" {
 		return
 	}
-	value := func(m map[string]interface{}) (float64, bool) {
-		meta, ok := m["meta"].(map[string]interface{})
+	value := func(m map[string]any) (float64, bool) {
+		meta, ok := m["meta"].(map[string]any)
 		if !ok {
 			return 0, false
 		}
@@ -1436,7 +1434,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	}
 	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
 
-	relations := make([]map[string]interface{}, 0, len(edges))
+	relations := make([]map[string]any, 0, len(edges))
 
 	for _, edge := range edges {
 		if edge.Type != relType {
@@ -1449,7 +1447,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		if !visibleNeighbors[peerID] {
 			continue
 		}
-		rel := map[string]interface{}{
+		rel := map[string]any{
 			"id":   peerID,
 			"type": a.reader.entityType(r.Context(), peerID),
 		}
@@ -1494,9 +1492,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	}
 
 	var req struct {
-		ID        string                 `json:"id"`
-		Meta      map[string]interface{} `json:"meta,omitempty"`
-		Direction string                 `json:"direction,omitempty"`
+		ID        string         `json:"id"`
+		Meta      map[string]any `json:"meta,omitempty"`
+		Direction string         `json:"direction,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1572,8 +1570,8 @@ func (a *App) handleV1UpdateRelation(
 	}
 
 	var req struct {
-		Meta      map[string]interface{} `json:"meta"`
-		Direction string                 `json:"direction,omitempty"`
+		Meta      map[string]any `json:"meta"`
+		Direction string         `json:"direction,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
@@ -1624,7 +1622,7 @@ func (a *App) handleV1UpdateRelation(
 		return
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"from": rel.From,
 		"type": rel.Type,
 		"to":   rel.To,
@@ -1715,10 +1713,8 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 	}
 
 	// Clone properties
-	props := make(map[string]interface{})
-	for k, v := range entity.Properties {
-		props[k] = v
-	}
+	props := make(map[string]any)
+	maps.Copy(props, entity.Properties)
 
 	cloneResult, err := a.entityManager.CreateEntity(r.Context(),
 		&entityPkg.Entity{
@@ -2088,7 +2084,6 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 
 // --- Helper Functions ---
 
-//nolint:gocognit // resolves the include set (all vs. named relations) then fetches each target; the nesting is the include-expansion algorithm, not shared logic to extract.
 func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
 	s := a.State()
 	included := make(map[string]v1.Entity)
@@ -2118,7 +2113,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 		}
 	} else {
-		for _, part := range strings.Split(includes, ",") {
+		for part := range strings.SplitSeq(includes, ",") {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue
@@ -2148,9 +2143,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
 
 		if nested, ok := nestedFor[target.ID]; ok {
-			for k, v := range a.resolveV1Includes(ctx, target, nested) {
-				included[k] = v
-			}
+			maps.Copy(included, a.resolveV1Includes(ctx, target, nested))
 		}
 	}
 	return included
@@ -2329,7 +2322,7 @@ func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*
 
 	// Parse sort param: "-created,title" means descending created, ascending title
 	sortSpecs := make([]filter.SortSpec, 0)
-	for _, part := range strings.Split(sortParam, ",") {
+	for part := range strings.SplitSeq(sortParam, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -2493,15 +2486,13 @@ func validateCreateIDOpts(def *metamodel.EntityDef, id, prefix string) string {
 	if def.IsManualID() {
 		return "prefix not applicable to manual ID type"
 	}
-	for _, p := range def.GetIDPrefixes() {
-		if p == prefix {
-			return ""
-		}
+	if slices.Contains(def.GetIDPrefixes(), prefix) {
+		return ""
 	}
 	return fmt.Sprintf("prefix %q is not valid; allowed: %v", prefix, def.GetIDPrefixes())
 }
 
-func writeV1JSON(w http.ResponseWriter, status int, data interface{}) {
+func writeV1JSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.WriteHeader(status)
@@ -2996,7 +2987,7 @@ func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordConflictResolveAudit(r.Context(), req.Path, resolvedEntity, resolvedRelation)
 
-	writeV1JSON(w, http.StatusOK, map[string]interface{}{
+	writeV1JSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"path":    req.Path,
 	})

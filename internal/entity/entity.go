@@ -45,7 +45,7 @@ type Entity struct {
 	Type         string              `json:"type"`
 	Properties   map[string]any      `json:"properties,omitempty"`
 	Content      string              `json:"content,omitempty"`
-	UpdatedAt    time.Time           `json:"updated_at,omitempty"`
+	UpdatedAt    time.Time           `json:"updated_at,omitzero"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 }
 
@@ -211,7 +211,7 @@ type Relation struct {
 	To           string              `json:"to"`
 	Properties   map[string]any      `json:"properties,omitempty"`
 	Content      string              `json:"content,omitempty"`
-	UpdatedAt    time.Time           `json:"updated_at,omitempty"`
+	UpdatedAt    time.Time           `json:"updated_at,omitzero"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 }
 
