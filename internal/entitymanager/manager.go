@@ -738,9 +738,10 @@ func (m *Manager) RenameEntity(
 	// carrying the pre-rename endpoints (prev_from/prev_to). This stitches the
 	// relation's history across the endpoint rename so it reads as one continuous
 	// timeline rather than a delete of the old triple + create of the new one.
-	// The new triples exist now (rename.Rename created them); the version's key
-	// is the post-rename endpoint, so WriteRelationVersion resolves the new
-	// rel_record_id. triggered_by attributes the versions to this rename.
+	// The new triples exist now (the store's atomic RenameEntity created them);
+	// the version's key is the post-rename endpoint, so WriteRelationVersion
+	// resolves the new rel_record_id. triggered_by attributes the versions to
+	// this rename.
 	if len(preRenameRels) > 0 {
 		renameTB := "rename-entity:" + oldID + "->" + newID
 		for _, rel := range preRenameRels {
