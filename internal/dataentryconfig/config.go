@@ -232,6 +232,11 @@ type FilterConfig struct {
 	Value    string `yaml:"value" json:"value"`
 }
 
+// HasProperty reports whether the filter names a property to filter on
+// (filters may also be written without one, e.g. operator-only entries
+// that validation flags separately).
+func (f FilterConfig) HasProperty() bool { return f.Property != "" }
+
 // FilterControl defines a user-facing filter control in a list.
 // Exactly one of Property or Relation must be set:
 //   - Property: filter on a scalar property of the entity.

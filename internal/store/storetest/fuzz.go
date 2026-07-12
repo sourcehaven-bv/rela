@@ -231,7 +231,7 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 	f.Add("items", 2) // []interface{}
 
 	f.Fuzz(func(t *testing.T, propName string, valueType int) {
-		if propName == "id" || propName == "type" {
+		if entity.IsReservedEntityKey(propName) {
 			return
 		}
 
@@ -296,7 +296,7 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 	f.Add("prop", 4, "a,b,c")
 
 	f.Fuzz(func(t *testing.T, propName string, valueType int, raw string) {
-		if propName == "id" || propName == "type" {
+		if entity.IsReservedEntityKey(propName) {
 			return
 		}
 

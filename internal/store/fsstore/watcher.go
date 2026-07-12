@@ -352,7 +352,7 @@ func (s *FSStore) parseEntityFromPath(data []byte, path string) (*entity.Entity,
 	e := entity.New(id, entityType)
 	e.Content = doc.content
 	for key, value := range doc.frontmatter {
-		if key != "id" && key != "type" {
+		if entity.IsEntityPropertyKey(key) {
 			e.Properties[key] = entity.CloneValue(value)
 		}
 	}

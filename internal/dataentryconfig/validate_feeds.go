@@ -7,6 +7,7 @@ import (
 
 	rrule "github.com/teambition/rrule-go"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -112,7 +113,7 @@ func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Me
 			errs = append(errs, fmt.Sprintf("%s: where[%d] %q: %v", prefix, j, clause, err))
 			continue
 		}
-		if f.Property != "id" && f.Property != "type" {
+		if entity.IsEntityPropertyKey(f.Property) {
 			if _, ok := entDef.Properties[f.Property]; !ok {
 				errs = append(errs, fmt.Sprintf("%s: where[%d] references unknown property %q", prefix, j, f.Property))
 			}

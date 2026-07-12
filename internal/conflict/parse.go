@@ -215,7 +215,7 @@ func docToEntity(doc *markdown.Document, _ string, meta *metamodel.Metamodel) *e
 	}
 
 	for key, value := range doc.Frontmatter {
-		if key != "id" && key != "type" {
+		if entity.IsEntityPropertyKey(key) {
 			e.Properties[key] = value
 		}
 	}
@@ -234,7 +234,7 @@ func docToRelation(doc *markdown.Document, _ string) *entity.Relation {
 	}
 
 	for key, value := range doc.Frontmatter {
-		if key != "from" && key != "relation" && key != "to" {
+		if entity.IsRelationPropertyKey(key) {
 			relation.Properties[key] = value
 		}
 	}
