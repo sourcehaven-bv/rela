@@ -303,20 +303,16 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 
 	newStyleMap := current.StyleMap
 	newStyledTypes := current.StyledTypes
-	newUserPalette := current.UserPalette
-	newPalette := current.Palette
 	newOpenAPI := current.OpenAPIGen
 
 	if configChanged || metaChanged {
 		newStyleMap, newStyledTypes = buildStyleMap(newCfg, newMeta)
-		// On reload, keep the previous palette if the new file is
-		// broken — better to show stale colors than crash or wipe.
-		if up, err := a.userState.loadUserPalette(); err != nil {
+		// Re-resolve the palette against the new project palette. The service
+		// keeps the previous user override if the on-disk file is broken —
+		// better to show stale colors than crash or wipe.
+		if err := a.palette.Reresolve(newCfg.Palette); err != nil {
 			slog.Warn("watcher: keeping previous user palette",
 				"file", userPaletteFile, "error", err)
-		} else {
-			newUserPalette = up
-			newPalette = ResolvePalette(newCfg.Palette, newUserPalette)
 		}
 		// Update OpenAPI generator with new metamodel (the generator
 		// is internally synchronized; we reuse the same instance).
@@ -331,8 +327,6 @@ func (a *App) rebuildState(configChanged, metaChanged bool) {
 		StyleMap:     newStyleMap,
 		StyledTypes:  newStyledTypes,
 		UserDefaults: current.UserDefaults,
-		Palette:      newPalette,
-		UserPalette:  newUserPalette,
 		OpenAPIGen:   newOpenAPI,
 	})
 }

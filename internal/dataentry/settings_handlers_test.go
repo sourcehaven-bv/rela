@@ -11,7 +11,6 @@ import (
 
 func TestHandleAPIPaletteCRUD(t *testing.T) {
 	app := newHandlerTestApp(t)
-	app.State().Palette = ResolvePalette(nil, nil)
 
 	t.Run("GET returns empty palette when none set", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/_palette", http.NoBody)
@@ -34,7 +33,7 @@ func TestHandleAPIPaletteCRUD(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
-		if app.State().UserPalette == nil || app.State().UserPalette.Accent != "#e11d48" {
+		if up := app.palette.UserPalette(); up == nil || up.Accent != "#e11d48" {
 			t.Error("palette not saved")
 		}
 	})
@@ -84,12 +83,12 @@ func TestWriteJSON(t *testing.T) {
 func TestLoadUserPalette(t *testing.T) {
 	t.Run("missing file returns nil with no error", func(t *testing.T) {
 		app := newHandlerTestApp(t)
-		p, err := app.userState.loadUserPalette()
+		got, err := app.palette.load()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if p != nil {
-			t.Errorf("expected nil palette for missing file, got %+v", p)
+		if got != nil {
+			t.Errorf("expected nil palette for missing file, got %+v", got)
 		}
 	})
 
@@ -103,7 +102,7 @@ func TestLoadUserPalette(t *testing.T) {
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		p, perr := app.userState.loadUserPalette()
+		p, perr := app.palette.load()
 		if perr == nil {
 			t.Fatal("expected error for legacy `dark: auto`, got nil")
 		}
@@ -121,7 +120,7 @@ func TestLoadUserPalette(t *testing.T) {
 		if err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		p, perr := app.userState.loadUserPalette()
+		p, perr := app.palette.load()
 		if perr != nil {
 			t.Fatalf("unexpected error: %v", perr)
 		}

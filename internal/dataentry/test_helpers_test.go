@@ -138,9 +138,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
 	app.userState = userStateStore{kv: svc.State()}
-	// logo store over the same kv; fresh fixtures have no logo on disk so the
-	// load can't error (a nil-return matches production's clean-boot path).
+	// logo + palette stores over the same kv; fresh fixtures have nothing on
+	// disk so the loads can't error (nil-returns match production's clean-boot
+	// path). Callers that need a specific project palette resolved re-wire
+	// app.palette after this with newPaletteService(kv, cfgPalette).
 	app.logo, _ = newLogoStore(svc.State())
+	app.palette, _ = newPaletteService(svc.State(), nil)
 	app.acl = svc.ACL()
 	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents
@@ -240,14 +243,17 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 	if meta != nil {
 		openAPIGen = openapi.New(meta, openapi.Config{Title: cfg.App.Name})
 	}
+	// Re-resolve the palette against this fixture's project palette (rebindApp
+	// wired a nil-cfg default).
+	if app.palette != nil {
+		_ = app.palette.Reresolve(cfg.Palette)
+	}
 	app.state.Store(&AppState{
 		Cfg:          cfg,
 		Meta:         meta,
 		StyleMap:     styleMap,
 		StyledTypes:  styledTypes,
 		UserDefaults: &UserDefaults{},
-		Palette:      ResolvePalette(cfg.Palette, nil),
-		UserPalette:  &PaletteConfig{},
 		OpenAPIGen:   openAPIGen,
 	})
 	return app
@@ -327,17 +333,21 @@ func newHandlerTestApp(t *testing.T) *App {
 		t.Fatalf("NewRootedFS: %v", err)
 	}
 	app.kv = state.NewFSKV(kvRoot)
+	// Resolve the palette against this fixture's project palette (rebindApp
+	// wired a nil-cfg default). The user palette stays nil: the theme tests
+	// use its nil-ness as the "nothing saved yet" signal.
+	if app.palette != nil {
+		_ = app.palette.Reresolve(cfg.Palette)
+	}
 	// Populate the snapshot fields handlers deref unconditionally — the
 	// router walk test hits every route, including _openapi.json, which
-	// panics on a nil OpenAPIGen. UserPalette stays nil on purpose: the
-	// theme tests use its nil-ness as the "nothing saved yet" signal.
+	// panics on a nil OpenAPIGen.
 	app.state.Store(&AppState{
 		Cfg:          cfg,
 		Meta:         meta,
 		StyleMap:     styleMap,
 		StyledTypes:  styledTypes,
 		UserDefaults: &UserDefaults{},
-		Palette:      ResolvePalette(cfg.Palette, nil),
 		OpenAPIGen:   openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
 	})
 	return app

@@ -3,8 +3,6 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 
 	"gopkg.in/yaml.v3"
 
@@ -83,45 +81,4 @@ func (s userStateStore) saveUserDefaults(ctx context.Context, ud *UserDefaults) 
 		return err
 	}
 	return s.kv.Put(ctx, userDefaultsFile, data)
-}
-
-// loadUserPalette reads .rela/palette.yaml and returns the parsed
-// palette. Returns (nil, nil) when the file does not exist (clean
-// "no user palette" state — matches how ResolvePalette consumes a
-// nil user palette pointer; a sentinel error or three-return shape
-// would be more confusing for the only two callers). Returns a
-// non-nil error if the file exists but cannot be read or parsed —
-// callers MUST surface this instead of silently falling back to
-// defaults, otherwise a subsequent save would silently overwrite
-// the user's palette with framework defaults (RR-OA4A).
-//
-//nolint:nilnil // see comment above
-func (s userStateStore) loadUserPalette() (*PaletteConfig, error) {
-	if s.kv == nil {
-		return nil, nil
-	}
-	data, err := s.kv.Get(context.Background(), userPaletteFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", userPaletteFile, err)
-	}
-	var p PaletteConfig
-	if err := yaml.Unmarshal(data, &p); err != nil {
-		return nil, fmt.Errorf("parse %s: %w (legacy `dark: auto` is no longer supported — remove the `dark` line or set it to `false` or an explicit object)", userPaletteFile, err)
-	}
-	return &p, nil
-}
-
-// saveUserPalette writes the user palette to .rela/palette.yaml.
-func (s userStateStore) saveUserPalette(ctx context.Context, p *PaletteConfig) error {
-	if s.kv == nil {
-		return nil
-	}
-	data, err := yaml.Marshal(p)
-	if err != nil {
-		return err
-	}
-	return s.kv.Put(ctx, userPaletteFile, data)
 }

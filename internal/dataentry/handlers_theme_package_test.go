@@ -193,8 +193,8 @@ func TestThemeImport_RoundTrip(t *testing.T) {
 	if gotBytes, _, _ := dest.logo.Get(); !bytes.Equal(gotBytes, pngBytes) {
 		t.Error("dest logo bytes do not match round-tripped bytes")
 	}
-	if dest.State().UserPalette != nil {
-		t.Error("dest UserPalette should not be auto-saved on import")
+	if dest.palette.UserPalette() != nil {
+		t.Error("dest user palette should not be auto-saved on import")
 	}
 }
 
