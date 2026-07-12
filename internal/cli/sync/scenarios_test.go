@@ -159,6 +159,80 @@ func TestPush_Conflict_HaltsThenForceResolves(t *testing.T) {
 	}
 }
 
+// BUG-ZWTDH9: a create-intent push that races a concurrent first-create of the
+// same id gets a 409 from the server. That 409 must HALT ONLY that record (a
+// conflict outcome), NOT abort the whole run — subsequent records still push.
+// This mirrors the 412 halt-one-record contract; before the fix a 409 fell
+// through to statusError and aborted the entire topo-ordered run.
+func TestPush_CreateConflict409_HaltsOneRecordAndRunContinues(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Two brand-new local creates. The server will 409 the first (TKT-A) as if a
+	// peer created it concurrently; TKT-B must still be applied in the same run.
+	h.createLocalEntity(t, "TKT-A", map[string]any{"title": "a"})
+	h.createLocalEntity(t, "TKT-B", map[string]any{"title": "b"})
+	h.server.mu.Lock()
+	h.server.conflictOnceKey = "TKT-A"
+	h.server.mu.Unlock()
+
+	rep, err := h.engine.Push(ctx)
+	if err != nil {
+		t.Fatalf("409 must halt one record, not abort the run: %v", err)
+	}
+	if rep.Conflicts != 1 {
+		t.Fatalf("conflicts=%d, want 1 (TKT-A halted on 409)", rep.Conflicts)
+	}
+	if rep.Applied != 1 {
+		t.Fatalf("applied=%d, want 1 (TKT-B must proceed past the halted TKT-A)", rep.Applied)
+	}
+
+	// TKT-A was halted: not on the server, and NOT recorded in the index (so a
+	// re-run replays it after the conflict is resolved).
+	if _, ok := h.server.entities["TKT-A"]; ok {
+		t.Fatal("TKT-A must not be on the server after a 409 halt")
+	}
+	if _, ok := h.idx.Hash("TKT-A"); ok {
+		t.Fatal("TKT-A must NOT be in the index after a 409 halt (re-run must replay it)")
+	}
+	// TKT-B converged: on the server and in the index.
+	if _, ok := h.server.entities["TKT-B"]; !ok {
+		t.Fatal("TKT-B missing on server — the 409 on TKT-A aborted the run")
+	}
+	if _, ok := h.idx.Hash("TKT-B"); !ok {
+		t.Fatal("TKT-B missing from index after a successful push")
+	}
+
+	// The halted record carries the create-specific message (not the 412
+	// base-changed wording), and re-running now converges (server no longer 409s).
+	var halted *PushRecordResult
+	for i := range rep.Results {
+		if rep.Results[i].Key == "TKT-A" {
+			halted = &rep.Results[i]
+		}
+	}
+	if halted == nil {
+		t.Fatal("no report entry for the halted TKT-A")
+	}
+	if halted.Outcome != OutcomeConflict {
+		t.Fatalf("TKT-A outcome=%v, want OutcomeConflict", halted.Outcome)
+	}
+	if !contains(halted.Detail, "created concurrently by a peer") {
+		t.Fatalf("409 detail=%q, want the concurrent-create wording", halted.Detail)
+	}
+
+	rep2, err := h.engine.Push(ctx)
+	if err != nil {
+		t.Fatalf("re-run after 409 resolved: %v", err)
+	}
+	if rep2.Applied != 1 || rep2.Conflicts != 0 {
+		t.Fatalf("re-run applied=%d conflicts=%d, want 1/0 (TKT-A now applies)", rep2.Applied, rep2.Conflicts)
+	}
+	if _, ok := h.server.entities["TKT-A"]; !ok {
+		t.Fatal("TKT-A still missing on server after the re-run")
+	}
+}
+
 // AC #6: a relation listed BEFORE its endpoint entity in a batch is still
 // applied, because push reorders entities ahead of relations.
 func TestPush_TopologicalOrder_EntitiesBeforeRelations(t *testing.T) {

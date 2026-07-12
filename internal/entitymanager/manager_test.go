@@ -114,8 +114,8 @@ func (s *countingStore) ListEntities(ctx context.Context, q store.EntityQuery) i
 
 // failingCreateStore wraps a store and forces the next N CreateEntity
 // calls to return a sentinel non-conflict error. Used to verify that
-// upsertEntity propagates non-conflict errors instead of falling
-// through to UpdateEntity.
+// createCore propagates a non-conflict store error instead of masking
+// it as a fall-through to UpdateEntity.
 type failingCreateStore struct {
 	store.Store
 	err         error
@@ -432,16 +432,15 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
-	// The initial create is a direct CreateEntity (no upsert fallback —
-	// a create must never become an update). The post-automation
-	// re-write goes through upsertEntity, which runs
-	// Create→conflict→Update. So creates=2 (initial + upsert probe),
-	// updates=1 (the upsert fallback).
-	if got := cs.creates.Load(); got != 2 {
-		t.Errorf("CreateEntity calls = %d, want 2 (initial create + upsert probe)", got)
+	// The initial create is a direct CreateEntity (a create must never
+	// become an update). The post-automation re-write is now a direct
+	// UpdateEntity (the row already exists from the initial create — no
+	// upsert fallback anywhere, BUG-ZWTDH9). So creates=1, updates=1.
+	if got := cs.creates.Load(); got != 1 {
+		t.Errorf("CreateEntity calls = %d, want 1 (initial create only)", got)
 	}
 	if got := cs.updates.Load(); got != 1 {
-		t.Errorf("UpdateEntity calls = %d, want 1", got)
+		t.Errorf("UpdateEntity calls = %d, want 1 (post-automation re-write)", got)
 	}
 	if got := result.Entity.GetString("status"); got != wantStatus {
 		t.Errorf("status = %q, want %q", got, wantStatus)
@@ -556,13 +555,13 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 
 	// Pin the invariant through store-call counts. Single-dispatch
 	// shape: requirement create (1) + cascade checklist create (1) +
-	// childAuto's Set writing via the Create→conflict→Update upsert
-	// (1 create attempt + 1 update) = 3 creates, 1 update. If the
-	// cascade re-entered Manager.CreateEntity, childAuto would be
-	// dispatched a second time, adding another conflict-create +
-	// update pair (4/2).
-	if got := cs.creates.Load(); got != 3 {
-		t.Errorf("store CreateEntity calls = %d, want 3 (recursion would add a 4th)", got)
+	// childAuto's Set persisted via cascade WriteEntity, now a direct
+	// UpdateEntity (no upsert probe — BUG-ZWTDH9) = 2 creates, 1 update.
+	// If the cascade re-entered Manager.CreateEntity, childAuto would be
+	// dispatched a second time, adding another create + update pair
+	// (3 creates / 2 updates).
+	if got := cs.creates.Load(); got != 2 {
+		t.Errorf("store CreateEntity calls = %d, want 2 (recursion would add a 3rd)", got)
 	}
 	if got := cs.updates.Load(); got != 1 {
 		t.Errorf("store UpdateEntity calls = %d, want 1 (recursion would double-fire childAuto)", got)
@@ -861,12 +860,11 @@ func TestDeleteRelation_RoundTrip(t *testing.T) {
 
 // --- Upsert error-propagation invariant (regression for C1) ---
 
-// TestCreate_PropagatesNonConflictStoreError pins that
-// upsertEntity does NOT mask a non-ErrConflict store failure by
-// falling through to UpdateEntity. With the workspace-era bug, a
-// CreateEntity that returned a generic I/O error would silently
-// reach UpdateEntity and likely return ErrNotFound, hiding the
-// real cause.
+// TestCreate_PropagatesNonConflictStoreError pins that createCore
+// does NOT mask a non-ErrConflict store failure by falling through to
+// UpdateEntity. With the workspace-era bug, a CreateEntity that
+// returned a generic I/O error would silently reach UpdateEntity and
+// likely return ErrNotFound, hiding the real cause.
 func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("simulated disk failure")

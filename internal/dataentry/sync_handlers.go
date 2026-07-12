@@ -78,8 +78,12 @@ func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest s
 //
 //	200 + new ETag : applied (the record's current hash matched If-Match, or
 //	                 If-Match was absent for a first create)
-//	412            : If-Match did not match the record's current hash → the
-//	                 remote moved since the client's base → conflict
+//	412            : If-Match did not match the record's current hash, OR an
+//	                 update-intent apply found its row vanished concurrently →
+//	                 the remote moved since the client's base → conflict
+//	409            : a create-intent apply (no If-Match) lost a race to a
+//	                 concurrent first-create of the same id → the client's
+//	                 create precondition is now false; re-read and resolve
 //	422            : entitymanager rejected the content (validation) — NOT a
 //	                 conflict; the data is invalid
 //	403            : ACL denied
@@ -325,9 +329,43 @@ func writeSyncApplyError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "The content is invalid", err.Error())
 		return
 	}
+	// A body type that contradicts the stored type on update is a structural
+	// impossibility (one ID cannot be two types) and a cross-type write
+	// escalation vector — 422, not a conflict (BUG-ZWTDH9).
+	if errors.Is(err, entitymanager.ErrTypeImmutable) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "type_immutable",
+			"The entity type is immutable on update", err.Error())
+		return
+	}
+	// A create-intent apply whose record was concurrently created (the
+	// existence probe said "absent", but the durable CreateEntity/
+	// CreateRelation raced a peer and conflicted) is a 409: the client's
+	// create precondition is now false — it must re-read and decide.
+	// Distinct from the 412 precondition (the client declared a base that
+	// no longer matches) and from the 422 validation reject (BUG-ZWTDH9 —
+	// a create never silently becomes a re-typing update).
+	if isCreateConflict(err) {
+		writeV1Error(w, r, http.StatusConflict, "conflict",
+			"The record was created concurrently; re-read and resolve", err.Error())
+		return
+	}
 	var forbidden *acl.ForbiddenError
 	if errors.As(err, &forbidden) {
 		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", "")
+		return
+	}
+	// An update-intent apply whose row vanished concurrently — a relation
+	// (ErrRelationNotFound) or an entity (ErrEntityVanishedOnUpdate, which
+	// wraps ErrEntityNotFound) — is a precondition failure (412), symmetric
+	// with writeSyncConflict: the client's base no longer exists on the
+	// server. This MUST be checked before the generic ErrEntityNotFound branch
+	// below (a missing relation ENDPOINT is a genuine 404), since the entity
+	// vanished-on-update error unwraps to ErrEntityNotFound.
+	vanishedOnUpdate := errors.Is(err, entitymanager.ErrRelationNotFound) ||
+		errors.Is(err, entitymanager.ErrEntityVanishedOnUpdate)
+	if vanishedOnUpdate {
+		writeV1Error(w, r, http.StatusPreconditionFailed, "conflict",
+			"The record changed on the server since your base; resolve the conflict", "")
 		return
 	}
 	if errors.Is(err, entitymanager.ErrEntityNotFound) {
@@ -335,4 +373,11 @@ func writeSyncApplyError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	writeV1Error(w, r, http.StatusInternalServerError, "apply_failed", "Failed to apply the change", "")
+}
+
+// isCreateConflict reports whether err is a create-intent apply that lost a
+// race to a concurrent create (entity or relation) — mapped to 409.
+func isCreateConflict(err error) bool {
+	return errors.Is(err, entitymanager.ErrEntityAlreadyExists) ||
+		errors.Is(err, entitymanager.ErrRelationAlreadyExists)
 }

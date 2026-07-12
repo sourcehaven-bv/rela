@@ -70,8 +70,9 @@ func newManagerOver(t *testing.T, st store.Store) *entitymanager.Manager {
 // TestCreate_FailsWhenIDScanErrors pins that auto-ID create surfaces an
 // entity-scan error instead of generating an ID from a partial list. A
 // truncated scan can hide a high-numbered existing ID, so generating
-// from it risks a collision that upsertEntity would turn into an
-// overwrite of the existing entity.
+// from it risks a collision — which createCore now rejects with
+// ErrEntityAlreadyExists (a create never overwrites), so a bad scan
+// would surface as a spurious conflict rather than data loss.
 func TestCreate_FailsWhenIDScanErrors(t *testing.T) {
 	sentinel := errors.New("boom: entity scan failed mid-stream")
 	st := &listEntitiesErrStore{Store: memstore.New(), err: sentinel}

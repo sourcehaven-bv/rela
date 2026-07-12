@@ -168,9 +168,15 @@ func (c *Client) GetRelation(ctx context.Context, from, relType, to string) (*Fe
 type PushResult struct {
 	Applied  bool
 	Conflict bool
-	Invalid  bool   // 422: content rejected by validation (NOT a conflict)
-	Hash     string // new hash on Applied
-	Detail   string // human-readable detail (validation message, etc.)
+	// CreatedConcurrently distinguishes a 409 (a create-intent push lost a
+	// race to a concurrent first-create of the same id on the multi-writer
+	// backend) from the ordinary 412 conflict (the client declared a base that
+	// no longer matches). Both are conflicts that HALT only the one record and
+	// let the run continue; the flag only sharpens the operator-facing message.
+	CreatedConcurrently bool
+	Invalid             bool   // 422: content rejected by validation (NOT a conflict)
+	Hash                string // new hash on Applied
+	Detail              string // human-readable detail (validation message, etc.)
 }
 
 // PutEntity pushes an entity conditionally. ifMatch is the index hash (the base
@@ -232,8 +238,9 @@ func (c *Client) get(ctx context.Context, segments []string) (*http.Response, er
 
 // pushResult maps the PUT/DELETE response status to a typed PushResult. 200 ->
 // applied (+ new hash from the body or ETag); 412 -> conflict (+ server hash
-// from ETag); 422 -> invalid; anything else -> an error (403/404/5xx surfaced
-// via statusError so auth failures are distinct from conflicts).
+// from ETag); 409 -> conflict (a create raced a concurrent first-create,
+// CreatedConcurrently set); 422 -> invalid; anything else -> an error (403/404/
+// 5xx surfaced via statusError so auth failures are distinct from conflicts).
 func (c *Client) pushResult(req *http.Request) (*PushResult, error) {
 	resp, err := c.do(req)
 	if err != nil {
@@ -258,6 +265,14 @@ func (c *Client) pushResult(req *http.Request) (*PushResult, error) {
 		return &PushResult{Applied: true, Hash: hash}, nil
 	case http.StatusPreconditionFailed:
 		return &PushResult{Conflict: true}, nil
+	case http.StatusConflict:
+		// 409: a create-intent push raced a concurrent first-create of the same
+		// id (postgres multi-writer). Like a 412, this is a per-record conflict
+		// that HALTS this record and lets the run continue — it is NOT a
+		// transport/auth error, so it must NOT fall through to statusError (which
+		// would abort the whole push run). The flag lets the caller emit a
+		// create-specific message.
+		return &PushResult{Conflict: true, CreatedConcurrently: true}, nil
 	case http.StatusUnprocessableEntity:
 		return &PushResult{Invalid: true, Detail: c.errorDetail(resp)}, nil
 	default:

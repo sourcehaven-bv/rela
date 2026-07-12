@@ -40,6 +40,11 @@ type fakeServer struct {
 	seq       int64
 	changes   []serverChange // append-only change log for the manifest
 	authToken string         // when set, requests must present it as a bearer
+	// conflictOnceKey, when set, forces the FIRST PUT of that entity key to
+	// respond 409 Conflict (a create that raced a concurrent first-create on
+	// the multi-writer backend), then behaves normally. Models the server's
+	// create-conflict mapping without needing a real concurrent writer.
+	conflictOnceKey string
 }
 
 type serverChange struct {
@@ -137,6 +142,13 @@ func (s *fakeServer) put(w http.ResponseWriter, r *http.Request, kind, key strin
 			w.Header().Set("ETag", cur)
 		}
 		writeJSONErr(w, http.StatusPreconditionFailed, "conflict")
+		return
+	}
+	// Create-conflict injection: a create-intent PUT (precondition just passed
+	// on an absent record) whose durable create raced a peer → 409. Fires once.
+	if s.conflictOnceKey == key {
+		s.conflictOnceKey = ""
+		writeJSONErr(w, http.StatusConflict, "conflict")
 		return
 	}
 	if kind == "e" {

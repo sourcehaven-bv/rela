@@ -56,9 +56,12 @@ type Host interface {
 	// validating the (from-type, type, to-type) tuple.
 	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
 
-	// WriteRelation upserts the relation to the store. Runner uses
-	// it for entries in [automation.Result.RelationsToCreate] and
-	// for trigger relations attached to automation-created entities.
+	// WriteRelation creates the relation in the store, treating a
+	// pre-existing identical relation as a no-op success (create-then-
+	// noop-on-conflict, never an update — cascade relations are
+	// property-less, so there is nothing to overwrite). Runner uses it
+	// for entries in [automation.Result.RelationsToCreate] and for
+	// trigger relations attached to automation-created entities.
 	WriteRelation(ctx context.Context, r *entity.Relation) error
 
 	// ValidateRelation checks whether a relation of the given type
