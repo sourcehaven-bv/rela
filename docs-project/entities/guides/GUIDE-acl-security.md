@@ -552,6 +552,61 @@ used as a hidden-field oracle. The remaining read-side gap is the MCP
 transport (TKT-G3PPD); within the data-entry server every read channel a
 browser can reach is tight.
 
+## Version history read gating (`history:read`)
+
+The PostgreSQL build's [version history](postgres-backend.md#version-history-time-machine)
+is read-gated on the same principles as everything else:
+
+- **Live-entity history** (`GET /api/v1/_history/<type>/<id>` and a specific
+  version) is gated by the *same* per-entity read verdict as a plain GET of the
+  entity. A principal who cannot read the entity gets a 404 indistinguishable
+  from a nonexistent id — history is never a side channel for reading a hidden
+  entity's content. Every returned snapshot is run through the same serializer
+  redaction as a live read, so `visible:`-denied properties never appear in a
+  historical version either.
+- **Deleted-entity history** has no live entity to evaluate a per-entity verdict
+  against (the conferring relations are gone), so it is gated on a global named
+  permission, **`history:read`**. Grant it via a role's `permissions:` list,
+  exactly like the delegate-X permissions:
+
+  ```yaml
+  roles:
+    auditor:
+      permissions: [history:read]
+  ```
+
+  Treat `history:read` as an **audit-everything-deleted super-permission**: it
+  is global (not per-entity), so a holder can read the surviving history of
+  *any* deleted entity of any type — including entities they never had live
+  access to. Grant it only to trusted audit/compliance roles. A **non-holder**
+  requesting a deleted entity's history gets the same 404 as a nonexistent id,
+  so the permission boundary does not itself leak which deleted entities exist.
+
+Restore (`POST /api/v1/_history/<type>/<id>/<version>/restore`) is a **write**,
+not a read: it is authorized as an ordinary update (or create, if the entity was
+deleted), runs the per-field write gate on exactly the fields that change (so it
+cannot set or clear a field the principal lacks write access to), and is audited
+and re-versioned like any edit.
+
+Not point-in-time: history read uses the *current* ACL, not the ACL as-of each
+version. Reading a live entity's history exposes its **entire** history from
+creation — including versions written before the principal gained access, and
+content later edited out. If you redact content for compliance, understand that
+older versions still hold it; a dedicated version-purge primitive is the
+intended follow-up for hard removal.
+
+**Field-visibility caveat for *conditional* `visible:` grants.** A historical
+snapshot is field-redacted against the **current** ACL context (the live
+relations and roles), not the context as-of the version. For an unconditional
+per-type `visible:` grant this is exactly correct. But if a grant is
+*conditioned* — on a relation (`visible: has_edge(...)`) or on another property
+value — the verdict computed for a snapshot can differ from the entity's verdict
+at write time, and for a **deleted** entity (whose conferring relations/roles no
+longer resolve) it can under-redact. Until the visibility verdict is frozen at
+capture time (a tracked follow-up), a policy that hides fields via *conditional*
+grants should not rely on history-read redaction for those fields. Unconditional
+per-type `visible:` grants are unaffected.
+
 ## Where to read next
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.

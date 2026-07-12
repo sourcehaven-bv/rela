@@ -46,6 +46,10 @@ type readGate interface {
 	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
 	ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult
 	SearchScope(ctx context.Context, types []string) map[string]search.TypeScope
+	// HoldsPermission reports whether the principal holds a global named
+	// permission (e.g. acl.PermHistoryRead). Used to gate deleted-entity
+	// history reads, which have no per-entity verdict to evaluate.
+	HoldsPermission(ctx context.Context, perm string) bool
 }
 
 // aclReadGate is the production implementation of readGate. Wraps a
@@ -77,6 +81,10 @@ func (g aclReadGate) PermitsReadMany(ctx context.Context, entityType string, ids
 
 func (g aclReadGate) ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult {
 	return g.req.ReadQuery(ctx, entityType)
+}
+
+func (g aclReadGate) HoldsPermission(ctx context.Context, perm string) bool {
+	return g.req.HoldsPermission(ctx, perm)
 }
 
 // SearchScope maps per-type ReadQuery verdicts onto the
@@ -120,6 +128,11 @@ func (nopReadGate) PermitsReadMany(_ context.Context, _ string, ids []string) (m
 func (nopReadGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 	return acl.ReadQueryResult{AllowAll: true}
 }
+
+// HoldsPermission under no ACL grants every permission — consistent with the
+// nop gate's allow-all posture (no policy configured ⇒ no restrictions), so
+// deleted-entity history is readable exactly as it would be pre-ACL.
+func (nopReadGate) HoldsPermission(context.Context, string) bool { return true }
 
 // SearchScope under no ACL is the wildcard-allow scope — NOT one
 // AllowAll entry per metamodel type. The difference is entities whose

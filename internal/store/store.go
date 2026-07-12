@@ -377,6 +377,94 @@ type Formatter interface {
 	FormatRelation(ctx context.Context, from, relType, to string, dryRun bool) (changed bool, err error)
 }
 
+// VersionOp is the operation that produced an entity version, mirroring the
+// write that triggered capture.
+type VersionOp string
+
+const (
+	VersionOpCreate VersionOp = "create"
+	VersionOpUpdate VersionOp = "update"
+	VersionOpRename VersionOp = "rename"
+	VersionOpDelete VersionOp = "delete"
+)
+
+// VersionMeta is a single row of an entity's version timeline, without the
+// snapshot body/properties — enough to render a history list. Version is the
+// human-facing 1-based ordinal within the entity's lineage (computed at read
+// time), newest last.
+type VersionMeta struct {
+	Version       int
+	Op            VersionOp
+	PrevID        string // set only for VersionOpRename: the entity's former ID
+	Type          string
+	ContentHash   string
+	SchemaHash    string
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+	CreatedAt     time.Time
+}
+
+// VersionSnapshot is a full captured version: its metadata plus the entity
+// content and properties as they were, and the render-schema projection (as
+// stored JSON) the snapshot was taken under. Rendering a snapshot resolves
+// display/typing against Projection, not the live metamodel, so a historical
+// version renders faithfully even after the schema drifts.
+type VersionSnapshot struct {
+	VersionMeta
+	Content    string
+	Properties map[string]interface{}
+	Projection []byte // the schema_versions.projection JSON for SchemaHash
+}
+
+// VersionInput is one entity version to persist via [VersionWriter]. It is the
+// store-facing shape of a synchronous capture (rename/delete): the snapshot
+// state, its op, the render-schema projection it was taken under (hash + JSON,
+// deduped into the backend's schema store), and attribution. PrevID is set only
+// for VersionOpRename.
+type VersionInput struct {
+	EntityID      string
+	Op            VersionOp
+	PrevID        string
+	Type          string
+	Content       string
+	Properties    map[string]interface{}
+	SchemaHash    string
+	Projection    []byte
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+}
+
+// VersionWriter persists a captured entity version. Like HistoryReader it is an
+// optional, backend-specific capability (pgstore only). The entitymanager's
+// synchronous version hook dispatches rename/delete captures here via a
+// wiring-supplied adapter; the store never learns the Principal by any other
+// route (it arrives inside VersionInput, populated from ctx at the boundary).
+type VersionWriter interface {
+	// WriteVersion persists one version row. It is best-effort from the
+	// caller's perspective (the entitymanager logs and swallows the error),
+	// but the implementation should still return a real error for diagnosis.
+	WriteVersion(ctx context.Context, in VersionInput) error
+}
+
+// HistoryReader reads an entity's captured version history. Like Formatter it
+// is NOT part of the Store interface — content versioning is a backend-specific
+// capability (only pgstore implements it today). Callers type-assert a Store to
+// HistoryReader and degrade gracefully when the assertion fails.
+type HistoryReader interface {
+	// ListVersions returns the version timeline for an entity id, oldest
+	// first, walking rename lineage so a renamed entity's pre-rename history
+	// is included. Returns an empty slice (not an error) when the id has no
+	// history. The id may name a live or an already-deleted entity.
+	ListVersions(ctx context.Context, id string) ([]VersionMeta, error)
+
+	// GetVersion returns the full snapshot for a specific 1-based version
+	// ordinal in the entity's lineage. Returns ErrNotFound if the id has no
+	// such version.
+	GetVersion(ctx context.Context, id string, version int) (*VersionSnapshot, error)
+}
+
 // EntityObserver receives notifications when entities are created, updated,
 // deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.

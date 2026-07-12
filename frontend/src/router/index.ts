@@ -43,6 +43,12 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/history/:type/:id',
+    name: 'history',
+    component: () => import('@/views/HistoryView.vue'),
+    props: true,
+  },
+  {
     path: '/kanban/:id',
     name: 'kanban',
     component: () => import('@/views/KanbanView.vue'),
@@ -99,9 +105,7 @@ const router = createRouter({
     // tell vue-router not to scroll itself.
     if (to.hash) {
       const startPath = to.fullPath
-      scrollToAnchorWhenReady(to.hash, () =>
-        router.currentRoute.value.fullPath !== startPath,
-      )
+      scrollToAnchorWhenReady(to.hash, () => router.currentRoute.value.fullPath !== startPath)
       return false
     }
     // Otherwise: top of the page.
@@ -245,7 +249,7 @@ router.onError((err, to, from) => {
       if (now - last < 10_000) {
         console.warn(
           '[router-error] chunk-load failure, already reloaded recently — skipping:',
-          msg,
+          msg
         )
         return
       }
@@ -265,10 +269,7 @@ router.onError((err, to, from) => {
   ) {
     return
   }
-  console.error(
-    `[router-error] navigating to=${to.fullPath} from=${from.fullPath}:`,
-    err,
-  )
+  console.error(`[router-error] navigating to=${to.fullPath} from=${from.fullPath}:`, err)
 })
 
 export default router

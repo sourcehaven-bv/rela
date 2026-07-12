@@ -166,6 +166,12 @@ type Deps struct {
 	// missing ACL fails fast at wiring time, not later as a silently
 	// disabled authz gate.
 	ACL acl.ACL
+
+	// VersionRecorder captures a synchronous entity version for rename and
+	// delete (see [VersionRecorder]). Optional: nil disables synchronous
+	// version capture (fs/mem builds, and the postgres build's create/update
+	// versions are handled by the store's periodic sweep, not this hook).
+	VersionRecorder VersionRecorder
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -588,6 +594,13 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return nil, ErrHasRelations
 	}
 
+	// Capture the final pre-delete version BEFORE the store delete. The row is
+	// hard-deleted below, so a version taken after the delete would be
+	// unrecoverable if the process died in between — order-before closes that
+	// permanent-loss window (the store delete is still not transactional with
+	// this capture; strict atomicity is a future hardening).
+	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+
 	// Delegate the actual deletion to the store's cascade, which removes
 	// the relation files and the entity file under a single lock and aborts
 	// fail-secure if any relation file cannot be removed — so the entity is
@@ -673,6 +686,11 @@ func (m *Manager) RenameEntity(
 		return res, nil
 	}
 	m.recordRenameAudit(ctx, oldID, postEntity)
+	// Capture the rename as a version event carrying the old id (prev_id), so a
+	// renamed entity's history is walkable back to its former id. Only the
+	// choke-point knows old->new; a later sweep sees the renamed entity as an
+	// ordinary update and cannot reconstruct this link.
+	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
 	return res, nil
 }
 

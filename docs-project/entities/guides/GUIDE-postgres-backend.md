@@ -54,8 +54,10 @@ CA) so the connection is never silently unencrypted.
 ## Schema and migrations
 
 On first start the PostgreSQL build creates its schema automatically
-(an `entities`, `relations`, `attachments`, and `schema_version` table,
-plus the `pg_trgm` extension for substring/fuzzy search). Migrations are
+(`entities`, `relations`, `attachments`, `schema_version`, and the
+`entity_versions` / `schema_versions` history tables — see
+[Version history](#version-history-time-machine) — plus the `pg_trgm`
+extension for substring/fuzzy search). Migrations are
 embedded in the binary and applied idempotently on every start — they run
 in a single transaction under an advisory lock, so concurrent starts are
 safe — and upgrading is just deploying a newer binary and restarting.
@@ -110,6 +112,66 @@ What you need to know to run it:
   updates are unavailable (a warning is logged).
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
+
+## Version history (time machine)
+
+The PostgreSQL build automatically keeps a **content version history** of every
+entity — the analogue of the git history a filesystem project gets for free.
+You can list an entity's past versions, view any one of them (rendered against
+the schema it was written under, not today's), diff two, and restore an entity
+to an earlier state — each version carrying who made the change and when.
+
+How capture works:
+
+- **Edits are debounced.** A background reconciliation sweep snapshots entities
+  that have been *settled* (un-edited) for a few minutes, so a burst of edits
+  collapses to one version rather than one-per-keystroke. An entity under
+  continuous editing is still snapshotted at least once per staleness ceiling
+  (default ~1 hour), so a long editing session is never entirely unrecorded.
+- **Deletes and renames are captured immediately** at write time (a delete
+  records the final pre-delete state so a deleted entity's history — and the
+  ability to restore it — survives; a rename records the old→new id so history
+  stays continuous across the rename).
+- Unchanged re-saves are de-duplicated (no version row when content is identical
+  to the latest).
+
+Attribution: the version's principal (user + tool) and any `triggered_by`
+(automation / schedule / cascade) are recorded. This inherits the same trust
+model as the [audit log](audit-log.md) — attribution is only as strong as your
+deployment's identity front door, so use a verifying (JWT) principal source
+where version attribution matters for accountability.
+
+Storage: two tables — `entity_versions` (one full snapshot per version, keyed by
+a versioning-internal record id so history survives id rename/reuse) and
+`schema_versions` (the content-addressed render-schema each snapshot was taken
+under, de-duplicated so an unchanged schema across thousands of writes stores
+one row). Both are separate from the hot `entities` table; the sweep filter adds
+an index on `entities(updated_at)`. History is retained indefinitely by default;
+apply your own retention (by age or count) if storage growth matters — but note
+audit/compliance deployments typically keep ≥ 12 months.
+
+From the CLI (PostgreSQL build):
+
+```bash
+rela history TKT-42                 # the version timeline with attribution
+rela history TKT-42 --version 3     # print version 3's snapshot (JSON) …
+rela history TKT-42 --version 3 | diff - <(rela history TKT-42 --version 5)
+                                   # … pipe two snapshots to any diff tool
+rela restore TKT-42 3              # restore the entity to version 3
+```
+
+The data-entry web UI shows the same timeline, an in-page diff, and a restore
+button (gated by your write permission) on each entity's detail page.
+
+Access control: reading the history of a **live** entity requires the same read
+permission as reading the entity itself. Reading the history of a **deleted**
+entity requires the global `history:read` permission — see
+[ACL security](acl-security.md). Restore is a normal write: it is authorized,
+validated, and audited like any edit, and produces a new version.
+
+Scope: entity content and properties are versioned. An entity's *relation set*
+as-of a version is not (relation history is a separate future capability), so a
+restore recovers content and properties, not the historical relations.
 
 ## Other scope notes
 

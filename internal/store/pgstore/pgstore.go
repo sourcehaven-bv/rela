@@ -62,11 +62,15 @@ type DBTX interface {
 
 // Store is a PostgreSQL-backed store.Store.
 //
-// TODO(TKT-N0IKN9): the exported surface (29) is the mandated store.Store
-// interface, which consumers depend on directly by design. Required-interface
-// exception — tracks the interface size, not accreted public API.
+// TODO(TKT-N0IKN9): the exported surface is the mandated store.Store interface
+// (29 methods) PLUS the optional versioning capabilities pgstore also provides
+// — store.HistoryReader (ListVersions/GetVersion), store.VersionWriter
+// (WriteVersion), and StartVersionSweep — which consumers type-assert. All are
+// interface-mandated methods, not accreted public API; Required-interface
+// exception, tracks the interface size.
 //
-//plimsoll:max-exported-methods=30
+//plimsoll:max-exported-methods=34
+//plimsoll:max-methods=42
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
@@ -78,6 +82,7 @@ type Store struct {
 	originID string
 	channel  string
 	listener *listener // nil unless a listener was started (see startListener)
+	sweep    *sweep    // nil unless a version-reconciliation sweep was started
 
 	mu          sync.Mutex // guards subscribers + nextSubID only
 	subscribers map[int]chan store.Event
@@ -234,9 +239,12 @@ func (s *Store) Close() error {
 	s.closed = true
 	l := s.listener
 	s.listener = nil
+	sw := s.sweep
+	s.sweep = nil
 	s.mu.Unlock()
 
-	l.stop() // nil-safe; blocks until the listener goroutine exits
+	sw.stop() // nil-safe; blocks until the sweep goroutine exits
+	l.stop()  // nil-safe; blocks until the listener goroutine exits
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

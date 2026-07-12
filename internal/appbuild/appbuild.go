@@ -669,14 +669,15 @@ func assemble(
 	}
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:        st,
-		Meta:         base.meta,
-		Templater:    templater,
-		Audit:        cfg.Audit,
-		ACL:          resolvedACL,
-		Automations:  autoEngine,
-		Cascade:      cascadeRunner,
-		ScriptRunner: script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		Store:           st,
+		Meta:            base.meta,
+		Templater:       templater,
+		Audit:           cfg.Audit,
+		ACL:             resolvedACL,
+		Automations:     autoEngine,
+		Cascade:         cascadeRunner,
+		ScriptRunner:    script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		VersionRecorder: versionRecorderFor(st),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -687,6 +688,11 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+
+	// Start the pgstore version-reconciliation sweep (postgres build only; a
+	// no-op elsewhere). It captures create/update versions for settled entities;
+	// rename/delete are captured synchronously via the entitymanager hook above.
+	startVersionSweepIfSupported(st, base.meta)
 
 	return &Services{
 		fs:              cfg.FS,
@@ -709,6 +715,47 @@ func assemble(
 		audit:           cfg.Audit,
 	}, nil
 }
+
+// versionRecorder adapts a store.VersionWriter to the entitymanager's
+// consumer-side VersionRecorder, translating the identically-shaped record. It
+// exists only to keep entitymanager depending on its own narrow interface
+// rather than on store.VersionWriter directly.
+type versionRecorder struct {
+	w store.VersionWriter
+}
+
+func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.VersionRecord) error {
+	return r.w.WriteVersion(ctx, store.VersionInput{
+		EntityID:      v.EntityID,
+		Op:            v.Op,
+		PrevID:        v.PrevID,
+		Type:          v.Type,
+		Content:       v.Content,
+		Properties:    v.Properties,
+		SchemaHash:    v.SchemaHash,
+		Projection:    v.Projection,
+		PrincipalUser: v.PrincipalUser,
+		PrincipalTool: v.PrincipalTool,
+		TriggeredBy:   v.TriggeredBy,
+	})
+}
+
+// versionRecorderFor returns a synchronous version recorder when the store
+// supports version writes (pgstore), or nil when it does not (fsstore/memstore
+// — where the entitymanager's version hook then no-ops). Returning a typed nil
+// would defeat the manager's nil check, so an unsupported store yields an
+// untyped nil interface.
+func versionRecorderFor(st store.Store) entitymanager.VersionRecorder {
+	if w, ok := st.(store.VersionWriter); ok {
+		return versionRecorder{w: w}
+	}
+	return nil
+}
+
+// (startVersionSweepIfSupported is defined per build tag in
+// versionsweep_postgres.go / versionsweep_nosweep.go — the postgres build starts
+// the pgstore reconciliation sweep, every other build no-ops — which keeps this
+// build-agnostic file free of any pgstore import. assemble calls it above.)
 
 // Close releases resources held by Services: store first (so any
 // in-flight observer callbacks complete), then the search backend.

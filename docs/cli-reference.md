@@ -337,6 +337,71 @@ rela delete REQ-001 --cascade
 
 ---
 
+### rela history
+
+Show an entity's version history, or print a past version's snapshot for piping
+to a diff tool. **PostgreSQL build only** — content versioning is a
+PostgreSQL-backend capability (filesystem projects use git for the same
+purpose); on other builds this reports that the backend does not support
+history.
+
+```bash
+rela history <id> [--version N]
+```
+
+**Arguments:**
+
+- `id` - Entity ID (may name a live or an already-deleted entity)
+
+**Flags:**
+
+- `--version N` - Print the full snapshot for version ordinal N (as JSON)
+  instead of the timeline, so it can be piped to an external diff tool
+
+Each timeline row shows the version number, timestamp, operation
+(create/update/rename/delete), and the principal (user + tool) that made the
+change. Reading a deleted entity's history requires the `history:read`
+permission (see the ACL guide).
+
+**Examples:**
+
+```bash
+rela history TKT-42                       # the version timeline
+rela history TKT-42 --version 3           # print version 3's snapshot
+
+# Diff two versions with any external tool (Unix-style):
+diff <(rela history TKT-42 --version 3) <(rela history TKT-42 --version 5)
+```
+
+---
+
+### rela restore
+
+Restore an entity's content and properties to a past version. **PostgreSQL
+build only.** The restore is applied as a normal write — authorized, validated,
+audited, and itself recorded as a new version (history is never rewritten). If
+the entity was deleted, it is re-created.
+
+```bash
+rela restore <id> <version>
+```
+
+**Arguments:**
+
+- `id` - Entity ID to restore
+- `version` - The version ordinal to restore to (see `rela history <id>`)
+
+Only entity content and properties are restored; the entity's relations
+as-of that version are not (relation history is a separate capability).
+
+**Examples:**
+
+```bash
+rela restore TKT-42 3
+```
+
+---
+
 ### rela attach
 
 Attach file(s) to an entity.

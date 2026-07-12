@@ -1,0 +1,9 @@
+---
+id: RR-TPATBK
+type: review-response
+title: 'Snapshot redaction evaluated against a live/relation-less reconstructed stub — conditional visible: grants under-redact'
+finding: 'cranky-code-reviewer C2: serveHistoryVersion reconstructs entityPkg.New(id, snap.Type) with only Content+Properties, then forWire→stripHiddenProperties→FieldVerdicts. But FieldVerdicts resolves visibility against (a) the LIVE store relations (empty for a deleted entity → has_edge()-style grants flip) and (b) roles from ForEntity against the live ACL graph (only ''everyone'' resolves for a deleted entity → role-scoped hidden fields un-hide). So a field correctly hidden at write time can LEAK in the snapshot the moment a visible: grant is relation- or property-conditioned. Downgraded from the reviewer''s ''critical'' to significant because it requires a conditional visible: grant in policy (unconditional per-type grants redact correctly); still must be fixed or fenced before shipping with such policies. Fix (sound): freeze the field-visibility verdict at capture time and redact against it (same pattern as the stored schema Projection). Interim: refuse snapshot serve for types with any conditional visible: grant.'
+severity: significant
+reason: 'The sound fix — freezing the field-visibility verdict at capture time (parallel to the stored schema projection) — is a substantial store-schema + capture-path change, deferred to follow-up TKT-BW6UUL''s sibling (filed). The gap only manifests when the ACL policy uses CONDITIONAL visible: grants (relation- or property-conditioned); unconditional per-type visible: grants redact correctly today. Documented the limitation in a code comment at serveHistoryVersion and (to be added) in docs/acl-security.md. Acceptable to ship v1 with this documented boundary since the common policy shape is unconditional; not acceptable to leave undocumented. Downgraded from the reviewer''s ''critical'' accordingly.'
+status: deferred
+---

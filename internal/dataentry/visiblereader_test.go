@@ -45,6 +45,8 @@ func (configGate) SearchScope(context.Context, []string) map[string]search.TypeS
 	return map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
 }
 
+func (configGate) HoldsPermission(context.Context, string) bool { return false }
+
 func seedReader(t *testing.T) visibleReader {
 	t.Helper()
 	st := memstore.New()

@@ -193,6 +193,28 @@ Rules when touching this:
   is the documented upgrade, not built. The data-entry SSE feed consumes this
   via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
   in-process single-writer by nature.
+- **Content versioning** (TKT-9INY0Y, postgres only). Two tables
+  (`entity_versions` = one full snapshot per version; `schema_versions` =
+  content-addressed render-schema projection, deduped) plus a dedicated
+  `version_seq` sequence. **Use `version_seq`, never `rela_seq`** — `rela_seq`
+  feeds the change-feed watermark (`primeWatermark`/`catchUp` scan
+  entities/relations/deletions), and burning it on version rows that don't land
+  in those tables would erode the overlap budget and drop real events. Capture
+  is **hybrid**: rename+delete are captured synchronously at the entitymanager
+  boundary (they carry old→new id / pre-delete state the sweep can't
+  reconstruct); create/update are captured by a debounced reconciliation
+  **sweep** goroutine (`sweep.go`, started/stopped like the listener). The sweep
+  runs its **entire tick on ONE acquired pool connection** under
+  `pg_try_advisory_lock` — the lock is session-scoped, so issuing the inserts via
+  the pool (other sessions) would silently void the single-writer guarantee.
+  Attribution comes from ctx only (the store never learns the Principal by
+  another route — it arrives inside `store.VersionInput` populated at the
+  boundary); swept create/update rows use a `version-sweep` system principal and
+  the editing principal is recoverable from the audit log. Lineage across a
+  rename/id-reuse is fenced by `[lo,hi)` vseq ranges in a recursive-CTE walk (an
+  unbounded `entity_id = ANY(...)` read would merge two entities' histories — see
+  the version.go doc). `HistoryReader`/`VersionWriter` are optional store
+  capabilities (type-asserted like `store.Formatter`), NOT part of `store.Store`.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
