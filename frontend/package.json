@@ -39,7 +39,7 @@
     "@pinia/testing": "^1.0.3",
     "@testing-library/vue": "^8.0.3",
     "@types/dompurify": "^3.2.0",
-    "@types/node": "^25.8.0",
+    "@types/node": "^26.0.1",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.10",
     "@vue/tsconfig": "^0.9.1",
