@@ -129,7 +129,11 @@ func TestAppCSSSource(t *testing.T) {
 	// nil palette → fall back to the embedded default tokens. The embed
 	// carries a :root.dark block, so it must be present here.
 	css := appCSSSource(nil)
-	for _, want := range []string{"--text-color", ":root", ":root.dark", ".btn", ".btn-primary", ".input", ".card"} {
+	for _, want := range []string{
+		"--text-color", ":root", ":root.dark", ".btn", ".btn-primary", ".input", ".card",
+		// Typography is always emitted (font tokens + applied on <html>).
+		"--font-family", "--font-size-base", "font-family: var(--font-family)",
+	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("appCSSSource(nil) missing %q", want)
 		}
@@ -182,6 +186,15 @@ func TestAppCSSSourceUsesResolvedPalette(t *testing.T) {
 	for _, want := range []string{":root {", ":root.dark {", ".btn-primary"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("appCSSSource(resolved) missing %q", want)
+		}
+	}
+	// Typography is palette-INDEPENDENT: the font tokens must still be emitted
+	// even when the color :root block comes from the resolved palette (the
+	// palette path only rewrites colors, so without the always-on typography
+	// block --font-family would be undefined).
+	for _, want := range []string{"--font-family", "--font-size-base", "font-family: var(--font-family)"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("appCSSSource(resolved) missing typography %q", want)
 		}
 	}
 }

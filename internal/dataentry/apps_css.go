@@ -71,6 +71,30 @@ const appBaseControlsCSS = `
 }
 `
 
+// appTypographyCSS defines the font tokens and applies them on the app document.
+// Unlike the color tokens, typography is palette-INDEPENDENT (it's the same for
+// every project), so it is emitted unconditionally by appCSSSource — the
+// per-project palette path only rewrites the color :root block and would
+// otherwise leave --font-family undefined. Applying family + base size on <html>
+// is what stops a linking app from falling back to the browser default serif at
+// 16px (a sandboxed app iframe is a separate document with no inherited
+// typography). Apps can override per-element. Font is app-only (the SPA sets its
+// own in App.vue), so it lives here rather than in the shared tokens.css.
+const appTypographyCSS = `
+/* --- rela typography (font tokens + application) --- */
+:root {
+  --font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+}
+html {
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+}
+`
+
 // appCSSSource returns the full stylesheet served at the reserved per-app path
 // /api/v1/_apps/<id>/_rela.css: the theme tokens followed by the base controls.
 // An app opts in with <link rel="stylesheet" href="_rela.css">; theme follows
@@ -95,6 +119,10 @@ func appCSSSource(palette *ResolvedPalette) string {
 		// No resolved palette — fall back to the embedded default tokens.
 		b.WriteString(appTokensCSS)
 	}
+	// Typography is palette-independent, so always emit it (the palette path
+	// only rewrites the color :root block).
+	b.WriteString("\n")
+	b.WriteString(appTypographyCSS)
 	b.WriteString("\n")
 	b.WriteString(appBaseControlsCSS)
 	return b.String()

@@ -2536,13 +2536,20 @@ linking the served stylesheet:
 (`_rela.css` is a relative URL — it resolves against the app's own base,
 `/api/v1/_apps/<id>/`, same as your other sibling assets.)
 
-`_rela.css` provides two things:
+`_rela.css` provides three things:
 
 - **Theme tokens** — CSS custom properties for colors (`--text-color`,
   `--bg-color`, `--card-bg`, `--border-color`, `--accent-color`,
   `--error/success/warning/info-color`, the `--badge-*` set), surfaces, and
   borders. Use them in your own CSS (`color: var(--text-color)`) so the app
   matches the host palette.
+- **Typography** — `--font-family` (the host UI font) and a small size scale
+  (`--font-size-sm` / `--font-size-base` / `--font-size-lg` / `--font-size-xl`).
+  Linking `_rela.css` applies `--font-family` and `--font-size-base` on your
+  app's `<html>` automatically, so text matches the host instead of the
+  browser's default serif — a sandboxed app iframe is a separate document with
+  no inherited typography. Use `var(--font-size-lg)` etc. for headings; override
+  per-element whenever you like.
 - **Base controls** — three atomic classes: `.btn` / `.btn-primary` (buttons),
   `.input` (text inputs), `.card` (a bordered surface). These are deliberately
   minimal; build anything more structural (tables, selects, modals) yourself
