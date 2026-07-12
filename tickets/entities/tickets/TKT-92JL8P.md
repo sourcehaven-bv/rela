@@ -5,7 +5,7 @@ title: 'pgstore relation versioning: extend time-machine history to relation pro
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 ## Problem

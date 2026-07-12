@@ -2,7 +2,7 @@
 id: REV-4P2LTJ
 type: review-checklist
 title: 'Review: pgstore relation versioning: extend time-machine history to relation props + content'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -51,7 +51,7 @@ dual-endpoint deny closes the TO oracle (RR-SDDYZO).
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI — PR created
-- [ ] All CI checks pass — **BLOCKED on stacking**: PR targets the unmerged #1104 branch, and GitHub CI (`ci.yml`) only runs for PRs into `main`/`develop`. Full CI validated LOCALLY (lint/arch/plimsoll/builds/race-tests/coverage/frontend). GitHub CI will run once #1104 merges and this PR is retargeted to `develop`.
+- [x] All CI checks pass — #1104 (entity versioning) merged into develop; #1112 rebased onto develop (dropping the duplicated entity commits via `rebase --onto`) and CI now runs. Green except the known pre-existing CodeQL osfs.go baseline (non-blocker) and a develop-side lint line (apps_css.go, PR #1061) fixed in passing.
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1112 (stacked on #1104 / TKT-9INY0Y)

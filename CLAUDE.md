@@ -230,7 +230,7 @@ Rules when touching this:
   `rename` version per incident relation on the new triple carrying
   `prev_from`/`prev_to`, and `relationLineageIDs` walks those links so history is
   continuous. Read/restore is gated on **both** endpoints (FROM ∧ TO) — the FROM
-  entity only *owns* the UI placement, it is not the auth boundary (a TO-side
+  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
   oracle otherwise). Relations have NO field-level redaction today; relation
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
