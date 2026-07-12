@@ -774,6 +774,49 @@ func TestRename_NotFoundReturnsTypedError(t *testing.T) {
 	}
 }
 
+// TestRename_TargetExistsDoesNotOverwrite pins BUG-5QDV6F: renaming onto
+// an ID another entity already occupies must fail with
+// ErrEntityAlreadyExists and leave the target untouched — never clobber
+// it. Routing through the atomic store.RenameEntity makes this the
+// store's conflict check (no non-atomic create-then-update window), and
+// the counting store confirms the rename performs zero writes.
+func TestRename_TargetExistsDoesNotOverwrite(t *testing.T) {
+	t.Parallel()
+	mgr, cs := newManager(t, nil)
+	ctx := context.Background()
+	src := createReq(t, mgr, "source")
+	dst := createReq(t, mgr, "occupied target")
+
+	creates, updates, deletes := cs.creates.Load(), cs.updates.Load(), cs.deletes.Load()
+
+	_, err := mgr.RenameEntity(ctx, src.ID, dst.ID, entity.RenameOptions{})
+	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("expected ErrEntityAlreadyExists, got %v", err)
+	}
+	if got := cs.creates.Load() - creates; got != 0 {
+		t.Errorf("conflicting rename creates = %d, want 0", got)
+	}
+	if got := cs.updates.Load() - updates; got != 0 {
+		t.Errorf("conflicting rename updates = %d, want 0 (must never overwrite the target)", got)
+	}
+	if got := cs.deletes.Load() - deletes; got != 0 {
+		t.Errorf("conflicting rename deletes = %d, want 0", got)
+	}
+
+	// Both entities still present at their original IDs, with their
+	// original titles — the target was not overwritten by the source.
+	gotDst, err := cs.GetEntity(ctx, dst.ID)
+	if err != nil {
+		t.Fatalf("target entity missing after conflicting rename: %v", err)
+	}
+	if title := gotDst.GetString("title"); title != "occupied target" {
+		t.Errorf("target title = %q, want %q — target was clobbered", title, "occupied target")
+	}
+	if _, err := cs.GetEntity(ctx, src.ID); err != nil {
+		t.Errorf("source entity missing after failed rename: %v", err)
+	}
+}
+
 // --- Relation methods ---
 
 func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
