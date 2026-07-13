@@ -1275,6 +1275,19 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	outgoing := a.reader.outgoingRelations(r.Context(), entityID)
 	incoming := a.reader.incomingRelations(r.Context(), entityID)
 
+	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
+	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
+	// the source-only read gate. Mirror the list path (handleV1ListEntities):
+	// compute the visible neighbor set in one type-batched pass and drop any
+	// edge whose peer is not visible BEFORE reading its type. A visible neighbor
+	// stays; a hidden one is dropped (no over-filtering).
+	// TODO(BUG-ABXMAV): the "gate a set of neighbor edges" step is now
+	// replicated here, in handleV1GetRelationType, and in the list path — a
+	// shared chokepoint (P3) would collapse the three; deferred to avoid
+	// churning the list path in a security fix.
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader,
+		neighborIDsOf(outgoing, incoming))
+
 	relations := make(map[string][]map[string]interface{})
 
 	// Track the sort property per group, derived from the relation type's
@@ -1282,6 +1295,9 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	groupSortProp := make(map[string]string)
 
 	for _, edge := range outgoing {
+		if !visibleNeighbors[edge.To] {
+			continue
+		}
 		rel := map[string]interface{}{
 			"id":        edge.To,
 			"type":      a.reader.entityType(r.Context(), edge.To),
@@ -1299,6 +1315,9 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	for _, edge := range incoming {
+		if !visibleNeighbors[edge.From] {
+			continue
+		}
 		relDef, ok := s.Meta.Relations[edge.Type]
 		if !ok {
 			continue
@@ -1399,6 +1418,24 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		edges = a.reader.outgoingRelations(r.Context(), entityID)
 	}
 
+	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP): same rationale as
+	// handleV1EntityRelations. Collect this relation-type's peers and compute
+	// the visible set in one batched pass, then skip any hidden peer BEFORE
+	// reading its type (so its type/meta never reach the wire). See the
+	// shared-chokepoint TODO in handleV1EntityRelations.
+	var peerIDs []string
+	for _, edge := range edges {
+		if edge.Type != relType {
+			continue
+		}
+		peerID := edge.To
+		if incoming {
+			peerID = edge.From
+		}
+		peerIDs = append(peerIDs, peerID)
+	}
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
+
 	relations := make([]map[string]interface{}, 0, len(edges))
 
 	for _, edge := range edges {
@@ -1408,6 +1445,9 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		peerID := edge.To
 		if incoming {
 			peerID = edge.From
+		}
+		if !visibleNeighbors[peerID] {
+			continue
 		}
 		rel := map[string]interface{}{
 			"id":   peerID,
