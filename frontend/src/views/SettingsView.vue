@@ -31,6 +31,20 @@ const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const { confirm } = useConfirm()
 
+// Display-timezone picker. The list comes from Intl (all IANA zones); the
+// empty value maps to "Browser default". Changing it only affects how datetime
+// values are displayed/entered — stored values stay UTC (client-only pref).
+const timezoneOptions = computed<string[]>(() => {
+  const intlWithValues = Intl as typeof Intl & {
+    supportedValuesOf?: (key: string) => string[]
+  }
+  return intlWithValues.supportedValuesOf?.('timeZone') ?? []
+})
+const displayTimezone = computed<string>({
+  get: () => uiStore.datetimeTimezone,
+  set: (tz: string) => uiStore.setDatetimeTimezone(tz),
+})
+
 // State
 const loading = ref(true)
 const saving = ref(false)
@@ -1292,6 +1306,28 @@ onMounted(() => {
             class="btn btn-secondary btn-sm"
             @click="handleResetPalette"
           >Reset</button>
+        </div>
+      </div>
+
+      <!-- Display timezone -->
+      <div class="settings-card">
+        <h3>Display timezone</h3>
+        <p class="description">
+          The time zone datetime fields are shown and entered in (applies to all
+          times, this browser only). Stored values are always kept in UTC — this
+          setting changes only how they are displayed, never the saved value.
+        </p>
+        <div class="settings-row">
+          <label for="display-timezone-select" class="tz-label">Time zone</label>
+          <select
+            id="display-timezone-select"
+            v-model="displayTimezone"
+            class="input tz-select"
+            aria-label="Display timezone for datetime fields"
+          >
+            <option value="">Browser default ({{ uiStore.effectiveTimezone }})</option>
+            <option v-for="tz in timezoneOptions" :key="tz" :value="tz">{{ tz }}</option>
+          </select>
         </div>
       </div>
 

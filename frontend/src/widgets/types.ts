@@ -80,6 +80,7 @@ export type WidgetHintKind =
   | 'enum-list'
   | 'boolean'
   | 'date'
+  | 'datetime'
   | 'integer'
   | 'rrule'
 

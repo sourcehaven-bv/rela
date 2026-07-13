@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -70,7 +71,10 @@ func Match(rec Record, filter *Filter, propDef *metamodel.PropertyDef, m *metamo
 	switch propDef.Type {
 	case metamodel.PropertyTypeString:
 		return matchString(val, filter)
-	case metamodel.PropertyTypeDate:
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
+		// datetime reuses matchDate: ParseDateValue yields a full time.Time
+		// (incl. time-of-day), so comparison is instant-granular. Equality
+		// is therefore strict-instant, not day-granular.
 		return matchDate(val, filter, propDef)
 	case metamodel.PropertyTypeInteger:
 		return matchInteger(val, filter)
@@ -166,8 +170,8 @@ func validateOperatorForType(op Operator, propDef *metamodel.PropertyDef, m *met
 			return fmt.Errorf("operator %q not supported for string property", op)
 		}
 
-	case metamodel.PropertyTypeDate, metamodel.PropertyTypeInteger:
-		// Date and integer support: =, !=, <, <=, >, >=
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime, metamodel.PropertyTypeInteger:
+		// Date, datetime and integer support: =, !=, <, <=, >, >=
 		if op == OpRegex || op == OpFuzzy {
 			return fmt.Errorf("operator %q not supported for %s property", op, propType)
 		}
@@ -260,17 +264,24 @@ func matchString(val interface{}, filter *Filter) (bool, error) {
 	}
 }
 
-// matchDate matches a date property value
+// matchDate matches a date or datetime property value. The entity value may
+// be a string (machine/quoted) or a time.Time — yaml.v3 auto-decodes an
+// unquoted timestamp/date scalar to time.Time, so both must be accepted.
+// Comparison is instant-granular for both date and datetime; for datetime
+// this makes equality strict-instant.
 func matchDate(val interface{}, filter *Filter, propDef *metamodel.PropertyDef) (bool, error) {
-	s, ok := val.(string)
-	if !ok {
-		return false, fmt.Errorf("expected date string value, got %T", val)
-	}
-
-	// Parse entity's date value
-	entityDate, err := metamodel.ParseDateValue(s, propDef)
-	if err != nil {
-		return false, fmt.Errorf("invalid date value %q: %w", s, err)
+	var entityDate time.Time
+	switch v := val.(type) {
+	case time.Time:
+		entityDate = v
+	case string:
+		parsed, err := metamodel.ParseDateValue(v, propDef)
+		if err != nil {
+			return false, fmt.Errorf("invalid date value %q: %w", v, err)
+		}
+		entityDate = parsed
+	default:
+		return false, fmt.Errorf("expected date string or time.Time value, got %T", val)
 	}
 
 	// Parse filter's date value

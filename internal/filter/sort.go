@@ -37,7 +37,7 @@ func Sort[T any](
 
 		var less bool
 		switch propDef.Type {
-		case metamodel.PropertyTypeDate:
+		case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 			less = compareDates(valI, valJ, propDef)
 		case metamodel.PropertyTypeInteger:
 			less = compareIntegers(valI, valJ)
@@ -308,6 +308,11 @@ func comparePropValues(valI, valJ interface{}, piI, piJ *propInfo, meta *metamod
 	switch {
 	case piI.def != nil && piJ.def != nil && piI.def.Type == piJ.def.Type:
 		return compareByPropDef(valI, valJ, piI.def, piI.enumIndex)
+	case piI.def != nil && piJ.def != nil && isTimeLike(piI.def.Type) && isTimeLike(piJ.def.Type):
+		// A mixed date/datetime column: both parse to a full time.Time via
+		// ParseDateValue, so compare as instants rather than lexically
+		// (RR-5R3QFJ). piI.def supplies the format fallback.
+		return compareDates(valI, valJ, piI.def)
 	case piI.def != nil && piJ.def != nil:
 		rankI := typeRank(piI.def, meta)
 		rankJ := typeRank(piJ.def, meta)
@@ -327,7 +332,7 @@ func comparePropValues(valI, valJ interface{}, piI, piJ *propInfo, meta *metamod
 // compareByPropDef compares two values using the given property definition.
 func compareByPropDef(valI, valJ interface{}, propDef *metamodel.PropertyDef, enumIndex map[string]int) bool {
 	switch propDef.Type {
-	case metamodel.PropertyTypeDate:
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
 		return compareDates(valI, valJ, propDef)
 	case metamodel.PropertyTypeInteger:
 		return compareIntegers(valI, valJ)
@@ -351,11 +356,20 @@ const (
 	typeRankString
 )
 
+// isTimeLike reports whether a property type is compared as a time.Time
+// instant (date or datetime). Both parse via ParseDateValue.
+func isTimeLike(propType string) bool {
+	return propType == metamodel.PropertyTypeDate || propType == metamodel.PropertyTypeDatetime
+}
+
 func typeRank(propDef *metamodel.PropertyDef, meta *metamodel.Metamodel) int {
 	switch propDef.Type {
 	case metamodel.PropertyTypeInteger:
 		return typeRankInteger
-	case metamodel.PropertyTypeDate:
+	case metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime:
+		// datetime shares date's rank so mixed date+datetime columns
+		// interleave chronologically rather than degrading to lexical
+		// string order (RR-5R3QFJ).
 		return typeRankDate
 	case metamodel.PropertyTypeBoolean:
 		return typeRankBoolean

@@ -19,7 +19,7 @@ export interface EntityType {
 }
 
 export interface PropertyDef {
-  type: 'string' | 'date' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
+  type: 'string' | 'date' | 'datetime' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
   required?: boolean
   values?: string[]
   // Optional display labels keyed by enum value. Display-only: the stored/

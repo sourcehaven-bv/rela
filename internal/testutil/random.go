@@ -63,6 +63,21 @@ func RandomDate() string {
 	return date.Format("2006-01-02")
 }
 
+// RandomDatetime generates a random RFC3339 (UTC) timestamp within the last
+// year. Unlike RandomDate it carries a time-of-day, so it produces valid
+// values for datetime properties.
+func RandomDatetime() string {
+	const daysInYear = 365
+	const secondsInDay = 24 * 60 * 60
+	now := time.Now().UTC()
+	rngMu.Lock()
+	daysAgo := rng.Intn(daysInYear)
+	secs := rng.Intn(secondsInDay)
+	rngMu.Unlock()
+	ts := now.AddDate(0, 0, -daysAgo).Truncate(24 * time.Hour).Add(time.Duration(secs) * time.Second)
+	return ts.Format(time.RFC3339)
+}
+
 // RandomEnumValue picks a random value from the given list.
 // Panics if values is empty.
 func RandomEnumValue(values []string) string {

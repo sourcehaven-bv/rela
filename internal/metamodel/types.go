@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"regexp"
+	"time"
 )
 
 // Metamodel represents the full metamodel configuration
@@ -271,13 +272,14 @@ func (p PropertyDef) FileMax() int {
 
 // Built-in property types
 const (
-	PropertyTypeString  = "string"
-	PropertyTypeDate    = "date"
-	PropertyTypeInteger = "integer"
-	PropertyTypeBoolean = "boolean"
-	PropertyTypeEnum    = "enum"
-	PropertyTypeFile    = "file"
-	PropertyTypeRrule   = "rrule"
+	PropertyTypeString   = "string"
+	PropertyTypeDate     = "date"
+	PropertyTypeDatetime = "datetime"
+	PropertyTypeInteger  = "integer"
+	PropertyTypeBoolean  = "boolean"
+	PropertyTypeEnum     = "enum"
+	PropertyTypeFile     = "file"
+	PropertyTypeRrule    = "rrule"
 )
 
 // ID types for entities
@@ -334,20 +336,30 @@ func (m OrderableMode) IsValid() bool {
 // DefaultDateFormat is the default format for date properties (ISO 8601)
 const DefaultDateFormat = "2006-01-02"
 
+// DefaultDatetimeFormat is the default format for datetime properties (RFC3339,
+// a time-bearing ISO 8601 instant). Unlike date, a datetime value carries a
+// time-of-day and (canonically) a UTC offset.
+const DefaultDatetimeFormat = time.RFC3339
+
 // IsBuiltinType returns true if the type is a built-in property type
 func IsBuiltinType(t string) bool {
 	switch t {
-	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger,
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeInteger,
 		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule:
 		return true
 	}
 	return false
 }
 
-// GetDateFormat returns the date format for a property, defaulting to ISO 8601
+// GetDateFormat returns the date format for a property, defaulting to ISO 8601.
+// For datetime properties the default is RFC3339 (time-bearing); an explicit
+// Format still overrides.
 func (p *PropertyDef) GetDateFormat() string {
 	if p.Format != "" {
 		return p.Format
+	}
+	if p.Type == PropertyTypeDatetime {
+		return DefaultDatetimeFormat
 	}
 	return DefaultDateFormat
 }

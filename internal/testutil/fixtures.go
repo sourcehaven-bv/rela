@@ -186,6 +186,8 @@ func (b *EntityBuilder) generatePropertyValue(_ string, prop metamodel.PropertyD
 		return RandomBool()
 	case metamodel.PropertyTypeDate:
 		return RandomDate()
+	case metamodel.PropertyTypeDatetime:
+		return RandomDatetime()
 	case metamodel.PropertyTypeFile:
 		return "test-file.txt"
 	default:

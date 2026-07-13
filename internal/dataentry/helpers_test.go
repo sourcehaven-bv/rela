@@ -379,6 +379,7 @@ func TestResolveWidget(t *testing.T) {
 	}{
 		{"string type", metamodel.PropertyDef{Type: metamodel.PropertyTypeString}, WidgetText},
 		{"date type", metamodel.PropertyDef{Type: metamodel.PropertyTypeDate}, WidgetDate},
+		{"datetime type", metamodel.PropertyDef{Type: metamodel.PropertyTypeDatetime}, WidgetDatetime},
 		{"integer type", metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}, WidgetNumber},
 		{"boolean type", metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean}, WidgetCheckbox},
 		{"enum type", metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum}, WidgetSelect},

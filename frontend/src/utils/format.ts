@@ -3,6 +3,7 @@
  */
 
 import { RRule } from 'rrule'
+import { TZDate } from '@date-fns/tz'
 import type { PropertyDef, EntityType } from '@/types'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
@@ -39,6 +40,71 @@ export function formatDate(value: string, locale?: string): string | null {
   return date.toLocaleDateString(locale, DATE_FORMAT_OPTIONS)
 }
 
+const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+}
+
+const pad = (n: number): string => String(n).padStart(2, '0')
+
+/**
+ * The browser's IANA time zone (e.g. "Europe/Amsterdam"), used as the default
+ * display zone when the user has not chosen an override.
+ */
+export function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone
+}
+
+/**
+ * Convert a stored UTC RFC3339 instant to the `YYYY-MM-DDTHH:mm` local
+ * wall-clock string a native <input type="datetime-local"> expects, expressed
+ * in the given IANA time zone. Returns '' for empty/invalid input.
+ */
+export function utcISOToLocalInput(iso: string | null | undefined, tz: string): string {
+  if (!iso) return ''
+  const d = new TZDate(iso, tz)
+  if (isNaN(d.getTime())) return ''
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
+}
+
+/**
+ * Convert a native datetime-local wall-clock string (`YYYY-MM-DDTHH:mm`),
+ * interpreted in the given IANA time zone, to a canonical UTC RFC3339 instant
+ * (`...Z`). Returns '' for empty/invalid input. DST and non-integer offsets are
+ * handled by TZDate.
+ */
+export function localInputToUtcISO(local: string | null | undefined, tz: string): string {
+  if (!local) return ''
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(local)
+  if (!m) return ''
+  const [, y, mo, d, h, min, s] = m
+  const zoned = new TZDate(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(h),
+    Number(min),
+    Number(s ?? 0),
+    tz
+  )
+  if (isNaN(zoned.getTime())) return ''
+  return new Date(zoned.getTime()).toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+/**
+ * Format a stored UTC RFC3339 instant for human display in the given IANA time
+ * zone. Deterministic across machines (fixed style + explicit zone). Returns
+ * null for un-parseable input so callers can fall back to the raw string.
+ */
+export function formatDatetime(value: string, tz: string, locale?: string): string | null {
+  const date = new Date(value)
+  if (isNaN(date.getTime())) return null
+  return date.toLocaleString(locale, { ...DATETIME_FORMAT_OPTIONS, timeZone: tz })
+}
+
 /**
  * Format a value based on its type for display
  */
@@ -48,6 +114,12 @@ export function formatValue(value: unknown, type?: string): string {
 
   if (type === 'date' && typeof value === 'string') {
     return formatDate(value) ?? '-'
+  }
+
+  if (type === 'datetime' && typeof value === 'string' && value) {
+    // List/table display uses the browser zone; the form widget passes the
+    // user's effective zone explicitly via formatDatetime.
+    return formatDatetime(value, browserTimeZone()) ?? value
   }
 
   if (type === 'boolean') {
@@ -89,6 +161,9 @@ export function formatCellValue(
     const propDef = entityType.properties[property]
     if (propDef?.type === 'date' && typeof value === 'string') {
       return formatDate(value) ?? ''
+    }
+    if (propDef?.type === 'datetime' && typeof value === 'string') {
+      return formatDatetime(value, browserTimeZone()) ?? String(value)
     }
     if (propDef?.type === 'boolean') {
       return value ? 'Yes' : 'No'

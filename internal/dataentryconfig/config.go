@@ -26,6 +26,7 @@ const (
 	WidgetTextarea    = "textarea"
 	WidgetNumber      = "number"
 	WidgetDate        = "date"
+	WidgetDatetime    = "datetime"
 	WidgetRrule       = "rrule"
 	WidgetCards       = "cards" // card-based UI for relations with properties
 )
