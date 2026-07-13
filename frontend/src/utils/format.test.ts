@@ -3,6 +3,8 @@ import {
   formatValue,
   formatCellValue,
   formatDate,
+  formatDatetime,
+  utcISOToLocalInput,
   getCellValue,
   isEnumProperty,
   isEnumPropertyDef,
@@ -53,6 +55,48 @@ describe('format', () => {
     it('returns string values as-is', () => {
       expect(formatValue('hello')).toBe('hello')
     })
+
+    it('formats a datetime in the given display zone', () => {
+      // 12:30 UTC in New York (UTC-4 in July) is 08:30.
+      expect(formatValue('2026-07-13T12:30:00Z', 'datetime', 'America/New_York')).toContain('8:30')
+    })
+
+    it('defaults the datetime zone to the browser when tz omitted', () => {
+      // No throw, returns a non-dash formatted string.
+      const out = formatValue('2026-07-13T12:30:00Z', 'datetime')
+      expect(out).not.toBe('-')
+      expect(out).toMatch(/2026/)
+    })
+  })
+
+  describe('formatDatetime', () => {
+    it('renders a zoned instant identically regardless of the interpretation zone arg for absolute values', () => {
+      // A value with an explicit Z is absolute; the tz arg only affects display.
+      expect(formatDatetime('2026-07-13T12:30:00Z', 'UTC')).toContain('12:30')
+    })
+
+    it('interprets a NAIVE value consistently with the edit widget (RR-P9NKU7)', () => {
+      // The key property: display (formatDatetime) and edit (utcISOToLocalInput)
+      // must resolve a naive value (no Z/offset) to the SAME wall-clock in the
+      // zone. Both now parse via TZDate, so they agree — previously formatDatetime
+      // used native new Date() and diverged. The exact value isn't the contract;
+      // the AGREEMENT between view and edit is.
+      const naive = '2026-07-13T12:30:00'
+      const tz = 'America/New_York'
+      const editWallClock = utcISOToLocalInput(naive, tz) // e.g. 2026-07-13T06:30
+      const shownTime = editWallClock.slice(11) // "06:30"
+      const [h, m] = shownTime.split(':')
+      const hour12 = String(Number(h) % 12 || 12)
+      expect(formatDatetime(naive, tz)).toContain(`${hour12}:${m}`)
+    })
+
+    it('returns null for an unparseable value', () => {
+      expect(formatDatetime('not-a-datetime', 'UTC')).toBeNull()
+    })
+
+    it('returns null (does not throw) on an invalid time zone', () => {
+      expect(formatDatetime('2026-07-13T12:30:00Z', 'Not/AZone')).toBeNull()
+    })
   })
 
   describe('formatCellValue', () => {
@@ -61,6 +105,7 @@ describe('format', () => {
       description: '',
       properties: {
         created_at: { type: 'date' },
+        starts_at: { type: 'datetime' },
         is_active: { type: 'boolean' },
         title: { type: 'string' },
         schedule: { type: 'rrule' },
@@ -87,6 +132,13 @@ describe('format', () => {
 
     it('returns empty string for invalid date property (matches cell-empty sentinel)', () => {
       expect(formatCellValue('invalid', 'created_at', mockEntityType)).toBe('')
+    })
+
+    it('formats a datetime cell in the passed display zone (honors the tz override, RR-K3WEW2)', () => {
+      // 12:30 UTC in New York (UTC-4 in July) is 08:30 — the list column must
+      // honor the effective zone threaded from EntityList, not the browser zone.
+      const out = formatCellValue('2026-07-13T12:30:00Z', 'starts_at', mockEntityType, 'America/New_York')
+      expect(out).toContain('8:30')
     })
 
     it('formats boolean property as Yes/No', () => {

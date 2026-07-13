@@ -5,7 +5,7 @@ title: Add a datetime metamodel property type (time-bearing, with date+time form
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Description

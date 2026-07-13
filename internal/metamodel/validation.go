@@ -275,7 +275,7 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 			return &ValidationError{
 				Type:     ValidationErrorInvalidType,
 				Property: propName,
-				Message:  "Must be a datetime string",
+				Message:  "Must be a datetime string or timestamp",
 			}
 		}
 

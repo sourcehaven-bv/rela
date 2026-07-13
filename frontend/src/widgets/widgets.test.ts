@@ -175,13 +175,23 @@ describe('DatetimeWidget', () => {
     expect((w.find('input').element as HTMLInputElement).value).toBe('2026-07-14T06:00')
   })
 
-  it('display mode formats the instant in the effective zone', () => {
+  it('emits the correct UTC across a US spring-forward DST boundary', async () => {
+    // 2026-03-08 is US spring-forward: America/New_York goes UTC-5 -> UTC-4 at
+    // 02:00 local. A 03:30 local time (just after the gap) is UTC-4 => 07:30Z.
+    const w = mountAt('America/New_York', { modelValue: '2026-03-08T12:00:00Z' })
+    await w.find('input').setValue('2026-03-08T03:30')
+    expect(w.emitted('update:modelValue')?.slice(-1)[0]).toEqual(['2026-03-08T07:30:00Z'])
+  })
+
+  it('display mode formats the instant in the effective zone (zone-correct text)', () => {
+    // Set the zone BEFORE mount so display reflects it; assert the actual text.
+    useUIStore().setDatetimeTimezone('America/New_York')
     const w = mount(DatetimeWidget, {
       props: { modelValue: '2026-07-13T12:30:00Z', mode: 'display' as const, propertyName: '' },
     })
-    useUIStore().setDatetimeTimezone('UTC')
-    expect(w.find('span.display-value').exists()).toBe(true)
     expect(w.find('input').exists()).toBe(false)
+    // 12:30 UTC in New York (UTC-4 in July) is 08:30 -> "8:30 AM".
+    expect(w.find('span.display-value').text()).toContain('8:30')
   })
 })
 
