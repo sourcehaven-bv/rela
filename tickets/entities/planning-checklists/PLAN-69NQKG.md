@@ -227,9 +227,9 @@ DST) + docs + one small dep.
 **Documentation Impact:**
 - [x] docs/metamodel.md — new `datetime` builtin (alongside `date`); UTC RFC3339 storage; bare-date = midnight-UTC; `=` is strict-instant.
 - [x] docs/data-entry.md — the datetime widget, the Settings display-timezone picker (client-only, display-only), the bare-date display quirk, and that datetime feed sources are a follow-on.
-- [ ] docs/cli-reference.md — N/A.
-- [ ] CLAUDE.md — N/A.
-- [ ] README.md — N/A.
+- [x] ~~docs/cli-reference.md~~ (N/A: no command changes)
+- [x] ~~CLAUDE.md~~ (N/A: no new cross-cutting convention)
+- [x] ~~README.md~~ (N/A: not a project-level change)
 
 ## Design Review
 
