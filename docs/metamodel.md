@@ -640,8 +640,7 @@ Semantics:
 - **Mixed `date` + `datetime` columns sort chronologically** together.
 
 The data-entry app renders `datetime` properties with a date+time picker and a
-configurable display time zone — see
-[Datetime fields](data-entry.md#datetime-fields-and-time-zones).
+configurable display time zone — see the data-entry guide.
 
 Calendar-feed sources currently accept only `date` (all-day) properties;
 timed events from `datetime` sources are a planned follow-on.

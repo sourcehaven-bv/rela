@@ -357,9 +357,9 @@ properties as date+time pickers, and everything else as text inputs.
 
 ### Datetime fields and time zones
 
-A `datetime` property (see [Datetime Properties](metamodel.md#datetime-properties))
-renders as a native date + time picker. Because a datetime is a specific instant,
-the field must communicate which time zone the entered wall-clock time means:
+A `datetime` property renders as a native date + time picker. Because a
+datetime is a specific instant, the field must communicate which time zone the
+entered wall-clock time means:
 
 - **Values are stored as UTC** (RFC3339, e.g. `2026-07-13T12:30:00Z`). The
   widget converts between your local wall-clock time and UTC as you type.
