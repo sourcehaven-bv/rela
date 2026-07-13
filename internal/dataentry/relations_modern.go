@@ -340,11 +340,26 @@ func (a *App) applyRelationsModern(
 	return warnings, nil
 }
 
-// writeCreateRelation creates a new relation. It first tries the
-// EntityManager (preserving validation + automation paths for the
-// happy case); on a target-not-found error it falls back to a direct
-// store write so DEC-HWZHA's "soft conditions are warnings, not
-// rejections" policy holds.
+// writeCreateRelation creates a new relation via the EntityManager
+// (preserving the ACL, audit, validation and automation paths).
+//
+// Error handling splits three ways:
+//
+//   - ACL denial (*acl.ForbiddenError): propagated so the handler maps it
+//     to 403. The EntityManager authorizes BEFORE any peer-existence check
+//     (BUG-K6FEVB), so a denied write is a ForbiddenError even when the
+//     peer is missing — it never reaches the fallback below.
+//   - Missing peer (source/target entity not found): returned as a hard
+//     structuralError so the handler maps it to 422. This is a DELIBERATE
+//     reversal of DEC-HWZHA's soft-condition treatment for THIS case: the
+//     old ungated fallback wrote the edge directly to the store, skipping
+//     the ACL and audit (that is the --read-only bypass BUG-K6FEVB). The
+//     user needs feedback that the reference did not resolve, so we reject
+//     rather than silently warn — and we NEVER write directly to the store.
+//   - Type-allowlist mismatch (invalid relation): still a soft condition —
+//     both endpoints exist and a hand-editor could produce this state — so
+//     it keeps DEC-HWZHA's write-with-warning behavior via a direct store
+//     write. This write is safe because the ACL already allowed it above.
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints —
 // this function does not consult direction. `ref.ID` is the peer ID
@@ -361,14 +376,18 @@ func (a *App) writeCreateRelation(
 	if err == nil {
 		return nil
 	}
+	if isMissingPeerCondition(err) {
+		return danglingPeerError(relType, ref.ID)
+	}
 	if !isSoftCondition(err) {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: err,
 		}
 	}
-	// Soft condition (e.g., target missing): write directly through
-	// the store, skipping the workspace's pre-write validation.
+	// Soft condition (type-allowlist mismatch): write directly through
+	// the store, skipping the workspace's pre-write validation. Safe
+	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
 	if _, sErr := a.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
 		return &relationError{
@@ -396,6 +415,11 @@ func (a *App) writeUpdateRelation(
 	if err == nil {
 		return nil
 	}
+	if isMissingPeerCondition(err) {
+		// See writeCreateRelation: a dangling peer is a hard 422, never a
+		// silent ungated store write (BUG-K6FEVB).
+		return danglingPeerError(relType, ref.ID)
+	}
 	if !isSoftCondition(err) {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "update",
@@ -415,27 +439,50 @@ func (a *App) writeUpdateRelation(
 	return nil
 }
 
+// isMissingPeerCondition reports whether the EntityManager error is a
+// dangling-peer error (source or target entity does not exist). This is
+// treated as a HARD 422, not a soft warning (BUG-K6FEVB) — see
+// danglingPeerError and writeCreateRelation for the rationale.
+func isMissingPeerCondition(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "target entity not found") ||
+		strings.Contains(msg, "source entity not found")
+}
+
 // isSoftCondition returns true when the error from EntityManager
 // indicates a DEC-HWZHA "soft" condition that should be treated as a
 // warning rather than blocking the write. The current workspace
 // implementation surfaces these as plain fmt.Errorf strings; we match
 // on substrings, which is fragile but acceptable for the current
 // implementation surface.
+//
+// A missing peer is NOT a soft condition here (see isMissingPeerCondition);
+// only the type-allowlist mismatch remains soft, because both endpoints
+// exist and a hand-editor could produce that state.
 func isSoftCondition(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "target entity not found"):
-		return true
-	case strings.Contains(msg, "source entity not found"):
-		return true
-	case strings.Contains(msg, "invalid relation:"):
-		// metamodel.ValidateRelation rejects type-allowlist failures.
-		return true
+	// metamodel.ValidateRelation rejects type-allowlist failures.
+	return strings.Contains(err.Error(), "invalid relation:")
+}
+
+// danglingPeerError builds the hard 422 returned when a relation write
+// references a peer entity that does not exist. A structuralError maps to
+// HTTP 422 via writeRelationsApplyError, telling the user the reference
+// did not resolve (and so the edge was NOT stored). This deliberately
+// reverses DEC-HWZHA's soft-warn treatment for the missing-peer case: the
+// old behavior wrote the edge through an ungated direct store call that
+// bypassed the ACL and audit (BUG-K6FEVB, the --read-only bypass).
+func danglingPeerError(relType, peerID string) *structuralError {
+	return &structuralError{
+		Code:   "target_not_found",
+		Path:   "/relations/" + v1.JSONPointerEscape(relType) + "/data",
+		Detail: fmt.Sprintf("relation %q references entity %q, which does not exist", relType, peerID),
 	}
-	return false
 }
 
 // mergeEdgeMeta computes the post-merge (properties, content) tuple

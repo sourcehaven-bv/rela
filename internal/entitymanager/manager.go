@@ -789,6 +789,29 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 func (m *Manager) CreateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
+	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
+	// peer must never let a write skip the ACL: if authz is deferred until
+	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
+	// and the dataentry fallback then writes directly to the store,
+	// bypassing the ACL and audit. The source type feeds the type-level
+	// grant check; it is best-effort (empty if the source doesn't exist
+	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
+	// decided from inputs that don't depend on peer existence.
+	var fromType string
+	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+		fromType = fromEntity.Type
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpCreate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: fromType, FromID: from,
+		},
+	}); aclErr != nil {
+		return nil, aclErr
+	}
+
 	fromEntity, err := m.deps.Store.GetEntity(ctx, from)
 	if err != nil {
 		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
@@ -796,15 +819,6 @@ func (m *Manager) CreateRelation(
 	toEntity, err := m.deps.Store.GetEntity(ctx, to)
 	if err != nil {
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
-	}
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: fromEntity.Type, FromID: from,
-		},
-	}); aclErr != nil {
-		return nil, aclErr
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
@@ -865,11 +879,10 @@ func (m *Manager) CreateRelation(
 func (m *Manager) UpdateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
-	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
-	}
-	// ACL needs the source entity type for the type-level write check.
+	// Authorize BEFORE the relation-existence lookup (BUG-K6FEVB): a
+	// missing relation must not let a denied caller skip the ACL and get
+	// a soft not-found. The source type feeds the type-level grant check;
+	// it is best-effort (empty if the source doesn't exist).
 	var sourceType string
 	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
 		sourceType = fromEntity.Type
@@ -882,6 +895,11 @@ func (m *Manager) UpdateRelation(
 		},
 	}); aclErr != nil {
 		return nil, aclErr
+	}
+
+	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
 	}
 
 	// Snapshot pre-update meta keys so the audit summary names exactly
@@ -934,11 +952,9 @@ func (m *Manager) UpdateRelation(
 
 // DeleteRelation removes a relation. **No automation.**
 func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	// Fetch pre-delete so the audit record carries the full Subject
-	// (relation type + from + to). The relation may not exist — in
-	// that case the store delete returns an error and we skip audit.
-	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
-	// ACL needs the source entity type for the type-level write check.
+	// Authorize BEFORE touching the store (BUG-K6FEVB). The source type
+	// feeds the type-level grant check; it is best-effort (empty if the
+	// source doesn't exist).
 	var sourceType string
 	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
 		sourceType = fromEntity.Type
@@ -952,6 +968,12 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 	}); aclErr != nil {
 		return aclErr
 	}
+	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
+	// ForbiddenError regardless of whether the relation exists) so the audit
+	// record and version snapshot carry the full Subject (relation type + from
+	// + to). The relation may not exist — then the store delete returns an
+	// error and we skip both the version capture and the audit.
+	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
 	// Capture the final pre-delete version BEFORE the store delete, while the
 	// live row (and its rel_record_id) still exists — the same order-before
 	// rationale as entity delete. Skipped if the relation was already gone.
