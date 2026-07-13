@@ -156,7 +156,7 @@ func (a *App) handleAPISettingsCRUD(w http.ResponseWriter, r *http.Request) {
 //nolint:gocognit // assembles the settings response from many independent optional sources; each block guards a distinct setting, with no shared structure to factor out.
 func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 	s := a.State()
-	ud := s.UserDefaults
+	ud := a.settings.UserDefaults()
 	if ud == nil {
 		ud = &UserDefaults{}
 	}
@@ -260,9 +260,9 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, data)
 }
 
-// handleAPISaveSettings saves the user defaults from JSON input. The save
-// to disk and the publication of the new AppState happen atomically via
-// mutateState so concurrent readers see a coherent snapshot.
+// handleAPISaveSettings saves the user defaults from JSON input. The
+// settingsService persists and republishes atomically so concurrent readers
+// see a coherent snapshot.
 func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 	var input APIUserDefaults
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -283,21 +283,10 @@ func (a *App) handleAPISaveSettings(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Save to file under writeMu, then publish a new AppState with the
-	// updated UserDefaults via mutateState. The save and the publish
-	// are wrapped together so a concurrent reader cannot observe a
-	// State whose UserDefaults disagrees with what's on disk.
-	var saveErr error
-	ctx := r.Context()
-	a.mutateState(func(s *AppState) {
-		if err := a.userState.saveUserDefaults(ctx, &ud); err != nil {
-			saveErr = err
-			return
-		}
-		s.UserDefaults = &ud
-	})
-	if saveErr != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+saveErr.Error())
+	// The service persists and republishes the defaults atomically, so a
+	// concurrent reader can't observe defaults that disagree with disk.
+	if err := a.settings.Save(r.Context(), &ud); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+err.Error())
 		return
 	}
 
