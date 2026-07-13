@@ -1315,7 +1315,7 @@ onMounted(() => {
         <p class="description">
           The time zone datetime fields are shown and entered in (applies to all
           times, this browser only). Stored values are always kept in UTC — this
-          setting changes only how they are displayed, never the saved value.
+          setting changes only how they are displayed, never the underlying value.
         </p>
         <div class="settings-row">
           <label for="display-timezone-select" class="tz-label">Time zone</label>
