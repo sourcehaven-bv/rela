@@ -68,13 +68,14 @@ func RandomDate() string {
 // values for datetime properties.
 func RandomDatetime() string {
 	const daysInYear = 365
-	const secondsInDay = 24 * 60 * 60
+	const dayDuration = 24 * time.Hour
+	const secondsInDay = int(dayDuration / time.Second)
 	now := time.Now().UTC()
 	rngMu.Lock()
 	daysAgo := rng.Intn(daysInYear)
 	secs := rng.Intn(secondsInDay)
 	rngMu.Unlock()
-	ts := now.AddDate(0, 0, -daysAgo).Truncate(24 * time.Hour).Add(time.Duration(secs) * time.Second)
+	ts := now.AddDate(0, 0, -daysAgo).Truncate(dayDuration).Add(time.Duration(secs) * time.Second)
 	return ts.Format(time.RFC3339)
 }
 
