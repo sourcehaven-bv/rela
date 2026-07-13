@@ -5,7 +5,7 @@ title: 'Triage modernize omitzero findings: omitempty on non-omittable fields'
 kind: chore
 priority: low
 effort: xs
-status: ready
+status: done
 ---
 
 ## Description
