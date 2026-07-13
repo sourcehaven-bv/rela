@@ -2,7 +2,7 @@
 id: REV-5DVEIG
 type: review-checklist
 title: 'Review: Add a datetime metamodel property type (time-bearing, with date+time form widget)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -64,8 +64,8 @@ see the ticket's has-review-response links.)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (E2E toast-locator collision fixed; the only remaining "Rela Tickets" failure is the self-referential gate that clears when this ticket → done)
+- [x] PR URL documented below
 
-**PR:** <!-- pending /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1131
