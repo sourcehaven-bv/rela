@@ -5,6 +5,33 @@ Create a pull request and monitor CI checks until they pass, fixing any issues f
 
 ## Workflow
 
+### 0. Ticket Gate (done-before-PR)
+
+A PR represents finished work, so its ticket/bug must already be `done` **and**
+validate-clean *before* the PR is opened. Do this first; do not proceed if it
+fails.
+
+1. Identify the ticket/bug this PR is for (from `$ARGUMENTS`, the branch name, or
+   the commit messages — they reference an ID like `TKT-XXXX` / `BUG-XXXX`).
+2. Check its status with `show_entity` (rela-issues-and-design-tickets). It
+   **must** be `status=done`. If it is still `planning` / `in-progress` /
+   `review`, the work isn't finished per the workflow — finish it and run
+   `/verify <ID>` to transition to `done` first.
+3. Confirm the ticket validates clean:
+
+   ```bash
+   ./bin/rela validate --project tickets --check cardinality --check properties --check validations
+   ```
+
+   This exercises the workflow gates (completed review checklist, no open
+   critical/significant review-responses, docs checklist for enhancement/docs
+   tickets). Exit code must be 0.
+
+**If the ticket is not `done` or validation fails: STOP.** Report exactly which
+gate failed and what's missing (e.g. "review checklist REV-xxxx is not `status:
+done`", "TKT-xxxx has an open critical review-response"). Do not push or open the
+PR until the ticket is `done` and validation is green.
+
 ### 1. Pre-flight Checks
 
 Run local CI checks before creating the PR:
