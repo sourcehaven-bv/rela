@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -325,12 +327,7 @@ func (s *Service) CheckRule(
 	}()
 
 	for _, e := range candidates {
-		// The Lua path under checkEntityAgainstRule runs through luaCtx.runtime,
-		// which was built with lua.WithContext(ctx); applyTimeout derives the
-		// per-entity budget from that cached parent ctx. contextcheck can't
-		// follow that flow across the gopher-lua SetContext boundary.
-		//nolint:contextcheck // ctx threaded via WithContext on luaCtx.runtime
-		entityResult := s.checkEntityAgainstRule(e, rule, whenFilters, thenFilters, luaCtx)
+		entityResult := s.checkEntityAgainstRule(ctx, e, rule, whenFilters, thenFilters, luaCtx)
 		result.Violations = append(result.Violations, entityResult.Violations...)
 		result.ScriptErrors = append(result.ScriptErrors, entityResult.ScriptErrors...)
 
@@ -388,6 +385,7 @@ type entityResult struct {
 // for Lua execution; passing nil disables the Lua path even when the
 // rule defines lua/lua_file (used when the script failed to load).
 func (s *Service) checkEntityAgainstRule(
+	ctx context.Context,
 	e *entity.Entity,
 	rule metamodel.ValidationRule,
 	whenFilters, thenFilters []*filter.Filter,
@@ -448,6 +446,11 @@ func (s *Service) checkEntityAgainstRule(
 	// behavior where the rule reported once per entity.
 	var out entityResult
 	if luaCtx != nil {
+		// The Lua path runs through luaCtx.runtime, built with
+		// lua.WithContext(ctx); applyTimeout derives the per-entity budget
+		// from that cached parent ctx. contextcheck can't follow that flow
+		// across the gopher-lua SetContext boundary.
+		//nolint:contextcheck // ctx threaded via WithContext on luaCtx.runtime
 		luaViolations, scriptErr := s.runLuaForEntity(e, rule, luaCtx)
 		if scriptErr != nil {
 			out.ScriptErrors = append(out.ScriptErrors, scriptErr)
@@ -468,7 +471,96 @@ func (s *Service) checkEntityAgainstRule(
 		out.Violations = append(out.Violations, v)
 	}
 
+	// Check relation-cardinality constraints. Each keyed constraint counts
+	// the entity's outgoing relations of that type to targets matching the
+	// constraint's `where` filters, and flags a violation when the count
+	// falls outside [min, max].
+	for relType, constraint := range rule.Relations {
+		if detail, ok := s.checkRelationConstraint(ctx, e, relType, constraint); !ok {
+			v := s.newViolation(rule, e, rule.Description)
+			v.Detail = []string{detail}
+			out.Violations = append(out.Violations, v)
+		}
+	}
+
 	return out
+}
+
+// checkRelationConstraint evaluates a single relation-cardinality
+// constraint against an entity. It counts outgoing relations of relType
+// whose target entity matches every `where` filter, then checks the count
+// against the constraint's Min/Max bounds. Returns (detail, false) with a
+// human-readable summary when the constraint is violated, ("", true) when
+// satisfied. A store or filter error is treated as satisfied (the check
+// degrades to a no-op rather than a spurious violation), matching how the
+// when/then paths swallow filter errors.
+func (s *Service) checkRelationConstraint(
+	ctx context.Context,
+	e *entity.Entity,
+	relType string,
+	c metamodel.RelationConstraint,
+) (string, bool) {
+	if c.Min == nil && c.Max == nil {
+		return "", true
+	}
+	// No reader wired (e.g. a Lua-only validation service in a unit test):
+	// the relation check can't run, so degrade to a no-op rather than
+	// panic. A nil reader denies rather than falling back to a raw handle.
+	if s.deps.VisibleReader == nil {
+		return "", true
+	}
+
+	whereFilters, err := filter.ParseAll(c.Where)
+	if err != nil {
+		return "", true
+	}
+
+	rels, err := s.deps.OutgoingRelations(ctx, e.ID, relType)
+	if err != nil {
+		return "", true
+	}
+
+	count := 0
+	for _, rel := range rels {
+		if len(whereFilters) == 0 {
+			count++
+			continue
+		}
+		target, gErr := s.deps.VisibleReader.GetEntity(ctx, rel.To)
+		if gErr != nil {
+			continue // dangling target can't match property filters
+		}
+		targetDef, ok := s.deps.Meta.GetEntityDef(target.Type)
+		if !ok {
+			continue
+		}
+		rec := filter.Record{ID: target.ID, Type: target.Type, Properties: target.Properties}
+		matches, mErr := filter.MatchAll(rec, whereFilters, targetDef, s.deps.Meta)
+		if mErr == nil && matches {
+			count++
+		}
+	}
+
+	constraintDesc := describeRelationConstraint(relType, c.Where)
+	if c.Min != nil && count < *c.Min {
+		return "requires at least " + strconv.Itoa(*c.Min) + " " + constraintDesc +
+			" relation(s), has " + strconv.Itoa(count), false
+	}
+	if c.Max != nil && count > *c.Max {
+		return "must have at most " + strconv.Itoa(*c.Max) + " " + constraintDesc +
+			" relation(s), has " + strconv.Itoa(count), false
+	}
+	return "", true
+}
+
+// describeRelationConstraint renders a relation type plus its target
+// filters into a compact human string, e.g. `has-review (status=done)`.
+func describeRelationConstraint(relType string, where []string) string {
+	desc := "'" + relType + "'"
+	if len(where) > 0 {
+		desc += " (" + strings.Join(where, ", ") + ")"
+	}
+	return desc
 }
 
 // newViolation constructs a Violation tagged with the rule's metadata.

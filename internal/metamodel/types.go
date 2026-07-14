@@ -153,6 +153,14 @@ type ValidationRule struct {
 	// Content specifies validation rules for markdown body content
 	Content *ContentRule `yaml:"content,omitempty"`
 
+	// Relations specifies relation-cardinality constraints, keyed by
+	// relation type. Each constraint asserts how many OUTGOING relations
+	// of that type the entity has to targets matching the constraint's
+	// `where` filters (min/max). Evaluated only for entities that match
+	// `when`. Used for workflow gates like "a done ticket must have at
+	// least one has-review relation to a done review-checklist".
+	Relations map[string]RelationConstraint `yaml:"relations,omitempty"`
+
 	// Severity is the severity level of violations: "error" or "warning"
 	// Defaults to "warning" if not specified
 	Severity string `yaml:"severity,omitempty"`
@@ -1438,6 +1446,26 @@ type ChecklistRule struct {
 
 	// AllowSkipped treats strikethrough items as complete (e.g., "- [x] ~~task~~ (N/A: reason)")
 	AllowSkipped bool `yaml:"allow-skipped,omitempty"`
+}
+
+// RelationConstraint is a relation-cardinality assertion on a validation
+// rule, keyed in ValidationRule.Relations by relation type. It counts the
+// entity's OUTGOING relations of that type whose target entity matches all
+// of the Where filters, then requires the count to satisfy Min and/or Max.
+//
+// Where reuses the same filter syntax as When/Then (e.g. "status=done"),
+// matched against the TARGET entity's properties. At least one of Min/Max
+// must be set for the constraint to have an effect.
+type RelationConstraint struct {
+	// Where filters the target entities that count toward the constraint.
+	// All conditions are ANDed; empty means every target counts.
+	Where []string `yaml:"where,omitempty"`
+
+	// Min requires at least this many matching relations (nil = no lower bound).
+	Min *int `yaml:"min,omitempty"`
+
+	// Max requires at most this many matching relations (nil = no upper bound).
+	Max *int `yaml:"max,omitempty"`
 }
 
 // HeaderCheck specifies a header to check for in markdown content.

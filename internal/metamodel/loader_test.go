@@ -945,6 +945,108 @@ func TestValidTopLevelKeysMatchStruct(t *testing.T) {
 	}
 }
 
+// TestValidValidationRuleKeysMatchStruct mirrors TestValidTopLevelKeysMatchStruct
+// for ValidationRule: the per-rule whitelist and the struct's yaml tags must not
+// drift, or the loader would reject a rule that uses a legitimate field (the
+// inverse of the TKT-IFHO2L bug, where a field with no whitelist entry was
+// silently dropped).
+func TestValidValidationRuleKeysMatchStruct(t *testing.T) {
+	for field := range reflect.TypeFor[ValidationRule]().Fields() {
+		tag := field.Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		key := strings.Split(tag, ",")[0]
+		if key == "" {
+			continue
+		}
+		if !validValidationRuleKeys[key] {
+			t.Errorf("ValidationRule field %q (yaml:%q) is not in validValidationRuleKeys — "+
+				"the loader will reject a rule that uses it", field.Name, key)
+		}
+	}
+}
+
+// TestParse_UnknownValidationRuleKeyRejected is the regression test for the
+// TKT-IFHO2L root cause: a mis-nested/misspelled key inside a validation rule
+// (here `relationz` instead of `relations`) must fail loudly at load rather
+// than being silently dropped.
+func TestParse_UnknownValidationRuleKeyRejected(t *testing.T) {
+	yaml := `version: "1.0"
+types:
+  status:
+    values: [open, done]
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      status:
+        type: status
+validations:
+  - name: broken-rule
+    entity_type: ticket
+    when: ["status=done"]
+    relationz:
+      has-review:
+        min: 1
+    severity: error
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for unknown validation-rule key, got nil")
+	}
+	if !strings.Contains(err.Error(), "relationz") {
+		t.Errorf("error should name the offending key; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "broken-rule") {
+		t.Errorf("error should name the offending rule; got: %v", err)
+	}
+}
+
+// TestParse_ValidationWithRelationsAccepted confirms the well-formed
+// declarative `relations:` block parses and populates the field.
+func TestParse_ValidationWithRelationsAccepted(t *testing.T) {
+	yaml := `version: "1.0"
+types:
+  status:
+    values: [open, done]
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      status:
+        type: status
+validations:
+  - name: done-needs-review
+    entity_type: ticket
+    when: ["status=done"]
+    relations:
+      has-review:
+        where: ["status=done"]
+        min: 1
+    severity: error
+`
+	m, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Validations) != 1 {
+		t.Fatalf("want 1 validation, got %d", len(m.Validations))
+	}
+	c, ok := m.Validations[0].Relations["has-review"]
+	if !ok {
+		t.Fatal("relations[has-review] not parsed")
+	}
+	if c.Min == nil || *c.Min != 1 {
+		t.Errorf("min = %v, want 1", c.Min)
+	}
+	if len(c.Where) != 1 || c.Where[0] != "status=done" {
+		t.Errorf("where = %v, want [status=done]", c.Where)
+	}
+}
+
 func TestParse_UnknownPropertyType(t *testing.T) {
 	yaml := `
 version: "1.0"
