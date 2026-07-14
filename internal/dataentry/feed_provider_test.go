@@ -21,10 +21,12 @@ func feedTestMeta() *metamodel.Metamodel {
 			"task": {
 				Label: "Task", IDPrefix: "TSK-", DisplayProperty: "title",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":    {Type: metamodel.PropertyTypeString},
-					"due":      {Type: metamodel.PropertyTypeDate},
-					"status":   {Type: metamodel.PropertyTypeString},
-					"schedule": {Type: metamodel.PropertyTypeString},
+					"title":     {Type: metamodel.PropertyTypeString},
+					"due":       {Type: metamodel.PropertyTypeDate},
+					"starts_at": {Type: metamodel.PropertyTypeDatetime},
+					"ends_at":   {Type: metamodel.PropertyTypeDatetime},
+					"status":    {Type: metamodel.PropertyTypeString},
+					"schedule":  {Type: metamodel.PropertyTypeString},
 				},
 			},
 			"party": {
@@ -114,6 +116,43 @@ func TestDeclarativeFeed_ListMapsAndFilters(t *testing.T) {
 	}
 	if cursor != mod.UTC().Format(time.RFC3339Nano) {
 		t.Errorf("cursor = %q, want max(modified) %q", cursor, mod.Format(time.RFC3339Nano))
+	}
+}
+
+func TestDeclarativeFeed_DatetimeSourceIsTimed(t *testing.T) {
+	mod := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	src := fakeSource{byType: map[string][]*entity.Entity{
+		"task": {{
+			ID: "TSK-1", Type: "task", UpdatedAt: mod,
+			Properties: map[string]any{
+				"title":     "Standup",
+				"starts_at": "2026-07-13T14:30:00Z",
+				"ends_at":   "2026-07-13T15:00:00Z",
+			},
+		}},
+	}}
+	cfg := dataentryconfig.Feed{Sources: []dataentryconfig.FeedSource{
+		{EntityType: "task", Date: "starts_at", EndDate: "ends_at", Summary: "title"},
+	}}
+	d := newTestFeed(t, cfg, src)
+
+	events, _, err := d.List(context.Background(), feedListOpts{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("event count = %d, want 1", len(events))
+	}
+	e := events[0]
+	if !e.Timed {
+		t.Error("a datetime source must produce a timed event")
+	}
+	// Start/End carry the full time-of-day, not a truncated day.
+	if want := time.Date(2026, 7, 13, 14, 30, 0, 0, time.UTC); !e.Start.Equal(want) {
+		t.Errorf("start = %v, want %v (time-of-day preserved)", e.Start, want)
+	}
+	if want := time.Date(2026, 7, 13, 15, 0, 0, 0, time.UTC); !e.End.Equal(want) {
+		t.Errorf("end = %v, want %v", e.End, want)
 	}
 }
 

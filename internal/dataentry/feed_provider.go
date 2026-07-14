@@ -225,6 +225,10 @@ func (d *declarativeFeed) mapEntity(
 		Summary: e.GetString(summaryProp),
 		Start:   day,
 		URL:     d.link(e.Type, e.ID),
+		// A datetime-typed source emits a timed event; a date-typed source
+		// stays all-day. The end_date (if any) is the same kind — enforced by
+		// feed-source validation — so no separate branch is needed for End.
+		Timed: dateDef.Type == metamodel.PropertyTypeDatetime,
 	}
 	if s.Description != "" {
 		ev.Description = e.GetString(s.Description)

@@ -2424,8 +2424,8 @@ Multiple sources are also how you express **OR**: the filter language has no
 |-------|----------|---------|
 | `entity_type` | yes | The entity type to project. |
 | `where` | no | A list of filter clauses, all ANDed. Empty = all entities of the type. |
-| `date` | yes | A **date**-typed property mapped to the event day (all-day). Entities without a value are skipped. |
-| `end_date` | no | A date property for an all-day range's end. Omit for single-day events. |
+| `date` | yes | A **date**- or **datetime**-typed property mapped to the event start. A `date` property yields an all-day event; a `datetime` property yields a **timed** event (rendered in UTC). Entities without a value are skipped. |
+| `end_date` | no | A property for the event's end. Must be the **same kind** as `date` (both `date` or both `datetime`) — a feed event is all-day or timed, not a mix. Omit for single-day / no-end events. |
 | `summary` | no | A property mapped to the event title. Defaults to the entity type's display property. |
 | `description` | no | A property mapped to the event description. |
 | `alarm` | no | A static RFC 5545 duration (e.g. `-PT9H`, `-P1D`) for a reminder before the event. |
@@ -2464,8 +2464,9 @@ dense.
 
 ### The events
 
-Each entity becomes one all-day event (feeds serve all-day events only for now —
-timed events await a `datetime` property type):
+Each entity becomes one event — **all-day** when the `date:` source is a `date`
+property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
+`datetime` property:
 
 - **UID** is `<type>--<id>@rela` — stable across refreshes so a calendar client
   tracks the same event over time.

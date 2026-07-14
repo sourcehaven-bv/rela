@@ -61,16 +61,25 @@ func (ic ICal) RenderCollection(f Feed) []byte {
 
 // RenderEvent renders one event as a VEVENT block (BEGIN:VEVENT…END:VEVENT),
 // CRLF-terminated. It is the single source of per-event serialization; both the
-// ICS feed and a future CalDAV per-resource GET use it. Phase 1 emits all-day
-// events (DTSTART;VALUE=DATE).
+// ICS feed and a future CalDAV per-resource GET use it. An all-day event emits
+// DTSTART;VALUE=DATE; a timed event (Event.Timed) emits a UTC date-time DTSTART.
 func (ic ICal) RenderEvent(e Event) []byte {
 	var b strings.Builder
 	writeLine(&b, "BEGIN:VEVENT")
 	writeProp(&b, "UID", e.UID)
 	writeLine(&b, "DTSTAMP:"+formatDateTimeUTC(ic.Now))
-	writeLine(&b, "DTSTART;VALUE=DATE:"+formatDate(e.Start))
-	if !e.End.IsZero() {
-		writeLine(&b, "DTEND;VALUE=DATE:"+formatDate(e.End))
+	// Timed events render UTC date-time instants; all-day events render a DATE
+	// value. Only the FORMAT differs — Start/End are rendered verbatim.
+	if e.Timed {
+		writeLine(&b, "DTSTART:"+formatDateTimeUTC(e.Start))
+		if !e.End.IsZero() {
+			writeLine(&b, "DTEND:"+formatDateTimeUTC(e.End))
+		}
+	} else {
+		writeLine(&b, "DTSTART;VALUE=DATE:"+formatDate(e.Start))
+		if !e.End.IsZero() {
+			writeLine(&b, "DTEND;VALUE=DATE:"+formatDate(e.End))
+		}
 	}
 	if e.RRule != "" {
 		writeLine(&b, "RRULE:"+e.RRule)

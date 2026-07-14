@@ -19,11 +19,12 @@ func feedHandlerApp(t *testing.T, feeds map[string]dataentryconfig.Feed, tasks .
 			"task": {
 				Label: "Task", IDPrefix: "TSK-", DisplayProperty: "title",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: metamodel.PropertyTypeString},
-					"due":    {Type: metamodel.PropertyTypeDate},
-					"status": {Type: metamodel.PropertyTypeString},
+					"title":     {Type: metamodel.PropertyTypeString},
+					"due":       {Type: metamodel.PropertyTypeDate},
+					"starts_at": {Type: metamodel.PropertyTypeDatetime},
+					"status":    {Type: metamodel.PropertyTypeString},
 				},
-				PropertyOrder: []string{"title", "due", "status"},
+				PropertyOrder: []string{"title", "due", "starts_at", "status"},
 			},
 		},
 	}
@@ -99,6 +100,36 @@ func TestFeedHandler_ICS(t *testing.T) {
 	}
 	if !strings.Contains(body, "X-WR-CALNAME:PIM tasks") {
 		t.Errorf("missing calendar name")
+	}
+}
+
+func TestFeedHandler_ICS_TimedEvent(t *testing.T) {
+	app := feedHandlerApp(t,
+		map[string]dataentryconfig.Feed{
+			"events": {
+				Meta:    dataentryconfig.FeedMeta{Name: "Events"},
+				Sources: []dataentryconfig.FeedSource{{EntityType: "task", Date: "starts_at", Summary: "title"}},
+			},
+		},
+		&entity.Entity{ID: "TSK-9", Type: "task", Properties: map[string]any{
+			"title": "Standup", "status": "todo", "starts_at": "2026-07-13T14:30:00Z",
+		}},
+	)
+
+	rec := doFeed(t, app, "/api/v1/_feeds/events.ics")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "BEGIN:VCALENDAR") {
+		t.Errorf("not a VCALENDAR:\n%s", body)
+	}
+	// Datetime source → timed DTSTART (UTC instant), NOT an all-day VALUE=DATE line.
+	if !strings.Contains(body, "DTSTART:20260713T143000Z") {
+		t.Errorf("missing timed DTSTART; body:\n%s", body)
+	}
+	if strings.Contains(body, "DTSTART;VALUE=DATE") {
+		t.Errorf("timed event should not emit an all-day DTSTART; body:\n%s", body)
 	}
 }
 

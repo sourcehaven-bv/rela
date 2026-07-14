@@ -8,8 +8,9 @@ import (
 )
 
 // feedMetamodel returns a metamodel with a date-bearing entity type for feed
-// validation tests: `task` has a `due` (date), `title` (string, display), and a
-// `status`; `note` has no display property.
+// validation tests: `task` has a `due` (date), `starts_at`/`ends_at`
+// (datetime), `title` (string, display), and a `status`; `note` has no display
+// property.
 func feedMetamodel() *metamodel.Metamodel {
 	return &metamodel.Metamodel{
 		Version: "1.0",
@@ -19,10 +20,12 @@ func feedMetamodel() *metamodel.Metamodel {
 				IDPrefix:        "TSK-",
 				DisplayProperty: "title",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":  {Type: metamodel.PropertyTypeString, Required: true},
-					"due":    {Type: metamodel.PropertyTypeDate},
-					"status": {Type: metamodel.PropertyTypeString},
-					"body":   {Type: metamodel.PropertyTypeString},
+					"title":     {Type: metamodel.PropertyTypeString, Required: true},
+					"due":       {Type: metamodel.PropertyTypeDate},
+					"starts_at": {Type: metamodel.PropertyTypeDatetime},
+					"ends_at":   {Type: metamodel.PropertyTypeDatetime},
+					"status":    {Type: metamodel.PropertyTypeString},
+					"body":      {Type: metamodel.PropertyTypeString},
 				},
 			},
 			"note": {
@@ -78,7 +81,7 @@ func TestValidateFeeds_Errors(t *testing.T) {
 		{"unknown entity type", FeedSource{EntityType: "widget", Date: "due"}, "unknown entity type"},
 		{"missing date", FeedSource{EntityType: "task"}, "'date' is required"},
 		{"unknown date prop", FeedSource{EntityType: "task", Date: "nope"}, "date property \"nope\" not in metamodel"},
-		{"date not date-typed", FeedSource{EntityType: "task", Date: "title"}, "must be date-typed"},
+		{"date not date-typed", FeedSource{EntityType: "task", Date: "title"}, "must be date- or datetime-typed"},
 		{"summary omitted, no display prop", FeedSource{EntityType: "note", Date: "on", Summary: ""}, "no display property"},
 		{"unknown summary prop", FeedSource{EntityType: "task", Date: "due", Summary: "nope"}, "summary property \"nope\""},
 		{"unknown description prop", FeedSource{EntityType: "task", Date: "due", Description: "nope"}, "description property \"nope\""},
@@ -104,6 +107,9 @@ func TestValidateFeeds_RruleAndEndDate(t *testing.T) {
 		{EntityType: "task", Date: "due", Summary: "title", Rrule: "RRULE:FREQ=DAILY"},     // literal w/ prefix
 		{EntityType: "note", Date: "on", Summary: "text", Rrule: "on"},                     // property ref (on is date-typed but exists)
 		{EntityType: "note", Date: "on", Summary: "text", EndDate: "on"},                   // end_date property
+		// Datetime sources (timed events) are now accepted.
+		{EntityType: "task", Date: "starts_at", Summary: "title"},                          // datetime start, no end
+		{EntityType: "task", Date: "starts_at", Summary: "title", EndDate: "ends_at"},      // datetime start + datetime end (same kind)
 	}
 	for i, src := range valid {
 		cfg := &Config{Feeds: map[string]Feed{"f": {Sources: []FeedSource{src}}}}
@@ -119,7 +125,10 @@ func TestValidateFeeds_RruleAndEndDate(t *testing.T) {
 		{FeedSource{EntityType: "task", Date: "due", Summary: "title", Rrule: "FREQ=NONSENSE"}, "not a valid RFC 5545"},
 		{FeedSource{EntityType: "task", Date: "due", Summary: "title", Rrule: "nope"}, "neither a valid RRULE"},
 		{FeedSource{EntityType: "task", Date: "due", Summary: "title", EndDate: "nope"}, "end_date property \"nope\""},
-		{FeedSource{EntityType: "task", Date: "due", Summary: "title", EndDate: "title"}, "end_date property \"title\" must be date-typed"},
+		{FeedSource{EntityType: "task", Date: "due", Summary: "title", EndDate: "title"}, "end_date property \"title\" must be date- or datetime-typed"},
+		// Start/end kind mismatch is rejected (iCal forbids all-day + timed in one event), both directions.
+		{FeedSource{EntityType: "task", Date: "due", Summary: "title", EndDate: "ends_at"}, "must be all-day or timed, not a mix"},
+		{FeedSource{EntityType: "task", Date: "starts_at", Summary: "title", EndDate: "due"}, "must be all-day or timed, not a mix"},
 	}
 	for _, tc := range bad {
 		cfg := &Config{Feeds: map[string]Feed{"f": {Sources: []FeedSource{tc.src}}}}
