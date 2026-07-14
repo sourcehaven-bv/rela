@@ -1,0 +1,9 @@
+---
+id: RR-QWFJ23
+type: review-response
+title: 'Test gaps: non-conflict create error propagation, entity-counter symmetry, delete-loop failures'
+finding: 'TestRename_ConflictDoesNotOverwrite is a good behavioral pin (counts Update* calls, asserts 0) but has gaps. (1) No test that a NON-conflict store error from CreateEntity/CreateRelation still propagates wrapped (rename.go:98 ''write new entity %s: %w'' and :228) rather than being mistaken for a conflict — that branch is what distinguishes this fix from ''swallow all create errors''. A conflictOnCreateStore variant returning a sentinel non-conflict error would lock the errors.Is(ErrConflict) gate actually discriminates. (2) The relation sub-test asserts relationUpdateCalls==0 but not entityUpdateCalls==0; pin both counters in both sub-tests for symmetry. (3) The test comment oversells ''modeling a racing create landing between the probe and the write'' — it models the OUTCOME (unconditional conflict), not the interleaving; reword. (4) Delete-loop error paths (rename.go:108-125) untested; given RR-YOFVE3 at least one test that a delete failure surfaces would be worthwhile.'
+severity: minor
+resolution: 'Resolved by the re-route (RR-PUI4JF): the internal/rename tests are deleted with the package; the store''s atomic RenameEntity is covered by the storetest conformance suite (not-found, conflict, self-ref, relation-rewrite) across mem/fs/pg. Added TestRename_TargetExistsDoesNotOverwrite at the entitymanager level (BUG-5QDV6F regression): renaming onto an occupied ID returns ErrEntityAlreadyExists, performs ZERO creates/updates/deletes (counting store), and leaves the target''s title untouched — proving no clobber. Existing manager rename tests (DryRun-no-writes, applies+rewrites, not-found-typed, ACL fail-closed, version prev-id, audit before/after) remain green.'
+status: addressed
+---

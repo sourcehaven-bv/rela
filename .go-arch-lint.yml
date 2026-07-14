@@ -49,7 +49,6 @@ components:
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
-  rename:           { in: internal/rename }
   renametype:       { in: internal/renametype }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
@@ -226,7 +225,6 @@ deps:
       - principal
       - project
       - projectsetup
-      - rename
       - renametype
       - scheduler
       - schema
@@ -331,7 +329,6 @@ deps:
       - principal
       - lua
       - metamodel
-      - rename
       - schema
       - script
       - search
@@ -477,7 +474,6 @@ deps:
       - automation
       - metamodel
       - principal
-      - rename
       - store
       - templating
   importer:
@@ -486,9 +482,6 @@ deps:
       - storage
       - store
       - storeutil
-  rename:
-    mayDependOn:
-      - store
   schema:
     mayDependOn:
       - dataentryconfig
