@@ -258,6 +258,7 @@ The following names are reserved for built-in property types and cannot be used 
 
 - `string` - Free-form text
 - `date` - Date values
+- `datetime` - Time-bearing instants (date + time)
 - `integer` - Whole numbers
 - `boolean` - True/false values
 - `enum` - Inline enumeration (use `values:` directly in property definition)
@@ -314,7 +315,7 @@ entities:
 
 **Allowed types.** The named property must be `string`, `integer`,
 `boolean`, or `enum` (custom enum-like types are accepted). `date`,
-`file`, `rrule`, and list-typed (`list: true`) properties are
+`datetime`, `file`, `rrule`, and list-typed (`list: true`) properties are
 rejected at metamodel-load time — their default rendering produces
 strings nobody designed as a display name (e.g. `"2026-04-25 00:00:00
 +0000 UTC"`, `"[a b c]"`).
@@ -518,6 +519,7 @@ entities:
 | ---------- | --------------------------------------------- | ----------------------------------- |
 | `string`   | Free-form text                                | `=`, `!=`, `=~` (regex), glob (`*`) |
 | `date`     | Date value (ISO 8601 by default)              | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `datetime` | Time-bearing instant (RFC3339, stored as UTC) | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `integer`  | Whole number                                  | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
 | `boolean`  | True or false                                 | `=`, `!=`                           |
 | `enum`     | Inline enum with `values`                     | `=`, `!=`                           |
@@ -608,6 +610,40 @@ Common formats:
 | European | `01/02/2025` | `02/01/2006`           |
 | US       | `02/01/2025` | `01/02/2006`           |
 | Long     | `1 Feb 2025` | `2 Jan 2006`           |
+
+### Datetime Properties
+
+Use `datetime` for a **time-bearing instant** (a specific point in time, not
+just a calendar day). Unlike `date`, a `datetime` value carries a time-of-day.
+
+```yaml
+properties:
+  starts_at:
+    type: datetime
+    description: "When the event begins"
+```
+
+Semantics:
+
+- **Stored as UTC RFC3339** (e.g. `2026-07-13T12:30:00Z`). Values written
+  through the data-entry app are always normalized to a UTC instant.
+- **Bare dates are accepted as midnight UTC.** A hand-edited value like
+  `2026-07-13` on a `datetime` property is interpreted as
+  `2026-07-13T00:00:00Z`. (Note that such a midnight-UTC value displays on the
+  previous evening in time zones west of UTC — see the data-entry docs.)
+- **Values may be quoted or unquoted** in YAML frontmatter. An unquoted
+  timestamp is parsed as a timestamp; both round-trip correctly.
+- **Filtering and sorting compare as instants** (down to the second).
+  Equality (`=`) is therefore strict-instant: `starts_at=2026-07-13` (which
+  parses as midnight) does **not** match `2026-07-13T12:30:00Z`. Use `>=` and
+  `<` to query a day or range.
+- **Mixed `date` + `datetime` columns sort chronologically** together.
+
+The data-entry app renders `datetime` properties with a date+time picker and a
+configurable display time zone — see the data-entry guide.
+
+Calendar-feed sources currently accept only `date` (all-day) properties;
+timed events from `datetime` sources are a planned follow-on.
 
 ### Property Type Examples
 
@@ -1000,10 +1036,10 @@ rela list control --where "status=implemented" --where "applicability=applicable
 | -------- | --------------------------- | ----------------- |
 | `=`      | Equal (exact match or glob) | All types         |
 | `!=`     | Not equal                   | All types         |
-| `<`      | Less than                   | `date`, `integer` |
-| `<=`     | Less than or equal          | `date`, `integer` |
-| `>`      | Greater than                | `date`, `integer` |
-| `>=`     | Greater than or equal       | `date`, `integer` |
+| `<`      | Less than                   | `date`, `datetime`, `integer` |
+| `<=`     | Less than or equal          | `date`, `datetime`, `integer` |
+| `>`      | Greater than                | `date`, `datetime`, `integer` |
+| `>=`     | Greater than or equal       | `date`, `datetime`, `integer` |
 | `=~`     | Regex match                 | `string`          |
 
 ### Error Handling
@@ -1048,6 +1084,7 @@ Sorting is type-aware:
 - `string`: Lexicographic (alphabetical)
 - `enum`/custom types: By the order defined in the type's `values` list (not alphabetical)
 - `date`: Chronological
+- `datetime`: Chronological, to the second (interleaves with `date`)
 - `integer`: Numeric
 - `boolean`: `false` before `true`
 

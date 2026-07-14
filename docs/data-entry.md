@@ -348,11 +348,36 @@ Each entry in `fields:` configures one property input:
 | `textarea` | Multi-line text area                             | Descriptions, notes            |
 | `number`   | Numeric input                                    | Integers                       |
 | `date`     | Date picker                                      | Date properties                |
+| `datetime` | Date + time picker                               | Datetime properties            |
 | `checkbox` | Toggle checkbox                                  | Boolean properties             |
 
 When no widget is specified, the system auto-detects from the property's type in the metamodel:
-enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, and everything
-else as text inputs.
+enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, `datetime`
+properties as date+time pickers, and everything else as text inputs.
+
+### Datetime fields and time zones
+
+A `datetime` property renders as a native date + time picker. Because a
+datetime is a specific instant, the field must communicate which time zone the
+entered wall-clock time means:
+
+- **Values are stored as UTC** (RFC3339, e.g. `2026-07-13T12:30:00Z`). The
+  widget converts between your local wall-clock time and UTC as you type.
+- **The field shows the active time zone** beneath the input ("Times shown in
+  `Europe/Amsterdam`"), so the interpretation is never hidden.
+- **The display time zone is configurable** on the **Settings** page under
+  *Display timezone*. It defaults to your browser's time zone and applies to
+  every datetime field. It is a **display-only** preference stored in your
+  browser — changing it re-labels existing values but never rewrites the stored
+  UTC instant.
+- **Editing is non-destructive.** Viewing an entity, or saving an unrelated
+  field, never rewrites a datetime you didn't touch — so values authored in a
+  different time zone don't produce spurious diffs.
+
+Note: a value that is exactly midnight UTC (e.g. a bare `2026-07-13` written by
+hand and interpreted as `2026-07-13T00:00:00Z`) displays on the **previous
+evening** in time zones west of UTC. The picker itself always writes a full
+instant, so this only affects hand-authored midnight values.
 
 ### ID Controls on Create Forms
 

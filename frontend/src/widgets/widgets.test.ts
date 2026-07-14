@@ -5,8 +5,11 @@ import TextareaWidget from './TextareaWidget.vue'
 import NumberWidget from './NumberWidget.vue'
 import CheckboxWidget from './CheckboxWidget.vue'
 import DateWidget from './DateWidget.vue'
+import DatetimeWidget from './DatetimeWidget.vue'
 import SelectWidget from './SelectWidget.vue'
 import FileWidget from './FileWidget.vue'
+
+import { useUIStore } from '@/stores'
 
 import type { AttachmentInfo } from '@/types'
 
@@ -113,6 +116,82 @@ describe('DateWidget', () => {
     expect(w.find('span.display-value').exists()).toBe(false)
     await input.setValue('2026-06-01')
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-06-01'])
+  })
+})
+
+describe('DatetimeWidget', () => {
+  const mountAt = (tz: string, props: { modelValue: unknown }) => {
+    // Choose the effective zone via the store; '' means browser default.
+    useUIStore().setDatetimeTimezone(tz)
+    return mount(DatetimeWidget, {
+      props: { mode: 'edit' as const, propertyName: '', ...props },
+    })
+  }
+
+  it('renders a datetime-local input showing the UTC instant as local wall-clock (UTC zone)', () => {
+    const w = mountAt('UTC', { modelValue: '2026-07-13T12:30:00Z' })
+    const input = w.find('input[type="datetime-local"]')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('2026-07-13T12:30')
+  })
+
+  it('shows the effective timezone in a read-only indicator', () => {
+    const w = mountAt('America/New_York', { modelValue: '2026-07-13T12:30:00Z' })
+    expect(w.find('.tz-indicator').text()).toContain('America/New_York')
+  })
+
+  it('converts UTC to the effective zone for the input (America/New_York = UTC-4 in July)', () => {
+    const w = mountAt('America/New_York', { modelValue: '2026-07-13T12:30:00Z' })
+    expect((w.find('input').element as HTMLInputElement).value).toBe('2026-07-13T08:30')
+  })
+
+  it('emits a canonical UTC ...Z instant on user input, interpreting wall-clock in the zone', async () => {
+    const w = mountAt('America/New_York', { modelValue: '2026-07-13T12:30:00Z' })
+    await w.find('input').setValue('2026-07-13T09:30')
+    // 09:30 in New York (UTC-4) is 13:30 UTC.
+    expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-07-13T13:30:00Z'])
+  })
+
+  it('is non-destructive: mounting emits nothing (no incidental rewrite)', () => {
+    const w = mountAt('America/New_York', { modelValue: '2026-07-13T12:30:00+02:00' })
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('emits empty when the input is cleared', async () => {
+    const w = mountAt('UTC', { modelValue: '2026-07-13T12:30:00Z' })
+    await w.find('input').setValue('')
+    expect(w.emitted('update:modelValue')?.[0]).toEqual([''])
+  })
+
+  it('handles a non-integer offset zone (Asia/Kolkata, +05:30)', () => {
+    const w = mountAt('Asia/Kolkata', { modelValue: '2026-07-13T12:30:00Z' })
+    // 12:30 UTC + 5:30 = 18:00 local.
+    expect((w.find('input').element as HTMLInputElement).value).toBe('2026-07-13T18:00')
+  })
+
+  it('handles a date-line zone where the local date differs (Pacific/Auckland)', () => {
+    const w = mountAt('Pacific/Auckland', { modelValue: '2026-07-13T18:00:00Z' })
+    // NZST in July is UTC+12, so 18:00Z on the 13th is 06:00 on the 14th.
+    expect((w.find('input').element as HTMLInputElement).value).toBe('2026-07-14T06:00')
+  })
+
+  it('emits the correct UTC across a US spring-forward DST boundary', async () => {
+    // 2026-03-08 is US spring-forward: America/New_York goes UTC-5 -> UTC-4 at
+    // 02:00 local. A 03:30 local time (just after the gap) is UTC-4 => 07:30Z.
+    const w = mountAt('America/New_York', { modelValue: '2026-03-08T12:00:00Z' })
+    await w.find('input').setValue('2026-03-08T03:30')
+    expect(w.emitted('update:modelValue')?.slice(-1)[0]).toEqual(['2026-03-08T07:30:00Z'])
+  })
+
+  it('display mode formats the instant in the effective zone (zone-correct text)', () => {
+    // Set the zone BEFORE mount so display reflects it; assert the actual text.
+    useUIStore().setDatetimeTimezone('America/New_York')
+    const w = mount(DatetimeWidget, {
+      props: { modelValue: '2026-07-13T12:30:00Z', mode: 'display' as const, propertyName: '' },
+    })
+    expect(w.find('input').exists()).toBe(false)
+    // 12:30 UTC in New York (UTC-4 in July) is 08:30 -> "8:30 AM".
+    expect(w.find('span.display-value').text()).toContain('8:30')
   })
 })
 

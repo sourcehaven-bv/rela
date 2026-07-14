@@ -3,8 +3,9 @@ id: TKT-ZYOBSN
 type: ticket
 title: Add a datetime metamodel property type (time-bearing, with date+time form widget)
 kind: enhancement
-priority: low
-status: backlog
+priority: medium
+effort: m
+status: done
 ---
 
 ## Description

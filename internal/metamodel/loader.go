@@ -403,7 +403,7 @@ func validateDisplayPropertyRef(
 	// types defined elsewhere. Reject the structured types whose default
 	// rendering is unhelpful.
 	switch prop.Type {
-	case PropertyTypeDate, PropertyTypeFile, PropertyTypeRrule:
+	case PropertyTypeDate, PropertyTypeDatetime, PropertyTypeFile, PropertyTypeRrule:
 		errs = append(errs, fmt.Sprintf(
 			"entity %q: display_property %q references property %q of type %q; "+
 				"only string, integer, boolean, or enum types render as display names",

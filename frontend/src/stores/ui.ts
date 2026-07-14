@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
+import { browserTimeZone } from '@/utils/format'
 
 export interface Toast {
   id: string
@@ -26,6 +27,31 @@ function getInitialThemeMode(): ThemeMode {
   return 'system'
 }
 
+// isSupportedTimeZone guards against a stale/tampered localStorage value: an
+// unknown IANA zone silently falls back to the browser default rather than
+// breaking every datetime widget. We probe with the Intl.DateTimeFormat
+// constructor rather than checking supportedValuesOf membership, because the
+// latter returns only canonical names on some engines (e.g. "Asia/Calcutta"
+// but not its alias "Asia/Kolkata", and no "UTC") — yet the constructor
+// accepts both. The constructor is the authoritative "does this zone work"
+// test; supportedValuesOf is used only to populate the picker list.
+function isSupportedTimeZone(tz: string): boolean {
+  if (!tz) return false
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// The datetime display-timezone override. Empty string means "use the browser
+// zone". A stored value that is no longer a supported zone is ignored.
+function getInitialDatetimeTimezone(): string {
+  const stored = localStorage.getItem('datetimeTimezone') ?? ''
+  return isSupportedTimeZone(stored) ? stored : ''
+}
+
 export const useUIStore = defineStore('ui', () => {
   // State
   const sidebarCollapsed = ref(false)
@@ -36,6 +62,8 @@ export const useUIStore = defineStore('ui', () => {
   const modalData = ref<unknown>(null)
   const themeMode = ref<ThemeMode>(getInitialThemeMode())
   const darkMode = ref(getInitialDarkMode())
+  // '' = follow the browser zone; otherwise a chosen IANA zone.
+  const datetimeTimezone = ref<string>(getInitialDatetimeTimezone())
 
   // Getters
   const isSidebarVisible = computed(
@@ -43,6 +71,9 @@ export const useUIStore = defineStore('ui', () => {
   )
 
   const isDark = computed(() => darkMode.value)
+
+  // The zone datetime widgets interpret input in and display values in.
+  const effectiveTimezone = computed(() => datetimeTimezone.value || browserTimeZone())
 
   // Actions
   function toggleSidebar() {
@@ -123,6 +154,20 @@ export const useUIStore = defineStore('ui', () => {
     }
   }
 
+  // Set the display-timezone override. Pass '' to follow the browser zone.
+  // An unsupported zone is rejected (no-op) so a bad caller can't wedge the UI.
+  // Persistence is synchronous (not a watch) so callers see localStorage
+  // updated immediately after the call.
+  function setDatetimeTimezone(tz: string) {
+    if (tz !== '' && !isSupportedTimeZone(tz)) return
+    datetimeTimezone.value = tz
+    if (tz) {
+      localStorage.setItem('datetimeTimezone', tz)
+    } else {
+      localStorage.removeItem('datetimeTimezone')
+    }
+  }
+
   // Apply palette CSS variables to the document root
   function applyPalette(palette: Record<string, string>) {
     const root = document.documentElement
@@ -170,10 +215,12 @@ export const useUIStore = defineStore('ui', () => {
     modalData,
     darkMode,
     themeMode,
+    datetimeTimezone,
 
     // Getters
     isSidebarVisible,
     isDark,
+    effectiveTimezone,
 
     // Actions
     toggleSidebar,
@@ -190,6 +237,7 @@ export const useUIStore = defineStore('ui', () => {
     info,
     toggleDarkMode,
     setThemeMode,
+    setDatetimeTimezone,
     applyPalette,
     clearPalette,
   }
