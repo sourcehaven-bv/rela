@@ -239,7 +239,8 @@ func formatDate(t time.Time) string {
 	return t.Format("20060102")
 }
 
-// formatDateTimeUTC renders a UTC timestamp as YYYYMMDDTHHMMSSZ for DTSTAMP.
+// formatDateTimeUTC renders a UTC timestamp as YYYYMMDDTHHMMSSZ, used for
+// DTSTAMP and for a timed event's DTSTART/DTEND.
 func formatDateTimeUTC(t time.Time) string {
 	return t.UTC().Format("20060102T150405Z")
 }

@@ -58,8 +58,9 @@ func hasDurationComponent(s string) bool {
 
 // validateFeeds checks each declarative feed against the metamodel: every source
 // must name a known entity type, its date/summary/description properties must
-// exist (date must be date-typed), each where clause must parse and reference a
-// real property, and any alarm must be a valid RFC 5545 duration. Errors are
+// exist (date must be date- or datetime-typed; a datetime source yields a timed
+// event), each where clause must parse and reference a real property, and any
+// alarm must be a valid RFC 5545 duration. Errors are
 // reported per feed + source index so authors can pinpoint the problem, and
 // surface at config load rather than at first calendar poll.
 func validateFeeds(cfg *Config, meta *metamodel.Metamodel) []string {
