@@ -1698,47 +1698,42 @@ validations:
         allow-skipped: true
     severity: error
   # --- Ticket workflow gates ---
+  # NOTE: these gates use the require-relation-count.lua stopgap instead of a
+  # declarative `relations:` block, because the validation engine does not
+  # evaluate `relations:` (ValidationRule has no such field — the block is
+  # silently dropped at parse time). See TKT-IFHO2L; the follow-up ticket
+  # restores the declarative form once the engine supports it.
   - name: planning-ticket-needs-checklist
     description: "Planning tickets must have a planning checklist"
     entity_type: ticket
     when:
       - "status=planning"
-    relations:
-      has-planning:
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-planning", "min", "1"]
     severity: error
   - name: in-progress-ticket-needs-planning-done
     description: "In-progress tickets require completed planning checklist"
     entity_type: ticket
     when:
       - "status=in-progress"
-    relations:
-      has-planning:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-planning", "min", "1", "status=done"]
     severity: error
   - name: review-ticket-needs-implementation-done
     description: "Review tickets must have completed implementation checklist"
     entity_type: ticket
     when:
       - "status=review"
-    relations:
-      has-implementation:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-implementation", "min", "1", "status=done"]
     severity: error
   - name: done-ticket-needs-review-done
     description: "Done tickets must have completed review checklist"
     entity_type: ticket
     when:
       - "status=done"
-    relations:
-      has-review:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-review", "min", "1", "status=done"]
     severity: error
   - name: done-enhancement-needs-docs-done
     description: "Done enhancement tickets must have completed docs checklist"
@@ -1746,11 +1741,8 @@ validations:
     when:
       - "status=done"
       - "kind=enhancement"
-    relations:
-      has-docs:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-docs", "min", "1", "status=done"]
     severity: error
   - name: done-docs-ticket-needs-docs-done
     description: "Done docs tickets must have completed docs checklist"
@@ -1758,11 +1750,8 @@ validations:
     when:
       - "status=done"
       - "kind=docs"
-    relations:
-      has-docs:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-docs", "min", "1", "status=done"]
     severity: error
   # --- Bug workflow gates ---
   - name: analyzing-bug-needs-checklist
@@ -1770,42 +1759,32 @@ validations:
     entity_type: bug
     when:
       - "status=analyzing"
-    relations:
-      has-bug-analysis:
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-bug-analysis", "min", "1"]
     severity: error
   - name: in-progress-bug-needs-analysis-done
     description: "In-progress bugs require completed analysis checklist"
     entity_type: bug
     when:
       - "status=in-progress"
-    relations:
-      has-bug-analysis:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-bug-analysis", "min", "1", "status=done"]
     severity: error
   - name: review-bug-needs-implementation-done
     description: "Review bugs must have completed implementation checklist"
     entity_type: bug
     when:
       - "status=review"
-    relations:
-      has-implementation:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-implementation", "min", "1", "status=done"]
     severity: error
   - name: done-bug-needs-review-done
     description: "Done bugs must have completed review checklist"
     entity_type: bug
     when:
       - "status=done"
-    relations:
-      has-review:
-        where:
-          - "status=done"
-        min: 1
+    lua_file: require-relation-count.lua
+    lua_args: ["has-review", "min", "1", "status=done"]
     severity: error
   # --- Review response completeness ---
   - name: addressed-review-response-needs-resolution
@@ -1853,24 +1832,16 @@ validations:
     entity_type: ticket
     when:
       - "status=done"
-    relations:
-      has-review-response:
-        where:
-          - "status=open"
-          - "severity=critical"
-        max: 0
+    lua_file: require-relation-count.lua
+    lua_args: ["has-review-response", "max", "0", "status=open", "severity=critical"]
     severity: error
   - name: done-ticket-no-open-significant-responses
     description: "Done tickets cannot have open significant review responses"
     entity_type: ticket
     when:
       - "status=done"
-    relations:
-      has-review-response:
-        where:
-          - "status=open"
-          - "severity=significant"
-        max: 0
+    lua_file: require-relation-count.lua
+    lua_args: ["has-review-response", "max", "0", "status=open", "severity=significant"]
     severity: error
   # --- Bug review response gates ---
   - name: done-bug-no-open-critical-responses
@@ -1878,24 +1849,16 @@ validations:
     entity_type: bug
     when:
       - "status=done"
-    relations:
-      has-review-response:
-        where:
-          - "status=open"
-          - "severity=critical"
-        max: 0
+    lua_file: require-relation-count.lua
+    lua_args: ["has-review-response", "max", "0", "status=open", "severity=critical"]
     severity: error
   - name: done-bug-no-open-significant-responses
     description: "Done bugs cannot have open significant review responses"
     entity_type: bug
     when:
       - "status=done"
-    relations:
-      has-review-response:
-        where:
-          - "status=open"
-          - "severity=significant"
-        max: 0
+    lua_file: require-relation-count.lua
+    lua_args: ["has-review-response", "max", "0", "status=open", "severity=significant"]
     severity: error
   # ===================
   # CI Gates: No Partial Work
