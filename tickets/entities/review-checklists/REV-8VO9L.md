@@ -59,8 +59,8 @@ data prune/backfill, enforcement)
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — monitoring on PR #1133
+- [x] PR URL documented below
 
-**PR:** <!-- to be filled by /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1133
