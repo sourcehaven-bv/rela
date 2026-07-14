@@ -5,7 +5,7 @@ title: 'Finish dataentry.App decomposition: command/sync handlers + write nucleu
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+status: ready
 ---
 
 Follow-up to TKT-N26KLB. That ticket drove `dataentry.App` from 227 methods down
@@ -14,18 +14,29 @@ that closes the #1010 read-ACL bug class — but stopped short of the original
 `<40` end goal. We chose to ship that progress rather than block the plimsoll
 ratchet on the whole refactor. This ticket tracks the remainder.
 
+The AppState state-decomposition prerequisite (TKT-XSWFXQ) is now done, so the
+snapshot/`writeMu` publish coupling is gone and the handler clusters can move
+off `App` one at a time.
+
 ## Remaining steps (from the M5 plan)
 
 - **M5.2** — extract command + sync handlers off `App`.
+  - [x] **Sync handler cluster** → `syncHandler` (16 methods; `App` 170 → 154,
+directive ratcheted). Narrow consumer-side interfaces (`syncStore`,
+`syncDeleter`) + lazy capability closures for the pgstore-only manifest and the
+`*entitymanager.Manager` applier; `writeMu` shared by pointer so sync writes
+still serialize with the other mutation handlers.
+  - [ ] Command handler cluster (`commands.go`, ~11 methods).
 - **M5.4** — carve the write nucleus + entity/relation/attachment write handlers
-  behind one shared `writeMu`; drive `App` under the 40-method line and delete
-  the `//plimsoll:max-methods` directive in `internal/dataentry/app.go`.
+behind one shared `writeMu`; drive `App` under the 40-method line and delete the
+`//plimsoll:max-methods` directive in `internal/dataentry/app.go`.
 
 ## Invariants (unchanged from M5)
 
 - Read handlers take the ACL-bounded `visibleReader` only — never `store.Store`.
 - `writeMu` stays a single shared instance across all write handlers (race
-  detector guards).
+detector guards). The extracted `syncHandler` holds a *pointer* to `App`'s
+`writeMu`, preserving this.
 
 ## Related finding
 

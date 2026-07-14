@@ -125,7 +125,7 @@ assignments:
 
 	// Compute the current hash for a valid If-Match (so the request reaches
 	// the apply path, not a 412 precondition failure).
-	cur, exists := app.currentEntityHash(context.Background(), "SECRET-1")
+	cur, exists := app.sync.currentEntityHash(context.Background(), "SECRET-1")
 	if !exists {
 		t.Fatal("seeded secret not found")
 	}
@@ -182,7 +182,7 @@ assignments:
 	seedEntity(app, &entity.Entity{
 		ID: "NOTE-1", Type: "note", Properties: map[string]any{"title": "v1"},
 	})
-	cur, exists := app.currentEntityHash(context.Background(), "NOTE-1")
+	cur, exists := app.sync.currentEntityHash(context.Background(), "NOTE-1")
 	if !exists {
 		t.Fatal("seeded note not found")
 	}

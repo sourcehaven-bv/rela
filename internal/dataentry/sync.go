@@ -27,27 +27,6 @@ type syncApplier interface {
 	ApplyRelation(ctx context.Context, r *entity.Relation) (*entity.Relation, error)
 }
 
-// syncManifest returns the manifest provider when the store supports it
-// (pgstore), else nil. Derived lazily from a.store rather than cached at
-// construction, so it stays correct if the store is re-pointed (e.g. test
-// rebind). Sync is fs-client ↔ pg-server, so this is nil on fs/memory builds.
-func (a *App) syncManifest() manifestProvider {
-	if mp, ok := a.store.(manifestProvider); ok {
-		return mp
-	}
-	return nil
-}
-
-// syncApplierFor returns the id-preserving applier when the entity manager
-// supports it (*entitymanager.Manager), else nil. Derived lazily for the same
-// reason as syncManifest.
-func (a *App) syncApplierFor() syncApplier {
-	if ap, ok := a.entityManager.(syncApplier); ok {
-		return ap
-	}
-	return nil
-}
-
 // --- Wire DTOs ---
 
 type syncManifestResponse struct {
@@ -79,16 +58,6 @@ type syncRelationBody struct {
 	Content    string         `json:"content,omitempty"`
 }
 
-// registerSyncRoutes mounts the sync API under /api/sync/. See sync.go's
-// handlers for the per-route contract. The routes inherit the data-entry
-// security middleware EXCEPT the same-origin check, from which /api/sync/ is
-// exempted (a non-browser sync client sends no Origin) — see
-// middleware_security.go.
-func (a *App) registerSyncRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/sync/manifest", a.handleSyncManifest)
-	mux.HandleFunc("/api/sync/", a.handleSyncRecord)
-}
-
 // handleSyncManifest: GET /api/sync/manifest?cursor=<token>. Returns the changes
 // since the cursor and a new cursor (the highest seq seen). The cursor is a
 // server-minted token the client stores and echoes back; today it is the seq
@@ -96,12 +65,12 @@ func (a *App) registerSyncRoutes(mux *http.ServeMux) {
 // and not derive meaning from it — the encoding may change). A missing or
 // malformed cursor is treated as 0 (full manifest), which is the safe degrade:
 // the client re-bootstraps rather than silently skipping changes.
-func (a *App) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
+func (h *syncHandler) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET", "")
 		return
 	}
-	mp := a.syncManifest()
+	mp := h.manifest
 	if mp == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "sync_unsupported",
 			"The sync manifest is only available on the postgres backend", "")
@@ -122,7 +91,7 @@ func (a *App) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 	// it has no right to read. Denied rows are dropped from Changes; the cursor
 	// still advances past them (so the client doesn't re-fetch the same hidden
 	// rows forever) — the highest seq is taken over ALL entries, visible or not.
-	visible, err := a.filterVisibleManifest(r.Context(), entries)
+	visible, err := h.filterVisibleManifest(r.Context(), entries)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -159,7 +128,7 @@ func (a *App) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 //
 // Probes are batched per type via PermitsReadMany so the whole manifest costs
 // one MatchingIDs roundtrip per distinct type, not one per row.
-func (a *App) filterVisibleManifest(
+func (h *syncHandler) filterVisibleManifest(
 	ctx context.Context, entries []synctypes.ManifestEntry,
 ) ([]synctypes.ManifestEntry, error) {
 	gate := readGateFromContext(ctx)
@@ -173,7 +142,7 @@ func (a *App) filterVisibleManifest(
 		id := e.IDA
 		if e.Kind == "r" {
 			// A relation gates on its source entity (IDA = From).
-			if src, err := a.store.GetEntity(ctx, e.IDA); err == nil {
+			if src, err := h.store.GetEntity(ctx, e.IDA); err == nil {
 				typ = src.Type
 			} else {
 				typ = ""
@@ -210,7 +179,7 @@ func (a *App) filterVisibleManifest(
 //
 // kind is "entities" or "relations". For an entity the id is the path tail; for
 // a relation the tail is "<from>/<relType>/<to>".
-func (a *App) handleSyncRecord(w http.ResponseWriter, r *http.Request) {
+func (h *syncHandler) handleSyncRecord(w http.ResponseWriter, r *http.Request) {
 	kind, rest, ok := splitSyncPath(r.URL.Path)
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Unknown sync resource", "")
@@ -218,11 +187,11 @@ func (a *App) handleSyncRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		a.handleSyncGet(w, r, kind, rest)
+		h.handleSyncGet(w, r, kind, rest)
 	case http.MethodPut:
-		a.handleSyncPut(w, r, kind, rest)
+		h.handleSyncPut(w, r, kind, rest)
 	case http.MethodDelete:
-		a.handleSyncDelete(w, r, kind, rest)
+		h.handleSyncDelete(w, r, kind, rest)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET, PUT, or DELETE", "")
 	}
