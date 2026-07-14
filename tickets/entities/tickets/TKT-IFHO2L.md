@@ -5,7 +5,7 @@ title: Relation-based validation gates are silently dropped; port workflow gates
 kind: refactor
 priority: high
 effort: m
-status: planning
+status: done
 ---
 
 ## Description
