@@ -85,9 +85,9 @@ run. Proven working: a probe `lua_file` rule using
 `severity: error` and exit 1.
 
 - Add one or a few parameterized Lua validators under `tickets/validations/`
-(e.g. `require-linked-status.lua` taking relation-type + required target status
-+ min, and a `no-open-responses.lua` variant), reused across the 14 rules via
-`lua_args`.
+(e.g. a `require-linked-status.lua` taking relation-type, required target
+status, and min; plus a `no-open-responses.lua` variant), reused across the 14
+rules via `lua_args`.
 - Replace each rule's dropped `relations:` block with `lua_file:` + `lua_args:`.
 - The 32 pre-existing offenders will now fail — triage: either backfill their
 review checklists or accept a one-time data-cleanup pass (separate decision).
