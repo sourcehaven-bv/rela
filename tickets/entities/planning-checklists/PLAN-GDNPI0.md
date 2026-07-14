@@ -170,9 +170,9 @@ carries the instant) + mirrored tests + a docs regen.
 **Documentation Impact:**
 - [x] data-entry feed docs (source guide) — `date:`/`end_date:` may be `date` or `datetime`; datetime → timed event; same-kind rule; UTC-only.
 - [x] metamodel datetime note — flip "Calendar-feed sources currently accept only `date`... timed events are a planned follow-on" to reflect that datetime sources now emit timed events (edit `docs-project/` source + regenerate).
-- [ ] docs/cli-reference.md — N/A.
-- [ ] CLAUDE.md — N/A.
-- [ ] README.md — N/A.
+- [x] ~~docs/cli-reference.md~~ (N/A: no command changes)
+- [x] ~~CLAUDE.md~~ (N/A: no new cross-cutting convention)
+- [x] ~~README.md~~ (N/A: not a project-level change)
 
 **Note:** docs are auto-generated from `docs-project/entities/` — edit the
 source guides and run `just docs`, never the generated `docs/*.md` directly

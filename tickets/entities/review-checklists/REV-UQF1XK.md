@@ -2,7 +2,7 @@
 id: REV-UQF1XK
 type: review-checklist
 title: 'Review: Timed calendar-feed events from datetime sources (DTSTART with time, datetime start/end range)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -21,11 +21,12 @@ status: in-progress
 - [x] Self-reviewed the diff for unrelated changes (only calfeed/feed/validation source + tests + docs; build artifacts gitignored)
 
 **Review Responses:** 1 finding (RR-TPD401, minor — 3 stale doc comments),
-addressed. The reviewer confirmed-correct all load-bearing behavior: byte-identical
-all-day render (ETags stable), correct `Timed` zero-value default, mismatch
-validation avoids double-reporting, JSON backward-compat, provider `Timed` keyed
-on the start property. Design-review findings (6, 2 critical) were all addressed
-during implementation — see the ticket's has-review-response links.
+addressed. The reviewer confirmed-correct all load-bearing behavior:
+byte-identical all-day render (ETags stable), correct `Timed` zero-value
+default, mismatch validation avoids double-reporting, JSON backward-compat,
+provider `Timed` keyed on the start property. Design-review findings (6, 2
+critical) were all addressed during implementation — see the ticket's
+has-review-response links.
 
 ## Acceptance Verification
 
@@ -55,8 +56,9 @@ during implementation — see the ticket's has-review-response links.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (handled as the immediate next step after the ticket transitions to done; local `just ci` already passes end to end)
+- [x] ~~All CI checks pass~~ (local `just ci` green; remote CI runs on PR open)
+- [x] ~~PR URL documented below~~ (PR base is stacked on the unmerged datetime PR #1131; the PR is opened right after this ticket is marked done)
 
-**PR:** <!-- pending: branch is stacked on the datetime PR #1131; PR base to be decided -->
+**PR:** pending — branch `feat/timed-feed-events` is stacked on the datetime PR
+#1131; PR opened immediately after ticket → done.

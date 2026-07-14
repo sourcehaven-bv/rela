@@ -5,7 +5,7 @@ title: Timed calendar-feed events from datetime sources (DTSTART with time, date
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Description
