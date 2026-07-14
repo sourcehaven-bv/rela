@@ -18,6 +18,14 @@ func isFeedDateType(t string) bool {
 	return t == metamodel.PropertyTypeDate || t == metamodel.PropertyTypeDatetime
 }
 
+// feedKindMismatch reports whether a feed source's start and end date types are
+// different kinds (one all-day `date`, one timed `datetime`). iCal forbids
+// mixing an all-day DTSTART with a timed DTEND in one event. Only meaningful
+// when both are feed-date types.
+func feedKindMismatch(startType, endType string) bool {
+	return isFeedDateType(startType) && startType != endType
+}
+
 // rruleIsLiteral reports whether an rrule config value is a literal RFC 5545
 // rule (rather than a property reference). The two are disambiguated by syntax:
 // a literal contains "=" (RRULE parts are KEY=VALUE), which a bare property
@@ -135,8 +143,9 @@ func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Me
 		if def, ok := entDef.Properties[src.EndDate]; !ok {
 			errs = append(errs, fmt.Sprintf("%s: end_date property %q not in metamodel for entity %q", prefix, src.EndDate, src.EntityType))
 		} else if !isFeedDateType(def.Type) {
-			errs = append(errs, fmt.Sprintf("%s: end_date property %q must be date- or datetime-typed, is %q", prefix, src.EndDate, def.Type))
-		} else if dateDef, ok := entDef.Properties[src.Date]; ok && isFeedDateType(dateDef.Type) && dateDef.Type != def.Type {
+			errs = append(errs, fmt.Sprintf(
+				"%s: end_date property %q must be date- or datetime-typed, is %q", prefix, src.EndDate, def.Type))
+		} else if dateDef, ok := entDef.Properties[src.Date]; ok && feedKindMismatch(dateDef.Type, def.Type) {
 			errs = append(errs, fmt.Sprintf(
 				"%s: date property %q is %q but end_date property %q is %q — a feed event must be all-day or timed, not a mix",
 				prefix, src.Date, dateDef.Type, src.EndDate, def.Type))

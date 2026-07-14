@@ -19,8 +19,8 @@ func day(m time.Month, d int) time.Time {
 }
 
 // dayTime builds a UTC instant with a time-of-day, for timed-event tests.
-func dayTime(m time.Month, d, h, min int) time.Time {
-	return time.Date(2026, m, d, h, min, 0, 0, time.UTC)
+func dayTime(mo time.Month, d, h, mn int) time.Time {
+	return time.Date(2026, mo, d, h, mn, 0, 0, time.UTC)
 }
 
 // unfold reverses RFC 5545 line folding so a test can assert on logical lines.

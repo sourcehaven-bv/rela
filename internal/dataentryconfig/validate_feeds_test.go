@@ -108,8 +108,8 @@ func TestValidateFeeds_RruleAndEndDate(t *testing.T) {
 		{EntityType: "note", Date: "on", Summary: "text", Rrule: "on"},                     // property ref (on is date-typed but exists)
 		{EntityType: "note", Date: "on", Summary: "text", EndDate: "on"},                   // end_date property
 		// Datetime sources (timed events) are now accepted.
-		{EntityType: "task", Date: "starts_at", Summary: "title"},                          // datetime start, no end
-		{EntityType: "task", Date: "starts_at", Summary: "title", EndDate: "ends_at"},      // datetime start + datetime end (same kind)
+		{EntityType: "task", Date: "starts_at", Summary: "title"},                     // datetime start, no end
+		{EntityType: "task", Date: "starts_at", Summary: "title", EndDate: "ends_at"}, // datetime start + datetime end (same kind)
 	}
 	for i, src := range valid {
 		cfg := &Config{Feeds: map[string]Feed{"f": {Sources: []FeedSource{src}}}}
