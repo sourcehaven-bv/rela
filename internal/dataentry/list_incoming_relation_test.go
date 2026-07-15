@@ -93,7 +93,7 @@ func newIncomingRelApp(t *testing.T, entities []*entity.Entity, relations []*ent
 
 	app := &App{fieldResolver: NopFieldVerdictResolver{}}
 	rebindApp(app, fs, ctx, svc)
-	app.state.Store(&AppState{
+	app.schema.Publish(&Schema{
 		Cfg:        cfg,
 		Meta:       meta,
 		OpenAPIGen: openapi.New(meta, openapi.Config{Title: cfg.App.Name}),

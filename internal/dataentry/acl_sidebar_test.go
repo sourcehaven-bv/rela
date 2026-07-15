@@ -77,7 +77,7 @@ func installSidebarConfig(app *App) {
 		{Label: "Board", Kanban: "board"},
 	}
 	next.Cfg = &cfg
-	app.state.Store(&next)
+	app.schema.Publish(&next)
 }
 
 // sidebarCountsByLabel performs a sidebar request and returns the

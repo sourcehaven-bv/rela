@@ -116,7 +116,7 @@ func (a *App) handleAPIThemeImport(w http.ResponseWriter, r *http.Request) {
 // buildExportManifest composes the manifest written into the zip,
 // drawing the palette from user state when available and falling back
 // to the project palette otherwise.
-func buildExportManifest(s *AppState, userPalette *PaletteConfig, logoExt string) *dataentryconfig.ThemeManifest {
+func buildExportManifest(s *Schema, userPalette *PaletteConfig, logoExt string) *dataentryconfig.ThemeManifest {
 	m := &dataentryconfig.ThemeManifest{
 		Name:    s.Cfg.App.Name,
 		Version: "1.0.0",
