@@ -5,47 +5,44 @@ title: 'Finish dataentry.App decomposition: command/sync handlers + write nucleu
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
-Follow-up to TKT-N26KLB. That ticket drove `dataentry.App` from 227 methods down
-to ~166 and landed the structural payoff — the ACL-bounded `visibleReader` seam
-that closes the #1010 read-ACL bug class — but stopped short of the original
-`<40` end goal. We chose to ship that progress rather than block the plimsoll
-ratchet on the whole refactor. This ticket tracks the remainder.
+**Epic / parent ticket** for the remainder of the `dataentry.App` decomposition.
+Each shippable step is its own sub-ticket (moved to `done` with its PR); this
+parent stays in `backlog` until the whole arc lands — App under the 40-method
+line with the plimsoll directive deleted. (Per-PR sub-tickets satisfy the
+done-before-merge gate honestly: a multi-PR epic can't be `done` while work
+remains, and `backlog` is the allowed "not-touched-by-this-PR" parent state.)
 
-The AppState state-decomposition prerequisite (TKT-XSWFXQ) is now done, so the
-snapshot/`writeMu` publish coupling is gone and the handler clusters can move
-off `App` one at a time.
+Follow-up to the earlier decomposition that drove `dataentry.App` from 227
+methods down to ~166 and landed the structural payoff — the ACL-bounded
+`visibleReader` seam that closes the #1010 read-ACL bug class — but stopped
+short of the original `<40` end goal. The AppState state-decomposition
+prerequisite ([[TKT-XSWFXQ]]) is also done, so the snapshot/`writeMu` publish
+coupling is gone and the handler clusters can move off `App` one at a time.
 
-## Remaining steps (from the M5 plan)
+## Sub-tickets
 
-- **M5.2** — extract command + sync handlers off `App`.
-  - [x] **Sync handler cluster** → `syncHandler` (16 methods; `App` 170 → 154,
-directive ratcheted). Narrow consumer-side interfaces (`syncStore`,
-`syncDeleter`) + capabilities resolved once from the concrete store/manager;
-`writeMu` shared by pointer so sync writes still serialize with the other
-mutation handlers.
-  - [x] **Command handler cluster** → `commandHandler` (11 methods; `App` 154 →
-143, directive ratcheted). Owns the SSE shell-exec endpoints, the file/URL
-launchers, and `resolveCommands` (consumed by `handleV1Commands`). Narrow
-closures over the schema snapshot, Services bundle, project root, and the view
-executor; no mutable state (the in-flight exec registry stays a package-level
-`sync.Map`).
-- **M5.4** — carve the write nucleus + entity/relation/attachment write handlers
-behind one shared `writeMu`; drive `App` under the 40-method line and delete the
+- **M5.2 — extract command + sync handlers off `App`.**
+  - [x] [[TKT-VG9P1]] — sync route cluster → `syncHandler` (170 → 154). PR #1134.
+  - [x] [[TKT-KUFLD]] — command route cluster → `commandHandler` (154 → 143).
+PR #1138.
+  - [ ] Attachment handler cluster (`handlers_attachment.go`, ~12 methods).
+- **M5.4 — write nucleus.** Carve the entity/relation/attachment write handlers
+behind one shared `writeMu`; drive `App` under 40 and delete the
 `//plimsoll:max-methods` directive in `internal/dataentry/app.go`.
   - **Open question to settle first:** does write-serialization move *behind the
 store* (the CLAUDE.md-endorsed direction) or stay an App-level mutex the write
 handlers share by pointer (as `syncHandler` does today)? Worth a design-review
 before extracting the write handlers.
 
-## Invariants (unchanged from M5)
+## Invariants (unchanged)
 
 - Read handlers take the ACL-bounded `visibleReader` only — never `store.Store`.
 - `writeMu` stays a single shared instance across all write handlers (race
-detector guards). The extracted `syncHandler` holds a *pointer* to `App`'s
-`writeMu`, preserving this.
+detector guards). The extracted handlers hold a *pointer* to `App`'s `writeMu`,
+preserving this.
 
 ## Related finding
 
