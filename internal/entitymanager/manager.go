@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -178,6 +179,40 @@ type Deps struct {
 	// [RelationVersionRecorder]). Optional: nil disables it (fs/mem builds; the
 	// postgres build's relation create/update versions come from the sweep).
 	RelationVersionRecorder RelationVersionRecorder
+
+	// Transitions enforces enum state machines on the write path (TKT-E4LW2):
+	// transition legality, guard permissions, and preconditions. Required so
+	// no write path can silently skip the machine — but a metamodel with no
+	// transitions compiles to an empty enforcer whose checks are no-ops, so
+	// "required" costs nothing when the feature is unused. Constructed once at
+	// startup by [statemachine.Compile] and injected; the Manager never
+	// re-derives it from the metamodel.
+	Transitions TransitionEnforcer
+
+	// TransitionGuard answers the guard question for a state-machine
+	// transition (does the ctx principal hold permission P for the subject).
+	// May be nil: a nil guard makes every guarded edge fail closed, which is
+	// the safe default when no ACL-backed guard was wired. Production wiring
+	// supplies an adapter over the ACL; the direct-CLI/no-policy case is
+	// handled inside that adapter (it allows when there is no policy).
+	TransitionGuard statemachine.Guard
+
+	// TransitionGraph answers has_relation/count_relations for a transition
+	// `when:` precondition. May be nil when no precondition needs the graph;
+	// a `when:` that queries the graph then evaluates against an empty graph.
+	TransitionGraph statemachine.GraphLookup
+}
+
+// TransitionEnforcer is the narrow contract the Manager needs from the
+// compiled state machines: enforce an update (old→new) and a create's entry
+// value. Defined at the call site (CLAUDE.md consumer-side interfaces);
+// [*statemachine.Set] satisfies it.
+type TransitionEnforcer interface {
+	EnforceUpdate(
+		ctx context.Context, old, updated *entity.Entity,
+		guard statemachine.Guard, lookup statemachine.GraphLookup,
+	) error
+	EnforceCreate(ctx context.Context, e *entity.Entity) error
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -196,6 +231,10 @@ func New(d Deps) (*Manager, error) {
 	}
 	if d.ACL == nil {
 		return nil, errors.New("entitymanager: New: ACL is required (use acl.NopACL{} to opt out)")
+	}
+	if d.Transitions == nil {
+		return nil, errors.New(
+			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
 	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
@@ -233,6 +272,29 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 	}
 	m.recordDeniedWrite(ctx, decision, req)
 	return &acl.ForbiddenError{Decision: decision}
+}
+
+// mapTransitionError translates a state-machine enforcement error into the
+// entitymanager's wire-facing error shape (TKT-E4LW2). A guard denial becomes
+// an [*acl.ForbiddenError] (RuleKind "transition-guard") so it flows through
+// the same 403 path — and audit row — as any other authorization denial;
+// legality and precondition failures pass through unchanged and surface as 422
+// validation-class errors at the HTTP boundary. Returns nil for a nil input.
+func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, statemachine.ErrGuardDenied) {
+		decision := acl.Decision{
+			Allow:    false,
+			RuleKind: "transition-guard",
+			RuleID:   "-",
+			Reason:   err.Error(),
+		}
+		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject})
+		return &acl.ForbiddenError{Decision: decision}
+	}
+	return err
 }
 
 // recordACLBypass emits one audit row for an elevated (rela.bypass_acl) write.
@@ -362,6 +424,16 @@ func (m *Manager) CreateEntity(
 		Content:         e.Content,
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	// Enforce state-machine entry: a create may only enter a machine at its
+	// entry value (Initial, else Default). Runs post-template (defaults have
+	// applied) on the created state (TKT-E4LW2). createCore persisted the row,
+	// so a rejection here leaves an orphan on disk only briefly — but the
+	// common path is a legal entry; an illegal explicit entry value is a client
+	// error surfaced as 422 before automation/cascade run.
+	if err := m.deps.Transitions.EnforceCreate(ctx, created); err != nil {
 		return nil, err
 	}
 
@@ -531,6 +603,18 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
+	}
+
+	// Enforce enum state machines on the final (post-automation) state, using
+	// the prior state to determine the transition (TKT-E4LW2). This is the
+	// unforgettable chokepoint: the enforcer is a required collaborator run in
+	// the fixed write pipeline, so no update path can skip legality/guard/
+	// precondition. An empty enforcer (metamodel with no transitions) is a
+	// no-op.
+	if err := m.deps.Transitions.EnforceUpdate(
+		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
+	); err != nil {
+		return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: e.Type, ID: e.ID}, err)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final

@@ -53,6 +53,7 @@ components:
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
+  statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
   validator:        { in: internal/validator }
@@ -373,6 +374,7 @@ deps:
       - script
       - search
       - state
+      - statemachine
       - storage
       - store
       - templating
@@ -474,6 +476,7 @@ deps:
       - automation
       - metamodel
       - principal
+      - statemachine
       - store
       - templating
   importer:
@@ -500,6 +503,11 @@ deps:
     mayDependOn: []
     canUse:
       - gopherlua
+  statemachine:
+    mayDependOn:
+      - entity
+      - metamodel
+      - predicate
   tracer:
     mayDependOn:
       - store

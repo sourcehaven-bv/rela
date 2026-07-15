@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -32,6 +33,7 @@ func newVersionManager(t *testing.T) (*entitymanager.Manager, *fakeRecorder) {
 		Templater:       nopTemplater{},
 		Audit:           audit.Nop{},
 		ACL:             acl.NopACL{},
+		Transitions:     statemachine.EmptySet(),
 		VersionRecorder: rec,
 	})
 	if err != nil {
