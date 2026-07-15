@@ -75,9 +75,7 @@ func (a *App) NewRouter() http.Handler {
 
 	// APIs used by Vue SPA
 	inner.HandleFunc("/api/help/", a.handleEntityHelp)
-	inner.HandleFunc("/api/command/", a.handleCommandExec)
-	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
-	inner.HandleFunc("/api/open-file", a.handleOpenFile)
+	a.commands.registerCommandRoutes(inner)
 	inner.HandleFunc("/api/git/status", a.handleGitStatus)
 	inner.HandleFunc("/api/git/sync", a.handleGitSync)
 

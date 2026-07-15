@@ -3243,7 +3243,7 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	qualifier := query.Get("qualifier")
 	entityType := query.Get("entity_type")
 
-	resolved := a.resolveCommands(pageType, qualifier, entityType)
+	resolved := a.commands.resolveCommands(pageType, qualifier, entityType)
 
 	commands := make([]v1.Command, 0, len(resolved))
 	for _, cmd := range resolved {

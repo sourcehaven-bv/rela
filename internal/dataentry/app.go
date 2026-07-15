@@ -75,9 +75,10 @@ const userPaletteFile = "palette.yaml"
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
 // HTTP route by the router's design). The sync route cluster (16 methods) moved
-// to syncHandler, ratcheting 170 → 154.
+// to syncHandler (170 → 154); the command cluster (11 methods) moved to
+// commandHandler (154 → 143).
 //
-//plimsoll:max-methods=154
+//plimsoll:max-methods=143
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -139,7 +140,12 @@ type App struct {
 	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
 	// surfaces plus a pointer to writeMu so its writes serialize with the other
 	// mutation handlers.
-	sync      *syncHandler
+	sync *syncHandler
+	// commands owns the user-configured command surface (SSE shell-exec,
+	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
+	// holds narrow closures over the schema snapshot, Services bundle, project
+	// root, and the view executor.
+	commands  *commandHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -517,6 +523,17 @@ func NewApp(
 	// are resolved once from the concrete store/manager (nil on fs/memory builds,
 	// where the sync endpoints degrade to 501).
 	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+
+	// commandHandler owns the user-configured command surface. Its
+	// collaborators are narrow closures over App: the schema snapshot (command/
+	// list/view config), the Services read bundle, the project root (exec cwd +
+	// env), and the view executor for view-context commands.
+	app.commands = &commandHandler{
+		schema:      app.State,
+		services:    app.Services,
+		projectRoot: app.ProjectRoot,
+		executeView: app.executeView,
+	}
 
 	// Build and publish the initial Schema snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep
