@@ -51,11 +51,11 @@ is covered by the bool-coercion test.
 
 ## Documentation (enhancements only)
 
-- [x] ~~Docs-checklist created~~ (N/A: pure client utility with no user-facing surface yet. The author-facing grammar reference for `visible_when`/`required_when` is written in docs/data-entry.md by the consumer TKT-CHLAJ, where the config keys first appear. The engine's own contract is documented in its module JSDoc.)
-- [x] ~~User-facing documentation updated~~ (N/A: same reason)
-- [x] ~~Docs-checklist marked as done~~ (N/A)
+- [x] Docs-checklist created and linked via `has-docs` — DOCS-NRH5Y
+- [x] User-facing documentation updated — N/A with reason (pure client utility, no user-facing surface yet; the author-facing `visible_when`/`required_when` grammar reference in docs/data-entry.md is written by the consumer TKT-CHLAJ where the config keys first appear; the engine's own contract is its module JSDoc)
+- [x] Docs-checklist marked as done — DOCS-NRH5Y is `done`
 
-**Docs Checklist:** N/A — grammar docs land with TKT-CHLAJ.
+**Docs Checklist:** DOCS-NRH5Y (grammar reference for authors lands with TKT-CHLAJ).
 
 ## Final Checks
 
