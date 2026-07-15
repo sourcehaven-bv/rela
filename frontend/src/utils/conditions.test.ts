@@ -1,24 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { compile, evaluate, _clearCache, type Bindings } from './conditions'
+import { parse, ConditionError, _clearCache, type Bindings } from './conditions'
 
 beforeEach(() => {
   _clearCache()
 })
 
+// parse() throws on static errors; eval() never throws. evalWith exercises the
+// happy path (parse succeeds, then eval).
 function evalWith(expr: string, bindings: Bindings): boolean {
-  return compile(expr).eval(bindings)
+  return parse(expr).eval(bindings)
 }
 
 describe('conditions', () => {
-  describe('empty / no-condition', () => {
-    it('treats empty/whitespace/undefined as "always true"', () => {
-      expect(evaluate('', {})).toBe(true)
-      expect(evaluate('   ', {})).toBe(true)
-      expect(evaluate(undefined, {})).toBe(true)
-      expect(evaluate(null, {})).toBe(true)
-    })
-  })
-
   describe('references & literals', () => {
     it('resolves form/entity/current_user namespaces', () => {
       const b: Bindings = {
@@ -34,7 +27,10 @@ describe('conditions', () => {
     it('unset field and missing namespace read as nil', () => {
       expect(evalWith('form.absent == nil', { form: {} })).toBe(true)
       expect(evalWith('form.absent == nil', {})).toBe(true)
-      expect(evalWith('form.absent != nil', { form: { absent: 'x' } })).toBe(true)
+    })
+
+    it('a set field is not nil', () => {
+      expect(evalWith('form.present != nil', { form: { present: 'x' } })).toBe(true)
     })
 
     it('parses boolean, number, string and nil literals', () => {
@@ -86,13 +82,11 @@ describe('conditions', () => {
       expect(evalWith('form.missing > 10', { form: {} })).toBe(false)
     })
 
-    it('=~ regex matches, invalid regex is false + warns (RR-9IQBT)', () => {
+    it('=~ regex matches a literal pattern (RR-9IQBT)', () => {
       expect(evalWith("form.name =~ '^foo'", { form: { name: 'foobar' } })).toBe(true)
       expect(evalWith("form.name =~ '^foo'", { form: { name: 'barfoo' } })).toBe(false)
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      expect(evalWith("form.name =~ '('", { form: { name: 'x' } })).toBe(false)
-      expect(warn).toHaveBeenCalled()
-      warn.mockRestore()
+      // Invalid-literal-regex behavior is covered in the ReDoS block (it throws
+      // at parse, since a literal pattern is statically knowable).
     })
   })
 
@@ -187,25 +181,22 @@ describe('conditions', () => {
   })
 
   describe('deferred host functions (RR-P6GVE)', () => {
-    it('function-call syntax parses but eval rejects the call (false)', () => {
-      // Parses cleanly (no parse-error warning), evaluates to false.
+    it('function-call syntax PARSES but eval rejects the call (false)', () => {
+      // A call is not a static error (the registry may exist later), so parse
+      // succeeds; there is simply no function to call yet, so eval is false.
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      expect(evalWith("has_role('editor')", {})).toBe(false)
-      // No parse-error warning should have fired (it's an eval-time rejection).
-      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('parse error'))
+      const prog = parse("has_role('editor')") // does not throw
+      expect(prog.eval({})).toBe(false)
       warn.mockRestore()
     })
   })
 
   describe('prototype-pollution guard (RR + security)', () => {
-    it('rejects __proto__/constructor/prototype field references at parse time', () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      // These fail to parse -> constant-false program + warning.
-      expect(evalWith('form.__proto__ == 1', { form: {} })).toBe(false)
-      expect(evalWith('form.constructor == 1', { form: {} })).toBe(false)
-      expect(evalWith('form.prototype == 1', { form: {} })).toBe(false)
-      expect(warn).toHaveBeenCalled()
-      warn.mockRestore()
+    it('throws on __proto__/constructor/prototype field references at parse', () => {
+      // A forbidden field name is a static error — reject loudly at parse.
+      expect(() => parse('form.__proto__ == 1')).toThrow(ConditionError)
+      expect(() => parse('form.constructor == 1')).toThrow(ConditionError)
+      expect(() => parse('form.prototype == 1')).toThrow(ConditionError)
     })
 
     it('does not read inherited properties, only own', () => {
@@ -216,39 +207,35 @@ describe('conditions', () => {
     })
   })
 
-  describe('parse errors are fail-safe (RR-8GRLD)', () => {
-    it('malformed expression compiles to constant-false + warns', () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      expect(evalWith('form. == ==', {})).toBe(false)
-      expect(evalWith('> > >', {})).toBe(false)
-      expect(evalWith('form.a < form.b < form.c', {})).toBe(false) // chaining
-      expect(evalWith("form.x == 'unterminated", {})).toBe(false)
-      expect(evalWith('bareword', {})).toBe(false)
-      expect(evalWith('unknown_ns.field == 1', {})).toBe(false)
-      expect(warn).toHaveBeenCalled()
-      warn.mockRestore()
+  describe('parse errors throw ConditionError (RR-8GRLD)', () => {
+    it('throws on malformed / static errors', () => {
+      // Static config bugs fail loud at parse — not swallowed to a silent false.
+      expect(() => parse('form. == ==')).toThrow(ConditionError)
+      expect(() => parse('> > >')).toThrow(ConditionError)
+      expect(() => parse('form.a < form.b < form.c')).toThrow(ConditionError) // chaining
+      expect(() => parse("form.x == 'unterminated")).toThrow(ConditionError)
+      expect(() => parse('bareword')).toThrow(ConditionError)
+      expect(() => parse('unknown_ns.field == 1')).toThrow(ConditionError)
+      expect(() => parse('')).toThrow(ConditionError) // empty is not "true" — caller's policy
     })
 
-    it('rejects deeply nested expressions (node budget)', () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    it('eval never throws — a valid parse with a nil reference is false', () => {
+      // The eval side stays fail-safe: an unknown-but-syntactically-valid field
+      // resolves to nil, never throws.
+      expect(evalWith('form.typo_field == true', { form: {} })).toBe(false)
+    })
+
+    it('rejects deeply nested expressions at parse (node budget)', () => {
       const deep = 'not '.repeat(1000) + 'true'
-      expect(evalWith(deep, {})).toBe(false)
-      expect(warn).toHaveBeenCalled()
-      warn.mockRestore()
+      expect(() => parse(deep)).toThrow(/too complex/)
     })
 
-    it('rejects a long flat and/or chain BEFORE eval can overflow (RR-P3HL8)', () => {
+    it('rejects a long flat and/or chain at parse, before eval can overflow (RR-P3HL8)', () => {
       // A flat chain builds a deep left AST spine that evalNode recurses over;
-      // the node budget must reject it at parse time rather than let a
-      // legitimately-true expression silently return false at eval.
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // the node budget rejects it at parse rather than risk an eval-time
+      // stack overflow.
       const clauses = Array.from({ length: 5000 }, (_, i) => `form.x == ${i}`)
-      const longChain = clauses.join(' or ')
-      // x matches the last clause, so a working evaluator would say true; the
-      // budget rejects it first -> constant-false program.
-      expect(evalWith(longChain, { form: { x: 4999 } })).toBe(false)
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('too complex'))
-      warn.mockRestore()
+      expect(() => parse(clauses.join(' or '))).toThrow(/too complex/)
     })
 
     it('a chain within the node budget still evaluates correctly', () => {
@@ -265,21 +252,28 @@ describe('conditions', () => {
   })
 
   describe('ReDoS guard on =~ (RR-IROUO)', () => {
-    it('rejects an over-long regex pattern instead of running it', () => {
+    it('a LITERAL invalid/oversized pattern throws at parse (statically knowable)', () => {
+      expect(() => parse("form.v =~ '('")).toThrow(/invalid regex/) // bad syntax
+      const evil = "'" + '(a+)+' + 'a'.repeat(300) + "'"
+      expect(() => parse(`form.v =~ ${evil}`)).toThrow(/too long/) // oversized
+    })
+
+    it('a DYNAMIC (binding-sourced) oversized pattern is fail-safe at eval, not executed', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      // A pattern sourced from a binding, longer than the cap.
-      const evil = '(a+)+' + 'a'.repeat(300)
+      const evilPat = '(a+)+' + 'a'.repeat(300)
+      const prog = parse('form.v =~ form.pat') // parses fine — pattern unknown yet
       const t0 = performance.now()
-      expect(evalWith('form.v =~ form.pat', { form: { v: 'x', pat: evil } })).toBe(false)
-      const elapsed = performance.now() - t0
-      // Must be rejected on length, not executed — so it returns effectively
-      // instantly rather than backtracking.
-      expect(elapsed).toBeLessThan(100)
+      expect(prog.eval({ form: { v: 'x', pat: evilPat } })).toBe(false)
+      expect(performance.now() - t0).toBeLessThan(100) // rejected on length, not run
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('too long'))
       warn.mockRestore()
     })
 
-    it('a normal-length pattern still matches', () => {
+    it('a normal literal pattern still matches', () => {
+      expect(evalWith("form.v =~ '^foo'", { form: { v: 'foobar' } })).toBe(true)
+    })
+
+    it('a dynamic normal-length pattern still matches', () => {
       expect(evalWith('form.v =~ form.pat', { form: { v: 'foobar', pat: '^foo' } })).toBe(true)
     })
 
@@ -319,10 +313,15 @@ describe('conditions', () => {
   })
 
   describe('memoization (RR-7VKNB)', () => {
-    it('compile returns the same Program instance for the same source', () => {
-      const a = compile("form.x == 'y'")
-      const b = compile("form.x == 'y'")
+    it('parse returns the same Program instance for the same source', () => {
+      const a = parse("form.x == 'y'")
+      const b = parse("form.x == 'y'")
       expect(a).toBe(b)
+    })
+
+    it('a repeated bad source re-throws (failure is memoized too)', () => {
+      expect(() => parse('bad ==')).toThrow(ConditionError)
+      expect(() => parse('bad ==')).toThrow(ConditionError)
     })
   })
 })

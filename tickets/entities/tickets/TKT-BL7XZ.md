@@ -35,9 +35,9 @@ precedence to gopher-lua's parser). Low → high binding:
 4. `not` (unary prefix)
 5. primary: literal, dotted reference, function call, `( expr )`
 
-Consequences to pin with tests:
+Consequences pinned with tests:
 - `a == b and c == d or e`  ⇒ `((a==b) and (c==d)) or e`
-- `not a == b`  ⇒ `(not a) == b`  (Lua binds unary `not` **tighter** than comparison — deliberately match; add an AST assertion test)
+- `not a == b`  ⇒ `(not a) == b`  (Lua binds unary `not` **tighter** than comparison)
 - `and`/`or` are left-associative.
 
 Literals: single-quoted string `'...'` (with `\'` `\\` escapes), number
@@ -48,73 +48,85 @@ functions below.
 
 ## Not-equal spelling (resolves RR-YTKIC)
 
-Canonical authored/documented spelling is **`!=`** (form authors aren't Lua
-users). `~=` is accepted as a silent alias for congruence with predicate. Docs
-show `!=` only. NOTE the asterisk on "congruent with predicate": `!=` is not
-valid Lua, and our engine is permissive where predicate is strict (below) — so
-the grammars are *aligned in surface/precedence*, not identical in semantics.
-Document this explicitly.
+Canonical authored/documented spelling is **`!=`**. `~=` is accepted as a silent
+alias for congruence with predicate. Docs show `!=` only. `!=` is not valid Lua
+and the engine is permissive where predicate is strict, so "congruent" means
+aligned in surface/precedence, not identical semantics.
 
 ## Value model, coercion & equality (PINNED — resolves RR-9IQBT)
 
-The engine is **permissive** (filter-style), NOT Lua-strict (predicate makes
-cross-type compares a compile error; we don't). Comparison table, applied after
-resolving both operands:
+Permissive (filter-style), NOT Lua-strict. Table applied after resolving both
+operands:
+- unset/missing reference → `nil`; `== nil`/`!= nil` true iff operand is nil.
+- bool literal vs value: real bool as-is; `'true'`/`'false'` (case-insensitive) → bool; else not-equal.
+- number literal vs value: **strict decimal** string coercion (DECIMAL_RE) — rejects hex/binary/whitespace/Infinity (RR-ATHC2).
+- string literal: byte-for-byte.
+- ordered `< <= > >=`: numeric coercion of both; if both finite numbers compare numerically, else lexicographically; never throws.
+- non-scalar (array/object) bound values → `nil` (never match a literal) (RR-KR035).
 
-- **unset / missing reference** (`form.x` where x absent) resolves to `nil`.
-- `== nil` / `!= nil`: true iff the operand is unset/nil.
-- **bool literal vs value:** the value is coerced to bool by: JS `true`/`false` as-is; strings `'true'`/`'false'` (case-insensitive) → bool; everything else → compare fails (not equal). So `form.has_processors == true` matches a real boolean `true` OR the string `'true'` (checkbox widgets emit boolean; enum/hand-edited may be string).
-- **number literal vs value:** value coerced via `Number(v)`; `NaN` → not equal. So `form.count == 3` matches number `3` or string `'3'`.
-- **string literal vs value:** compare `String(v)` byte-for-byte. So `form.kind == 'note'` matches string `'note'`.
-- **ordered `< <= > >=`:** attempt numeric coercion of both sides; if both are finite numbers compare numerically, else compare as strings lexicographically. Never throws.
-- **`=~` regex:** `new RegExp(literal)` against `String(value)`; **invalid regex → false + `console.warn`, never throws.**
+`and`/`or`/`not` operate on truthiness; a non-bool in boolean position coerces
+(does not error, unlike predicate).
 
-`and`/`or`/`not` operate on the **truthiness** of sub-results (each comparison
-yields a real bool; a bare reference in boolean position is truthy iff not
-nil/false/empty-string). Unlike predicate (strict bool), a non-bool in boolean
-position does NOT error — it coerces. Document the divergence.
+## Fail-safe EVAL vs throwing PARSE (PINNED — resolves RR-TNMRC, RR-8GRLD; refined after crit review)
 
-## Fail-safe evaluation (PINNED — resolves RR-TNMRC)
+The engine has **two responsibilities and one throw boundary**, mirroring the
+platform (`new RegExp('[')` / `JSON.parse('{')` throw at construction; only
+matching is lenient):
 
-Eval errors are **per-node local**, not whole-expression bail: a node that
-errors coerces to **false** in place, then evaluation continues. So `brokenRef
-or form.ok == true` still yields true if the right side holds. `and`/`or`
-**short-circuit** normally (left decides when it can). A parse error is
-different: an expression that fails to *parse* evaluates to a constant `false`
-at runtime (+ warn), and is caught earlier by the lint (below). Tests must
-cover: short-circuit with an erroring left operand on both `and` and `or`.
+- **`parse(expr): Program` — THROWS `ConditionError`** on a *statically* broken
+expression: syntax error, comparison chaining, bare/unknown namespace,
+over-budget size (node budget), forbidden field name, or an invalid/oversized
+**literal** `=~` pattern. These are config bugs; they fail loud. Memoized by
+source (failures cached too, so a repeated bad string re-throws cheaply).
+- **`Program.eval(bindings): boolean` — NEVER THROWS.** A per-node
+*data-dependent* failure (bad reference, rejected function call, a **dynamic**
+`=~ form.pat` pattern only known at eval) coerces to `false` *locally* and
+evaluation continues, so one broken leaf doesn't sink an otherwise-valid `or`.
+`and`/`or` short-circuit.
+
+**The engine ships NO leniency wrapper and NO one-shot helper.** Deciding what a
+broken/unmet condition *means* (hide a branch, surface an inline error, refuse
+to render) is the calling layer's policy, made where the error can be surfaced.
+A caller that must not throw during render (e.g. a Vue computed) wraps `parse`
+in its own try/catch. (This replaced the earlier swallowing `compile()` +
+`evaluate()` design, which baked the error-handling decision into the library —
+crit review flagged that as taking the decision away from the caller.)
+
+**`=~` asymmetry (deliberate, matches JS):** a *literal* pattern is validated
+(syntax + length cap) at parse and throws; a *binding-sourced* pattern is only
+knowable at eval and stays fail-safe (false + warn). Documented on the operator.
 
 ## Host functions — DEFERRED (resolves RR-P6GVE)
 
-Per decision: **do not build the registry in this ticket.** The only in-scope
-consumer (wizard forms) uses `form.<field>` only. The parser DOES accept a
-function-call AST node (so the grammar is stable), but eval **rejects any call**
-with a local error → false + warn (`no such function: <name>`). The registry +
-concrete host functions (`has_role`, `has_relation`) are added by the ACL ticket
-when a real caller exists to shape and test the API. This keeps the contract
-minimal and unproven surface out of the frozen API.
+Registry not built here. The parser accepts a function-call AST node (grammar
+stable), but eval **rejects any call** → false + warn (`no such function`).
+Registry + concrete functions (`has_role`, `has_relation`) land with the ACL
+consumer that has a real caller to shape/test the API.
 
-## Compile/eval split & caching (resolves RR-7VKNB)
+## Complexity / ReDoS bounds (resolves RR-P3HL8, RR-7GDOI, RR-IROUO)
 
-Mirror predicate's Program/Eval split: `compile(expr): Program` (parse once →
-AST/closure) and `program.eval(bindings): boolean`. Memoize compiled programs by
-expression string (a module-level `Map`). `DynamicForm` holds compiled programs
-in a computed and re-evals on `formData` change — no re-parse per keystroke.
-Volumes are small (~tens of conditions) so this is about avoiding an
-obviously-wasteful re-parse loop, not micro-perf.
+- **Total-node budget (MAX_NODES=500)** enforced per emitted AST node — bounds
+flat `and`/`or` chains AND nesting uniformly, so a long chain is rejected at
+parse (throws) rather than overflowing the eval-time stack. (Replaced the
+nesting-only depth counter that also double-counted parens.)
+- **Regex length cap (MAX_REGEX_LENGTH=200)** bounds ReDoS: literal over-length
+patterns throw at parse; dynamic ones are rejected fail-safe at eval.
 
 ## Authoring safety / bad-condition surfacing (resolves RR-8GRLD)
 
-Two mechanisms (per decision — dev-console + CLI lint; NOT an in-SPA banner):
-1. **Runtime:** on parse/eval failure the engine `console.warn`s with the expression and reason. (Fail-safe → the branch just stays hidden; no crash.)
-2. **`rela` CLI config lint (separate small Go surface — lands with the wizard consumer TKT-CHLAJ, since that's when config first carries conditions):** feed each `visible_when`/`required_when` string through the Go **`internal/predicate`** parser (`predicate.Compile` with an env declaring `form`/`entity`/`current_user` records), reporting parse errors and unknown references. This is the shared-grammar payoff — no second Go parser. **Caveat to document:** predicate is *stricter* than the runtime engine (strict bool, cross-type compare = error), so the lint flags a **superset** — it's a "predicate-grammar sanity check", not a 1:1 mirror of runtime behavior. Framed and documented as such. (The lint's Go wiring is tracked with TKT-CHLAJ; this engine ticket only owns the TS runtime + the grammar spec the lint targets.)
+Because `parse` now **throws**, the calling layer can surface a broken condition
+however it wants (inline error, banner, console) — the engine no longer swallows
+it. Runtime eval still `console.warn`s on data-dependent failures. The **`rela`
+CLI config lint** (Go, reusing `internal/predicate` — a stricter superset; lands
+with TKT-CHLAJ) additionally catches parse errors AND unknown-field references
+at author time.
 
 ## Security
 
-- Property lookup is **prototype-pollution-safe**: reject/skip `__proto__`, `constructor`, `prototype` segments and use own-property access only (mirror `frontend/src/utils/filters.ts` `PROPERTY_NAME_RE`, `^[a-zA-Z_][a-zA-Z0-9_]*$`). Identifier segments only; no computed/bracket access in the grammar (matches predicate's rejection of `entity[expr]`).
-- No `eval()`, no `Function()` — hand-written parser over a closed grammar.
-- A small **depth cap** on parse (reject absurdly nested expressions) — admin-authored config, but fail-safe.
-- Client-side visibility/required is a **UX affordance only, never authorization** — the server re-validates every write regardless.
+- Prototype-pollution-safe: `__proto__`/`constructor`/`prototype` rejected at parse (throw); own-property lookups only; belt-and-suspenders eval-time guard.
+- No `eval()`/`Function()` — hand-written parser over a closed grammar.
+- Node budget + regex length cap (above).
+- Client-side visibility/required is a **UX affordance only, never authorization** — the server re-validates every write.
 
 ## Out of scope
 
@@ -125,13 +137,13 @@ Two mechanisms (per decision — dev-console + CLI lint; NOT an in-SPA banner):
 
 ## Acceptance criteria
 
-1. `compile(expr)` parses the pinned grammar (and/or/not, comparisons incl. `!=`/`~=`/`=~`, parens, literals, dotted refs, call nodes) or returns a clear parse error; AST-precedence tests pin the three sample expressions above.
-2. `program.eval(bindings)` returns a boolean; `form.`/`entity.`/`current_user.` refs resolve from bindings; compiled programs are memoized by string.
-3. The coercion/equality table above holds, with tests for each row (bool/number/string literal vs typed and string values; nil/unset; ordered; regex incl. invalid-regex → false).
-4. Fail-safe: per-node eval errors coerce to false locally (short-circuit tests on `and`/`or` with an erroring operand); parse failure → constant false + warn; nothing throws at eval time.
-5. Property lookup rejects `__proto__`/`constructor`/`prototype`; unset fields read as nil.
+1. `parse(expr)` returns a reusable `Program` for the pinned grammar, or **throws `ConditionError`** on any static error (syntax, chaining, bad namespace, over-budget, forbidden field, invalid/oversized literal `=~`); AST-precedence pinned by the sample-expression tests.
+2. `program.eval(bindings)` returns a boolean and **never throws**; `form.`/`entity.`/`current_user.` refs resolve; parse results (success + failure) memoized by source.
+3. The coercion/equality table holds, with a test per row (bool/number/string vs typed+string, nil/unset, strict-decimal, ordered, non-scalar→nil, literal `=~` match).
+4. Throw-vs-fail-safe split: static errors throw at parse; eval-time per-node errors (bad ref, rejected call, dynamic bad/oversized regex) coerce to false locally with short-circuit; nothing throws at eval.
+5. Forbidden field names throw at parse; unset fields read as nil; inherited props not resolved.
 6. Function-call syntax parses but eval rejects any call (`no such function`) — registry deferred.
-7. Unit tests cover: every operator, precedence/associativity, parens, short-circuit, nil handling, coercion table, prototype-pollution guard, invalid regex, and the deferred-function path.
+7. Unit tests cover every operator, precedence/associativity, parens, short-circuit, nil, coercion table, prototype-pollution, complexity budget, and the literal-vs-dynamic `=~` distinction.
 
 ## First consumer
 

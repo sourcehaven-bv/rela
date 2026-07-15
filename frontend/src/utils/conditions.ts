@@ -41,13 +41,31 @@
  * {@link compareEq}) instead of being compile errors, and boolean positions
  * coerce truthiness instead of requiring a bool.
  *
- * # Fail-safe
+ * # Two responsibilities, one throw boundary
  *
- * Nothing throws at eval time. A per-node eval error (bad reference, rejected
- * call, invalid regex) coerces to `false` *locally* and evaluation continues,
- * so one broken reference does not sink an otherwise-valid `or`. An expression
- * that fails to *parse* compiles to a constant-`false` program plus a
- * `console.warn` — the caller still gets a usable `Program`.
+ * The engine does exactly two things, and the split mirrors the platform's own
+ * (`new RegExp('[')` / `JSON.parse('{')` throw at construction; only matching
+ * is lenient):
+ *
+ * - {@link parse} — **throws** {@link ConditionError} on a *statically* broken
+ *   expression: syntax error, comparison chaining, bare/unknown namespace,
+ *   over-budget size, or an invalid/oversized *literal* `=~` pattern. These are
+ *   config bugs; they fail loud.
+ * - {@link Program.eval} — **never throws.** A per-node *data-dependent* failure
+ *   (a reference that resolves to nil in a bad way, a rejected function call, a
+ *   *dynamic* `=~` pattern that only resolves at eval) coerces to `false`
+ *   locally and evaluation continues, so one broken leaf does not sink an
+ *   otherwise-valid `or`.
+ *
+ * Note the `=~` asymmetry, which is deliberate and matches JS: a *literal*
+ * pattern is validated at parse (throws), a *binding-sourced* pattern is only
+ * knowable at eval (fail-safe false + warn).
+ *
+ * The engine ships **no leniency wrapper and no one-shot helper**. Deciding what
+ * a broken or unmet condition *means* — hide a branch, surface an inline error,
+ * refuse to render — is the calling layer's policy, made where the error can be
+ * surfaced. A caller that must not throw during render wraps {@link parse} in
+ * its own try/catch and picks the fallback; the engine does not pick for it.
  */
 
 /**
@@ -312,7 +330,16 @@ class Parser {
       if (after.type === 'op' && COMPARE_OPS.has(after.value)) {
         throw new ConditionError(`comparison operators do not chain at ${after.pos}`)
       }
-      return this.node({ kind: 'compare', op: normalizeCompareOp(tok.value), left, right })
+      const op = normalizeCompareOp(tok.value)
+      // A `=~` whose pattern is a string LITERAL is statically knowable, so
+      // validate it now: an invalid or oversized literal regex is a config
+      // bug and throws at parse (like JS rejecting `/[/` at parse time). A
+      // pattern that comes from a binding can only be checked at eval, where
+      // it stays fail-safe (see compareRegex).
+      if (op === '=~' && right.kind === 'lit' && typeof right.value === 'string') {
+        validateRegexLiteral(right.value, tok.pos)
+      }
+      return this.node({ kind: 'compare', op, left, right })
     }
     return left
   }
@@ -569,14 +596,34 @@ function compareOrdered(op: CompareOp, a: Value, b: Value): boolean {
   }
 }
 
+/**
+ * Validate a `=~` pattern known at PARSE time (a string literal). Throws
+ * {@link ConditionError} on an oversized or syntactically-invalid pattern so
+ * the config bug surfaces loudly at parse, consistent with every other static
+ * error. The length cap bounds ReDoS exposure: JS's backtracking RegExp engine
+ * has no match timeout, so a pathological pattern (e.g. `(a+)+$`) could hang
+ * the thread — the cap is a coarse ceiling on that.
+ */
+function validateRegexLiteral(pattern: string, pos: number): void {
+  if (pattern.length > MAX_REGEX_LENGTH) {
+    throw new ConditionError(`regex pattern too long (>${MAX_REGEX_LENGTH} chars) at ${pos}`)
+  }
+  try {
+    new RegExp(pattern)
+  } catch (err) {
+    throw new ConditionError(
+      `invalid regex ${JSON.stringify(pattern)} at ${pos}: ${err instanceof Error ? err.message : err}`
+    )
+  }
+}
+
 function compareRegex(value: Value, pattern: Value): boolean {
   if (pattern === NIL || value === NIL) return false
   const src = String(pattern)
-  // Cap the pattern length. JS's backtracking RegExp engine has no match
-  // timeout, so a pathological pattern (e.g. `(a+)+$`) can hang the render
-  // thread indefinitely — a length cap is a coarse but effective ceiling on
-  // that exposure. `=~` patterns are expected to be trusted config, not
-  // free-form user input; this is defence-in-depth, not the primary boundary.
+  // Reached with a DYNAMIC pattern (from a binding) — literals were already
+  // validated at parse. A dynamic pattern can only be checked now, so it stays
+  // fail-safe: oversized or invalid → false + warn, never throw. (Same length
+  // cap as validateRegexLiteral; see that function for the ReDoS rationale.)
   if (src.length > MAX_REGEX_LENGTH) {
     console.warn(`[conditions] regex pattern too long (>${MAX_REGEX_LENGTH} chars); rejected`)
     return false
@@ -623,21 +670,31 @@ function toNumber(v: Value): number | undefined {
 // Public API
 // ---------------------------------------------------------------------------
 
-const cache = new Map<string, Program>()
-
-/** A program that always evaluates to false — used when parsing fails. */
-function constFalse(source: string): Program {
-  return { source, eval: () => false }
-}
+// Memoize by source string. A successful parse caches its Program; a failed
+// parse caches the ConditionError so a repeated bad string re-throws cheaply
+// rather than re-tokenizing. This engine has exactly two responsibilities —
+// parse (throws on static errors) and eval (never throws). It deliberately
+// ships NO leniency wrapper and NO one-shot helper: deciding what a broken or
+// unmet condition *means* (hide a branch? surface an inline error? refuse to
+// render?) is the calling layer's policy, made where the error can actually be
+// surfaced. A library that swallowed it would take that decision away.
+const cache = new Map<string, Program | ConditionError>()
 
 /**
- * Compile an expression into a reusable {@link Program}. Compilation never
- * throws: a parse error logs a warning and returns a constant-false program so
- * callers can treat every expression uniformly. Results are memoized by source
- * string.
+ * Parse an expression into a reusable {@link Program}, or **throw**
+ * {@link ConditionError} if it is statically malformed — syntax error,
+ * comparison chaining, a bare/unknown namespace, an over-budget expression, or
+ * an invalid/oversized *literal* `=~` pattern. Results (success and failure)
+ * are memoized by source string.
+ *
+ * This mirrors the platform's own split: `new RegExp('[')` and `JSON.parse('{')`
+ * throw at construction; only *evaluation* is fail-safe. Callers that must not
+ * throw during render (e.g. a Vue computed) wrap this in their own try/catch and
+ * choose the fallback — the engine does not choose for them.
  */
-export function compile(source: string): Program {
+export function parse(source: string): Program {
   const cached = cache.get(source)
+  if (cached instanceof ConditionError) throw cached
   if (cached) return cached
 
   let program: Program
@@ -650,32 +707,26 @@ export function compile(source: string): Program {
           return truthy(evalNode(ast, bindings))
         } catch (err) {
           if (err instanceof EvalFail) return false
-          // Unexpected error: stay fail-safe rather than crash a render.
+          // Unexpected error: eval must never throw, so stay fail-safe.
           console.warn(`[conditions] eval error in ${JSON.stringify(source)}:`, err)
           return false
         }
       },
     }
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-    console.warn(`[conditions] parse error in ${JSON.stringify(source)}: ${reason}`)
-    program = constFalse(source)
+    const condErr =
+      err instanceof ConditionError
+        ? err
+        : new ConditionError(err instanceof Error ? err.message : String(err))
+    cache.set(source, condErr)
+    throw condErr
   }
 
   cache.set(source, program)
   return program
 }
 
-/**
- * Convenience one-shot: compile (memoized) and evaluate. An empty or
- * whitespace-only expression is treated as "no condition" and returns true.
- */
-export function evaluate(source: string | undefined | null, bindings: Bindings): boolean {
-  if (source == null || source.trim() === '') return true
-  return compile(source).eval(bindings)
-}
-
-/** Test-only: clear the compile cache. */
+/** Test-only: clear the memoization cache. */
 export function _clearCache(): void {
   cache.clear()
 }
