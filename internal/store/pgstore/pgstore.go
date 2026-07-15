@@ -65,14 +65,16 @@ type DBTX interface {
 // TODO(TKT-N0IKN9): the exported surface is the mandated store.Store interface
 // (29 methods) PLUS the optional versioning capabilities pgstore also provides
 // — store.HistoryReader (ListVersions/GetVersion), store.VersionWriter
-// (WriteVersion), StartVersionSweep, and the RELATION versioning capabilities
+// (WriteVersion), StartVersionSweep, the RELATION versioning capabilities
 // store.RelationHistoryReader (ListRelationVersions/GetRelationVersion) +
-// store.RelationVersionWriter (WriteRelationVersion) — which consumers
-// type-assert. All are interface-mandated methods, not accreted public API;
-// Required-interface exception, tracks the interface size.
+// store.RelationVersionWriter (WriteRelationVersion), and the version-PURGE
+// capabilities store.VersionPurger (PurgeVersions) + store.RelationVersionPurger
+// (PurgeRelationVersions) — which consumers type-assert. All are
+// interface-mandated methods, not accreted public API; Required-interface
+// exception, tracks the interface size.
 //
-//plimsoll:max-exported-methods=37
-//plimsoll:max-methods=47
+//plimsoll:max-exported-methods=39
+//plimsoll:max-methods=52
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
