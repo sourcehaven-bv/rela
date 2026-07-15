@@ -16,7 +16,8 @@ import (
 
 // ACLCmd groups access-control commands.
 type ACLCmd struct {
-	Audit ACLAuditCmd `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
+	Audit  ACLAuditCmd  `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
+	WhoCan ACLWhoCanCmd `cmd:"" name:"who-can" help:"List every principal who can perform a verb on an entity, with the route each grant took."`
 }
 
 // ACLAuditCmd runs the on-demand authorization-misconfiguration linter over the
