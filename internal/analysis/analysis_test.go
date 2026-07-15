@@ -134,6 +134,67 @@ func TestFindDuplicates(t *testing.T) {
 	})
 }
 
+func TestFindUniqueViolations(t *testing.T) {
+	// persoon.email is unique; nickname is not; aliases is unique+list (skipped).
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"persoon": {Label: "Persoon", Properties: map[string]metamodel.PropertyDef{
+				"email":    {Type: "string", Unique: true},
+				"nickname": {Type: "string"},
+				"aliases":  {Type: "string", Unique: true, List: true},
+			}},
+			"account": {Label: "Account", Properties: map[string]metamodel.PropertyDef{
+				"email": {Type: "string", Unique: true},
+			}},
+		},
+	}
+
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "PERS-JV", "persoon", map[string]interface{}{"email": "jv@x.com", "nickname": "dup"})
+		addEntity(s, "PERS-DUP", "persoon", map[string]interface{}{"email": "jv@x.com", "nickname": "dup"})
+		addEntity(s, "PERS-TS", "persoon", map[string]interface{}{"email": "ts@x.com"})
+		addEntity(s, "PERS-NONE", "persoon", nil) // empty email — exempt
+		// Same email on a different type must NOT collide (scoped per type).
+		addEntity(s, "ACC-1", "account", map[string]interface{}{"email": "jv@x.com"})
+	})
+
+	t.Run("finds the email collision, not nickname or cross-type", func(t *testing.T) {
+		v := svc.FindUniqueViolations(context.Background(), analysis.Options{})
+		if len(v) != 1 {
+			t.Fatalf("got %d violations, want 1: %+v", len(v), v)
+		}
+		got := v[0]
+		if got.EntityType != "persoon" || got.Property != "email" || got.Value != "jv@x.com" {
+			t.Fatalf("violation = %s.%s=%q, want persoon.email=jv@x.com", got.EntityType, got.Property, got.Value)
+		}
+		if len(got.Entities) != 2 {
+			t.Fatalf("collision group has %d entities, want 2 (PERS-JV, PERS-DUP)", len(got.Entities))
+		}
+	})
+
+	t.Run("scope filters violations", func(t *testing.T) {
+		v := svc.FindUniqueViolations(context.Background(), analysis.Options{
+			Scope: map[string]bool{"PERS-JV": true}, // only one of the pair in scope
+		})
+		if len(v) != 0 {
+			t.Errorf("got %d violations, want 0 (collision partner out of scope)", len(v))
+		}
+	})
+
+	t.Run("no unique properties → no work", func(t *testing.T) {
+		plain := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+			"doc": {Label: "Doc", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}}},
+		}}
+		s2 := newServiceWith(t, plain, func(s store.Store) {
+			addEntity(s, "DOC-1", "doc", map[string]interface{}{"title": "same"})
+			addEntity(s, "DOC-2", "doc", map[string]interface{}{"title": "same"})
+		})
+		if v := s2.FindUniqueViolations(context.Background(), analysis.Options{}); len(v) != 0 {
+			t.Errorf("got %d violations, want 0 (no unique props declared)", len(v))
+		}
+	})
+}
+
 func TestCheckCardinality(t *testing.T) {
 	minOne := 1
 	meta := &metamodel.Metamodel{

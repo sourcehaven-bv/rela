@@ -33,12 +33,12 @@ import (
 // interfaces enforced; the consumer of *cliServices is each kong
 // command's Run method.
 //
-// TODO(TKT-N0IKN9): 28 exported methods, over the 20 exported-method line.
+// TODO(TKT-N0IKN9): 29 exported methods, over the 20 exported-method line.
 // This is the CLI service bundle each command binds to; the count tracks the
 // breadth of the CLI surface. Ratchet candidate — purpose-grouped sub-bundles
 // (read / write / analyze) would let each command bind only what it uses.
 //
-//plimsoll:max-exported-methods=28
+//plimsoll:max-exported-methods=29
 type cliServices struct {
 	svc        *appbuild.Services
 	attachment *attachment.Service
@@ -81,6 +81,10 @@ func (s *cliServices) CheckCardinality(ctx context.Context, opts analysis.Option
 
 func (s *cliServices) CheckRelationOrder(ctx context.Context, opts analysis.Options) []analysis.RelationOrderIssue {
 	return s.analysis.CheckRelationOrder(ctx, opts)
+}
+
+func (s *cliServices) FindUniqueViolations(ctx context.Context, opts analysis.Options) []analysis.UniqueViolation {
+	return s.analysis.FindUniqueViolations(ctx, opts)
 }
 
 func (s *cliServices) FindDuplicates(ctx context.Context, opts analysis.Options) []analysis.DuplicateGroup {

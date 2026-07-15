@@ -24,6 +24,7 @@ import (
 type AnalyzeCmd struct {
 	Orphans       AnalyzeOrphansCmd       `cmd:"" help:"Find entities with no connections."`
 	Duplicates    AnalyzeDuplicatesCmd    `cmd:"" help:"Find entities with similar titles."`
+	Unique        AnalyzeUniqueCmd        `cmd:"" help:"Find entities that violate a unique property constraint."`
 	Gaps          AnalyzeGapsCmd          `cmd:"" help:"Find gaps in ID sequences."`
 	Cardinality   AnalyzeCardinalityCmd   `cmd:"" help:"Check relation cardinality constraints."`
 	RelationOrder AnalyzeRelationOrderCmd `cmd:"" name:"relation-order" help:"Find duplicate or missing values on managed relation order properties."`
@@ -117,6 +118,51 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, svc *cliServices) error 
 		out.WriteMessage("  Title: %s", group.Title)
 		for _, e := range group.Entities {
 			out.WriteMessage("    - %s (%s)", e.ID, e.Type)
+		}
+	}
+	return nil
+}
+
+// AnalyzeUniqueCmd finds entities that violate a `unique: true` property
+// constraint — same-type entities sharing a value for a unique property.
+type AnalyzeUniqueCmd struct{}
+
+// Run dispatches `rela analyze unique`.
+func (c *AnalyzeUniqueCmd) Run(ctx context.Context, svc *cliServices) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	violations := svc.FindUniqueViolations(ctx, *opts)
+
+	if out.Format == "json" {
+		type uniqueViolation struct {
+			EntityType string           `json:"entity_type"`
+			Property   string           `json:"property"`
+			Value      string           `json:"value"`
+			Entities   []*entity.Entity `json:"entities"`
+		}
+		details := make([]uniqueViolation, 0, len(violations))
+		for _, v := range violations {
+			details = append(details, uniqueViolation{
+				EntityType: v.EntityType, Property: v.Property, Value: v.Value, Entities: v.Entities,
+			})
+		}
+		writeAnalysisJSON(len(violations), details,
+			"No unique constraint violations found", "Found %d unique constraint violations")
+		return nil
+	}
+
+	if len(violations) == 0 {
+		out.WriteSuccess("No unique constraint violations found")
+		return nil
+	}
+	out.WriteWarning("Found %d unique constraint violations:", len(violations))
+	for _, v := range violations {
+		out.WriteMessage("")
+		out.WriteMessage("  %s.%s = %q shared by:", v.EntityType, v.Property, v.Value)
+		for _, e := range v.Entities {
+			out.WriteMessage("    - %s", e.ID)
 		}
 	}
 	return nil
@@ -493,6 +539,7 @@ type allAnalysisSummary struct {
 	Orphans                int `json:"orphans"`
 	Cardinality            int `json:"cardinality"`
 	Duplicates             int `json:"duplicates"`
+	UniqueViolations       int `json:"unique_violations"`
 	Gaps                   int `json:"gaps"`
 	Properties             int `json:"properties"`
 	ValidationErrors       int `json:"validation_errors"`
@@ -506,6 +553,7 @@ func writeAnalyzeAllJSON(summary *analysis.Summary) error {
 		Orphans:                summary.Orphans,
 		Cardinality:            summary.Cardinality,
 		Duplicates:             summary.Duplicates,
+		UniqueViolations:       summary.UniqueViolations,
 		Gaps:                   summary.Gaps,
 		Properties:             summary.PropertyErrors,
 		ValidationErrors:       summary.ValidationErrors,
@@ -515,7 +563,8 @@ func writeAnalyzeAllJSON(summary *analysis.Summary) error {
 	}
 	validationFailures := summary.ValidationScriptErrors + summary.ValidationLoadErrors
 	totalIssues := summary.Orphans + summary.Cardinality + summary.Duplicates +
-		summary.Gaps + summary.PropertyErrors + summary.ValidationErrors + validationFailures
+		summary.UniqueViolations + summary.Gaps + summary.PropertyErrors +
+		summary.ValidationErrors + validationFailures
 	status := "success"
 	message := "All analyses passed"
 	if summary.ValidationErrors > 0 || summary.PropertyErrors > 0 || validationFailures > 0 {
@@ -538,6 +587,7 @@ func writeAnalyzeAllSummary(svc *cliServices, summary *analysis.Summary) {
 		fmt.Sprintf("Orphans: %d", summary.Orphans),
 		fmt.Sprintf("Cardinality: %d", summary.Cardinality),
 		fmt.Sprintf("Duplicates: %d", summary.Duplicates),
+		fmt.Sprintf("Unique Violations: %d", summary.UniqueViolations),
 		fmt.Sprintf("Gaps: %d", summary.Gaps),
 		fmt.Sprintf("Properties: %d", summary.PropertyErrors),
 	}
@@ -568,6 +618,11 @@ func runAnalyzeAllSections(ctx context.Context, svc *cliServices, opts analysis.
 	out.WriteSectionHeader("Duplicate Analysis")
 	if err := (&AnalyzeDuplicatesCmd{}).Run(ctx, svc); err != nil {
 		errs = append(errs, fmt.Errorf("duplicate analysis: %w", err))
+	}
+	out.WriteMessage("")
+	out.WriteSectionHeader("Unique Constraint Analysis")
+	if err := (&AnalyzeUniqueCmd{}).Run(ctx, svc); err != nil {
+		errs = append(errs, fmt.Errorf("unique analysis: %w", err))
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("ID Gap Analysis")

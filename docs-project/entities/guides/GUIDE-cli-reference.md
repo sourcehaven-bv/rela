@@ -1076,6 +1076,18 @@ Find entities with similar titles.
 rela analyze duplicates
 ```
 
+#### rela analyze unique
+
+Find entities that violate a `unique: true` property constraint — same-type
+entities sharing a value for a unique property. The write path rejects new
+duplicates; this surfaces ones that already exist (e.g. after adding
+`unique: true` to a property whose data already contains collisions, which
+the constraint does not clean retroactively).
+
+```bash
+rela analyze unique
+```
+
 #### rela analyze gaps
 
 Find gaps in ID sequences for entity types with sequential IDs.
