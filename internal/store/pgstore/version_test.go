@@ -243,6 +243,7 @@ func TestDeleteThenRecreateIdenticalContent(t *testing.T) {
 		"re-creating with identical content must record a create, not dedup away leaving the timeline at delete")
 }
 
+//nolint:unparam // typ is "ticket" in every current caller but is a real knob for future entity-type tests.
 func mkEntity(id, typ, content string) *entity.Entity {
 	e := entity.New(id, typ)
 	e.Content = content
