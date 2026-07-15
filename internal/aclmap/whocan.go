@@ -58,19 +58,57 @@ func (e *Engine) WhoCan(ctx context.Context, verb acl.Verb, entityID string) (*W
 		return nil, err
 	}
 
+	// Merge by EFFECTIVE principal: a single human can appear as several
+	// candidate keys (a raw-UPN assignment key AND the resolved user
+	// entity it maps to), which must collapse to one row with a unioned
+	// route set — otherwise the same principal is reported twice and the
+	// diff artifact this feeds is corrupt (RR-XC2NTO).
+	byPrincipal := map[string]*PrincipalAccess{}
+	var order []string
 	for _, raw := range candidates {
 		access, ok, err := e.accessFor(ctx, raw, verb, entityType, entityID)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			result.Principals = append(result.Principals, access)
+		if !ok {
+			continue
+		}
+		existing, seen := byPrincipal[access.Principal]
+		if !seen {
+			acc := access
+			byPrincipal[access.Principal] = &acc
+			order = append(order, access.Principal)
+			continue
+		}
+		existing.Routes = mergeRoutes(existing.Routes, access.Routes)
+		if existing.Raw == "" {
+			existing.Raw = access.Raw
 		}
 	}
-	sort.Slice(result.Principals, func(i, j int) bool {
-		return result.Principals[i].Principal < result.Principals[j].Principal
-	})
+	sort.Strings(order)
+	for _, id := range order {
+		result.Principals = append(result.Principals, *byPrincipal[id])
+	}
 	return result, nil
+}
+
+// mergeRoutes unions two route sets, dropping exact duplicates, and
+// returns them re-sorted so the output stays deterministic regardless of
+// which candidate key surfaced each route.
+func mergeRoutes(a, b []Route) []Route {
+	seen := make(map[Route]struct{}, len(a)+len(b))
+	out := make([]Route, 0, len(a)+len(b))
+	for _, rs := range [][]Route{a, b} {
+		for _, r := range rs {
+			if _, dup := seen[r]; dup {
+				continue
+			}
+			seen[r] = struct{}{}
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return lessRoute(out[i], out[j]) })
+	return out
 }
 
 // accessFor resolves one raw principal key, asks the resolver for the
@@ -89,8 +127,10 @@ func (e *Engine) accessFor(
 		return PrincipalAccess{}, false, nil
 	}
 	rawShown := ""
-	// Resolve raw → entity ID when principal_property is configured.
-	if id, err := e.resolvePrincipal(ctx, raw); err != nil {
+	// Resolve raw → entity ID when principal_property is configured. An
+	// ambiguous or errored lookup fails the report loud rather than
+	// silently mis-attributing.
+	if id, err := e.resolver.ResolvePrincipal(ctx, raw); err != nil {
 		return PrincipalAccess{}, false, err
 	} else if id != "" && id != raw {
 		user = id

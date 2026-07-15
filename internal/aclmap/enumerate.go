@@ -24,12 +24,20 @@ import (
 // holds NO direct assignment and is NOT of user_entity_type (which may
 // be unset): they gain their role purely by being a member of a group
 // that is an assignment key. Omitting them drops exactly the
-// group-conferred principals — the false negative the who-can tool must
-// never produce.
+// group-conferred principals — a false negative.
 //
-// The everyone role is not a principal and is reported globally. This is
-// the O(principals) universe the ticket's cost note describes; a reverse
-// principal→entity index is a later optimization.
+// No candidate is excluded by graph TOPOLOGY. An earlier version dropped
+// membership-relation targets as "groups", but "is a membership target"
+// is not the same predicate as "is a non-actor container": a manager who
+// has reports (a membership target) is also a real principal, and
+// excluding them dropped a genuine grantee (RR-C5Q743). Correctness — the
+// runtime's own answer for every candidate — beats hiding group entities.
+// A candidate that carries no grant for the queried entity/verb simply
+// yields no row; only the "everyone" role is special-cased, and it is
+// reported globally, not per candidate.
+//
+// This is the O(principals) universe the ticket's cost note describes; a
+// reverse principal→entity index is a later optimization.
 func (e *Engine) enumeratePrincipals(ctx context.Context) ([]string, error) {
 	policy := e.resolver.Policy()
 	set := map[string]struct{}{}
@@ -52,14 +60,7 @@ func (e *Engine) enumeratePrincipals(ctx context.Context) ([]string, error) {
 	// Sources of membership and role-relation edges. Both are read via
 	// the relation index keyed by type; the membership relation is the
 	// effective one (default member-of) so it honors a policy override.
-	// Membership TARGETS (groups) are collected separately: a group is a
-	// role container, not an actor — it must not be listed as a principal
-	// even though, resolved as one, it would carry its own assigned role.
-	// Excluding groups keeps the report to real actors and avoids
-	// double-reporting a grant against both the group and its members.
-	groups := map[string]struct{}{}
-	membershipRel := policy.EffectiveMembershipRelation()
-	relTypes := map[string]struct{}{membershipRel: {}}
+	relTypes := map[string]struct{}{policy.EffectiveMembershipRelation(): {}}
 	for relType := range policy.RoleRelations {
 		relTypes[relType] = struct{}{}
 	}
@@ -72,28 +73,13 @@ func (e *Engine) enumeratePrincipals(ctx context.Context) ([]string, error) {
 				return nil, fmt.Errorf("aclmap: list %s relations: %w", relType, err)
 			}
 			set[rel.From] = struct{}{}
-			if relType == membershipRel {
-				groups[rel.To] = struct{}{}
-			}
 		}
 	}
 
 	out := make([]string, 0, len(set))
 	for k := range set {
-		if _, isGroup := groups[k]; isGroup {
-			continue
-		}
 		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out, nil
-}
-
-// resolvePrincipal maps a raw principal key to a user entity ID via the
-// policy's principal_property lookup. Returns "" when the lookup is
-// disabled or no entity matches (the caller keeps the raw key). An
-// ambiguous or errored lookup is surfaced so the report fails loud
-// rather than silently mis-attributing.
-func (e *Engine) resolvePrincipal(ctx context.Context, raw string) (string, error) {
-	return e.resolver.ResolvePrincipal(ctx, raw)
 }

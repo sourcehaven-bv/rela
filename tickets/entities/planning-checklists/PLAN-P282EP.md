@@ -2,119 +2,115 @@
 id: PLAN-P282EP
 type: planning-checklist
 title: 'Planning: rela acl who-can <verb> <entity> — list principals with access to one entity + provenance (UC3)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Understanding
 
-- [ ] Problem/requirements clearly understood
-- [ ] Scope defined (what's in/out documented below)
-- [ ] Acceptance criteria documented with specific test scenarios
+- [x] Problem/requirements clearly understood
+- [x] Scope defined (what's in/out documented below)
+- [x] Acceptance criteria documented with specific test scenarios
 
-**Scope:**
-<!-- Document explicitly what IS and IS NOT in scope -->
+**Scope:** IN: `rela acl who-can <verb> <entity>` on ONE entity, all four verbs,
+all-routes terminal-fact provenance, text+JSON, everyone-once, existence gate.
+OUT (deferred): full hop-chains, `can`/`map`, type-aggregation, drift,
+conformance-assertions, web view. See [[TKT-9089I6]].
 
-**Acceptance Criteria:**
-<!-- Each criterion must have a concrete test scenario -->
-1. ...
+**Acceptance Criteria:** documented in the ticket body (11 criteria) each mapped
+to a test.
 
 ## Research
 
-- [ ] For larger features: run `/research` to create a structured research doc
-- [ ] Searched for existing libraries that solve this problem
-- [ ] Checked codebase for similar patterns or reusable code
-- [ ] Looked for reference implementations in other projects
-- [ ] Reviewed relevant rela concepts for prior art
+- [x] For larger features: run `/research` to create a structured research doc
+- [x] Searched for existing libraries that solve this problem
+- [x] Checked codebase for similar patterns or reusable code
+- [x] Looked for reference implementations in other projects
+- [x] Reviewed relevant rela concepts for prior art
 
-**Research Doc:** <!-- Link RES-xxxx if created, or N/A for small changes -->
+**Research Doc:** [[RES-8TX9KF]] (surveyed 8 use-cases, ACL model, provenance
+decision).
 
-**Existing Solutions:**
-<!-- Document what you found:
-- Libraries considered (with pros/cons, why chosen or rejected)
-- Similar patterns in codebase (file:line references)
-- Reference implementations that inspired the approach
-- Relevant concepts from rela-docs or rela-issues-and-design-tickets
--->
+**Existing Solutions:** Reused the acl resolver (`Request.ForEntity`,
+`PermitsRead`, `Source` taxonomy) — no library needed; the feature is composing
+existing evaluation primitives. `internal/aclaudit` is the sibling
+policy-linter; who-can is the reserved Tier C/D territory.
 
 ## Approach
 
-- [ ] Technical approach chosen and documented
-- [ ] Approach builds on existing patterns (not reinventing)
-- [ ] Alternatives considered (document why rejected)
-- [ ] Dependencies identified (packages, APIs, types)
+- [x] Technical approach chosen and documented
+- [x] Approach builds on existing patterns (not reinventing)
+- [x] Alternatives considered (document why rejected)
+- [x] Dependencies identified (packages, APIs, types)
 
-**Technical Approach:**
-<!-- Document the approach with enough detail that implementation is mechanical -->
+**Technical Approach:** new `internal/aclmap` engine taking narrow consumer-side
+interfaces; new `acl.Request.AccessRoutes` unifying read (via `PermitsRead`) and
+write (via `grantsVerb`) provenance; CLI command under `rela acl`. Rejected:
+reconstructing read from `computeForEntity` (false-negative risk — see
+[[RR-7UXWNA]]).
 
-**Files to modify:**
-<!-- List specific files that will change -->
+**Files to modify:** `internal/acl/access.go` (new), `internal/aclmap/*` (new),
+`internal/cli/acl_whocan.go` (new), `internal/cli/acl.go`, `.go-arch-lint.yml`.
 
 ## Security Considerations
 
-- [ ] Input sources identified (user input, config, external APIs)
-- [ ] Input validation approach defined (allowlist preferred over blocklist)
-- [ ] Security-sensitive operations identified (file access, auth, crypto)
-- [ ] Error handling doesn't leak sensitive information
+- [x] Input sources identified (user input, config, external APIs)
+- [x] Input validation approach defined (allowlist preferred over blocklist)
+- [x] Security-sensitive operations identified (file access, auth, crypto)
+- [x] Error handling doesn't leak sensitive information
 
-**Input Sources & Validation:**
-<!-- For each input: source, validation approach, what happens on invalid input -->
+**Input Sources & Validation:** verb (Kong enum allowlist + `Verb.Valid()`
+fail-closed guard); entity ID (existence-gated via `store.GetEntity`); acl.yaml
+(validated against metamodel). This is a read-only reporting tool — no writes.
 
-**Security-Sensitive Operations:**
-<!-- List operations and how they're protected -->
+**Security-Sensitive Operations:** the whole feature IS access reporting; the
+load-bearing invariant is no read false-negative — guarded by the
+read-vs-runtime conformance test.
 
 ## Test Plan
 
-- [ ] Test scenarios documented for each acceptance criterion
-- [ ] Edge cases identified and documented
-- [ ] Negative test cases defined (invalid input, error conditions)
-- [ ] Integration test approach defined (not just unit tests)
+- [x] Test scenarios documented for each acceptance criterion
+- [x] Edge cases identified and documented
+- [x] Negative test cases defined (invalid input, error conditions)
+- [x] Integration test approach defined (not just unit tests)
 
-**Test Scenarios:**
-<!-- Map each acceptance criterion to how it will be tested -->
+**Test Scenarios:** all six route kinds, multi-route redundancy, everyone-once,
+read-vs-runtime conformance, missing-entity error, unknown-verb error, JSON
+schema, plus CLI-level text/JSON/missing/no-policy tests.
 
-**Edge Cases:**
-<!-- List specific edge cases and expected behavior. Consider:
-- Empty/null/missing values
-- Boundary values (0, -1, MAX_INT)
-- Special characters, unicode, null bytes
-- Concurrent access
-- Resource exhaustion
--->
+**Edge Cases:** non-existent entity (errors), `everyone: read:["*"]` (global
+once), group entities (excluded as non-actors), blank assignment key (skipped),
+unknown verb (fail-closed).
 
-**Negative Tests:**
-<!-- What should fail? How should it fail? -->
+**Negative Tests:** missing entity → error; unknown verb → error.
 
 ## Risk Assessment
 
-- [ ] Technical risks assessed with mitigations
-- [ ] Security risks assessed (see Security Considerations)
-- [ ] Effort estimated (xs/s/m/l/xl)
+- [x] Technical risks assessed with mitigations
+- [x] Security risks assessed (see Security Considerations)
+- [x] Effort estimated (xs/s/m/l/xl)
 
-**Risks:**
-<!-- List risks and how they will be mitigated -->
+**Risks:** read/write path drift (mitigated: read routed through real
+`PermitsRead` + conformance test); O(principals) cost (bounded by depthCap=5,
+noted, reverse-index deferred). Effort: M.
 
 ## Documentation Planning
 
-For enhancements: identify what documentation needs updating.
+- [x] User-facing docs identified (skip if internal refactor)
+- [x] Docs-checklist will be created when entering implementation
 
-- [ ] User-facing docs identified (skip if internal refactor)
-- [ ] Docs-checklist will be created when entering implementation
-
-**Documentation Impact:**
-<!-- Which docs need updating? Check all that apply:
-- [ ] docs/metamodel.md - New metamodel features
-- [ ] docs/cli-reference.md - New/changed commands
-- [ ] docs/data-entry.md - UI changes
-- [ ] CLAUDE.md - New patterns or conventions
-- [ ] README.md - Project-level changes
-- [ ] N/A - Internal change, no user-facing docs needed
--->
+**Documentation Impact:** the data-entry-transport caveat is documented in
+`--help` and the command godoc. A `docs/cli-reference.md` update is a candidate
+for the follow-up `map`/`can` slice when the full command family lands;
+~~standalone docs page~~ (N/A: single subcommand, self-documenting via
+`--help`).
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] Run `/design-review` before starting implementation
+- [x] All critical/significant findings addressed in plan
 
-**Design Review Findings:** <!-- List review-response IDs, e.g., RR-xxxx -->
+**Design Review Findings:** [[RR-7UXWNA]] (critical), [[RR-N16SDV]],
+[[RR-CY6WYR]] (significant), [[RR-GC751G]], [[RR-K72ML0]] (minor) — all
+addressed, plan revised before implementation.

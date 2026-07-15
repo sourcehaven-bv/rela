@@ -27,6 +27,12 @@ import (
 // reader is never omitted. Access granted to the built-in `everyone`
 // role is reported once, globally, rather than against each principal.
 //
+// The listing reports every entity the resolver would grant the verb —
+// including a group/role entity that itself holds an assigned role (it is
+// not hidden by graph topology, since that would risk dropping a real
+// actor who happens to also be a membership target). Each row's routes
+// name why the grant applies, so a group entity is easy to recognize.
+//
 // Scope caveat: when the policy sets `principal_property`, that
 // raw→entity resolution is wired only into the data-entry (HTTP)
 // transport. This command resolves the same way for reporting, but the
