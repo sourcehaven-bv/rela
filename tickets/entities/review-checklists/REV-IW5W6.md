@@ -2,7 +2,7 @@
 id: REV-IW5W6
 type: review-checklist
 title: 'Review: Client-side condition expression engine (parser + evaluator)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -22,15 +22,18 @@ status: in-progress
 
 **Review Responses:**
 
-Design-review findings (all addressed): RR-8VZSP, RR-9IQBT, RR-8GRLD, RR-P6GVE, RR-YTKIC, RR-7VKNB, RR-TNMRC.
-Code-review findings (all addressed):
+Design-review findings (all addressed): RR-8VZSP, RR-9IQBT, RR-8GRLD, RR-P6GVE,
+RR-YTKIC, RR-7VKNB, RR-TNMRC. Code-review findings (all addressed):
 - RR-IROUO (critical) — ReDoS via `=~`: pattern length cap (MAX_REGEX_LENGTH=200) rejects pathological patterns before running them.
 - RR-P3HL8 (critical) — eval-recursion: replaced nesting-only depth counter with a total-node budget (MAX_NODES=500) enforced per emitted node; long flat chains now rejected at parse.
 - RR-ATHC2 (significant) — strict-decimal `toNumber` (DECIMAL_RE) rejects hex/binary/whitespace/Infinity.
 - RR-7GDOI (minor) — paren double-count eliminated by the node-budget switch.
 - RR-KR035 (minor) — non-scalars map to NIL; nil/coercion/eval-guard test gaps closed; eval-time forbidden-key guard documented as belt-and-suspenders.
 
-Reviewer's finding #5 (compareEq bool-branch ordering) was flagged "confirm intended" not a defect — it is intended (matches the pinned coercion table: bool literal matches real bool OR 'true'/'false' string, checked before numeric) and is covered by the bool-coercion test.
+Reviewer's finding #5 (compareEq bool-branch ordering) was flagged "confirm
+intended" not a defect — it is intended (matches the pinned coercion table: bool
+literal matches real bool OR 'true'/'false' string, checked before numeric) and
+is covered by the bool-coercion test.
 
 ## Acceptance Verification
 

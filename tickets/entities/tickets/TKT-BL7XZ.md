@@ -5,7 +5,7 @@ title: Client-side condition expression engine (parser + evaluator)
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Build a small, self-contained TypeScript boolean-expression engine for the
