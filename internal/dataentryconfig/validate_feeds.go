@@ -12,6 +12,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// isFeedDateType reports whether a property type is usable as a feed
+// date/end_date source: `date` (all-day event) or `datetime` (timed event).
+func isFeedDateType(t string) bool {
+	return t == metamodel.PropertyTypeDate || t == metamodel.PropertyTypeDatetime
+}
+
+// feedKindMismatch reports whether a feed source's start and end date types are
+// different kinds (one all-day `date`, one timed `datetime`). iCal forbids
+// mixing an all-day DTSTART with a timed DTEND in one event. Only meaningful
+// when both are feed-date types.
+func feedKindMismatch(startType, endType string) bool {
+	return isFeedDateType(startType) && startType != endType
+}
+
 // rruleIsLiteral reports whether an rrule config value is a literal RFC 5545
 // rule (rather than a property reference). The two are disambiguated by syntax:
 // a literal contains "=" (RRULE parts are KEY=VALUE), which a bare property
@@ -52,8 +66,9 @@ func hasDurationComponent(s string) bool {
 
 // validateFeeds checks each declarative feed against the metamodel: every source
 // must name a known entity type, its date/summary/description properties must
-// exist (date must be date-typed), each where clause must parse and reference a
-// real property, and any alarm must be a valid RFC 5545 duration. Errors are
+// exist (date must be date- or datetime-typed; a datetime source yields a timed
+// event), each where clause must parse and reference a real property, and any
+// alarm must be a valid RFC 5545 duration. Errors are
 // reported per feed + source index so authors can pinpoint the problem, and
 // surface at config load rather than at first calendar poll.
 func validateFeeds(cfg *Config, meta *metamodel.Metamodel) []string {
@@ -81,13 +96,14 @@ func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Me
 		return append(errs, fmt.Sprintf("%s: unknown entity type %q", prefix, src.EntityType))
 	}
 
-	// Date: required, must exist, must be date-typed.
+	// Date: required, must exist, must be date- or datetime-typed. A datetime
+	// source yields a timed event; a date source stays all-day.
 	if src.Date == "" {
 		errs = append(errs, prefix+": 'date' is required")
 	} else if def, ok := entDef.Properties[src.Date]; !ok {
 		errs = append(errs, fmt.Sprintf("%s: date property %q not in metamodel for entity %q", prefix, src.Date, src.EntityType))
-	} else if def.Type != metamodel.PropertyTypeDate {
-		errs = append(errs, fmt.Sprintf("%s: date property %q must be date-typed, is %q", prefix, src.Date, def.Type))
+	} else if !isFeedDateType(def.Type) {
+		errs = append(errs, fmt.Sprintf("%s: date property %q must be date- or datetime-typed, is %q", prefix, src.Date, def.Type))
 	}
 
 	// Summary: optional, but if omitted the type needs a display property.
@@ -120,12 +136,19 @@ func validateFeedSource(feedID string, i int, src FeedSource, meta *metamodel.Me
 		}
 	}
 
-	// EndDate: optional, must exist and be date-typed.
+	// EndDate: optional, must exist and be date- or datetime-typed. It must
+	// also be the SAME kind as `date` — iCal forbids mixing an all-day
+	// DTSTART with a timed DTEND (or vice versa) in one event.
 	if src.EndDate != "" {
 		if def, ok := entDef.Properties[src.EndDate]; !ok {
 			errs = append(errs, fmt.Sprintf("%s: end_date property %q not in metamodel for entity %q", prefix, src.EndDate, src.EntityType))
-		} else if def.Type != metamodel.PropertyTypeDate {
-			errs = append(errs, fmt.Sprintf("%s: end_date property %q must be date-typed, is %q", prefix, src.EndDate, def.Type))
+		} else if !isFeedDateType(def.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: end_date property %q must be date- or datetime-typed, is %q", prefix, src.EndDate, def.Type))
+		} else if dateDef, ok := entDef.Properties[src.Date]; ok && feedKindMismatch(dateDef.Type, def.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: date property %q is %q but end_date property %q is %q — a feed event must be all-day or timed, not a mix",
+				prefix, src.Date, dateDef.Type, src.EndDate, def.Type))
 		}
 	}
 

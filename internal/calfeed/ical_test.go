@@ -18,6 +18,11 @@ func day(m time.Month, d int) time.Time {
 	return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC)
 }
 
+// dayTime builds a UTC instant with a time-of-day, for timed-event tests.
+func dayTime(mo time.Month, d, h, mn int) time.Time {
+	return time.Date(2026, mo, d, h, mn, 0, 0, time.UTC)
+}
+
 // unfold reverses RFC 5545 line folding so a test can assert on logical lines.
 func unfold(s string) string { return strings.ReplaceAll(s, "\r\n ", "") }
 
@@ -106,6 +111,38 @@ func TestRenderEvent_AllDayValueDate(t *testing.T) {
 		if strings.HasPrefix(l, "DTSTART:") {
 			t.Errorf("unexpected timed DTSTART: %q", l)
 		}
+	}
+}
+
+func TestRenderEvent_Timed(t *testing.T) {
+	// A datetime-typed source yields a timed event: DTSTART is a UTC
+	// date-time instant, NOT a VALUE=DATE line.
+	lines := logicalLines(t, testICal().RenderEvent(Event{
+		UID: "EVT-1@rela", Summary: "Standup", Start: dayTime(7, 13, 14, 30), Timed: true,
+	}))
+	if !containsLine(lines, "DTSTART:20260713T143000Z") {
+		t.Errorf("missing timed DTSTART; got lines: %v", lines)
+	}
+	// The all-day form must be absent for a timed event.
+	for _, l := range lines {
+		if strings.HasPrefix(l, "DTSTART;VALUE=DATE:") {
+			t.Errorf("unexpected all-day DTSTART on a timed event: %q", l)
+		}
+	}
+}
+
+func TestRenderEvent_TimedRange(t *testing.T) {
+	// A datetime start+end yields timed DTSTART and DTEND (the exact end
+	// instant, verbatim — no coercion).
+	lines := logicalLines(t, testICal().RenderEvent(Event{
+		UID: "EVT-2@rela", Summary: "Meeting",
+		Start: dayTime(7, 13, 14, 0), End: dayTime(7, 13, 15, 0), Timed: true,
+	}))
+	if !containsLine(lines, "DTSTART:20260713T140000Z") {
+		t.Errorf("missing timed DTSTART; got %v", lines)
+	}
+	if !containsLine(lines, "DTEND:20260713T150000Z") {
+		t.Errorf("missing timed DTEND; got %v", lines)
 	}
 }
 

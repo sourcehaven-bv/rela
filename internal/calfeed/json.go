@@ -8,8 +8,13 @@ import (
 // jsonFeed / jsonEvent / jsonAlarm are the stable wire shapes for the JSON
 // rendering. They are defined separately from the domain types so the JSON
 // contract (consumed by menubar/notification glue) does not drift with internal
-// field changes, and so dates render as plain YYYY-MM-DD rather than RFC3339
-// timestamps (Phase 1 events are all-day).
+// field changes.
+//
+// All-day events populate date/endDate (plain YYYY-MM-DD) with allDay=true;
+// timed events populate start/end (RFC3339 UTC instants) with allDay=false.
+// The two field pairs are mutually exclusive so an existing date-only consumer
+// keeps working (it simply sees empty date fields, and allDay=false, for a
+// timed event).
 type jsonFeed struct {
 	Name        string      `json:"name,omitempty"`
 	Description string      `json:"description,omitempty"`
@@ -22,10 +27,12 @@ type jsonEvent struct {
 	Summary     string      `json:"summary"`
 	Description string      `json:"description,omitempty"`
 	URL         string      `json:"url,omitempty"`
-	Date        string      `json:"date"`              // YYYY-MM-DD (all-day)
-	EndDate     string      `json:"endDate,omitempty"` // YYYY-MM-DD, for a range
-	AllDay      bool        `json:"allDay"`            // always true in Phase 1
-	RRule       string      `json:"rrule,omitempty"`   // bare RFC 5545 recurrence rule
+	Date        string      `json:"date,omitempty"`    // YYYY-MM-DD (all-day only)
+	EndDate     string      `json:"endDate,omitempty"` // YYYY-MM-DD, all-day range
+	Start       string      `json:"start,omitempty"`   // RFC3339 UTC (timed only)
+	End         string      `json:"end,omitempty"`     // RFC3339 UTC, timed range
+	AllDay      bool        `json:"allDay"`
+	RRule       string      `json:"rrule,omitempty"` // bare RFC 5545 recurrence rule
 	Alarms      []jsonAlarm `json:"alarms,omitempty"`
 }
 
@@ -50,12 +57,19 @@ func RenderJSON(f Feed) ([]byte, error) {
 			Summary:     e.Summary,
 			Description: e.Description,
 			URL:         e.URL,
-			Date:        e.Start.Format(time.DateOnly),
-			AllDay:      true,
+			AllDay:      !e.Timed,
 			RRule:       e.RRule,
 		}
-		if !e.End.IsZero() {
-			je.EndDate = e.End.Format(time.DateOnly)
+		if e.Timed {
+			je.Start = e.Start.UTC().Format(time.RFC3339)
+			if !e.End.IsZero() {
+				je.End = e.End.UTC().Format(time.RFC3339)
+			}
+		} else {
+			je.Date = e.Start.Format(time.DateOnly)
+			if !e.End.IsZero() {
+				je.EndDate = e.End.Format(time.DateOnly)
+			}
 		}
 		for _, a := range e.Alarms {
 			je.Alarms = append(je.Alarms, jsonAlarm(a))

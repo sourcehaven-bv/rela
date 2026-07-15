@@ -648,8 +648,10 @@ Semantics:
 The data-entry app renders `datetime` properties with a date+time picker and a
 configurable display time zone — see the data-entry guide.
 
-Calendar-feed sources currently accept only `date` (all-day) properties;
-timed events from `datetime` sources are a planned follow-on.
+A calendar-feed source can use a `datetime` property (as its `date:` or
+`end_date:`) to emit a **timed** event; a `date` property emits an all-day
+event. Start and end must be the same kind (all-day or timed), and timed events
+are rendered in UTC.
 
 ### Property Type Examples
 
