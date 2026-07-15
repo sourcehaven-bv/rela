@@ -30,6 +30,10 @@ RR-YTKIC, RR-7VKNB, RR-TNMRC. Code-review findings (all addressed):
 - RR-7GDOI (minor) — paren double-count eliminated by the node-budget switch.
 - RR-KR035 (minor) — non-scalars map to NIL; nil/coercion/eval-guard test gaps closed; eval-time forbidden-key guard documented as belt-and-suspenders.
 
+Crit review (interactive, round 2) drove two further changes, both applied:
+- Test clarity: split a misleading `absent`-that-is-set assertion into its own `a set field is not nil` test.
+- **API refactor:** `parse()` now **throws `ConditionError`** on static errors (a config bug should fail loud, like `new RegExp`/`JSON.parse`); `Program.eval()` **never throws** (data-dependent failures stay fail-safe). Dropped the swallowing `compile()`/`evaluate()` — the library no longer bakes in "broken → hidden branch"; the calling layer wraps `parse` and owns how the error surfaces. Literal `=~` patterns validated at parse; dynamic ones at eval. CI green on HEAD 06219c86 (incl. Fuzz).
+
 Reviewer's finding #5 (compareEq bool-branch ordering) was flagged "confirm
 intended" not a defect — it is intended (matches the pinned coercion table: bool
 literal matches real bool OR 'true'/'false' string, checked before numeric) and
