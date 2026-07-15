@@ -65,8 +65,8 @@ is covered by the bool-coercion test.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — monitoring; see PR
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1137
