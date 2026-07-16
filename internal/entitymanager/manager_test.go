@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -151,18 +152,24 @@ func parseMeta(t *testing.T) *metamodel.Metamodel {
 func newManager(t *testing.T, automations []automation.Automation) (*entitymanager.Manager, *countingStore) {
 	t.Helper()
 	cs := &countingStore{Store: memstore.New()}
+	meta := parseMeta(t)
+	machines, err := statemachine.Compile(meta)
+	if err != nil {
+		t.Fatalf("statemachine.Compile: %v", err)
+	}
 	deps := entitymanager.Deps{
-		Store:     cs,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       cs,
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: machines,
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
-		runner, err := autocascade.New(autocascade.Deps{Engine: engine})
-		if err != nil {
-			t.Fatalf("autocascade.New: %v", err)
+		runner, rerr := autocascade.New(autocascade.Deps{Engine: engine})
+		if rerr != nil {
+			t.Fatalf("autocascade.New: %v", rerr)
 		}
 		deps.Automations = engine
 		deps.Cascade = runner
@@ -258,6 +265,20 @@ func TestNew_RejectsNilACL(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsNilTransitions(t *testing.T) {
+	t.Parallel()
+	_, err := entitymanager.New(entitymanager.Deps{
+		Store:     memstore.New(),
+		Meta:      parseMeta(t),
+		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Transitions") {
+		t.Fatalf("expected Transitions-required error, got %v", err)
+	}
+}
+
 func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 	t.Parallel()
 	engine := automation.NewEngine(nil)
@@ -267,6 +288,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 		Automations: engine,
 	})
 	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
@@ -277,11 +299,12 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 func TestNew_AllowsNoAutomation(t *testing.T) {
 	t.Parallel()
 	if _, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -606,6 +629,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
 		ACL:          acl.NopACL{},
+		Transitions:  statemachine.EmptySet(),
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
@@ -918,11 +942,12 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 	cs.remaining.Store(1)
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     cs,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       cs,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -973,11 +998,12 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      meta,
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1032,11 +1058,12 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      meta,
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

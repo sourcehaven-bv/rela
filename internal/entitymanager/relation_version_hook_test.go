@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -34,6 +35,7 @@ func newRelationVersionManager(t *testing.T) (*entitymanager.Manager, *fakeRelat
 		Templater:               nopTemplater{},
 		Audit:                   audit.Nop{},
 		ACL:                     acl.NopACL{},
+		Transitions:             statemachine.EmptySet(),
 		RelationVersionRecorder: rec,
 	})
 	if err != nil {

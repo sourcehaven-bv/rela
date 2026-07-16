@@ -668,6 +668,11 @@ func assemble(
 		ProjectRoot: cfg.Paths.Root,
 	}
 
+	tw, err := CompileTransitions(base.meta, st, resolvedACL)
+	if err != nil {
+		return nil, fmt.Errorf("compile transitions: %w", err)
+	}
+
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:                   st,
 		Meta:                    base.meta,
@@ -679,6 +684,9 @@ func assemble(
 		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
 		VersionRecorder:         versionRecorderFor(st),
 		RelationVersionRecorder: relationVersionRecorderFor(st),
+		Transitions:             tw.Enforcer,
+		TransitionGuard:         tw.Guard,
+		TransitionGraph:         tw.Graph,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
