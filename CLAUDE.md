@@ -62,7 +62,10 @@
   `appbuild.New` or takes focused interfaces at the call site.
 - **Don't run user-supplied Lua on the read path.** ACL gates evaluate
   against declarative policy + the graph; Lua participates only at write
-  time. See `internal/entitymanager/CLAUDE.md`.
+  time. This targets unbounded/hot paths (per-row predicates on list reads),
+  NOT a bounded single-subject evaluation the caller explicitly requested
+  (e.g. performable transitions for one field on one entity). See
+  `internal/entitymanager/CLAUDE.md`.
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 

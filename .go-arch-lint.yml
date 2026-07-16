@@ -291,6 +291,7 @@ deps:
       - search
       - searchparser
       - state
+      - statemachine
       - storage
       - store
       - sync
@@ -450,6 +451,7 @@ deps:
       - metamodel
       - predicate
       - principal
+      - statemachine
   audit:
     mayDependOn:
       - principal

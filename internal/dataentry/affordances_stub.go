@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -75,6 +76,18 @@ func ResolverFromProfile(
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: compiling acl.yaml affordance predicates: %w", err)
 	}
+	// Wire the enum state machines so the resolver can answer
+	// TransitionVerdicts (TKT-FT8J9). Compiled from the same metamodel the
+	// entitymanager compiled its enforcer from — Compile is a deterministic
+	// pure transform, so the two Sets are identical; the read/write drift
+	// guard is the shared evalEdge, not shared instance identity. (Threading
+	// the entitymanager's single Set through appbuild.Services is the follow-up
+	// when the SPA status control wires the whole surface.)
+	machines, err := statemachine.Compile(meta)
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: compiling state machines: %w", err)
+	}
+	resolver.WithMachines(machines)
 	return &policyResolver{inner: resolver}, nil
 }
 

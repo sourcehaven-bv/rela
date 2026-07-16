@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // FieldVerdicts carries per-entity field-level affordance decisions.
@@ -56,6 +57,12 @@ type PolicyResolver struct {
 	// groups, containment, and typed-Source attribution. Required
 	// (never nil after [New] returns); [New] rejects a nil argument.
 	declarative *acl.Declarative
+
+	// machines is the compiled enum state machines (TKT-E4LW2). Used by
+	// [PolicyResolver.TransitionVerdicts] to resolve which transitions the
+	// current principal can perform on an entity. May be nil / empty (a
+	// metamodel with no transitions) — TransitionVerdicts then returns nil.
+	machines *statemachine.Set
 
 	// envs holds the compiled predicate env per entity type, reused
 	// across grants of that type.
@@ -142,6 +149,16 @@ func New(
 		return nil, errors.Join(errs...)
 	}
 	return r, nil
+}
+
+// WithMachines injects the compiled enum state machines so
+// [PolicyResolver.TransitionVerdicts] can resolve performable transitions.
+// Optional and chainable: a resolver without machines (or with an empty set)
+// answers TransitionVerdicts with nil, so existing callers that don't wire
+// transitions are unaffected. Call once at wiring time, before concurrent use.
+func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
+	r.machines = m
+	return r
 }
 
 // env returns (compiling on first use) the predicate env for an entity
@@ -406,6 +423,65 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 	}
 	out.Types = acc.verdicts()
 	return out
+}
+
+// TransitionVerdicts resolves, per state-machine-typed property on e, the
+// transitions the ctx principal can perform right now — guard held
+// (subject-aware) AND `when:` precondition met — plus, for blocked edges, which
+// gate blocked them (TKT-FT8J9). It is the read-side counterpart of the write
+// path's transition enforcement, sharing the same evaluation via
+// [statemachine.Set.Performable], so the "what can I do" answer here cannot
+// disagree with what a write would accept.
+//
+// Returns an empty map when no machines are wired, e is nil, or e's type has no
+// state-machine property. This is a bounded per-entity read (only e's machine
+// fields and their out-edges are evaluated), which is why running the `when:`
+// predicate here is consistent with the no-predicate-on-reads rule — see
+// internal/entitymanager/CLAUDE.md.
+func (r *PolicyResolver) TransitionVerdicts(
+	ctx context.Context, e *entity.Entity,
+) map[string][]statemachine.TransitionVerdict {
+	out := map[string][]statemachine.TransitionVerdict{}
+	if e == nil || r.machines == nil || r.machines.Empty() {
+		return out
+	}
+	guard := r.transitionGuard(ctx)
+	for _, prop := range r.machines.MachineProps(e.Type) {
+		if vs := r.machines.Performable(ctx, e, prop, guard, r.lookup); len(vs) > 0 {
+			out[prop] = vs
+		}
+	}
+	return out
+}
+
+// transitionGuard adapts the resolver's ACL into the subject-aware
+// [statemachine.Guard] the transition resolver needs, bound to the ctx
+// principal. It resolves via the per-request [acl.Request] on ctx when present
+// (reusing the list-handler scope), else opens one for the principal. Answers
+// via [acl.Request.HoldsPermissionForEntity] so ownership-relation-conferred
+// permissions are honored — identical to the write-path guard.
+func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard {
+	req := acl.FromContext(ctx)
+	if req == nil {
+		var err error
+		req, err = r.declarative.ForPrincipal(principal.From(ctx))
+		if err != nil {
+			req = nil // unstamped principal → holds no guarded permission
+		}
+	}
+	return requestGuard{req: req}
+}
+
+// requestGuard evaluates a transition guard against an acl.Request. A nil
+// request (unresolved/unstamped principal) holds no permission → guarded edges
+// resolve as not-performable, consistent with the write path failing closed.
+type requestGuard struct{ req *acl.Request }
+
+func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
+	if g.req == nil {
+		return false
+	}
+	return g.req.HoldsPermissionForEntity(ctx, subjectID, permission)
 }
 
 // bindingFor resolves the effective role set for (principal, entity)
