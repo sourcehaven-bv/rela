@@ -113,4 +113,32 @@ test.describe("Wizard (multi-step) forms", () => {
     // assignee belonged to a hidden step -> not persisted.
     expect(entity.properties.assignee ?? "").toBe("");
   });
+
+  test("a revealed-then-hidden field is NOT persisted on create", async ({
+    appPage,
+    api,
+  }) => {
+    // The real hidden-branch case: the user reveals the branch, fills it, then
+    // hides it again before submitting. The filled value must not persist.
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_wizard");
+
+    await formPage.fillField("title", "Toggled branch task");
+    await formPage.setCheckbox("done", true); // reveal Assignment
+    await formPage.clickNext(); // -> Assignment
+    await formPage.fillField("assignee", "alice"); // fill the conditional field
+    await formPage.clickBack(); // -> Basics
+    await formPage.setCheckbox("done", false); // hide Assignment again
+    // Now the only visible steps are Basics + Status.
+    await formPage.clickNext(); // -> Status
+    await formPage.selectField("status", "approved");
+
+    const created = await formPage.submitAndExpectCreate("tasks");
+    createdTasks.push(created.id);
+
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.title).toBe("Toggled branch task");
+    // assignee was entered but its step ended up hidden -> dropped.
+    expect(entity.properties.assignee ?? "").toBe("");
+  });
 });

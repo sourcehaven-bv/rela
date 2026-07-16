@@ -92,6 +92,12 @@ describe('useFormWizard', () => {
     expect([...wiz.activeProperties.value].sort()).toEqual(['name', 'processor_name', 'published'])
   })
 
+  it('managedProperties covers every step field regardless of visibility', () => {
+    // Independent of current form values — includes the hidden branch's field.
+    const { wiz } = setup(wizardForm(), { has_processors: false })
+    expect([...wiz.managedProperties.value].sort()).toEqual(['name', 'processor_name', 'published'])
+  })
+
   it('visibleFieldsOf honors per-field visible_when', () => {
     const cfg: FormConfig = {
       entity: 'x',

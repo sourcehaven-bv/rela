@@ -608,10 +608,29 @@ function visibleStepFields(step: import('@/types').FormStep): FormFieldOrRelatio
 }
 
 // Fields currently in scope for submit: for a wizard, only the visible fields
-// of currently-visible steps; for a single-page form, all fields.
+// of currently-visible steps; for a single-page form, all fields. The wizard
+// scope applies the same affordance filter as rendering (visibleStepFields), so
+// validation never demands a policy-hidden field the user can't see or fill.
 function submitScopeFields(): FormFieldOrRelation[] {
   if (!wizard.isWizard.value) return fields.value
-  return wizard.visibleSteps.value.flatMap((s) => wizard.visibleFieldsOf(s))
+  return wizard.visibleSteps.value.flatMap((s) => visibleStepFields(s))
+}
+
+// Drop property keys that belong to a condition-hidden step/field for a wizard
+// (so a revealed-then-hidden branch is not persisted). No-op for single-page
+// forms. Applied by BOTH submit paths — including on top of the create path's
+// affordance prune — so the two pruning systems reconcile in one place.
+function pruneWizardHidden(props: Record<string, unknown>): Record<string, unknown> {
+  if (!wizard.isWizard.value) return props
+  const active = wizard.activeProperties.value
+  const managed = wizard.managedProperties.value
+  // Drop a key only if the wizard governs it (named by some step) AND it is not
+  // currently active (its step/field is condition-hidden). A key no step
+  // mentions — e.g. a metamodel default seeded into form state — is left as-is,
+  // matching how a single-page form submits it.
+  return Object.fromEntries(
+    Object.entries(props).filter(([key]) => !managed.has(key) || active.has(key))
+  )
 }
 
 // Property keys made required right now by a matching `required_when`.
@@ -628,7 +647,9 @@ function requiredWhenProps(scope: FormFieldOrRelation[]): Set<string> {
 function handleNext() {
   const step = wizard.currentStepDef.value
   if (!step) return
-  const scope = wizard.visibleFieldsOf(step)
+  // Same scope as the step renders (visibleStepFields), so Next doesn't block
+  // on a policy-hidden field the user can't see.
+  const scope = visibleStepFields(step)
   if (!validate(scope, requiredWhenProps(scope))) return
   errors.value = {}
   wizard.next()
@@ -691,17 +712,6 @@ async function handleSubmit() {
     }
     const relationsPayload: ModernRelationsField = { ...reshapedPickers, ...modernRelations }
 
-    // For a wizard, drop values that belong to a hidden step/field so a
-    // toggled-off branch doesn't persist stale data (matches OpenVWR's
-    // isFieldEnabled). Single-page forms submit formData as-is.
-    let properties = formData.value
-    if (wizard.isWizard.value) {
-      const active = wizard.activeProperties.value
-      properties = Object.fromEntries(
-        Object.entries(formData.value).filter(([key]) => active.has(key))
-      )
-    }
-
     const payload: {
       id?: string
       prefix?: string
@@ -709,7 +719,12 @@ async function handleSubmit() {
       relations: ModernRelationsField
       content?: string
     } = {
-      properties,
+      // For a wizard, drop values under a hidden step/field so a toggled-off
+      // branch doesn't persist stale data (matches OpenVWR's isFieldEnabled).
+      // Single-page forms submit formData as-is. The create path re-derives
+      // this from the affordance-pruned set below (line ~734); this covers the
+      // edit path.
+      properties: pruneWizardHidden(formData.value),
       relations: relationsPayload,
       content: content.value || undefined,
     }
@@ -730,8 +745,12 @@ async function handleSubmit() {
       // entirely from reshaped picker selections.
       //
       // TKT-3I5U: send only visible + writable property keys; the server
-      // fills hidden / read-only defaults after the affordance gate.
-      payload.properties = visibleWritablePropertiesForCommit()
+      // fills hidden / read-only defaults after the affordance gate. For a
+      // wizard, also drop keys under a condition-hidden step/field — a
+      // `visible_when=false` branch wins over the affordance filter's
+      // userTouched-preserve rule, so a revealed-then-hidden field is not
+      // persisted (TKT-CHLAJ).
+      payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
       Object.assign(payload, idControls.buildPayloadFields())
       const entity = await entitiesStore.create(formConfig.value.entity, payload)
 
@@ -1186,7 +1205,7 @@ onBeforeRouteLeave(async () => {
           <ol class="wizard-steps" aria-label="Form steps">
             <li
               v-for="(step, sIdx) in wizard.visibleSteps.value"
-              :key="step.title"
+              :key="sIdx"
               class="wizard-step-pill"
               :class="{
                 active: sIdx === wizard.currentStep.value,
@@ -1228,6 +1247,11 @@ onBeforeRouteLeave(async () => {
               />
             </div>
           </div>
+
+          <!-- Degenerate config: every step is conditionally hidden right now.
+               Render nothing to submit rather than an empty form with a
+               misleading Submit button. -->
+          <p v-else class="section-description">No steps to display.</p>
         </template>
 
         <div v-else class="form-fields">
@@ -1268,7 +1292,7 @@ onBeforeRouteLeave(async () => {
         </div>
 
         <!-- Wizard navigation: Back / Next, with Submit on the last step. -->
-        <div v-if="wizard.isWizard.value" class="form-actions">
+        <div v-if="wizard.isWizard.value && wizard.currentStepDef.value" class="form-actions">
           <button
             type="button"
             class="btn btn-secondary"

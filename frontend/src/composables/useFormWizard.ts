@@ -57,6 +57,8 @@ export interface FormWizard {
   isFieldRequired: (field: FormFieldOrRelation) => boolean
   /** Property keys under all currently-visible steps (for payload pruning). */
   activeProperties: ComputedRef<Set<string>>
+  /** Property keys named by ANY step/field, regardless of visibility. */
+  managedProperties: ComputedRef<Set<string>>
   next: () => void
   back: () => void
   goTo: (index: number) => void
@@ -112,6 +114,21 @@ export function useFormWizard(
     const keys = new Set<string>()
     for (const step of visibleSteps.value) {
       for (const f of visibleFieldsOf(step)) {
+        if (f.property) keys.add(f.property)
+      }
+    }
+    return keys
+  })
+
+  // Every property named by ANY step/field, regardless of current visibility.
+  // A property NOT in this set is not governed by the wizard's conditional
+  // structure (e.g. a metamodel default seeded into form state but surfaced in
+  // no step), so payload pruning must leave it alone — matching how a
+  // single-page form submits such a value.
+  const managedProperties = computed<Set<string>>(() => {
+    const keys = new Set<string>()
+    for (const step of formConfig.value?.steps ?? []) {
+      for (const f of stepFields(step)) {
         if (f.property) keys.add(f.property)
       }
     }
@@ -184,6 +201,7 @@ export function useFormWizard(
     visibleFieldsOf,
     isFieldRequired,
     activeProperties,
+    managedProperties,
     next,
     back,
     goTo,
