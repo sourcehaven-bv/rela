@@ -135,6 +135,30 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(await formPage.erroredStepIndices()).not.toContain(0);
   });
 
+  test("error flags persist across navigation until each is resolved", async ({
+    appPage,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_wizard");
+
+    // Both `title` (step 0) and `status` (step 1, Assignment hidden) are
+    // required and empty. Go to the last step (where Create lives) and submit.
+    await formPage.clickStep(1);
+    await formPage.clickCreate();
+    expect(await formPage.erroredStepIndices()).toEqual([0, 1]);
+
+    // Fix step 0's field, then navigate to step 1. Step 1's flag must persist
+    // (navigating away from step 0 must NOT wipe step 1's error).
+    await formPage.fillField("title", "Has a title now");
+    expect(await formPage.erroredStepIndices()).toEqual([1]);
+    await formPage.clickStep(1);
+    expect(await formPage.erroredStepIndices()).toEqual([1]);
+
+    // Fixing step 1 clears the last flag.
+    await formPage.selectField("status", "approved");
+    expect(await formPage.erroredStepIndices()).toEqual([]);
+  });
+
   test("submits a wizard and drops hidden-branch values", async ({
     appPage,
     api,

@@ -548,9 +548,12 @@ function getTemplateLabel(name: string): string {
 // validated (single-page submit, or wizard final submit over visible steps).
 // `requiredProps` are property keys made required by a matching `required_when`
 // condition, in addition to the metamodel's own `required` flag.
+//
+// Errors are updated **only for the scope's fields**: existing errors on fields
+// OUTSIDE the scope are preserved. This is what lets a wizard's per-step Next
+// re-check just the current step while leaving flags on other errored steps
+// standing until they're actually resolved. Returns whether the SCOPE is valid.
 function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<string>): boolean {
-  errors.value = {}
-
   if (!entityType.value) return true
 
   const scope = scopeFields ?? fields.value
@@ -561,6 +564,12 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
       .map((f) => f.property)
   )
 
+  // Start from the existing errors, then clear this scope's entries so a
+  // fixed field drops out while out-of-scope errors are untouched.
+  const next: Record<string, string> = { ...errors.value }
+  for (const prop of formPropertyNames) delete next[prop]
+  let scopeValid = true
+
   for (const [propName, propDef] of Object.entries(entityType.value.properties)) {
     // Skip properties not in the form - backend will validate them
     if (!formPropertyNames.has(propName)) continue
@@ -570,7 +579,8 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
     // Required check (metamodel `required` OR a matching `required_when`)
     const isRequired = propDef.required || (requiredProps?.has(propName) ?? false)
     if (isRequired && (value === undefined || value === null || value === '')) {
-      errors.value[propName] = 'This field is required'
+      next[propName] = 'This field is required'
+      scopeValid = false
       continue
     }
 
@@ -579,14 +589,16 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
       if (propDef.type === 'integer' && typeof value === 'string') {
         const num = parseInt(value, 10)
         if (isNaN(num)) {
-          errors.value[propName] = 'Must be a valid number'
+          next[propName] = 'Must be a valid number'
+          scopeValid = false
         }
       }
 
       if (propDef.type === 'date' && typeof value === 'string') {
         const date = new Date(value)
         if (isNaN(date.getTime())) {
-          errors.value[propName] = 'Must be a valid date'
+          next[propName] = 'Must be a valid date'
+          scopeValid = false
         }
       }
 
@@ -595,13 +607,15 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
         const items = propDef.list && Array.isArray(value) ? value : [value]
         const invalid = items.some((v) => !allowed.includes(String(v)))
         if (invalid) {
-          errors.value[propName] = `Must be one of: ${allowed.join(', ')}`
+          next[propName] = `Must be one of: ${allowed.join(', ')}`
+          scopeValid = false
         }
       }
     }
   }
 
-  return Object.keys(errors.value).length === 0
+  errors.value = next
+  return scopeValid
 }
 
 // The affordance filter applied to flat forms in `fields`, reusable for a
@@ -659,6 +673,8 @@ function requiredWhenProps(scope: FormFieldOrRelation[]): Set<string> {
 
 // Wizard "Next": validate only the current step's visible fields; advance only
 // when valid, so an invalid step blocks progression with per-field errors.
+// `validate` is scope-local, so it re-checks just this step and leaves any
+// flags on OTHER errored steps standing until they're resolved.
 function handleNext() {
   const step = wizard.currentStepDef.value
   if (!step) return
@@ -666,23 +682,21 @@ function handleNext() {
   // on a policy-hidden field the user can't see.
   const scope = visibleStepFields(step)
   if (!validate(scope, requiredWhenProps(scope))) return
-  errors.value = {}
   wizard.next()
 }
 
 function handleBack() {
-  // Back never validates — the user may be fixing an earlier answer.
-  errors.value = {}
+  // Back never validates and never clears errors — navigating isn't fixing.
   wizard.back()
 }
 
 // Clicking a step pill jumps straight there. A deliberate jump is not gated by
 // per-step validation (unlike Next): visible_when keeps unmet branches hidden
 // and the final Submit re-validates every visible step, so a jump can't persist
-// invalid data. Clear transient per-field errors so a jumped-to step starts clean.
+// invalid data. Errors are left intact — a flag clears when its field is fixed,
+// not when the user navigates away.
 function handleStepClick(index: number) {
   if (index === wizard.currentStep.value) return
-  errors.value = {}
   wizard.goTo(index)
 }
 
@@ -857,11 +871,13 @@ async function handleSubmit() {
     if (isCancelledFetch(err)) return
     const validationErrors = err instanceof ApiError ? err.validationErrors : []
     if (validationErrors.length > 0) {
+      const next = { ...errors.value }
       for (const e of validationErrors) {
         if (e.field) {
-          errors.value[e.field] = e.message || e.detail || 'Invalid value'
+          next[e.field] = e.message || e.detail || 'Invalid value'
         }
       }
+      errors.value = next
       uiStore.error('Please fix the validation errors')
     } else {
       uiStore.error(getErrorMessage(err, 'Failed to save entity'))
