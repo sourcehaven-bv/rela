@@ -5,7 +5,7 @@ title: 'Close the =~ ReDoS hole: require trusted literal regex patterns (issue #
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Follow-up to RR-IROUO (rela#1137 / TKT-BL7XZ). Source: GitHub issue
