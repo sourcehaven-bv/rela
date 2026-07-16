@@ -18,10 +18,10 @@ import (
 
 func stringContainsACL(s, sub string) bool { return strings.Contains(s, sub) }
 
-// aclTestServices wires a cliServices whose project Root is a real temp dir
+// aclTestServices wires a readServices whose project Root is a real temp dir
 // (acl.LoadPolicy reads acl.yaml from the OS filesystem). aclYAML, when
 // non-empty, is written to <root>/acl.yaml.
-func aclTestServices(t *testing.T, meta *metamodel.Metamodel, aclYAML string) *cliServices {
+func aclTestServices(t *testing.T, meta *metamodel.Metamodel, aclYAML string) *readServices {
 	t.Helper()
 	root := t.TempDir()
 	if aclYAML != "" {
@@ -30,13 +30,13 @@ func aclTestServices(t *testing.T, meta *metamodel.Metamodel, aclYAML string) *c
 		}
 	}
 	paths := &project.Context{Root: root, CacheDir: filepath.Join(root, ".rela")}
-	svc, err := newCLIServicesFromAppbuild(
+	b, err := newCLIBundles(
 		appbuildtest.New(meta, appbuildtest.WithFS(storage.NewOsFS(), paths)),
 	)
 	if err != nil {
 		t.Fatalf("build cli services: %v", err)
 	}
-	return svc
+	return b.read
 }
 
 func aclTestMeta() *metamodel.Metamodel {

@@ -39,7 +39,7 @@ type SyncPullCmd struct {
 }
 
 // Run executes `rela sync push`.
-func (c *SyncPushCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *SyncPushCmd) Run(ctx context.Context, svc *writeServices) error {
 	eng, idx, cacheDir, err := buildSyncEngine(c.Remote, c.Token, svc)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (c *SyncPushCmd) Run(ctx context.Context, svc *cliServices) error {
 		if ferr != nil {
 			return ferr
 		}
-		if serr := idx.Save(svc.FS(), cacheDir); serr != nil {
+		if serr := idx.Save(svc.FS, cacheDir); serr != nil {
 			return serr
 		}
 		out.WriteSuccess("force-pushed %s (local wins)", res.Key)
@@ -59,7 +59,7 @@ func (c *SyncPushCmd) Run(ctx context.Context, svc *cliServices) error {
 
 	report, err := eng.Push(ctx)
 	// Always persist whatever progress was made before reporting an error.
-	if serr := idx.Save(svc.FS(), cacheDir); serr != nil && err == nil {
+	if serr := idx.Save(svc.FS, cacheDir); serr != nil && err == nil {
 		err = serr
 	}
 	if err != nil {
@@ -69,7 +69,7 @@ func (c *SyncPushCmd) Run(ctx context.Context, svc *cliServices) error {
 }
 
 // Run executes `rela sync pull`.
-func (c *SyncPullCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *SyncPullCmd) Run(ctx context.Context, svc *writeServices) error {
 	eng, idx, cacheDir, err := buildSyncEngine(c.Remote, c.Token, svc)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (c *SyncPullCmd) Run(ctx context.Context, svc *cliServices) error {
 		if ferr != nil {
 			return ferr
 		}
-		if serr := idx.Save(svc.FS(), cacheDir); serr != nil {
+		if serr := idx.Save(svc.FS, cacheDir); serr != nil {
 			return serr
 		}
 		out.WriteSuccess("force-pulled %s (remote wins)", res.Key)
@@ -88,7 +88,7 @@ func (c *SyncPullCmd) Run(ctx context.Context, svc *cliServices) error {
 	}
 
 	report, err := eng.Pull(ctx)
-	if serr := idx.Save(svc.FS(), cacheDir); serr != nil && err == nil {
+	if serr := idx.Save(svc.FS, cacheDir); serr != nil && err == nil {
 		err = serr
 	}
 	if err != nil {
@@ -102,23 +102,23 @@ func (c *SyncPullCmd) Run(ctx context.Context, svc *cliServices) error {
 // id-preserving applier (the same consumer-side pattern as the server — these
 // methods are intentionally off the broad EntityManager interface). Returns the
 // engine, the index (so the caller can Save it), and the cache dir.
-func buildSyncEngine(remote, token string, svc *cliServices) (*syncclient.Engine, *syncclient.State, string, error) {
+func buildSyncEngine(remote, token string, svc *writeServices) (*syncclient.Engine, *syncclient.State, string, error) {
 	client, err := syncclient.NewClient(remote, token, nil)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	cacheDir := svc.Paths().CacheDir
-	idx, err := syncclient.LoadState(svc.FS(), cacheDir)
+	cacheDir := svc.Paths.CacheDir
+	idx, err := syncclient.LoadState(svc.FS, cacheDir)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	applier, ok := svc.EntityManager().(syncclient.LocalApplier)
+	applier, ok := svc.EntityManager.(syncclient.LocalApplier)
 	if !ok {
 		// fs/memory builds use *entitymanager.Manager, which satisfies this; a
 		// build that doesn't would only break pull (push needs no applier).
 		applier = nil
 	}
-	eng, err := syncclient.NewEngine(client, svc.Store(), applier, idx)
+	eng, err := syncclient.NewEngine(client, svc.Store, applier, idx)
 	if err != nil {
 		return nil, nil, "", err
 	}

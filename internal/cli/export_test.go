@@ -19,7 +19,7 @@ import (
 
 // setupExportGraph builds a small graph and returns the services and
 // metamodel for export tests to share.
-func setupExportGraph(t *testing.T) (*cliServices, *metamodel.Metamodel) {
+func setupExportGraph(t *testing.T) (*readServices, *metamodel.Metamodel) {
 	t.Helper()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -75,7 +75,7 @@ func setupExportGraph(t *testing.T) (*cliServices, *metamodel.Metamodel) {
 	seeder.addRelation("CTRL-002", "mitigates", "RISK-001")
 	seeder.addRelation("CTRL-001", "evidencedBy", "EV-001")
 
-	return seeder.build(t), meta
+	return seeder.build(t).read, meta
 }
 
 // captureStdout runs fn while redirecting os.Stdout into a buffer.
@@ -178,7 +178,7 @@ func TestExportEntitiesCSV(t *testing.T) {
 	svc, _ := setupExportGraph(t)
 	cmd := &ExportCmd{Format: "csv"}
 
-	entities := fixtureEntities(t, svc, "control")
+	entities := fixtureEntities(t, svc.Store, "control")
 	exportData := make([]ExportEntity, 0, len(entities))
 	for _, e := range entities {
 		exportData = append(exportData, entityToExport(e))

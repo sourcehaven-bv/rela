@@ -20,14 +20,14 @@ type ListCmd struct {
 }
 
 // Run dispatches `rela list [type]`.
-func (c *ListCmd) Run(ctx context.Context, svc *cliServices) error {
-	meta := svc.Meta()
+func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
+	meta := svc.Meta
 	entityTypeName, q, err := resolveListType(meta, c.Type)
 	if err != nil {
 		return err
 	}
 
-	entities, err := collectListEntities(ctx, svc.Store(), q)
+	entities, err := collectListEntities(ctx, svc.Store, q)
 	if err != nil {
 		return err
 	}

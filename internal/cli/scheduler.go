@@ -15,9 +15,10 @@ import (
 // coverage-ignore: scheduler command - long-running process
 type SchedulerCmd struct{}
 
-// Run dispatches `rela scheduler`.
-func (c *SchedulerCmd) Run(ctx context.Context, svc *cliServices) error {
-	data, err := svc.Config().Load(ctx, scheduler.ConfigFile)
+// Run dispatches `rela scheduler`. The WorkspaceProvider is supplied at
+// the kong wiring site (appbuild.Services implements it structurally).
+func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) error {
+	data, err := ws.Config().Load(ctx, scheduler.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)
 	}
@@ -28,8 +29,6 @@ func (c *SchedulerCmd) Run(ctx context.Context, svc *cliServices) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	// svc.svc (the appbuild.Services) implements scheduler.WorkspaceProvider
-	// structurally. Pass it through the embedded accessor.
-	s := scheduler.New(cfg, script.NewEngine(), svc, logger)
+	s := scheduler.New(cfg, script.NewEngine(), ws, logger)
 	return s.Run(ctx)
 }

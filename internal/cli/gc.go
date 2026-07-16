@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+
+	"github.com/Sourcehaven-BV/rela/internal/analysis"
 )
 
 // GcCmd garbage-collects orphaned files (e.g. interrupted-write temp files).
@@ -12,15 +14,15 @@ type GcCmd struct {
 }
 
 // Run dispatches `rela gc`.
-func (c *GcCmd) Run(svc *cliServices) error {
+func (c *GcCmd) Run(analyzer *analysis.Service) error {
 	if !c.TempFiles {
 		return errors.New("specify --temp-files")
 	}
-	return gcOrphanedTempFiles(svc, c.DryRun)
+	return gcOrphanedTempFiles(analyzer, c.DryRun)
 }
 
-func gcOrphanedTempFiles(svc *cliServices, dryRun bool) error {
-	orphaned, err := svc.FindOrphanedTempFiles()
+func gcOrphanedTempFiles(analyzer *analysis.Service, dryRun bool) error {
+	orphaned, err := analyzer.FindOrphanedTempFiles()
 	if err != nil {
 		return fmt.Errorf("find orphaned files: %w", err)
 	}
@@ -35,7 +37,7 @@ func gcOrphanedTempFiles(svc *cliServices, dryRun bool) error {
 		}
 		return nil
 	}
-	count, err := svc.CleanupOrphanedTempFiles()
+	count, err := analyzer.CleanupOrphanedTempFiles()
 	if err != nil {
 		return fmt.Errorf("cleanup failed: %w", err)
 	}
