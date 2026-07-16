@@ -166,6 +166,15 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// own, so sync writes serialize with the other mutation handlers just as in
 	// production.
 	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	// commandHandler holds closures over App methods, which read the fields
+	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
+	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
+	app.commands = &commandHandler{
+		schema:      app.State,
+		services:    app.Services,
+		projectRoot: app.ProjectRoot,
+		executeView: app.executeView,
+	}
 }
 
 // rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.
