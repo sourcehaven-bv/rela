@@ -1547,9 +1547,13 @@ onBeforeRouteLeave(async () => {
   outline-offset: 2px;
 }
 
+/* "You are here" = a filled pill. This is the primary cue and is INDEPENDENT
+   of the error color, so an active step still reads as active even when it also
+   has an error (see .active.has-errors below). */
 .wizard-step-pill.active {
+  background: var(--accent-color);
   border-color: var(--accent-color);
-  color: var(--text-color);
+  color: #fff;
   font-weight: 600;
 }
 
@@ -1568,21 +1572,39 @@ onBeforeRouteLeave(async () => {
   font-size: 12px;
 }
 
-.wizard-step-pill.active .wizard-step-num,
 .wizard-step-pill.done .wizard-step-num {
   background: var(--accent-color);
   color: #fff;
 }
 
-/* A step with a validation error takes precedence over active/done styling. */
-.wizard-step-pill.has-errors {
+/* On the filled active pill, the number badge is inverted (light on accent). */
+.wizard-step-pill.active .wizard-step-num {
+  background: #fff;
+  color: var(--accent-color);
+}
+
+/* An errored step: red outline + red number badge, but NOT active. */
+.wizard-step-pill.has-errors:not(.active) {
   border-color: var(--error-color);
   color: var(--error-color);
 }
 
-.wizard-step-pill.has-errors .wizard-step-num {
+.wizard-step-pill.has-errors:not(.active) .wizard-step-num {
   background: var(--error-color);
   color: #fff;
+}
+
+/* The active step that also has an error: filled with the error color, so it
+   still reads as "you are here" while signalling the problem. */
+.wizard-step-pill.active.has-errors {
+  background: var(--error-color);
+  border-color: var(--error-color);
+  color: #fff;
+}
+
+.wizard-step-pill.active.has-errors .wizard-step-num {
+  background: #fff;
+  color: var(--error-color);
 }
 
 .wizard-error-summary {
