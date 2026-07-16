@@ -4,8 +4,8 @@ type: ticket
 title: 'Perf: load-test the version sweep at 1M entities × 10k versions (relations candidate scan)'
 kind: test
 priority: medium
-status: ready
 effort: s
+status: done
 ---
 
 ## Result: DONE — sweep is index-bound and flat with scale. No code change needed.
