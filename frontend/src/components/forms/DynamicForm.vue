@@ -1457,7 +1457,7 @@ onBeforeRouteLeave(async () => {
 }
 
 .wizard-step-pill.active {
-  border-color: var(--primary, #3b82f6);
+  border-color: var(--accent-color);
   color: var(--text-color);
   font-weight: 600;
 }
@@ -1479,7 +1479,7 @@ onBeforeRouteLeave(async () => {
 
 .wizard-step-pill.active .wizard-step-num,
 .wizard-step-pill.done .wizard-step-num {
-  background: var(--primary, #3b82f6);
+  background: var(--accent-color);
   color: #fff;
 }
 
