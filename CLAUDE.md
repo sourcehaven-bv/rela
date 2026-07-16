@@ -235,6 +235,25 @@ Rules when touching this:
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
   independently of the entity ones.
+- **Version purge** (TKT-BW6UUL, postgres only) is the audited, irreversible
+  exception to append-only history — hard-deletes version rows for compliance
+  redaction. `VersionPurger`/`RelationVersionPurger` are SEPARATE optional
+  capabilities (`purge.go`), one `PurgeVersions`/`PurgeRelationVersions` method
+  each. Load-bearing guardrails (design-review, do not relax): the whole op runs
+  under **`sweepAdvisoryLockKey`** (mutually exclusive with a sweep tick — a purge
+  racing a capture-insert loses the erasure); it **REFUSES while a live row still
+  holds the content** unless `--force-live` (else the sweep re-captures it within
+  one interval — a `VersionOpPurge` no-content tombstone whose content_hash = the
+  live hash suppresses that re-capture via the sweep's existing dedup); it
+  **REFUSES a rename row** (purging one orphans/forks the lineage walk — v1 is
+  non-rename-only); `--all` purges the **fenced lineage** (`lineageCTE` /
+  `relationLineageIDs`), never `WHERE id=$1` (id-reuse would destroy unrelated
+  history). CLI-only (`history-purge`/`relation-history-purge`), dry-run by
+  default; trust boundary is operator shell (no ACL check — like `db migrate`),
+  audited via the `audit.Audit` sink (`OpPurgeVersion`, `svc.Audit()`), never
+  echoing purged content. `schema_versions` is projection-only + FK-shared, so
+  purge never deletes it. Purge is necessary-not-sufficient for erasure (live
+  row / PITR backups survive) — see the postgres-backend guide.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the

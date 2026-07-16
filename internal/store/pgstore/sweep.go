@@ -424,6 +424,10 @@ func (s *sweep) captureRelation(
 // tryAdvisoryLock takes a non-blocking session advisory lock on conn, returning
 // whether it was acquired. Session-scoped: released by advisoryUnlock or when
 // the connection closes.
+// key is always sweepAdvisoryLockKey — there is exactly ONE version lock, shared
+// by the reconciliation sweep and version purge so they are mutually exclusive
+// (a purge racing a sweep capture-insert would lose the erasure). It is a
+// parameter only so the lock/unlock pair reads symmetrically.
 func tryAdvisoryLock(ctx context.Context, conn *pgxpool.Conn, key int64) (bool, error) {
 	var ok bool
 	err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&ok)

@@ -91,6 +91,7 @@ components:
   # Infrastructure
   acl:              { in: internal/acl }
   aclaudit:         { in: internal/aclaudit }
+  aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
@@ -201,6 +202,7 @@ deps:
     mayDependOn:
       - acl
       - aclaudit
+      - aclmap
       - ai
       - analysis
       - app
@@ -443,6 +445,12 @@ deps:
   aclaudit:
     mayDependOn:
       - acl
+  aclmap:
+    mayDependOn:
+      - acl
+      - entity
+      - principal
+      - store
   affordances:
     mayDependOn:
       - acl
