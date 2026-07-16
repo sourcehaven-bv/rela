@@ -207,6 +207,47 @@ global `history:read`). In the web UI, a relation's history is owned by its
 a History affordance. Restore goes through the normal write path; re-creating a
 relation whose endpoint entity no longer exists is refused (409).
 
+### Purging history for compliance
+
+History is append-only by design. When you must actually **remove** content from
+history — a leaked secret, PII, a GDPR erasure request — the `history-purge` /
+`relation-history-purge` commands hard-delete version snapshot rows. This is the
+deliberate, audited, **irreversible** exception to the append-only model, and it
+is **operator-only**: the trust boundary is shell access plus the database
+credential (`RELA_DATABASE_URL`), the same as `rela db migrate` — the CLI applies
+no ACL check.
+
+```bash
+# Dry-run (the DEFAULT): shows exactly what would be purged, deletes nothing.
+rela history-purge TKT-42 --content-hash <h> --reason "erase SSN per DPO-42"
+
+# Commit the deletion (irreversible). Confirmation asks you to type the id.
+rela history-purge TKT-42 --content-hash <h> --reason "erase SSN per DPO-42" --commit
+```
+
+Target a specific row by `--vseq` (from `rela history`), every row holding a
+value by `--content-hash` (the "erase this value everywhere it was captured"
+operation — verifiable, since afterward no row carries that hash), or the whole
+lineage with `--all`. `--reason` is required and recorded in the audit trail;
+**do not put the secret itself in `--reason`** (it is logged in cleartext). The
+purge itself is audited (who, what, count, when) — that record is the surviving
+compliance trail and never contains the purged content.
+
+Two guardrails you will hit:
+
+- **Purge refuses while the live entity/relation still holds the content.** The
+  version sweep reconciles history *toward* the live row, so purging history
+  without first redacting the live value would just re-capture it within a few
+  minutes. Redact (or delete) the live value first; or pass `--force-live`, which
+  writes a tombstone that stops the sweep from re-capturing.
+- **Purge refuses a `rename` row** (purging one would sever unrelated history).
+  Select non-rename rows by `--vseq`/`--content-hash`.
+
+**Purge is one necessary step, not cryptographic erasure.** It removes rows from
+the primary database; a value may still survive in your PITR/base backups and WAL
+until their retention expires — accounting for the backup lifecycle is the
+operator's separate responsibility.
+
 ## Other scope notes
 
 - The desktop app (`rela-desktop`) is filesystem-only; there is no PostgreSQL
