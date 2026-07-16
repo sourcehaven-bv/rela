@@ -85,7 +85,7 @@ func (a *App) NewRouter() http.Handler {
 	a.registerAPIV1Routes(inner)
 
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
-	a.registerSyncRoutes(inner)
+	a.sync.registerSyncRoutes(inner)
 
 	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
 	// configured (SetWebhookReceiver). It lives OUTSIDE /api/ because it

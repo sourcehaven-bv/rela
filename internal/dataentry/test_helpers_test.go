@@ -162,6 +162,19 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}
+	// Rebuild the sync handler over the rebound store/manager. writeMu is App's
+	// own, so sync writes serialize with the other mutation handlers just as in
+	// production.
+	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+}
+
+// rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.
+// Production resolves the sync capabilities once at construction (the store is
+// fixed for App's lifetime); a test that swaps app.store after construction to
+// inject a fake manifest/apply source must call this so the handler re-resolves
+// against the swapped store.
+func rebindSyncHandler(app *App) {
+	app.sync = newSyncHandler(app.store, app.entityManager, &app.writeMu)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper

@@ -70,13 +70,14 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through a.State(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object. Decompose toward the
+// TODO(TKT-R68TV8): App is a god-object. Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design) — this branch adds handleV1Feed (TKT-RDM9M5).
+// HTTP route by the router's design). The sync route cluster (16 methods) moved
+// to syncHandler, ratcheting 170 → 154.
 //
-//plimsoll:max-methods=170
+//plimsoll:max-methods=154
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -133,7 +134,12 @@ type App struct {
 	palette *paletteService
 	// settings owns the per-user default values (create-form/relation defaults).
 	// Self-synchronized; extracted from the schema snapshot.
-	settings  *settingsService
+	settings *settingsService
+	// sync owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
+	// surfaces plus a pointer to writeMu so its writes serialize with the other
+	// mutation handlers.
+	sync      *syncHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -503,6 +509,14 @@ func NewApp(
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
 	app.logo = logo
+
+	// syncHandler owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). It shares App's store (reads), entityManager (deletes), and
+	// — crucially — a POINTER to App's writeMu so sync pushes/deletes serialize
+	// against every other data-entry mutation. The manifest/applier capabilities
+	// are resolved once from the concrete store/manager (nil on fs/memory builds,
+	// where the sync endpoints degrade to 501).
+	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
 
 	// Build and publish the initial Schema snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep

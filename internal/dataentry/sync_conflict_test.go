@@ -86,7 +86,7 @@ func TestSyncPut_UpdateVanishedReturns412(t *testing.T) {
 
 	// If-Match matches the current hash → precondition passes and ApplyEntity
 	// resolves UPDATE intent. The conflict only surfaces on UpdateEntity.
-	cur, exists := app.currentEntityHash(context.Background(), "NOTE-1")
+	cur, exists := app.sync.currentEntityHash(context.Background(), "NOTE-1")
 	if !exists {
 		t.Fatal("seed missing: store should report NOTE-1 present")
 	}
