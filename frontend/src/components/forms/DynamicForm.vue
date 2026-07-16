@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -164,6 +164,21 @@ const conditionBindings = (): Bindings => ({
 })
 
 const wizard = useFormWizard(formConfig, conditionBindings)
+
+// Visible-step indices that currently have a validation error, so the stepper
+// can flag them. Recomputes as `errors` changes, so a pill's flag clears the
+// moment its field becomes valid.
+const stepsWithErrors = computed<Set<number>>(() => {
+  const flagged = new Set<number>()
+  if (!wizard.isWizard.value) return flagged
+  for (const property of Object.keys(errors.value)) {
+    const idx = wizard.visibleStepIndexForProperty(property)
+    if (idx >= 0) flagged.add(idx)
+  }
+  return flagged
+})
+
+const errorCount = computed(() => Object.keys(errors.value).length)
 
 // TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
 // the entity's affordances. A property field is rendered only if it is
@@ -671,10 +686,38 @@ function handleStepClick(index: number) {
   wizard.goTo(index)
 }
 
+// On a failed wizard submit, take the user to the first step that has an error
+// and focus its first invalid field, so the fix is one glance + zero hunting.
+function focusFirstError() {
+  if (!wizard.isWizard.value) return
+  // First errored property in visible order.
+  let firstStep = Infinity
+  let firstProp: string | null = null
+  for (const property of Object.keys(errors.value)) {
+    const idx = wizard.visibleStepIndexForProperty(property)
+    if (idx >= 0 && idx < firstStep) {
+      firstStep = idx
+      firstProp = property
+    }
+  }
+  if (firstProp === null) return
+  wizard.goTo(firstStep)
+  // Focus after the step renders.
+  const prop = firstProp
+  nextTick(() => {
+    const el = document.getElementById(`field-${prop}`)
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el?.focus()
+  })
+}
+
 async function handleSubmit() {
   if (!formConfig.value) return
   const scope = submitScopeFields()
-  if (!validate(scope, requiredWhenProps(scope))) return
+  if (!validate(scope, requiredWhenProps(scope))) {
+    focusFirstError()
+    return
+  }
 
   saving.value = true
   try {
@@ -835,6 +878,15 @@ function handleCancel() {
 
 function updateField(property: string, value: unknown) {
   formData.value[property] = value
+  // Clear a standing validation error for this field as the user edits it, so
+  // the wizard's per-step error flags and summary update live. A full re-check
+  // happens on the next Next/Submit; this just avoids a stale "needs attention"
+  // marker after the user has addressed it.
+  if (errors.value[property]) {
+    const next = { ...errors.value }
+    delete next[property]
+    errors.value = next
+  }
   checkDirty()
   // TKT-3I5U: in create mode, re-derive affordances from the staged
   // entity's new values (value-dependent verdicts) — debounced. Also
@@ -1220,11 +1272,14 @@ onBeforeRouteLeave(async () => {
                 :class="{
                   active: sIdx === wizard.currentStep.value,
                   done: sIdx < wizard.currentStep.value,
+                  'has-errors': stepsWithErrors.has(sIdx),
                 }"
                 :aria-current="sIdx === wizard.currentStep.value ? 'step' : undefined"
                 @click="handleStepClick(sIdx)"
               >
-                <span class="wizard-step-num">{{ sIdx + 1 }}</span>
+                <span class="wizard-step-num">{{
+                  stepsWithErrors.has(sIdx) ? '!' : sIdx + 1
+                }}</span>
                 <span class="wizard-step-title">{{ step.title }}</span>
               </button>
             </li>
@@ -1303,6 +1358,14 @@ onBeforeRouteLeave(async () => {
             @update:model-value="updateContent"
           />
         </div>
+
+        <!-- Submit-time validation summary. Announced (role=alert) and linked to
+             the offending fields via the flagged stepper pills; Create also
+             jumps to the first error. -->
+        <p v-if="wizard.isWizard.value && errorCount > 0" class="wizard-error-summary" role="alert">
+          ⚠ {{ errorCount }} {{ errorCount === 1 ? 'field needs' : 'fields need' }} attention — see
+          the flagged step{{ stepsWithErrors.size === 1 ? '' : 's' }} above.
+        </p>
 
         <!-- Wizard navigation: Back / Next, with Submit on the last step. -->
         <div v-if="wizard.isWizard.value && wizard.currentStepDef.value" class="form-actions">
@@ -1509,6 +1572,24 @@ onBeforeRouteLeave(async () => {
 .wizard-step-pill.done .wizard-step-num {
   background: var(--accent-color);
   color: #fff;
+}
+
+/* A step with a validation error takes precedence over active/done styling. */
+.wizard-step-pill.has-errors {
+  border-color: var(--error-color);
+  color: var(--error-color);
+}
+
+.wizard-step-pill.has-errors .wizard-step-num {
+  background: var(--error-color);
+  color: #fff;
+}
+
+.wizard-error-summary {
+  color: var(--error-color);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 12px;
 }
 
 .form-fields {

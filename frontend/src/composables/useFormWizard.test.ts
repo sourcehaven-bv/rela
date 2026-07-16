@@ -98,6 +98,18 @@ describe('useFormWizard', () => {
     expect([...wiz.managedProperties.value].sort()).toEqual(['name', 'processor_name', 'published'])
   })
 
+  it('visibleStepIndexForProperty maps a property to its visible step', () => {
+    const { wiz, formData } = setup(wizardForm(), { has_processors: true })
+    expect(wiz.visibleStepIndexForProperty('name')).toBe(0)
+    expect(wiz.visibleStepIndexForProperty('processor_name')).toBe(1)
+    expect(wiz.visibleStepIndexForProperty('published')).toBe(2)
+    expect(wiz.visibleStepIndexForProperty('nope')).toBe(-1)
+    // When the processor step is hidden, its field maps to no visible step.
+    formData.value = { has_processors: false }
+    expect(wiz.visibleStepIndexForProperty('processor_name')).toBe(-1)
+    expect(wiz.visibleStepIndexForProperty('published')).toBe(1) // shifted up
+  })
+
   it('visibleFieldsOf honors per-field visible_when', () => {
     const cfg: FormConfig = {
       entity: 'x',

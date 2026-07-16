@@ -53,6 +53,8 @@ export interface FormWizard {
   isLastStep: ComputedRef<boolean>
   /** Visible fields of a given step (honors per-field `visible_when`). */
   visibleFieldsOf: (step: FormStep) => FormFieldOrRelation[]
+  /** Visible-step index showing a field for `property`, or -1. */
+  visibleStepIndexForProperty: (property: string) => number
   /** True if the field is required now (authored `required` OR `required_when`). */
   isFieldRequired: (field: FormFieldOrRelation) => boolean
   /** Property keys under all currently-visible steps (for payload pruning). */
@@ -102,6 +104,15 @@ export function useFormWizard(
 
   function visibleFieldsOf(step: FormStep): FormFieldOrRelation[] {
     return stepFields(step).filter((f) => evalCond(f.visible_when))
+  }
+
+  // The visible-step index that currently shows a field for `property`, or -1.
+  // Used to map a validation error (keyed by property) back to the step the
+  // user must visit to fix it.
+  function visibleStepIndexForProperty(property: string): number {
+    return visibleSteps.value.findIndex((step) =>
+      visibleFieldsOf(step).some((f) => f.property === property)
+    )
   }
 
   function isFieldRequired(field: FormFieldOrRelation): boolean {
@@ -199,6 +210,7 @@ export function useFormWizard(
     isFirstStep,
     isLastStep,
     visibleFieldsOf,
+    visibleStepIndexForProperty,
     isFieldRequired,
     activeProperties,
     managedProperties,

@@ -111,6 +111,30 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(await formPage.activeStepIndex()).toBe(2);
   });
 
+  test("Create with a missing required field on an earlier step flags it and jumps back", async ({
+    appPage,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_wizard");
+
+    // Leave the required `title` (step 0) empty; jump to the last step (Status,
+    // index 1 while Assignment is hidden) and try to Create.
+    await formPage.clickStep(1);
+    expect(await formPage.activeStepIndex()).toBe(1);
+    await formPage.clickCreate();
+
+    // Bounced back to step 0, which is flagged, with a summary shown.
+    expect(await formPage.activeStepIndex()).toBe(0);
+    expect(await formPage.erroredStepIndices()).toContain(0);
+    const summary = await formPage.errorSummaryText();
+    expect(summary).toContain("attention");
+    expect(await formPage.hasValidationError()).toBeTruthy();
+
+    // Fixing the field clears the flag live.
+    await formPage.fillField("title", "Now valid");
+    expect(await formPage.erroredStepIndices()).not.toContain(0);
+  });
+
   test("submits a wizard and drops hidden-branch values", async ({
     appPage,
     api,

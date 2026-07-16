@@ -67,6 +67,11 @@ export class FormPage extends BasePage {
     await this.wizardNextBtn.click();
   }
 
+  /** Click the wizard's Create/Save submit button (last step). */
+  async clickCreate() {
+    await this.page.locator('.form-actions button[type="submit"]').click();
+  }
+
   async clickBack() {
     await this.wizardBackBtn.click();
   }
@@ -81,6 +86,24 @@ export class FormPage extends BasePage {
   /** Value of the `step` query param on the current URL, or null. */
   readStepParam(): string | null {
     return new URL(this.page.url()).searchParams.get("step");
+  }
+
+  /** 0-based indices of wizard step pills currently flagged with an error. */
+  async erroredStepIndices(): Promise<number[]> {
+    const count = await this.wizardSteps.count();
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const cls = (await this.wizardSteps.nth(i).getAttribute("class")) ?? "";
+      if (cls.includes("has-errors")) out.push(i);
+    }
+    return out;
+  }
+
+  /** Text of the wizard's submit-time error summary, or null if not shown. */
+  async errorSummaryText(): Promise<string | null> {
+    const el = this.page.locator(".wizard-error-summary");
+    if (!(await el.isVisible().catch(() => false))) return null;
+    return el.innerText();
   }
 
   /** Fill a set of property fields keyed by property name. */
