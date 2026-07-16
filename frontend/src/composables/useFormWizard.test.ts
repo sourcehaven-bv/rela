@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { computed, reactive, ref, nextTick, effectScope, type EffectScope } from 'vue'
+import { reactive, ref, nextTick, effectScope, type EffectScope } from 'vue'
 import type { LocationQuery } from 'vue-router'
 import { useFormWizard } from './useFormWizard'
 import type { Bindings } from '@/utils/conditions'
@@ -46,12 +46,12 @@ describe('useFormWizard', () => {
   function setup(cfg: FormConfig | undefined, form: Record<string, unknown> = {}) {
     const config = ref(cfg)
     const formData = ref(form)
-    const bindings = computed<Bindings>(() => ({
+    const getBindings = (): Bindings => ({
       form: formData.value,
       entity: {},
       current_user: {},
-    }))
-    const wiz = scope.run(() => useFormWizard(config, bindings))!
+    })
+    const wiz = scope.run(() => useFormWizard(config, getBindings))!
     return { wiz, formData, config }
   }
 

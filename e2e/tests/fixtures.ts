@@ -759,6 +759,27 @@ forms:
       - relation: fixes
         label: Fixes Bug
 
+  # Wizard (multi-step) task form — exercises steps, visible_when,
+  # required_when, next/back, and hidden-branch pruning (wizard.spec.ts).
+  task_wizard:
+    entity_type: task
+    title: "New Task (wizard)"
+    steps:
+      - title: "Basics"
+        fields:
+          - property: title
+          - property: done
+            widget: checkbox
+      - title: "Assignment"
+        # Only shown once the task is marked done.
+        visible_when: "form.done == true"
+        fields:
+          - property: assignee
+            required_when: "form.done == true"
+      - title: "Status"
+        fields:
+          - property: status
+
   tag:
     entity_type: tag
     title: "Tag"

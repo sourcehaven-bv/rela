@@ -64,7 +64,12 @@ export interface FormWizard {
 
 export function useFormWizard(
   formConfig: Ref<FormConfig | undefined> | ComputedRef<FormConfig | undefined>,
-  bindings: ComputedRef<Bindings>
+  // A getter, not a computed: it is invoked inside each derived computed so the
+  // reactive reads of the underlying form values happen in that computed's
+  // tracking scope. A cached computed would return a stable object whose
+  // property reads are not re-tracked, so visibility would never update as the
+  // user types (the `form.done == true` reveal would go stale).
+  getBindings: () => Bindings
 ): FormWizard {
   const route = useRoute()
   const router = useRouter()
@@ -78,7 +83,7 @@ export function useFormWizard(
   const evalCond = (expr: string | undefined): boolean => {
     const prog = compileCond(expr)
     if (!prog) return !expr || expr.trim() === ''
-    return prog.eval(bindings.value)
+    return prog.eval(getBindings())
   }
 
   const visibleSteps = computed<FormStep[]>(() => {

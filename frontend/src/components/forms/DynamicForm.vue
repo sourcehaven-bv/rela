@@ -153,14 +153,15 @@ const allFields = computed((): FormFieldOrRelation[] => {
   return [...propFields, ...relFields]
 })
 
-// Live binding namespaces for condition evaluation. `form` is the current field
-// values; `entity`/`current_user` are reserved for future ACL/view use and are
-// empty here (form conditions reference `form.<field>` only).
-const conditionBindings = computed<Bindings>(() => ({
+// Live binding namespaces for condition evaluation. Supplied as a getter (not a
+// computed) so the reactive read of formData happens inside each wizard
+// computed's tracking scope — see useFormWizard. `entity`/`current_user` are
+// reserved for future ACL/view use (form conditions reference `form.<field>`).
+const conditionBindings = (): Bindings => ({
   form: formData.value,
   entity: {},
   current_user: {},
-}))
+})
 
 const wizard = useFormWizard(formConfig, conditionBindings)
 

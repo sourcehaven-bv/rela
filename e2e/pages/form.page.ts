@@ -1,5 +1,5 @@
-import { type Page, type Locator, expect } from '@playwright/test';
-import { BasePage } from './base.page';
+import { type Page, type Locator, expect } from "@playwright/test";
+import { BasePage } from "./base.page";
 
 export class FormPage extends BasePage {
   readonly form: Locator;
@@ -9,16 +9,73 @@ export class FormPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.form = page.locator('form');
-    this.submitButton = page.locator('button[type="submit"], button:has-text("Save"), button:has-text("Create")');
+    this.form = page.locator("form");
+    this.submitButton = page.locator(
+      'button[type="submit"], button:has-text("Save"), button:has-text("Create")',
+    );
     this.cancelButton = page.locator('button:has-text("Cancel")');
-    this.titleInput = page.locator('#field-title');
+    this.titleInput = page.locator("#field-title");
   }
 
   async navigateToCreateForm(formId: string) {
     await this.navigateTo(`/form/${formId}`);
     await this.waitForSpinnerToDisappear();
     await expect(this.titleInput).toBeVisible();
+  }
+
+  // --- Wizard (multi-step) form helpers ---
+
+  private get wizardSteps(): Locator {
+    return this.page.locator(".wizard-steps .wizard-step-pill");
+  }
+
+  private get wizardNextBtn(): Locator {
+    return this.page.locator('.form-actions button:has-text("Next")');
+  }
+
+  private get wizardBackBtn(): Locator {
+    return this.page.locator('.form-actions button:has-text("Back")');
+  }
+
+  /** Titles of the currently-rendered wizard steps, in order. */
+  async wizardStepTitles(): Promise<string[]> {
+    return this.wizardSteps.locator(".wizard-step-title").allInnerTexts();
+  }
+
+  /** The 0-based index of the active wizard step (from the `active` pill). */
+  async activeStepIndex(): Promise<number> {
+    const count = await this.wizardSteps.count();
+    for (let i = 0; i < count; i++) {
+      const cls = (await this.wizardSteps.nth(i).getAttribute("class")) ?? "";
+      if (cls.includes("active")) return i;
+    }
+    return -1;
+  }
+
+  /** Toggle a checkbox field on/off by property name. */
+  async setCheckbox(name: string, checked: boolean) {
+    const box = this.page.locator(`#field-${name}`);
+    await box.setChecked(checked);
+  }
+
+  async clickNext() {
+    await this.wizardNextBtn.click();
+  }
+
+  async clickBack() {
+    await this.wizardBackBtn.click();
+  }
+
+  async isFieldVisible(name: string): Promise<boolean> {
+    return this.page
+      .locator(`#field-${name}`)
+      .isVisible()
+      .catch(() => false);
+  }
+
+  /** Value of the `step` query param on the current URL, or null. */
+  readStepParam(): string | null {
+    return new URL(this.page.url()).searchParams.get("step");
   }
 
   /** Fill a set of property fields keyed by property name. */
@@ -39,7 +96,10 @@ export class FormPage extends BasePage {
   async submitAndExpectCreate(plural: string): Promise<{ id: string }> {
     const [response] = await Promise.all([
       this.page.waitForResponse(
-        r => r.url().includes(`/api/v1/${plural}`) && r.request().method() === 'POST' && r.status() === 201,
+        (r) =>
+          r.url().includes(`/api/v1/${plural}`) &&
+          r.request().method() === "POST" &&
+          r.status() === 201,
       ),
       this.submitButton.click(),
     ]);
@@ -57,7 +117,7 @@ export class FormPage extends BasePage {
    *  `_actions.update === false` for the target entity — AC10 of the
    *  read-only payoff. */
   async expectNotEditableMessage(timeoutMs = 10_000) {
-    const banner = this.page.locator('.not-editable-state');
+    const banner = this.page.locator(".not-editable-state");
     await expect(banner).toBeVisible({ timeout: timeoutMs });
     await expect(banner).toContainText(/not editable/i);
   }
@@ -66,7 +126,9 @@ export class FormPage extends BasePage {
    *  when navigation is triggered by another page (e.g. Edit button on the
    *  document view). */
   async expectAtFormUrl(formId: string, entityId: string) {
-    await this.page.waitForURL(new RegExp(`/form/${formId}/${entityId}`), { timeout: 10000 });
+    await this.page.waitForURL(new RegExp(`/form/${formId}/${entityId}`), {
+      timeout: 10000,
+    });
     await this.waitForSpinnerToDisappear();
   }
 
@@ -74,7 +136,7 @@ export class FormPage extends BasePage {
    *  null if absent. Useful for asserting on the form's return target
    *  without coupling to URL-encoding details (RR-BS0O4). */
   readReturnTo(): string | null {
-    return new URL(this.page.url()).searchParams.get('return_to');
+    return new URL(this.page.url()).searchParams.get("return_to");
   }
 
   async fillField(name: string, value: string) {
@@ -93,15 +155,17 @@ export class FormPage extends BasePage {
 
   async fillMarkdown(value: string) {
     // EasyMDE creates a CodeMirror instance
-    const codeMirror = this.page.locator('.CodeMirror');
+    const codeMirror = this.page.locator(".CodeMirror");
     if (await codeMirror.isVisible({ timeout: 1000 }).catch(() => false)) {
       await codeMirror.click();
       // Clear existing content
-      await this.page.keyboard.press('Meta+a');
+      await this.page.keyboard.press("Meta+a");
       await this.page.keyboard.type(value);
     } else {
       // Fallback to textarea
-      const textarea = this.page.locator('textarea[name="content"], textarea.markdown-input');
+      const textarea = this.page.locator(
+        'textarea[name="content"], textarea.markdown-input',
+      );
       await textarea.fill(value);
     }
   }
@@ -111,8 +175,10 @@ export class FormPage extends BasePage {
     // for the default RelationPicker widget we delegate to
     // `pickInRelationPicker` so both helpers share the same combobox-
     // scoped selector strategy.
-    const relationSection = this.page.locator('.relation-field, .form-field').filter({ hasText: relationName });
-    const select = relationSection.locator('select');
+    const relationSection = this.page
+      .locator(".relation-field, .form-field")
+      .filter({ hasText: relationName });
+    const select = relationSection.locator("select");
     if (await select.isVisible().catch(() => false)) {
       await select.selectOption(targetId);
       return;
@@ -126,33 +192,45 @@ export class FormPage extends BasePage {
     // form always has it. In autosave edit mode it never appears.
     const submitVisible = await this.submitButton
       .first()
-      .waitFor({ state: 'visible', timeout: 2000 })
+      .waitFor({ state: "visible", timeout: 2000 })
       .then(() => true)
       .catch(() => false);
     if (submitVisible) {
       await this.submitButton.first().click();
       // Submit is a client-side fetch followed by a router.push on success.
       // Wait briefly for the URL to change; if validation fails we stay on the form.
-      await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
+      await this.page
+        .waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 })
+        .catch(() => {});
       return;
     }
     // TKT-E6094 autosave: no explicit Submit. Blur, wait for the autosave
     // PATCH(es) to drain, then navigate back; the route guard flushes any
     // pending edits before the URL changes.
-    await this.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await this.page.evaluate(() =>
+      (document.activeElement as HTMLElement | null)?.blur(),
+    );
     await this.page.waitForTimeout(1000);
     await this.page.goBack();
-    await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
+    await this.page
+      .waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 })
+      .catch(() => {});
   }
 
   async cancel() {
     const startUrl = this.page.url();
     await this.cancelButton.click();
-    await this.page.waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 }).catch(() => {});
+    await this.page
+      .waitForURL((url) => url.toString() !== startUrl, { timeout: 2000 })
+      .catch(() => {});
   }
 
   async expectValidationError(message: string) {
-    await expect(this.page.locator('.error, .validation-error, [role="alert"]').filter({ hasText: message })).toBeVisible();
+    await expect(
+      this.page
+        .locator('.error, .validation-error, [role="alert"]')
+        .filter({ hasText: message }),
+    ).toBeVisible();
   }
 
   async expectFieldValue(name: string, value: string) {
@@ -161,7 +239,9 @@ export class FormPage extends BasePage {
   }
 
   async expectFormTitle(title: string) {
-    await expect(this.page.locator('h1, h2, .form-title').filter({ hasText: title })).toBeVisible();
+    await expect(
+      this.page.locator("h1, h2, .form-title").filter({ hasText: title }),
+    ).toBeVisible();
   }
 
   async getFieldValue(name: string): Promise<string> {
@@ -178,7 +258,9 @@ export class FormPage extends BasePage {
   }
 
   async hasValidationError(): Promise<boolean> {
-    const error = this.page.locator('.error, .validation-error, [role="alert"]').first();
+    const error = this.page
+      .locator('.error, .validation-error, .field-error, [role="alert"]')
+      .first();
     return error.isVisible().catch(() => false);
   }
 
@@ -187,7 +269,7 @@ export class FormPage extends BasePage {
     const count = await options.count();
     const values: string[] = [];
     for (let i = 0; i < count; i++) {
-      const v = await options.nth(i).getAttribute('value');
+      const v = await options.nth(i).getAttribute("value");
       if (v) values.push(v);
     }
     return values;
@@ -204,13 +286,15 @@ export class FormPage extends BasePage {
   async saveAndWaitForPatch(plural: string, entityId: string) {
     const submitVisible = await this.submitButton
       .first()
-      .waitFor({ state: 'visible', timeout: 2000 })
+      .waitFor({ state: "visible", timeout: 2000 })
       .then(() => true)
       .catch(() => false);
     if (submitVisible) {
       const [resp] = await Promise.all([
         this.page.waitForResponse(
-          (r) => r.url().includes(`/api/v1/${plural}/${entityId}`) && r.request().method() === 'PATCH',
+          (r) =>
+            r.url().includes(`/api/v1/${plural}/${entityId}`) &&
+            r.request().method() === "PATCH",
         ),
         this.submitButton.first().click(),
       ]);
@@ -220,13 +304,18 @@ export class FormPage extends BasePage {
     // PATCH chain to drain. Multiple edits in quick succession serialize
     // through the FIFO queue, so we wait for an idle window of no PATCH
     // activity. Bounded so a no-edit form doesn't hang.
-    await this.page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    let lastResp: Awaited<ReturnType<typeof this.page.waitForResponse>> | undefined;
+    await this.page.evaluate(() =>
+      (document.activeElement as HTMLElement | null)?.blur(),
+    );
+    let lastResp:
+      Awaited<ReturnType<typeof this.page.waitForResponse>> | undefined;
     // Poll for PATCH responses until 1s elapses without one.
     for (;;) {
       const resp = await this.page
         .waitForResponse(
-          (r) => r.url().includes(`/api/v1/${plural}/${entityId}`) && r.request().method() === 'PATCH',
+          (r) =>
+            r.url().includes(`/api/v1/${plural}/${entityId}`) &&
+            r.request().method() === "PATCH",
           { timeout: 1500 },
         )
         .catch(() => undefined);
@@ -239,7 +328,9 @@ export class FormPage extends BasePage {
   /** True if the page shows an inline-create UI for related entities. */
   async hasInlineCreateButton(): Promise<boolean> {
     return this.page
-      .locator('button:has-text("New"), .btn-inline-create, [data-create-inline]')
+      .locator(
+        'button:has-text("New"), .btn-inline-create, [data-create-inline]',
+      )
       .first()
       .isVisible()
       .catch(() => false);
@@ -247,31 +338,35 @@ export class FormPage extends BasePage {
 
   async clickInlineCreateButton() {
     await this.page
-      .locator('button:has-text("New"), .btn-inline-create, [data-create-inline]')
+      .locator(
+        'button:has-text("New"), .btn-inline-create, [data-create-inline]',
+      )
       .first()
       .click();
   }
 
   async expectInlineFormVisible() {
-    await expect(this.page.locator('.inline-form, .modal, dialog')).toBeVisible();
+    await expect(
+      this.page.locator(".inline-form, .modal, dialog"),
+    ).toBeVisible();
   }
 
   // --- Markdown body editor (EasyMDE) ---
 
   get contentField(): Locator {
-    return this.page.locator('.content-field');
+    return this.page.locator(".content-field");
   }
 
   get markdownEditorRoot(): Locator {
-    return this.page.locator('.markdown-editor');
+    return this.page.locator(".markdown-editor");
   }
 
   get markdownToolbar(): Locator {
-    return this.page.locator('.editor-toolbar');
+    return this.page.locator(".editor-toolbar");
   }
 
   get codeMirror(): Locator {
-    return this.page.locator('.CodeMirror');
+    return this.page.locator(".CodeMirror");
   }
 
   async expectContentFieldVisible() {
@@ -279,7 +374,7 @@ export class FormPage extends BasePage {
   }
 
   async expectContentLabelHasText(text: string) {
-    await expect(this.contentField.locator('label')).toHaveText(text);
+    await expect(this.contentField.locator("label")).toHaveText(text);
   }
 
   async expectMarkdownEditorReady() {
@@ -302,9 +397,11 @@ export class FormPage extends BasePage {
    *  Implemented via `evaluate` rather than a Locator because computed-style
    *  on a pseudo-element isn't exposed through Playwright's selector API. */
   async getBoldToolbarIconFontFamily(): Promise<string | null> {
-    return this.markdownToolbar.locator('.fa-bold').first().evaluate(
-      (el) => window.getComputedStyle(el, '::before').fontFamily,
-    ).catch(() => null);
+    return this.markdownToolbar
+      .locator(".fa-bold")
+      .first()
+      .evaluate((el) => window.getComputedStyle(el, "::before").fontFamily)
+      .catch(() => null);
   }
 
   // --- Entity-reference picker (TKT-I5NO) ---
@@ -313,27 +410,29 @@ export class FormPage extends BasePage {
    *  title attribute rather than the icon class so the test survives
    *  icon-swap refactors. */
   get insertEntityRefButton(): Locator {
-    return this.markdownToolbar.locator('button[title="Insert entity reference"]')
+    return this.markdownToolbar.locator(
+      'button[title="Insert entity reference"]',
+    );
   }
 
   /** Picker modal overlay. Teleported to <body>, so we query the page
    *  rather than the form root. */
   get entityPickerOverlay(): Locator {
-    return this.page.locator('.entity-picker-overlay')
+    return this.page.locator(".entity-picker-overlay");
   }
 
   get entityPickerInput(): Locator {
-    return this.entityPickerOverlay.locator('.entity-picker-input')
+    return this.entityPickerOverlay.locator(".entity-picker-input");
   }
 
   get entityPickerOptions(): Locator {
-    return this.entityPickerOverlay.locator('.entity-picker-option')
+    return this.entityPickerOverlay.locator(".entity-picker-option");
   }
 
   /** Click the toolbar button and wait for the modal to render. */
   async openEntityPicker(): Promise<void> {
-    await this.insertEntityRefButton.click()
-    await expect(this.entityPickerInput).toBeFocused()
+    await this.insertEntityRefButton.click();
+    await expect(this.entityPickerInput).toBeFocused();
   }
 
   /** Type a query into the picker and wait for results to render. The
@@ -341,8 +440,10 @@ export class FormPage extends BasePage {
    *  five seconds before failing — generous enough that a freshly-created
    *  entity surfaces, tight enough that a real bug still fails fast. */
   async searchEntityPicker(query: string): Promise<void> {
-    await this.entityPickerInput.fill(query)
-    await expect(this.entityPickerOptions.first()).toBeVisible({ timeout: 5_000 })
+    await this.entityPickerInput.fill(query);
+    await expect(this.entityPickerOptions.first()).toBeVisible({
+      timeout: 5_000,
+    });
   }
 
   /** Read the current CodeMirror buffer back as a single string. Used
@@ -353,9 +454,11 @@ export class FormPage extends BasePage {
       // global CodeMirror constructor. EasyMDE preserves the same shape;
       // every line in the document is concatenated with '\n'.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cm = (el as any).CodeMirror
-      return typeof cm?.getValue === 'function' ? (cm.getValue() as string) : ''
-    })
+      const cm = (el as any).CodeMirror;
+      return typeof cm?.getValue === "function"
+        ? (cm.getValue() as string)
+        : "";
+    });
   }
 
   // --- Inline backtick autocomplete (TKT-2RCP) ---
@@ -364,15 +467,15 @@ export class FormPage extends BasePage {
    *  backtick in prose context. Rendered next to the editor textarea
    *  (NOT teleported), so we scope to the editor container. */
   get backtickPopup(): Locator {
-    return this.markdownEditorRoot.locator('.backtick-popup')
+    return this.markdownEditorRoot.locator(".backtick-popup");
   }
 
   get backtickPopupOptions(): Locator {
-    return this.backtickPopup.locator('.backtick-popup-option')
+    return this.backtickPopup.locator(".backtick-popup-option");
   }
 
   get backtickPopupHint(): Locator {
-    return this.backtickPopup.locator('.backtick-popup-hint')
+    return this.backtickPopup.locator(".backtick-popup-hint");
   }
 
   /** Type a single character into the editor at the current cursor.
@@ -382,14 +485,17 @@ export class FormPage extends BasePage {
    *  `.CodeMirror` lands on the gutter wrapper, not the hidden
    *  textarea that captures input events. */
   async typeIntoEditor(text: string): Promise<void> {
-    await this.codeMirror.click()
+    await this.codeMirror.click();
     await this.page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cm = (document.querySelector('.CodeMirror') as any)?.CodeMirror
-      cm?.focus()
-    })
+      const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
+      cm?.focus();
+    });
     for (const ch of text) {
-      await this.page.evaluate((c) => document.execCommand('insertText', false, c), ch)
+      await this.page.evaluate(
+        (c) => document.execCommand("insertText", false, c),
+        ch,
+      );
     }
   }
 
@@ -401,39 +507,39 @@ export class FormPage extends BasePage {
   async useFastAutocompleteDelay(delayMs = 30): Promise<void> {
     await this.page.addInitScript((d) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(window as any).__BACKTICK_AUTOCOMPLETE_DELAY_MS__ = d
-    }, delayMs)
+      (window as any).__BACKTICK_AUTOCOMPLETE_DELAY_MS__ = d;
+    }, delayMs);
   }
 
   /** Clear the editor's buffer entirely. Useful when a form preloads a
    *  template body and the test wants a known starting state. */
   async clearEditorBuffer(): Promise<void> {
-    await this.codeMirror.click()
+    await this.codeMirror.click();
     await this.page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cm = (document.querySelector('.CodeMirror') as any)?.CodeMirror
+      const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
       if (cm) {
-        cm.setValue('')
-        cm.focus()
-        cm.setCursor({ line: 0, ch: 0 })
+        cm.setValue("");
+        cm.focus();
+        cm.setCursor({ line: 0, ch: 0 });
       }
-    })
+    });
   }
 
   /** Wait for the inline autocomplete popup to appear. Default 1500 ms
    *  (well above the 600 ms open delay). */
   async waitForBacktickPopup(): Promise<void> {
-    await this.backtickPopup.waitFor({ state: 'visible', timeout: 1_500 })
+    await this.backtickPopup.waitFor({ state: "visible", timeout: 1_500 });
   }
 
   // --- Template selector ---
 
   get templateSelector(): Locator {
-    return this.page.locator('.template-selector');
+    return this.page.locator(".template-selector");
   }
 
   get templatePills(): Locator {
-    return this.page.locator('.template-pill');
+    return this.page.locator(".template-pill");
   }
 
   async templatePillCount(): Promise<number> {
@@ -459,14 +565,14 @@ export class FormPage extends BasePage {
    *  top; we filter on the label text. */
   relationPickerByLabel(label: string): Locator {
     return this.page
-      .locator('.form-field.relation-picker', { hasText: label })
+      .locator(".form-field.relation-picker", { hasText: label })
       .first();
   }
 
   /** A selected-entity tile inside a relation picker. The tile renders the
    *  entity's title (via `getEntityLabel`), so callers pass the title text. */
   pickerTileByText(picker: Locator, text: string): Locator {
-    return picker.locator('.selected-entity', { hasText: text });
+    return picker.locator(".selected-entity", { hasText: text });
   }
 
   /** Type into the picker's combobox input and click the dropdown item
@@ -475,18 +581,26 @@ export class FormPage extends BasePage {
    *  when the form has multiple pickers open. Cards-widget callers want
    *  `RelationCardsPage.linkTargetByIdWithSearch` instead; that path
    *  surfaces a different (search-then-meta-form) UI. */
-  async pickInRelationPicker(picker: Locator, query: string, optionText: string) {
+  async pickInRelationPicker(
+    picker: Locator,
+    query: string,
+    optionText: string,
+  ) {
     const search = picker.locator('input[role="combobox"]');
     await expect(search).toBeVisible();
     await search.fill(query);
-    const option = picker.locator('.dropdown-item', { hasText: optionText }).first();
+    const option = picker
+      .locator(".dropdown-item", { hasText: optionText })
+      .first();
     await expect(option).toBeVisible();
     await option.click();
   }
 
   /** Remove a selected entity tile from a relation picker. */
   async removePickerTile(picker: Locator, tileText: string) {
-    await this.pickerTileByText(picker, tileText).locator('.remove-btn').click();
+    await this.pickerTileByText(picker, tileText)
+      .locator(".remove-btn")
+      .click();
   }
 
   async saveAndWaitForNavigation() {
@@ -500,7 +614,7 @@ export class FormPage extends BasePage {
   }
 
   get prefixSelect(): Locator {
-    return this.page.locator('.id-field select');
+    return this.page.locator(".id-field select");
   }
 
   async expectIdInputVisible() {
@@ -524,6 +638,6 @@ export class FormPage extends BasePage {
   }
 
   async getPrefixOptions(): Promise<string[]> {
-    return this.prefixSelect.locator('option').allTextContents();
+    return this.prefixSelect.locator("option").allTextContents();
   }
 }
