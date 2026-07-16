@@ -169,7 +169,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		aclImpl = acl.NopACL{}
 	}
 
-	tw, err := appbuild.CompileTransitions(meta, st)
+	tw, err := appbuild.CompileTransitions(meta, st, aclImpl)
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
 	}

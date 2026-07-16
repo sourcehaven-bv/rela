@@ -36,6 +36,7 @@ package statemachine
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 )
@@ -55,6 +56,25 @@ var (
 	// other than the machine's entry value.
 	ErrIllegalEntry = errors.New("illegal entry state")
 )
+
+// GuardError is returned (wrapping [ErrGuardDenied]) when an edge's guard
+// permission is not held. It carries the Permission so a caller mapping the
+// denial to an authorization response can name the specific right in a
+// queryable field rather than parsing the message (RR-F30CZ/N1).
+type GuardError struct {
+	Prop       string
+	From, To   string
+	Permission string
+}
+
+func (e *GuardError) Error() string {
+	return fmt.Sprintf("%s: %s %q→%q requires permission %q",
+		ErrGuardDenied.Error(), e.Prop, e.From, e.To, e.Permission)
+}
+
+// Unwrap ties GuardError to the ErrGuardDenied sentinel so errors.Is keeps
+// working.
+func (e *GuardError) Unwrap() error { return ErrGuardDenied }
 
 // Guard is the narrow permission oracle the enforcer needs to gate a
 // transition. Defined at the consumer (CLAUDE.md "interfaces at the call

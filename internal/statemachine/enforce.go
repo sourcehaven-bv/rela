@@ -91,14 +91,13 @@ func (s *Set) applyEdge(
 	// guarded edge fails closed.
 	if ed.guard != "" {
 		if guard == nil || !guard.HoldsPermission(ctx, e.ID, ed.guard) {
-			return fmt.Errorf("%w: %s %q→%q requires permission %q",
-				ErrGuardDenied, prop, from, to, ed.guard)
+			return &GuardError{Prop: prop, From: from, To: to, Permission: ed.guard}
 		}
 	}
 
 	// Precondition.
 	if ed.when != nil {
-		ok, err := evalWhen(ctx, ed.when, e, lookup)
+		ok, err := evalWhen(ctx, ed.when, e, prop, lookup)
 		if err != nil {
 			return fmt.Errorf("%w: %s %q→%q when: %s", ErrPreconditionFailed, prop, from, to, err.Error())
 		}

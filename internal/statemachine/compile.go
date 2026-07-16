@@ -49,13 +49,26 @@ func Compile(meta *metamodel.Metamodel) (*Set, error) {
 	// consulting the metamodel again.
 	for _, etName := range sortedKeys(meta.Entities) {
 		et := meta.Entities[etName]
-		for propName, pd := range et.Properties {
-			if _, ok := set.machines[pd.Type]; ok {
-				if set.propType[etName] == nil {
-					set.propType[etName] = map[string]string{}
-				}
-				set.propType[etName][propName] = pd.Type
+		for _, propName := range sortedKeys(et.Properties) {
+			pd := et.Properties[propName]
+			if _, ok := set.machines[pd.Type]; !ok {
+				continue
 			}
+			// A state machine is a single-valued lifecycle; a list-typed
+			// property has no single "current value" to transition (Enforce
+			// reads it via GetString, which would flatten the list to a
+			// coincidental scalar). Reject at boot rather than mis-enforce
+			// (RR-F30CZ/N4).
+			if pd.List {
+				problems = append(problems, fmt.Sprintf(
+					"entity %q property %q: type %q declares transitions but the property is a list; "+
+						"state machines require a single-valued property", etName, propName, pd.Type))
+				continue
+			}
+			if set.propType[etName] == nil {
+				set.propType[etName] = map[string]string{}
+			}
+			set.propType[etName][propName] = pd.Type
 		}
 	}
 
@@ -75,14 +88,20 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 		values[v] = true
 	}
 
-	// Entry value: Initial if set, else Default. Must be a declared value.
+	// Entry value: Initial if set, else Default. Whichever supplies it must be
+	// a declared value — validate the RESOLVED entry, not just Initial, so a
+	// typo'd Default-as-entry fails fast at boot too (RR-VB2DE).
 	entry := ct.Initial
 	if entry == "" {
 		entry = ct.Default
 	}
-	if ct.Initial != "" && !values[ct.Initial] {
+	if entry != "" && !values[entry] {
+		source := "initial"
+		if ct.Initial == "" {
+			source = "default"
+		}
 		problems = append(problems, fmt.Sprintf(
-			"type %q: initial %q is not a declared value", typeName, ct.Initial))
+			"type %q: %s %q is not a declared value", typeName, source, entry))
 	}
 
 	env, err := buildEnv(ct)

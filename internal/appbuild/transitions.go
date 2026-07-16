@@ -15,19 +15,26 @@ import (
 // ([acl.Request.HoldsPermissionForEntity]) — so a permission conferred by an
 // ownership relation to the subject is honored, not just global grants.
 //
-// Served-vs-inert lives here: the enforcer's guard question is only meaningful
-// when there is an authenticated principal with a policy. On a direct CLI/no-
-// policy write there is no [acl.Request] on the context (NopACL never puts one
-// there), so the guard is inert — it allows, matching the "no principal → no
-// authorization to enforce" tier rule. A misconfigured served path that somehow
-// lacks a Request also allows here; the top-level entity-write ACL gate has
-// already run, so this is not the only line of defense.
-type transitionGuard struct{}
+// Served-vs-inert lives here, and the distinction is deliberate (RR-UOBUC):
+//
+//   - No policy configured (NopACL / no acl.yaml): policyActive is false. The
+//     guard is inert — it allows — matching the "no principal → no authorization
+//     to enforce" tier rule (direct CLI writes, demos).
+//   - A policy IS configured (Declarative) but no [acl.Request] is on the
+//     context: this is a misconfiguration (a served path that lost its
+//     Request-attach middleware, or a background job reusing a bare ctx). The
+//     guard fails CLOSED — it denies — because a policy-backed deployment must
+//     not silently open a governed transition just because plumbing broke. This
+//     matches the rest of the ACL's fail-closed posture (the router 500s on an
+//     unresolved principal; role walks abort rather than over-grant).
+type transitionGuard struct{ policyActive bool }
 
-func (transitionGuard) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
+func (g transitionGuard) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
 	req := acl.FromContext(ctx)
 	if req == nil {
-		return true // no policy/principal in scope → guard inert (direct/CLI path)
+		// No Request: inert when there is no policy at all; fail closed when a
+		// policy exists but the Request is unexpectedly absent.
+		return !g.policyActive
 	}
 	return req.HoldsPermissionForEntity(ctx, subjectID, permission)
 }
@@ -65,10 +72,20 @@ type TransitionWiring struct {
 // transitions yields an empty (no-op) enforcer. Returns an error only when a
 // machine is malformed (surfaced at boot). Exported so test fixtures wire the
 // enforcer through the same path as production.
-func CompileTransitions(meta *metamodel.Metamodel, st store.Store) (TransitionWiring, error) {
+//
+// resolvedACL determines the guard's fail-closed posture: when it is a
+// policy-backed [*acl.Declarative], a served write that is missing its
+// [acl.Request] is denied rather than allowed (RR-UOBUC). With NopACL /
+// ReadOnlyACL there is no policy, so the guard stays inert.
+func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL acl.ACL) (TransitionWiring, error) {
 	set, err := statemachine.Compile(meta)
 	if err != nil {
 		return TransitionWiring{}, err
 	}
-	return TransitionWiring{Enforcer: set, Guard: transitionGuard{}, Graph: transitionGraph{st: st}}, nil
+	_, policyActive := resolvedACL.(*acl.Declarative)
+	return TransitionWiring{
+		Enforcer: set,
+		Guard:    transitionGuard{policyActive: policyActive},
+		Graph:    transitionGraph{st: st},
+	}, nil
 }

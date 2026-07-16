@@ -149,6 +149,32 @@ func TestCompile_Errors(t *testing.T) {
 	}
 }
 
+func TestCompile_RejectsUndeclaredDefaultEntry(t *testing.T) {
+	// initial unset, default typo'd → must fail fast at boot (RR-VB2DE).
+	m := snapshotMeta()
+	ct := m.Types["snapshot-status"]
+	ct.Initial = ""
+	ct.Default = "aproved" // typo
+	m.Types["snapshot-status"] = ct
+	_, err := Compile(m)
+	if err == nil || !strings.Contains(err.Error(), `default "aproved" is not a declared value`) {
+		t.Fatalf("expected default-not-declared boot error, got %v", err)
+	}
+}
+
+func TestCompile_RejectsTransitionsOnListProperty(t *testing.T) {
+	// A machine-typed property that is also list:true is nonsensical and must
+	// be rejected at boot (RR-F30CZ/N4).
+	m := snapshotMeta()
+	et := m.Entities["snapshot"]
+	et.Properties["status"] = metamodel.PropertyDef{Type: "snapshot-status", List: true}
+	m.Entities["snapshot"] = et
+	_, err := Compile(m)
+	if err == nil || !strings.Contains(err.Error(), "is a list") {
+		t.Fatalf("expected list-property rejection, got %v", err)
+	}
+}
+
 func TestCompile_NoTransitions_Empty(t *testing.T) {
 	m := &metamodel.Metamodel{
 		Types:    map[string]metamodel.CustomType{"plain": {Values: []string{"a", "b"}}},
@@ -269,6 +295,66 @@ func TestEnforceUpdate_GuardBeforeWhen(t *testing.T) {
 	if !errors.Is(err, ErrGuardDenied) {
 		t.Fatalf("expected guard denial to take precedence, got %v", err)
 	}
+	// The denial carries the specific permission (RR-F30CZ/N1).
+	var ge *GuardError
+	if !errors.As(err, &ge) {
+		t.Fatalf("expected *GuardError, got %T", err)
+	}
+	if ge.Permission != "establish" {
+		t.Errorf("GuardError.Permission = %q, want establish", ge.Permission)
+	}
+}
+
+// A when: predicate references the machine property's own value via
+// entity.value (RR-NODYR), which binds the POST-write value (the enforcer
+// evaluates against the updated entity). Proves the binding resolves the
+// machine's own property regardless of its name.
+func TestEnforceUpdate_When_EntityValueBinding(t *testing.T) {
+	m := snapshotMeta()
+	ct := m.Types["snapshot-status"]
+	// established→obsolete only when the (new) value is "obsolete" — always true
+	// here, so this asserts entity.value resolves to the written value, not "".
+	ct.Transitions[3].When = `entity.value == "obsolete"`
+	m.Types["snapshot-status"] = ct
+	set := mustCompile(t, m)
+	allow := fakeGuard{perms: map[string]bool{"establish": true}}
+
+	old := ent("SNAP-1", "snapshot", "established")
+	nw := ent("SNAP-1", "snapshot", "obsolete")
+	if err := set.EnforceUpdate(context.Background(), old, nw, allow, fakeLookup{}); err != nil {
+		t.Fatalf("entity.value==obsolete precondition should pass: %v", err)
+	}
+
+	// Flip the predicate to a value it is NOT, to prove entity.value is actually
+	// consulted (not always-true).
+	ct.Transitions[3].When = `entity.value == "in-review"`
+	m.Types["snapshot-status"] = ct
+	set2 := mustCompile(t, m)
+	if err := set2.EnforceUpdate(context.Background(), old, nw, allow, fakeLookup{}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Fatalf("entity.value mismatch should fail precondition, got %v", err)
+	}
+}
+
+// Clearing a machine property (X→"") is an undeclared edge → ErrIllegalTransition
+// (RR-F30CZ/N3), and whitespace values are compared raw.
+func TestEnforceUpdate_ClearAndWhitespace(t *testing.T) {
+	set := mustCompile(t, snapshotMeta())
+	guard := fakeGuard{perms: map[string]bool{"approve": true}}
+
+	t.Run("clear to empty is illegal", func(t *testing.T) {
+		old := ent("SNAP-1", "snapshot", "approved")
+		nw := ent("SNAP-1", "snapshot", "") // unset
+		if err := set.EnforceUpdate(context.Background(), old, nw, guard, fakeLookup{}); !errors.Is(err, ErrIllegalTransition) {
+			t.Fatalf("clear→empty want ErrIllegalTransition, got %v", err)
+		}
+	})
+	t.Run("trailing-space target is illegal (raw compare)", func(t *testing.T) {
+		old := ent("SNAP-1", "snapshot", "in-review")
+		nw := ent("SNAP-1", "snapshot", "approved ") // trailing space
+		if err := set.EnforceUpdate(context.Background(), old, nw, guard, fakeLookup{}); !errors.Is(err, ErrIllegalTransition) {
+			t.Fatalf("whitespace target want ErrIllegalTransition, got %v", err)
+		}
+	})
 }
 
 func TestEnforceUpdate_NonMachineProperty_NoOp(t *testing.T) {

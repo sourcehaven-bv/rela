@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -146,4 +147,74 @@ func TestTransition_LegalEntryOnCreatePasses(t *testing.T) {
 	seedSnapshot(t, mgr, "in-review")
 	// Absent is fine (default applies).
 	seedSnapshot(t, mgr, "")
+}
+
+// RR-NB135: the sync/upsert path (ApplyEntity) must enforce transitions too —
+// it is a served write path and must not be a bypass.
+func TestTransition_ApplyEntity_EnforcesLegality(t *testing.T) {
+	mgr := newTransitionManager(t, allowAllGuard{})
+	snap := seedSnapshot(t, mgr, "") // in-review
+
+	// A sync-apply that skips approved (in-review→established) must be rejected.
+	snap.SetString("status", "established")
+	_, err := mgr.ApplyEntity(context.Background(), snap)
+	if !errors.Is(err, statemachine.ErrIllegalTransition) {
+		t.Fatalf("ApplyEntity must enforce legality; want ErrIllegalTransition, got %v", err)
+	}
+}
+
+func TestTransition_ApplyEntity_EnforcesGuard(t *testing.T) {
+	mgr := newTransitionManager(t, denyAllGuard{})
+	snap := seedSnapshot(t, mgr, "") // in-review
+
+	snap.SetString("status", "approved") // legal edge, guard denied
+	_, err := mgr.ApplyEntity(context.Background(), snap)
+	var fe *acl.ForbiddenError
+	if !errors.As(err, &fe) {
+		t.Fatalf("ApplyEntity guard denial must be *acl.ForbiddenError (403), got %v", err)
+	}
+	if fe.Decision.RuleID != "approve" {
+		t.Errorf("RuleID = %q, want the permission name 'approve'", fe.Decision.RuleID)
+	}
+}
+
+// RR-HETEE: a rejected illegal-entry create must NOT persist a row.
+func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(transitionMetaYAML))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	machines, err := statemachine.Compile(meta)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	st := memstore.New()
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:           st,
+		Meta:            meta,
+		Templater:       nopTemplater{},
+		Audit:           audit.Nop{},
+		ACL:             acl.NopACL{},
+		Transitions:     machines,
+		TransitionGuard: allowAllGuard{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	e := entity.New("", "snapshot")
+	e.SetString("title", "bad")
+	e.SetString("status", "established") // illegal entry
+	if _, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{}); !errors.Is(err, statemachine.ErrIllegalEntry) {
+		t.Fatalf("want ErrIllegalEntry, got %v", err)
+	}
+	// No snapshot row must exist — the check runs before the store write, so a
+	// rejected illegal entry never persists (and thus never emits a store event).
+	count := 0
+	for range st.ListEntities(context.Background(), store.EntityQuery{Type: "snapshot"}) {
+		count++
+	}
+	if count != 0 {
+		t.Fatalf("illegal-entry create persisted %d row(s) (RR-HETEE regression)", count)
+	}
 }

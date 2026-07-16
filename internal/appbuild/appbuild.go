@@ -668,7 +668,7 @@ func assemble(
 		ProjectRoot: cfg.Paths.Root,
 	}
 
-	tw, err := CompileTransitions(base.meta, st)
+	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}

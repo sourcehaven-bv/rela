@@ -130,6 +130,24 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, err
 	}
 
+	// Enforce enum state machines on the sync/upsert path too (RR-NB135): this
+	// is a served write with a real principal, so skipping it would let a sync
+	// client land an illegal transition or bypass a guard — the exact hole the
+	// "unforgettable" pipeline is meant to close. On an update we diff against
+	// the probed `stored` state; on a create we check the entry value. The
+	// guard adapter is inert when there is no policy/principal (CLI sync), so
+	// only a policy-backed served sync is gated. ApplyEntity runs no automation,
+	// so this is the final pre-write state.
+	if op.aclOp == acl.OpUpdate {
+		if err := m.deps.Transitions.EnforceUpdate(
+			ctx, stored, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
+		); err != nil {
+			return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: subjectType, ID: e.ID}, err)
+		}
+	} else if err := m.deps.Transitions.EnforceCreate(ctx, e); err != nil {
+		return nil, err
+	}
+
 	// Write by RESOLVED intent — never upsert. A create that conflicts
 	// (a concurrent create of the same ID landed since the existence
 	// probe) is a lost-update + type-re-type vector if it silently

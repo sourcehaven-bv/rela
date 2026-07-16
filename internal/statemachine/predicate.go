@@ -19,10 +19,14 @@ import (
 func buildEnv(_ metamodel.CustomType) (*predicate.Env, error) {
 	env := predicate.NewEnv()
 
+	// `entity.value` is the machine property's OWN current value, bound
+	// independently of what that property is named (RR-NODYR — the old
+	// hardcoded `status` field misbehaved for machines on other-named
+	// properties). id/type are the stable pseudo-fields.
 	entityRec := predicate.RecordType{
-		"id":     predicate.StringType,
-		"type":   predicate.StringType,
-		"status": predicate.StringType,
+		"id":    predicate.StringType,
+		"type":  predicate.StringType,
+		"value": predicate.StringType,
 	}
 	if err := env.DeclareVar("entity", entityRec); err != nil {
 		return nil, err
@@ -52,9 +56,11 @@ func buildEnv(_ metamodel.CustomType) (*predicate.Env, error) {
 // is required for has_relation/count_relations; if the predicate references
 // them and lookup is nil, evaluation errors (surfaced by the caller as a
 // precondition failure) rather than silently passing.
-func evalWhen(ctx context.Context, prog *predicate.Program, e *entity.Entity, lookup GraphLookup) (bool, error) {
+func evalWhen(
+	ctx context.Context, prog *predicate.Program, e *entity.Entity, prop string, lookup GraphLookup,
+) (bool, error) {
 	b := predicate.NewBindings()
-	if err := b.SetVar("entity", entityRecord(e)); err != nil {
+	if err := b.SetVar("entity", entityRecord(e, prop)); err != nil {
 		return false, err
 	}
 	gb := &graphBindings{entityID: e.ID, lookup: lookup}
@@ -77,13 +83,13 @@ func evalWhen(ctx context.Context, prog *predicate.Program, e *entity.Entity, lo
 }
 
 // entityRecord coerces an entity into the predicate record the `when:` env
-// expects. Only id/type/status are surfaced; missing values bind as empty
-// strings.
-func entityRecord(e *entity.Entity) predicate.Value {
+// expects: id, type, and `value` = the machine property's own current value
+// (read from prop, whatever it is named). Missing values bind as empty strings.
+func entityRecord(e *entity.Entity, prop string) predicate.Value {
 	return predicate.NewRecord(map[string]predicate.Value{
-		"id":     predicate.NewString(e.ID),
-		"type":   predicate.NewString(e.Type),
-		"status": predicate.NewString(e.GetString("status")),
+		"id":    predicate.NewString(e.ID),
+		"type":  predicate.NewString(e.Type),
+		"value": predicate.NewString(e.GetString(prop)),
 	})
 }
 

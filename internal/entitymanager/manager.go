@@ -284,11 +284,12 @@ func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, e
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, statemachine.ErrGuardDenied) {
+	var ge *statemachine.GuardError
+	if errors.As(err, &ge) {
 		decision := acl.Decision{
 			Allow:    false,
 			RuleKind: "transition-guard",
-			RuleID:   "-",
+			RuleID:   ge.Permission, // the specific right, queryable in audit (RR-F30CZ/N1)
 			Reason:   err.Error(),
 		}
 		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject})
@@ -426,16 +427,10 @@ func (m *Manager) CreateEntity(
 	if err != nil {
 		return nil, err
 	}
-
-	// Enforce state-machine entry: a create may only enter a machine at its
-	// entry value (Initial, else Default). Runs post-template (defaults have
-	// applied) on the created state (TKT-E4LW2). createCore persisted the row,
-	// so a rejection here leaves an orphan on disk only briefly — but the
-	// common path is a legal entry; an illegal explicit entry value is a client
-	// error surfaced as 422 before automation/cascade run.
-	if err := m.deps.Transitions.EnforceCreate(ctx, created); err != nil {
-		return nil, err
-	}
+	// State-machine entry is enforced INSIDE createCore, before the durable
+	// write (RR-HETEE), so an illegal entry never persists. No guard applies on
+	// create-entry today; if a future change adds one, route its ErrGuardDenied
+	// through mapTransitionError so it surfaces as 403, not 422 (RR-F30CZ/N2).
 
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
