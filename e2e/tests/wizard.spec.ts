@@ -58,6 +58,25 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(await formPage.getFieldValue("title")).toBe("Wizard task");
   });
 
+  test("clicking a step pill jumps to it (forward and back)", async ({
+    appPage,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_wizard");
+
+    // Jump forward to the last step (Status, index 1 while Assignment hidden)
+    // without going through Next — a deliberate pill click is not gated.
+    await formPage.clickStep(1);
+    expect(await formPage.activeStepIndex()).toBe(1);
+    expect(formPage.readStepParam()).toBe("1");
+    expect(await formPage.isFieldVisible("status")).toBeTruthy();
+
+    // Jump back to the first step by clicking its pill.
+    await formPage.clickStep(0);
+    expect(await formPage.activeStepIndex()).toBe(0);
+    expect(await formPage.isFieldVisible("title")).toBeTruthy();
+  });
+
   test("refresh returns to the encoded step", async ({ appPage }) => {
     const formPage = new FormPage(appPage);
     await formPage.navigateToCreateForm("task_wizard");

@@ -661,6 +661,16 @@ function handleBack() {
   wizard.back()
 }
 
+// Clicking a step pill jumps straight there. A deliberate jump is not gated by
+// per-step validation (unlike Next): visible_when keeps unmet branches hidden
+// and the final Submit re-validates every visible step, so a jump can't persist
+// invalid data. Clear transient per-field errors so a jumped-to step starts clean.
+function handleStepClick(index: number) {
+  if (index === wizard.currentStep.value) return
+  errors.value = {}
+  wizard.goTo(index)
+}
+
 async function handleSubmit() {
   if (!formConfig.value) return
   const scope = submitScopeFields()
@@ -1203,17 +1213,20 @@ onBeforeRouteLeave(async () => {
         <!-- Wizard layout: a stepper + one visible step at a time. -->
         <template v-if="wizard.isWizard.value">
           <ol class="wizard-steps" aria-label="Form steps">
-            <li
-              v-for="(step, sIdx) in wizard.visibleSteps.value"
-              :key="sIdx"
-              class="wizard-step-pill"
-              :class="{
-                active: sIdx === wizard.currentStep.value,
-                done: sIdx < wizard.currentStep.value,
-              }"
-            >
-              <span class="wizard-step-num">{{ sIdx + 1 }}</span>
-              <span class="wizard-step-title">{{ step.title }}</span>
+            <li v-for="(step, sIdx) in wizard.visibleSteps.value" :key="sIdx">
+              <button
+                type="button"
+                class="wizard-step-pill"
+                :class="{
+                  active: sIdx === wizard.currentStep.value,
+                  done: sIdx < wizard.currentStep.value,
+                }"
+                :aria-current="sIdx === wizard.currentStep.value ? 'step' : undefined"
+                @click="handleStepClick(sIdx)"
+              >
+                <span class="wizard-step-num">{{ sIdx + 1 }}</span>
+                <span class="wizard-step-title">{{ step.title }}</span>
+              </button>
             </li>
           </ol>
 
@@ -1454,6 +1467,21 @@ onBeforeRouteLeave(async () => {
   border: 1px solid var(--border-color);
   color: var(--muted-text);
   font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.wizard-step-pill:hover {
+  border-color: var(--accent-color);
+  color: var(--text-color);
+}
+
+.wizard-step-pill:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
 }
 
 .wizard-step-pill.active {

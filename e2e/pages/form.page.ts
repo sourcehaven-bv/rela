@@ -58,6 +58,11 @@ export class FormPage extends BasePage {
     await box.setChecked(checked);
   }
 
+  /** Click a wizard step pill by its 0-based visible index. */
+  async clickStep(index: number) {
+    await this.wizardSteps.nth(index).click();
+  }
+
   async clickNext() {
     await this.wizardNextBtn.click();
   }
