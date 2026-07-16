@@ -5,7 +5,7 @@ title: 'Declarative status/enum state machines: transitions on CustomType with A
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 ## Scope

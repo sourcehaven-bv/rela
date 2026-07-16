@@ -4,7 +4,8 @@ type: review-response
 title: 'when: predicate needs graph-backed host funcs that only exist in affordances today'
 finding: internal/predicate is a pure (Program, Bindings)->Value engine with no graph access of its own; graph-dependent ops like 'no sibling established' require host functions (count_relations/has_relation) that are implemented by the affordances BindingContext (bindings.go:14-21,96-99), not the engine. Reusing predicate at the entitymanager write point requires re-provisioning an equivalent graph-backed BindingContext there. The graph is reachable in the manager, but this wiring does not exist outside affordances. 'Just reuse internal/predicate' is correct at the engine level but understates the host-binding plumbing.
 severity: significant
-status: open
+resolution: 'when: reuses internal/predicate with a write-path graph binding (statemachine.GraphLookup, adapted from the store in appbuild transitionGraph) providing has_relation/count_relations. Effort accounted for; the binding is a small store-backed adapter, not a copy of affordances.'
+status: addressed
 ---
 
 ## Finding

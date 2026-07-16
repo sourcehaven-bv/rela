@@ -4,7 +4,8 @@ type: review-response
 title: Inline type:enum properties silently get no machine — usability cliff, no warning
 finding: 'Inline `type: enum` + values (PropertyDef, validation.go:334-358) and named CustomType (validation.go:385-389) are separate code paths never merged. Putting transitions on CustomType cleanly means named-type-only, but every existing inline `status: {type: enum}` silently gets no state-machine enforcement and nothing warns the author. Most status enums in-tree are likely inline. Migration/opt-in ergonomics and a lint (''inline enum named like a lifecycle field has no machine'') should be considered.'
 severity: minor
-status: open
+resolution: Machines are named-CustomType-only by design (inline enums carry no transitions). Documented on CustomType.Transitions godoc. The stricter lint for lifecycle-named inline enums is deferred as a nice-to-have; the core distinction is intentional and documented.
+status: addressed
 ---
 
 ## Finding

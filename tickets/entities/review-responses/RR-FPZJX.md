@@ -4,7 +4,8 @@ type: review-response
 title: 'Enforcement point lacks (from,to): ACL+validation run before oldEntity is loaded'
 finding: The design's enforcement steps 2-4 assume the write chokepoint has both prior and new status. In Manager.UpdateEntity (entitymanager/manager.go:485) ACL authorizeAndAudit runs first (489) with no old state, then ValidateEntity(id,type,properties) runs on new state only (499), and oldEntity is loaded only after both, at 505 - passed only to automation/cascade/audit. So neither the ACL guard (403) nor validation (422) can see `from`. Also internal/validator is the wrong validator (offline batch read service, never gates a write); the real 422 is metamodel.ValidateEntity which also lacks old state. Not implementable without re-ordering the write path or hosting the check where OldEntity is available.
 severity: critical
-status: open
+resolution: 'Implemented as designed: a dedicated transition-check step runs in the entitymanager write pipeline after old-state is available and before the store write (statemachine.Set.EnforceUpdate in manager.go UpdateEntity + apply.go ApplyEntity; EnforceCreate inside createCore pre-persist). Legality->422, guard->403, when->422. Not internal/validator (correctly avoided).'
+status: addressed
 ---
 
 ## Finding

@@ -4,7 +4,8 @@ type: review-response
 title: 'CREATE has no old value: initial-state entry into the machine is unspecified'
 finding: 'CreateEntity runs ACL then ValidateEntity with no GetEntity pre-read (manager.go:334-411; comment at 350 notes ''No GetEntity pre-check''). The design''s `initial:` field and ''only legal entry state'' AC have nothing to diff against on create. Undefined: is setting status to a non-initial value on create rejected? Is the initial-state entry itself guardable (who may create an entity already in `approved`)? The [*]->initial edge from the mermaid analogy is unspecified for the create path.'
 severity: significant
-status: open
+resolution: 'Create-path entry semantics implemented: value defaults to Initial-else-Default; a non-initial explicit value on create is rejected 422 (ErrIllegalEntry) via EnforceCreate, now run pre-persist in createCore. Tests TestTransition_IllegalEntryOnCreateIs422, TestTransition_IllegalEntry_DoesNotPersist.'
+status: addressed
 ---
 
 ## Finding

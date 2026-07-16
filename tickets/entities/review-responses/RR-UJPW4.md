@@ -4,7 +4,8 @@ type: review-response
 title: Subject-scoped guards can't use holdsPermission (Globals-only); needs computeForEntity path
 finding: 'holdsPermission (acl/resolver.go:229) resolves only against Globals().Attributions; computeGlobals (resolver.go:15-48) includes only static assignments + member-of group roles + everyone, NOT relation-conferred local roles (godoc: ''global-only by design''). The subject-aware path is computeForEntity (authz_write.go:39). So the ticket''s headline ''assignee may transition their own ticket'' (role conferred by an ownership relation) will NOT work via holdsPermission - guard resolution must go through the entity-ID-aware computeForEntity path, which requires the subject ID and ties to the ordering finding. Revises the ''~15 lines, near-copy of delegate-permission gate'' estimate: delegate gate uses globals; subject-scoped guard needs local-role machinery.'
 severity: significant
-status: open
+resolution: Guard resolves via the subject-aware acl.Request.HoldsPermissionForEntity (backed by computeForEntity), NOT the globals-only holdsPermission. Own-subject scoping via relation-conferred roles works. Test TestRequest_HoldsPermissionForEntity_SubjectScoped.
+status: addressed
 ---
 
 ## Finding
