@@ -1,0 +1,9 @@
+---
+id: RR-8FUVW
+type: review-response
+title: 'Minor: restore-after-purge ordinal instability, confirmation UX, sweep-lock race, no-op feedback'
+finding: 'Batched minors. (cranky S3) restore-after-purge: single-version purge shrinks the lineage so a stored ''restore version 5'' now restores a DIFFERENT version''s content silently with a 200 (ordinal renumber). Not a crash (past-end returns ErrNotFound->clean 404, verified), but a correctness landmine — note purge invalidates outstanding ordinal-based restore intent; add a test ''purge --all then restore v1 -> 404, entity NOT resurrected''. (cranky N2) confirmation must be DEFAULT-ON for irreversible destruction: require the operator to type the id (not just ''y''), show resolved vseq+op+created_at+principal of exact row(s) about to die; --yes for scripts only. (cranky N4) purge tx vs sweep: a purge deleting rows concurrently with a sweep tick INSERTING re-captured rows is a bad race — purge should take the sweepAdvisoryLockKey (mutual exclusion), which RR-SH28E already requires. (cranky N3) empty/no-op purge: report ''nothing to purge'' distinctly from ''purged 0 rows'' so a typo''d id isn''t misread as ''already clean'' (CLI operator context; for a future API surface this must collapse into indistinguishable-404). (cranky N2/architect M3) --version N contradicts the stable-handle requirement; prefer --vseq/--content-hash as primary, --version N (if kept) prints resolved vseq + preview + requires confirm.'
+severity: minor
+resolution: 'Design revised: restore-after-purge ordinal instability documented + test planned; default-on confirmation (type the id) with --yes for scripts; purge takes sweep advisory lock (race closed); no-op reported distinctly; vseq/content-hash primary targeting. Folded into revised design #1/#6/#7.'
+status: addressed
+---
