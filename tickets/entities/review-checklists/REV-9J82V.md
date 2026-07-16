@@ -9,7 +9,7 @@ status: done
 
 ## Automated Checks
 
-- [x] All tests pass (`go test ./...` + `-race` on statemachine/entitymanager/appbuild)
+- [x] All tests pass (`go test ./...` + `-race` on statemachine/entitymanager/appbuild; `just ci` exit 0)
 - [x] Lint clean (`golangci-lint run ./...` → 0 issues; `just arch-lint`; `just plimsoll`)
 - [x] Coverage maintained (`just coverage-check` PASS; statemachine 89%)
 
@@ -54,8 +54,8 @@ RR-UOBUC, RR-F30CZ. All 12 `addressed`.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (monitoring — see below)
+- [x] PR URL documented below
 
-**PR:** <!-- pending /pr -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1143
