@@ -58,15 +58,23 @@ export interface FormConfig {
   description?: string
   mode?: 'edit' | string
   body?: boolean
-  sections?: FormSection[]
+  /**
+   * Wizard layout. Mutually exclusive with fields/relations (the server
+   * rejects both). When present the form renders one step at a time with
+   * next/back navigation instead of a single page.
+   */
+  steps?: FormStep[]
   fields?: FormField[]
   relations?: FormRelation[]
 }
 
-export interface FormSection {
-  title?: string
+export interface FormStep {
+  title: string
   description?: string
-  fields: FormFieldOrRelation[]
+  /** Condition expression; the step is hidden/skipped when it evaluates false. */
+  visible_when?: string
+  fields?: FormFieldOrRelation[]
+  relations?: FormFieldOrRelation[]
 }
 
 export interface FormField {
@@ -78,6 +86,10 @@ export interface FormField {
   default?: unknown
   readonly?: boolean
   hidden?: boolean
+  /** Condition expression; the field is hidden when it evaluates false. */
+  visible_when?: string
+  /** Condition expression; the field is required only when it evaluates true. */
+  required_when?: string
 }
 
 export interface RelationProperty {
@@ -96,6 +108,8 @@ export interface FormRelation {
   allow_create?: boolean
   create_form?: string
   properties?: RelationProperty[]
+  /** Condition expression; the relation widget is hidden when it evaluates false. */
+  visible_when?: string
 }
 
 // Unified type for form fields that can be either property fields or relation fields
@@ -119,6 +133,9 @@ export interface FormFieldOrRelation {
   // Common props
   label?: string
   widget?: string
+  // Wizard conditions (see FormField / FormRelation)
+  visible_when?: string
+  required_when?: string
 }
 
 export interface ListConfig {

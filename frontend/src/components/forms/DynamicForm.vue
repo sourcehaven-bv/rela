@@ -28,11 +28,11 @@ import {
   INCOMING_SUFFIX,
 } from './relationsPatch'
 import { useAutoSave } from '@/composables/useAutoSave'
+import { useFormWizard } from '@/composables/useFormWizard'
+import type { Bindings } from '@/utils/conditions'
 import { registerForm } from './dirtyFormRegistry'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
-import FieldRenderer from './FieldRenderer.vue'
-import RelationPicker from './RelationPicker.vue'
-import RelationCards from './RelationCards.vue'
+import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
@@ -125,17 +125,9 @@ const isEdit = computed(() => !!props.entityId)
 const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' | 'edit')
 
 const idControls = useEntityIDControls(entityType, formMode)
-const {
-  showManualIDInput,
-  showPrefixPicker,
-  prefixOptions,
-  manualId,
-  selectedPrefix,
-} = idControls
+const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
-const showReadOnlyID = computed(
-  () => isEdit.value && entityType.value?.id_type === 'manual'
-)
+const showReadOnlyID = computed(() => isEdit.value && entityType.value?.id_type === 'manual')
 
 const title = computed(() => {
   if (!formConfig.value) return ''
@@ -145,14 +137,32 @@ const title = computed(() => {
 
 const allFields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []
-  if (formConfig.value.sections?.length) {
-    return formConfig.value.sections.flatMap((s) => s.fields) as FormFieldOrRelation[]
+  // Wizard forms carry their fields under steps; flatten them so affordance
+  // filtering, payload assembly, and load-time hydration see every field the
+  // same way single-page forms do. Per-step visibility is applied separately
+  // by the wizard layer at render/validate time.
+  if (formConfig.value.steps?.length) {
+    return formConfig.value.steps.flatMap((s) => [
+      ...((s.fields || []) as FormFieldOrRelation[]),
+      ...((s.relations || []) as FormFieldOrRelation[]),
+    ])
   }
   // Combine property fields and relation fields into a single list
   const propFields = (formConfig.value.fields || []) as FormFieldOrRelation[]
   const relFields = (formConfig.value.relations || []) as FormFieldOrRelation[]
   return [...propFields, ...relFields]
 })
+
+// Live binding namespaces for condition evaluation. `form` is the current field
+// values; `entity`/`current_user` are reserved for future ACL/view use and are
+// empty here (form conditions reference `form.<field>` only).
+const conditionBindings = computed<Bindings>(() => ({
+  form: formData.value,
+  entity: {},
+  current_user: {},
+}))
+
+const wizard = useFormWizard(formConfig, conditionBindings)
 
 // TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
 // the entity's affordances. A property field is rendered only if it is
@@ -251,11 +261,7 @@ async function loadEntity(force = false) {
   if (!props.entityId || !formConfig.value) return
 
   try {
-    const entity = await entitiesStore.fetchEntity(
-      formConfig.value.entity,
-      props.entityId,
-      force
-    )
+    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
     // Route-guard: if the server says this entity is not updatable,
     // render an inline "not editable" message instead of the form.
     // The EntityDetail Edit button already hides for the same
@@ -271,7 +277,11 @@ async function loadEntity(force = false) {
     fieldAffordances.value = entity._fields ?? {}
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
-    originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+    originalData.value = JSON.stringify({
+      formData: formData.value,
+      relations: relations.value,
+      content: content.value,
+    })
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
@@ -385,7 +395,11 @@ function initializeDefaults() {
     }
   }
 
-  originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
 }
 
 async function loadTemplates() {
@@ -431,7 +445,7 @@ async function refreshStagedAffordances() {
     const candidate = await dryRunCreateEntity(
       formConfig.value.entity,
       { properties: { ...formData.value }, content: content.value || undefined },
-      controller.signal,
+      controller.signal
     )
     // A newer request superseded this one between await points — discard.
     if (controller !== stagedDryRunController) return
@@ -487,7 +501,11 @@ function applyTemplate(template: Template) {
       relations.value[rel.relation].push(rel.target)
     }
   }
-  originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
 }
 
 function selectTemplate(name: string) {
@@ -509,14 +527,20 @@ function getTemplateLabel(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
-function validate(): boolean {
+// Validate the form. `scopeFields` restricts validation to a subset (used for
+// per-step validation on wizard "Next"); when omitted, all shown fields are
+// validated (single-page submit, or wizard final submit over visible steps).
+// `requiredProps` are property keys made required by a matching `required_when`
+// condition, in addition to the metamodel's own `required` flag.
+function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<string>): boolean {
   errors.value = {}
 
   if (!entityType.value) return true
 
+  const scope = scopeFields ?? fields.value
   // Only validate properties that are shown in the form (not hidden)
   const formPropertyNames = new Set(
-    fields.value
+    scope
       .filter((f): f is typeof f & { property: string } => !!f.property && !f.hidden)
       .map((f) => f.property)
   )
@@ -527,8 +551,9 @@ function validate(): boolean {
 
     const value = formData.value[propName]
 
-    // Required check
-    if (propDef.required && (value === undefined || value === null || value === '')) {
+    // Required check (metamodel `required` OR a matching `required_when`)
+    const isRequired = propDef.required || (requiredProps?.has(propName) ?? false)
+    if (isRequired && (value === undefined || value === null || value === '')) {
       errors.value[propName] = 'This field is required'
       continue
     }
@@ -563,8 +588,61 @@ function validate(): boolean {
   return Object.keys(errors.value).length === 0
 }
 
+// The affordance filter applied to flat forms in `fields`, reusable for a
+// wizard step's field list so policy-hidden fields are dropped consistently.
+function affordanceVisible(f: FormFieldOrRelation): boolean {
+  if (!f.property) return true // relations / non-property fields untouched
+  if (loading.value) return true
+  if (!isEdit.value && !stagedAffordancesReady.value) return true
+  if (f.property in fieldAffordances.value) return true
+  if (isEdit.value && f.property in formData.value) return true
+  if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
+  return false
+}
+
+// A wizard step's fields to render: per-field `visible_when` (wizard layer)
+// intersected with the affordance filter (same rule as flat `fields`).
+function visibleStepFields(step: import('@/types').FormStep): FormFieldOrRelation[] {
+  return wizard.visibleFieldsOf(step).filter(affordanceVisible)
+}
+
+// Fields currently in scope for submit: for a wizard, only the visible fields
+// of currently-visible steps; for a single-page form, all fields.
+function submitScopeFields(): FormFieldOrRelation[] {
+  if (!wizard.isWizard.value) return fields.value
+  return wizard.visibleSteps.value.flatMap((s) => wizard.visibleFieldsOf(s))
+}
+
+// Property keys made required right now by a matching `required_when`.
+function requiredWhenProps(scope: FormFieldOrRelation[]): Set<string> {
+  const req = new Set<string>()
+  for (const f of scope) {
+    if (f.property && wizard.isFieldRequired(f)) req.add(f.property)
+  }
+  return req
+}
+
+// Wizard "Next": validate only the current step's visible fields; advance only
+// when valid, so an invalid step blocks progression with per-field errors.
+function handleNext() {
+  const step = wizard.currentStepDef.value
+  if (!step) return
+  const scope = wizard.visibleFieldsOf(step)
+  if (!validate(scope, requiredWhenProps(scope))) return
+  errors.value = {}
+  wizard.next()
+}
+
+function handleBack() {
+  // Back never validates — the user may be fixing an earlier answer.
+  errors.value = {}
+  wizard.back()
+}
+
 async function handleSubmit() {
-  if (!validate() || !formConfig.value) return
+  if (!formConfig.value) return
+  const scope = submitScopeFields()
+  if (!validate(scope, requiredWhenProps(scope))) return
 
   saving.value = true
   try {
@@ -572,9 +650,7 @@ async function handleSubmit() {
     // `filteredRelations` IDs-only map — they're delivered through
     // pendingCardChanges and the unified PATCH-with-relations shape.
     const cardRelations = new Set(
-      fields.value
-        .filter((f) => f.relation && f.widget === 'cards')
-        .map((f) => f.relation!)
+      fields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
     )
     const filteredRelations: Record<string, string[]> = {}
     for (const [rel, ids] of Object.entries(relations.value)) {
@@ -602,7 +678,7 @@ async function handleSubmit() {
       // and tell the user to reload (the type comes from backend Step 0
       // and is normally always present).
       uiStore.error(
-        'Some related entities have unknown types. Save aborted; reload the form and try again.',
+        'Some related entities have unknown types. Save aborted; reload the form and try again.'
       )
       // Drop the outgoing card-edit Map entries so they aren't
       // mistakenly cleared on success below.
@@ -614,6 +690,17 @@ async function handleSubmit() {
     }
     const relationsPayload: ModernRelationsField = { ...reshapedPickers, ...modernRelations }
 
+    // For a wizard, drop values that belong to a hidden step/field so a
+    // toggled-off branch doesn't persist stale data (matches OpenVWR's
+    // isFieldEnabled). Single-page forms submit formData as-is.
+    let properties = formData.value
+    if (wizard.isWizard.value) {
+      const active = wizard.activeProperties.value
+      properties = Object.fromEntries(
+        Object.entries(formData.value).filter(([key]) => active.has(key))
+      )
+    }
+
     const payload: {
       id?: string
       prefix?: string
@@ -621,7 +708,7 @@ async function handleSubmit() {
       relations: ModernRelationsField
       content?: string
     } = {
-      properties: formData.value,
+      properties,
       relations: relationsPayload,
       content: content.value || undefined,
     }
@@ -677,7 +764,11 @@ async function handleSubmit() {
     }
 
     dirty.value = false
-    originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+    originalData.value = JSON.stringify({
+      formData: formData.value,
+      relations: relations.value,
+      content: content.value,
+    })
 
     // Navigate to return_to or back
     if (returnTo.value) {
@@ -797,15 +888,13 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   if (!hasModernCards && !hasLegacy) return null
   // Reshape legacy IDs to modern shape (autosave always uses modern;
   // shape_mixed 400 otherwise).
-  const reshaped = hasLegacy
-    ? reshapeLegacyToModern(filteredRelations, pickerTypes.value)
-    : {}
+  const reshaped = hasLegacy ? reshapeLegacyToModern(filteredRelations, pickerTypes.value) : {}
   if (reshaped === null) {
     // Pathological: a picker target without a known type. Surface
     // and skip — explicit Save in create mode handles this case;
     // autosave is best-effort.
     uiStore.error(
-      'Some related entities have unknown types; relation changes were not saved. Reload the form and try again.',
+      'Some related entities have unknown types; relation changes were not saved. Reload the form and try again.'
     )
     return null
   }
@@ -826,10 +915,7 @@ function updateRelationCards(relation: string, state: RelationCardState) {
 // write. RelationPicker emits enough state (loadedEntries +
 // currentEntries) for us to build a proper RelationCardState the
 // builder can consume.
-function updateIncomingPicker(
-  relation: string,
-  state: RelationPickerIncomingState,
-) {
+function updateIncomingPicker(relation: string, state: RelationPickerIncomingState) {
   pendingCardChanges.value.set(`${relation}${INCOMING_SUFFIX}`, {
     entries: state.currentEntries,
     added: state.added,
@@ -858,7 +944,11 @@ function updateContent(value: string) {
 }
 
 function checkDirty() {
-  const currentData = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+  const currentData = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
   const hasCardChanges = pendingCardChanges.value.size > 0
   dirty.value = currentData !== originalData.value || hasCardChanges
 }
@@ -936,7 +1026,9 @@ onMounted(async () => {
           formData.value[property] = value
         }
       },
-      applyServerContent: (c) => { content.value = c },
+      applyServerContent: (c) => {
+        content.value = c
+      },
       onError: (msg) => uiStore.error(msg),
     })
     // Register with the dirty registry so SSE-driven re-fetches in
@@ -946,7 +1038,7 @@ onMounted(async () => {
     // instance, so Vue would silently drop it and leak the registration.
     unregisterDirtyForm = registerForm(
       props.entityId,
-      (property) => _autoSaveInstance.value?.isDirty(property) ?? false,
+      (property) => _autoSaveInstance.value?.isDirty(property) ?? false
     )
   }
 
@@ -962,7 +1054,7 @@ onMounted(async () => {
       if (!inverse) {
         uiStore.warning(
           `Relation '${f.relation}' has no 'inverse:' declared in the metamodel. ` +
-            `Saving changes from this widget will fail until the metamodel is updated.`,
+            `Saving changes from this widget will fail until the metamodel is updated.`
         )
       }
     }
@@ -1051,7 +1143,7 @@ onBeforeRouteLeave(async () => {
       </div>
 
       <div v-if="loading" class="loading-state">
-        <div class="spinner"/>
+        <div class="spinner" />
         <span>Loading...</span>
       </div>
 
@@ -1059,8 +1151,8 @@ onBeforeRouteLeave(async () => {
         <h2>This entity is not editable</h2>
         <p>
           Your current permissions don't allow updating
-          <code>{{ entityId }}</code>. Return to the entity view to see
-          available actions.
+          <code>{{ entityId }}</code
+          >. Return to the entity view to see available actions.
         </p>
         <router-link
           v-if="formConfig && entityId"
@@ -1088,103 +1180,84 @@ onBeforeRouteLeave(async () => {
           </select>
         </div>
 
-        <template v-if="formConfig.sections?.length">
-          <div
-            v-for="section in formConfig.sections"
-            :key="section.title"
-            class="form-section"
-          >
-            <h2 v-if="section.title">{{ section.title }}</h2>
-            <p v-if="section.description" class="section-description">
-              {{ section.description }}
-            </p>
+        <!-- Wizard layout: a stepper + one visible step at a time. -->
+        <template v-if="wizard.isWizard.value">
+          <ol class="wizard-steps" aria-label="Form steps">
+            <li
+              v-for="(step, sIdx) in wizard.visibleSteps.value"
+              :key="step.title"
+              class="wizard-step-pill"
+              :class="{
+                active: sIdx === wizard.currentStep.value,
+                done: sIdx < wizard.currentStep.value,
+              }"
+            >
+              <span class="wizard-step-num">{{ sIdx + 1 }}</span>
+              <span class="wizard-step-title">{{ step.title }}</span>
+            </li>
+          </ol>
 
+          <div v-if="wizard.currentStepDef.value" class="form-section wizard-panel">
+            <h2 v-if="wizard.currentStepDef.value.title">
+              {{ wizard.currentStepDef.value.title }}
+            </h2>
+            <p v-if="wizard.currentStepDef.value.description" class="section-description">
+              {{ wizard.currentStepDef.value.description }}
+            </p>
             <div class="form-fields">
-              <template v-for="(field, fieldIdx) in section.fields" :key="`${fieldIdx}-${field.property || field.relation}`">
-                <FieldRenderer
-                  v-if="field.property && !field.hidden"
-                  :field="field"
-                  :property-def="getPropertyDef(field.property)"
-                  :value="formData[field.property]"
-                  :error="errors[field.property]"
-                  :readonly="isFieldReadonly(field)"
-                  :option-verdicts="optionVerdictsFor(field)"
-                  :entity-type="formConfig.entity"
-                  :entity-id="entityId"
-                  :attachments="attachments[field.property]"
-                  :max="getPropertyDef(field.property)?.max"
-                  @update="updateField(field.property!, $event)"
-                  @attachment-changed="onAttachmentChanged"
-                />
-                <RelationCards
-                  v-else-if="field.relation && field.widget === 'cards' && entityId"
-                  :key="`cards-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-                  :field="field"
-                  :entity-type="formConfig.entity"
-                  :entity-id="entityId"
-                  :verdict="relationAffordances[field.relation!]"
-                  @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
-                />
-                <RelationPicker
-                  v-else-if="field.relation"
-                  :key="`picker-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-                  :field="field"
-                  :entity-type="formConfig.entity"
-                  :entity-id="entityId"
-                  :value="relations[field.relation] || []"
-                  :verdict="relationAffordances[field.relation!]"
-                  @update="updateRelation(field.relation!, $event)"
-                  @update:types="(types) => updateRelationTypes(field.relation!, types)"
-                  @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
-                />
-              </template>
+              <FormFieldList
+                :fields="visibleStepFields(wizard.currentStepDef.value)"
+                :entity-type="formConfig.entity"
+                :entity-id="entityId"
+                :form-data="formData"
+                :relations="relations"
+                :errors="errors"
+                :relation-affordances="relationAffordances"
+                :attachments="attachments"
+                :save-generation="saveGeneration"
+                :get-property-def="getPropertyDef"
+                :is-field-readonly="isFieldReadonly"
+                :option-verdicts-for="optionVerdictsFor"
+                @update-field="updateField"
+                @attachment-changed="onAttachmentChanged"
+                @update-relation="updateRelation"
+                @update-relation-types="updateRelationTypes"
+                @incoming-changed="updateIncomingPicker"
+                @cards-changed="updateRelationCards"
+              />
             </div>
           </div>
         </template>
 
         <div v-else class="form-fields">
-          <template v-for="(field, fieldIdx) in fields" :key="`${fieldIdx}-${field.property || field.relation}`">
-            <FieldRenderer
-              v-if="field.property && !field.hidden"
-              :field="field"
-              :property-def="getPropertyDef(field.property)"
-              :value="formData[field.property]"
-              :error="errors[field.property]"
-              :readonly="isFieldReadonly(field)"
-              :option-verdicts="optionVerdictsFor(field)"
-              :entity-type="formConfig.entity"
-              :entity-id="entityId"
-              :attachments="attachments[field.property]"
-              :max="getPropertyDef(field.property)?.max"
-              @update="updateField(field.property!, $event)"
-              @attachment-changed="onAttachmentChanged"
-            />
-            <RelationCards
-              v-else-if="field.relation && field.widget === 'cards' && entityId"
-              :key="`cards-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-              :field="field"
-              :entity-type="formConfig.entity"
-              :entity-id="entityId"
-              :verdict="relationAffordances[field.relation!]"
-              @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
-            />
-            <RelationPicker
-              v-else-if="field.relation"
-              :key="`picker-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-              :field="field"
-              :entity-type="formConfig.entity"
-              :entity-id="entityId"
-              :value="relations[field.relation] || []"
-              :verdict="relationAffordances[field.relation!]"
-              @update="updateRelation(field.relation!, $event)"
-              @update:types="(types) => updateRelationTypes(field.relation!, types)"
-              @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
-            />
-          </template>
+          <FormFieldList
+            :fields="fields"
+            :entity-type="formConfig.entity"
+            :entity-id="entityId"
+            :form-data="formData"
+            :relations="relations"
+            :errors="errors"
+            :relation-affordances="relationAffordances"
+            :attachments="attachments"
+            :save-generation="saveGeneration"
+            :get-property-def="getPropertyDef"
+            :is-field-readonly="isFieldReadonly"
+            :option-verdicts-for="optionVerdictsFor"
+            @update-field="updateField"
+            @attachment-changed="onAttachmentChanged"
+            @update-relation="updateRelation"
+            @update-relation-types="updateRelationTypes"
+            @incoming-changed="updateIncomingPicker"
+            @cards-changed="updateRelationCards"
+          />
         </div>
 
-        <!-- Content field (markdown body) -->
-        <div class="form-field content-field">
+        <!-- Content field (markdown body). In a wizard it belongs on the
+             final step, next to the submit action. -->
+        <div
+          v-if="!wizard.isWizard.value || wizard.isLastStep.value"
+          class="form-field content-field"
+        >
           <label for="content">Content</label>
           <MarkdownEditor
             :model-value="content"
@@ -1193,23 +1266,40 @@ onBeforeRouteLeave(async () => {
           />
         </div>
 
-        <div class="form-actions">
+        <!-- Wizard navigation: Back / Next, with Submit on the last step. -->
+        <div v-if="wizard.isWizard.value" class="form-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="wizard.isFirstStep.value"
+            @click="handleBack"
+          >
+            Back
+          </button>
+          <button
+            v-if="!wizard.isLastStep.value"
+            type="button"
+            class="btn btn-primary"
+            @click="handleNext"
+          >
+            Next
+          </button>
+          <button v-else type="submit" class="btn btn-primary" :disabled="saving">
+            {{ saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create' }}
+            <kbd>&#8984;&#8629;</kbd>
+          </button>
+        </div>
+
+        <div v-else class="form-actions">
           <!-- Edit mode: ambient autosave indicator replaces the
                explicit Save button. Cancel is repurposed as a Back
                button to navigate away (with the autosave-flushing
                route guard catching any pending edits). -->
           <template v-if="autoSave">
-            <button
-              type="button"
-              class="btn btn-secondary"
-              @click="handleCancel"
-            >
+            <button type="button" class="btn btn-secondary" @click="handleCancel">
               Back <kbd>Esc</kbd>
             </button>
-            <AutoSaveIndicator
-              :status="autoSave.status"
-              :error="autoSave.lastError"
-            />
+            <AutoSaveIndicator :status="autoSave.status" :error="autoSave.lastError" />
           </template>
           <template v-else>
             <button
@@ -1220,12 +1310,9 @@ onBeforeRouteLeave(async () => {
             >
               Cancel <kbd>Esc</kbd>
             </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="saving"
-            >
-              {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
+            <button type="submit" class="btn btn-primary" :disabled="saving">
+              {{ saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create' }}
+              <kbd>&#8984;&#8629;</kbd>
             </button>
           </template>
         </div>
@@ -1233,11 +1320,7 @@ onBeforeRouteLeave(async () => {
     </div>
 
     <!-- Side panel for edit mode -->
-    <SidePanel
-      v-if="isEdit && entityId"
-      :form-id="formId"
-      :entity-id="entityId"
-    />
+    <SidePanel v-if="isEdit && entityId" :form-id="formId" :entity-id="entityId" />
   </div>
 
   <div v-else class="error-state">
@@ -1326,6 +1409,55 @@ onBeforeRouteLeave(async () => {
   margin-bottom: 24px;
 }
 
+/* Wizard stepper */
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.wizard-step-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  color: var(--muted-text);
+  font-size: 13px;
+}
+
+.wizard-step-pill.active {
+  border-color: var(--primary, #3b82f6);
+  color: var(--text-color);
+  font-weight: 600;
+}
+
+.wizard-step-pill.done {
+  color: var(--text-color);
+}
+
+.wizard-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border-color);
+  font-size: 12px;
+}
+
+.wizard-step-pill.active .wizard-step-num,
+.wizard-step-pill.done .wizard-step-num {
+  background: var(--primary, #3b82f6);
+  color: #fff;
+}
+
 .form-fields {
   display: flex;
   flex-direction: column;
@@ -1383,7 +1515,6 @@ onBeforeRouteLeave(async () => {
   margin-top: 16px;
   margin-bottom: 24px;
 }
-
 
 .form-actions {
   display: flex;
