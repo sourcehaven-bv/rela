@@ -196,8 +196,8 @@ Alternatives considered:
 **Documentation Impact:**
 - [x] docs/data-entry.md — new `steps:`, `visible_when:`, `required_when:` under Forms; note client-side-only evaluation + server still authoritative; link to the engine grammar doc.
 - [x] Engine grammar doc — owned by TKT-BL7XZ (grammar reference for authors).
-- [ ] docs/metamodel.md — N/A (form config lives in data-entry.yaml).
-- [ ] README.md — N/A.
+- [x] ~~docs/metamodel.md~~ (N/A: form config lives in data-entry.yaml).
+- [x] ~~README.md~~ (N/A).
 
 ## Design Review
 
