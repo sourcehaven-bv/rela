@@ -115,6 +115,26 @@ describe('useFormWizard', () => {
     expect([...wiz.managedProperties.value].sort()).toEqual(['name', 'processor_name', 'published'])
   })
 
+  it('active/managedRelations track relations under conditional branches', () => {
+    const cfg: FormConfig = {
+      entity: 'x',
+      steps: [
+        { title: 'A', relations: [{ relation: 'always_rel' }] },
+        {
+          title: 'B',
+          visible_when: 'form.show == true',
+          relations: [{ relation: 'cond_rel' }],
+        },
+      ],
+    }
+    const { wiz, formData } = setup(cfg, { show: false })
+    // managed = every relation named; active = only under a visible step.
+    expect([...wiz.managedRelations.value].sort()).toEqual(['always_rel', 'cond_rel'])
+    expect([...wiz.activeRelations.value].sort()).toEqual(['always_rel'])
+    formData.value = { show: true }
+    expect([...wiz.activeRelations.value].sort()).toEqual(['always_rel', 'cond_rel'])
+  })
+
   it('visibleStepIndexForProperty maps a property to its visible step', () => {
     const { wiz, formData } = setup(wizardForm(), { has_processors: true })
     expect(wiz.visibleStepIndexForProperty('name')).toBe(0)
@@ -150,6 +170,18 @@ describe('useFormWizard', () => {
     it('seeds currentStep from ?step= on setup', () => {
       mockRoute.query = { step: '2' }
       const { wiz } = setup(wizardForm(), { has_processors: true })
+      expect(wiz.currentStep.value).toBe(2)
+    })
+
+    it('seedFromUrl re-seeds after loaded data reveals an earlier step (RR-TXMU6)', () => {
+      // Deep link ?step=2. At construction `has_processors` is absent, so the
+      // conditional Processor step is hidden -> visibleSteps has 2 -> clamp(2)=1.
+      mockRoute.query = { step: '2' }
+      const { wiz, formData } = setup(wizardForm(), {})
+      expect(wiz.currentStep.value).toBe(1) // clamped against the 2 visible steps
+      // Loaded/toggled data reveals the earlier step; a re-seed lands on 2.
+      formData.value = { has_processors: true }
+      wiz.seedFromUrl()
       expect(wiz.currentStep.value).toBe(2)
     })
 

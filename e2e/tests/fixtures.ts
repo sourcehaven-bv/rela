@@ -851,6 +851,10 @@ forms:
         fields:
           - property: assignee
             required_when: "form.done == true"
+        # A relation under a conditional step — must also be pruned when hidden.
+        relations:
+          - relation: implements
+            label: "Implements"
       - title: "Status"
         fields:
           - property: status

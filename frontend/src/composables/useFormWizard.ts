@@ -63,9 +63,16 @@ export interface FormWizard {
   activeProperties: ComputedRef<Set<string>>
   /** Property keys named by ANY step/field, regardless of visibility. */
   managedProperties: ComputedRef<Set<string>>
+  /** Relation names under all currently-visible steps. */
+  activeRelations: ComputedRef<Set<string>>
+  /** Relation names named by ANY step/field, regardless of visibility. */
+  managedRelations: ComputedRef<Set<string>>
   next: () => void
   back: () => void
   goTo: (index: number) => void
+  /** Re-seed currentStep from `?step=`. Call after entity/defaults load so a
+   *  step revealed by loaded data can still be the deep-link target. */
+  seedFromUrl: () => void
 }
 
 export function useFormWizard(
@@ -134,30 +141,43 @@ export function useFormWizard(
     return false
   }
 
-  const activeProperties = computed<Set<string>>(() => {
+  // Keys (property names OR relation names) currently VISIBLE — under a
+  // visible step, honouring per-field visible_when.
+  function activeKeys(pick: (f: FormFieldOrRelation) => string | undefined): Set<string> {
     const keys = new Set<string>()
     for (const step of visibleSteps.value) {
       for (const f of visibleFieldsOf(step)) {
-        if (f.property) keys.add(f.property)
+        const k = pick(f)
+        if (k) keys.add(k)
       }
     }
     return keys
-  })
+  }
 
-  // Every property named by ANY step/field, regardless of current visibility.
-  // A property NOT in this set is not governed by the wizard's conditional
-  // structure (e.g. a metamodel default seeded into form state but surfaced in
-  // no step), so payload pruning must leave it alone — matching how a
-  // single-page form submits such a value.
-  const managedProperties = computed<Set<string>>(() => {
+  // Keys named by ANY step/field, regardless of current visibility. A key NOT
+  // in this set is not governed by the wizard's conditional structure (e.g. a
+  // metamodel default seeded into form state but surfaced in no step), so
+  // pruning must leave it alone — matching how a single-page form submits it.
+  function managedKeys(pick: (f: FormFieldOrRelation) => string | undefined): Set<string> {
     const keys = new Set<string>()
     for (const step of normalizedSteps.value) {
       for (const f of stepFields(step)) {
-        if (f.property) keys.add(f.property)
+        const k = pick(f)
+        if (k) keys.add(k)
       }
     }
     return keys
-  })
+  }
+
+  const asProperty = (f: FormFieldOrRelation) => f.property
+  const asRelation = (f: FormFieldOrRelation) => f.relation
+
+  const activeProperties = computed(() => activeKeys(asProperty))
+  const managedProperties = computed(() => managedKeys(asProperty))
+  // Relations get the same treatment so a relation under a hidden branch is
+  // pruned from the submitted payload, not just hidden from render.
+  const activeRelations = computed(() => activeKeys(asRelation))
+  const managedRelations = computed(() => managedKeys(asRelation))
 
   // --- URL sync (`?step=N`), mirroring useUrlFilterSync's seed/replace/echo. ---
 
@@ -167,14 +187,20 @@ export function useFormWizard(
     return Math.min(i, Math.max(0, max))
   }
 
-  // Seed synchronously from the URL so a refresh/deep-link lands on the step.
-  // Only multi-step forms use the `?step=` param — a single-step (flat) form
-  // never touches the URL.
-  if (isMultiStep.value) {
+  // Seed currentStep from the `?step=` param. Only multi-step forms use the
+  // param — a single-step (flat) form never touches the URL. Runs once
+  // synchronously (so the first paint is right for data already present), and
+  // the caller re-runs it after the entity/defaults load (seedFromUrl), because
+  // an earlier step may only become visible once loaded data satisfies its
+  // `visible_when` — and clamp against a smaller visibleSteps would otherwise
+  // strand the user on the wrong step.
+  function seedFromUrl(): void {
+    if (!isMultiStep.value) return
     const raw = route.query.step
     const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN
     currentStep.value = clamp(parsed)
   }
+  seedFromUrl()
 
   let lastWritten = ''
   function writeStep(i: number): void {
@@ -230,8 +256,11 @@ export function useFormWizard(
     isFieldRequired,
     activeProperties,
     managedProperties,
+    activeRelations,
+    managedRelations,
     next,
     back,
     goTo,
+    seedFromUrl,
   }
 }

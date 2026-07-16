@@ -179,21 +179,33 @@ const stepsWithErrors = computed<Set<number>>(() => {
 
 const errorCount = computed(() => Object.keys(errors.value).length)
 
-// Edit mode: when a conditional field/step becomes hidden (its `visible_when`
-// flipped false), unset its stored value — the edit-mode analogue of create's
-// submit-time hidden-branch pruning, so a toggled-off branch doesn't linger on
-// the entity. Only fields the wizard governs (managed) are affected; a plain
-// field in no conditional branch is never unset. Runs only after the form has
-// loaded (skip the initial hydration).
+// React to a conditional field/step becoming hidden (its `visible_when` flipped
+// false). Two effects, both keyed on a property leaving `activeProperties`:
+//   1. Always: drop any standing validation error for the now-hidden field, so
+//      a hidden field can't leave a phantom "N fields need attention" with no
+//      flagged, reachable step (RR-U9ERK).
+//   2. Edit mode only: unset its stored value (autosave) — the edit analogue of
+//      create's submit-time hidden-branch pruning, so a toggled-off branch
+//      doesn't linger on the entity.
+// Skips the initial hydration (`loading`); only touches wizard-governed
+// (managed) fields, so a plain non-conditional field is never affected.
 watch(
   () => wizard.activeProperties.value,
   (active, prevActive) => {
-    if (!isEdit.value || loading.value || !autoSave.value || !prevActive) return
+    if (loading.value || !prevActive) return
+    const managed = wizard.managedProperties.value
+    let nextErrors: Record<string, string> | null = null
     for (const prop of prevActive) {
-      // Became hidden, is wizard-governed, and still holds a value → unset it.
+      if (active.has(prop) || !managed.has(prop)) continue // still shown / not governed
+      // Clear a standing error for the now-hidden field.
+      if (errors.value[prop]) {
+        nextErrors ??= { ...errors.value }
+        delete nextErrors[prop]
+      }
+      // Edit mode: unset a stored value so the hidden branch doesn't persist.
       if (
-        !active.has(prop) &&
-        wizard.managedProperties.value.has(prop) &&
+        isEdit.value &&
+        autoSave.value &&
         formData.value[prop] !== undefined &&
         formData.value[prop] !== '' &&
         formData.value[prop] !== null
@@ -202,6 +214,7 @@ watch(
         autoSave.value.scheduleUnset(prop)
       }
     }
+    if (nextErrors) errors.value = nextErrors
   }
 )
 
@@ -686,6 +699,18 @@ function pruneWizardHidden(props: Record<string, unknown>): Record<string, unkno
   )
 }
 
+// Relation analogue of pruneWizardHidden: drop a relation's edges when it is
+// wizard-governed but currently hidden (its step/field visible_when is false),
+// so a revealed-then-hidden relation is not persisted. `rels` is keyed by
+// relation name (as relations.value is).
+function pruneWizardHiddenRelations(rels: Record<string, string[]>): Record<string, string[]> {
+  const active = wizard.activeRelations.value
+  const managed = wizard.managedRelations.value
+  return Object.fromEntries(
+    Object.entries(rels).filter(([rel]) => !managed.has(rel) || active.has(rel))
+  )
+}
+
 // Property keys made required right now by a matching `required_when`.
 function requiredWhenProps(scope: FormFieldOrRelation[]): Set<string> {
   const req = new Set<string>()
@@ -768,8 +793,11 @@ async function handleSubmit() {
     const cardRelations = new Set(
       fields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
     )
+    // Drop relations under a condition-hidden branch (mirrors property pruning),
+    // then exclude card-managed relations (delivered via pendingCardChanges).
+    const prunedRelations = pruneWizardHiddenRelations(relations.value)
     const filteredRelations: Record<string, string[]> = {}
-    for (const [rel, ids] of Object.entries(relations.value)) {
+    for (const [rel, ids] of Object.entries(prunedRelations)) {
       if (!cardRelations.has(rel)) {
         filteredRelations[rel] = ids
       }
@@ -1092,10 +1120,16 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
   }
 }
 
-// Cmd/Ctrl+Enter to submit
+// Cmd/Ctrl+Enter: on the last (or only) step it submits (create); on an earlier
+// wizard step it advances — matching the visible Create-only-on-last-step
+// affordance rather than submitting from the middle of a wizard. No-op in edit
+// mode (autosave; handleSubmit early-returns).
 function handleKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-    e.preventDefault()
+  if (!((e.metaKey || e.ctrlKey) && e.key === 'Enter')) return
+  e.preventDefault()
+  if (!isEdit.value && wizard.isMultiStep.value && !wizard.isLastStep.value) {
+    handleNext()
+  } else {
     handleSubmit()
   }
 }
@@ -1118,6 +1152,12 @@ onMounted(async () => {
     await loadTemplates()
   }
   loading.value = false
+
+  // Re-seed the wizard step from `?step=` now that entity/defaults are loaded:
+  // a step whose `visible_when` needs loaded data is only in `visibleSteps`
+  // after this point, so the construction-time seed may have clamped a
+  // deep-link to the wrong step (RR-TXMU6).
+  wizard.seedFromUrl()
 
   // TKT-3I5U: derive the staged entity's initial affordances from the
   // dry-run so the first affordance-filtered paint reflects defaults +
@@ -1380,7 +1420,7 @@ onBeforeRouteLeave(async () => {
         <p v-if="!isEdit && errorCount > 0" class="wizard-error-summary" role="alert">
           ⚠ {{ errorCount }}
           {{ errorCount === 1 ? 'field needs' : 'fields need' }} attention<template
-            v-if="wizard.isMultiStep.value"
+            v-if="wizard.isMultiStep.value && stepsWithErrors.size > 0"
           >
             — see the flagged step{{ stepsWithErrors.size === 1 ? '' : 's' }} above</template
           >.

@@ -159,6 +159,30 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(await formPage.erroredStepIndices()).toEqual([]);
   });
 
+  test("hiding an errored step clears its flag and summary (RR-U9ERK)", async ({
+    appPage,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_wizard");
+
+    // Reveal Assignment (assignee required), fill Basics + Status, leave
+    // assignee empty, then Create -> Assignment is flagged.
+    await formPage.fillField("title", "Will hide the error");
+    await formPage.setCheckbox("done", true); // reveal Assignment
+    await formPage.clickStep(2); // Status
+    await formPage.selectField("status", "approved");
+    await formPage.clickCreate(); // assignee empty -> error, jumps to Assignment
+    expect((await formPage.erroredStepIndices()).length).toBeGreaterThan(0);
+    expect(await formPage.errorSummaryText()).not.toBeNull();
+
+    // Go back to Basics and toggle `done` off -> the Assignment step (and its
+    // error) disappears. No phantom summary should remain.
+    await formPage.clickStep(0);
+    await formPage.setCheckbox("done", false);
+    expect(await formPage.erroredStepIndices()).toEqual([]);
+    expect(await formPage.errorSummaryText()).toBeNull();
+  });
+
   test("submits a wizard and drops hidden-branch values", async ({
     appPage,
     api,
@@ -204,6 +228,34 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(entity.properties.title).toBe("Retitled in wizard");
   });
 
+  test("edit mode unsets a field whose branch is hidden (AC5, TKT-ZKGY3)", async ({
+    appPage,
+    api,
+  }) => {
+    // Seed a task with the conditional branch active and its field filled.
+    const created = await api.createEntity("tasks", {
+      properties: {
+        title: "Has assignee",
+        status: "approved",
+        done: true,
+        assignee: "alice",
+      },
+    });
+    createdTasks.push(created.id);
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm("task_wizard", created.id);
+
+    // `done` lives on the first step (Basics); toggling it off hides the whole
+    // Assignment step (which carries `assignee`). Its stored value must be unset.
+    await formPage.setCheckbox("done", false);
+    await formPage.saveAndWaitForPatch("tasks", created.id);
+
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.done).toBe(false);
+    expect(entity.properties.assignee ?? "").toBe(""); // unset because its branch hid
+  });
+
   test("a revealed-then-hidden field is NOT persisted on create", async ({
     appPage,
     api,
@@ -230,6 +282,31 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(entity.properties.title).toBe("Toggled branch task");
     // assignee was entered but its step ended up hidden -> dropped.
     expect(entity.properties.assignee ?? "").toBe("");
+  });
+
+  test("a relation under a revealed-then-hidden step is NOT persisted", async ({
+    appPage,
+    api,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_wizard");
+
+    await formPage.fillField("title", "Relation branch task");
+    await formPage.setCheckbox("done", true); // reveal Assignment (has `implements`)
+    await formPage.clickNext(); // -> Assignment
+    await formPage.fillField("assignee", "carol");
+    await formPage.addRelation("Implements", "FEAT-001"); // link under the branch
+    await formPage.clickBack(); // -> Basics
+    await formPage.setCheckbox("done", false); // hide the whole Assignment step
+    await formPage.clickNext(); // -> Status
+    await formPage.selectField("status", "approved");
+
+    const created = await formPage.submitAndExpectCreate("tasks");
+    createdTasks.push(created.id);
+
+    // The relation belonged to a hidden step -> not persisted (mirrors props).
+    const rels = await api.listRelations("tasks", created.id, "implements");
+    expect(rels).toEqual([]);
   });
 });
 
