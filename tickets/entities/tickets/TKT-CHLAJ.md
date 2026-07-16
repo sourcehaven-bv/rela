@@ -5,7 +5,7 @@ title: Multi-step (wizard) forms with conditional steps
 kind: enhancement
 priority: medium
 effort: m
-status: planning
+status: in-progress
 ---
 
 Add an optional wizard layout to the data-entry form config. A form can declare

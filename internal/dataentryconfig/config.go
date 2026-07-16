@@ -129,6 +129,11 @@ type AppConfig struct {
 }
 
 // Form defines a create/edit form for an entity type.
+//
+// A form is EITHER single-page (Fields/Relations at the top level) OR a wizard
+// (Steps). The two are mutually exclusive — validateForms rejects a form that
+// sets both. A wizard renders one step at a time with next/back navigation;
+// single-page remains the default and is unchanged when Steps is empty.
 type Form struct {
 	EntityType  string           `yaml:"entity_type" json:"entity"`
 	Title       string           `yaml:"title" json:"title"`
@@ -137,7 +142,20 @@ type Form struct {
 	Body        *bool            `yaml:"body,omitempty" json:"body,omitempty"`
 	Fields      []FormField      `yaml:"fields" json:"fields"`
 	Relations   []FormRelation   `yaml:"relations" json:"relations,omitempty"`
+	Steps       []FormStep       `yaml:"steps,omitempty" json:"steps,omitempty"`
 	SidePanel   *SidePanelConfig `yaml:"side_panel,omitempty" json:"side_panel,omitempty"`
+}
+
+// FormStep is one ordered, titled step of a wizard form. VisibleWhen is an
+// optional condition expression (see the frontend conditions engine) evaluated
+// against earlier field values; when it evaluates false the step is skipped in
+// navigation and its values are excluded from the submitted entity.
+type FormStep struct {
+	Title       string         `yaml:"title" json:"title"`
+	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
+	VisibleWhen string         `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
+	Fields      []FormField    `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Relations   []FormRelation `yaml:"relations,omitempty" json:"relations,omitempty"`
 }
 
 // SidePanelConfig defines an optional context panel shown alongside a form.
@@ -148,25 +166,37 @@ type SidePanelConfig struct {
 }
 
 // FormField defines a single field in a form.
+//
+// VisibleWhen / RequiredWhen are optional condition expressions (see the
+// frontend conditions engine) evaluated against earlier field values. They are
+// opaque strings to Go — the SPA parses and evaluates them; the `rela` config
+// lint checks them syntactically. VisibleWhen hides the field (and drops its
+// value from the payload) when false; RequiredWhen makes the field required
+// only when true.
 type FormField struct {
-	Property    string              `yaml:"property" json:"property"`
-	Label       string              `yaml:"label" json:"label,omitempty"`
-	Placeholder string              `yaml:"placeholder" json:"placeholder,omitempty"`
-	Help        string              `yaml:"help" json:"help,omitempty"`
-	Widget      string              `yaml:"widget" json:"widget,omitempty"`
-	Required    *bool               `yaml:"required,omitempty" json:"required,omitempty"`
-	Default     string              `yaml:"default" json:"default,omitempty"`
-	Hidden      bool                `yaml:"hidden" json:"hidden,omitempty"`
-	Transitions map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
+	Property     string              `yaml:"property" json:"property"`
+	Label        string              `yaml:"label" json:"label,omitempty"`
+	Placeholder  string              `yaml:"placeholder" json:"placeholder,omitempty"`
+	Help         string              `yaml:"help" json:"help,omitempty"`
+	Widget       string              `yaml:"widget" json:"widget,omitempty"`
+	Required     *bool               `yaml:"required,omitempty" json:"required,omitempty"`
+	RequiredWhen string              `yaml:"required_when,omitempty" json:"required_when,omitempty"`
+	VisibleWhen  string              `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
+	Default      string              `yaml:"default" json:"default,omitempty"`
+	Hidden       bool                `yaml:"hidden" json:"hidden,omitempty"`
+	Transitions  map[string][]string `yaml:"transitions,omitempty" json:"transitions,omitempty"`
 }
 
-// FormRelation defines a relation field in a form.
+// FormRelation defines a relation field in a form. VisibleWhen is an optional
+// condition expression (see FormField) that hides the relation widget when
+// false.
 type FormRelation struct {
 	Relation     string             `yaml:"relation" json:"relation"`
 	Direction    Direction          `yaml:"direction" json:"direction,omitempty"`
 	TargetType   string             `yaml:"target_type" json:"target_type,omitempty"`
 	Label        string             `yaml:"label" json:"label,omitempty"`
 	Required     bool               `yaml:"required" json:"required,omitempty"`
+	VisibleWhen  string             `yaml:"visible_when,omitempty" json:"visible_when,omitempty"`
 	Widget       string             `yaml:"widget" json:"widget,omitempty"`
 	Display      string             `yaml:"display" json:"display,omitempty"`
 	AllowCreate  bool               `yaml:"allow_create" json:"allow_create,omitempty"`

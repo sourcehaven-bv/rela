@@ -1869,26 +1869,42 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// resolveRelationWidgets returns a copy of rels with any empty Widget set to
+// "cards" when the relation type has edge properties/content. Shared by the
+// flat and wizard-step relation lists in handleV1Config.
+func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelation) []dataentryconfig.FormRelation {
+	resolved := make([]dataentryconfig.FormRelation, len(rels))
+	copy(resolved, rels)
+	for i := range resolved {
+		if resolved[i].Widget == "" {
+			if def, ok := s.Meta.GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
+				resolved[i].Widget = WidgetCards
+			}
+		}
+	}
+	return resolved
+}
+
 func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 	s := a.State()
-	// Resolve relation widgets: auto-detect "cards" for relations with properties/content
+	// Resolve relation widgets: auto-detect "cards" for relations with
+	// properties/content, for both single-page (flat) and wizard (step) forms.
 	forms := make(map[string]dataentryconfig.Form, len(s.Cfg.Forms))
 	for id, form := range s.Cfg.Forms {
 		f := form
-		resolved := make([]dataentryconfig.FormRelation, len(f.Relations))
-		copy(resolved, f.Relations)
-		for i := range resolved {
-			if resolved[i].Widget == "" {
-				if def, ok := s.Meta.GetRelationDef(resolved[i].Relation); ok && def.HasAdvancedFeatures() {
-					resolved[i].Widget = WidgetCards
-				}
+		f.Relations = a.resolveRelationWidgets(s, f.Relations)
+		if len(f.Steps) > 0 {
+			steps := make([]dataentryconfig.FormStep, len(f.Steps))
+			copy(steps, f.Steps)
+			for i := range steps {
+				steps[i].Relations = a.resolveRelationWidgets(s, steps[i].Relations)
 			}
+			f.Steps = steps
 		}
-		f.Relations = resolved
 		forms[id] = f
 	}
 

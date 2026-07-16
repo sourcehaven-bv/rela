@@ -218,8 +218,6 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 }
 
 // validateForms validates form definitions.
-//
-//nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
 func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -230,68 +228,105 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
-		// Validate fields
-		for i, f := range form.Fields {
-			if _, ok := entDef.Properties[f.Property]; !ok {
-				errs = append(errs, fmt.Sprintf(
-					"form %q: field[%d] property %q not in metamodel for entity %q",
-					formID, i, f.Property, form.EntityType))
-			}
-
-			// Validate transitions (if specified, must be valid enum values)
-			if len(f.Transitions) > 0 {
-				propDef, hasProp := entDef.Properties[f.Property]
-				if hasProp {
-					errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
-				}
-			}
+		// A form is single-page OR a wizard, never both.
+		hasFlat := len(form.Fields) > 0 || len(form.Relations) > 0
+		if len(form.Steps) > 0 && hasFlat {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: a form may define either top-level fields/relations OR steps, not both",
+				formID))
 		}
 
-		// Validate relations
+		// Flat (single-page) fields/relations.
+		for i, f := range form.Fields {
+			errs = append(errs, validateFormField(formID, "", i, f, form.EntityType, entDef, meta)...)
+		}
 		for i, r := range form.Relations {
-			relDef, ok := meta.GetRelationDef(r.Relation)
-			switch {
-			case ok:
-				// Canonical name resolved — check that the form's entity
-				// type is on the correct side of the edge for the chosen
-				// direction. Wrong-side configs are silently broken
-				// otherwise: the widget searches the wrong target type
-				// and never shows existing edges.
-				errs = append(errs, validateFormRelationSide(formID, i, form.EntityType, r, relDef)...)
-			default:
-				if canonical, isInverse := meta.InverseOwner(r.Relation); isInverse {
-					errs = append(errs, fmt.Sprintf(
-						"form %q: relation[%d] uses inverse name %q; use `relation: %s` with `direction: incoming` to bind the inverse of %q",
-						formID, i, r.Relation, canonical, canonical))
-				} else {
-					errs = append(errs, fmt.Sprintf(
-						"form %q: relation[%d] references unknown relation %q",
-						formID, i, r.Relation))
-				}
-			}
+			errs = append(errs, validateFormRelation(cfg, formID, "", i, r, form.EntityType, meta)...)
+		}
 
-			// Validate direction
-			if !validRelationDirections[r.Direction] {
-				errs = append(errs, fmt.Sprintf(
-					"form %q: relation[%d] has invalid direction %q (valid: outgoing, incoming)",
-					formID, i, r.Direction))
+		// Wizard steps: each step's fields/relations reuse the same checks.
+		for si, step := range form.Steps {
+			ctx := fmt.Sprintf("step[%d] ", si)
+			if step.Title == "" {
+				errs = append(errs, fmt.Sprintf("form %q: %shas no title", formID, ctx))
 			}
+			for i, f := range step.Fields {
+				errs = append(errs, validateFormField(formID, ctx, i, f, form.EntityType, entDef, meta)...)
+			}
+			for i, r := range step.Relations {
+				errs = append(errs, validateFormRelation(cfg, formID, ctx, i, r, form.EntityType, meta)...)
+			}
+		}
+	}
 
-			// Validate widget
-			if !validRelationWidgets[r.Widget] {
-				errs = append(errs, fmt.Sprintf(
-					"form %q: relation[%d] has invalid widget %q (valid: select, multi-select, cards)",
-					formID, i, r.Widget))
-			}
+	return errs
+}
 
-			// Validate create_form reference
-			if r.CreateForm != "" {
-				if _, ok := cfg.Forms[r.CreateForm]; !ok {
-					errs = append(errs, fmt.Sprintf(
-						"form %q: relation[%d] references unknown create_form %q",
-						formID, i, r.CreateForm))
-				}
-			}
+// validateFormField checks one form field against the metamodel. ctx is an
+// optional location prefix (e.g. "step[0] ") so wizard and flat forms share
+// the rule set while keeping distinct error messages.
+func validateFormField(
+	formID, ctx string, i int, f FormField, entityType string,
+	entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	if _, ok := entDef.Properties[f.Property]; !ok {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %sfield[%d] property %q not in metamodel for entity %q",
+			formID, ctx, i, f.Property, entityType))
+	}
+	if len(f.Transitions) > 0 {
+		if propDef, hasProp := entDef.Properties[f.Property]; hasProp {
+			errs = append(errs, validateTransitions(formID, i, f, propDef, meta)...)
+		}
+	}
+	return errs
+}
+
+// validateFormRelation checks one form relation against the metamodel. ctx is
+// an optional location prefix (see validateFormField).
+func validateFormRelation(
+	cfg *Config, formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+
+	relDef, ok := meta.GetRelationDef(r.Relation)
+	switch {
+	case ok:
+		// Canonical name resolved — check that the form's entity type is on
+		// the correct side of the edge for the chosen direction. Wrong-side
+		// configs are silently broken otherwise: the widget searches the wrong
+		// target type and never shows existing edges.
+		errs = append(errs, validateFormRelationSide(formID, i, entityType, r, relDef)...)
+	default:
+		if canonical, isInverse := meta.InverseOwner(r.Relation); isInverse {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: %srelation[%d] uses inverse name %q; use `relation: %s` with `direction: incoming` to bind the inverse of %q",
+				formID, ctx, i, r.Relation, canonical, canonical))
+		} else {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: %srelation[%d] references unknown relation %q",
+				formID, ctx, i, r.Relation))
+		}
+	}
+
+	if !validRelationDirections[r.Direction] {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %srelation[%d] has invalid direction %q (valid: outgoing, incoming)",
+			formID, ctx, i, r.Direction))
+	}
+
+	if !validRelationWidgets[r.Widget] {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %srelation[%d] has invalid widget %q (valid: select, multi-select, cards)",
+			formID, ctx, i, r.Widget))
+	}
+
+	if r.CreateForm != "" {
+		if _, ok := cfg.Forms[r.CreateForm]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: %srelation[%d] references unknown create_form %q",
+				formID, ctx, i, r.CreateForm))
 		}
 	}
 

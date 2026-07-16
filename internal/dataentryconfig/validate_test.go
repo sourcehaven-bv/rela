@@ -498,6 +498,93 @@ func TestValidateConfig_FormRelationUnknownCreateForm(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_WizardStepsValid(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Forms: map[string]Form{
+			"wizard": {
+				EntityType: "ticket",
+				Steps: []FormStep{
+					{Title: "Basics", Fields: []FormField{{Property: "title"}}},
+					{
+						Title:       "Details",
+						VisibleWhen: "form.status == 'open'",
+						Fields:      []FormField{{Property: "priority", RequiredWhen: "form.status == 'open'"}},
+						Relations:   []FormRelation{{Relation: "blocks", Direction: "outgoing", Widget: "select"}},
+					},
+				},
+			},
+		},
+	}
+
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("expected valid wizard form, got: %v", err)
+	}
+}
+
+func TestValidateConfig_WizardStepsAndFlatMutuallyExclusive(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Forms: map[string]Form{
+			"mixed": {
+				EntityType: "ticket",
+				Fields:     []FormField{{Property: "title"}},
+				Steps:      []FormStep{{Title: "Step 1", Fields: []FormField{{Property: "status"}}}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error when both fields and steps are set")
+	}
+	if !strings.Contains(err.Error(), "either top-level fields/relations OR steps") {
+		t.Errorf("expected steps-xor-flat error, got: %v", err)
+	}
+}
+
+func TestValidateConfig_WizardStepUnknownProperty(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Forms: map[string]Form{
+			"wizard": {
+				EntityType: "ticket",
+				Steps: []FormStep{
+					{Title: "Step 1", Fields: []FormField{{Property: "unknown_prop"}}},
+				},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for unknown property in a step")
+	}
+	if !strings.Contains(err.Error(), `step[0] field[0] property "unknown_prop" not in metamodel`) {
+		t.Errorf("expected step-scoped unknown-property error, got: %v", err)
+	}
+}
+
+func TestValidateConfig_WizardStepMissingTitle(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Forms: map[string]Form{
+			"wizard": {
+				EntityType: "ticket",
+				Steps:      []FormStep{{Fields: []FormField{{Property: "title"}}}},
+			},
+		},
+	}
+
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("expected error for step without title")
+	}
+	if !strings.Contains(err.Error(), "step[0] has no title") {
+		t.Errorf("expected missing-title error, got: %v", err)
+	}
+}
+
 func TestValidateConfig_UnknownListEntityType(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{
