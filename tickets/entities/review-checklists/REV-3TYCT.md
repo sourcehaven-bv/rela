@@ -2,7 +2,7 @@
 id: REV-3TYCT
 type: review-checklist
 title: 'Review: Multi-step (wizard) forms with conditional steps'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -36,14 +36,16 @@ status: in-progress
 - [x] Each acceptance criterion tested (see IMPL-2BYV8 AC mapping)
 - [x] Test evidence documented in implementation checklist
 
-**Acceptance Status:** All 5 ACs PASS (verified by `e2e/tests/wizard.spec.ts`, 7 tests):
+**Acceptance Status:** All 5 ACs PASS (verified by `e2e/tests/wizard.spec.ts`, 7
+tests):
 1. Ordered titled steps — PASS ("renders steps…").
 2. Show/hide + required by earlier field — PASS ("visible_when reveals…", "required_when blocks Next…").
 3. Next/back + per-step validation + full validation on submit — PASS ("next/back…", "required_when blocks…", "submits a wizard…").
 4. Step in URL, refresh-safe — PASS ("refresh returns…", `?step=` assertions).
 5. Single-page unchanged, opt-in — PASS (existing suite green; wizard path strictly additive behind `steps`).
 
-Plus hidden-branch pruning verified on create ("drops hidden-branch values" + "a revealed-then-hidden field is NOT persisted on create").
+Plus hidden-branch pruning verified on create ("drops hidden-branch values" + "a
+revealed-then-hidden field is NOT persisted on create").
 
 ## Documentation (enhancements only)
 

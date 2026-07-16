@@ -2,7 +2,7 @@
 id: PLAN-QBFTB
 type: planning-checklist
 title: 'Planning: Multi-step (wizard) forms with conditional steps'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
