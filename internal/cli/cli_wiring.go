@@ -39,7 +39,10 @@ import (
 // breadth of the CLI surface. Ratchet candidate — purpose-grouped sub-bundles
 // (read / write / analyze) would let each command bind only what it uses.
 //
-//plimsoll:max-exported-methods=29
+// (Bumped 29 → 30: #1142 added Audit() without adjusting the pin, leaving
+// develop red on this check.)
+//
+//plimsoll:max-exported-methods=30
 type cliServices struct {
 	svc        *appbuild.Services
 	attachment *attachment.Service

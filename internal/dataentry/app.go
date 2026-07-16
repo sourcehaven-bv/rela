@@ -76,9 +76,10 @@ const userPaletteFile = "palette.yaml"
 // EXCEPT for a new required route handler (App owns one method per registered
 // HTTP route by the router's design). The sync route cluster (16 methods) moved
 // to syncHandler (170 → 154); the command cluster (11 methods) moved to
-// commandHandler (154 → 143).
+// commandHandler (154 → 143); the attachment cluster (12 methods) moved to
+// attachmentHandler / package functions (143 → 131).
 //
-//plimsoll:max-methods=143
+//plimsoll:max-methods=131
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -145,11 +146,15 @@ type App struct {
 	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
 	// holds narrow closures over the schema snapshot, Services bundle, project
 	// root, and the view executor.
-	commands  *commandHandler
-	templater templating.Templater
-	cfgLoader config.Loader
-	kv        state.KV
-	acl       acl.ACL
+	commands *commandHandler
+	// attachments owns the entity-attachment routes (upload/download/detach).
+	// Extracted from App (TKT-R68TV8); closures over the swappable acl/audit/
+	// field-resolver collaborators, a pointer to writeMu for the write paths.
+	attachments *attachmentHandler
+	templater   templating.Templater
+	cfgLoader   config.Loader
+	kv          state.KV
+	acl         acl.ACL
 
 	// attachmentRunner drives external scan/transform commands for uploads.
 	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
@@ -562,9 +567,29 @@ func NewApp(
 	// failure) leaves uploads with native MIME validation only.
 	if runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes); rerr == nil {
 		app.attachmentRunner = runner
-		app.probeAttachmentCommands(meta, runner)
+		probeAttachmentCommands(meta, runner)
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
+	}
+
+	// attachmentHandler owns the entity-attachment routes. Constructed after
+	// the runner wiring above so it captures the resolved runner. The acl/
+	// audit/field-resolver deps are closures because tests swap those fields
+	// on App after construction (same rationale as affordanceService); the
+	// store/manager handles are fixed for App's lifetime. writeMu is shared by
+	// pointer so attachment writes serialize with every other mutation handler.
+	app.attachments = &attachmentHandler{
+		schema:     app.State,
+		store:      st,
+		manager:    app.entityManager,
+		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
+		reader:     app.reader,
+		serializer: app.serializer,
+		acl:        func() acl.ACL { return app.acl },
+		audit:      func() audit.Audit { return app.auditSink },
+		fields:     func() FieldVerdictResolver { return app.fieldResolver },
+		gateRead:   app.gateReadOrNotFound,
+		writeMu:    &app.writeMu,
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the

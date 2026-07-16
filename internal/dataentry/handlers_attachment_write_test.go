@@ -52,7 +52,7 @@ func putAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declara
 	req.Header.Set("Content-Type", contentType)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1AttachmentRoute(rec, req, "ticket", "tickets", entityID, property)
+	app.attachments.handleV1AttachmentRoute(rec, req, "ticket", "tickets", entityID, property)
 	return rec
 }
 
@@ -64,7 +64,7 @@ func deleteAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Decl
 	req := httptest.NewRequest(http.MethodDelete, url, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1AttachmentFileRoute(rec, req, "ticket", entityID, property, fileName)
+	app.attachments.handleV1AttachmentFileRoute(rec, req, "ticket", entityID, property, fileName)
 	return rec
 }
 
@@ -250,7 +250,7 @@ func TestAttachmentUpload_MissingFieldOrBadProperty(t *testing.T) {
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1AttachmentRoute(rec, req, "ticket", "tickets", "TKT-001", "screenshot")
+	app.attachments.handleV1AttachmentRoute(rec, req, "ticket", "tickets", "TKT-001", "screenshot")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("missing file field: got %d, want 400; body=%s", rec.Code, rec.Body)
 	}

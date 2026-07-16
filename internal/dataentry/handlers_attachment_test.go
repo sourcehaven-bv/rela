@@ -23,7 +23,7 @@ func getAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declara
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1GetAttachment(rec, req, typeName, entityID, property, fileName)
+	app.attachments.handleV1GetAttachment(rec, req, typeName, entityID, property, fileName)
 	return rec
 }
 
@@ -146,7 +146,7 @@ func TestAttachment_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001/_attachments/screenshot", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1AttachmentRoute(rec, req, "ticket", "tickets", "TKT-001", "screenshot")
+	app.attachments.handleV1AttachmentRoute(rec, req, "ticket", "tickets", "TKT-001", "screenshot")
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("got %d, want 405", rec.Code)
 	}

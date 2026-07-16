@@ -174,7 +174,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "_actions":
 			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
 		case "_attachments":
-			a.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
+			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -185,7 +185,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
 		case "_attachments":
-			a.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
+			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
