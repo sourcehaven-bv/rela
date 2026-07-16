@@ -94,10 +94,33 @@ Noted in-code so nobody parses a user-typed source and turns it into a leak.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [x] All CI checks pass — Frontend (the job covering this change), CodeQL,
-  Analyze (go / js-ts / actions), Architecture, Vulnerability Check, Fuzz,
-  Lint Markdown, and all 6 Cross-Compile matrix jobs green. God-object lint and
-  Rela Tickets failures were both self-inflicted bookkeeping, not code (see below).
+- [x] All CI checks pass — every job green **except God-object lint, which is
+  broken on `develop` itself and is not caused by this PR** (evidence below).
+  Green: Frontend (the job covering this change), Test, Lint, CodeQL, Analyze
+  (go / js-ts / actions), Architecture, Vulnerability Check, Fuzz, Postgres
+  Backend, Lint Markdown, Rela Tickets, and all 6 Cross-Compile matrix jobs.
+
+**God-object lint — pre-existing failure on `develop`, not this PR.** Proven, not
+assumed: checking out develop's tip (`40e94f44`) and running plimsoll reproduces
+the identical error —
+
+```
+internal/cli/cli_wiring.go:43:6: type cliServices has 30 exported methods,
+over the load line of 29
+```
+
+`40e94f44` (**TKT-BW6UUL / PR #1142**, operator version-purge) modified
+`cli_wiring.go` (+11/-3) and pushed `cliServices` past its pinned
+`//plimsoll:max-exported-methods=29`. That commit landed on develop *after* this
+branch, so this PR merely inherits a red base. This change is TypeScript-only —
+a Go linter never reads it — and plimsoll passes on this branch's tree.
+Out of scope here; raised with the user separately rather than silently widening
+this PR.
+
+**Rela Tickets** — was failing on a self-inflicted bookkeeping loop: this
+checklist is `done`, and the "all CI checks pass" item was legitimately unchecked
+while CI was still running, which trips the "done review checklists cannot have
+unchecked items" gate. Resolved once CI actually reported green. Now passing.
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1147
