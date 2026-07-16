@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // Performable resolves outgoing transitions from the entity's current status,
@@ -102,52 +104,115 @@ func TestPerformable_NilCases(t *testing.T) {
 	})
 }
 
+// driftMeta is purpose-built to EXPOSE read/write divergence, not hide it: it
+// has (a) a `when:` that reads entity.value (must see the TARGET value on both
+// paths — RR against critical#1), and (b) a self-loop edge (a no-op on write;
+// must not be reported performable on read — critical#2). If Performable
+// evaluated against the pre-transition entity, or reported self-loops, the
+// parity assertion below would fail.
+func driftMeta() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"s": {
+				Values:  []string{"a", "b", "c"},
+				Initial: "a",
+				Transitions: []metamodel.TransitionDef{
+					// value-dependent precondition: only legal when the NEW value is "b".
+					{From: "a", To: "b", When: `entity.value == "b"`},
+					// a plain edge and a guarded edge.
+					{From: "a", To: "c", Guard: "g"},
+					// self-loop: no-op on write, must not be "performable".
+					{From: "a", To: "a"},
+				},
+			},
+		},
+		Entities: map[string]metamodel.EntityDef{
+			"x": {Properties: map[string]metamodel.PropertyDef{"s": {Type: "s"}}},
+		},
+	}
+}
+
 // TestPerformable_MatchesEnforceUpdate is the drift guard (AC4): for the same
 // (entity, target, guard, graph), Performable's Allowed verdict MUST agree with
-// whether EnforceUpdate accepts the write. Read and write share evalEdge, so a
-// divergence here means someone broke that sharing.
+// whether EnforceUpdate accepts the write. Uses BOTH snapshotMeta (graph
+// precondition) and driftMeta (value-dependent precondition + self-loop) so the
+// two divergence classes the reviewer found can never regress.
 func TestPerformable_MatchesEnforceUpdate(t *testing.T) {
-	set := mustCompile(t, snapshotMeta())
 	ctx := context.Background()
 
-	scenarios := []struct {
-		name   string
+	type probe struct {
+		meta   *metamodel.Metamodel
+		etype  string
+		prop   string
+		from   string
 		guard  Guard
-		counts map[string]int
-	}{
-		{"all held+met", fakeGuard{perms: map[string]bool{"establish": true, "approve": true}}, map[string]int{"signed-by": 1}},
-		{"guard denied", fakeGuard{perms: map[string]bool{}}, map[string]int{"signed-by": 1}},
-		{"precondition unmet", fakeGuard{perms: map[string]bool{"establish": true, "approve": true}}, map[string]int{"signed-by": 0}},
+		lookup GraphLookup
+		// targets to also enforce-check even if Performable omits them (e.g.
+		// self-loops, which Performable must NOT list but which are no-ops on
+		// write) — asserts the omission is correct.
+		omittedTargets []string
 	}
-	for _, sc := range scenarios {
-		t.Run(sc.name, func(t *testing.T) {
-			from := ent("SNAP-1", "snapshot", "approved")
-			lookup := fakeLookup{counts: sc.counts}
-			verdicts := set.Performable(ctx, from, "status", sc.guard, lookup)
+	probes := []struct {
+		name string
+		p    probe
+	}{
+		{"snapshot allow", probe{snapshotMeta(), "snapshot", "status", "approved",
+			fakeGuard{perms: map[string]bool{"establish": true, "approve": true}}, fakeLookup{counts: map[string]int{"signed-by": 1}}, nil}},
+		{"snapshot guard-denied", probe{snapshotMeta(), "snapshot", "status", "approved",
+			fakeGuard{perms: map[string]bool{}}, fakeLookup{counts: map[string]int{"signed-by": 1}}, nil}},
+		{"snapshot precond-unmet", probe{snapshotMeta(), "snapshot", "status", "approved",
+			fakeGuard{perms: map[string]bool{"establish": true, "approve": true}}, fakeLookup{counts: map[string]int{"signed-by": 0}}, nil}},
+		// driftMeta: entity.value precondition (a→b legal because target is "b"),
+		// a→c guarded, a→a self-loop omitted by read but a no-op on write.
+		{"drift value-precond + guard", probe{driftMeta(), "x", "s", "a",
+			fakeGuard{perms: map[string]bool{"g": true}}, fakeLookup{}, []string{"a"}}},
+		{"drift guard-denied", probe{driftMeta(), "x", "s", "a",
+			fakeGuard{perms: map[string]bool{}}, fakeLookup{}, []string{"a"}}},
+	}
+	for _, tc := range probes {
+		t.Run(tc.name, func(t *testing.T) {
+			set := mustCompile(t, tc.p.meta)
+			from := ent("E-1", tc.p.etype, "")
+			from.SetString(tc.p.prop, tc.p.from)
+			verdicts := set.Performable(ctx, from, tc.p.prop, tc.p.guard, tc.p.lookup)
 
-			for _, v := range verdicts {
-				// Enforce the same transition and check the accept/reject
-				// matches the verdict's Allowed.
-				updated := ent("SNAP-1", "snapshot", v.To)
-				err := set.EnforceUpdate(ctx, from, updated, sc.guard, lookup)
-				enforceAllowed := err == nil
-				if enforceAllowed != v.Allowed {
-					t.Errorf("drift on %q→%q: Performable.Allowed=%v but EnforceUpdate allowed=%v (err=%v)",
-						"approved", v.To, v.Allowed, enforceAllowed, err)
+			assertParity := func(to string, allowed bool, reason VerdictGate) {
+				updated := from.Clone()
+				updated.SetString(tc.p.prop, to)
+				err := set.EnforceUpdate(ctx, from, updated, tc.p.guard, tc.p.lookup)
+				if (err == nil) != allowed {
+					t.Errorf("drift on %s→%s: Performable.Allowed=%v but EnforceUpdate allowed=%v (err=%v)",
+						tc.p.from, to, allowed, err == nil, err)
 				}
-				// The gate the verdict names must match the error kind.
-				switch v.Reason {
+				switch reason {
 				case VerdictAllowed:
-					// Allowed verdict → EnforceUpdate must have succeeded
-					// (already asserted above via enforceAllowed).
+					// already covered by the (err == nil) == allowed assertion
 				case VerdictGuard:
 					if !errors.Is(err, ErrGuardDenied) {
-						t.Errorf("%q: verdict says guard but EnforceUpdate err=%v", v.To, err)
+						t.Errorf("%s: verdict says guard but EnforceUpdate err=%v", to, err)
 					}
 				case VerdictPrecondition:
 					if !errors.Is(err, ErrPreconditionFailed) {
-						t.Errorf("%q: verdict says precondition but EnforceUpdate err=%v", v.To, err)
+						t.Errorf("%s: verdict says precondition but EnforceUpdate err=%v", to, err)
 					}
+				}
+			}
+
+			for _, v := range verdicts {
+				assertParity(v.To, v.Allowed, v.Reason)
+			}
+			// A self-loop must be omitted from verdicts AND be a no-op (allowed)
+			// on write — assert both, so "read omits it" stays correct.
+			for _, to := range tc.p.omittedTargets {
+				for _, v := range verdicts {
+					if v.To == to {
+						t.Errorf("self-loop %s→%s must not be reported performable, got %+v", tc.p.from, to, v)
+					}
+				}
+				updated := from.Clone()
+				updated.SetString(tc.p.prop, to)
+				if err := set.EnforceUpdate(ctx, from, updated, tc.p.guard, tc.p.lookup); err != nil {
+					t.Errorf("self-loop %s→%s should be a no-op on write, got %v", tc.p.from, to, err)
 				}
 			}
 		})

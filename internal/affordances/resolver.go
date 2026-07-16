@@ -155,7 +155,15 @@ func New(
 // [PolicyResolver.TransitionVerdicts] can resolve performable transitions.
 // Optional and chainable: a resolver without machines (or with an empty set)
 // answers TransitionVerdicts with nil, so existing callers that don't wire
-// transitions are unaffected. Call once at wiring time, before concurrent use.
+// transitions are unaffected.
+//
+// CONCURRENCY: this is the one mutator on an otherwise-immutable-after-[New]
+// resolver, so the "safe for concurrent use" guarantee holds only if it is
+// called during single-threaded wiring, BEFORE the resolver is shared — which
+// is the sole production call site ([ResolverFromProfile], synchronous, before
+// the resolver escapes). It is a setter rather than a [New] parameter
+// deliberately: machines are optional and adding a required arg would churn all
+// [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
 func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
 	r.machines = m
 	return r
@@ -459,7 +467,18 @@ func (r *PolicyResolver) TransitionVerdicts(
 // principal. It resolves via the per-request [acl.Request] on ctx when present
 // (reusing the list-handler scope), else opens one for the principal. Answers
 // via [acl.Request.HoldsPermissionForEntity] so ownership-relation-conferred
-// permissions are honored — identical to the write-path guard.
+// permissions are honored (the same subject-aware resolution the write-path
+// guard uses).
+//
+// This guard fails CLOSED unconditionally: an unstamped/unresolvable principal
+// holds no permission, so guarded transitions read as not-performable. Unlike
+// the write-path guard (appbuild.transitionGuard), it has NO "no policy → inert
+// allow" tier — because it is only ever wired under an active policy
+// (ResolverFromProfile constructs the machine-backed resolver only when the
+// policy declares affordance grants). Do NOT wire TransitionVerdicts from a
+// no-policy/CLI path expecting inert behavior: there, an unstamped principal
+// would be shown zero performable transitions even where a write would succeed
+// inert. If such a caller is ever needed, add the policy-active tier here first.
 func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard {
 	req := acl.FromContext(ctx)
 	if req == nil {
@@ -474,7 +493,8 @@ func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard
 
 // requestGuard evaluates a transition guard against an acl.Request. A nil
 // request (unresolved/unstamped principal) holds no permission → guarded edges
-// resolve as not-performable, consistent with the write path failing closed.
+// resolve as not-performable (fail closed). See [PolicyResolver.transitionGuard]
+// for why there is no inert tier.
 type requestGuard struct{ req *acl.Request }
 
 func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission string) bool {

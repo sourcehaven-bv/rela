@@ -65,10 +65,24 @@ func (s *Set) Performable(
 
 	var out []TransitionVerdict
 	for key, ed := range m.edges {
-		if key.from != from {
+		if key.from != from || key.to == from {
+			// Not an out-edge from the current value, or a self-loop. A
+			// self-loop is a no-op write (EnforceUpdate skips unchanged
+			// values before reaching the edge), so it is never a
+			// *performable* transition — excluding it keeps read parity with
+			// write (a self-loop verdict would claim an action the write path
+			// never enforces).
 			continue
 		}
-		res := evalEdge(ctx, ed, prop, e, guard, lookup)
+		// Evaluate the gates against the entity AS IT WOULD BE after the move —
+		// prop = key.to — exactly as the write path evaluates them (it feeds
+		// applyEdge the post-write `updated` entity). A `when:` that reads
+		// `entity.value` must see the target value here, or the read verdict
+		// would disagree with what the write actually enforces (the AC4 drift
+		// guard depends on this).
+		after := e.Clone()
+		after.SetString(prop, key.to)
+		res := evalEdge(ctx, ed, prop, after, guard, lookup)
 		out = append(out, TransitionVerdict{
 			To:      key.to,
 			Guard:   ed.guard,
