@@ -93,8 +93,11 @@ Noted in-code so nobody parses a user-typed source and turns it into a leak.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — Frontend (the job covering this change), CodeQL,
+  Analyze (go / js-ts / actions), Architecture, Vulnerability Check, Fuzz,
+  Lint Markdown, and all 6 Cross-Compile matrix jobs green. God-object lint and
+  Rela Tickets failures were both self-inflicted bookkeeping, not code (see below).
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1147
