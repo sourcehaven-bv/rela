@@ -16,6 +16,12 @@ status: done
 - [x] Coverage floors pass
 - [x] All three build tags compile (default, postgres, memorybackend)
 - [x] Runtime smoke test: kong parameter injection verified against the `tickets/` project (list, analyze orphans, gc dry-run, schema) — kong resolves Run bindings at runtime, so compile success alone doesn't prove the wiring
+- [x] PR created and all CI checks green
+
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1148 — every check passed on
+the first run (Test, Lint, God-object lint, Architecture, Coverage/Check,
+Postgres Backend, E2E, Frontend, Fuzz, Docs, Demos, Rela Tickets, CodeQL, all
+six cross-compile targets).
 
 **Summary:** Removed the `cliServices` god-object (30 pure-delegation methods)
 in favor of `readServices`/`writeServices` field bundles and direct kong
