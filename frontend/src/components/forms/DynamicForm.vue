@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -170,7 +170,6 @@ const wizard = useFormWizard(formConfig, conditionBindings)
 // moment its field becomes valid.
 const stepsWithErrors = computed<Set<number>>(() => {
   const flagged = new Set<number>()
-  if (!wizard.isWizard.value) return flagged
   for (const property of Object.keys(errors.value)) {
     const idx = wizard.visibleStepIndexForProperty(property)
     if (idx >= 0) flagged.add(idx)
@@ -179,6 +178,32 @@ const stepsWithErrors = computed<Set<number>>(() => {
 })
 
 const errorCount = computed(() => Object.keys(errors.value).length)
+
+// Edit mode: when a conditional field/step becomes hidden (its `visible_when`
+// flipped false), unset its stored value — the edit-mode analogue of create's
+// submit-time hidden-branch pruning, so a toggled-off branch doesn't linger on
+// the entity. Only fields the wizard governs (managed) are affected; a plain
+// field in no conditional branch is never unset. Runs only after the form has
+// loaded (skip the initial hydration).
+watch(
+  () => wizard.activeProperties.value,
+  (active, prevActive) => {
+    if (!isEdit.value || loading.value || !autoSave.value || !prevActive) return
+    for (const prop of prevActive) {
+      // Became hidden, is wizard-governed, and still holds a value → unset it.
+      if (
+        !active.has(prop) &&
+        wizard.managedProperties.value.has(prop) &&
+        formData.value[prop] !== undefined &&
+        formData.value[prop] !== '' &&
+        formData.value[prop] !== null
+      ) {
+        delete formData.value[prop]
+        autoSave.value.scheduleUnset(prop)
+      }
+    }
+  }
+)
 
 // TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
 // the entity's affordances. A property field is rendered only if it is
@@ -636,21 +661,20 @@ function visibleStepFields(step: import('@/types').FormStep): FormFieldOrRelatio
   return wizard.visibleFieldsOf(step).filter(affordanceVisible)
 }
 
-// Fields currently in scope for submit: for a wizard, only the visible fields
-// of currently-visible steps; for a single-page form, all fields. The wizard
-// scope applies the same affordance filter as rendering (visibleStepFields), so
-// validation never demands a policy-hidden field the user can't see or fill.
+// Fields in scope for submit: the visible fields of the currently-visible
+// steps (for a flat/one-step form that's just its fields). Applies the same
+// affordance filter as rendering (visibleStepFields), so validation never
+// demands a policy-hidden field the user can't see or fill.
 function submitScopeFields(): FormFieldOrRelation[] {
-  if (!wizard.isWizard.value) return fields.value
   return wizard.visibleSteps.value.flatMap((s) => visibleStepFields(s))
 }
 
-// Drop property keys that belong to a condition-hidden step/field for a wizard
-// (so a revealed-then-hidden branch is not persisted). No-op for single-page
-// forms. Applied by BOTH submit paths — including on top of the create path's
-// affordance prune — so the two pruning systems reconcile in one place.
+// Drop property keys under a condition-hidden step/field so a revealed-then-
+// hidden branch is not persisted. Applied by BOTH submit paths — including on
+// top of the create path's affordance prune — so the two pruning systems
+// reconcile in one place. For a flat form with no conditions this is a no-op
+// (nothing is hidden).
 function pruneWizardHidden(props: Record<string, unknown>): Record<string, unknown> {
-  if (!wizard.isWizard.value) return props
   const active = wizard.activeProperties.value
   const managed = wizard.managedProperties.value
   // Drop a key only if the wizard governs it (named by some step) AND it is not
@@ -700,10 +724,10 @@ function handleStepClick(index: number) {
   wizard.goTo(index)
 }
 
-// On a failed wizard submit, take the user to the first step that has an error
-// and focus its first invalid field, so the fix is one glance + zero hunting.
+// On a failed submit, take the user to the first step that has an error and
+// focus its first invalid field, so the fix is one glance + zero hunting. For a
+// one-step form this just focuses the field on the only step.
 function focusFirstError() {
-  if (!wizard.isWizard.value) return
   // First errored property in visible order.
   let firstStep = Infinity
   let firstProp: string | null = null
@@ -727,6 +751,9 @@ function focusFirstError() {
 
 async function handleSubmit() {
   if (!formConfig.value) return
+  // Edit mode has no explicit submit — autosave persists per field. Guard
+  // against an Enter-key form submit doing anything (there's no Save button).
+  if (isEdit.value) return
   const scope = submitScopeFields()
   if (!validate(scope, requiredWhenProps(scope))) {
     focusFirstError()
@@ -1278,95 +1305,68 @@ onBeforeRouteLeave(async () => {
           </select>
         </div>
 
-        <!-- Wizard layout: a stepper + one visible step at a time. -->
-        <template v-if="wizard.isWizard.value">
-          <ol class="wizard-steps" aria-label="Form steps">
-            <li v-for="(step, sIdx) in wizard.visibleSteps.value" :key="sIdx">
-              <button
-                type="button"
-                class="wizard-step-pill"
-                :class="{
-                  active: sIdx === wizard.currentStep.value,
-                  done: sIdx < wizard.currentStep.value,
-                  'has-errors': stepsWithErrors.has(sIdx),
-                }"
-                :aria-current="sIdx === wizard.currentStep.value ? 'step' : undefined"
-                @click="handleStepClick(sIdx)"
-              >
-                <span class="wizard-step-num">{{
-                  stepsWithErrors.has(sIdx) ? '!' : sIdx + 1
-                }}</span>
-                <span class="wizard-step-title">{{ step.title }}</span>
-              </button>
-            </li>
-          </ol>
+        <!-- Every form renders through the same step model. A single-page (flat)
+             form is one implicit, title-less step, so the stepper bar only shows
+             when there is more than one step. -->
+        <ol v-if="wizard.isMultiStep.value" class="wizard-steps" aria-label="Form steps">
+          <li v-for="(step, sIdx) in wizard.visibleSteps.value" :key="sIdx">
+            <button
+              type="button"
+              class="wizard-step-pill"
+              :class="{
+                active: sIdx === wizard.currentStep.value,
+                done: sIdx < wizard.currentStep.value,
+                'has-errors': stepsWithErrors.has(sIdx),
+              }"
+              :aria-current="sIdx === wizard.currentStep.value ? 'step' : undefined"
+              @click="handleStepClick(sIdx)"
+            >
+              <span class="wizard-step-num">{{ stepsWithErrors.has(sIdx) ? '!' : sIdx + 1 }}</span>
+              <span class="wizard-step-title">{{ step.title }}</span>
+            </button>
+          </li>
+        </ol>
 
-          <div v-if="wizard.currentStepDef.value" class="form-section wizard-panel">
-            <h2 v-if="wizard.currentStepDef.value.title">
-              {{ wizard.currentStepDef.value.title }}
-            </h2>
-            <p v-if="wizard.currentStepDef.value.description" class="section-description">
-              {{ wizard.currentStepDef.value.description }}
-            </p>
-            <div class="form-fields">
-              <FormFieldList
-                :fields="visibleStepFields(wizard.currentStepDef.value)"
-                :entity-type="formConfig.entity"
-                :entity-id="entityId"
-                :form-data="formData"
-                :relations="relations"
-                :errors="errors"
-                :relation-affordances="relationAffordances"
-                :attachments="attachments"
-                :save-generation="saveGeneration"
-                :get-property-def="getPropertyDef"
-                :is-field-readonly="isFieldReadonly"
-                :option-verdicts-for="optionVerdictsFor"
-                @update-field="updateField"
-                @attachment-changed="onAttachmentChanged"
-                @update-relation="updateRelation"
-                @update-relation-types="updateRelationTypes"
-                @incoming-changed="updateIncomingPicker"
-                @cards-changed="updateRelationCards"
-              />
-            </div>
+        <div
+          v-if="wizard.currentStepDef.value"
+          class="form-section"
+          :class="{ 'wizard-panel': wizard.isMultiStep.value }"
+        >
+          <h2 v-if="wizard.currentStepDef.value.title">
+            {{ wizard.currentStepDef.value.title }}
+          </h2>
+          <p v-if="wizard.currentStepDef.value.description" class="section-description">
+            {{ wizard.currentStepDef.value.description }}
+          </p>
+          <div class="form-fields">
+            <FormFieldList
+              :fields="visibleStepFields(wizard.currentStepDef.value)"
+              :entity-type="formConfig.entity"
+              :entity-id="entityId"
+              :form-data="formData"
+              :relations="relations"
+              :errors="errors"
+              :relation-affordances="relationAffordances"
+              :attachments="attachments"
+              :save-generation="saveGeneration"
+              :get-property-def="getPropertyDef"
+              :is-field-readonly="isFieldReadonly"
+              :option-verdicts-for="optionVerdictsFor"
+              @update-field="updateField"
+              @attachment-changed="onAttachmentChanged"
+              @update-relation="updateRelation"
+              @update-relation-types="updateRelationTypes"
+              @incoming-changed="updateIncomingPicker"
+              @cards-changed="updateRelationCards"
+            />
           </div>
-
-          <!-- Degenerate config: every step is conditionally hidden right now.
-               Render nothing to submit rather than an empty form with a
-               misleading Submit button. -->
-          <p v-else class="section-description">No steps to display.</p>
-        </template>
-
-        <div v-else class="form-fields">
-          <FormFieldList
-            :fields="fields"
-            :entity-type="formConfig.entity"
-            :entity-id="entityId"
-            :form-data="formData"
-            :relations="relations"
-            :errors="errors"
-            :relation-affordances="relationAffordances"
-            :attachments="attachments"
-            :save-generation="saveGeneration"
-            :get-property-def="getPropertyDef"
-            :is-field-readonly="isFieldReadonly"
-            :option-verdicts-for="optionVerdictsFor"
-            @update-field="updateField"
-            @attachment-changed="onAttachmentChanged"
-            @update-relation="updateRelation"
-            @update-relation-types="updateRelationTypes"
-            @incoming-changed="updateIncomingPicker"
-            @cards-changed="updateRelationCards"
-          />
         </div>
 
-        <!-- Content field (markdown body). In a wizard it belongs on the
-             final step, next to the submit action. -->
-        <div
-          v-if="!wizard.isWizard.value || wizard.isLastStep.value"
-          class="form-field content-field"
-        >
+        <!-- Degenerate config: every step is conditionally hidden right now. -->
+        <p v-else class="section-description">No fields to display.</p>
+
+        <!-- Content field (markdown body). Shown on the final (or only) step. -->
+        <div v-if="wizard.isLastStep.value" class="form-field content-field">
           <label for="content">Content</label>
           <MarkdownEditor
             :model-value="content"
@@ -1375,63 +1375,71 @@ onBeforeRouteLeave(async () => {
           />
         </div>
 
-        <!-- Submit-time validation summary. Announced (role=alert) and linked to
-             the offending fields via the flagged stepper pills; Create also
-             jumps to the first error. -->
-        <p v-if="wizard.isWizard.value && errorCount > 0" class="wizard-error-summary" role="alert">
-          ⚠ {{ errorCount }} {{ errorCount === 1 ? 'field needs' : 'fields need' }} attention — see
-          the flagged step{{ stepsWithErrors.size === 1 ? '' : 's' }} above.
+        <!-- Submit-time validation summary (create only — edit autosaves and has
+             no submit gate). Announced via role=alert. -->
+        <p v-if="!isEdit && errorCount > 0" class="wizard-error-summary" role="alert">
+          ⚠ {{ errorCount }}
+          {{ errorCount === 1 ? 'field needs' : 'fields need' }} attention<template
+            v-if="wizard.isMultiStep.value"
+          >
+            — see the flagged step{{ stepsWithErrors.size === 1 ? '' : 's' }} above</template
+          >.
         </p>
 
-        <!-- Wizard navigation: Back / Next, with Submit on the last step. -->
-        <div v-if="wizard.isWizard.value && wizard.currentStepDef.value" class="form-actions">
+        <!--
+          Actions branch on MODE, not on wizard-ness, so a wizard and a flat form
+          behave identically:
+          - EDIT: autosave per field, no Save button (the route guard flushes
+            pending edits on leave); step Back/Next only when multi-step.
+          - CREATE: Cancel + Back/Next (when multi-step) + Create on the last step.
+        -->
+        <div v-if="wizard.currentStepDef.value" class="form-actions">
+          <!-- Leave-the-form control (autosave Back in edit, Cancel in create). -->
           <button
             type="button"
             class="btn btn-secondary"
-            :disabled="wizard.isFirstStep.value"
-            @click="handleBack"
+            :disabled="!autoSave && saving"
+            @click="handleCancel"
           >
-            Back
+            {{ autoSave ? 'Back' : 'Cancel' }} <kbd>Esc</kbd>
           </button>
-          <button
-            v-if="!wizard.isLastStep.value"
-            type="button"
-            class="btn btn-primary"
-            @click="handleNext"
-          >
-            Next
-          </button>
-          <button v-else type="submit" class="btn btn-primary" :disabled="saving">
-            {{ saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create' }}
-            <kbd>&#8984;&#8629;</kbd>
-          </button>
-        </div>
 
-        <div v-else class="form-actions">
-          <!-- Edit mode: ambient autosave indicator replaces the
-               explicit Save button. Cancel is repurposed as a Back
-               button to navigate away (with the autosave-flushing
-               route guard catching any pending edits). -->
-          <template v-if="autoSave">
-            <button type="button" class="btn btn-secondary" @click="handleCancel">
-              Back <kbd>Esc</kbd>
-            </button>
-            <AutoSaveIndicator :status="autoSave.status" :error="autoSave.lastError" />
-          </template>
-          <template v-else>
+          <!-- Step navigation (multi-step only). -->
+          <template v-if="wizard.isMultiStep.value">
             <button
               type="button"
               class="btn btn-secondary"
-              :disabled="saving"
-              @click="handleCancel"
+              :disabled="wizard.isFirstStep.value"
+              @click="handleBack"
             >
-              Cancel <kbd>Esc</kbd>
+              ← Prev step
             </button>
-            <button type="submit" class="btn btn-primary" :disabled="saving">
-              {{ saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create' }}
-              <kbd>&#8984;&#8629;</kbd>
+            <button
+              v-if="!wizard.isLastStep.value"
+              type="button"
+              class="btn btn-primary"
+              @click="handleNext"
+            >
+              Next step →
             </button>
           </template>
+
+          <!-- Create only: the commit button, on the last (or only) step. -->
+          <button
+            v-if="!isEdit && wizard.isLastStep.value"
+            type="submit"
+            class="btn btn-primary"
+            :disabled="saving"
+          >
+            {{ saving ? 'Saving...' : 'Create' }} <kbd>&#8984;&#8629;</kbd>
+          </button>
+
+          <!-- Edit: ambient autosave status stands in for a Save button. -->
+          <AutoSaveIndicator
+            v-if="autoSave"
+            :status="autoSave.status"
+            :error="autoSave.lastError"
+          />
         </div>
       </form>
     </div>

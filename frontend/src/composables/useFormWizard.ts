@@ -43,7 +43,9 @@ function stepFields(step: FormStep): FormFieldOrRelation[] {
 }
 
 export interface FormWizard {
-  isWizard: ComputedRef<boolean>
+  /** True when the form has more than one authored step — gates the stepper
+   *  bar and `?step=` URL sync. A flat form (one implicit step) is false. */
+  isMultiStep: ComputedRef<boolean>
   /** Steps whose `visible_when` currently holds, in authored order. */
   visibleSteps: ComputedRef<FormStep[]>
   /** Clamped index into visibleSteps. */
@@ -78,7 +80,20 @@ export function useFormWizard(
   const route = useRoute()
   const router = useRouter()
 
-  const isWizard = computed(() => (formConfig.value?.steps?.length ?? 0) > 0)
+  // Every form is modelled as a list of steps. A single-page (flat) form is a
+  // form with exactly one implicit, title-less step synthesised from its
+  // top-level fields/relations — so ONE render/validate/condition path serves
+  // both, and `visible_when`/`required_when` work everywhere. `isMultiStep`
+  // (not the mere presence of `steps`) is what gates wizard *presentation* (the
+  // stepper bar, `?step=` URL sync).
+  const normalizedSteps = computed<FormStep[]>(() => {
+    const cfg = formConfig.value
+    if (!cfg) return []
+    if (cfg.steps?.length) return cfg.steps
+    return [{ title: '', fields: cfg.fields ?? [], relations: cfg.relations ?? [] }]
+  })
+
+  const isMultiStep = computed(() => (formConfig.value?.steps?.length ?? 0) > 1)
 
   // Evaluate a condition against the live bindings. The engine memoizes the
   // compiled program by source, so re-evaluating each render is cheap. An
@@ -90,11 +105,9 @@ export function useFormWizard(
     return prog.eval(getBindings())
   }
 
-  const visibleSteps = computed<FormStep[]>(() => {
-    const steps = formConfig.value?.steps
-    if (!steps?.length) return []
-    return steps.filter((s) => evalCond(s.visible_when))
-  })
+  const visibleSteps = computed<FormStep[]>(() =>
+    normalizedSteps.value.filter((s) => evalCond(s.visible_when))
+  )
 
   const currentStep = ref(0)
 
@@ -138,7 +151,7 @@ export function useFormWizard(
   // single-page form submits such a value.
   const managedProperties = computed<Set<string>>(() => {
     const keys = new Set<string>()
-    for (const step of formConfig.value?.steps ?? []) {
+    for (const step of normalizedSteps.value) {
       for (const f of stepFields(step)) {
         if (f.property) keys.add(f.property)
       }
@@ -155,7 +168,9 @@ export function useFormWizard(
   }
 
   // Seed synchronously from the URL so a refresh/deep-link lands on the step.
-  if (isWizard.value) {
+  // Only multi-step forms use the `?step=` param — a single-step (flat) form
+  // never touches the URL.
+  if (isMultiStep.value) {
     const raw = route.query.step
     const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN
     currentStep.value = clamp(parsed)
@@ -163,6 +178,7 @@ export function useFormWizard(
 
   let lastWritten = ''
   function writeStep(i: number): void {
+    if (!isMultiStep.value) return // single-step forms never touch the URL
     const value = String(i)
     lastWritten = value
     const query = { ...route.query, step: value }
@@ -203,7 +219,7 @@ export function useFormWizard(
   }
 
   return {
-    isWizard,
+    isMultiStep,
     visibleSteps,
     currentStep,
     currentStepDef,

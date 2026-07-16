@@ -55,10 +55,27 @@ describe('useFormWizard', () => {
     return { wiz, formData, config }
   }
 
-  it('detects a wizard vs a single-page form', () => {
-    expect(setup(wizardForm()).wiz.isWizard.value).toBe(true)
-    expect(setup({ entity: 'x', fields: [{ property: 'a' }] }).wiz.isWizard.value).toBe(false)
-    expect(setup(undefined).wiz.isWizard.value).toBe(false)
+  it('isMultiStep is true only for >1 authored step', () => {
+    expect(setup(wizardForm()).wiz.isMultiStep.value).toBe(true) // 3 steps
+    // A flat form (one implicit step) and a one-step form are NOT multi-step.
+    expect(setup({ entity: 'x', fields: [{ property: 'a' }] }).wiz.isMultiStep.value).toBe(false)
+    expect(
+      setup({ entity: 'x', steps: [{ title: 'Only', fields: [{ property: 'a' }] }] }).wiz
+        .isMultiStep.value
+    ).toBe(false)
+    expect(setup(undefined).wiz.isMultiStep.value).toBe(false)
+  })
+
+  it('a flat form is modelled as one visible step', () => {
+    const { wiz } = setup({
+      entity: 'x',
+      fields: [{ property: 'a' }, { property: 'b' }],
+      relations: [{ relation: 'r' }],
+    })
+    expect(wiz.visibleSteps.value.length).toBe(1)
+    expect(
+      wiz.visibleFieldsOf(wiz.visibleSteps.value[0]).map((f) => f.property || f.relation)
+    ).toEqual(['a', 'b', 'r'])
   })
 
   it('filters visible steps by visible_when against form values', () => {

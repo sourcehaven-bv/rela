@@ -856,6 +856,20 @@ forms:
           - property: status
             required: true
 
+  # A FLAT (single-page) form that also uses visible_when/required_when — proves
+  # conditions work on non-wizard forms after the unification (TKT-ZKGY3).
+  task_flat_conditional:
+    entity_type: task
+    title: "Task (flat, conditional)"
+    fields:
+      - property: title
+        required: true
+      - property: done
+        widget: checkbox
+      - property: assignee
+        visible_when: "form.done == true"
+        required_when: "form.done == true"
+
   tag:
     entity_type: tag
     title: "Tag"

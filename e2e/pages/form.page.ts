@@ -30,11 +30,11 @@ export class FormPage extends BasePage {
   }
 
   private get wizardNextBtn(): Locator {
-    return this.page.locator('.form-actions button:has-text("Next")');
+    return this.page.locator('.form-actions button:has-text("Next step")');
   }
 
   private get wizardBackBtn(): Locator {
-    return this.page.locator('.form-actions button:has-text("Back")');
+    return this.page.locator('.form-actions button:has-text("Prev step")');
   }
 
   /** Titles of the currently-rendered wizard steps, in order. */

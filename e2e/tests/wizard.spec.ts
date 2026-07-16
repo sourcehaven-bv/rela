@@ -181,6 +181,29 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(entity.properties.assignee ?? "").toBe("");
   });
 
+  test("wizard EDIT mode autosaves and has no Save button (TKT-ZKGY3)", async ({
+    appPage,
+    api,
+  }) => {
+    // Seed a task, then open it in the wizard form in EDIT mode.
+    const created = await api.createEntity("tasks", {
+      properties: { title: "Editable via wizard", status: "approved" },
+    });
+    createdTasks.push(created.id);
+
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToEditForm("task_wizard", created.id);
+
+    // No explicit Save/Create button — edit is autosave, same as a flat form.
+    expect(await formPage.hasSubmitButton()).toBeFalsy();
+
+    // Editing a field autosaves via PATCH (no submit).
+    await formPage.fillField("title", "Retitled in wizard");
+    await formPage.saveAndWaitForPatch("tasks", created.id);
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.title).toBe("Retitled in wizard");
+  });
+
   test("a revealed-then-hidden field is NOT persisted on create", async ({
     appPage,
     api,
@@ -207,5 +230,63 @@ test.describe("Wizard (multi-step) forms", () => {
     expect(entity.properties.title).toBe("Toggled branch task");
     // assignee was entered but its step ended up hidden -> dropped.
     expect(entity.properties.assignee ?? "").toBe("");
+  });
+});
+
+// After unifying flat + wizard (TKT-ZKGY3), single-page forms run through the
+// same step model, so visible_when/required_when work there too — with NO
+// stepper bar and NO ?step param.
+test.describe("Flat forms with conditions", () => {
+  const createdTasks: string[] = [];
+  test.afterEach(async ({ api }) => {
+    while (createdTasks.length) {
+      const id = createdTasks.pop()!;
+      await api.deleteEntity("tasks", id).catch(() => {});
+    }
+  });
+
+  test("no stepper bar and no ?step on a single-page form", async ({
+    appPage,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_flat_conditional");
+    expect(await formPage.wizardStepTitles()).toEqual([]); // no pills
+    expect(formPage.readStepParam()).toBeNull(); // no ?step
+    expect(await formPage.isFieldVisible("title")).toBeTruthy();
+  });
+
+  test("visible_when reveals a field inline on a flat form", async ({
+    appPage,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_flat_conditional");
+
+    expect(await formPage.isFieldVisible("assignee")).toBeFalsy();
+    await formPage.setCheckbox("done", true);
+    expect(await formPage.isFieldVisible("assignee")).toBeTruthy();
+    await formPage.setCheckbox("done", false);
+    expect(await formPage.isFieldVisible("assignee")).toBeFalsy();
+  });
+
+  test("required_when blocks Create until the revealed field is filled", async ({
+    appPage,
+    api,
+  }) => {
+    const formPage = new FormPage(appPage);
+    await formPage.navigateToCreateForm("task_flat_conditional");
+
+    await formPage.fillField("title", "Flat conditional");
+    await formPage.setCheckbox("done", true); // assignee now required
+
+    // Empty assignee blocks Create.
+    await formPage.clickCreate();
+    expect(await formPage.hasValidationError()).toBeTruthy();
+
+    // Fill it, then Create succeeds and persists the value.
+    await formPage.fillField("assignee", "bob");
+    const created = await formPage.submitAndExpectCreate("tasks");
+    createdTasks.push(created.id);
+    const entity = await api.getEntity("tasks", created.id);
+    expect(entity.properties.assignee).toBe("bob");
   });
 });
