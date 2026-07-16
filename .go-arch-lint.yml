@@ -54,6 +54,7 @@ components:
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
+  predicatefns:     { in: internal/predicatefns }
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
@@ -523,6 +524,11 @@ deps:
     mayDependOn: []
     canUse:
       - gopherlua
+  predicatefns:
+    mayDependOn:
+      - predicate
+      - filter
+      - metamodel
   statemachine:
     mayDependOn:
       - entity

@@ -68,6 +68,31 @@
 // promoted to float64 at binding time; values outside the 53-bit integer
 // range round per IEEE 754.
 //
+// The separate Int type (int64) exists for integer-typed metamodel
+// properties so comparisons are exact and non-lexicographic — there is no
+// Int *literal* syntax, so a number literal compared against an Int-typed
+// attribute is coerced to Int at compile time (rejecting a fractional
+// literal). See the Typed values section.
+//
+// # Typed values (Int, Date) and literal coercion
+//
+// Beyond the scalar primitives, the engine carries two metamodel-driven
+// typed values: Int (int64) and Date (time.Time, instant-granular, backing
+// both `date` and `datetime` properties). There is no literal syntax for
+// either — an integer is written as a number literal and a date as a string
+// literal. When one operand of a comparison is an Int/Date-typed expression
+// (declared via IntType / DateTypeWithLayout on the Env) and the other is a
+// bare literal, the literal is COERCED to the operand's type at COMPILE
+// time: a number literal becomes an Int (fractional literals are rejected),
+// a string literal is parsed to a Date against the field's declared layout.
+//
+// Coercion at compile time is deliberate: it keeps Eval a pure function
+// with no parsing and no metamodel access (the Date is already a time.Time
+// by the time Eval runs), which is what lets the engine be used on the
+// read/ACL path. The metamodel->Env mapping (property type -> predicate
+// type, incl. the date layout) lives in internal/predicatefns so this
+// package stays dependency-free.
+//
 // # Security model
 //
 // The walker rejects any AST node not on the allow-list (default-reject

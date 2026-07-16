@@ -31,12 +31,44 @@ func (primitiveType) sealedType() {}
 var (
 	BoolType   Type = primitiveType{"bool"}
 	NumberType Type = primitiveType{"number"}
+	IntType    Type = primitiveType{"int"}
+	// DateType is the bare date type (no parse layout). It is
+	// equalsType-compatible with any DateTypeWithLayout(...) — see that
+	// constructor. Use DateTypeWithLayout at the metamodel->Env adapter
+	// so string date literals coerce against the field's real format.
+	DateType   Type = dateType{}
 	StringType Type = primitiveType{"string"}
 	NilType    Type = primitiveType{"nil"}
 	// AnyType only appears in host-function signatures: it accepts
 	// any Value. Use sparingly — it short-circuits the type checker.
 	AnyType Type = primitiveType{"any"}
 )
+
+// DateTypeWithLayout returns a date type descriptor that additionally
+// carries the Go time layout used to parse bare string/number date
+// literals against this field at COMPILE time (see walkRelational
+// literal coercion, RR-A3EZR). It is equalsType-compatible with the
+// bare DateType singleton — a value is still a Date, comparisons are
+// still date-ordered — so only the compile-time coercion path reads the
+// layout; eval never does. The metamodel->Env adapter supplies the
+// layout (e.g. "2006-01-02" for date, time.RFC3339 for datetime) so the
+// predicate package need not import metamodel (arch_test forbids it).
+//
+// An empty layout falls back to the built-in default layouts at
+// coercion time (see coerceDateLiteral).
+func DateTypeWithLayout(layout string) Type { return dateType{layout: layout} }
+
+// dateType is the parameterized date descriptor. Its zero value (empty
+// layout) is what the DateType singleton is, so DateType and any
+// DateTypeWithLayout(...) are mutually equalsType-compatible.
+type dateType struct{ layout string }
+
+func (dateType) typeName() string { return "date" }
+func (dateType) equalsType(o Type) bool {
+	_, ok := o.(dateType)
+	return ok
+}
+func (dateType) sealedType() {}
 
 // Record is a named-field type descriptor. Used both as a static
 // declaration and as a runtime Value (see value.go). The fields map

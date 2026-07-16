@@ -63,10 +63,104 @@ func (w *walker) walkRelational(e *ast.RelationalOpExpr) (node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Literal coercion (RR-A3EZR): predicate has no int/date literal
+	// syntax — `entity.due < '2026-02-01'` writes the date as a string
+	// literal and `entity.count > 9` writes the int as a number literal.
+	// When exactly one side is an int/date-typed expression and the
+	// other is a bare literal constNode, retype the literal to match at
+	// COMPILE time (parse the date string against the field's layout;
+	// convert the number to int64). This keeps eval pure — no parsing,
+	// no metamodel lookup at Eval — and lets the same-type checker below
+	// pass. Coercion is symmetric (either operand may be the literal).
+	lhs, rhs, err = w.coerceLiteralOperands(lhs, rhs, e.Line())
+	if err != nil {
+		return nil, err
+	}
 	if err := checkRelational(e.Operator, lhs.resultType(), rhs.resultType(), e.Line()); err != nil {
 		return nil, err
 	}
 	return &relationalNode{op: e.Operator, lhs: lhs, rhs: rhs}, nil
+}
+
+// coerceLiteralOperands retypes a bare literal operand to the int/date
+// type of the opposite operand, at compile time. It returns the
+// (possibly rewritten) operands. A literal that cannot be coerced to
+// the target type is a CompileError (e.g. a malformed date string, or a
+// non-integer number literal against an IntType field). If neither
+// side is a coercible literal-vs-typed pairing, the operands pass
+// through unchanged and the normal type check runs.
+func (w *walker) coerceLiteralOperands(lhs, rhs node, line int) (newLHS, newRHS node, err error) {
+	if coerced, handled, cErr := coerceOneLiteral(lhs, rhs.resultType(), line); handled {
+		return coerced, rhs, cErr
+	}
+	if coerced, handled, cErr := coerceOneLiteral(rhs, lhs.resultType(), line); handled {
+		return lhs, coerced, cErr
+	}
+	return lhs, rhs, nil
+}
+
+// coerceOneLiteral attempts to retype `lit` (only if it is a bare
+// literal constNode) to `target` (only if target is Int or Date). The
+// handled return reports whether this pairing was processed (a coercion
+// was attempted) — distinguishing "coerced or errored" from "not
+// applicable, leave operands alone."
+func coerceOneLiteral(lit node, target Type, line int) (out node, handled bool, err error) {
+	cn, ok := lit.(*constNode)
+	if !ok {
+		return lit, false, nil
+	}
+	switch {
+	case target.equalsType(IntType):
+		v, cErr := coerceIntLiteral(cn.v, line)
+		if cErr != nil {
+			return lit, true, cErr
+		}
+		return &constNode{v: v}, true, nil
+	case target.equalsType(DateType):
+		layout := ""
+		if dt, ok := target.(dateType); ok {
+			layout = dt.layout
+		}
+		v, cErr := coerceDateLiteral(cn.v, layout, line)
+		if cErr != nil {
+			return lit, true, cErr
+		}
+		return &constNode{v: v}, true, nil
+	}
+	return lit, false, nil
+}
+
+// coerceIntLiteral converts a number-literal Value to an Int, rejecting
+// a fractional value (e.g. `entity.count > 1.5` against an int field).
+// A String literal against an int field is a type mismatch left for the
+// checker to report, so it is passed through unchanged wrapped in an
+// error only when it is a Number that isn't integral.
+func coerceIntLiteral(v Value, line int) (Value, error) {
+	n, ok := v.(Number)
+	if !ok {
+		// Not a number literal (e.g. a string) — don't coerce; let the
+		// same-type checker produce the clearer "cannot compare" error.
+		return v, nil
+	}
+	if n.v != float64(int64(n.v)) {
+		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("cannot compare an int field with the non-integer literal %v", n.v)}
+	}
+	return NewInt(int64(n.v)), nil
+}
+
+// coerceDateLiteral parses a string-literal Value into a Date using the
+// field's layout (or built-in defaults when layout is empty). A
+// non-string literal is left unchanged for the checker to reject.
+func coerceDateLiteral(v Value, layout string, line int) (Value, error) {
+	s, ok := v.(String)
+	if !ok {
+		return v, nil
+	}
+	t, err := parseDateLiteral(s.v, layout)
+	if err != nil {
+		return nil, &CompileError{Line: line, Reason: err.Error()}
+	}
+	return NewDate(t), nil
 }
 
 // checkRelational enforces the equality / ordering rules documented in
@@ -103,8 +197,8 @@ func checkRelational(op string, lt, rt Type, line int) error {
 		if !lt.equalsType(rt) {
 			return &CompileError{Line: line, Reason: fmt.Sprintf("ordered comparison requires same type, got %s and %s", lt.typeName(), rt.typeName())}
 		}
-		if !lt.equalsType(NumberType) && !lt.equalsType(StringType) {
-			return &CompileError{Line: line, Reason: "ordered comparison requires number or string, got " + lt.typeName()}
+		if !isOrderedType(lt) {
+			return &CompileError{Line: line, Reason: "ordered comparison requires number, int, date, or string, got " + lt.typeName()}
 		}
 		return nil
 	}
@@ -112,6 +206,14 @@ func checkRelational(op string, lt, rt Type, line int) error {
 }
 
 func isNil(t Type) bool { return t.equalsType(NilType) }
+
+// isOrderedType reports whether a type supports ordered comparison
+// (<, <=, >, >=). Numbers, ints, dates, and strings order; bools,
+// nil, records, and lists do not.
+func isOrderedType(t Type) bool {
+	return t.equalsType(NumberType) || t.equalsType(IntType) ||
+		t.equalsType(DateType) || t.equalsType(StringType)
+}
 
 func (w *walker) walkLogical(e *ast.LogicalOpExpr) (node, error) {
 	switch e.Operator {

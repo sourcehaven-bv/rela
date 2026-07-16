@@ -1,5 +1,7 @@
 package predicate
 
+import "time"
+
 // Value is the sealed sum type the evaluator operates on. The
 // unexported sealedValue method prevents external packages from
 // inventing new variants; everything that round-trips through the
@@ -35,6 +37,39 @@ func NewNumberFromInt(i int) Number { return Number{v: float64(i)} }
 func (n Number) Float() float64 { return n.v }
 func (Number) Type() Type       { return NumberType }
 func (Number) sealedValue()     {}
+
+// Int is a concrete integer value backed by int64. It is a SEPARATE
+// variant from Number (which is float64) so integer-typed properties
+// compare exactly — no lossy float64 round-trip past 2^53 and no
+// lexicographic "10" < "9" surprise. A predicate never mixes Int and
+// Number in a comparison: the type checker (checkRelational) requires
+// same-type operands, and literal coercion (walkRelational) retypes a
+// number-literal RHS to Int when the LHS attribute is IntType.
+type Int struct{ v int64 }
+
+// NewInt constructs an Int value.
+func NewInt(i int64) Int { return Int{v: i} }
+
+// Int64 returns the underlying int64.
+func (i Int) Int64() int64 { return i.v }
+func (Int) Type() Type     { return IntType }
+func (Int) sealedValue()   {}
+
+// Date is a concrete instant value backed by time.Time. It backs both
+// the metamodel `date` and `datetime` property types; comparison is
+// always instant-granular (a bare date is midnight in its parsed
+// location), matching internal/filter's matchDate. The time.Time is
+// parsed at compile or bind time — never at Eval — so the engine keeps
+// its no-I/O-at-eval invariant (see doc.go, RR-A3EZR).
+type Date struct{ v time.Time }
+
+// NewDate constructs a Date value from a time.Time.
+func NewDate(t time.Time) Date { return Date{v: t} }
+
+// Time returns the underlying time.Time.
+func (d Date) Time() time.Time { return d.v }
+func (Date) Type() Type        { return DateType }
+func (Date) sealedValue()      {}
 
 // String is a concrete string value. Lua strings are byte-strings; we
 // preserve any bytes the caller binds, including embedded null bytes.
