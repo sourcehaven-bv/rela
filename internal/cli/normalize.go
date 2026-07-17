@@ -15,12 +15,12 @@ type NormalizeCmd struct {
 }
 
 // Run dispatches `rela normalize [type]`.
-func (c *NormalizeCmd) Run(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
+func (c *NormalizeCmd) Run(ctx context.Context, svc *readServices) error {
+	st := svc.Store
 
 	q := store.EntityQuery{}
 	if c.Type != "" {
-		resolvedType, _, err := resolveEntityType(svc.Meta(), c.Type)
+		resolvedType, err := resolveEntityType(svc.Meta, c.Type)
 		if err != nil {
 			return err
 		}

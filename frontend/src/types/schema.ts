@@ -19,9 +19,12 @@ export interface EntityType {
 }
 
 export interface PropertyDef {
-  type: 'string' | 'date' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
+  type: 'string' | 'date' | 'datetime' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
   required?: boolean
   values?: string[]
+  // Optional display labels keyed by enum value. Display-only: the stored/
+  // submitted value stays the raw value; labels never become wire identities.
+  labels?: Record<string, string>
   default?: string
   description?: string
   format?: string
@@ -64,6 +67,8 @@ export interface InverseDef {
 
 export interface CustomType {
   values: string[]
+  // Optional display labels keyed by value. Display-only; see PropertyDef.labels.
+  labels?: Record<string, string>
   default?: string
 }
 

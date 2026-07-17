@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -45,6 +46,20 @@ type serverFlags struct {
 	debugPprof      string
 	principalHeader string
 	readOnly        bool
+	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
+	// JWKS and stamp the verified subject as the principal. Provider-agnostic
+	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
+	// must be set to enable; empty ⇒ disabled.
+	jwtIssuer   string
+	jwtAudience string
+	jwtJWKSURL  string
+	jwtHeader   string
+	// Inbound-IdP webhook: verify a signed-JWT webhook body (same JWKS/issuer as
+	// the identity JWT, but its OWN audience) and dispatch to a named action that
+	// provisions a person entity. Both must be set to enable; empty ⇒ disabled.
+	// Requires the JWT identity flags above (the webhook reuses that JWKS).
+	webhookAudience string
+	webhookAction   string
 }
 
 // coverage-ignore: flag wiring — exercised at startup, not in tests
@@ -53,7 +68,7 @@ func parseFlags() *serverFlags {
 	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
 	flag.StringVar(&f.port, "port", "8080", "HTTP port to listen on")
 	flag.StringVar(&f.bind, "bind", "127.0.0.1",
-		"Network interface to bind to. Defaults to loopback. Use 0.0.0.0 to expose on the LAN (see docs/security.md).")
+		"Network interface to bind to. Defaults to loopback. Use 0.0.0.0 to expose on the LAN (see docs/server-security.md).")
 	flag.Var(&f.allowedOrigins, "allowed-origin",
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
@@ -66,11 +81,32 @@ func parseFlags() *serverFlags {
 			"Default empty: do not read any header. Operators can override per-process via "+
 			"$RELA_DATAENTRY_USER (wins over the header). "+
 			"WARNING: the header is only as trustworthy as the upstream proxy that sets it. "+
-			"See docs/security.md.")
+			"See docs/server-security.md.")
 	flag.BoolVar(&f.readOnly, "read-only", false,
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
+	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
+	// is safer than --principal-header (which merely trusts the proxy set a header).
+	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
+		"Expected issuer (iss) of the identity JWT. Set with -jwt-audience and -jwt-jwks-url to "+
+			"enable cryptographic principal verification.")
+	flag.StringVar(&f.jwtAudience, "jwt-audience", os.Getenv("RELA_JWT_AUDIENCE"),
+		"Expected audience (aud) of the identity JWT — this server's id, per the proxy config.")
+	flag.StringVar(&f.jwtJWKSURL, "jwt-jwks-url", os.Getenv("RELA_JWT_JWKS_URL"),
+		"HTTPS URL of the proxy's JWKS, used to verify the identity JWT's ES256 signature.")
+	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
+		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
+			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
+	// Inbound-IdP webhook flags (env fallbacks $RELA_WEBHOOK_*). Enable POST
+	// /webhooks/idp: a signed-JWT callback that provisions a user via an action.
+	flag.StringVar(&f.webhookAudience, "webhook-audience", os.Getenv("RELA_WEBHOOK_AUDIENCE"),
+		"Expected audience (aud) of an inbound IdP webhook JWT — distinct from -jwt-audience so an "+
+			"identity assertion can't be replayed as a webhook. Set with -webhook-action to enable "+
+			"POST /webhooks/idp. Reuses the -jwt-issuer/-jwt-jwks-url trust root.")
+	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
+		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
+			"receives event/user_id/org_id as params and provisions the user.")
 	// Note: there is no --database-url flag. The postgres build reads the DSN
 	// from $RELA_DATABASE_URL only, so the credential never lands in process
 	// listings or shell history. See appbuild.Config.DatabaseURL.
@@ -90,6 +126,129 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
 	}
 	return opts
+}
+
+// envOr returns $key, or def when unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// wirePrincipalResolvers installs the principal-resolver chain on the app.
+//
+// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch) wins over any
+// identity source; then the cryptographically-VERIFIED JWT assertion; then the
+// plain (proxy-trusted) header; then "unknown". A verified JWT is preferred over
+// the plain header because it proves authenticity.
+//
+// coverage-ignore: startup wiring.
+func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
+	jwtResolver, jwtHeader := buildJWTResolver(idv, f)
+	if jwtHeader != "" && f.principalHeader != "" {
+		// Both a verified JWT and a plain trusted header are enabled. Because the
+		// JWT sits ahead of the plain header in the chain, a JWT verification
+		// failure falls THROUGH to the spoofable plain header — a downgrade path an
+		// attacker could exploit by, e.g., briefly disrupting the JWKS. Warn loudly.
+		slog.Warn("both --jwt-* and --principal-header are enabled: a JWT failure "+
+			"downgrades to the plain (spoofable) header. Prefer one identity source. "+
+			"See docs/server-security.md.",
+			"jwt_header", jwtHeader, "principal_header", f.principalHeader)
+	}
+	app.SetPrincipalResolver(dataentry.ChainResolvers(
+		dataentry.EnvPrincipalResolver(),
+		jwtResolver,
+		dataentry.HeaderPrincipalResolver(f.principalHeader),
+	))
+	// Vary on the active identity header: under ACL, API responses are
+	// per-principal (TKT-VMD8). When JWT identity is enabled its header determines
+	// the principal, so vary on that; else the plain header.
+	varyHeader := f.principalHeader
+	if jwtHeader != "" {
+		varyHeader = jwtHeader
+	}
+	app.SetPrincipalHeader(varyHeader)
+}
+
+// buildIdentityVerifier builds the shared signed-JWT verifier from the flags, or
+// returns nil when JWT identity is disabled (any of issuer/audience/jwks unset). A
+// build failure — a bad config, a non-https JWKS URL, or an unreachable JWKS — is
+// fatal so identity never silently no-ops (jwtauth.New fetches the JWKS up front
+// and errors if it can't). The one verifier is reused by both the principal
+// resolver and the webhook receiver, so the JWKS is fetched once.
+//
+// coverage-ignore: startup wiring — exercised via jwtauth's own tests.
+func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifier {
+	if f.jwtIssuer == "" || f.jwtAudience == "" || f.jwtJWKSURL == "" {
+		return nil
+	}
+	v, err := jwtauth.New(ctx, jwtauth.Config{
+		Issuer:   f.jwtIssuer,
+		Audience: f.jwtAudience,
+		JWKSURL:  f.jwtJWKSURL,
+	})
+	if err != nil {
+		slog.Error("jwt identity: failed to initialize verifier", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("jwt identity enabled", "issuer", f.jwtIssuer, "header", f.jwtHeader)
+	return v
+}
+
+// buildJWTResolver wraps the shared verifier into a principal resolver, returning
+// it plus the header name it reads. A nil verifier (JWT identity disabled) yields
+// an inert resolver + "" header.
+//
+// coverage-ignore: startup wiring — exercised via the resolver's own tests.
+func buildJWTResolver(idv *jwtauth.Verifier, f *serverFlags) (resolver dataentry.PrincipalResolver, header string) {
+	if idv == nil {
+		return dataentry.JWTPrincipalResolver(nil, ""), ""
+	}
+	return dataentry.JWTPrincipalResolver(idv, f.jwtHeader), f.jwtHeader
+}
+
+// wireWebhookReceiver enables POST /webhooks/idp when -webhook-audience and
+// -webhook-action are both set. It requires JWT identity (the webhook reuses that
+// verifier's JWKS/issuer); a webhook audience without JWT identity, or a build
+// failure, is fatal so a misconfiguration fails loud rather than silently leaving
+// the endpoint off.
+//
+// coverage-ignore: startup wiring — exercised via the shim + verifier tests.
+func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
+	if f.webhookAudience == "" && f.webhookAction == "" {
+		return // disabled
+	}
+	if f.webhookAudience == "" || f.webhookAction == "" {
+		slog.Error("webhook: both -webhook-audience and -webhook-action are required to enable POST /webhooks/idp")
+		os.Exit(1)
+	}
+	if idv == nil {
+		slog.Error("webhook: -webhook-* requires JWT identity (-jwt-issuer/-jwt-audience/-jwt-jwks-url); the webhook reuses that JWKS")
+		os.Exit(1)
+	}
+	wv, err := jwtauth.NewWebhookVerifier(idv, f.webhookAudience)
+	if err != nil {
+		slog.Error("webhook: failed to initialize verifier", "error", err)
+		os.Exit(1)
+	}
+	app.SetWebhookReceiver(webhookVerifierAdapter{wv}, f.webhookAction)
+	slog.Info("idp webhook enabled", "audience", f.webhookAudience, "action", f.webhookAction)
+}
+
+// webhookVerifierAdapter bridges the concrete jwtauth.WebhookVerifier to the
+// dataentry receiver's expected shape, translating jwtauth.WebhookClaims into
+// dataentry.WebhookClaims. This adapter lives in the wiring layer — the one place
+// allowed to import both packages — so dataentry needn't depend on jwtauth (the
+// inward-pointing layering rule, mirroring the JWTPrincipalResolver seam).
+type webhookVerifierAdapter struct{ v *jwtauth.WebhookVerifier }
+
+func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (dataentry.WebhookClaims, error) {
+	c, err := a.v.VerifyWebhook(ctx, raw)
+	if err != nil {
+		return dataentry.WebhookClaims{}, err
+	}
+	return dataentry.WebhookClaims{Event: c.Event, UserID: c.UserID, OrgID: c.OrgID, ID: c.ID}, nil
 }
 
 // coverage-ignore: main function - entry point
@@ -161,22 +320,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch)
-	// wins over an incoming header; either falls through to
-	// "unknown" when both are absent. Empty --principal-header
-	// keeps the legacy default behavior.
-	app.SetPrincipalResolver(dataentry.ChainResolvers(
-		dataentry.EnvPrincipalResolver(),
-		dataentry.HeaderPrincipalResolver(f.principalHeader),
-	))
-	// Vary on the identity header: under ACL, API responses are
-	// per-principal (TKT-VMD8). No-op when the flag is empty.
-	app.SetPrincipalHeader(f.principalHeader)
+	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
+	// share it between the principal resolver and the webhook receiver so the JWKS
+	// is fetched a single time.
+	idv := buildIdentityVerifier(context.Background(), f)
+	wirePrincipalResolvers(app, f, idv)
+	wireWebhookReceiver(app, f, idv)
 
 	srv := newHTTPServer(addr, app.NewRouter())
 
 	if !isLoopbackHost(f.bind) {
-		slog.Warn("rela-server bound beyond loopback; see docs/security.md for threat model",
+		slog.Warn("rela-server bound beyond loopback; see docs/server-security.md for threat model",
 			"bind", f.bind)
 		if f.principalHeader != "" {
 			// The combination — exposed bind + header-trusted principal —
@@ -186,7 +340,7 @@ func main() {
 			slog.Warn("--principal-header set on non-loopback bind: "+
 				"audit attribution trusts an HTTP header from the network; "+
 				"only safe if a reverse proxy strips + replaces the header. "+
-				"See docs/security.md.",
+				"See docs/server-security.md.",
 				"bind", f.bind, "header", f.principalHeader)
 		}
 		if shouldWarnNoACL(svc.ACL(), f.readOnly) {
@@ -200,7 +354,7 @@ func main() {
 			// the gap at startup rather than at first-incident time.
 			slog.Warn("rela-server bound beyond loopback without acl.yaml: "+
 				"every reachable client can write. Add an acl.yaml at the project "+
-				"root or pass --read-only. See docs/security.md.",
+				"root or pass --read-only. See docs/server-security.md.",
 				"bind", f.bind)
 		}
 	}
@@ -249,7 +403,7 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		// long-lived responses and would otherwise be killed mid-flight.
 		// Trade-off: a slow-reading client can hold a goroutine open as
 		// long as it accepts data slowly. On a loopback bind that risk
-		// is limited to local processes; see docs/security.md for the
+		// is limited to local processes; see docs/server-security.md for the
 		// residual exposure when --bind opts into LAN access.
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,

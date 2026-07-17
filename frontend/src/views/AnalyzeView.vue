@@ -1,18 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { analyze } from '@/api'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
-import { useSchemaStore } from '@/stores'
-import { useScriptErrorStore } from '@/stores/scriptError'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
 import PageLayout from '@/components/common/PageLayout.vue'
 import PageTitle from '@/components/common/PageTitle.vue'
+import IssuesTable from '@/components/common/IssuesTable.vue'
 
-const router = useRouter()
-const schemaStore = useSchemaStore()
-const scriptErrorStore = useScriptErrorStore()
 const backTarget = useBackTarget()
 
 // Check type definitions with descriptions. Three-way contract:
@@ -105,10 +100,6 @@ function shouldShowIssues(checkKey: string): boolean {
   return filterCheckType.value === checkKey
 }
 
-function getEntityTitle(issue: AnalyzeIssue): string {
-  return issue.title?.trim() || issue.entityId
-}
-
 // Methods
 async function loadAnalysis() {
   loading.value = true
@@ -118,30 +109,6 @@ async function loadAnalysis() {
     console.error('Analyze error:', err)
   } finally {
     loading.value = false
-  }
-}
-
-function getEntityTypeLabel(type: string): string {
-  const def = schemaStore.entityTypes.get(type)
-  return def?.label || type
-}
-
-// An issue is clickable if it has a structured Lua-failure envelope
-// (opens ScriptErrorDialog) or a real entity (navigates). LoadError
-// rows have neither and stay inert.
-function isClickable(issue: AnalyzeIssue): boolean {
-  if (issue.scriptError) return true
-  return Boolean(issue.entityId && issue.entityType)
-}
-
-function onIssueClick(issue: AnalyzeIssue, ev: Event) {
-  if (issue.scriptError) {
-    const trigger = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
-    scriptErrorStore.show(issue.scriptError, trigger)
-    return
-  }
-  if (issue.entityId && issue.entityType) {
-    router.push(`/entity/${issue.entityType}/${issue.entityId}`)
   }
 }
 
@@ -158,10 +125,7 @@ onMounted(() => {
     </template>
 
     <template #topbar>
-      <PageTitle
-        title="Analysis"
-        subtitle="Validation checks across all entities and relations"
-      />
+      <PageTitle title="Analysis" subtitle="Validation checks across all entities and relations" />
     </template>
 
     <template #actions>
@@ -171,7 +135,7 @@ onMounted(() => {
     </template>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
+      <div class="spinner" />
       <span>Running analysis...</span>
     </div>
 
@@ -188,11 +152,7 @@ onMounted(() => {
 
       <!-- Check type cards -->
       <div class="check-cards">
-        <div
-          v-for="checkType in CHECK_TYPES"
-          :key="checkType.key"
-          class="check-card"
-        >
+        <div v-for="checkType in CHECK_TYPES" :key="checkType.key" class="check-card">
           <div class="check-header">
             <h3 class="check-title">
               {{ checkType.label }}
@@ -209,83 +169,13 @@ onMounted(() => {
           </div>
 
           <template v-else>
-            <template v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0">
-              <!-- Desktop: dense table layout -->
-              <div class="issues-table-wrapper">
-                <table class="issues-table">
-                  <thead>
-                    <tr>
-                      <th>Entity</th>
-                      <th>Type</th>
-                      <th>Message</th>
-                      <th>Severity</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="(issue, idx) in getFilteredIssuesForCheck(checkType.key)"
-                      :key="`${checkType.key}-${idx}-${issue.entityType}-${issue.entityId}`"
-                      class="issue-row"
-                      :class="{ clickable: isClickable(issue) }"
-                      :tabindex="isClickable(issue) ? 0 : -1"
-                      @click="onIssueClick(issue, $event)"
-                      @keydown.enter="onIssueClick(issue, $event)"
-                      @keydown.space.prevent="onIssueClick(issue, $event)"
-                    >
-                      <td class="entity-cell">
-                        <template v-if="issue.entityId">
-                          <span class="entity-title">{{ getEntityTitle(issue) }}</span>
-                          <span class="entity-id">{{ issue.entityId }}</span>
-                        </template>
-                        <template v-else>
-                          <span class="entity-empty">&mdash;</span>
-                        </template>
-                      </td>
-                      <td>
-                        <span v-if="issue.entityType" class="type-badge">{{ getEntityTypeLabel(issue.entityType) }}</span>
-                        <span v-else class="entity-empty">&mdash;</span>
-                      </td>
-                      <td class="message-cell">{{ issue.message }}</td>
-                      <td>
-                        <span class="severity-badge" :class="issue.severity">
-                          {{ issue.severity.toUpperCase() }}
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- Mobile: stacked cards. The 4-column table is too cramped
-                   on iPhone widths; cards expose the same fields more
-                   readably. -->
-              <ul class="issues-card-list">
-                <li
-                  v-for="(issue, idx) in getFilteredIssuesForCheck(checkType.key)"
-                  :key="`${checkType.key}-card-${idx}-${issue.entityType}-${issue.entityId}`"
-                  class="issue-card"
-                  :class="{ clickable: isClickable(issue) }"
-                  :tabindex="isClickable(issue) ? 0 : -1"
-                  @click="onIssueClick(issue, $event)"
-                  @keydown.enter="onIssueClick(issue, $event)"
-                  @keydown.space.prevent="onIssueClick(issue, $event)"
-                >
-                  <div class="issue-card-row issue-card-head">
-                    <span v-if="issue.entityId" class="entity-title">{{ getEntityTitle(issue) }}</span>
-                    <span v-else class="entity-empty">&mdash;</span>
-                    <span class="severity-badge" :class="issue.severity">
-                      {{ issue.severity.toUpperCase() }}
-                    </span>
-                  </div>
-                  <div class="issue-card-row issue-card-meta">
-                    <span v-if="issue.entityType" class="type-badge">{{ getEntityTypeLabel(issue.entityType) }}</span>
-                    <span v-else class="entity-empty">&mdash;</span>
-                    <span v-if="issue.entityId" class="entity-id">{{ issue.entityId }}</span>
-                  </div>
-                  <div class="issue-card-message">{{ issue.message }}</div>
-                </li>
-              </ul>
-            </template>
+            <IssuesTable
+              v-if="
+                shouldShowIssues(checkType.key) &&
+                getFilteredIssuesForCheck(checkType.key).length > 0
+              "
+              :issues="getFilteredIssuesForCheck(checkType.key)"
+            />
           </template>
         </div>
       </div>
@@ -430,173 +320,5 @@ onMounted(() => {
 
 .check-icon {
   font-size: 16px;
-}
-
-/* Issues table */
-.issues-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.issues-table th {
-  text-align: left;
-  padding: 10px 16px;
-  background: var(--hover-bg);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted-text);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.issues-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  font-size: 14px;
-}
-
-.issue-row {
-  transition: background 0.15s;
-}
-
-.issue-row.clickable {
-  cursor: pointer;
-}
-
-.issue-row.clickable:hover,
-.issue-row.clickable:focus-visible {
-  background: var(--hover-bg);
-  outline: none;
-}
-
-.issue-row:last-child td {
-  border-bottom: none;
-}
-
-/* `display: flex` on the <td> collapses the cell box so its border
- * doesn't span the row height (visible discontinuity between rows).
- * Keep the td as a normal table-cell and stack the two spans with
- * block display + margin instead. */
-.entity-title {
-  display: block;
-  color: var(--accent-color, #6366f1);
-  font-weight: 500;
-}
-
-.entity-id {
-  display: block;
-  margin-top: 2px;
-  font-family: monospace;
-  font-size: 12px;
-  color: var(--muted-text);
-}
-
-.entity-empty {
-  color: var(--muted-text);
-  font-size: 14px;
-}
-
-.type-badge {
-  display: inline-block;
-  padding: 4px 8px;
-  background: var(--hover-bg);
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--muted-text);
-}
-
-.message-cell {
-  color: var(--text-color);
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.severity-badge {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.severity-badge.error {
-  background: color-mix(in srgb, var(--error-color) 15%, transparent);
-  color: var(--error-color);
-}
-
-.severity-badge.warning {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
-}
-
-.issues-table-wrapper {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Mobile-only stacked card list. Hidden on desktop; the table is the
-   primary UI there. Each card surfaces the same four columns
-   (entity / type / message / severity) but laid out vertically so they
-   read comfortably at iPhone widths. */
-.issues-card-list {
-  display: none;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.issue-card {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.issue-card:last-child {
-  border-bottom: none;
-}
-
-.issue-card:hover {
-  background: var(--hover-bg);
-}
-
-.issue-card-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.issue-card-head {
-  margin-bottom: 6px;
-}
-
-.issue-card-head .entity-title {
-  font-size: 14px;
-  color: var(--accent-color, #6366f1);
-}
-
-.issue-card-meta {
-  margin-bottom: 8px;
-}
-
-.issue-card-message {
-  font-size: 13px;
-  color: var(--text-color);
-  line-height: 1.4;
-}
-
-@media (max-width: 768px) {
-  /* Replace the cramped 4-column table with stacked cards on mobile. */
-  .issues-table-wrapper {
-    display: none;
-  }
-
-  .issues-card-list {
-    display: block;
-  }
 }
 </style>

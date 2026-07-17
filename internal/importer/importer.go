@@ -590,7 +590,7 @@ func parseCSV(r io.Reader) (*ImportData, error) {
 
 		// Add other columns as properties
 		for col, idx := range colIndex {
-			if col == "id" || col == "type" || idx >= len(row) {
+			if entity.IsReservedEntityKey(col) || idx >= len(row) {
 				continue
 			}
 			value := strings.TrimSpace(row[idx])

@@ -164,7 +164,7 @@ func TestThemeImport_RoundTrip(t *testing.T) {
 	}
 
 	dest := newHandlerTestApp(t)
-	if dest.State().UserLogoExt != "" {
+	if _, ext, _ := dest.logo.Get(); ext != "" {
 		t.Fatal("dest should not start with a logo")
 	}
 
@@ -190,11 +190,11 @@ func TestThemeImport_RoundTrip(t *testing.T) {
 		t.Errorf("logoUrl: %q", resp.LogoURL)
 	}
 
-	if !bytes.Equal(dest.State().UserLogoBytes, pngBytes) {
-		t.Error("dest UserLogoBytes does not match round-tripped bytes")
+	if gotBytes, _, _ := dest.logo.Get(); !bytes.Equal(gotBytes, pngBytes) {
+		t.Error("dest logo bytes do not match round-tripped bytes")
 	}
-	if dest.State().UserPalette != nil {
-		t.Error("dest UserPalette should not be auto-saved on import")
+	if dest.palette.UserPalette() != nil {
+		t.Error("dest user palette should not be auto-saved on import")
 	}
 }
 
@@ -219,7 +219,7 @@ func TestThemeImport_Errors(t *testing.T) {
 			if !strings.Contains(w.Body.String(), tt.wantSubstr) {
 				t.Errorf("body: %q does not contain %q", w.Body.String(), tt.wantSubstr)
 			}
-			if app.State().UserLogoExt != "" {
+			if _, ext, _ := app.logo.Get(); ext != "" {
 				t.Error("rejected import must not have mutated state")
 			}
 		})

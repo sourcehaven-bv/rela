@@ -14,10 +14,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
-// schemaTestFixture builds a *cliServices around the given metamodel.
-func schemaTestFixture(t *testing.T, meta *metamodel.Metamodel) *cliServices {
+// schemaTestFixture builds a *readServices around the given metamodel.
+func schemaTestFixture(t *testing.T, meta *metamodel.Metamodel) *readServices {
 	t.Helper()
-	return newStoreSeeder(meta).build(t)
+	return newStoreSeeder(meta).build(t).read
 }
 
 func TestSchemaOverview(t *testing.T) {
@@ -508,7 +508,7 @@ func TestSchemaGraphviz(t *testing.T) {
 	svc := schemaTestFixture(t, meta)
 
 	_, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("schema graphviz failed: %v", err)
@@ -520,7 +520,7 @@ func TestSchemaGraphvizOutput(t *testing.T) {
 	svc := schemaTestFixture(t, meta)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("schema graphviz failed: %v", err)
@@ -575,7 +575,7 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	svc := schemaTestFixture(t, meta)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), true, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, true, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("schema graphviz with constraints failed: %v", err)
@@ -606,7 +606,7 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 	svc := schemaTestFixture(t, meta)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("schema graphviz with colors failed: %v", err)
@@ -640,7 +640,7 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 	svc := schemaTestFixture(t, meta)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("schema graphviz with multiple from/to failed: %v", err)
@@ -749,7 +749,7 @@ func schemaGraphvizFixture(
 	t *testing.T,
 	ents map[string]metamodel.EntityDef,
 	rels map[string]metamodel.RelationDef,
-) *cliServices {
+) *readServices {
 	t.Helper()
 	meta := &metamodel.Metamodel{
 		Version:   "1.0",
@@ -757,7 +757,7 @@ func schemaGraphvizFixture(
 		Entities:  ents,
 		Relations: rels,
 	}
-	return newStoreSeeder(meta).build(t)
+	return newStoreSeeder(meta).build(t).read
 }
 
 func TestSchemaGraphvizExclude(t *testing.T) {
@@ -774,7 +774,7 @@ func TestSchemaGraphvizExclude(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, []string{"c"}, false, false)
+		return runSchemaGraphviz(svc.Meta, false, []string{"c"}, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -807,7 +807,7 @@ func TestSchemaGraphvizLegendFiveTargets(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -839,7 +839,7 @@ func TestSchemaGraphvizHubIsolatedTargets(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -883,7 +883,7 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -934,7 +934,7 @@ func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -964,7 +964,7 @@ func TestSchemaGraphvizFewTargetsPlain(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -997,7 +997,7 @@ func TestSchemaGraphvizDropsEmptyNode(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -1026,7 +1026,7 @@ func TestSchemaGraphvizNoLegendFlag(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, true)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, true)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -1051,7 +1051,7 @@ func TestSchemaGraphvizNoBundleFlag(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, true, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, true, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -1153,7 +1153,7 @@ func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)
@@ -1210,7 +1210,7 @@ func TestSchemaGraphvizEscapesHTML(t *testing.T) {
 	)
 
 	result, err := captureStdoutVoid(t, func() error {
-		return runSchemaGraphviz(svc.Meta(), false, nil, false, false)
+		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
 		t.Fatalf("runSchemaGraphviz: %v", err)

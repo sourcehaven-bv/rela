@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -114,8 +115,8 @@ func (s *countingStore) ListEntities(ctx context.Context, q store.EntityQuery) i
 
 // failingCreateStore wraps a store and forces the next N CreateEntity
 // calls to return a sentinel non-conflict error. Used to verify that
-// upsertEntity propagates non-conflict errors instead of falling
-// through to UpdateEntity.
+// createCore propagates a non-conflict store error instead of masking
+// it as a fall-through to UpdateEntity.
 type failingCreateStore struct {
 	store.Store
 	err         error
@@ -151,18 +152,24 @@ func parseMeta(t *testing.T) *metamodel.Metamodel {
 func newManager(t *testing.T, automations []automation.Automation) (*entitymanager.Manager, *countingStore) {
 	t.Helper()
 	cs := &countingStore{Store: memstore.New()}
+	meta := parseMeta(t)
+	machines, err := statemachine.Compile(meta)
+	if err != nil {
+		t.Fatalf("statemachine.Compile: %v", err)
+	}
 	deps := entitymanager.Deps{
-		Store:     cs,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       cs,
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: machines,
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
-		runner, err := autocascade.New(autocascade.Deps{Engine: engine})
-		if err != nil {
-			t.Fatalf("autocascade.New: %v", err)
+		runner, rerr := autocascade.New(autocascade.Deps{Engine: engine})
+		if rerr != nil {
+			t.Fatalf("autocascade.New: %v", rerr)
 		}
 		deps.Automations = engine
 		deps.Cascade = runner
@@ -258,6 +265,20 @@ func TestNew_RejectsNilACL(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsNilTransitions(t *testing.T) {
+	t.Parallel()
+	_, err := entitymanager.New(entitymanager.Deps{
+		Store:     memstore.New(),
+		Meta:      parseMeta(t),
+		Templater: nopTemplater{},
+		Audit:     audit.Nop{},
+		ACL:       acl.NopACL{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Transitions") {
+		t.Fatalf("expected Transitions-required error, got %v", err)
+	}
+}
+
 func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 	t.Parallel()
 	engine := automation.NewEngine(nil)
@@ -267,6 +288,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 		Automations: engine,
 	})
 	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
@@ -277,11 +299,12 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 func TestNew_AllowsNoAutomation(t *testing.T) {
 	t.Parallel()
 	if _, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -432,16 +455,15 @@ func TestCreate_WritesTwiceWithAutomationProperty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
-	// The initial create is a direct CreateEntity (no upsert fallback —
-	// a create must never become an update). The post-automation
-	// re-write goes through upsertEntity, which runs
-	// Create→conflict→Update. So creates=2 (initial + upsert probe),
-	// updates=1 (the upsert fallback).
-	if got := cs.creates.Load(); got != 2 {
-		t.Errorf("CreateEntity calls = %d, want 2 (initial create + upsert probe)", got)
+	// The initial create is a direct CreateEntity (a create must never
+	// become an update). The post-automation re-write is now a direct
+	// UpdateEntity (the row already exists from the initial create — no
+	// upsert fallback anywhere, BUG-ZWTDH9). So creates=1, updates=1.
+	if got := cs.creates.Load(); got != 1 {
+		t.Errorf("CreateEntity calls = %d, want 1 (initial create only)", got)
 	}
 	if got := cs.updates.Load(); got != 1 {
-		t.Errorf("UpdateEntity calls = %d, want 1", got)
+		t.Errorf("UpdateEntity calls = %d, want 1 (post-automation re-write)", got)
 	}
 	if got := result.Entity.GetString("status"); got != wantStatus {
 		t.Errorf("status = %q, want %q", got, wantStatus)
@@ -556,13 +578,13 @@ func TestCreate_CascadeNoRecursion(t *testing.T) {
 
 	// Pin the invariant through store-call counts. Single-dispatch
 	// shape: requirement create (1) + cascade checklist create (1) +
-	// childAuto's Set writing via the Create→conflict→Update upsert
-	// (1 create attempt + 1 update) = 3 creates, 1 update. If the
-	// cascade re-entered Manager.CreateEntity, childAuto would be
-	// dispatched a second time, adding another conflict-create +
-	// update pair (4/2).
-	if got := cs.creates.Load(); got != 3 {
-		t.Errorf("store CreateEntity calls = %d, want 3 (recursion would add a 4th)", got)
+	// childAuto's Set persisted via cascade WriteEntity, now a direct
+	// UpdateEntity (no upsert probe — BUG-ZWTDH9) = 2 creates, 1 update.
+	// If the cascade re-entered Manager.CreateEntity, childAuto would be
+	// dispatched a second time, adding another create + update pair
+	// (3 creates / 2 updates).
+	if got := cs.creates.Load(); got != 2 {
+		t.Errorf("store CreateEntity calls = %d, want 2 (recursion would add a 3rd)", got)
 	}
 	if got := cs.updates.Load(); got != 1 {
 		t.Errorf("store UpdateEntity calls = %d, want 1 (recursion would double-fire childAuto)", got)
@@ -607,6 +629,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
 		ACL:          acl.NopACL{},
+		Transitions:  statemachine.EmptySet(),
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
@@ -775,6 +798,49 @@ func TestRename_NotFoundReturnsTypedError(t *testing.T) {
 	}
 }
 
+// TestRename_TargetExistsDoesNotOverwrite pins BUG-5QDV6F: renaming onto
+// an ID another entity already occupies must fail with
+// ErrEntityAlreadyExists and leave the target untouched — never clobber
+// it. Routing through the atomic store.RenameEntity makes this the
+// store's conflict check (no non-atomic create-then-update window), and
+// the counting store confirms the rename performs zero writes.
+func TestRename_TargetExistsDoesNotOverwrite(t *testing.T) {
+	t.Parallel()
+	mgr, cs := newManager(t, nil)
+	ctx := context.Background()
+	src := createReq(t, mgr, "source")
+	dst := createReq(t, mgr, "occupied target")
+
+	creates, updates, deletes := cs.creates.Load(), cs.updates.Load(), cs.deletes.Load()
+
+	_, err := mgr.RenameEntity(ctx, src.ID, dst.ID, entity.RenameOptions{})
+	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("expected ErrEntityAlreadyExists, got %v", err)
+	}
+	if got := cs.creates.Load() - creates; got != 0 {
+		t.Errorf("conflicting rename creates = %d, want 0", got)
+	}
+	if got := cs.updates.Load() - updates; got != 0 {
+		t.Errorf("conflicting rename updates = %d, want 0 (must never overwrite the target)", got)
+	}
+	if got := cs.deletes.Load() - deletes; got != 0 {
+		t.Errorf("conflicting rename deletes = %d, want 0", got)
+	}
+
+	// Both entities still present at their original IDs, with their
+	// original titles — the target was not overwritten by the source.
+	gotDst, err := cs.GetEntity(ctx, dst.ID)
+	if err != nil {
+		t.Fatalf("target entity missing after conflicting rename: %v", err)
+	}
+	if title := gotDst.GetString("title"); title != "occupied target" {
+		t.Errorf("target title = %q, want %q — target was clobbered", title, "occupied target")
+	}
+	if _, err := cs.GetEntity(ctx, src.ID); err != nil {
+		t.Errorf("source entity missing after failed rename: %v", err)
+	}
+}
+
 // --- Relation methods ---
 
 func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
@@ -861,12 +927,11 @@ func TestDeleteRelation_RoundTrip(t *testing.T) {
 
 // --- Upsert error-propagation invariant (regression for C1) ---
 
-// TestCreate_PropagatesNonConflictStoreError pins that
-// upsertEntity does NOT mask a non-ErrConflict store failure by
-// falling through to UpdateEntity. With the workspace-era bug, a
-// CreateEntity that returned a generic I/O error would silently
-// reach UpdateEntity and likely return ErrNotFound, hiding the
-// real cause.
+// TestCreate_PropagatesNonConflictStoreError pins that createCore
+// does NOT mask a non-ErrConflict store failure by falling through to
+// UpdateEntity. With the workspace-era bug, a CreateEntity that
+// returned a generic I/O error would silently reach UpdateEntity and
+// likely return ErrNotFound, hiding the real cause.
 func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("simulated disk failure")
@@ -877,11 +942,12 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 	cs.remaining.Store(1)
 
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     cs,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       cs,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -932,11 +998,12 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      meta,
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -991,11 +1058,12 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      meta,
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -1,0 +1,4 @@
+# Default reviewers for every change. GitHub auto-requests this team on each PR
+# (the PR author is skipped). Manage membership at:
+# https://github.com/orgs/sourcehaven-bv/teams/maintainers
+* @sourcehaven-bv/maintainers

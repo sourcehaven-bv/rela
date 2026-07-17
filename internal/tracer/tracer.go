@@ -14,17 +14,27 @@ import (
 )
 
 // TraceResult represents a tree of entities reachable from a starting point.
+//
+// Title is the entity's literal `title` property (the tracer is a pure reader
+// with no metamodel, so it cannot resolve display_property). Properties carries
+// the raw property map so a metamodel-aware output layer can render the display
+// title itself (see internal/output.Writer.traceTitle); it is `json:"-"` so the
+// trace JSON schema stays lean and unchanged — properties are plumbing for text
+// rendering, not part of the trace's data contract.
 type TraceResult struct {
-	ID       string
-	Type     string
-	Title    string
-	Depth    int
-	Relation string // relation that led to this node
-	Incoming bool   // reached via an incoming relation
-	Children []*TraceResult
+	ID         string
+	Type       string
+	Title      string
+	Properties map[string]interface{} `json:"-"`
+	Depth      int
+	Relation   string // relation that led to this node
+	Incoming   bool   // reached via an incoming relation
+	Children   []*TraceResult
 }
 
-// PathStep represents one step in a path between two entities.
+// PathStep represents one step in a path between two entities. (No Properties
+// field: path text output renders only ID/Type, never a title, so there is
+// nothing to resolve.)
 type PathStep struct {
 	ID       string
 	Type     string
@@ -93,12 +103,13 @@ func (t *GenericTracer) traceBidirectional(
 	}
 
 	result := &TraceResult{
-		ID:       id,
-		Type:     e.Type,
-		Title:    e.Title(),
-		Depth:    depth,
-		Relation: relation,
-		Incoming: incoming,
+		ID:         id,
+		Type:       e.Type,
+		Title:      e.Title(),
+		Properties: e.Properties,
+		Depth:      depth,
+		Relation:   relation,
+		Incoming:   incoming,
 	}
 
 	if visited[id] {
@@ -148,11 +159,12 @@ func (t *GenericTracer) traceTo(
 	}
 
 	result := &TraceResult{
-		ID:       id,
-		Type:     e.Type,
-		Title:    e.Title(),
-		Depth:    depth,
-		Relation: relation,
+		ID:         id,
+		Type:       e.Type,
+		Title:      e.Title(),
+		Properties: e.Properties,
+		Depth:      depth,
+		Relation:   relation,
 	}
 
 	if visited[id] {

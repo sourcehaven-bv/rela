@@ -39,7 +39,7 @@ func TestShowEntityRendersRelations(t *testing.T) {
 	seeder.addEntity(testutil.EntityFor(meta, "solution").ID("SOL-001"))
 	seeder.addRelation("DEC-001", "addresses", "REQ-001")
 	seeder.addRelation("REQ-001", "implements", "SOL-001")
-	svc := seeder.build(t)
+	svc := seeder.build(t).read
 	buf := withOutput(t, output.FormatTable)
 
 	cmd := &ShowCmd{ID: "REQ-001"}
@@ -59,7 +59,7 @@ func TestShowEntityRendersRelations(t *testing.T) {
 func TestShowEntityNotFound(t *testing.T) {
 	meta := metamodel.DefaultMetamodel()
 	seeder := newStoreSeeder(meta)
-	svc := seeder.build(t)
+	svc := seeder.build(t).read
 	_ = withOutput(t, output.FormatTable)
 
 	cmd := &ShowCmd{ID: "NONEXISTENT-001"}
@@ -87,7 +87,7 @@ func TestShowEntityJSON(t *testing.T) {
 	meta := metamodel.DefaultMetamodel()
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
-	svc := seeder.build(t)
+	svc := seeder.build(t).read
 	buf := withOutput(t, output.FormatJSON)
 
 	cmd := &ShowCmd{ID: "REQ-001"}

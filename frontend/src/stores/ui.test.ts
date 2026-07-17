@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { useUIStore } from './ui'
 
 describe('UI Store', () => {
@@ -166,6 +167,43 @@ describe('UI Store', () => {
 
       expect(store.toasts).toHaveLength(3)
       expect(store.toasts.map((t) => t.type)).toEqual(['success', 'error', 'warning'])
+    })
+  })
+
+  describe('datetime timezone', () => {
+    beforeEach(() => {
+      // localStorage is a shared mock that isn't reset between tests; clear it
+      // and re-create the store (fresh Pinia) so each case starts from a clean
+      // override initialized from the now-empty storage.
+      localStorage.clear()
+      setActivePinia(createPinia())
+      store = useUIStore()
+    })
+
+    it('defaults to browser zone (empty override)', () => {
+      expect(store.datetimeTimezone).toBe('')
+      // effectiveTimezone falls back to the browser zone.
+      expect(store.effectiveTimezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone)
+    })
+
+    it('sets and persists a supported zone', () => {
+      store.setDatetimeTimezone('America/New_York')
+      expect(store.datetimeTimezone).toBe('America/New_York')
+      expect(store.effectiveTimezone).toBe('America/New_York')
+      expect(localStorage.getItem('datetimeTimezone')).toBe('America/New_York')
+    })
+
+    it('rejects an unsupported zone (no-op)', () => {
+      store.setDatetimeTimezone('Not/AZone')
+      expect(store.datetimeTimezone).toBe('')
+    })
+
+    it('clearing the override removes the persisted value', () => {
+      store.setDatetimeTimezone('Asia/Kolkata')
+      expect(localStorage.getItem('datetimeTimezone')).toBe('Asia/Kolkata')
+      store.setDatetimeTimezone('')
+      expect(store.datetimeTimezone).toBe('')
+      expect(localStorage.getItem('datetimeTimezone')).toBeNull()
     })
   })
 })

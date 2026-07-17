@@ -377,6 +377,289 @@ type Formatter interface {
 	FormatRelation(ctx context.Context, from, relType, to string, dryRun bool) (changed bool, err error)
 }
 
+// VersionOp is the operation that produced an entity version, mirroring the
+// write that triggered capture.
+type VersionOp string
+
+const (
+	VersionOpCreate VersionOp = "create"
+	VersionOpUpdate VersionOp = "update"
+	VersionOpRename VersionOp = "rename"
+	VersionOpDelete VersionOp = "delete"
+	// VersionOpPurge is a no-content tombstone marker written when a lineage's
+	// history is deliberately purged while its LIVE row still exists (a
+	// --force-live purge). It carries NO snapshot content — only the op,
+	// principal, and vseq — and exists so the reconciliation sweep recognizes
+	// "this lineage was purged on purpose" and does NOT re-capture the live
+	// content as a fresh version (TKT-BW6UUL RR-SH28E). It is never produced by
+	// an ordinary write.
+	VersionOpPurge VersionOp = "purge"
+)
+
+// VersionMeta is a single row of an entity's version timeline, without the
+// snapshot body/properties — enough to render a history list. Version is the
+// human-facing 1-based ordinal within the entity's lineage (computed at read
+// time), newest last.
+type VersionMeta struct {
+	Version       int
+	Op            VersionOp
+	PrevID        string // set only for VersionOpRename: the entity's former ID
+	Type          string
+	ContentHash   string
+	SchemaHash    string
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+	CreatedAt     time.Time
+}
+
+// VersionSnapshot is a full captured version: its metadata plus the entity
+// content and properties as they were, and the render-schema projection (as
+// stored JSON) the snapshot was taken under. Rendering a snapshot resolves
+// display/typing against Projection, not the live metamodel, so a historical
+// version renders faithfully even after the schema drifts.
+type VersionSnapshot struct {
+	VersionMeta
+	Content    string
+	Properties map[string]interface{}
+	Projection []byte // the schema_versions.projection JSON for SchemaHash
+}
+
+// VersionInput is one entity version to persist via [VersionWriter]. It is the
+// store-facing shape of a synchronous capture (rename/delete): the snapshot
+// state, its op, the render-schema projection it was taken under (hash + JSON,
+// deduped into the backend's schema store), and attribution. PrevID is set only
+// for VersionOpRename.
+type VersionInput struct {
+	EntityID      string
+	Op            VersionOp
+	PrevID        string
+	Type          string
+	Content       string
+	Properties    map[string]interface{}
+	SchemaHash    string
+	Projection    []byte
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+}
+
+// VersionWriter persists a captured entity version. Like HistoryReader it is an
+// optional, backend-specific capability (pgstore only). The entitymanager's
+// synchronous version hook dispatches rename/delete captures here via a
+// wiring-supplied adapter; the store never learns the Principal by any other
+// route (it arrives inside VersionInput, populated from ctx at the boundary).
+type VersionWriter interface {
+	// WriteVersion persists one version row. It is best-effort from the
+	// caller's perspective (the entitymanager logs and swallows the error),
+	// but the implementation should still return a real error for diagnosis.
+	WriteVersion(ctx context.Context, in VersionInput) error
+}
+
+// HistoryReader reads an entity's captured version history. Like Formatter it
+// is NOT part of the Store interface — content versioning is a backend-specific
+// capability (only pgstore implements it today). Callers type-assert a Store to
+// HistoryReader and degrade gracefully when the assertion fails.
+type HistoryReader interface {
+	// ListVersions returns the version timeline for an entity id, oldest
+	// first, walking rename lineage so a renamed entity's pre-rename history
+	// is included. Returns an empty slice (not an error) when the id has no
+	// history. The id may name a live or an already-deleted entity.
+	ListVersions(ctx context.Context, id string) ([]VersionMeta, error)
+
+	// GetVersion returns the full snapshot for a specific 1-based version
+	// ordinal in the entity's lineage. Returns ErrNotFound if the id has no
+	// such version.
+	GetVersion(ctx context.Context, id string, version int) (*VersionSnapshot, error)
+}
+
+// --- Relation versioning (TKT-92JL8P) ---
+//
+// Relation versioning mirrors entity versioning but is a SEPARATE optional
+// capability: the DTOs and the RelationHistoryReader / RelationVersionWriter
+// interfaces are distinct from the entity ones, and consumers type-assert them
+// independently. This keeps each optional interface narrow (a store may support
+// entity history without relation history, or vice versa) and keeps relation
+// methods off the entity HistoryReader/VersionWriter surface. See the ticket's
+// design notes for why relations need a surrogate lineage id (they have no
+// stable key — the composite (from,type,to) mutates on endpoint rename).
+
+// RelationVersionMeta is a single row of a relation's version timeline, without
+// the snapshot body/properties. From/Type/To are the composite AS-OF this
+// version; PrevFrom/PrevTo are set only for VersionOpRename (the pre-rename
+// endpoints). Version is the 1-based ordinal within the relation's lineage
+// (keyed by the surrogate rel_record_id), computed at read time, newest last.
+type RelationVersionMeta struct {
+	Version       int
+	Op            VersionOp
+	From          string
+	Type          string
+	To            string
+	PrevFrom      string // set only for VersionOpRename
+	PrevTo        string // set only for VersionOpRename
+	ContentHash   string
+	SchemaHash    string
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+	CreatedAt     time.Time
+}
+
+// RelationVersionSnapshot is a full captured relation version: its metadata plus
+// the relation content and properties as they were, and the render-schema
+// projection (as stored JSON) the snapshot was taken under.
+type RelationVersionSnapshot struct {
+	RelationVersionMeta
+	Content    string
+	Properties map[string]interface{}
+	Projection []byte // the schema_versions.projection JSON for SchemaHash
+}
+
+// RelationVersionInput is one relation version to persist via
+// [RelationVersionWriter]. RecordID is the surrogate lineage id read off the
+// live relations row (0 is invalid — the caller must supply the row's
+// rel_record_id). PrevFrom/PrevTo are set only for VersionOpRename. Attribution
+// arrives here, populated from ctx at the boundary — the store learns the
+// Principal by no other route.
+type RelationVersionInput struct {
+	RecordID      int64
+	Op            VersionOp
+	From          string
+	Type          string
+	To            string
+	PrevFrom      string
+	PrevTo        string
+	Content       string
+	Properties    map[string]interface{}
+	SchemaHash    string
+	Projection    []byte
+	PrincipalUser string
+	PrincipalTool string
+	TriggeredBy   string
+}
+
+// RelationVersionWriter persists a captured relation version. An optional,
+// backend-specific capability (pgstore only), type-asserted independently of the
+// entity VersionWriter. The entitymanager's synchronous version hook dispatches
+// delete/rename captures here via a wiring-supplied adapter.
+type RelationVersionWriter interface {
+	// WriteRelationVersion persists one relation_versions row. Best-effort from
+	// the caller's perspective (the entitymanager logs and swallows the error),
+	// but the implementation should still return a real error for diagnosis.
+	WriteRelationVersion(ctx context.Context, in RelationVersionInput) error
+}
+
+// RelationHistoryReader reads a relation's captured version history. Optional,
+// backend-specific (pgstore only), type-asserted independently of the entity
+// HistoryReader. A relation is addressed by its current (or last-known, for a
+// deleted relation) composite key; the reader resolves that to a surrogate
+// rel_record_id lineage internally.
+type RelationHistoryReader interface {
+	// ListRelationVersions returns the version timeline for a relation's
+	// composite key, oldest first. Returns an empty slice (not an error) when
+	// the key has no history. The key may name a live or an already-deleted
+	// relation. Because a re-created (from,type,to) after delete gets a fresh
+	// rel_record_id, this returns only the CURRENT (or most recent) lineage for
+	// that key, not merged across a delete boundary.
+	ListRelationVersions(ctx context.Context, from, relType, to string) ([]RelationVersionMeta, error)
+
+	// GetRelationVersion returns the full snapshot for a 1-based version ordinal
+	// in the relation's lineage. Returns ErrNotFound if the key has no such
+	// version.
+	GetRelationVersion(ctx context.Context, from, relType, to string, version int) (*RelationVersionSnapshot, error)
+}
+
+// --- Version purge (TKT-BW6UUL) ---
+//
+// Purge HARD-DELETES version snapshot rows — the deliberate, audited exception
+// to the append-only history model, for compliance redaction (PII / rotated
+// secret / GDPR erasure). It is an OPTIONAL, backend-specific capability
+// (pgstore only), type-asserted independently of the reader/writer capabilities.
+// Separate entity (VersionPurger) and relation (RelationVersionPurger)
+// capabilities, one method each. See the ticket + design-review responses for
+// the guardrails the implementation MUST enforce (they are load-bearing, not
+// optional): mutual exclusion with the reconciliation sweep, refuse-when-live,
+// non-rename-rows-only, fenced-lineage --all.
+
+// PurgeSelector chooses which version row(s) in a lineage a purge targets.
+// Exactly one of Vseq / ContentHash / All must be set. Vseq and ContentHash are
+// STABLE handles (unlike the read-time 1-based ordinal, which renumbers when a
+// row is purged) so an operator purges exactly the row they meant even under a
+// concurrent capture.
+type PurgeSelector struct {
+	Vseq        int64  // purge the single row with this vseq (0 = unset)
+	ContentHash string // purge every row in the lineage with this content_hash (GDPR "erase this value everywhere")
+	All         bool   // purge the entire fenced lineage
+}
+
+// VersionPurgeRequest is one entity-version purge. Target is the entity id whose
+// lineage is addressed. Reason is a required operator-supplied justification
+// recorded in the audit trail (the one record that survives a purge). ForceLive
+// overrides the refuse-when-a-live-row-exists guard by writing a no-content
+// purge tombstone the sweep respects (see VersionOpPurge). DryRun resolves and
+// returns the target rows WITHOUT deleting. Attribution arrives here from ctx at
+// the boundary — the store never learns the principal by another route.
+type VersionPurgeRequest struct {
+	EntityID      string
+	Selector      PurgeSelector
+	Reason        string
+	ForceLive     bool
+	DryRun        bool
+	PrincipalUser string
+	PrincipalTool string
+}
+
+// RelationVersionPurgeRequest is the relation analog, addressing a relation by
+// its composite key.
+type RelationVersionPurgeRequest struct {
+	From, Type, To string
+	Selector       PurgeSelector
+	Reason         string
+	ForceLive      bool
+	DryRun         bool
+	PrincipalUser  string
+	PrincipalTool  string
+}
+
+// PurgeTarget is one version row a purge would delete (or, in DryRun, would
+// delete): enough to show the operator and audit the action WITHOUT the snapshot
+// content (which must never be echoed — echoing it would defeat the purge).
+type PurgeTarget struct {
+	Vseq        int64
+	Op          VersionOp
+	ContentHash string
+	CreatedAt   time.Time
+	IsRename    bool // a rename row is REFUSED in v1 (purging it orphans lineage)
+}
+
+// PurgeResult reports what a purge did (or, in DryRun, would do). Targets is the
+// resolved set. Purged is how many rows were actually deleted (0 on DryRun).
+// LiveRowExists / RenameInTargets flag the two refuse conditions so a caller can
+// render the reason without re-querying.
+type PurgeResult struct {
+	Targets          []PurgeTarget
+	Purged           int
+	LiveRowExists    bool
+	RenameInTargets  bool
+	TombstoneWritten bool
+}
+
+// VersionPurger hard-deletes entity version snapshot rows. Optional,
+// backend-specific (pgstore only), type-asserted independently.
+type VersionPurger interface {
+	// PurgeVersions resolves the request's target rows and, unless DryRun,
+	// deletes them — under mutual exclusion with the reconciliation sweep. It
+	// REFUSES (deleting nothing, PurgeResult flags the reason) when the target
+	// set contains a rename row, or when a live row still holds the content and
+	// ForceLive is not set. Returns the resolved/purged set for audit + display.
+	PurgeVersions(ctx context.Context, req VersionPurgeRequest) (*PurgeResult, error)
+}
+
+// RelationVersionPurger is the relation analog.
+type RelationVersionPurger interface {
+	PurgeRelationVersions(ctx context.Context, req RelationVersionPurgeRequest) (*PurgeResult, error)
+}
+
 // EntityObserver receives notifications when entities are created, updated,
 // deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.

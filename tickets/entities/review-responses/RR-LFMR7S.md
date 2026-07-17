@@ -1,0 +1,9 @@
+---
+id: RR-LFMR7S
+type: review-response
+title: 'Default-fill in Validate() is insufficient: NewDeclarative bypasses it, blank relation = match-all walk'
+finding: 'The plan defaults MembershipRelation to "member-of" only inside Policy.Validate(). But NewDeclarative() does NOT call Validate (confirmed declarative.go:55-66), and 9+ test sites build &Policy{...} literals passed straight to newTestDeclarative/NewDeclarative. Those policies keep MembershipRelation=="". When the resolver walks OutgoingRelations(ctx, n, ""), StoreGraph passes Type:"" into store.RelationQuery, which means ''all relation types'' (per CLAUDE.md and the existing Validate guard that rejects blank InheritRolesThrough/RoleRelations keys for exactly this reason). Result: an un-defaulted policy walks EVERY outgoing edge as if it were membership — an over-grant / privilege-widening bug, and it breaks every existing resolver_test/declarative_test that relies on member-of being the walked relation. Fix: default at a site every resolver path passes through. Recommended: resolve the effective name in the resolver read (e.g. a Policy.membershipRelation() helper returning MembershipRelation or defaultMembershipRelation when blank) used at resolver.go:65; keep the Validate default-fill too for operator-facing clarity, but do not RELY on it for correctness.'
+severity: significant
+resolution: 'Plan revised (PLAN-RL30CP Approach step 2): correctness now comes from a non-mutating Policy.membershipRelation() accessor (returns defaultMembershipRelation when isBlank), read at resolver.go:65. Every path — LoadPolicy, NewDeclarative, and direct &Policy{} test literals — funnels through it, so a blank relation can never reach the store as a Type=="" match-all query. Validate no longer the correctness mechanism.'
+status: addressed
+---

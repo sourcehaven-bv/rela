@@ -189,7 +189,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	seedAttachment(t, app, "TKT-001", "shot.png", []byte("bytes"))
 
-	result := app.serializeEntityForWire(context.Background(), mustGet(t, app, "TKT-001"), "tickets", true)
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
 	if result.Attachments == nil {
 		t.Fatalf("_attachments map must be present on per-entity GET")
 	}
@@ -210,7 +210,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 
 	// A list-row serialization must NOT carry the map (closed-world: it
 	// rides on per-entity responses only).
-	row := app.serializeRelatedEntityForWire(context.Background(), mustGet(t, app, "TKT-001"), "tickets", false)
+	row := app.serializer.forWireRelated(context.Background(), mustGet(t, app, "TKT-001"), nil, nil, nil, app.Meta(), "tickets")
 	if row.Attachments != nil {
 		t.Errorf("_attachments must be nil on list-row serialization; got %+v", *row.Attachments)
 	}
@@ -219,7 +219,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 // mustGet loads an entity or fails the test.
 func mustGet(t *testing.T, app *App, id string) *entity.Entity {
 	t.Helper()
-	e, ok := app.getEntity(context.Background(), id)
+	e, ok := app.reader.getEntity(context.Background(), id)
 	if !ok {
 		t.Fatalf("getEntity(%s) not found", id)
 	}
@@ -251,11 +251,13 @@ func TestAttachment_DeceptiveExtensionServesTypeFromName(t *testing.T) {
 	}
 }
 
-// TestAttachment_SvgIsSandboxed pins that an SVG (which can carry inline
-// script) is served with the sandbox CSP and inline disposition. The
-// sandbox (no allow-scripts) is what makes `inline` safe for SVG/HTML
-// content in the app origin; if this header is ever dropped the endpoint
-// becomes a stored-XSS vector.
+// TestAttachment_SvgIsSandboxed pins the download-hardening headers for an SVG
+// (which can carry inline script): the sandbox CSP, nosniff, AND
+// `Content-Disposition: attachment` (force-download, never inline render).
+// Defense in depth — the upload allowlist normally blocks SVG, but a file
+// seeded out-of-band (or under a pre-allowlist policy) must still never
+// execute as stored XSS in the app origin. Dropping any of these reopens the
+// vector.
 func TestAttachment_SvgIsSandboxed(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
@@ -273,8 +275,8 @@ func TestAttachment_SvgIsSandboxed(t *testing.T) {
 	if !strings.Contains(csp, "sandbox") || !strings.Contains(csp, "default-src 'none'") {
 		t.Errorf("CSP = %q, want sandbox + default-src 'none'", csp)
 	}
-	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "inline;") {
-		t.Errorf("Content-Disposition = %q, want inline", cd)
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Errorf("Content-Disposition = %q, want attachment (force-download)", cd)
 	}
 }
 
@@ -313,7 +315,7 @@ func TestAttachment_MetadataOnMutationResponse(t *testing.T) {
 	// serializeEntityForWire is the shared per-entity serializer for GET,
 	// PATCH, POST create, and clone. If it carries _attachments, every one
 	// of those responses does.
-	result := app.serializeEntityForWire(context.Background(), mustGet(t, app, "TKT-001"), "tickets", true)
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
 	if result.Attachments == nil {
 		t.Fatalf("_attachments must be present on every per-entity response, including mutations")
 	}
@@ -336,7 +338,7 @@ func TestAttachment_HiddenPropertyNotLeaked(t *testing.T) {
 	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"screenshot": false}}}
 
 	// _attachments omits the hidden property entirely.
-	result := app.serializeEntityForWire(context.Background(), mustGet(t, app, "TKT-001"), "tickets", true)
+	result := app.serializer.forWire(context.Background(), mustGet(t, app, "TKT-001"), app.reader.outgoingRelations(context.Background(), "TKT-001"), app.Meta(), "tickets")
 	if result.Attachments != nil {
 		if _, present := (*result.Attachments)["screenshot"]; present {
 			t.Errorf("hidden property leaked into _attachments: %+v", *result.Attachments)

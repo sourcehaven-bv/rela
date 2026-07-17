@@ -32,11 +32,11 @@ func TestAnalyzeOrphansJSONOutput(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-003"))
-	svc := seeder.build(t)
+	b := seeder.build(t)
 	buf := withOutput(t, output.FormatJSON)
 
 	cmd := &AnalyzeOrphansCmd{}
-	if err := cmd.Run(context.Background(), svc); err != nil {
+	if err := cmd.Run(context.Background(), b.analysis); err != nil {
 		t.Fatalf("analyze orphans error = %v", err)
 	}
 
@@ -68,10 +68,10 @@ func TestAnalyzeValidations_NonZeroExitOnScriptError(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "ticket").ID("TKT-001"))
-	svc := seeder.build(t)
+	b := seeder.build(t)
 	_ = withOutput(t, output.FormatTable)
 
-	err := runValidations(context.Background(), svc, analysis.Options{})
+	err := runValidations(context.Background(), b.read, b.analysis, analysis.Options{})
 
 	if err == nil {
 		t.Fatal("expected non-zero exit error, got nil")
@@ -103,11 +103,11 @@ func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "ticket").ID("TKT-001"))
-	svc := seeder.build(t)
+	b := seeder.build(t)
 	buf := withOutput(t, output.FormatJSON)
 
 	cmd := &AnalyzeAllCmd{}
-	if err := cmd.Run(context.Background(), svc); err != nil {
+	if err := cmd.Run(context.Background(), b.read, b.analysis); err != nil {
 		t.Fatalf("analyze all: %v", err)
 	}
 
@@ -148,11 +148,11 @@ func TestAnalyzeGaps(t *testing.T) {
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seeder.addEntity(testutil.EntityFor(meta, "requirement").ID("REQ-003"))
-	svc := seeder.build(t)
+	b := seeder.build(t)
 	buf := withOutput(t, output.FormatJSON)
 
 	cmd := &AnalyzeGapsCmd{}
-	if err := cmd.Run(context.Background(), svc); err != nil {
+	if err := cmd.Run(context.Background(), b.analysis); err != nil {
 		t.Fatalf("analyze gaps error = %v", err)
 	}
 

@@ -2,7 +2,7 @@
 // view sections. Covers:
 //   - copyVisibleProperties hidden-stripping (AC 5 + RR-FD1A)
 //   - buildSectionEntityData populates Props + FieldVerdicts (AC 3)
-//   - sectionEntityToV1 wire conversion at the V1ViewEntity level (AC 4)
+//   - sectionEntityToV1 wire conversion at the v1.ViewEntity level (AC 4)
 //   - Key-set invariant between _props and _fields (RR-FD1B)
 //   - Both properties/list AND content/cards branches produce the
 //     same wire shape (RR-FD1C)
@@ -15,11 +15,12 @@ import (
 	"reflect"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 func TestCopyVisibleProperties_HiddenStripped(t *testing.T) {
-	a := appWithResolver((&verdictBuilder{}).Hidden("priority").Build())
+	svc := affordanceServiceWithResolver((&verdictBuilder{}).Hidden("priority").Build())
 	e := &entity.Entity{
 		Type: "ticket",
 		Properties: map[string]any{
@@ -28,7 +29,7 @@ func TestCopyVisibleProperties_HiddenStripped(t *testing.T) {
 			"priority": "high", // hidden — must not appear
 		},
 	}
-	got := a.copyVisibleProperties(context.Background(), e)
+	got := svc.copyVisibleProperties(context.Background(), e)
 	if _, ok := got["priority"]; ok {
 		t.Errorf("hidden 'priority' must not appear in _props; got %+v", got)
 	}
@@ -44,10 +45,10 @@ func TestCopyVisibleProperties_FreshMap(t *testing.T) {
 	// Defensive copy: the returned map must not share its backing
 	// pointer with e.Properties so future maintainers can't accidentally
 	// alias the entity's property map into a long-lived response.
-	a := appWithResolver(NopFieldVerdictResolver{})
+	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
 	original := map[string]any{"title": "x", "status": "open"}
 	e := &entity.Entity{Type: "ticket", Properties: original}
-	got := a.copyVisibleProperties(context.Background(), e)
+	got := svc.copyVisibleProperties(context.Background(), e)
 	if reflect.ValueOf(got).Pointer() == reflect.ValueOf(original).Pointer() {
 		t.Fatal("copyVisibleProperties returned the same map pointer as e.Properties; expected a fresh map")
 	}
@@ -59,12 +60,12 @@ func TestCopyVisibleProperties_FreshMap(t *testing.T) {
 }
 
 func TestCopyVisibleProperties_EmptyHidden(t *testing.T) {
-	a := appWithResolver(NopFieldVerdictResolver{})
+	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
 	e := &entity.Entity{
 		Type:       "ticket",
 		Properties: map[string]any{"title": "x"},
 	}
-	got := a.copyVisibleProperties(context.Background(), e)
+	got := svc.copyVisibleProperties(context.Background(), e)
 	if got["title"] != "x" {
 		t.Errorf("title: got %v, want 'x'", got["title"])
 	}
@@ -145,7 +146,7 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
 	sed := app.buildSectionEntityData(context.Background(), e, nil, eDef)
 
-	hidden := app.hiddenProperties(context.Background(), e)
+	hidden := app.affordances.hiddenProperties(context.Background(), e)
 	for k := range sed.Props {
 		if _, h := hidden[k]; h {
 			t.Errorf("Props has hidden key %q (invariant: keys(Props) ∩ hidden == ∅)", k)
@@ -160,8 +161,8 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 
 func TestSectionEntityToV1_WiresPropsAndFields(t *testing.T) {
 	// AC 4: the wire converter dumb-copies Props and FieldVerdicts off
-	// SectionEntityData into V1ViewEntity._props and ._fields.
-	verdict := map[string]V1FieldAffordance{
+	// SectionEntityData into v1.ViewEntity._props and ._fields.
+	verdict := map[string]v1.FieldAffordance{
 		"status": {Writable: ptrTo(false)},
 	}
 	sed := SectionEntityData{
@@ -206,7 +207,7 @@ func TestSectionEntityToV1_EmptyFieldVerdicts_EmitsPresentButEmpty(t *testing.T)
 	sed := SectionEntityData{
 		ID:            "TKT-001",
 		Type:          "ticket",
-		FieldVerdicts: map[string]V1FieldAffordance{},
+		FieldVerdicts: map[string]v1.FieldAffordance{},
 	}
 	got := sectionEntityToV1(sed)
 	if got.FieldAffordances == nil {

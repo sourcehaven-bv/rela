@@ -3,6 +3,7 @@ import { searchEntities, listEntities } from '@/api'
 import type { Entity, EntityType, ListResponse } from '@/types'
 import {
   buildPrefixList,
+  rankByIdMatch,
   useBacktickAutocomplete,
   type EasyMdeLike,
   OPEN_DELAY_MS,
@@ -199,6 +200,53 @@ describe('buildPrefixList', () => {
   })
 })
 
+describe('rankByIdMatch', () => {
+  const ent = (id: string): Entity => ({ id, type: 'actor', properties: {} })
+
+  it('sorts id-prefix matches ahead of title-only (backend) matches', () => {
+    // Mirrors the reported `VAD-ACT-` case: Bleve returns title-scored
+    // junk (PRS-ACT-*) before the entities whose ID actually starts with
+    // the typed prefix.
+    const backendOrder = [
+      ent('PRS-ACT-BPHC'), // title match only ("Handelende organisatie")
+      ent('PRS-ACT-DWPM'),
+      ent('VAD-ACT-6P4X'), // id-prefix matches — should lead
+      ent('VAD-ACT-CV83'),
+    ]
+    const ranked = rankByIdMatch(backendOrder, 'VAD-ACT-', '')
+    expect(ranked.map((e) => e.id)).toEqual([
+      'VAD-ACT-6P4X',
+      'VAD-ACT-CV83',
+      'PRS-ACT-BPHC',
+      'PRS-ACT-DWPM',
+    ])
+  })
+
+  it('puts an exact id match first', () => {
+    const ranked = rankByIdMatch(
+      [ent('TKT-12'), ent('TKT-1'), ent('TKT-100')],
+      'TKT-',
+      '1',
+    )
+    expect(ranked[0].id).toBe('TKT-1')
+  })
+
+  it('is stable within a rank tier (preserves backend relevance order)', () => {
+    const ranked = rankByIdMatch(
+      [ent('VAD-ACT-B'), ent('VAD-ACT-A')],
+      'VAD-ACT-',
+      '',
+    )
+    // Both are id-prefix matches; original order is kept.
+    expect(ranked.map((e) => e.id)).toEqual(['VAD-ACT-B', 'VAD-ACT-A'])
+  })
+
+  it('ranks id-substring matches ahead of title-only matches', () => {
+    const ranked = rankByIdMatch([ent('PRS-ACT-9'), ent('PRS-XYZ-9')], '', '9')
+    expect(ranked[0].id).toBe('PRS-ACT-9')
+  })
+})
+
 describe('useBacktickAutocomplete', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -374,6 +422,40 @@ describe('useBacktickAutocomplete', () => {
       const [q, type] = searchSpy.mock.calls[0]
       expect(q).toBe('1')
       expect(type).toBe('ticket')
+      ctl.dispose()
+    })
+
+    it('recovers to phase prefix when backspacing across the prefix boundary', async () => {
+      // Regression: once in phase id, backspacing back into the prefix
+      // (e.g. TKT-1 → TKT → TK) left the session stuck in phase id,
+      // feeding the partial prefix into searchEntities as free text. It
+      // should hand control back to the prefix machine — "backspace kills
+      // completion" report.
+      const fake = makeFakeEditor({
+        text: '`',
+        cursor: { line: 0, ch: 1 },
+        tokenAt: () => ({ type: 'formatting formatting-code comment', string: '`' }),
+      })
+      const ctl = useBacktickAutocomplete(fake.editor, () => makeEntityTypes())
+      fake.fire('inputRead', null, { text: ['`'], from: { line: 0, ch: 0 } })
+      vi.advanceTimersByTime(OPEN_DELAY_MS + 10)
+      // Type into the id body.
+      fake.setText('`TKT-1')
+      fake.setCursor({ line: 0, ch: 6 })
+      fake.fire('change')
+      expect(ctl.state.phase).toBe('id')
+      // Backspace across the prefix boundary: TKT-1 → TK.
+      fake.setText('`TK')
+      fake.setCursor({ line: 0, ch: 3 })
+      fake.fire('change')
+      expect(ctl.state.phase).toBe('prefix')
+      // The prefix list is re-derived and filtered to TKT- by "TK".
+      expect(ctl.state.prefixItems.map((p) => p.prefix)).toEqual(['TKT-'])
+      // Re-typing the full prefix re-enters phase id (forward path intact).
+      fake.setText('`TKT-')
+      fake.setCursor({ line: 0, ch: 5 })
+      fake.fire('change')
+      expect(ctl.state.phase).toBe('id')
       ctl.dispose()
     })
 

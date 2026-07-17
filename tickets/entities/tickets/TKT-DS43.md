@@ -5,7 +5,17 @@ title: Migrate CLI production code off workspace.Workspace to appbuild.Services
 kind: refactor
 priority: high
 effort: m
-status: ready
+status: done
+---
+
+**Closed as obsolete (2026-07-16).** The migration this ticket describes —
+moving `internal/cli` off `*workspace.Workspace` onto `appbuild.Services` —
+landed as part of the workspace-decomposition arc (`internal/workspace` is
+deleted; `cli_wiring.go` was built on `newCLIServicesFromAppbuild`). The
+transitional `cliServices` bundle this ticket targeted has since been removed
+entirely in TKT-45QYI (read/write field bundles + direct kong service bindings),
+which supersedes any remaining scope here. Original plan below for history.
+
 ---
 
 Replace `*workspace.Workspace` usage in `internal/cli` (production + tests) with

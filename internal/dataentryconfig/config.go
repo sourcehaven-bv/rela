@@ -26,6 +26,7 @@ const (
 	WidgetTextarea    = "textarea"
 	WidgetNumber      = "number"
 	WidgetDate        = "date"
+	WidgetDatetime    = "datetime"
 	WidgetRrule       = "rrule"
 	WidgetCards       = "cards" // card-based UI for relations with properties
 )
@@ -74,6 +75,7 @@ type Config struct {
 	EntityViews map[string]EntityViewConfig  `yaml:"entity_views,omitempty" json:"entity_views,omitempty"`
 	Kanbans     map[string]Kanban            `yaml:"kanbans"`
 	Documents   map[string]DocumentConfig    `yaml:"documents,omitempty"`
+	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
 	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
 	Actions     map[string]Action            `yaml:"actions,omitempty"`
@@ -115,6 +117,15 @@ type AppConfig struct {
 	// semi-untrusted deployments. The store backends also enforce their
 	// own backstop guard independent of this value.
 	MaxAttachmentBytes int64 `yaml:"max_attachment_bytes,omitempty" json:"max_attachment_bytes,omitempty"`
+	// PlantUMLServerURL is the base URL of a PlantUML rendering server (e.g.
+	// "https://plantuml.internal.example.com"). When set, the SPA renders
+	// ```plantuml fenced code blocks as diagrams by pointing an <img> at
+	// "<url>/svg/<encoded>". Empty (the default) disables PlantUML rendering
+	// entirely — blocks degrade to plain code, and no diagram source ever
+	// leaves the browser. Deliberately not defaulted to the public
+	// plantuml.com server: that would silently publish private diagram source
+	// to a third party. Operators opt in by configuring a server they trust.
+	PlantUMLServerURL string `yaml:"plantuml_server_url,omitempty" json:"plantuml_server_url,omitempty"`
 }
 
 // Form defines a create/edit form for an entity type.
@@ -173,9 +184,17 @@ type RelationProperty struct {
 }
 
 // List defines a list view for an entity type.
+//
+// Header and Footer carry admin-authored markdown rendered above and below the
+// list, respectively (sanitized client-side via renderMarkdown). Description
+// predates this feature but was never rendered; the SPA now adopts it as a
+// fallback for Header (used only when Header is empty) so existing configs that
+// happen to set it get a header region without a rewrite.
 type List struct {
 	EntityType     string          `yaml:"entity_type" json:"entity"`
 	Title          string          `yaml:"title" json:"title"`
+	Header         string          `yaml:"header" json:"header,omitempty"`
+	Footer         string          `yaml:"footer" json:"footer,omitempty"`
 	Description    string          `yaml:"description" json:"description,omitempty"`
 	Columns        []ListColumn    `yaml:"columns" json:"columns"`
 	Sort           []SortSpec      `yaml:"sort,omitempty" json:"default_sort,omitempty"`
@@ -214,17 +233,26 @@ type FilterConfig struct {
 	Value    string `yaml:"value" json:"value"`
 }
 
+// HasProperty reports whether the filter names a property to filter on
+// (filters may also be written without one, e.g. operator-only entries
+// that validation flags separately).
+func (f FilterConfig) HasProperty() bool { return f.Property != "" }
+
 // FilterControl defines a user-facing filter control in a list.
 // Exactly one of Property or Relation must be set:
 //   - Property: filter on a scalar property of the entity.
-//   - Relation: filter by the target title of an outgoing relation; the
-//     relation name must exist in the metamodel.
+//   - Relation: filter by the target title of a relation; the relation name
+//     must exist in the metamodel. Direction controls whether the filter
+//     follows edges pointing FROM the row (outgoing, the default) or TO the
+//     row (incoming). An incoming relation filter keeps rows whose incoming
+//     source titles match the requested value, mirroring ListColumn.Direction.
 //
 // Label is an optional display label override for the control.
 type FilterControl struct {
-	Property string `yaml:"property,omitempty" json:"property,omitempty"`
-	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
-	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
+	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
+	Label     string    `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // Key returns the filter key (Relation if set, otherwise Property).
@@ -248,6 +276,60 @@ func (fc FilterControl) QueryParamKey() string {
 // CurrentValue returns the current filter value from the given query parameters.
 func (fc FilterControl) CurrentValue(query url.Values) string {
 	return query.Get(fc.QueryParamKey())
+}
+
+// RelationFilterDirection returns the configured Direction for a relation
+// filter control keyed by relation on any list of the given entity type. It
+// scans every list whose EntityType matches, returning the matching
+// FilterControl's direction. Returns (DirectionOutgoing, false) when no such
+// filter control is configured — callers use the `ok` return to decide whether
+// a relation filter applies at all (RR-B0JPPL: a relation filter only applies
+// when a control configures it).
+//
+// Lowest-list-ID wins: Config.Lists is a map, so iterating it directly would
+// randomize which list's direction wins when two lists of the same entity type
+// configure the same relation with conflicting directions (RR-9MJRJG). We
+// iterate list IDs in sorted order so the answer is deterministic per process.
+// CollectConfigWarnings surfaces conflicting directions at load time; this
+// resolver just needs a stable answer.
+func (c *Config) RelationFilterDirection(entityType, relation string) (Direction, bool) {
+	for _, listID := range sortedListIDs(c) {
+		list := c.Lists[listID]
+		if list.EntityType != entityType {
+			continue
+		}
+		for _, fc := range list.FilterControls {
+			if fc.Relation == relation {
+				// Normalize the empty (unset) YAML value to the outgoing
+				// default so callers get a concrete direction.
+				if fc.Direction.IsIncoming() {
+					return DirectionIncoming, true
+				}
+				return DirectionOutgoing, true
+			}
+		}
+	}
+	return DirectionOutgoing, false
+}
+
+// HasPropertyFilterControl reports whether any list of the given entity type
+// declares a property (non-relation) filter control for the named property.
+// Used by the list pipeline to resolve a property/relation name collision in
+// favor of the property when the config explicitly configures it as a property
+// filter (RR-0HWAS0).
+func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
+	for _, listID := range sortedListIDs(c) {
+		list := c.Lists[listID]
+		if list.EntityType != entityType {
+			continue
+		}
+		for _, fc := range list.FilterControls {
+			if !fc.IsRelation() && fc.Property == property {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Kanban defines a kanban board view for an entity type.
@@ -279,8 +361,25 @@ type KanbanSwimlane struct {
 
 // KanbanCard defines how cards are displayed on the board.
 type KanbanCard struct {
-	Title  string             `yaml:"title" json:"title"`
-	Fields []ViewSectionField `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Title  string            `yaml:"title" json:"title"`
+	Fields []KanbanCardField `yaml:"fields,omitempty" json:"fields,omitempty"`
+}
+
+// KanbanCardField defines a single field shown on a kanban card.
+// A field references either a Property (entity property) or a Relation
+// (relation type whose target titles are shown). For relation fields,
+// Direction controls whether to show outgoing (default) or incoming edges.
+//
+// This is a dedicated type rather than a reuse of ViewSectionField: the
+// latter is shared by form relations, side panels, and view sections, and
+// widening it would leak card-relation semantics into all of them. An
+// existing property-only card field (`- property: X`) unmarshals unchanged
+// because Property carries the same yaml tag.
+type KanbanCardField struct {
+	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
+	Label     string    `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // NavigationEntry defines a sidebar navigation item or a group of items.
@@ -495,4 +594,61 @@ type DocumentEdit struct {
 	// Label is the visible button text. Author-controlled to disambiguate
 	// multi-entity docs (e.g. "Edit release", "Open ticket").
 	Label string `yaml:"label" json:"label"`
+}
+
+// Feed is a declarative calendar feed: a named calendar composed of one or more
+// [FeedSource] projections that merge into a single calendar. It is served as
+// iCalendar (.ics) and JSON at /api/v1/_feeds/<name>.{ics,json}. See
+// TKT-RDM9M5 and the calfeed package.
+type Feed struct {
+	// Meta is optional calendar-level metadata (name, color, description).
+	Meta FeedMeta `yaml:"meta,omitempty" json:"meta,omitzero"`
+	// Sources are the event projections; at least one is required. Their events
+	// are merged into one calendar (which is also how OR is expressed, since a
+	// single source's filter clauses are ANDed).
+	Sources []FeedSource `yaml:"sources" json:"sources"`
+}
+
+// FeedMeta is calendar-level metadata for a [Feed].
+type FeedMeta struct {
+	// Name is the calendar's display name (iCalendar X-WR-CALNAME). Defaults to
+	// the feed's config key when empty.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Color is an optional calendar color, e.g. "#C2185B".
+	Color string `yaml:"color,omitempty" json:"color,omitempty"`
+	// Description is optional calendar-level text.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// FeedSource projects entities of one type into calendar events. Each surviving
+// entity yields one all-day event (Phase 1). Properties are mapped to event
+// fields by name; nothing is computed.
+type FeedSource struct {
+	// EntityType is the entity type to project. Required; validated at load.
+	EntityType string `yaml:"entity_type" json:"entity_type"`
+	// Where is a list of filter clauses (e.g. "status != done", "due != "),
+	// all ANDed. Uses the internal/filter language. Empty selects all entities
+	// of the type. There is no OR — use a second source for OR.
+	Where []string `yaml:"where,omitempty" json:"where,omitempty"`
+	// Date names a date-typed property mapped to the event's day
+	// (DTSTART;VALUE=DATE). Required in Phase 1; entities lacking a value are
+	// skipped.
+	Date string `yaml:"date" json:"date"`
+	// EndDate optionally names a date-typed property mapped to the (exclusive)
+	// end of an all-day range (DTEND;VALUE=DATE). Omit for single-day events.
+	EndDate string `yaml:"end_date,omitempty" json:"end_date,omitempty"`
+	// Rrule optionally makes events recurring. Its value is disambiguated by
+	// SYNTAX: a value containing "=" is a literal RFC 5545 rule applied to every
+	// event ("FREQ=DAILY"); a bare identifier is a property name whose value is
+	// used per entity. An unbounded rule keeps an event visible until it leaves
+	// the feed. Validated at load.
+	Rrule string `yaml:"rrule,omitempty" json:"rrule,omitempty"`
+	// Summary names a property mapped to the event title (SUMMARY). Optional;
+	// defaults to the entity type's display property when omitted.
+	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	// Description names an optional property mapped to DESCRIPTION.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Alarm is an optional static RFC 5545 duration (e.g. "-PT9H") mapped to a
+	// VALARM reminder on every event from this source.
+	Alarm string `yaml:"alarm,omitempty" json:"alarm,omitempty"`
 }

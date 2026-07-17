@@ -116,6 +116,7 @@ var toolCalls = map[string]struct {
 	"find_path":           {args: `{"from":"DEC-001","to":"REQ-001"}`},
 	"analyze_orphans":     {args: `{}`},
 	"analyze_cardinality": {args: `{}`},
+	"analyze_unique":      {args: `{}`},
 	"analyze_properties":  {args: `{}`},
 	"analyze_validations": {args: `{}`},
 	"analyze_schema":      {args: `{"threshold":0}`},

@@ -43,6 +43,18 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/history/:type/:id',
+    name: 'history',
+    component: () => import('@/views/HistoryView.vue'),
+    props: true,
+  },
+  {
+    path: '/relation-history/:fromType/:from/:relType/:to',
+    name: 'relation-history',
+    component: () => import('@/views/RelationHistoryView.vue'),
+    props: true,
+  },
+  {
     path: '/kanban/:id',
     name: 'kanban',
     component: () => import('@/views/KanbanView.vue'),
@@ -99,9 +111,7 @@ const router = createRouter({
     // tell vue-router not to scroll itself.
     if (to.hash) {
       const startPath = to.fullPath
-      scrollToAnchorWhenReady(to.hash, () =>
-        router.currentRoute.value.fullPath !== startPath,
-      )
+      scrollToAnchorWhenReady(to.hash, () => router.currentRoute.value.fullPath !== startPath)
       return false
     }
     // Otherwise: top of the page.
@@ -167,6 +177,8 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
     mo.observe(container, { childList: true, subtree: true, characterData: true })
 
     container.addEventListener('rela:mermaid-rendered', reScroll)
+    // PlantUML <img>s shift layout when they (lazily) load; same re-settle.
+    container.addEventListener('rela:plantuml-rendered', reScroll)
     const deadline = window.setTimeout(cleanup, SETTLE_TIMEOUT_MS)
     const abortTick = window.setInterval(() => {
       if (abort()) cleanup()
@@ -178,6 +190,7 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
     function cleanup() {
       mo.disconnect()
       container.removeEventListener('rela:mermaid-rendered', reScroll)
+      container.removeEventListener('rela:plantuml-rendered', reScroll)
       window.clearTimeout(deadline)
       window.clearInterval(abortTick)
       window.removeEventListener('wheel', onUserScroll)
@@ -242,7 +255,7 @@ router.onError((err, to, from) => {
       if (now - last < 10_000) {
         console.warn(
           '[router-error] chunk-load failure, already reloaded recently — skipping:',
-          msg,
+          msg
         )
         return
       }
@@ -262,10 +275,7 @@ router.onError((err, to, from) => {
   ) {
     return
   }
-  console.error(
-    `[router-error] navigating to=${to.fullPath} from=${from.fullPath}:`,
-    err,
-  )
+  console.error(`[router-error] navigating to=${to.fullPath} from=${from.fullPath}:`, err)
 })
 
 export default router

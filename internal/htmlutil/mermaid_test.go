@@ -44,3 +44,54 @@ func TestConvertMermaidBlocks(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertPlantUMLBlocks(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "basic plantuml block",
+			input:    `<pre><code class="language-plantuml">@startuml A--&gt;B @enduml</code></pre>`,
+			expected: `<pre class="plantuml">@startuml A--&gt;B @enduml</pre>`,
+		},
+		{
+			name:     "multiline plantuml",
+			input:    "<pre><code class=\"language-plantuml\">@startuml\nA->B\n@enduml</code></pre>",
+			expected: "<pre class=\"plantuml\">@startuml\nA->B\n@enduml</pre>",
+		},
+		{
+			name:     "leaves mermaid untouched",
+			input:    `<pre><code class="language-mermaid">graph TD</code></pre>`,
+			expected: `<pre><code class="language-mermaid">graph TD</code></pre>`,
+		},
+		{
+			name:     "no plantuml blocks",
+			input:    `<pre><code class="language-go">x</code></pre>`,
+			expected: `<pre><code class="language-go">x</code></pre>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ConvertPlantUMLBlocks(tt.input)
+			if result != tt.expected {
+				t.Errorf("ConvertPlantUMLBlocks() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestConvertDiagramBlocks(t *testing.T) {
+	// Both rewrites apply in a single pass; an unrelated code block is untouched.
+	input := `<pre><code class="language-mermaid">graph TD</code></pre>` +
+		`<pre><code class="language-plantuml">@startuml</code></pre>` +
+		`<pre><code class="language-go">x</code></pre>`
+	want := `<pre class="mermaid">graph TD</pre>` +
+		`<pre class="plantuml">@startuml</pre>` +
+		`<pre><code class="language-go">x</code></pre>`
+	if got := ConvertDiagramBlocks(input); got != want {
+		t.Errorf("ConvertDiagramBlocks() = %q, want %q", got, want)
+	}
+}

@@ -94,12 +94,29 @@ func createCore(
 		return nil, nil, err
 	}
 
+	// Enforce state-machine entry BEFORE the durable write (TKT-E4LW2,
+	// RR-HETEE): the candidate carries the resolved post-template property
+	// values, so the entry-value check needs no persisted row. Running it
+	// here — not after Store.CreateEntity — means an illegal entry is
+	// rejected without ever emitting a store event (no orphaned index entry,
+	// no SSE broadcast, no un-audited row).
+	if err := deps.Transitions.EnforceCreate(ctx, e); err != nil {
+		return nil, nil, err
+	}
+
+	// Enforce `unique: true` natural-key constraints before the durable
+	// write. excludeSelfID is empty: on create there is no prior version
+	// of this entity to exclude.
+	if err := checkUniqueProperties(ctx, deps, e, ""); err != nil {
+		return nil, nil, err
+	}
+
 	// A create must never fall through to an update — that would
 	// overwrite a colliding entity (a racing create, or a stale-scan
 	// duplicate ID). Write with a direct CreateEntity and surface a
-	// conflict as ErrEntityAlreadyExists. upsertEntity's
-	// create-then-update fallback is only for write-back-existing
-	// callers, never the create path.
+	// conflict as ErrEntityAlreadyExists. Every write path is now
+	// create-XOR-update by resolved intent; there is no create-then-
+	// update-on-conflict fallback anywhere (BUG-ZWTDH9).
 	if err := deps.Store.CreateEntity(ctx, e); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil, nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
@@ -201,8 +218,10 @@ func generateID(ctx context.Context, deps Deps, entityType, prefix string) (stri
 // collectAllIDs returns every entity ID currently in the store.
 // A partial scan must not feed ID generation: a truncated list can hide
 // a high-numbered existing ID, so the generator would mint one that
-// already exists and (via upsertEntity's create-then-update fallback)
-// overwrite that entity. Fail loudly instead.
+// already exists. createCore then rejects that collision with
+// ErrEntityAlreadyExists (a create never overwrites), so a truncated
+// scan would surface as a spurious conflict rather than data loss — but
+// fail loudly here regardless, so the generator is never fed bad data.
 func collectAllIDs(ctx context.Context, st store.Store) ([]string, error) {
 	ids := make([]string, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
@@ -256,50 +275,6 @@ func findExistingRelationTarget(
 		if target.Type == targetType {
 			return target
 		}
-	}
-	return nil
-}
-
-// upsertEntity persists an entity to the store. Tries CreateEntity
-// first; if and only if that fails with [store.ErrConflict], falls
-// back to UpdateEntity. Any other error from CreateEntity is
-// returned as-is — masking a permission or I/O failure as a missing
-// entity would cause confusing downstream errors.
-func upsertEntity(ctx context.Context, st store.Store, e *entity.Entity) error {
-	if e == nil {
-		return nil
-	}
-	err := st.CreateEntity(ctx, e)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, store.ErrConflict) {
-		return err
-	}
-	return st.UpdateEntity(ctx, e)
-}
-
-// upsertRelation persists a relation to the store with the same
-// "Create-then-Update on ErrConflict" discipline as upsertEntity.
-func upsertRelation(ctx context.Context, st store.Store, r *entity.Relation) error {
-	if r == nil {
-		return nil
-	}
-	_, err := st.CreateRelation(ctx, r.From, r.Type, r.To, &store.RelationData{
-		Properties: r.Properties,
-		Content:    r.Content,
-	})
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, store.ErrConflict) {
-		return err
-	}
-	if _, uErr := st.UpdateRelation(ctx, r.From, r.Type, r.To, store.RelationData{
-		Properties: r.Properties,
-		Content:    r.Content,
-	}); uErr != nil {
-		return fmt.Errorf("update relation: %w", uErr)
 	}
 	return nil
 }

@@ -62,9 +62,11 @@ func resolveUpsertOp(getErr error, createAudit, updateAudit string) (upsertOp, e
 //   - Like every write path, it authorizes against the ACL, validates against
 //     the metamodel (hard errors abort; soft conditions ride along as
 //     warnings), and emits an audit record AFTER the durable write (consistent
-//     with Create/Update — a committed write is never left unaudited). It must
-//     not be confused with the internal upsertEntity, a raw store write with
-//     none of that.
+//     with Create/Update — a committed write is never left unaudited). The
+//     durable write is a direct CreateEntity or UpdateEntity chosen by the
+//     resolved intent — never an upsert: a create-intent write that races a
+//     concurrent create is rejected (ErrEntityAlreadyExists), not silently
+//     turned into a re-typing overwrite (BUG-ZWTDH9).
 //
 // ID-prefix note: validation includes the metamodel's ID-prefix check, which is
 // a HARD error. Sync therefore assumes peers share a metamodel (so a
@@ -87,15 +89,30 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: entity %s has inaccessible fields", e.ID)
 	}
 
-	_, getErr := m.deps.Store.GetEntity(ctx, e.ID)
+	stored, getErr := m.deps.Store.GetEntity(ctx, e.ID)
 	op, err := resolveUpsertOp(getErr, audit.OpCreateEntity, audit.OpUpdateEntity)
 	if err != nil {
 		return nil, fmt.Errorf("entitymanager: ApplyEntity: existence check for %s: %w", e.ID, err)
 	}
 
+	// On UPDATE, the authorization subject must be bound to the RESOURCE, not
+	// the body. Type is immutable on update: authorize (and below, validate)
+	// against the stored type, and hard-reject a body type that differs — a
+	// mismatch is a cross-type write-privilege escalation, not a legal edit
+	// (BUG-ZWTDH9). On CREATE (entity does not yet exist) the body type IS the
+	// new entity's type, so subjectType is simply e.Type.
+	subjectType := e.Type
+	if op.aclOp == acl.OpUpdate {
+		if e.Type != stored.Type {
+			return nil, fmt.Errorf("entitymanager: ApplyEntity: %s: %w (stored %q, body %q)",
+				e.ID, ErrTypeImmutable, stored.Type, e.Type)
+		}
+		subjectType = stored.Type
+	}
+
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      op.aclOp,
-		Subject: acl.EntitySubject{Type: e.Type, ID: e.ID},
+		Subject: acl.EntitySubject{Type: subjectType, ID: e.ID},
 	}); err != nil {
 		return nil, err
 	}
@@ -107,12 +124,77 @@ func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.Up
 		return nil, newValidationError(hard)
 	}
 
-	if err := upsertEntity(ctx, m.deps.Store, e); err != nil {
-		return nil, fmt.Errorf("entitymanager: ApplyEntity: %w", err)
+	// Enforce `unique: true` natural-key constraints, excluding this
+	// entity's own prior version (sync upserts an existing ID).
+	if err := checkUniqueProperties(ctx, m.deps, e, e.ID); err != nil {
+		return nil, err
+	}
+
+	// Enforce enum state machines on the sync/upsert path too (RR-NB135): this
+	// is a served write with a real principal, so skipping it would let a sync
+	// client land an illegal transition or bypass a guard — the exact hole the
+	// "unforgettable" pipeline is meant to close. On an update we diff against
+	// the probed `stored` state; on a create we check the entry value. The
+	// guard adapter is inert when there is no policy/principal (CLI sync), so
+	// only a policy-backed served sync is gated. ApplyEntity runs no automation,
+	// so this is the final pre-write state.
+	if op.aclOp == acl.OpUpdate {
+		if err := m.deps.Transitions.EnforceUpdate(
+			ctx, stored, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
+		); err != nil {
+			return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: subjectType, ID: e.ID}, err)
+		}
+	} else if err := m.deps.Transitions.EnforceCreate(ctx, e); err != nil {
+		return nil, err
+	}
+
+	// Write by RESOLVED intent — never upsert. A create that conflicts
+	// (a concurrent create of the same ID landed since the existence
+	// probe) is a lost-update + type-re-type vector if it silently
+	// updates: reject it as ErrEntityAlreadyExists so the caller re-reads
+	// (the sync handler maps it to 409). An update whose row vanished
+	// concurrently surfaces as ErrEntityVanishedOnUpdate (wrapping
+	// ErrEntityNotFound; the sync handler maps it to a 412 conflict,
+	// symmetric with the relation vanished-on-update case). This is what
+	// closes the residual on the postgres multi-writer backend
+	// (BUG-ZWTDH9).
+	if err := m.persistApplyEntity(ctx, op.aclOp, e); err != nil {
+		return nil, err
 	}
 	m.recordEntityAudit(ctx, op.auditOp, e, op.summary)
 
 	return &entity.UpdateResult{Entity: e, Warnings: soft}, nil
+}
+
+// persistApplyEntity writes e by the resolved apply intent: OpCreate ->
+// CreateEntity (a conflict is ErrEntityAlreadyExists — never overwrite);
+// OpUpdate -> UpdateEntity (a vanished row is ErrEntityVanishedOnUpdate, which
+// wraps ErrEntityNotFound). Neither branch falls back to the other, so a
+// create-intent write that races a concurrent create can never become a blind,
+// re-typing update.
+func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.Entity) error {
+	if op == acl.OpCreate {
+		if err := m.deps.Store.CreateEntity(ctx, e); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, e.ID)
+			}
+			return fmt.Errorf("entitymanager: ApplyEntity: %w", err)
+		}
+		return nil
+	}
+	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// The probe saw the entity but the row vanished before the write
+			// (a concurrent delete). Surface ErrEntityVanishedOnUpdate, which
+			// wraps ErrEntityNotFound so existing errors.Is callers still match
+			// while the sync handler can map this narrow race to a 412 conflict
+			// (symmetric with the relation vanished-on-update case), distinct
+			// from the 404 reserved for a missing relation endpoint.
+			return fmt.Errorf("%w: %s", ErrEntityVanishedOnUpdate, e.ID)
+		}
+		return fmt.Errorf("entitymanager: ApplyEntity: %w", err)
+	}
+	return nil
 }
 
 // ApplyRelation upserts a relation by its from/type/to triple, with the same
@@ -170,12 +252,38 @@ func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entit
 		return nil, fmt.Errorf("entitymanager: ApplyRelation: invalid relation: %w", vErr)
 	}
 
-	if err := upsertRelation(ctx, m.deps.Store, r); err != nil {
-		return nil, fmt.Errorf("entitymanager: ApplyRelation: %w", err)
+	// Write by RESOLVED intent — never upsert (BUG-ZWTDH9). OpCreate ->
+	// CreateRelation (a conflict is ErrRelationAlreadyExists); OpUpdate ->
+	// UpdateRelation (a vanished row is ErrRelationNotFound).
+	if err := m.persistApplyRelation(ctx, op.aclOp, r); err != nil {
+		return nil, err
 	}
 	m.recordRelationAudit(ctx, op.auditOp, r, op.summary)
 
 	return r, nil
+}
+
+// persistApplyRelation writes r by the resolved apply intent, mirroring
+// persistApplyEntity: no create-then-update fallback, so a create-intent
+// write that races a concurrent create is rejected, not silently merged.
+func (m *Manager) persistApplyRelation(ctx context.Context, op acl.Op, r *entity.Relation) error {
+	data := store.RelationData{Properties: r.Properties, Content: r.Content}
+	if op == acl.OpCreate {
+		if _, err := m.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &data); err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				return fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, r.From, r.Type, r.To)
+			}
+			return fmt.Errorf("entitymanager: ApplyRelation: %w", err)
+		}
+		return nil
+	}
+	if _, err := m.deps.Store.UpdateRelation(ctx, r.From, r.Type, r.To, data); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, r.From, r.Type, r.To)
+		}
+		return fmt.Errorf("entitymanager: ApplyRelation: %w", err)
+	}
+	return nil
 }
 
 // requireEndpoint loads a relation endpoint, distinguishing a genuine

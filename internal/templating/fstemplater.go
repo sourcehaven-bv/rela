@@ -3,6 +3,7 @@ package templating
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -70,7 +71,7 @@ func (t *FSTemplater) GenerateRelation(
 func entityDocToTemplate(doc *markdown.Document, entityType, variant string) *Template {
 	properties := make(map[string]interface{}, len(doc.Frontmatter))
 	for k, v := range doc.Frontmatter {
-		if k == "id" || k == "type" || k == "_template_relations" {
+		if entity.IsReservedEntityKey(k) || k == templateRelationsKey {
 			continue
 		}
 		properties[k] = v
@@ -89,7 +90,7 @@ func entityDocToTemplate(doc *markdown.Document, entityType, variant string) *Te
 func relationDocToTemplate(doc *markdown.Document) *Template {
 	properties := make(map[string]interface{}, len(doc.Frontmatter))
 	for k, v := range doc.Frontmatter {
-		if k == "from" || k == "relation" || k == "to" {
+		if entity.IsReservedRelationKey(k) {
 			continue
 		}
 		properties[k] = v
@@ -100,10 +101,10 @@ func relationDocToTemplate(doc *markdown.Document) *Template {
 	}
 }
 
-// docTemplateRelations reads _template_relations from the frontmatter
-// and returns them in the top-level Relation shape used by Template.
+// docTemplateRelations reads the template-relations frontmatter and
+// returns them in the top-level Relation shape used by Template.
 func docTemplateRelations(frontmatter map[string]interface{}) []Relation {
-	raw, ok := frontmatter["_template_relations"]
+	raw, ok := frontmatter[templateRelationsKey]
 	if !ok || raw == nil {
 		return nil
 	}

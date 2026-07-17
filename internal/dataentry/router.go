@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,7 +15,7 @@ import (
 
 // envDataEntryUser is the local-dev escape hatch: if this env var is
 // set, EnvPrincipalResolver returns its value as the principal user.
-// Documented in docs/security.md alongside the --principal-header
+// Documented in docs/server-security.md alongside the --principal-header
 // flag.
 const envDataEntryUser = "RELA_DATAENTRY_USER"
 
@@ -74,14 +75,21 @@ func (a *App) NewRouter() http.Handler {
 
 	// APIs used by Vue SPA
 	inner.HandleFunc("/api/help/", a.handleEntityHelp)
-	inner.HandleFunc("/api/command/", a.handleCommandExec)
-	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
-	inner.HandleFunc("/api/open-file", a.handleOpenFile)
+	a.commands.registerCommandRoutes(inner)
 	inner.HandleFunc("/api/git/status", a.handleGitStatus)
 	inner.HandleFunc("/api/git/sync", a.handleGitSync)
 
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
+
+	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
+	a.sync.registerSyncRoutes(inner)
+
+	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
+	// configured (SetWebhookReceiver). It lives OUTSIDE /api/ because it
+	// authenticates itself by verifying a signed JWT body, not a proxy header or
+	// cookie, so it is CSRF-immune by construction and needs no same-origin gate.
+	a.registerWebhookRoutes(inner)
 
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
@@ -165,6 +173,14 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 			// upstream layer attached a Request from a different
 			// identity); under that condition the gate would run
 			// against the wrong policy with no loud signal.
+			//
+			// Note: principal_property resolution (resolvePrincipalEntity
+			// below) has NOT run on this branch — it only applies when we
+			// open a fresh Request. So both sides here are the raw,
+			// pre-resolution principal and match in production (nothing
+			// upstream resolves). If a future upstream layer ever attaches
+			// a Request built from a *resolved* principal while ctx still
+			// holds the raw one, this correctly 500s as a genuine mismatch.
 			ctxPrin := principal.From(ctx)
 			if existing.Principal() != ctxPrin {
 				slog.Warn("acl: attachACLRequest: existing Request principal mismatch",
@@ -192,6 +208,16 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
+		// Resolve the raw principal to a user entity via the policy's
+		// `principal_property` lookup (a no-op unless both policy keys are
+		// set). On a single match we re-stamp ctx with the resolved ID so
+		// BOTH the ACL walk below and the audit writer (which re-reads
+		// principal.From(ctx)) attribute the write to the real entity while
+		// preserving the raw header value in RawUser. Any non-match /
+		// ambiguous / errored lookup keeps the raw principal (fail-open to
+		// pre-feature behavior) — see acl.Declarative.ResolvePrincipal.
+		ctx = resolvePrincipalEntity(ctx, d, r)
+
 		req, err := d.ForPrincipal(principal.From(ctx))
 		if err != nil {
 			// RR-372L: log the raw error server-side; never emit it
@@ -230,6 +256,30 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 	})
 }
 
+// resolvePrincipalEntity applies the ACL policy's `principal_property`
+// lookup to the ctx principal. When the policy has the lookup enabled and
+// the raw principal resolves to exactly one user entity, it returns a ctx
+// carrying a principal whose User is the entity ID and whose RawUser is
+// the original identifier (so the audit log records both). In every other
+// case — lookup disabled, no match, ambiguous match, or backend error —
+// it returns ctx unchanged so the write falls back to the raw principal
+// (pre-feature behavior); ambiguity and errors are logged, a plain
+// no-match is not (a principal absent from the graph is expected, e.g. a
+// break-glass identity assigned by raw UPN).
+func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Request) context.Context {
+	p := principal.From(ctx)
+	id, err := d.ResolvePrincipal(ctx, p.User)
+	if err != nil {
+		slog.Warn("acl: principal_property lookup failed; using raw principal",
+			"path", r.URL.Path, "method", r.Method, "err", err)
+		return ctx
+	}
+	if id == "" || id == p.User {
+		return ctx
+	}
+	return principal.With(ctx, principal.Principal{User: id, Tool: p.Tool, RawUser: p.User})
+}
+
 // PrincipalResolver maps an incoming HTTP request to the audit
 // Principal that should be stamped on its context. Compose multiple
 // resolvers via [ChainResolvers] to layer (e.g.) an env-var override
@@ -262,7 +312,7 @@ func defaultPrincipalResolver(_ *http.Request) principal.Principal {
 // the reverse proxy that sets it. Operators serving data-entry
 // without a trusted proxy must not enable this resolver — anyone
 // can spoof identity by setting the header on the wire. See
-// docs/security.md for the deployment guidance.
+// docs/server-security.md for the deployment guidance.
 //
 // Sanitization: control characters (C0 + DEL) in the header value
 // are replaced with regular spaces, the value is truncated to 256
@@ -303,6 +353,75 @@ func EnvPrincipalResolver() PrincipalResolver {
 		}
 		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 	}
+}
+
+// subjectVerifier verifies a signed identity assertion and returns its subject
+// (the stable OIDC `sub`). Satisfied by *jwtauth.Verifier; kept local (and
+// unexported, per the other consumer interfaces here) so the dataentry package
+// doesn't import the concrete verifier and the resolver is testable with a stub.
+type subjectVerifier interface {
+	VerifySubject(ctx context.Context, raw string) (string, error)
+}
+
+// JWTPrincipalResolver reads a signed identity assertion from headerName,
+// verifies it (ES256 against the proxy's JWKS, via v), and stamps the verified
+// STABLE subject as Principal.User. This is provider-agnostic — any OIDC proxy
+// that injects a signed JWT works by configuring the issuer/audience/JWKS/header.
+//
+// Unlike [HeaderPrincipalResolver] (which trusts the proxy set the header), this
+// resolver CRYPTOGRAPHICALLY verifies the assertion, so it is safe even when the
+// header could reach the server from the network — a spoofed header without a
+// valid signature simply fails verification and falls through.
+//
+// Tool is [principal.ToolDataEntry]: the assertion changes WHO authenticated, not
+// the entry point (a verified user still arrives via the data-entry HTTP surface).
+//
+// A missing header, an "Authorization: Bearer <jwt>" wrapper (the scheme is
+// stripped case-insensitively per RFC 6750), or any verification failure yields a
+// zero Principal so the chain falls through — a nil v also yields an inert
+// resolver. Empty headerName ⇒ inert (matches the disabled-flag shape of the
+// other resolvers).
+func JWTPrincipalResolver(v subjectVerifier, headerName string) PrincipalResolver {
+	if v == nil || headerName == "" {
+		return func(*http.Request) principal.Principal { return principal.Principal{} }
+	}
+	return func(r *http.Request) principal.Principal {
+		raw := stripBearer(r.Header.Get(headerName))
+		if raw == "" {
+			return principal.Principal{}
+		}
+		sub, err := v.VerifySubject(r.Context(), raw)
+		if err != nil || sub == "" {
+			return principal.Principal{}
+		}
+		// The subject is a controlled id (opaque, from the IdP), but sanitize it
+		// the same way as header/env users for defense in depth (length cap,
+		// control-char strip). A control-only value sanitizes to "" and falls
+		// through.
+		user := sanitizeUser(sub)
+		if user == "" {
+			return principal.Principal{}
+		}
+		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+	}
+}
+
+// stripBearer trims the header value and removes an optional "Bearer" auth
+// scheme (case-insensitive, per RFC 6750, tolerating any run of whitespace after
+// it) so the header may carry either a raw JWT or an "Authorization: Bearer <jwt>"
+// value. Returns the bare token, or "" if the value is empty.
+func stripBearer(v string) string {
+	v = strings.TrimSpace(v)
+	const scheme = "bearer"
+	if len(v) > len(scheme) && strings.EqualFold(v[:len(scheme)], scheme) {
+		rest := v[len(scheme):]
+		if trimmed := strings.TrimLeft(rest, " \t"); trimmed != rest {
+			// Only strip when the scheme was actually followed by whitespace, so a
+			// token that merely starts with "bearer" isn't mangled.
+			return strings.TrimSpace(trimmed)
+		}
+	}
+	return v
 }
 
 // ChainResolvers returns a resolver that tries each supplied

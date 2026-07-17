@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
@@ -20,7 +21,8 @@ import (
 type renameTestEnv struct {
 	dir   string
 	paths *project.Context
-	svc   *cliServices
+	svc   *writeServices
+	rt    *renametype.Service
 }
 
 func setupRenameTestEnv(t *testing.T) renameTestEnv {
@@ -57,14 +59,14 @@ func setupRenameTestEnv(t *testing.T) renameTestEnv {
 	// Set up project services backed by a real filesystem so the
 	// rename command can modify files on disk.
 	fs := storage.NewSafeFS(storage.NewOsFS())
-	svc, err := newCLIServicesFromAppbuild(
+	b, err := newCLIBundles(
 		appbuildtest.New(meta, appbuildtest.WithFS(fs, paths)),
 	)
 	if err != nil {
-		t.Fatalf("newCLIServicesFromAppbuild: %v", err)
+		t.Fatalf("newCLIBundles: %v", err)
 	}
 
-	return renameTestEnv{dir: dir, paths: paths, svc: svc}
+	return renameTestEnv{dir: dir, paths: paths, svc: b.write, rt: b.renametype}
 }
 
 func writeEntityFile(t *testing.T, path, id, entityType, title string) {
@@ -122,7 +124,7 @@ func TestRenameEntityCommand(t *testing.T) {
 			"REQ-002", "requirement", "Second Requirement")
 
 		// Run rename
-		err := runRenameEntity(env.svc, "requirement", "feature", true, "")
+		err := runRenameEntity(env.svc, env.rt, "requirement", "feature", true, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -169,7 +171,7 @@ func TestRenameEntityCommand(t *testing.T) {
 	t.Run("error when old type not found", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
 
-		err := runRenameEntity(env.svc, "nonexistent", "feature", true, "")
+		err := runRenameEntity(env.svc, env.rt, "nonexistent", "feature", true, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -181,7 +183,7 @@ func TestRenameEntityCommand(t *testing.T) {
 	t.Run("error when new type already exists", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
 
-		err := runRenameEntity(env.svc, "requirement", "decision", true, "")
+		err := runRenameEntity(env.svc, env.rt, "requirement", "decision", true, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -193,7 +195,7 @@ func TestRenameEntityCommand(t *testing.T) {
 	t.Run("error when new type name is invalid", func(t *testing.T) {
 		env := setupRenameTestEnv(t)
 
-		err := runRenameEntity(env.svc, "requirement", "Bad-Name", true, "")
+		err := runRenameEntity(env.svc, env.rt, "requirement", "Bad-Name", true, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -210,7 +212,7 @@ func TestRenameEntityCommand(t *testing.T) {
 			filepath.Join(dir, "entities", "requirements", "REQ-001.md"),
 			"REQ-001", "requirement", "Test")
 
-		err := runRenameEntity(env.svc, "requirement", "policy", true, "policies")
+		err := runRenameEntity(env.svc, env.rt, "requirement", "policy", true, "policies")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -231,7 +233,7 @@ func TestRenameEntityCommand(t *testing.T) {
 		templatePath := filepath.Join(templateDir, "requirement.md")
 		os.WriteFile(templatePath, []byte("---\nstatus: draft\n---\n"), 0644)
 
-		err := runRenameEntity(env.svc, "requirement", "feature", true, "")
+		err := runRenameEntity(env.svc, env.rt, "requirement", "feature", true, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -252,7 +254,7 @@ func TestRenameEntityCommand(t *testing.T) {
 		os.RemoveAll(env.paths.EntitiesDir)
 		os.MkdirAll(env.paths.EntitiesDir, 0755)
 
-		err := runRenameEntity(env.svc, "requirement", "feature", true, "")
+		err := runRenameEntity(env.svc, env.rt, "requirement", "feature", true, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -61,7 +61,7 @@ Every record is one line of JSON:
 
 ### `denied-write` records
 
-When an ACL refuses a write (see [security](../security.md)
+When an ACL refuses a write (see [security](server-security.md)
 "Access control"), the audit log records a `denied-write` row with
 the would-be `subject` and a `summary` carrying the deny reason.
 The record never produces side-effects on the store itself — the
@@ -131,7 +131,7 @@ records `"unknown"` — honest about the gap.
 behind a reverse proxy that *strips the same header from inbound
 requests* and *sets it from an authenticated source*. A direct
 client can otherwise spoof the header at will. See
-[`docs/security.md`](../security.md) for deployment guidance.
+[`docs/server-security.md`](server-security.md) for deployment guidance.
 
 Header values are trimmed, length-capped at 256 runes, and have
 control characters replaced with a space — defense-in-depth against
@@ -187,14 +187,26 @@ the specific name as `automation:<name>`.
 
 ### Retention
 
-There is no automatic log rotation / pruning. Operators are
-responsible for managing the directory:
+`rela` rotates to a new daily file but **never deletes audit logs** —
+there is no automatic pruning or expiry. Retaining the directory is an
+operational responsibility of the deployment.
+
+**Minimum retention.** Where a security-log retention requirement
+applies (e.g. POLICY-017 §4 / PROCEDURE-f4cu: **≥ 12 months**), keep
+everything under `.rela/audit/` for at least that window. The directory
+is gitignored and per-machine, so back it up or ship it off-box if the
+host is ephemeral. See the [security model](server-security.md#retention).
+
+**Pruning, if any, must stay above the retention window.** Daily file
+naming makes the granularity exact — delete only files older than your
+window, never on a shorter interval:
 
 ```bash
-find .rela/audit -mtime +90 -delete
+# Delete audit logs older than 12 months (365 days). Do NOT prune
+# below your required retention window — a shorter -mtime would drop
+# records you are required to keep.
+find .rela/audit -name '*.jsonl' -mtime +365 -delete
 ```
-
-Daily file naming makes retention granularity trivial.
 
 ## Reading the log
 

@@ -5,9 +5,19 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// defaultMembershipRelation is the relation type the resolver walks
+// for group membership when [Policy.MembershipRelation] is unset (or
+// blank/whitespace). Promoting this from a hard-coded literal to a
+// policy field (TKT-Z8A62F) lets operators point the resolver at a
+// domain relation they already model (e.g. `heeft_rol` in a Dutch
+// ISMS) instead of maintaining a parallel `member-of` edge system.
+// The default preserves existing deployments verbatim.
+const defaultMembershipRelation = "member-of"
 
 // EveryoneRole is the one built-in role name. A role declared under
 // this name in `acl.yaml` is held implicitly by every principal,
@@ -18,17 +28,42 @@ import (
 // source of truth for the name so the two paths can't drift.
 //
 // (No `anonymous` / `authenticated` built-ins yet: rela-server has no
-// authentication layer — see docs/security.md. Those would be added
+// authentication layer — see docs/server-security.md. Those would be added
 // here when auth lands, so both write and affordance paths see them.)
 const EveryoneRole = "everyone"
+
+// PermHistoryRead is the global named permission that gates reading the
+// version history of a DELETED entity (TKT-9INY0Y). A live entity's history
+// is gated by the ordinary per-entity read verdict; but once an entity is
+// deleted the conferring relations are gone, so there is nothing to evaluate
+// a per-entity verdict against — deleted-history read is therefore an
+// all-or-nothing global capability, granted via a role's `permissions:` list
+// like the delegate-X permissions. Documented in docs/acl-security.md as an
+// "audit-everything-deleted" super-permission.
+const PermHistoryRead = "history:read"
 
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
 // at the project root.
 //
 //   - [Policy.UserEntityType] names the entity type that represents
-//     a user (e.g. "person", "user"). Reserved for a future
-//     check that validates `member-of` edges originate from a user
-//     entity; not consulted by the resolver today (RR-NIGK).
+//     a user (e.g. "person", "user"). Consulted together with
+//     [Policy.PrincipalProperty] to resolve the raw principal to a user
+//     entity (see below); also the type a membership edge is expected to
+//     originate from.
+//   - [Policy.PrincipalProperty] names a property on [Policy.UserEntityType]
+//     whose value equals the authenticated principal's raw identifier
+//     (e.g. `email` holding the value of `X-Forwarded-User`). When both
+//     this and UserEntityType are set, the resolver looks the raw
+//     principal up against that property once per request and, on exactly
+//     one match, substitutes the matched entity's ID for `principal.User`
+//     so membership/local-role walks operate from a real entity. The
+//     referenced property MUST be declared `unique: true` in the metamodel
+//     (enforced at load, see [Policy.ValidateAgainstMetamodel]).
+//   - [Policy.MembershipRelation] names the relation type the resolver
+//     walks from a principal to resolve group membership (TKT-Z8A62F).
+//     Blank/whitespace means the default ("member-of") — read the
+//     effective value via [Policy.membershipRelation], never the raw
+//     field, since a blank type would otherwise match *all* relations.
 //   - [Policy.Roles] declares the named capability bundles. The
 //     built-in role name [EveryoneRole] ("everyone") is appended to
 //     every principal's effective role set in both the write path
@@ -51,10 +86,50 @@ const EveryoneRole = "everyone"
 // key, and security-critical invariants — see [Policy.Validate].
 type Policy struct {
 	UserEntityType      string                     `yaml:"user_entity_type"`
+	PrincipalProperty   string                     `yaml:"principal_property"`
+	MembershipRelation  string                     `yaml:"membership_relation"`
 	Roles               map[string]RoleDef         `yaml:"roles"`
 	Assignments         map[string]string          `yaml:"assignments"`
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
+}
+
+// principalPropertyLookupEnabled reports whether the policy asks the
+// resolver to map the raw principal (e.g. an email from
+// `X-Forwarded-User`) to a user entity ID before role attribution. Both
+// [Policy.UserEntityType] AND [Policy.PrincipalProperty] must be set;
+// either blank leaves behavior byte-for-byte identical to a policy that
+// never declared them (assignments/membership match on the raw string).
+func (p *Policy) principalPropertyLookupEnabled() bool {
+	return strings.TrimSpace(p.UserEntityType) != "" &&
+		strings.TrimSpace(p.PrincipalProperty) != ""
+}
+
+// EffectiveMembershipRelation returns the relation type the resolver
+// walks for group membership: a space-trimmed [Policy.MembershipRelation]
+// when set, or [defaultMembershipRelation] ("member-of") when
+// blank/whitespace.
+//
+// This is the single source of truth for the membership relation name.
+// The resolver MUST read through it rather than the raw field, and any
+// out-of-package consumer that needs to reason about the *effective*
+// relation (e.g. the aclaudit linter) must use this too — so the audit
+// can never disagree with what the resolver actually walks. [NewDeclarative]
+// does not run [Policy.Validate], and the resolver passes the name straight
+// into a [store.RelationQuery] where an empty Type means "all relation
+// types" — so a blank field reaching the walk would silently follow *every*
+// outgoing edge as if it were membership (an over-grant). Collapsing blank
+// to the default here, on every read, closes that hole regardless of how
+// the [Policy] was constructed.
+//
+// The value is trimmed so a stray-whitespace YAML value (e.g.
+// `"heeft_rol "`) resolves to the relation the operator meant rather
+// than silently matching zero edges.
+func (p *Policy) EffectiveMembershipRelation() string {
+	if trimmed := strings.TrimSpace(p.MembershipRelation); trimmed != "" {
+		return trimmed
+	}
+	return defaultMembershipRelation
 }
 
 // RoleDef is the capability bundle for a single role. The per-verb
@@ -191,18 +266,21 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 // gate — the relation type is recognized as role-conferring (for
 // future group expansion) but no permission check fires on writes.
 //
-// **Escalation risk for the `member-of` relation** (RR-7O6Q). v1
-// confers group roles by walking `member-of` edges. By default
-// `member-of` is a regular relation type with no `requires_permission`
+// **Escalation risk for the configured membership relation** (RR-7O6Q).
+// v1 confers group roles by walking the membership relation —
+// [Policy.MembershipRelation], default `member-of`. By default that
+// relation is a regular relation type with no `requires_permission`
 // gate, so anyone with write access on the relation's source type can
-// create their own `member-of` edge into any group named in
+// create their own membership edge into any group named in
 // [Policy.Assignments]. If a group is assigned a privileged role
 // (e.g. `assignments: { admins: admin }`), an attacker with write
 // access on `person` can self-promote by writing
 // `alice --member-of--> admins`.
 //
-// Operators using groups for role attribution MUST gate
-// `member-of` writes. Recommended shape:
+// Operators using groups for role attribution MUST gate writes to the
+// membership relation. Recommended shape (substitute the configured
+// relation name for `member-of` when [Policy.MembershipRelation] is
+// set):
 //
 //	role_relations:
 //	  member-of:
@@ -211,9 +289,9 @@ func roleHasAffordanceGrants(role RoleDef) bool {
 //	  admin:
 //	    permissions: [delegate-membership]
 //
-// This restricts `member-of` creation to principals holding
+// This restricts membership-edge creation to principals holding
 // `delegate-membership` — typically only admins. See
-// `docs/security.md` for the full hardening pattern. The UC1 example
+// `docs/server-security.md` for the full hardening pattern. The UC1 example
 // policy in features_test.go is intentionally minimal and would be
 // wide-open if copy-pasted into a deployment.
 type RoleRelationDef struct {
@@ -225,6 +303,8 @@ type RoleRelationDef struct {
 // Keep in sync with [Policy]'s yaml tags.
 var knownPolicyKeys = map[string]bool{
 	"user_entity_type":      true,
+	"principal_property":    true,
+	"membership_relation":   true,
 	"roles":                 true,
 	"assignments":           true,
 	"role_relations":        true,
@@ -333,6 +413,14 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // entity types in grants, etc. remain warnings (or analyze-tool
 // findings) per the "tolerant by design" stance. Security-relevant
 // invariants like the ones above are the exception.
+//
+// Validate is a pure structural gate: it does NOT flag escalation
+// foot-guns, dead/inert config, or policy-vs-metamodel drift. Those
+// advisory checks (including the un-gated / inert membership relation
+// warnings that briefly lived here in TKT-Z8A62F) belong to the
+// on-demand `rela acl audit` linter — see internal/aclaudit and
+// TKT-TS0J5K — which can rank findings by severity and cross-check the
+// metamodel, neither of which fits a boot gate.
 func (p *Policy) Validate() error {
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
@@ -366,6 +454,88 @@ func (p *Policy) Validate() error {
 						name, verb.name, t, hint, verb.name)
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// PropertyInfo describes a property to [Policy.ValidateAgainstMetamodel].
+// Exists is false when the type has no such property (in which case the
+// other fields are meaningless). A named struct instead of a tuple of
+// bools so the fields can't be transposed at the call site.
+type PropertyInfo struct {
+	Exists bool // the type declares this property
+	Unique bool // declared `unique: true`
+	List   bool // declared `list: true` (multi-valued)
+}
+
+// MetamodelView is the narrow, consumer-side contract
+// [Policy.ValidateAgainstMetamodel] needs from the metamodel. Declared
+// here (rather than importing internal/metamodel, which the acl package
+// deliberately does not depend on — see .go-arch-lint.yml) so the wiring
+// site supplies the schema without coupling the domain package to it.
+// *metamodel.Metamodel is adapted to this at the wiring site (appbuild).
+type MetamodelView interface {
+	// HasEntityType reports whether entityType is declared.
+	HasEntityType(entityType string) bool
+	// PropertyInfo describes property on entityType (existence, unique,
+	// list). A missing type or property yields PropertyInfo{Exists:false}.
+	PropertyInfo(entityType, property string) PropertyInfo
+}
+
+// ValidateAgainstMetamodel enforces the schema-dependent invariants that
+// [Policy.Validate] cannot check in isolation. It is run at the wiring
+// site (where the metamodel is available) after LoadPolicy. Errors are
+// hard — a policy that references a non-existent type/property, or a
+// principal_property that is not a unique natural key, is an operator
+// mistake that must fail loud at load rather than silently mis-resolve
+// identities at runtime.
+//
+// Checks (all gated on the relevant keys being set):
+//
+//   - principal_property set but user_entity_type empty → error.
+//   - user_entity_type not a declared entity type → error.
+//   - principal_property not a declared property on user_entity_type →
+//     error.
+//   - principal_property not declared `unique: true` → error. A
+//     non-unique identity key admits duplicates, which makes resolution
+//     ambiguous; requiring uniqueness is what makes the property a
+//     primary key (see internal/entitymanager checkUniqueProperties).
+//   - principal_property declared `list: true` → error. A multi-valued
+//     property can't be an identity key: the write-time unique check
+//     skips list properties and the lookup reads a scalar, so a list
+//     principal_property would silently resolve nobody. Fail loud at boot
+//     rather than ship a wired-but-inert lookup.
+//
+// user_entity_type set WITHOUT principal_property is NOT an error — it is
+// meaningful on its own (the type a membership edge originates from).
+func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
+	if meta == nil {
+		return errors.New("acl: ValidateAgainstMetamodel: metamodel view must be non-nil")
+	}
+	prop := strings.TrimSpace(p.PrincipalProperty)
+	userType := strings.TrimSpace(p.UserEntityType)
+
+	if prop != "" && userType == "" {
+		return errors.New("acl: principal_property requires user_entity_type to be set")
+	}
+	if userType != "" && !meta.HasEntityType(userType) {
+		return fmt.Errorf("acl: user_entity_type %q is not a declared entity type", userType)
+	}
+	if prop != "" {
+		info := meta.PropertyInfo(userType, prop)
+		if !info.Exists {
+			return fmt.Errorf("acl: principal_property %q is not a declared property on %q",
+				prop, userType)
+		}
+		if info.List {
+			return fmt.Errorf("acl: principal_property %q on %q is declared `list: true`; "+
+				"a multi-valued property cannot be an identity key", prop, userType)
+		}
+		if !info.Unique {
+			return fmt.Errorf("acl: principal_property %q on %q must be declared `unique: true` "+
+				"(it is used as an identity key; a duplicate value makes resolution ambiguous)",
+				prop, userType)
 		}
 	}
 	return nil

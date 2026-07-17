@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"iter"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -200,6 +200,8 @@ func propertyIsEmpty(prop interface{}) bool {
 }
 
 // applyFilters filters entities by a set of filter conditions.
+//
+//nolint:gocognit // applies each filter operator against each entity property; the branches are per-operator match semantics, not shared logic to extract.
 func applyFilters(entities []*entity.Entity, filters []FilterConfig) []*entity.Entity {
 	if len(filters) == 0 {
 		return entities
@@ -366,8 +368,8 @@ func simpleMarkdownToHTML(md string) template.HTML {
 	// Post-process: add md-table class to tables
 	result = strings.ReplaceAll(result, "<table>", `<table class="md-table">`)
 
-	// Post-process: convert mermaid code blocks
-	result = htmlutil.ConvertMermaidBlocks(result)
+	// Post-process: convert diagram code blocks (mermaid, plantuml)
+	result = htmlutil.ConvertDiagramBlocks(result)
 
 	// Post-process: add checkbox indices for interactive toggling
 	result = addCheckboxIndices(result)
@@ -490,7 +492,7 @@ func (a *App) runVisibleFreeTextSearch(
 		Limit: limit,
 	}
 	out := make([]*entity.Entity, 0)
-	for hit, err := range a.visibleSearcher.SearchVisible(ctx, q, scope) {
+	for hit, err := range searchVisibleHits(ctx, a.visibleSearcher, a.affordances, q, scope) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
@@ -507,6 +509,53 @@ func (a *App) runVisibleFreeTextSearch(
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// searchVisibleHits runs the ACL-scoped search with property-level redaction
+// when the wired searcher supports it ([search.FieldVisibleSearcher]), so a hit
+// that matched only a `visible:`-hidden property is dropped rather than
+// confirming that property's value by its presence (the match-on-hidden-field
+// oracle, TKT-GGQ0JT). If the searcher is entity-level only, it degrades to
+// SearchVisible — no field redaction, matching pre-existing behavior.
+//
+// Free function (not an App method) to keep App's method surface under the
+// god-object load line; it takes only the two collaborators it needs.
+//
+// The field filter is engaged only when the resolver can actually hide a
+// property (a policy-backed resolver); under the Nop resolver redaction is a
+// provable no-op, so the plain entity-level path runs — and a searcher that
+// isn't a FieldVisibleSearcher is fine there. When redaction IS in play but the
+// searcher can't do it, SearchVisibleFields fails closed (it does not silently
+// skip) — see search.Visible.SearchVisibleFields.
+func searchVisibleHits(
+	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
+	q search.Query, scope map[string]search.TypeScope,
+) iter.Seq2[search.Hit, error] {
+	fvs, ok := vs.(search.FieldVisibleSearcher)
+	if !ok || !aff.hidesAnyField() {
+		return vs.SearchVisible(ctx, q, scope)
+	}
+	return fvs.SearchVisibleFields(ctx, q, scope, hiddenSearchFields(aff))
+}
+
+// hiddenSearchFields builds the [search.HiddenFieldsFunc] that reports, per
+// hit, the property fields the request principal may not see — resolved through
+// the same affordance verdict source the serializer uses, then qualified into
+// the search field vocabulary (`prop:<name>`). The seam passes the already-
+// loaded entity, so the resolver's `when:` predicates evaluate against the same
+// snapshot the provenance check uses (no second load, no cross-snapshot race).
+func hiddenSearchFields(aff affordanceService) search.HiddenFieldsFunc {
+	return func(ctx context.Context, _ search.Hit, e *entity.Entity) (map[string]struct{}, error) {
+		hidden := aff.hiddenProperties(ctx, e)
+		if len(hidden) == 0 {
+			return nil, nil
+		}
+		out := make(map[string]struct{}, len(hidden))
+		for name := range hidden {
+			out[search.PropFieldPrefix+name] = struct{}{}
+		}
+		return out, nil
+	}
 }
 
 // visibleListByTypes is executeQuery's no-free-text branch: load
@@ -615,7 +664,9 @@ const maxFreeTextSearchResults = 1000
 // searcher's text layer can rebuild the same fuzzy-words + exact-phrases
 // compound query the dataentry UI used to build upstream. Backend failures
 // surface to the caller.
-func runFreeTextSearchE(ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int) ([]*entity.Entity, error) {
+func runFreeTextSearchE(
+	ctx context.Context, svc Services, sq *searchparser.SearchQuery, limit int,
+) ([]*entity.Entity, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
 	for _, p := range sq.FreeTextPhrases {
@@ -702,53 +753,6 @@ func (a *App) resolveRelationColumnValues(
 	return titles
 }
 
-// filterByRelation filters entities to those that have an outgoing edge of the given
-// relation type pointing to a target whose display title matches value.
-func (a *App) filterByRelation(
-	ctx context.Context, entities []*entity.Entity, relationType, value string,
-) []*entity.Entity {
-	svc := a.Services()
-	var result []*entity.Entity
-	for _, e := range entities {
-		if hasOutgoingRelationTo(ctx, svc, e.ID, relationType, value) {
-			result = append(result, e)
-		}
-	}
-	return result
-}
-
-// resolveRelationFilterValues returns sorted, unique display titles of all entities
-// reachable via the given relation type from any of the provided entities.
-func (a *App) resolveRelationFilterValues(
-	ctx context.Context, entities []*entity.Entity, relationType string,
-) []string {
-	svc := a.Services()
-	seen := make(map[string]bool)
-	var vals []string
-	for _, e := range entities {
-		q := store.RelationQuery{
-			EntityID:  e.ID,
-			Type:      relationType,
-			Direction: store.DirectionOutgoing,
-		}
-		for r, err := range svc.Store.ListRelations(ctx, q) {
-			if err != nil {
-				break
-			}
-			title, ok := entityTitle(ctx, svc, r.To)
-			if !ok {
-				continue
-			}
-			if !seen[title] {
-				seen[title] = true
-				vals = append(vals, title)
-			}
-		}
-	}
-	sort.Strings(vals)
-	return vals
-}
-
 // entityTitle resolves an entity ID to its metamodel-rendered display title.
 // Returns ("", false) when the entity does not exist (e.g. dangling relation).
 func entityTitle(ctx context.Context, svc Services, id string) (string, bool) {
@@ -757,25 +761,6 @@ func entityTitle(ctx context.Context, svc Services, id string) (string, bool) {
 		return "", false
 	}
 	return svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties), true
-}
-
-// hasOutgoingRelationTo reports whether fromID has an outgoing relation of
-// the given type pointing to a target whose display title matches value.
-func hasOutgoingRelationTo(ctx context.Context, svc Services, fromID, relationType, value string) bool {
-	q := store.RelationQuery{
-		EntityID:  fromID,
-		Type:      relationType,
-		Direction: store.DirectionOutgoing,
-	}
-	for r, err := range svc.Store.ListRelations(ctx, q) {
-		if err != nil {
-			return false
-		}
-		if title, ok := entityTitle(ctx, svc, r.To); ok && title == value {
-			return true
-		}
-	}
-	return false
 }
 
 // relationDirection maps the data-entry config direction type to the

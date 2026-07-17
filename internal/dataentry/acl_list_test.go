@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -343,7 +344,7 @@ func TestACLPosition_SearchScopeGated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("position: %d %s", rec.Code, rec.Body)
 	}
-	var pos V1Position
+	var pos v1.Position
 	if err := json.Unmarshal(rec.Body.Bytes(), &pos); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -429,7 +430,7 @@ func TestACLList_VaryHeader(t *testing.T) {
 // header asserts.
 func listEntitiesAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	typeName, plural, rawQuery string,
-) (V1ListResponse, *httptest.ResponseRecorder) {
+) (v1.ListResponse, *httptest.ResponseRecorder) {
 	t.Helper()
 	url := "/api/v1/" + plural
 	if rawQuery != "" {
@@ -440,7 +441,7 @@ func listEntitiesAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarat
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, typeName, plural)
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("decode list response: %v\nbody: %s", err, rec.Body)

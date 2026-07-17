@@ -119,6 +119,7 @@ Domain and storage:
 | `internal/metamodel`     | Schema: entity types, relations, properties, validation   |
 | `internal/store`         | Storage abstraction — CRUD + events; `fsstore`/`memstore`/`pgstore` |
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
+| `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor) |
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
 | `internal/audit`         | Append-only JSONL audit log of every successful write     |
@@ -192,6 +193,67 @@ Rules when touching this:
   is the documented upgrade, not built. The data-entry SSE feed consumes this
   via `App.startStoreEventBridge` (entity events only). fsstore/memstore stay
   in-process single-writer by nature.
+- **Content versioning** (TKT-9INY0Y, postgres only). Two tables
+  (`entity_versions` = one full snapshot per version; `schema_versions` =
+  content-addressed render-schema projection, deduped) plus a dedicated
+  `version_seq` sequence. **Use `version_seq`, never `rela_seq`** — `rela_seq`
+  feeds the change-feed watermark (`primeWatermark`/`catchUp` scan
+  entities/relations/deletions), and burning it on version rows that don't land
+  in those tables would erode the overlap budget and drop real events. Capture
+  is **hybrid**: rename+delete are captured synchronously at the entitymanager
+  boundary (they carry old→new id / pre-delete state the sweep can't
+  reconstruct); create/update are captured by a debounced reconciliation
+  **sweep** goroutine (`sweep.go`, started/stopped like the listener). The sweep
+  runs its **entire tick on ONE acquired pool connection** under
+  `pg_try_advisory_lock` — the lock is session-scoped, so issuing the inserts via
+  the pool (other sessions) would silently void the single-writer guarantee.
+  Attribution comes from ctx only (the store never learns the Principal by
+  another route — it arrives inside `store.VersionInput` populated at the
+  boundary); swept create/update rows use a `version-sweep` system principal and
+  the editing principal is recoverable from the audit log. Lineage across a
+  rename/id-reuse is fenced by `[lo,hi)` vseq ranges in a recursive-CTE walk (an
+  unbounded `entity_id = ANY(...)` read would merge two entities' histories — see
+  the version.go doc). `HistoryReader`/`VersionWriter` are optional store
+  capabilities (type-asserted like `store.Formatter`), NOT part of `store.Store`.
+- **Relation versioning** (TKT-92JL8P, postgres only) extends the above to
+  relations, which carry their own props + body. A `relation_versions` table
+  reuses `version_seq` + `schema_versions`; identity is a surrogate
+  `rel_record_id` **column ON the `relations` row** (`DEFAULT nextval(...)`,
+  carried through writes) — NOT reconstructed per sweep-tick, which would race the
+  sync path and merge/fork lineages. Delete+recreate of the same `(from,type,to)`
+  mints a fresh id (histories don't merge). Capture: create/update via the sweep's
+  second `FROM relations` scan (entities-then-relations, same tick/lock);
+  **delete synchronously via `DeleteResult.DeletedRelations`** — the single path
+  for BOTH explicit `DeleteRelation` and entity **cascade** delete (the store
+  bulk-deletes relations below the entitymanager, so cascade edges would otherwise
+  lose history). Rename **stitches** (not forks): the entitymanager captures a
+  `rename` version per incident relation on the new triple carrying
+  `prev_from`/`prev_to`, and `relationLineageIDs` walks those links so history is
+  continuous. Read/restore is gated on **both** endpoints (FROM ∧ TO) — the FROM
+  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
+  oracle otherwise). Relations have NO field-level redaction today; relation
+  history exposes exactly what a live relation GET does. `RelationHistoryReader`/
+  `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
+  independently of the entity ones.
+- **Version purge** (TKT-BW6UUL, postgres only) is the audited, irreversible
+  exception to append-only history — hard-deletes version rows for compliance
+  redaction. `VersionPurger`/`RelationVersionPurger` are SEPARATE optional
+  capabilities (`purge.go`), one `PurgeVersions`/`PurgeRelationVersions` method
+  each. Load-bearing guardrails (design-review, do not relax): the whole op runs
+  under **`sweepAdvisoryLockKey`** (mutually exclusive with a sweep tick — a purge
+  racing a capture-insert loses the erasure); it **REFUSES while a live row still
+  holds the content** unless `--force-live` (else the sweep re-captures it within
+  one interval — a `VersionOpPurge` no-content tombstone whose content_hash = the
+  live hash suppresses that re-capture via the sweep's existing dedup); it
+  **REFUSES a rename row** (purging one orphans/forks the lineage walk — v1 is
+  non-rename-only); `--all` purges the **fenced lineage** (`lineageCTE` /
+  `relationLineageIDs`), never `WHERE id=$1` (id-reuse would destroy unrelated
+  history). CLI-only (`history-purge`/`relation-history-purge`), dry-run by
+  default; trust boundary is operator shell (no ACL check — like `db migrate`),
+  audited via the `audit.Audit` sink (`OpPurgeVersion`, `svc.Audit()`), never
+  echoing purged content. `schema_versions` is projection-only + FK-shared, so
+  purge never deletes it. Purge is necessary-not-sufficient for erasure (live
+  row / PITR backups survive) — see the postgres-backend guide.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the
@@ -234,6 +296,29 @@ enforcement — unit tests run plain (`npm run test:run`).
 
 golangci-lint with project rules. Test files exempt from `dupl`, `funlen`,
 magic numbers. Cobra `cmd`/`args` unused parameters allowed. Line length: 120.
+
+**God-object load lines** (`just plimsoll`, CI job "God-object lint"). The
+[plimsoll](https://github.com/sourcehaven-bv/plimsoll) linter caps three
+independent surfaces — the metric that tracks a type accreting into a
+god-object (`App`, `Runtime`, `FSStore` got there because nothing stopped them):
+
+- **`max-methods` (40)** — total methods, exported + unexported. The backstop
+  for internal sprawl: a receiver with dozens of private helpers is one struct
+  whose fields they can all reach.
+- **`max-exported-methods` (20)** — exported methods only. The sharper signal,
+  since the public API is the coupling surface consumers bind to. Note these
+  often diverge wildly from the total: `App` is 226 methods but only 13
+  exported; the genuinely-wide _public_ APIs are the store implementations and
+  schema value types (`FSStore`, `MemStore`, `Metamodel`).
+- **`max-fields` (20)** — exported struct fields.
+
+A new type over any line fails CI. Existing offenders are grandfathered with a
+`//plimsoll:max-methods=N` / `max-exported-methods=N` / `max-fields=N` directive
+at the declaration site, pinned to the current count so they can't grow; ratchet
+those down as you decompose (TKT-N0IKN9). A store-implementation's exported count
+is the mandated `store.Store` interface, so its directive is a documented
+"required interface" exception rather than a ratchet target. Prefer splitting the
+type over raising the number.
 
 ## Security
 

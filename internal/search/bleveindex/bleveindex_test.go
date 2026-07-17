@@ -70,6 +70,56 @@ func TestIndex_SearchByID(t *testing.T) {
 	assert.Contains(t, ids, "FEAT-42")
 }
 
+func TestIndex_SearchByIDPrefix(t *testing.T) {
+	// A partial ID like `VAD-ACT-` must match every `VAD-ACT-*` entity and
+	// rank them above entities that only match incidentally via their
+	// title. Before the id-prefix query was added, the keyword `id` field
+	// only answered exact full-ID term queries, so this query returned
+	// title-scored noise (or nothing) — the rel-picker relevance report.
+	idx := newTestIndex(t)
+
+	seed := []struct{ id, title string }{
+		{"PRS-ACT-BPHC", "Handelende organisatie"},
+		{"PRS-ACT-DWPM", "Afnemende organisatie"},
+		{"VAD-ACT-6P4X", "Gegevensuitwisselingspartners"},
+		{"VAD-ACT-CV83", "VAD-realisator-burger-authenticatie"},
+		{"VAD-ACT-F7A4", "VAD-realisator-beveiligd"},
+	}
+	for _, s := range seed {
+		e := entity.New(s.id, "actor")
+		e.SetString("title", s.title)
+		require.NoError(t, idx.EntityPut(e))
+	}
+
+	ids, err := idx.Search("VAD-ACT-", 20)
+	require.NoError(t, err)
+
+	// All three VAD-ACT-* entities are found...
+	assert.Subset(t, ids, []string{"VAD-ACT-6P4X", "VAD-ACT-CV83", "VAD-ACT-F7A4"})
+	// ...and rank ahead of any PRS-ACT-* that only matched on title tokens.
+	// The first three hits are exactly the id-prefix matches, in some order.
+	require.GreaterOrEqual(t, len(ids), 3)
+	assert.ElementsMatch(t,
+		[]string{"VAD-ACT-6P4X", "VAD-ACT-CV83", "VAD-ACT-F7A4"},
+		ids[:3],
+		"id-prefix matches must occupy the top ranks, got %v", ids)
+}
+
+func TestIndex_SearchByIDPrefix_CaseSensitiveToken(t *testing.T) {
+	// The prefix query runs against the unanalyzed (case-sensitive)
+	// keyword token, but real callers may type lower-case. Guard that the
+	// common upper-case ID prefix path works; lower-case partial-ID search
+	// is a known limitation handled by the caller, not asserted here.
+	idx := newTestIndex(t)
+	e := entity.New("TKT-ABCD", "ticket")
+	e.SetString("title", "Example")
+	require.NoError(t, idx.EntityPut(e))
+
+	ids, err := idx.Search("TKT-", 10)
+	require.NoError(t, err)
+	assert.Contains(t, ids, "TKT-ABCD")
+}
+
 func TestIndex_SearchByProperty(t *testing.T) {
 	idx := newTestIndex(t)
 

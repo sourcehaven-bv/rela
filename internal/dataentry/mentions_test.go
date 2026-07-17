@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -27,24 +28,34 @@ func TestCollectMentions(t *testing.T) {
 		// (`status`) is locked. The display title is still readable, so
 		// the resulting mention must NOT carry the inaccessible flag.
 		entityWithLockedProperty("TKT-PARTIAL", "ticket", "Mostly Readable", "status"),
+		// Templated display title, fully readable → renders both placeholders.
+		mustPersoon("PERS-OK", "Jeroen", "Vloothuis"),
+		// Templated display title with a locked PLACEHOLDER property
+		// (`achternaam`) → the title is incomplete, so the mention must be
+		// flagged inaccessible. This is the TKT-NJTBQX regression: a bare
+		// display_property was protected here; the template must be too.
+		mustPersoon("PERS-LOCKED", "Jeroen", "Vloothuis", "achternaam"),
+		// Templated display title with a locked NON-placeholder property
+		// → title still fully readable, must NOT be flagged.
+		mustPersoon("PERS-PARTIAL", "Jeroen", "Vloothuis", "geboortedatum"),
 	}
 
 	tests := []struct {
 		name     string
 		contents []string
-		want     map[string]Mention
+		want     map[string]v1.Mention
 	}{
 		{
 			name:     "known short-ID code span resolves",
 			contents: []string{"see `TKT-LXYHQ` for context"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-LXYHQ": {Type: "ticket", Title: "Resolve entity-ID references"},
 			},
 		},
 		{
 			name:     "manual-ID concept resolves via DisplayTitle (name)",
 			contents: []string{"covered by `data-entry-ui`"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				// concept's primary property is `name` per its metamodel;
 				// the title comes from there, not the `title` property
 				// (which the seed never sets for concept).
@@ -79,7 +90,7 @@ func TestCollectMentions(t *testing.T) {
 		{
 			name:     "multiple distinct mentions are deduplicated across blobs",
 			contents: []string{"`TKT-LXYHQ` and `FEAT-010`", "again: `TKT-LXYHQ`"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-LXYHQ": {Type: "ticket", Title: "Resolve entity-ID references"},
 				"FEAT-010":  {Type: "feature", Title: "Use goldmark for markdown rendering"},
 			},
@@ -87,7 +98,7 @@ func TestCollectMentions(t *testing.T) {
 		{
 			name:     "inaccessible target carries inaccessible + reason",
 			contents: []string{"locked: `TKT-LOCKED`"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-LOCKED": {
 					Type:               "ticket",
 					Title:              "TKT-LOCKED",
@@ -99,21 +110,47 @@ func TestCollectMentions(t *testing.T) {
 		{
 			name:     "partially-locked entity keeps its readable title and is NOT inaccessible",
 			contents: []string{"partial: `TKT-PARTIAL`"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-PARTIAL": {Type: "ticket", Title: "Mostly Readable"},
+			},
+		},
+		{
+			name:     "templated title renders all placeholders",
+			contents: []string{"person: `PERS-OK`"},
+			want: map[string]v1.Mention{
+				"PERS-OK": {Type: "persoon", Title: "Jeroen Vloothuis"},
+			},
+		},
+		{
+			name:     "templated title with a locked placeholder is inaccessible (TKT-NJTBQX)",
+			contents: []string{"person: `PERS-LOCKED`"},
+			want: map[string]v1.Mention{
+				"PERS-LOCKED": {
+					Type:               "persoon",
+					Title:              "Jeroen Vloothuis",
+					Inaccessible:       true,
+					InaccessibleReason: "git-crypt",
+				},
+			},
+		},
+		{
+			name:     "templated title with a locked non-placeholder property is NOT inaccessible",
+			contents: []string{"person: `PERS-PARTIAL`"},
+			want: map[string]v1.Mention{
+				"PERS-PARTIAL": {Type: "persoon", Title: "Jeroen Vloothuis"},
 			},
 		},
 		{
 			name:     "code span inside list item is collected",
 			contents: []string{"- see `TKT-LXYHQ` here\n"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-LXYHQ": {Type: "ticket", Title: "Resolve entity-ID references"},
 			},
 		},
 		{
 			name:     "code span inside blockquote is collected",
 			contents: []string{"> quoted: `TKT-LXYHQ`\n"},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-LXYHQ": {Type: "ticket", Title: "Resolve entity-ID references"},
 			},
 		},
@@ -122,7 +159,7 @@ func TestCollectMentions(t *testing.T) {
 			contents: []string{
 				"| col |\n| --- |\n| `TKT-LXYHQ` |\n",
 			},
-			want: map[string]Mention{
+			want: map[string]v1.Mention{
 				"TKT-LXYHQ": {Type: "ticket", Title: "Resolve entity-ID references"},
 			},
 		},
@@ -161,7 +198,7 @@ func TestCollectMentions_SelfReference(t *testing.T) {
 	}
 
 	got := collectMentions(context.Background(), st, meta, "see `TKT-SELF` for the recursion")
-	want := map[string]Mention{
+	want := map[string]v1.Mention{
 		"TKT-SELF": {Type: self.Type, Title: self.Title()},
 	}
 	assertMentionsEqual(t, want, got)
@@ -200,7 +237,7 @@ func TestCollectMentions_StoreErrorIsLoggedAndSkipped(t *testing.T) {
 	}
 
 	got := collectMentions(context.Background(), flaky, meta, "`TKT-FAIL` then `TKT-OK`")
-	want := map[string]Mention{
+	want := map[string]v1.Mention{
 		"TKT-OK": {Type: "ticket", Title: "Resolves fine"},
 	}
 	assertMentionsEqual(t, want, got)
@@ -221,7 +258,7 @@ func TestCollectMentions_ConcurrentScanIsSafe(t *testing.T) {
 	const n = 64
 	var wg sync.WaitGroup
 	wg.Add(n)
-	results := make([]map[string]Mention, n)
+	results := make([]map[string]v1.Mention, n)
 	for i := range n {
 		go func(idx int) {
 			defer wg.Done()
@@ -230,7 +267,7 @@ func TestCollectMentions_ConcurrentScanIsSafe(t *testing.T) {
 	}
 	wg.Wait()
 
-	want := map[string]Mention{"TKT-CONC": {Type: "ticket", Title: "Concurrent"}}
+	want := map[string]v1.Mention{"TKT-CONC": {Type: "ticket", Title: "Concurrent"}}
 	for i, got := range results {
 		if len(got) != 1 || got["TKT-CONC"] != want["TKT-CONC"] {
 			t.Fatalf("goroutine %d: want %+v, got %+v", i, want, got)
@@ -268,6 +305,16 @@ func buildTestMetamodel(t *testing.T) *metamodel.Metamodel {
 					"name": {Type: "string", Required: true},
 				},
 			},
+			// Templated display_property: the title reads from two
+			// placeholders. A lock on either must lock the title.
+			"persoon": {
+				Label:           "Persoon",
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]metamodel.PropertyDef{
+					"voornaam":   {Type: "string"},
+					"achternaam": {Type: "string", Required: true},
+				},
+			},
 		},
 	}
 }
@@ -287,6 +334,20 @@ func mustEntityNamed(id, typeName, name string) *entity.Entity {
 	return e
 }
 
+// mustPersoon builds a persoon whose title comes from the template
+// "{voornaam} {achternaam}". Any inaccessible field names in lockedProps are
+// marked inaccessible (git-crypt) to exercise the templated locked-title path.
+func mustPersoon(id, voornaam, achternaam string, lockedProps ...string) *entity.Entity {
+	e := entity.New(id, "persoon")
+	e.Properties["voornaam"] = voornaam
+	e.Properties["achternaam"] = achternaam
+	for _, p := range lockedProps {
+		e.Inaccessible = append(e.Inaccessible,
+			entity.InaccessibleField{Name: p, Reason: entity.InaccessibleReasonGitCrypt})
+	}
+	return e
+}
+
 func lockedEntity(id, typeName string, reason entity.InaccessibleReason) *entity.Entity {
 	e := entity.New(id, typeName)
 	// Lock the entity by marking content inaccessible — matches what the
@@ -299,7 +360,7 @@ func lockedEntity(id, typeName string, reason entity.InaccessibleReason) *entity
 }
 
 // entityWithLockedProperty produces an entity whose `title` is readable
-// but some unrelated property is locked. The wire-shape Mention should
+// but some unrelated property is locked. The wire-shape v1.Mention should
 // keep `Inaccessible == false` because the displayed link text comes
 // from a readable source.
 func entityWithLockedProperty(id, typeName, title, lockedProp string) *entity.Entity {
@@ -311,7 +372,7 @@ func entityWithLockedProperty(id, typeName, title, lockedProp string) *entity.En
 	return e
 }
 
-func assertMentionsEqual(t *testing.T, want, got map[string]Mention) {
+func assertMentionsEqual(t *testing.T, want, got map[string]v1.Mention) {
 	t.Helper()
 	if len(want) != len(got) {
 		t.Fatalf("mention count mismatch: want %d, got %d (want=%v got=%v)",

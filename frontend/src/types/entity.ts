@@ -1,3 +1,12 @@
+// Minimal shape a single-value entity-target selector needs: an id and an
+// optional backend-supplied display title. Entity satisfies it structurally,
+// so list rows can be passed straight through. Lives here so both the
+// component and its callers/tests import it from one place.
+export interface TargetCandidate {
+  id: string
+  _title?: string
+}
+
 export interface Entity {
   id: string
   type: string

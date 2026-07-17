@@ -26,12 +26,21 @@ import (
 )
 
 // Principal identifies who is making a write. User is the OS user
-// captured at process startup via [SystemUser]; data-entry will
-// later override per-request from an HTTP middleware. Tool identifies
-// the entry point — one of the Tool* constants below.
+// captured at process startup via [SystemUser]; data-entry overrides it
+// per-request from an HTTP middleware. Tool identifies the entry point —
+// one of the Tool* constants below.
+//
+// RawUser records the pre-resolution identifier when the ACL policy's
+// `principal_property` lookup substituted User with a graph entity ID
+// (e.g. the `X-Forwarded-User` email before it became a `PERS-…` ID). It
+// is empty when no substitution happened — the common case — and exists
+// so the audit log can record BOTH the identity that authenticated and
+// the entity it resolved to without a round-trip to the graph. Old audit
+// consumers ignore the `raw_user` key (omitempty).
 type Principal struct {
-	User string `json:"user"`
-	Tool string `json:"tool"`
+	User    string `json:"user"`
+	Tool    string `json:"tool"`
+	RawUser string `json:"raw_user,omitempty"`
 }
 
 // Tool constants — the values that may appear in [Principal.Tool].
@@ -43,6 +52,14 @@ const (
 	ToolDataEntry = "data-entry"
 	ToolScheduler = "scheduler"
 	ToolDesktop   = "desktop"
+	// ToolSync attributes writes applied by the sync API (FEAT-NJ9FEN) so the
+	// audit log distinguishes a synced write from a direct data-entry edit.
+	ToolSync = "sync"
+	// ToolWebhookReceiver attributes writes made by an inbound-webhook handler
+	// (e.g. an IdP membership event that provisions a person entity). It is a
+	// distinct entry point from data-entry: the write originates from a verified
+	// server-to-server callback, not a human at the UI.
+	ToolWebhookReceiver = "webhook-receiver"
 )
 
 // principalKey is the unexported context.WithValue key so no other

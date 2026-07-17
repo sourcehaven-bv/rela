@@ -261,6 +261,10 @@ function onPopupHover(idx: number): void {
   position: relative;
 }
 
+/* DRIFT: these EasyMDE token overrides are mirrored (de-scoped, plain CSS) in
+   the sandboxed-app editor at frontend/src/app-editor/relaEditorTheme.css, and
+   the toolbar/options config is mirrored in relaEditor.ts. Keep them in sync;
+   the eventual shared core is tracked in TKT-D2JML7. */
 .markdown-editor :deep(.EasyMDEContainer) {
   width: 100%;
 }
@@ -324,6 +328,10 @@ function onPopupHover(idx: number): void {
   justify-content: center;
 }
 
+/* Container chrome only (padding/background/color). The markdown *element*
+   styling inside the preview (headings, lists, code, blockquote, tables, …)
+   comes from the shared global stylesheet's `.editor-preview` alias — see
+   styles/markdown-content.css — so it matches the entity view exactly. */
 .markdown-editor :deep(.editor-preview) {
   padding: 16px;
   background: var(--card-bg);

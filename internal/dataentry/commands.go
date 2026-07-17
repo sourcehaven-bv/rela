@@ -42,8 +42,8 @@ type ResolvedCommand struct {
 // pageType is "entity", "list", "view", or "dashboard".
 // qualifier is the specific list ID or view ID.
 // entityType is the entity type shown on the page (empty for dashboard).
-func (a *App) resolveCommands(pageType, qualifier, entityType string) []ResolvedCommand {
-	s := a.State()
+func (h *commandHandler) resolveCommands(pageType, qualifier, entityType string) []ResolvedCommand {
+	s := h.schema()
 	if len(s.Cfg.Commands) == 0 {
 		return nil
 	}
@@ -150,12 +150,12 @@ type commandProjectInfo struct {
 	Metamodel string `json:"metamodel"`
 }
 
-func (a *App) buildEntityInput(ctx context.Context, e *entity.Entity) *commandInput {
+func (h *commandHandler) buildEntityInput(ctx context.Context, e *entity.Entity) *commandInput {
 	return &commandInput{
 		Context:   "entity",
 		Entity:    e,
-		Relations: relationsForEntity(ctx, a.Services(), e.ID),
-		Project:   a.projectInfo(),
+		Relations: relationsForEntity(ctx, h.services(), e.ID),
+		Project:   h.projectInfo(),
 	}
 }
 
@@ -173,16 +173,16 @@ func relationsForEntity(ctx context.Context, svc Services, id string) []*entity.
 	return rels
 }
 
-func (a *App) buildListInput(listID string, entities []*entity.Entity) *commandInput {
+func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity) *commandInput {
 	return &commandInput{
 		Context:  "list",
 		ListID:   listID,
 		Entities: entities,
-		Project:  a.projectInfo(),
+		Project:  h.projectInfo(),
 	}
 }
 
-func (a *App) buildViewInput(ctx context.Context, viewID string, vr *viewResult) *commandInput {
+func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *viewResult) *commandInput {
 	// Collect all entity IDs in the result set.
 	idSet := map[string]bool{vr.Entry.ID: true}
 	for _, entities := range vr.Collections {
@@ -192,7 +192,7 @@ func (a *App) buildViewInput(ctx context.Context, viewID string, vr *viewResult)
 	}
 
 	// Gather relations between entities in the result set.
-	svc := a.Services()
+	svc := h.services()
 	var rels []*entity.Relation
 	for id := range idSet {
 		q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
@@ -217,20 +217,20 @@ func (a *App) buildViewInput(ctx context.Context, viewID string, vr *viewResult)
 		Entity:      vr.Entry,
 		Collections: collections,
 		Relations:   rels,
-		Project:     a.projectInfo(),
+		Project:     h.projectInfo(),
 	}
 }
 
-func (a *App) buildGlobalInput() *commandInput {
+func (h *commandHandler) buildGlobalInput() *commandInput {
 	return &commandInput{
 		Context: "global",
-		Project: a.projectInfo(),
+		Project: h.projectInfo(),
 	}
 }
 
-func (a *App) projectInfo() commandProjectInfo {
+func (h *commandHandler) projectInfo() commandProjectInfo {
 	return commandProjectInfo{
-		Root:      a.ProjectRoot(),
+		Root:      h.projectRoot(),
 		Metamodel: "metamodel.yaml",
 	}
 }
@@ -281,14 +281,16 @@ var (
 // Restricted to POST: this endpoint runs configured shell commands and a GET
 // would let `<img src=/api/command/X>` invoke them cross-origin from any
 // browser tab, bypassing same-origin policy entirely.
-func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
+//
+//nolint:funlen // dispatches over every command context and argument shape inline; each branch is one command variant, and extracting them would fragment the request lifecycle.
+func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	commandID := strings.TrimPrefix(r.URL.Path, "/api/command/")
-	s := a.State()
+	s := h.schema()
 	cmd, ok := s.Cfg.Commands[commandID]
 	if !ok {
 		http.Error(w, "Unknown command: "+commandID, http.StatusNotFound)
@@ -305,13 +307,13 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	switch cmd.Context {
 	case "entity":
 		entityID := r.URL.Query().Get("entity_id")
-		svc := a.Services()
+		svc := h.services()
 		entityDomain, err := svc.Store.GetEntity(r.Context(), entityID)
 		if err != nil {
 			http.Error(w, "Entity not found: "+entityID, http.StatusNotFound)
 			return
 		}
-		input = a.buildEntityInput(r.Context(), entityDomain)
+		input = h.buildEntityInput(r.Context(), entityDomain)
 	case "list":
 		listID := r.URL.Query().Get("list_id")
 		listCfg, found := s.Cfg.Lists[listID]
@@ -319,9 +321,9 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "List not found: "+listID, http.StatusNotFound)
 			return
 		}
-		entities := listFromStoreByTypes(r.Context(), a.Services(), []string{listCfg.EntityType})
+		entities := listFromStoreByTypes(r.Context(), h.services(), []string{listCfg.EntityType})
 		entities = applyFilters(entities, listCfg.Filters)
-		input = a.buildListInput(listID, entities)
+		input = h.buildListInput(listID, entities)
 	case "view":
 		viewID := r.URL.Query().Get("view_id")
 		entityID := r.URL.Query().Get("entity_id")
@@ -330,14 +332,14 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "View not found: "+viewID, http.StatusNotFound)
 			return
 		}
-		vr, err := a.executeView(r.Context(), viewCfg, entityID)
+		vr, err := h.executeView(r.Context(), viewCfg, entityID)
 		if err != nil {
 			http.Error(w, "View error: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		input = a.buildViewInput(r.Context(), viewID, vr)
+		input = h.buildViewInput(r.Context(), viewID, vr)
 	case "global":
-		input = a.buildGlobalInput()
+		input = h.buildGlobalInput()
 	default:
 		http.Error(w, "Invalid command context: "+cmd.Context, http.StatusBadRequest)
 		return
@@ -363,8 +365,8 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 	proc := exec.CommandContext(r.Context(), "sh", "-c", cmd.Script)
 	proc.Cancel = func() error { return proc.Process.Signal(syscall.SIGINT) }
 	proc.WaitDelay = cancelGrace
-	proc.Dir = a.ProjectRoot()
-	proc.Env = a.buildCommandEnv(cmd, input)
+	proc.Dir = h.projectRoot()
+	proc.Env = h.buildCommandEnv(cmd, input)
 	proc.Stdin = strings.NewReader(string(inputJSON))
 
 	stdout, err := proc.StdoutPipe()
@@ -431,7 +433,7 @@ func (a *App) handleCommandExec(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCommandCancel handles POST /api/command-cancel/{execID}.
-func (a *App) handleCommandCancel(w http.ResponseWriter, r *http.Request) {
+func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -466,7 +468,9 @@ func (a *App) handleCommandCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleOpenFile handles POST /api/open-file to open or reveal files.
-func (a *App) handleOpenFile(w http.ResponseWriter, r *http.Request) { // coverage-ignore: requires OS interaction
+//
+// coverage-ignore: requires OS interaction
+func (h *commandHandler) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -479,7 +483,7 @@ func (a *App) handleOpenFile(w http.ResponseWriter, r *http.Request) { // covera
 		return
 	}
 
-	resolved, err := containedProjectPath(a.ProjectRoot(), filePath)
+	resolved, err := containedProjectPath(h.projectRoot(), filePath)
 	switch {
 	case errors.Is(err, errPathNotFound):
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -534,7 +538,9 @@ func openFileCommand(goos, action, filePath string) *exec.Cmd {
 }
 
 // handleOpenURL handles POST /api/open-url to open URLs in the default browser.
-func (a *App) handleOpenURL(w http.ResponseWriter, r *http.Request) { // coverage-ignore: requires OS interaction
+//
+// coverage-ignore: requires OS interaction
+func (h *commandHandler) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -665,10 +671,10 @@ func validateOpenURL(raw string) error {
 	return errors.New("disallowed url scheme")
 }
 
-func (a *App) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
+func (h *commandHandler) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
 	env := os.Environ()
 	env = append(env,
-		"RELA_PROJECT_ROOT="+a.ProjectRoot(),
+		"RELA_PROJECT_ROOT="+h.projectRoot(),
 		"RELA_CONTEXT="+cmd.Context,
 	)
 	if input.Entity != nil {

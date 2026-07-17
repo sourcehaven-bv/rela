@@ -86,6 +86,8 @@ func (g *Generator) propertyToSchema(prop metamodel.PropertyDef) *Schema {
 		base = &Schema{Type: "string"}
 	case metamodel.PropertyTypeDate:
 		base = &Schema{Type: "string", Format: "date"}
+	case metamodel.PropertyTypeDatetime:
+		base = &Schema{Type: "string", Format: "date-time"}
 	case metamodel.PropertyTypeInteger:
 		base = &Schema{Type: "integer"}
 	case metamodel.PropertyTypeBoolean:
@@ -377,6 +379,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"required":    BooleanSchema(),
 			"default":     StringSchema(),
 			"values":      ArraySchema(StringSchema()),
+			"labels":      {Type: "object", AdditionalProperties: StringSchema()},
 			"description": StringSchema(),
 			"list":        BooleanSchema(),
 		},
@@ -400,6 +403,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 		Type: "object",
 		Properties: map[string]*Schema{
 			"values":  ArraySchema(StringSchema()),
+			"labels":  {Type: "object", AdditionalProperties: StringSchema()},
 			"default": StringSchema(),
 		},
 	}

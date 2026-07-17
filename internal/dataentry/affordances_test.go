@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -62,7 +63,7 @@ func TestComputeActions_ReadOnly(t *testing.T) {
 	app.acl = acl.ReadOnlyACL{}
 
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
-	got := app.computeActions(t.Context(), e)
+	got := app.affordances.computeActions(t.Context(), e)
 
 	for _, v := range []string{"update", "delete", "rename"} {
 		if got[v] {
@@ -77,7 +78,7 @@ func TestComputeActions_NopACL(t *testing.T) {
 	// app.acl is already acl.NopACL via the test fixture wiring.
 
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
-	got := app.computeActions(t.Context(), e)
+	got := app.affordances.computeActions(t.Context(), e)
 
 	for _, v := range []string{"update", "delete", "rename"} {
 		if !got[v] {
@@ -91,7 +92,7 @@ func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
 	app.acl = acl.ReadOnlyACL{}
 
-	got := app.computeCollectionActions(t.Context(), "ticket")
+	got := app.affordances.computeCollectionActions(t.Context(), "ticket")
 	if got["create"] {
 		t.Errorf("_actions.create = true under ReadOnlyACL, want false")
 	}
@@ -127,7 +128,7 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	})
 
 	ticket := &entity.Entity{ID: "TKT-001", Type: "ticket"}
-	got := app.computeActions(ctx, ticket)
+	got := app.affordances.computeActions(ctx, ticket)
 	for _, v := range []string{"update", "delete", "rename"} {
 		if !got[v] {
 			t.Errorf("ticket _actions[%q] = false under ticket-writer role, want true", v)
@@ -135,7 +136,7 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	}
 
 	feature := &entity.Entity{ID: "FEAT-001", Type: "feature"}
-	got = app.computeActions(ctx, feature)
+	got = app.affordances.computeActions(ctx, feature)
 	for _, v := range []string{"update", "delete", "rename"} {
 		if got[v] {
 			t.Errorf("feature _actions[%q] = true under ticket-writer role, want false", v)
@@ -343,8 +344,16 @@ func (r byTypeResolver) RelationVerdicts(_ context.Context, e *entity.Entity) Re
 	return r.rvByType[e.Type]
 }
 
-func appWithResolver(r FieldVerdictResolver) *App {
-	return &App{fieldResolver: r}
+// affordanceServiceWithResolver builds a bare affordanceService over a fixed
+// resolver — no App. The resolver-driven affordance methods
+// (computeFieldAffordances, hiddenProperties, computeRelationAffordances)
+// depend only on the resolver and an (empty) metamodel, so these unit tests
+// construct the service directly rather than standing up an App.
+func affordanceServiceWithResolver(r FieldVerdictResolver) affordanceService {
+	return affordanceService{
+		resolver: func() FieldVerdictResolver { return r },
+		meta:     func() *metamodel.Metamodel { return &metamodel.Metamodel{} },
+	}
 }
 
 // verdictBuilder is a fluent helper for constructing fakeResolver
@@ -451,8 +460,8 @@ func (b *verdictBuilder) Build() fakeResolver {
 }
 
 func TestComputeFieldAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
-	a := appWithResolver(NopFieldVerdictResolver{})
-	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	if got == nil {
 		t.Fatal("got nil, want empty map")
 	}
@@ -464,7 +473,7 @@ func TestComputeFieldAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
 func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 	// title=true is the default (writable) and must NOT appear in
 	// output; kind=false deviates and must be emitted.
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{
 				"title": true,
@@ -472,7 +481,7 @@ func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 			},
 		},
 	})
-	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	if _, ok := got["title"]; ok {
 		t.Errorf("title should be absent (sparse: writable=true is default)")
 	}
@@ -486,14 +495,14 @@ func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 }
 
 func TestComputeFieldAffordances_HiddenFieldsOmittedFromMap(t *testing.T) {
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{"priority": false}, // also marked read-only
 			Visible:  map[string]bool{"priority": false}, // but hidden takes precedence
 			Options:  map[string]map[string]bool{"priority": {"high": false}},
 		},
 	})
-	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	if _, ok := got["priority"]; ok {
 		t.Errorf("hidden field must NOT appear in _fields (closed-world); got %+v", got)
 	}
@@ -502,7 +511,7 @@ func TestComputeFieldAffordances_HiddenFieldsOmittedFromMap(t *testing.T) {
 func TestComputeFieldAffordances_SparseOptions(t *testing.T) {
 	// allowed values (backlog, in-progress) are the default and must
 	// be absent from output; done=false deviates and must be emitted.
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Options: map[string]map[string]bool{
 				"status": {
@@ -513,7 +522,7 @@ func TestComputeFieldAffordances_SparseOptions(t *testing.T) {
 			},
 		},
 	})
-	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	status, ok := got["status"]
 	if !ok {
 		t.Fatalf("status should be present")
@@ -527,14 +536,14 @@ func TestComputeFieldAffordances_SparseOptions(t *testing.T) {
 }
 
 func TestComputeFieldAffordances_OptionsWithoutWritableEntry(t *testing.T) {
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Options: map[string]map[string]bool{
 				"effort": {"l": false, "xl": false},
 			},
 		},
 	})
-	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	effort, ok := got["effort"]
 	if !ok {
 		t.Fatalf("effort should be present")
@@ -548,28 +557,28 @@ func TestComputeFieldAffordances_OptionsWithoutWritableEntry(t *testing.T) {
 }
 
 func TestComputeFieldAffordances_AllOptionsAllowed_NoEntry(t *testing.T) {
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Options: map[string]map[string]bool{
 				"status": {"backlog": true, "ready": true},
 			},
 		},
 	})
-	got := a.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeFieldAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	if _, ok := got["status"]; ok {
 		t.Errorf("status should be absent when all options allowed")
 	}
 }
 
 func TestHiddenProperties_NopResolver_ReturnsNil(t *testing.T) {
-	a := appWithResolver(NopFieldVerdictResolver{})
-	if got := a.hiddenProperties(context.Background(), &entity.Entity{Type: "ticket"}); got != nil {
+	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
+	if got := svc.hiddenProperties(context.Background(), &entity.Entity{Type: "ticket"}); got != nil {
 		t.Errorf("got %v, want nil", got)
 	}
 }
 
 func TestHiddenProperties_OnlyHiddenEntries(t *testing.T) {
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{
 				"title":    true,
@@ -577,7 +586,7 @@ func TestHiddenProperties_OnlyHiddenEntries(t *testing.T) {
 			},
 		},
 	})
-	got := a.hiddenProperties(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.hiddenProperties(context.Background(), &entity.Entity{Type: "ticket"})
 	if _, ok := got["priority"]; !ok {
 		t.Errorf("priority should be in hidden set: %v", got)
 	}
@@ -587,8 +596,8 @@ func TestHiddenProperties_OnlyHiddenEntries(t *testing.T) {
 }
 
 func TestComputeRelationAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
-	a := appWithResolver(NopFieldVerdictResolver{})
-	got := a.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	svc := affordanceServiceWithResolver(NopFieldVerdictResolver{})
+	got := svc.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	if got == nil {
 		t.Fatal("got nil, want empty map")
 	}
@@ -598,7 +607,7 @@ func TestComputeRelationAffordances_NopResolver_EmitsEmptyMap(t *testing.T) {
 }
 
 func TestComputeRelationAffordances_SparseCreatableRemovable(t *testing.T) {
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		rv: RelationVerdicts{
 			Types: map[string]RelationVerdict{
 				"affects":    {Creatable: false, Removable: true},
@@ -607,7 +616,7 @@ func TestComputeRelationAffordances_SparseCreatableRemovable(t *testing.T) {
 			},
 		},
 	})
-	got := a.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 
 	if _, ok := got["depends-on"]; ok {
 		t.Errorf("depends-on should be absent (all defaults)")
@@ -637,7 +646,7 @@ func TestComputeRelationAffordances_SparseCreatableRemovable(t *testing.T) {
 }
 
 func TestComputeRelationAffordances_MetaFieldOverrides(t *testing.T) {
-	a := appWithResolver(fakeResolver{
+	svc := affordanceServiceWithResolver(fakeResolver{
 		rv: RelationVerdicts{
 			Types: map[string]RelationVerdict{
 				"has-planning": {
@@ -651,7 +660,7 @@ func TestComputeRelationAffordances_MetaFieldOverrides(t *testing.T) {
 			},
 		},
 	})
-	got := a.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
+	got := svc.computeRelationAffordances(context.Background(), &entity.Entity{Type: "ticket"})
 	hp, ok := got["has-planning"]
 	if !ok {
 		t.Fatalf("has-planning should be present (meta-field deviation)")

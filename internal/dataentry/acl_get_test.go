@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -70,11 +71,11 @@ func TestACLGet_TypeLevelReadGrant(t *testing.T) {
 // own URL); other fields must match.
 //
 // Parsing + re-encoding (instead of string slicing — RR-QLQW) makes
-// the comparator robust against future V1Error field additions and
+// the comparator robust against future v1.Error field additions and
 // against JSON-encoder reordering quirks.
 func stripInstance(t *testing.T, s string) string {
 	t.Helper()
-	var v V1Error
+	var v v1.Error
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		t.Fatalf("stripInstance: invalid JSON %q: %v", s, err)
 	}
@@ -237,7 +238,8 @@ func TestACLGet_WriteGateErrorMapping(t *testing.T) {
 // PermitsRead / PermitsReadMany. Used by error-mapping tests;
 // production sites use aclReadGate.
 type fakeGate struct {
-	permitsErr error
+	permitsErr      error
+	holdsPermission bool
 }
 
 func (g fakeGate) PermitsRead(context.Context, string, string) (bool, error) {
@@ -262,6 +264,8 @@ func (g fakeGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
 func (g fakeGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
 	return nil // all-deny, matching ReadQuery above
 }
+
+func (g fakeGate) HoldsPermission(context.Context, string) bool { return g.holdsPermission }
 
 // principalCtx returns a context carrying a stamped data-entry
 // principal for `user`. RR-MILH: replaces the previous parameterless

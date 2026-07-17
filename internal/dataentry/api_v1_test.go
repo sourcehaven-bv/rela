@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -37,7 +38,7 @@ func TestV1SchemaEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestV1ConfigEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var config V1Config
+	var config v1.Config
 	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestV1ConfigEndpoint_IncludesActions(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
-	var config V1Config
+	var config v1.Config
 	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestV1ListEntities(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestV1GetEntity(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -302,7 +303,7 @@ func TestV1Filtering(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestV1FilteringNEMultipleValues(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -433,7 +434,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -463,7 +464,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d", rec.Code)
 		}
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -485,7 +486,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -510,7 +511,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -530,7 +531,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -560,7 +561,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -618,7 +619,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
 		rec := httptest.NewRecorder()
 		app.handleV1ListEntities(rec, req, "ticket", "tickets")
-		var resp V1ListResponse
+		var resp v1.ListResponse
 		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 			t.Fatal(err)
 		}
@@ -651,7 +652,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 	})
 }
 
-func responseIDs(r V1ListResponse) []string {
+func responseIDs(r v1.ListResponse) []string {
 	out := make([]string, 0, len(r.Data))
 	for _, e := range r.Data {
 		out = append(out, e.ID)
@@ -681,7 +682,7 @@ func TestV1Sorting(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -713,7 +714,7 @@ func TestV1Pagination(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -809,7 +810,7 @@ func TestV1SearchEmptyQuery(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -865,7 +866,7 @@ func TestV1SearchWithTypeFilter(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -961,7 +962,7 @@ func TestV1GetEntityWithIncludesAll(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1001,7 +1002,7 @@ func TestV1GetEntityWithIncludesSpecific(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1070,7 +1071,7 @@ func TestV1GetEntityWithActions(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1136,7 +1137,7 @@ func TestV1ListEntitiesEmpty(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1167,7 +1168,7 @@ func TestV1ListEntitiesDescendingSort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=-title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1203,7 +1204,7 @@ func TestV1FilteringContains(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[title][contains]=Bug", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1245,7 +1246,7 @@ func TestV1FilteringIn(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?filter[status][in]=open,in_progress", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1348,7 +1349,7 @@ func runListFilter(t *testing.T, app *App, query string) []string {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -1551,7 +1552,7 @@ func TestV1MultipleSort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?sort=status,title", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1610,7 +1611,7 @@ func TestV1GetEntityWithNestedIncludes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1651,7 +1652,7 @@ func TestV1ComputeEntityActionsWithIncomingRelations(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/features/FEA-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "feature", "features", "FEA-001")
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1790,7 +1791,7 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1804,6 +1805,85 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	ticketType := schema.Entities["ticket"]
 	if ticketType.Properties["status"].Values == nil {
 		t.Error("expected status property to have values from custom type")
+	}
+}
+
+// TestV1SchemaEnumLabels pins that display labels flow onto the wire for both
+// enum forms, and that label copy mirrors value precedence (a custom-typed
+// property inherits the custom type's labels; an inline `labels` map on such a
+// property is ignored, exactly as inline `values` is). See TKT-G6R5YE.
+func TestV1SchemaEnumLabels(t *testing.T) {
+	app := newTestAppV1(t)
+
+	app.Meta().Types = map[string]metamodel.CustomType{
+		"status_type": {
+			Values: []string{"open", "in_progress"},
+			Labels: map[string]string{"in_progress": "In Progress"},
+		},
+	}
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
+		Label: "Ticket",
+		Properties: map[string]metamodel.PropertyDef{
+			"title": {Type: "string", Required: true},
+			// Custom-type-backed: labels come from status_type; the inline
+			// labels here must be ignored (dead config), mirroring values.
+			"status": {Type: "status_type", Labels: map[string]string{"open": "SHOULD-BE-IGNORED"}},
+			// Inline enum with its own labels.
+			"kind": {Type: "enum", Values: []string{"bug", "feat"}, Labels: map[string]string{"feat": "Feature"}},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Schema(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var schema v1.Schema
+	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Custom type carries its labels in the types map.
+	if got := schema.Types["status_type"].Labels["in_progress"]; got != "In Progress" {
+		t.Errorf("custom type label: got %q, want %q", got, "In Progress")
+	}
+
+	props := schema.Entities["ticket"].Properties
+
+	// Custom-typed property inherits the custom type's labels, not the inline one.
+	statusLabels := props["status"].Labels
+	if got := statusLabels["in_progress"]; got != "In Progress" {
+		t.Errorf("status inherited label: got %q, want %q", got, "In Progress")
+	}
+	if _, present := statusLabels["open"]; present {
+		t.Errorf("inline labels on a custom-typed property must be ignored, got %v", statusLabels)
+	}
+
+	// Inline enum carries its own labels.
+	if got := props["kind"].Labels["feat"]; got != "Feature" {
+		t.Errorf("inline enum label: got %q, want %q", got, "Feature")
+	}
+}
+
+// TestV1SchemaEnumLabelsOmittedWhenAbsent pins that a label-less enum emits no
+// `labels` key (omitempty), so existing metamodels are byte-for-byte unchanged.
+func TestV1SchemaEnumLabelsOmittedWhenAbsent(t *testing.T) {
+	app := newTestAppV1(t)
+	app.Meta().Entities["ticket"] = metamodel.EntityDef{
+		Label: "Ticket",
+		Properties: map[string]metamodel.PropertyDef{
+			"kind": {Type: "enum", Values: []string{"bug", "feat"}},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Schema(rec, req)
+
+	if strings.Contains(rec.Body.String(), "\"labels\"") {
+		t.Errorf("expected no labels key for a label-less enum, body: %s", rec.Body.String())
 	}
 }
 
@@ -1915,7 +1995,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -1971,7 +2051,7 @@ func TestV1SidebarAppliesListFilters(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2028,7 +2108,7 @@ func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Sidebar(rec, req)
 
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2073,7 +2153,7 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2172,7 +2252,7 @@ func TestV1SchemaTypesSpecific(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entityType V1EntityType
+	var entityType v1.EntityType
 	if err := json.NewDecoder(rec.Body).Decode(&entityType); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2223,7 +2303,7 @@ func TestV1GetEntityIncludeIncoming(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var entity V1Entity
+	var entity v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&entity); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2272,7 +2352,7 @@ func TestV1PaginationEdgeCases(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=100&per_page=10", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2314,6 +2394,69 @@ func TestV1AnalyzeWithIssues(t *testing.T) {
 
 	// Should return a valid result - we just verify it doesn't error
 	_ = result
+}
+
+// TestV1Analyze_ContentDetailPassthrough covers TKT-IL499B: a content
+// required-headers violation must carry the missing exact headers to the
+// wire as APIIssue.detail, so the SPA can reveal which headers are
+// missing. Rows without detail must omit the field entirely (omitempty).
+func TestV1Analyze_ContentDetailPassthrough(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ncr": {Label: "NCR", IDPrefix: "NCR-"},
+		},
+		Validations: []metamodel.ValidationRule{
+			{
+				Name:        "ncr-standard-headers",
+				Description: "NCR body moet standaardkoppen bevatten",
+				EntityType:  "ncr",
+				Severity:    "error",
+				Content: &metamodel.ContentRule{
+					RequiredHeaders: []metamodel.HeaderCheck{
+						{Header: "## Beschrijving"},
+						{Header: "## Oorzaak"},
+					},
+				},
+			},
+		},
+	}
+	cfg := &dataentryconfig.Config{App: dataentryconfig.AppConfig{Name: "Test"}}
+	app := newAppFromParts(cfg, meta, newFixture())
+	seedEntity(app, &entity.Entity{ID: "NCR-001", Type: "ncr", Content: "# NCR\n## Beschrijving\ntext"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var result APIAnalysisResult
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var found *APIIssue
+	for i := range result.Issues {
+		if result.Issues[i].EntityID == "NCR-001" {
+			found = &result.Issues[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no issue for NCR-001; issues=%+v", result.Issues)
+	}
+	if len(found.Detail) != 1 || found.Detail[0] != "## Oorzaak" {
+		t.Errorf("Detail = %v, want [## Oorzaak]", found.Detail)
+	}
+
+	// omitempty: the raw JSON must not carry a "detail" key on rows
+	// without structured detail. Re-encode this issue with no detail
+	// and confirm the key is absent.
+	blank, _ := json.Marshal(APIIssue{EntityID: "X", Message: "m", Severity: "error"})
+	if strings.Contains(string(blank), "detail") {
+		t.Errorf("expected detail omitted when empty, got %s", blank)
+	}
 }
 
 // newAnalyzeScriptErrorApp builds an App with one inline-Lua validation
@@ -2525,7 +2668,7 @@ func TestV1SchemaWithRelationCardinality(t *testing.T) {
 
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2555,7 +2698,7 @@ func TestV1EntityToV1WithoutRelations(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	rec := httptest.NewRecorder()
 	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -2674,10 +2817,13 @@ func newTestAppV1(t *testing.T) *App {
 				Label:    "Ticket",
 				IDPrefix: "TKT-",
 				Properties: map[string]metamodel.PropertyDef{
-					"title":      {Type: "string", Required: true},
-					"status":     {Type: "string"},
-					"screenshot": {Type: "file"},
-					"docs":       {Type: "file", Max: 3},
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "string"},
+					// The mechanics tests upload arbitrary text content, so the
+					// fixture file properties accept text/plain; a dedicated
+					// test exercises the default-safe allowlist rejection path.
+					"screenshot": {Type: "file", Accept: []string{"text/plain"}},
+					"docs":       {Type: "file", Max: 3, Accept: []string{"text/plain"}},
 				},
 				// PropertyOrder is populated at YAML-load time in
 				// production; set it explicitly here so tests exercise
@@ -2981,7 +3127,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 // edges for entityID, used to keep the relation-save tests concise.
 func implementsTargets(app *App, entityID string) map[string]bool {
 	out := map[string]bool{}
-	for _, r := range app.outgoingRelations(context.Background(), entityID) {
+	for _, r := range app.reader.outgoingRelations(context.Background(), entityID) {
 		if r.Type == "implements" {
 			out[r.To] = true
 		}
@@ -3024,7 +3170,7 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 	}
 
 	// The ticket was auto-assigned a short ID; read it from the response body.
-	var created V1Entity
+	var created v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode response: %v; body: %s", err, rec.Body.String())
 	}
@@ -3146,7 +3292,7 @@ func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
 
 	impls := map[string]bool{}
 	blocks := map[string]bool{}
-	for _, r := range app.outgoingRelations(context.Background(), "TKT-001") {
+	for _, r := range app.reader.outgoingRelations(context.Background(), "TKT-001") {
 		switch r.Type {
 		case "implements":
 			impls[r.To] = true
@@ -3182,7 +3328,7 @@ func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
 	}
 
 	types := map[string]bool{}
-	for _, r := range app.outgoingRelations(context.Background(), "TKT-001") {
+	for _, r := range app.reader.outgoingRelations(context.Background(), "TKT-001") {
 		types[r.Type+"->"+r.To] = true
 	}
 	if !types["implements->FEAT-001"] || !types["blocks->TKT-002"] || len(types) != 2 {
@@ -3210,16 +3356,18 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "unknown_relation_type") || !strings.Contains(rec.Body.String(), "bogus") {
 		t.Fatalf("detail missing structured reason/type, got: %s", rec.Body.String())
 	}
-	if len(app.outgoingRelations(context.Background(), "TKT-001")) != 0 {
+	if len(app.reader.outgoingRelations(context.Background(), "TKT-001")) != 0 {
 		t.Fatalf("no edges should have been written on a rejected type")
 	}
 }
 
 // TestV1UpdateEntity_Relations_UnknownTarget asserts that a missing
-// target id surfaces as a warning (DEC-HWZHA: soft condition, 200 with
-// structured warning) rather than a hard rejection. The edge is
-// written referencing a missing peer; analyze_orphans surfaces it on
-// the next run.
+// target id is a HARD 422, not a soft 200-with-warning (BUG-K6FEVB).
+// The old behavior wrote the edge via an ungated direct store call that
+// bypassed the ACL and audit; the fix rejects the write so the user
+// learns the reference did not resolve and the edge is NOT stored. This
+// is a deliberate reversal of DEC-HWZHA's soft-warn treatment for the
+// missing-peer case (see danglingPeerError).
 func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
@@ -3231,11 +3379,15 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-999"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (soft condition), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 (dangling peer), got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "target_not_found") || !strings.Contains(rec.Body.String(), "FEAT-999") {
-		t.Fatalf("response missing warning code/target, got: %s", rec.Body.String())
+		t.Fatalf("response missing target_not_found/FEAT-999, got: %s", rec.Body.String())
+	}
+	// The edge must NOT have been written to the store.
+	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "implements", "FEAT-999"); err == nil {
+		t.Fatal("dangling-peer edge was persisted; want no store mutation")
 	}
 }
 
@@ -3280,7 +3432,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "F"}})
 
-	entityBefore, _ := app.getEntity(context.Background(), "TKT-001")
+	entityBefore, _ := app.reader.getEntity(context.Background(), "TKT-001")
 	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
@@ -3291,7 +3443,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
 
-	entityAfter, _ := app.getEntity(context.Background(), "TKT-001")
+	entityAfter, _ := app.reader.getEntity(context.Background(), "TKT-001")
 	// Entity fields (id/type/props/content) should be byte-identical.
 	if entityAfter.Content != entityBefore.Content ||
 		len(entityAfter.Properties) != len(entityBefore.Properties) {
@@ -3615,7 +3767,7 @@ func TestV1Schema_MultiPrefix(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3641,7 +3793,7 @@ func TestV1Schema_SinglePrefix_Compat(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Schema(rec, req)
 
-	var schema V1Schema
+	var schema v1.Schema
 	if err := json.NewDecoder(rec.Body).Decode(&schema); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3674,7 +3826,7 @@ func TestV1CreateEntity_PrefixOverride(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3690,7 +3842,7 @@ func TestV1CreateEntity_EmptyPrefixUsesFirst(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3745,7 +3897,7 @@ func TestV1CreateEntity_ManualAcceptsID(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3841,7 +3993,7 @@ func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3886,7 +4038,7 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -3923,7 +4075,7 @@ func assertViewSectionsLackKeys(t *testing.T, body []byte, keys ...string) {
 
 // View responses must not carry add/link affordances. The view path is
 // strictly read-only; mutations live on the form/side-panel path. This guards
-// against re-introducing addInfo / linkInfo on V1ViewSection across every
+// against re-introducing addInfo / linkInfo on v1.ViewSection across every
 // shape that historically emitted them: outgoing/incoming traversals,
 // cards/list/table displays, and the variant where the target type has no
 // create-form configured (which previously emitted only linkInfo).
@@ -4091,7 +4243,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	var resp V1ViewResponse
+	var resp v1.ViewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4158,7 +4310,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 
 	raw := rec.Body.String()
 
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4186,7 +4338,7 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	// Wire format: both keys must appear in the raw JSON as `{}` so
 	// the SPA distinguishes "anonymous fallback" (absent) from
 	// "evaluated with no deviations" (present-empty). Round-tripping
-	// V1Entity through omitempty proves this for pointer fields.
+	// v1.Entity through omitempty proves this for pointer fields.
 	if !strings.Contains(raw, `"_fields":{}`) {
 		t.Errorf("raw body should contain \"_fields\":{}; got: %s", raw)
 	}
@@ -4238,7 +4390,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	var got V1Entity
+	var got v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -4498,7 +4650,7 @@ func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 			t.Fatalf("got %d, want 403; body=%s", code, body)
 		}
 		// Verify title was NOT updated.
-		e, _ := app.getEntity(context.Background(), "TKT-001")
+		e, _ := app.reader.getEntity(context.Background(), "TKT-001")
 		if e.Properties["title"] != "Original" {
 			t.Errorf("title must not be applied when status fails: got %v", e.Properties["title"])
 		}
@@ -4794,7 +4946,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
-		var v V1Entity
+		var v v1.Entity
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 		}
@@ -4818,7 +4970,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
 		body := rec.Body.String()
-		var v V1Entity
+		var v v1.Entity
 		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 			t.Fatalf("decode: %v; body=%s", err, body)
 		}
@@ -4842,7 +4994,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 		}
-		var v V1Entity
+		var v v1.Entity
 		_ = json.Unmarshal(rec.Body.Bytes(), &v)
 		if v.FieldAffordances == nil || (*v.FieldAffordances)["status"].Options["done"] {
 			t.Errorf("_fields.status.options.done must be false; body=%s", rec.Body.String())
@@ -4896,7 +5048,7 @@ func TestHandleV1DryRunCreate_SoftWarnings(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 	}
-	var v V1Entity
+	var v v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
@@ -4930,7 +5082,7 @@ func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing
 	if code != http.StatusOK {
 		t.Fatalf("got %d, want 200; body=%s", code, rec.Body.String())
 	}
-	var v V1Entity
+	var v v1.Entity
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}

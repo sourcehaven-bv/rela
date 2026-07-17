@@ -2,9 +2,17 @@ package metamodel
 
 import (
 	"regexp"
+	"time"
 )
 
 // Metamodel represents the full metamodel configuration
+//
+// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
+// This is the schema accessor — wide read-API by nature — but a ratchet
+// candidate: group the type/relation/property lookups behind focused accessors
+// (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
+//
+//plimsoll:max-exported-methods=31
 type Metamodel struct {
 	Version     string                 `yaml:"version"`
 	Namespace   string                 `yaml:"namespace"`
@@ -14,6 +22,10 @@ type Metamodel struct {
 	Relations   map[string]RelationDef `yaml:"relations"`
 	Validations []ValidationRule       `yaml:"validations,omitempty"`
 	Automations []AutomationDef        `yaml:"automations,omitempty"`
+
+	// Attachments holds the global attachment safety floor (MIME allowlist,
+	// scan policy) applied to every `file` property unless overridden.
+	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
@@ -117,13 +129,58 @@ func (tv *TypeValidation) SetCompiled(re *regexp.Regexp) {
 
 // CustomType defines a reusable type with optional enum values and/or regex validations.
 type CustomType struct {
-	Values      []string         `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
-	Default     string           `yaml:"default,omitempty"`     // Default value
-	Description string           `yaml:"description,omitempty"` // Documentation for the type
-	Validations []TypeValidation `yaml:"validations,omitempty"` // Regex validations with error messages
+	Values      []string          `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
+	Labels      map[string]string `yaml:"labels,omitempty"`      // Optional display labels keyed by value (display-only; value stays the identity)
+	Default     string            `yaml:"default,omitempty"`     // Default value
+	Description string            `yaml:"description,omitempty"` // Documentation for the type
+	Validations []TypeValidation  `yaml:"validations,omitempty"` // Regex validations with error messages
+
+	// Transitions declares the legal value→value moves for this enum,
+	// making it a state machine (TKT-E4LW2). This is declarative source
+	// data only — the metamodel does not enforce it. At startup
+	// internal/statemachine.Compile reads these into an executable machine
+	// that the entitymanager runs on the write path (legality 422, guard
+	// 403, precondition 422). Empty means "any value may change to any
+	// other" (the historical, unconstrained behavior). Only meaningful on a
+	// named type — inline `type: enum` properties carry no transitions.
+	Transitions []TransitionDef `yaml:"transitions,omitempty"`
+
+	// Initial names the only legal entry value on entity create when this
+	// type is a state machine. Empty falls back to Default. Consumed by
+	// internal/statemachine at compile time.
+	Initial string `yaml:"initial,omitempty"`
+}
+
+// TransitionDef is one edge in an enum state machine: a legal move from one
+// value to another, optionally gated by an ACL permission (Guard) and/or a
+// data precondition (When). This is declarative source data; the executable
+// machine is built from it by internal/statemachine.Compile.
+type TransitionDef struct {
+	From string `yaml:"from"` // Source value; must be one of CustomType.Values
+	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
+
+	// Guard names an ACL permission the acting principal must hold for this
+	// transition. Enforced only on served paths (a principal exists); inert
+	// on direct CLI writes. Empty means the transition is legal for anyone
+	// who may otherwise write the entity.
+	Guard string `yaml:"guard,omitempty"`
+
+	// When is an internal/predicate expression evaluated as a precondition
+	// against the entity + graph at write time. False rejects the transition
+	// (422). Empty means no precondition.
+	When string `yaml:"when,omitempty"`
 }
 
 // EntityDef defines an entity type in the metamodel
+//
+// TODO(TKT-N0IKN9): 24 exported methods, over the 20 exported-method line.
+// Schema value type; ratchet candidate alongside Metamodel. DisplayProperties
+// (TKT-NJTBQX) is the 24th — it reports the property set backing the display
+// title so the ACL locked-title guard can gate on templated display_property
+// (see internal/dataentry mentions); ratchet back down when this type is
+// decomposed.
+//
+//plimsoll:max-exported-methods=24
 type EntityDef struct {
 	Label         string                 `yaml:"label"`
 	LabelPlural   string                 `yaml:"label_plural,omitempty"`
@@ -175,19 +232,67 @@ type PropertySchema interface {
 
 // PropertyDef defines a property on an entity or relation
 type PropertyDef struct {
-	Type        string   `yaml:"type"`
-	Required    bool     `yaml:"required,omitempty"`
-	Values      []string `yaml:"values,omitempty"` // For inline enum types
-	Default     string   `yaml:"default,omitempty"`
-	Description string   `yaml:"description,omitempty"` // Documentation for the property
-	Format      string   `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
-	List        bool     `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	Type        string            `yaml:"type"`
+	Required    bool              `yaml:"required,omitempty"`
+	Values      []string          `yaml:"values,omitempty"` // For inline enum types
+	Labels      map[string]string `yaml:"labels,omitempty"` // Optional display labels keyed by value (display-only; value stays the identity)
+	Default     string            `yaml:"default,omitempty"`
+	Description string            `yaml:"description,omitempty"` // Documentation for the property
+	Format      string            `yaml:"format,omitempty"`      // Date format (Go layout, e.g., "2006-01-02")
+	List        bool              `yaml:"list,omitempty"`        // True for multi-select properties (allows multiple values)
+	// Unique constrains the property to a natural key: no two entities of
+	// the same type may carry the same non-empty value. Enforced at write
+	// time by the entitymanager (a colliding create/update is rejected as
+	// a validation error → 422). Empty values are exempt (a property is
+	// unique among the entities that set it). Ignored on `list` properties
+	// (a natural key is a scalar).
+	//
+	// Guarantee level is not uniform across backends. The write-path check
+	// is a check-then-write, not an atomic constraint, so under concurrent
+	// writers two racing creates with the same value can both commit on
+	// ANY backend. For race-free enforcement an operator adds a store-level
+	// unique index (a partial unique index on pgstore), which is the only
+	// mechanism that makes the constraint atomic. Uniqueness is therefore
+	// NOT part of the store conformance contract — a new store.Store
+	// implementation is not required to enforce it. See
+	// `internal/entitymanager` checkUniqueProperties and the ACL
+	// `principal_property` gate, which requires the referenced property to
+	// be unique (and non-list).
+	Unique bool `yaml:"unique,omitempty"`
 	// Max caps how many attachments a `file`-type property may hold.
 	// Zero/unset means 1 (the default, single-attachment). When > 1 the
 	// property holds a list of attachment paths and the data-entry UI
 	// switches from replace-mode to multi-file add-mode. Only meaningful
 	// for `type: file`.
 	Max int `yaml:"max,omitempty"`
+
+	// Accept narrows the MIME allowlist for this `file` property to these
+	// sniffed MIME types (e.g. ["application/pdf"]). Empty means inherit the
+	// global allowlist. Only meaningful for `type: file`.
+	Accept []string `yaml:"accept,omitempty"`
+
+	// Scan overrides the global virus-scan policy for this `file` property.
+	// ScanUnset (the zero value) means inherit the global policy. Only
+	// meaningful for `type: file`.
+	Scan ScanPolicy `yaml:"scan,omitempty"`
+
+	// ScanCmd is the external scan command (array args) run when the effective
+	// scan policy is `required`. Empty inherits the global scan command. Only
+	// meaningful for `type: file`. See [AttachmentsConfig.ScanCmd].
+	ScanCmd []string `yaml:"scan_cmd,omitempty"`
+
+	// Transform is the ordered list of byte transforms (each an external
+	// command) applied to this `file` property's uploads. Only meaningful for
+	// `type: file`.
+	Transform []TransformStep `yaml:"transform,omitempty"`
+}
+
+// TransformStep is one entry in a `transform:` pipeline — an external command
+// (array args) that rewrites the attachment bytes (e.g. metadata strip,
+// resize, CDR). The command receives templated {in}/{out} paths owned by the
+// runner; see the attachment-security guide for vetted recipes.
+type TransformStep struct {
+	Cmd []string `yaml:"cmd"`
 }
 
 // FileMax returns the effective attachment cap for a file property:
@@ -202,13 +307,14 @@ func (p PropertyDef) FileMax() int {
 
 // Built-in property types
 const (
-	PropertyTypeString  = "string"
-	PropertyTypeDate    = "date"
-	PropertyTypeInteger = "integer"
-	PropertyTypeBoolean = "boolean"
-	PropertyTypeEnum    = "enum"
-	PropertyTypeFile    = "file"
-	PropertyTypeRrule   = "rrule"
+	PropertyTypeString   = "string"
+	PropertyTypeDate     = "date"
+	PropertyTypeDatetime = "datetime"
+	PropertyTypeInteger  = "integer"
+	PropertyTypeBoolean  = "boolean"
+	PropertyTypeEnum     = "enum"
+	PropertyTypeFile     = "file"
+	PropertyTypeRrule    = "rrule"
 )
 
 // ID types for entities
@@ -265,20 +371,30 @@ func (m OrderableMode) IsValid() bool {
 // DefaultDateFormat is the default format for date properties (ISO 8601)
 const DefaultDateFormat = "2006-01-02"
 
+// DefaultDatetimeFormat is the default format for datetime properties (RFC3339,
+// a time-bearing ISO 8601 instant). Unlike date, a datetime value carries a
+// time-of-day and (canonically) a UTC offset.
+const DefaultDatetimeFormat = time.RFC3339
+
 // IsBuiltinType returns true if the type is a built-in property type
 func IsBuiltinType(t string) bool {
 	switch t {
-	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger,
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeInteger,
 		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule:
 		return true
 	}
 	return false
 }
 
-// GetDateFormat returns the date format for a property, defaulting to ISO 8601
+// GetDateFormat returns the date format for a property, defaulting to ISO 8601.
+// For datetime properties the default is RFC3339 (time-bearing); an explicit
+// Format still overrides.
 func (p *PropertyDef) GetDateFormat() string {
 	if p.Format != "" {
 		return p.Format
+	}
+	if p.Type == PropertyTypeDatetime {
+		return DefaultDatetimeFormat
 	}
 	return DefaultDateFormat
 }

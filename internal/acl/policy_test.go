@@ -121,6 +121,12 @@ also_unknown:
 	}
 }
 
+// Note: the membership-relation hardening warnings that briefly lived in
+// Policy.Validate (TKT-Z8A62F) moved to the on-demand `rela acl audit`
+// linter in TKT-TS0J5K — Validate is a pure structural gate again. The
+// un-gated / gated membership scenarios are now asserted in
+// internal/aclaudit (findings A1 / A1b), not here.
+
 // AC2.1: missing file returns an error wrapping os.ErrNotExist so
 // callers (appbuild in PR 3) can fall back to NopACL via errors.Is.
 func TestLoadPolicy_MissingFile_ReturnsErrNotExist(t *testing.T) {

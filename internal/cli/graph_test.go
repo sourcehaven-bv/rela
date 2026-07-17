@@ -13,7 +13,7 @@ import (
 // store layer; here we only verify that `generateDOT` renders a
 // well-formed, correctly-populated DOT document.
 
-func setupGraphTestGraph(t *testing.T) *cliServices {
+func setupGraphTestGraph(t *testing.T) *readServices {
 	t.Helper()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -21,11 +21,17 @@ func setupGraphTestGraph(t *testing.T) *cliServices {
 				Label:    "Requirement",
 				IDPrefix: "REQ-",
 				Color:    "#E3F2FD",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
 			},
 			"decision": {
 				Label:    "Decision",
 				IDPrefix: "DEC-",
 				Color:    "#FFF3E0",
+				Properties: map[string]metamodel.PropertyDef{
+					"title": {Type: "string", Required: true},
+				},
 			},
 		},
 		Relations: map[string]metamodel.RelationDef{
@@ -44,7 +50,7 @@ func setupGraphTestGraph(t *testing.T) *cliServices {
 	seeder.addEntity(testutil.EntityFor(meta, "decision").
 		ID("DEC-001").With("title", "Important Decision"))
 	seeder.addRelation("DEC-001", "implements", "REQ-001")
-	return seeder.build(t)
+	return seeder.build(t).read
 }
 
 // TestGenerateDOT is the canonical test for DOT rendering. One fixture,
@@ -52,7 +58,7 @@ func setupGraphTestGraph(t *testing.T) *cliServices {
 func TestGenerateDOT(t *testing.T) {
 	svc := setupGraphTestGraph(t)
 
-	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
+	dot := generateDOT(svc.Meta, fixtureAllEntities(t, svc.Store), fixtureAllRelations(t, svc.Store), "")
 
 	// Structural invariants.
 	if !strings.HasPrefix(dot, "digraph architecture {") {
@@ -100,7 +106,7 @@ func TestGenerateDOT(t *testing.T) {
 func TestGenerateDOT_DirectionLR(t *testing.T) {
 	svc := setupGraphTestGraph(t)
 
-	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "lr")
+	dot := generateDOT(svc.Meta, fixtureAllEntities(t, svc.Store), fixtureAllRelations(t, svc.Store), "lr")
 
 	if !strings.Contains(dot, "rankdir=LR") {
 		t.Error("DOT should contain 'rankdir=LR' when direction is lr")
@@ -111,9 +117,9 @@ func TestGenerateDOT_EmptyGraph(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{},
 	}
-	svc := newStoreSeeder(meta).build(t)
+	svc := newStoreSeeder(meta).build(t).read
 
-	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
+	dot := generateDOT(svc.Meta, fixtureAllEntities(t, svc.Store), fixtureAllRelations(t, svc.Store), "")
 
 	if !strings.HasPrefix(dot, "digraph architecture {") {
 		t.Errorf("DOT should start with 'digraph architecture {', got:\n%s", dot)
@@ -131,12 +137,17 @@ func TestGenerateDOT_EntityWithoutTitle(t *testing.T) {
 	}
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.Entity("component").ID("CMP-001"))
-	svc := seeder.build(t)
+	svc := seeder.build(t).read
 
-	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
+	dot := generateDOT(svc.Meta, fixtureAllEntities(t, svc.Store), fixtureAllRelations(t, svc.Store), "")
 
 	if !strings.Contains(dot, `label="CMP-001"`) {
 		t.Error("DOT should use entity ID as label when no title is set")
+	}
+	// The label guard must not duplicate the ID when DisplayTitle falls back
+	// to it (would otherwise render "CMP-001\nCMP-001").
+	if strings.Contains(dot, `CMP-001\nCMP-001`) {
+		t.Errorf("titleless label must not duplicate the ID, got:\n%s", dot)
 	}
 }
 
@@ -157,9 +168,9 @@ func TestGenerateDOT_HyphenatedEntityType(t *testing.T) {
 	seeder := newStoreSeeder(meta)
 	seeder.addEntity(testutil.EntityFor(meta, "review-response").
 		ID("RR-001").With("title", "Finding"))
-	svc := seeder.build(t)
+	svc := seeder.build(t).read
 
-	dot := generateDOT(svc.Meta(), fixtureAllEntities(t, svc), fixtureAllRelations(t, svc), "")
+	dot := generateDOT(svc.Meta, fixtureAllEntities(t, svc.Store), fixtureAllRelations(t, svc.Store), "")
 
 	if !strings.Contains(dot, "subgraph cluster_review_response") {
 		t.Errorf("expected sanitized cluster ID 'cluster_review_response', got:\n%s", dot)

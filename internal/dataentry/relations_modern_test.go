@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -127,9 +128,9 @@ func patch(t *testing.T, app *App, plural, id, body string, headers ...string) *
 	return rec
 }
 
-func decodeV1(t *testing.T, body []byte) V1Entity {
+func decodeV1(t *testing.T, body []byte) v1.Entity {
 	t.Helper()
-	var got V1Entity
+	var got v1.Entity
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decode response: %v\nbody: %s", err, body)
 	}
@@ -355,23 +356,22 @@ func TestModern_AC10_TargetTypeMismatchWarns(t *testing.T) {
 	}
 }
 
-// AC11: target ID doesn't exist surfaces warning.
-func TestModern_AC11_TargetMissingWarns(t *testing.T) {
+// AC11 (revised, BUG-K6FEVB): a relation write to a target that doesn't
+// exist is a HARD 422, not a soft 200-with-warning. The old behavior wrote
+// the edge via an ungated direct store call (the --read-only bypass); the fix
+// rejects the write and stores nothing. See danglingPeerError.
+func TestModern_AC11_TargetMissingIs422(t *testing.T) {
 	app := newRelationsTestApp(t)
 	body := `{"relations": {"tagged": {"data": [{"type":"label","id":"L-DOES-NOT-EXIST"}]}}}`
 	rec := patch(t, app, "tickets", "TKT-001", body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d, want 422; body=%s", rec.Code, rec.Body.String())
 	}
-	got := decodeV1(t, rec.Body.Bytes())
-	found := false
-	for _, w := range got.Warnings {
-		if w.Code == "target_not_found" {
-			found = true
-		}
+	if !strings.Contains(rec.Body.String(), "target_not_found") {
+		t.Errorf("expected target_not_found in body, got %s", rec.Body.String())
 	}
-	if !found {
-		t.Errorf("expected target_not_found warning, got %v", got.Warnings)
+	if rels := outgoingByType(app, "TKT-001", "tagged"); len(rels) != 0 {
+		t.Errorf("dangling-peer edge must not be stored, got %d", len(rels))
 	}
 }
 

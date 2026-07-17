@@ -415,9 +415,41 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 // An error from [acl.NewDeclarative] is propagated, not downgraded:
 // the operator wrote a policy and the resolver couldn't accept it; the
 // server must fail to boot rather than silently allow-all.
-func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, error) {
+// metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
+// package deliberately does not depend on internal/metamodel
+// (.go-arch-lint.yml), so it declares the narrow view it needs and the
+// wiring site — which imports both — supplies this adapter. Uniqueness is
+// computed from the already-exported EntityDef accessors, keeping it out
+// of Metamodel's public API (plimsoll load line).
+type metamodelView struct{ m *metamodel.Metamodel }
+
+func (v metamodelView) HasEntityType(entityType string) bool {
+	return v.m.HasEntityType(entityType)
+}
+
+func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
+	def, ok := v.m.GetEntityDef(entityType)
+	if !ok {
+		return acl.PropertyInfo{}
+	}
+	pd, ok := def.PropertyDefs()[property]
+	if !ok {
+		return acl.PropertyInfo{}
+	}
+	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
+}
+
+func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if policy == nil {
 		return acl.NopACL{}, nil, nil
+	}
+	// Schema-dependent policy validation (principal_property references a
+	// real, unique property; user_entity_type is a declared type). Run
+	// here rather than in acl.LoadPolicy because the acl package
+	// deliberately does not depend on metamodel; a mistake must fail the
+	// boot, not silently mis-resolve identities at runtime.
+	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
+		return nil, nil, fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
 	}
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
@@ -427,7 +459,12 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	// store-wrapping decorator (audit, metrics) MUST forward
 	// GraphQueryer or this compiles while the read gate silently uses
 	// the wrong store.
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+	//
+	// WithPrincipalLookup supplies the store-backed resolver for the
+	// `principal_property` substitution; NewDeclarative requires it iff
+	// the policy enables that lookup (else it is an inert dependency).
+	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st,
+		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
 	if err != nil {
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}
@@ -598,7 +635,7 @@ func assemble(
 	var aclDeclarative *acl.Declarative
 	if resolvedACL == nil {
 		var err error
-		resolvedACL, aclDeclarative, err = buildACL(base.aclPolicy, st)
+		resolvedACL, aclDeclarative, err = buildACL(base.aclPolicy, base.meta, st)
 		if err != nil {
 			return nil, err
 		}
@@ -631,15 +668,25 @@ func assemble(
 		ProjectRoot: cfg.Paths.Root,
 	}
 
+	tw, err := CompileTransitions(base.meta, st, resolvedACL)
+	if err != nil {
+		return nil, fmt.Errorf("compile transitions: %w", err)
+	}
+
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:        st,
-		Meta:         base.meta,
-		Templater:    templater,
-		Audit:        cfg.Audit,
-		ACL:          resolvedACL,
-		Automations:  autoEngine,
-		Cascade:      cascadeRunner,
-		ScriptRunner: script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		Store:                   st,
+		Meta:                    base.meta,
+		Templater:               templater,
+		Audit:                   cfg.Audit,
+		ACL:                     resolvedACL,
+		Automations:             autoEngine,
+		Cascade:                 cascadeRunner,
+		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		VersionRecorder:         versionRecorderFor(st),
+		RelationVersionRecorder: relationVersionRecorderFor(st),
+		Transitions:             tw.Enforcer,
+		TransitionGuard:         tw.Guard,
+		TransitionGraph:         tw.Graph,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -650,6 +697,11 @@ func assemble(
 	if err != nil {
 		return nil, err
 	}
+
+	// Start the pgstore version-reconciliation sweep (postgres build only; a
+	// no-op elsewhere). It captures create/update versions for settled entities;
+	// rename/delete are captured synchronously via the entitymanager hook above.
+	startVersionSweepIfSupported(st, base.meta)
 
 	return &Services{
 		fs:              cfg.FS,
@@ -672,6 +724,83 @@ func assemble(
 		audit:           cfg.Audit,
 	}, nil
 }
+
+// versionRecorder adapts a store.VersionWriter to the entitymanager's
+// consumer-side VersionRecorder, translating the identically-shaped record. It
+// exists only to keep entitymanager depending on its own narrow interface
+// rather than on store.VersionWriter directly.
+type versionRecorder struct {
+	w store.VersionWriter
+}
+
+func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.VersionRecord) error {
+	return r.w.WriteVersion(ctx, store.VersionInput{
+		EntityID:      v.EntityID,
+		Op:            v.Op,
+		PrevID:        v.PrevID,
+		Type:          v.Type,
+		Content:       v.Content,
+		Properties:    v.Properties,
+		SchemaHash:    v.SchemaHash,
+		Projection:    v.Projection,
+		PrincipalUser: v.PrincipalUser,
+		PrincipalTool: v.PrincipalTool,
+		TriggeredBy:   v.TriggeredBy,
+	})
+}
+
+// versionRecorderFor returns a synchronous version recorder when the store
+// supports version writes (pgstore), or nil when it does not (fsstore/memstore
+// — where the entitymanager's version hook then no-ops). Returning a typed nil
+// would defeat the manager's nil check, so an unsupported store yields an
+// untyped nil interface.
+func versionRecorderFor(st store.Store) entitymanager.VersionRecorder {
+	if w, ok := st.(store.VersionWriter); ok {
+		return versionRecorder{w: w}
+	}
+	return nil
+}
+
+// relationVersionRecorder adapts a store.RelationVersionWriter to the
+// entitymanager's consumer-side RelationVersionRecorder. RecordID is left 0 so
+// the store resolves the surrogate lineage id from the composite key at write
+// time (correct for the synchronous pre-delete / post-rename capture).
+type relationVersionRecorder struct {
+	w store.RelationVersionWriter
+}
+
+func (r relationVersionRecorder) RecordRelationVersion(
+	ctx context.Context, v entitymanager.RelationVersionRecord,
+) error {
+	return r.w.WriteRelationVersion(ctx, store.RelationVersionInput{
+		From:          v.From,
+		Type:          v.Type,
+		To:            v.To,
+		Op:            v.Op,
+		PrevFrom:      v.PrevFrom,
+		PrevTo:        v.PrevTo,
+		Content:       v.Content,
+		Properties:    v.Properties,
+		SchemaHash:    v.SchemaHash,
+		Projection:    v.Projection,
+		PrincipalUser: v.PrincipalUser,
+		PrincipalTool: v.PrincipalTool,
+		TriggeredBy:   v.TriggeredBy,
+	})
+}
+
+// relationVersionRecorderFor mirrors versionRecorderFor for relation versions.
+func relationVersionRecorderFor(st store.Store) entitymanager.RelationVersionRecorder {
+	if w, ok := st.(store.RelationVersionWriter); ok {
+		return relationVersionRecorder{w: w}
+	}
+	return nil
+}
+
+// (startVersionSweepIfSupported is defined per build tag in
+// versionsweep_postgres.go / versionsweep_nosweep.go — the postgres build starts
+// the pgstore reconciliation sweep, every other build no-ops — which keeps this
+// build-agnostic file free of any pgstore import. assemble calls it above.)
 
 // Close releases resources held by Services: store first (so any
 // in-flight observer callbacks complete), then the search backend.

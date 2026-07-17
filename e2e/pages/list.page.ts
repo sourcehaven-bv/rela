@@ -192,6 +192,24 @@ export class ListPage extends BasePage {
     return this.filterBar.locator('select').count();
   }
 
+  /** The Nth filter-bar <select> (relation filters in select mode, and
+   *  property selects, both render as native selects). */
+  private filterSelect(index = 0): Locator {
+    return this.filterBar.locator('select').nth(index);
+  }
+
+  /** Count how many <option>s in the Nth filter select carry the given text. */
+  async filterOptionCount(text: string, index = 0): Promise<number> {
+    return this.filterSelect(index).locator('option', { hasText: text }).count();
+  }
+
+  /** Select an option (by its value) in the Nth filter select and wait for the
+   *  resulting list refetch. Pass '' to clear. */
+  async selectFilterOption(value: string, index = 0) {
+    await this.filterSelect(index).selectOption(value);
+    await this.waitForSpinnerToDisappear();
+  }
+
   /** Wait for rows to be present before we try to issue keyboard commands
    *  against them. The ListView's keydown handler is attached to `document`,
    *  so we don't need to focus the table itself. */

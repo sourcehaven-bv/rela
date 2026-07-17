@@ -162,7 +162,9 @@ func (s *documentService) GetCached(ctx context.Context, entryID string) *Docume
 // (entryID, ConfigID) pair — renders of the same entry under *different*
 // document configs proceed in parallel. Command renders cache to disk;
 // script renders do not.
-func (s *documentService) Render(ctx context.Context, entryID string, cfg documentRenderConfig) (*DocumentResult, error) {
+func (s *documentService) Render(
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+) (*DocumentResult, error) {
 	entities, contentHash, err := s.computeDocumentHash(ctx, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("computing document hash: %w", err)
@@ -189,7 +191,8 @@ func (s *documentService) Render(ctx context.Context, entryID string, cfg docume
 // Command — these are mutually exclusive at config load (see
 // dataentryconfig.validateDocuments) so exactly one branch fires.
 func (s *documentService) doRender(
-	ctx context.Context, entryID string, cfg documentRenderConfig, entities []*entity.Entity, contentHash, cacheFile string,
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+	entities []*entity.Entity, contentHash, cacheFile string,
 ) (*DocumentResult, error) {
 	var markdown string
 	var err error
@@ -352,8 +355,9 @@ func markdownToHTML(markdown string) (string, error) {
 
 	result := buf.String()
 
-	// Post-process: convert mermaid code blocks to mermaid-ready pre elements.
-	result = htmlutil.ConvertMermaidBlocks(result)
+	// Post-process: convert diagram code blocks (mermaid, plantuml) to the
+	// pre elements the SPA upgrades client-side.
+	result = htmlutil.ConvertDiagramBlocks(result)
 
 	return result, nil
 }
@@ -519,6 +523,9 @@ func parseAttrs(s string) []parsedAttr {
 			continue
 		}
 		a := parsedAttr{name: name, raw: s[m[0]:m[1]]}
+		// Capture-group index (within attrRegex) for the unquoted value
+		// alternative — the fourth value-bearing group.
+		const unquotedValueGroup = 4
 		// Group indices in m[]: 2*k = start, 2*k+1 = end. A missing
 		// group has start == -1. A present-but-empty group (e.g. `""`)
 		// has start == end and both >= 0 — distinguish these from
@@ -531,7 +538,7 @@ func parseAttrs(s string) []parsedAttr {
 			a.value = get(3)
 			a.quoted = true
 		case m[8] >= 0: // unquoted, never empty by regex definition
-			a.value = get(4)
+			a.value = get(unquotedValueGroup)
 			a.quoted = true
 		default:
 			// boolean attribute (no = sign) — value stays "",

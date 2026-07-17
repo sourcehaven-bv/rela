@@ -223,6 +223,12 @@ func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) er
 		return store.ErrNotFound
 	}
 
+	// Record a tombstone in the same tx so the durable manifest can report the
+	// removal after the live row is gone (FEAT-NJ9FEN).
+	if err := s.writeRelationTombstone(ctx, tx, from, relType, to); err != nil {
+		return err
+	}
+
 	ev := store.Event{Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to}
 	s.notify(ctx, tx, ev)
 	if err := tx.Commit(ctx); err != nil {

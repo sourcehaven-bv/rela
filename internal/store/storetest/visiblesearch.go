@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -305,6 +306,152 @@ func RunVisibleSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 			require.True(t, hitInSet(base, h.ID), "visible hit missing from ungated baseline")
 		}
 	})
+}
+
+// VisibleFieldSearchFactory returns a fresh store, the ungated searcher, and
+// the FieldVisibleSearcher under test. Mirrors [VisibleSearchFactory] but for
+// the property-level seam (TKT-GGQ0JT).
+type VisibleFieldSearchFactory func(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher)
+
+// RunVisibleFieldSearchTests is the conformance suite for the property-level
+// filter [search.FieldVisibleSearcher.SearchVisibleFields]. It pins the
+// match-on-hidden-field oracle closure: a hit whose text matched ONLY fields
+// the principal may not see is dropped, while a hit that matched a visible
+// field (or id/content, never property-gated) survives.
+//
+// The fixture adds a `code` property carrying a value ("zeta777") that appears
+// in NO title, so a search for it can only match via the property — making the
+// hidden-only case unambiguous. Every backend's own matcher must agree with
+// the ground-truth (search.MatchTextFields over the visible projection).
+func RunVisibleFieldSearchTests(t *testing.T, vsf VisibleFieldSearchFactory) {
+	t.Helper()
+
+	allowTickets := map[string]search.TypeScope{"ticket": {AllowAll: true}}
+
+	// hideCode hides the `code` property (search vocabulary "prop:code") for
+	// every hit — the common closed-world case.
+	hideCode := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
+		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
+	}
+
+	t.Run("HiddenOnlyMatchDropped", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		// "zeta777" lives only in TKT-1's hidden `code` property.
+		q := search.Query{Text: "zeta777"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
+		require.Empty(t, got, "a hit matching only a hidden field must be dropped (oracle closed)")
+	})
+
+	t.Run("HiddenOnlyMatchSurvivesWhenVisible", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		q := search.Query{Text: "zeta777"}
+		// No hidden fields: the property is visible, so the hit stands.
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, nil))
+		requireSameIDSet(t, []string{"TKT-1"}, got)
+	})
+
+	t.Run("VisibleFieldMatchKeptDespiteHiddenField", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		// "alpha" matches TKT-1's visible title AND (hypothetically) other
+		// fields; with `code` hidden the title match alone keeps the hit.
+		q := search.Query{Text: "alpha"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
+		require.True(t, hitInSet(got, "TKT-1"),
+			"a hit matching a visible field must survive even when another matched field is hidden")
+	})
+
+	t.Run("IDMatchSurvivesHiddenProperty", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		// The consumer only ever hides declared PROPERTIES ("prop:<name>"), so
+		// id/content are never in the hidden set. A hit that matches by id
+		// survives even though its `code` property is hidden — id is never
+		// property-gated by construction of the hidden set.
+		q := search.Query{Text: "TKT-1"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
+		require.True(t, hitInSet(got, "TKT-1"), "an id match must survive: id is never property-gated")
+	})
+
+	t.Run("FailClosedOnHiddenFuncError", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		boom := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
+			return nil, errors.New("acl resolution boom")
+		}
+		q := search.Query{Text: "zeta777"}
+		var streamErr error
+		hits := 0
+		for _, err := range vs.SearchVisibleFields(ctx(), q, allowTickets, boom) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+			hits++
+		}
+		require.Zero(t, hits, "no hit may survive a hidden-fields resolution failure")
+		require.ErrorIs(t, streamErr, search.ErrScope, "hidden-func errors fail closed via ErrScope")
+	})
+
+	t.Run("EntityLevelStillApplies", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		seedVisibleFieldWorld(t, s)
+		// Scope denies tickets entirely: field filter never even runs.
+		q := search.Query{Text: "zeta777"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, map[string]search.TypeScope{}, nil))
+		require.Empty(t, got, "empty scope denies everything before field filtering")
+	})
+
+	t.Run("ContentMatchSurvivesHiddenProperty", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		e := entity.New("TKT-9", "ticket")
+		e.SetString("title", "gamma orbiter")
+		e.SetString("code", "zeta777")
+		e.Content = "uniquebodytoken operational notes"
+		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
+		// The query matches the entity body (content), which is never
+		// property-gated, so hiding `code` must not drop it.
+		q := search.Query{Text: "uniquebodytoken"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideCode))
+		require.True(t, hitInSet(got, "TKT-9"),
+			"a content match must survive: content is never property-gated")
+	})
+
+	t.Run("CallerCannotFalseDropViaIDOrContent", func(t *testing.T) {
+		s, _, vs := vsf(t)
+		e := entity.New("TKT-9", "ticket")
+		e.SetString("title", "delta probe")
+		e.Content = "singularcontentword"
+		require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-9")
+		// A buggy HiddenFieldsFunc that (wrongly) lists id/content must NOT be
+		// able to drop a hit that matched id/content — the seam guards the
+		// never-gated invariant (MatchHasVisibleField special-cases them).
+		hideIDAndContent := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
+			return map[string]struct{}{search.FieldID: {}, search.FieldContent: {}}, nil
+		}
+		q := search.Query{Text: "singularcontentword"}
+		got := collectHits(t, vs.SearchVisibleFields(ctx(), q, allowTickets, hideIDAndContent))
+		require.True(t, hitInSet(got, "TKT-9"),
+			"id/content are never property-gated even if a caller mis-lists them")
+	})
+}
+
+// seedVisibleFieldWorld builds a small fixture for the property-level suite:
+// TKT-1 carries a visible title ("alpha rocket") and a `code` property whose
+// value ("zeta777") appears nowhere else, so a search for it matches ONLY via
+// that property.
+func seedVisibleFieldWorld(t *testing.T, s store.Store) {
+	t.Helper()
+	e := entity.New("TKT-1", "ticket")
+	e.SetString("title", "alpha rocket")
+	e.SetString("code", "zeta777")
+	require.NoError(t, s.CreateEntity(ctx(), e), "create TKT-1")
+
+	e2 := entity.New("TKT-2", "ticket")
+	e2.SetString("title", "beta lander")
+	require.NoError(t, s.CreateEntity(ctx(), e2), "create TKT-2")
 }
 
 // seedVisibleSearchWorld builds the shared fixture graph:

@@ -29,12 +29,12 @@ when it doesn't exist.
 
 ```yaml
 formatting:
-  line_width: 80  # Maximum line width for paragraph wrapping (default: 80)
+  line_width: 80 # Maximum line width for paragraph wrapping (default: 80)
 ```
 
-| Setting                  | Description                                      | Default |
-| ------------------------ | ------------------------------------------------ | ------- |
-| `formatting.line_width`  | Maximum line width for paragraph wrapping        | 80      |
+| Setting                 | Description                               | Default |
+| ----------------------- | ----------------------------------------- | ------- |
+| `formatting.line_width` | Maximum line width for paragraph wrapping | 80      |
 
 ## Commands
 
@@ -89,13 +89,21 @@ rela create <type> [flags]
 
 | Flag              | Description                                                                    |
 | ----------------- | ------------------------------------------------------------------------------ |
-| `-t, --title`     | Entity title (required)                                                        |
 | `-s, --status`    | Entity status (default: `draft`)                                               |
 | `-p, --priority`  | Entity priority                                                                |
 | `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
 | `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
 | `-b, --body`      | Markdown body content for the entity                                           |
 | `-B, --body-file` | Read body content from file (use `-` for stdin)                                |
+
+Set the title (and any other property) with `-P`, e.g. `-P title="..."`.
+
+> **Removed:** `create` no longer has a `-t, --title` flag. It used to write
+> into the entity type's _display_ property, which is not always `title` (a
+> project may name it `naam`/`label` or set `display_property`). If you relied
+> on `--title` writing into a non-`title` display property, set that property
+> directly: `-P <yourprop>="..."`. (`rela update -t` is unaffected — it always
+> wrote the literal `title` property.)
 
 **Templates:**
 
@@ -112,11 +120,11 @@ Entity types can have either sequential or string IDs (configured in `metamodel.
 
 ```bash
 # Sequential ID type (auto-generated)
-rela create requirement --title "System must scale to 1000 users"
+rela create requirement -P title="System must scale to 1000 users"
 # Creates REQ-001
 
 # String ID type (requires --id)
-rela create component --id auth-service --title "Authentication Service"
+rela create component --id auth-service -P title="Authentication Service"
 # Creates auth-service
 ```
 
@@ -124,25 +132,25 @@ rela create component --id auth-service --title "Authentication Service"
 
 ```bash
 # Create with auto-generated ID (sequential types)
-rela create requirement --title "System must scale to 1000 users"
+rela create requirement -P title="System must scale to 1000 users"
 
 # Use type alias
-rela create req -t "Short form works too"
+rela create req -P title="Short form works too"
 
 # With status and priority
-rela create requirement --title "Security audit" --status proposed --priority high
+rela create requirement -P title="Security audit" --status proposed --priority high
 
 # With custom ID (works for both sequential and string types)
-rela create requirement --title "Custom ID" --id REQ-CUSTOM-001
+rela create requirement -P title="Custom ID" --id REQ-CUSTOM-001
 
 # String ID type (--id is required)
-rela create component --id user-service --title "User Service"
+rela create component --id user-service -P title="User Service"
 
 # With custom properties
-rela create control -t "Access Control" -P "iso27001=A.5.15" -P "owner=Security Team"
+rela create control -P title="Access Control" -P "iso27001=A.5.15" -P "owner=Security Team"
 
 # With body content
-rela create requirement -t "Auth feature" --body "## Description\n\nUser authentication."
+rela create requirement -P title="Auth feature" --body "## Description\n\nUser authentication."
 ```
 
 ---
@@ -161,26 +169,26 @@ rela list [type] [flags]
 
 **Flags:**
 
-| Flag      | Description                                      |
-| --------- | ------------------------------------------------ |
-| `--where` | Filter by property (repeatable for AND logic)    |
-| `--sort`  | Sort by property (or `id`, `modified`)           |
-| `--desc`  | Sort descending                                  |
+| Flag      | Description                                   |
+| --------- | --------------------------------------------- |
+| `--where` | Filter by property (repeatable for AND logic) |
+| `--sort`  | Sort by property (or `id`, `modified`)        |
+| `--desc`  | Sort descending                               |
 
 **Filter Operators:**
 
 The `--where` flag supports multiple comparison operators:
 
-| Operator | Description                        | Example                            |
-| -------- | ---------------------------------- | ---------------------------------- |
-| `=`      | Exact match (supports `*` glob)    | `--where "status=draft"`           |
-| `!=`     | Not equal                          | `--where "status!=done"`           |
-| `<`      | Less than (date/integer)           | `--where "due_date<2025-03-01"`    |
-| `<=`     | Less than or equal                 | `--where "priority<=2"`            |
-| `>`      | Greater than                       | `--where "risk_score>5"`           |
-| `>=`     | Greater than or equal              | `--where "valid_until>=2025-01-01"`|
-| `=~`     | Regex match                        | `--where "title=~^Auth"`           |
-| `~`      | Fuzzy match                        | `--where "title~authentcation"`    |
+| Operator | Description                     | Example                             |
+| -------- | ------------------------------- | ----------------------------------- |
+| `=`      | Exact match (supports `*` glob) | `--where "status=draft"`            |
+| `!=`     | Not equal                       | `--where "status!=done"`            |
+| `<`      | Less than (date/integer)        | `--where "due_date<2025-03-01"`     |
+| `<=`     | Less than or equal              | `--where "priority<=2"`             |
+| `>`      | Greater than                    | `--where "risk_score>5"`            |
+| `>=`     | Greater than or equal           | `--where "valid_until>=2025-01-01"` |
+| `=~`     | Regex match                     | `--where "title=~^Auth"`            |
+| `~`      | Fuzzy match                     | `--where "title~authentcation"`     |
 
 **Glob Patterns:**
 
@@ -329,6 +337,192 @@ rela delete REQ-001 --cascade
 
 ---
 
+### rela history
+
+Show an entity's version history, or print a past version's snapshot for piping
+to a diff tool. **PostgreSQL build only** — content versioning is a
+PostgreSQL-backend capability (filesystem projects use git for the same
+purpose); on other builds this reports that the backend does not support
+history.
+
+```bash
+rela history <id> [--version N]
+```
+
+**Arguments:**
+
+- `id` - Entity ID (may name a live or an already-deleted entity)
+
+**Flags:**
+
+- `--version N` - Print the full snapshot for version ordinal N (as JSON)
+  instead of the timeline, so it can be piped to an external diff tool
+
+Each timeline row shows the version number, timestamp, operation
+(create/update/rename/delete), and the principal (user + tool) that made the
+change. Reading a deleted entity's history requires the `history:read`
+permission (see the ACL guide).
+
+**Examples:**
+
+```bash
+rela history TKT-42                       # the version timeline
+rela history TKT-42 --version 3           # print version 3's snapshot
+
+# Diff two versions with any external tool (Unix-style):
+diff <(rela history TKT-42 --version 3) <(rela history TKT-42 --version 5)
+```
+
+---
+
+### rela restore
+
+Restore an entity's content and properties to a past version. **PostgreSQL
+build only.** The restore is applied as a normal write — authorized, validated,
+audited, and itself recorded as a new version (history is never rewritten). If
+the entity was deleted, it is re-created.
+
+```bash
+rela restore <id> <version>
+```
+
+**Arguments:**
+
+- `id` - Entity ID to restore
+- `version` - The version ordinal to restore to (see `rela history <id>`)
+
+Only entity content and properties are restored; the entity's relations
+as-of that version are versioned separately (see `rela relation-history`).
+
+**Examples:**
+
+```bash
+rela restore TKT-42 3
+```
+
+---
+
+### rela relation-history
+
+Show a relation's version history, or print a past version's snapshot for piping
+to a diff tool. A relation is addressed by its three-part key. **PostgreSQL build
+only** (filesystem projects use git). Relations carry their own properties and
+markdown body, versioned with the same time-machine model as entities.
+
+```bash
+rela relation-history <from> <type> <to> [--version N]
+```
+
+**Arguments:**
+
+- `from` - Source entity ID (the relation's `from`)
+- `type` - Relation type (e.g. `blocks`)
+- `to` - Target entity ID (the relation's `to`)
+
+**Flags:**
+
+- `--version N` - Print the full snapshot for version ordinal N (as JSON) for
+  piping to an external diff tool, instead of the timeline
+
+Each row shows the version, timestamp, operation (create/update/rename/delete),
+and principal. A rename row shows the pre-rename endpoints so a renamed edge's
+history reads as one continuous timeline. Reading a relation's history requires
+read access to **both** endpoints (a deleted relation requires `history:read`).
+
+**Examples:**
+
+```bash
+rela relation-history TKT-42 blocks TKT-99
+
+# Diff two versions with any external tool (Unix-style):
+diff <(rela relation-history TKT-42 blocks TKT-99 --version 2) \
+     <(rela relation-history TKT-42 blocks TKT-99 --version 4)
+```
+
+---
+
+### rela relation-restore
+
+Restore a relation's content and properties to a past version. **PostgreSQL build
+only.** Applied as a normal write (authorized, validated, audited, re-versioned).
+If the relation was deleted it is re-created — which fails with a conflict if an
+endpoint entity no longer exists.
+
+```bash
+rela relation-restore <from> <type> <to> <version>
+```
+
+**Arguments:**
+
+- `from` / `type` / `to` - The relation's three-part key
+- `version` - The version ordinal to restore to (see `rela relation-history`)
+
+**Examples:**
+
+```bash
+rela relation-restore TKT-42 blocks TKT-99 2
+```
+
+---
+
+### rela history-purge
+
+Hard-delete an entity's version history for compliance (leaked secret, PII, GDPR
+erasure). The deliberate, audited, **irreversible** exception to append-only
+history. **PostgreSQL build only.** Operator-only: the trust boundary is shell +
+`RELA_DATABASE_URL` access (no ACL check), like `rela db migrate`.
+
+```bash
+rela history-purge <id> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+```
+
+**Arguments / flags:**
+
+- `id` — the entity whose history to purge
+- `--vseq N` — purge the single version row with this vseq (from `rela history`)
+- `--content-hash H` — purge every row in the lineage with this content hash
+  (erase a value everywhere it was captured; verifiable afterward)
+- `--all` — purge the entity's entire (fenced) history
+- `--reason "..."` — **required**; recorded in the audit trail. Do NOT put the
+  secret here (logged in cleartext)
+- `--commit` — actually delete. **Without it the command is a dry-run** that only
+  shows what would be purged
+- `--yes` — skip the type-the-id confirmation (scripts); requires `--commit`
+- `--force-live` — purge even though the live row still holds the content (writes
+  a tombstone so the sweep will not re-capture it). Prefer redacting the live
+  value first.
+
+Purge **refuses** while the live row still holds the content (unless
+`--force-live`) and **refuses** a rename row. It is one necessary step, not
+cryptographic erasure — PITR/backup lifecycle is the operator's responsibility.
+
+**Examples:**
+
+```bash
+rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42"          # dry-run
+rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42" --commit  # do it
+```
+
+---
+
+### rela relation-history-purge
+
+The relation analog of `rela history-purge`, addressing a relation by its
+three-part key. Same flags, guardrails, and irreversibility. **PostgreSQL build
+only.**
+
+```bash
+rela relation-history-purge <from> <type> <to> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+```
+
+**Examples:**
+
+```bash
+rela relation-history-purge TKT-42 blocks TKT-99 --all --reason "erase per request" --commit
+```
+
+---
+
 ### rela attach
 
 Attach file(s) to an entity.
@@ -353,9 +547,9 @@ the property (see the metamodel reference) to allow several.
 
 **Flags:**
 
-| Flag              | Description                              |
-| ----------------- | ---------------------------------------- |
-| `-P, --property`  | Property to attach file(s) to            |
+| Flag             | Description                   |
+| ---------------- | ----------------------------- |
+| `-P, --property` | Property to attach file(s) to |
 
 If `--property` is not specified, uses the first `file`-type property defined for the entity type.
 
@@ -413,9 +607,9 @@ names.
 
 **Flags:**
 
-| Flag           | Description                                            |
-| -------------- | ----------------------------------------------------- |
-| `-f, --file`   | File name to detach (required when more than one)     |
+| Flag         | Description                                       |
+| ------------ | ------------------------------------------------- |
+| `-f, --file` | File name to detach (required when more than one) |
 
 **Examples:**
 
@@ -482,26 +676,56 @@ rela unlink DEC-001 addresses REQ-001
 
 ### rela sync
 
-Rebuild the graph from markdown files.
+Two-way sync between a local project (fsstore) and a remote rela-server backed
+by PostgreSQL. `push` sends locally-changed records to the server; `pull` brings
+remote changes into the local project. Conflicts are surfaced for manual
+resolution — no automatic merge. See [Sync](sync.md) for the full design.
 
 ```bash
-rela sync [flags]
+rela sync push [--remote <url>] [--token <token>] [--force <id>]
+rela sync pull [--remote <url>] [--token <token>] [--force <id>]
 ```
 
 **Flags:**
 
-| Flag      | Description        |
-| --------- | ------------------ |
-| `--force` | Force full rebuild |
+| Flag       | Description                                                      |
+| ---------- | ---------------------------------------------------------------- |
+| `--remote` | Remote rela-server base URL (proxy-fronted). Env: `RELA_REMOTE`. |
+| `--token`  | Bearer token for the OAuth proxy. Prefer env `RELA_SYNC_TOKEN`.  |
+| `--force`  | Resolve one record id: push = local wins, pull = remote wins.    |
 
-Use after manually editing markdown files to update the cache.
+The sync state (a per-record content-hash index and an opaque server cursor)
+lives in `.rela/sync-state.json`. Dirty detection is local: a record whose
+canonical hash differs from the index is pushed; the index advances only past
+confirmed-applied records, so an interrupted run resumes on re-run.
+
+**Conflicts.** A record changed on both ends halts with a clear report and is
+NOT applied. Resolve it explicitly:
+
+- `rela sync push --force <id>` — overwrite the remote with the local copy.
+- `rela sync pull --force <id>` — overwrite the local copy with the remote.
+
+**Authentication.** In production rela-server sits behind an OAuth proxy and has
+no native auth — the CLI authenticates to the _proxy_ by presenting a JWT bearer
+(`Authorization: Bearer $RELA_SYNC_TOKEN`). The token is read from the env/flag
+and never logged. On loopback/dev with no proxy, sync works without a token. See
+[Sync](sync.md) for the proxy configuration.
 
 **Examples:**
 
 ```bash
-rela sync
-rela sync --force
+export RELA_REMOTE=https://rela.example.com
+export RELA_SYNC_TOKEN=$(my-idp-get-token)
+
+rela sync push                 # send local changes
+rela sync pull                 # bring in remote changes
+rela sync push --force TKT-42  # resolve TKT-42: local wins
+rela sync pull --force TKT-42  # resolve TKT-42: remote wins
 ```
+
+> Note: sync requires the remote to run the PostgreSQL backend. Against a
+> non-postgres server the manifest endpoint returns 501 and `pull` reports that
+> the server does not support sync.
 
 ---
 
@@ -715,10 +939,10 @@ rela fmt [type] [flags]
 
 **Flags:**
 
-| Flag        | Description                                          |
-| ----------- | ---------------------------------------------------- |
-| `--dry-run` | Preview changes without writing                      |
-| `--check`   | Check if files need formatting (exits 1 if they do)  |
+| Flag        | Description                                         |
+| ----------- | --------------------------------------------------- |
+| `--dry-run` | Preview changes without writing                     |
+| `--check`   | Check if files need formatting (exits 1 if they do) |
 
 This command normalizes:
 
@@ -732,7 +956,7 @@ Line width can be configured in `.rela/config.yaml`:
 
 ```yaml
 formatting:
-  line_width: 100  # default: 80
+  line_width: 100 # default: 80
 ```
 
 **What gets wrapped:**
@@ -904,6 +1128,18 @@ Find entities with similar titles.
 rela analyze duplicates
 ```
 
+#### rela analyze unique
+
+Find entities that violate a `unique: true` property constraint — same-type
+entities sharing a value for a unique property. The write path rejects new
+duplicates; this surfaces ones that already exist (e.g. after adding
+`unique: true` to a property whose data already contains collisions, which
+the constraint does not clean retroactively).
+
+```bash
+rela analyze unique
+```
+
 #### rela analyze gaps
 
 Find gaps in ID sequences for entity types with sequential IDs.
@@ -984,11 +1220,11 @@ Shows:
 
 **Flags:**
 
-| Flag          | Description                                                    |
-| ------------- | -------------------------------------------------------------- |
-| `--threshold` | Show types with instance count <= threshold (0 = only unused)  |
-| `--cleanup`   | Remove unused types from metamodel.yaml                        |
-| `--dry-run`   | Preview cleanup changes without modifying files                |
+| Flag          | Description                                                   |
+| ------------- | ------------------------------------------------------------- |
+| `--threshold` | Show types with instance count <= threshold (0 = only unused) |
+| `--cleanup`   | Remove unused types from metamodel.yaml                       |
+| `--dry-run`   | Preview cleanup changes without modifying files               |
 
 The cleanup operation only removes types that have no instances AND no references in
 configuration files (data-entry.yaml, validations, automations). Types referenced in
@@ -1183,7 +1419,7 @@ rela template init requirement
 # templates/entities/requirement.md
 
 # New entities will use the template
-rela create requirement --title "My Requirement"
+rela create requirement -P title="My Requirement"
 ```
 
 ---
@@ -1252,9 +1488,11 @@ This command adjusts header levels so the minimum header level in each entity is
 preserving the relative hierarchy. For example:
 
 ```markdown
-# Overview        →  ## Overview
-## Details        →  ### Details
-### Subsection    →  #### Subsection
+# Overview → ## Overview
+
+## Details → ### Details
+
+### Subsection → #### Subsection
 ```
 
 Setext-style headers (underlined with `===` or `---`) are converted to ATX style (`##`).
@@ -1265,9 +1503,9 @@ Setext-style headers (underlined with `===` or `---`) are converted to ATX style
 
 **Flags:**
 
-| Flag        | Description                        |
-| ----------- | ---------------------------------- |
-| `--dry-run` | Preview changes without writing    |
+| Flag        | Description                     |
+| ----------- | ------------------------------- |
+| `--dry-run` | Preview changes without writing |
 
 **Examples:**
 
@@ -1299,10 +1537,10 @@ rela rename entity <old-type> <new-type> [flags]
 
 **Flags:**
 
-| Flag           | Description                              |
-| -------------- | ---------------------------------------- |
-| `--plural`     | Override plural form for directory name  |
-| `-f, --force`  | Skip confirmation prompt                 |
+| Flag          | Description                             |
+| ------------- | --------------------------------------- |
+| `--plural`    | Override plural form for directory name |
+| `-f, --force` | Skip confirmation prompt                |
 
 This updates:
 
@@ -1367,21 +1605,21 @@ and custom types.
 
 **Subcommands:**
 
-| Command     | Description                              |
-| ----------- | ---------------------------------------- |
-| `overview`  | Show metamodel overview (default)        |
-| `entities`  | List all entity types with descriptions  |
-| `relations` | List all relation types                  |
-| `types`     | List custom types defined in metamodel   |
-| `entity`    | Show details for a specific entity type  |
-| `relation`  | Show details for a specific relation     |
+| Command     | Description                             |
+| ----------- | --------------------------------------- |
+| `overview`  | Show metamodel overview (default)       |
+| `entities`  | List all entity types with descriptions |
+| `relations` | List all relation types                 |
+| `types`     | List custom types defined in metamodel  |
+| `entity`    | Show details for a specific entity type |
+| `relation`  | Show details for a specific relation    |
 
 **Flags:**
 
-| Flag            | Description                                     |
-| --------------- | ----------------------------------------------- |
-| `--graphviz`    | Output metamodel as GraphViz DOT format         |
-| `--constraints` | Include cardinality constraints in DOT output   |
+| Flag            | Description                                   |
+| --------------- | --------------------------------------------- |
+| `--graphviz`    | Output metamodel as GraphViz DOT format       |
+| `--constraints` | Include cardinality constraints in DOT output |
 
 **Examples:**
 
@@ -1411,10 +1649,10 @@ attachments with it, so there is no separate attachment GC pass.
 
 **Flags:**
 
-| Flag            | Description                                              |
-| --------------- | -------------------------------------------------------- |
-| `--temp-files`  | Clean up orphaned `.new` files from interrupted writes   |
-| `--dry-run`     | Show what would be removed without actually removing     |
+| Flag           | Description                                            |
+| -------------- | ------------------------------------------------------ |
+| `--temp-files` | Clean up orphaned `.new` files from interrupted writes |
+| `--dry-run`    | Show what would be removed without actually removing   |
 
 **Examples:**
 

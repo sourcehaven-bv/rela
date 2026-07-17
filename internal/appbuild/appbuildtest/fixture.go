@@ -169,15 +169,22 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		aclImpl = acl.NopACL{}
 	}
 
+	tw, err := appbuild.CompileTransitions(meta, st, aclImpl)
+	if err != nil {
+		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
+	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:        st,
-		Meta:         meta,
-		Templater:    templater,
-		Audit:        auditSink,
-		ACL:          aclImpl,
-		Automations:  autoEngine,
-		Cascade:      cascadeRunner,
-		ScriptRunner: script.NewLuaScriptRunner(scriptEngine, readDeps),
+		Store:           st,
+		Meta:            meta,
+		Templater:       templater,
+		Audit:           auditSink,
+		ACL:             aclImpl,
+		Automations:     autoEngine,
+		Cascade:         cascadeRunner,
+		ScriptRunner:    script.NewLuaScriptRunner(scriptEngine, readDeps),
+		Transitions:     tw.Enforcer,
+		TransitionGuard: tw.Guard,
+		TransitionGraph: tw.Graph,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))

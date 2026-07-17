@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -18,14 +19,14 @@ import (
 
 // searchAs performs GET /api/v1/_search?q=<q> with the readGate +
 // acl.Request attached, mirroring listEntitiesAs for the search view.
-func searchAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative, q string) (V1ListResponse, *httptest.ResponseRecorder) {
+func searchAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative, q string) (v1.ListResponse, *httptest.ResponseRecorder) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_search?q="+q, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
 	app.handleV1Search(rec, req)
 
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("decode search response: %v\nbody: %s", err, rec.Body)
@@ -348,7 +349,7 @@ func TestACLSearchRegression_NopACL(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /_search: %d %s", rec.Code, rec.Body)
 	}
-	var resp V1ListResponse
+	var resp v1.ListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v\nbody: %s", err, rec.Body)
 	}

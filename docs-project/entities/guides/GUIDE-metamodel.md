@@ -128,8 +128,8 @@ it is loaded only once. This is not an error.
 ```yaml
 # metamodel.yaml
 includes:
-  - a.yaml    # includes shared.yaml
-  - b.yaml    # also includes shared.yaml — loaded once, no conflict
+  - a.yaml # includes shared.yaml
+  - b.yaml # also includes shared.yaml — loaded once, no conflict
 ```
 
 ### Conflict Handling
@@ -145,12 +145,12 @@ To resolve conflicts, rename one of the definitions or move it to a shared file.
 
 ### Error Messages
 
-| Situation | Error |
-| --- | --- |
-| Duplicate definition | `duplicate entity "control": defined in both a.yaml and b.yaml` |
-| Circular include | `circular include detected: a.yaml → b.yaml → a.yaml` |
-| File not found | `include file not found: missing.yaml (included from metamodel.yaml)` |
-| Root-only field | `included file a.yaml must not contain "version" (only allowed in root metamodel.yaml)` |
+| Situation            | Error                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| Duplicate definition | `duplicate entity "control": defined in both a.yaml and b.yaml`                         |
+| Circular include     | `circular include detected: a.yaml → b.yaml → a.yaml`                                   |
+| File not found       | `include file not found: missing.yaml (included from metamodel.yaml)`                   |
+| Root-only field      | `included file a.yaml must not contain "version" (only allowed in root metamodel.yaml)` |
 
 ## Custom Types
 
@@ -170,6 +170,46 @@ types:
   priority:
     values: [critical, high, medium, low]
 ```
+
+#### Display Labels
+
+Enum values are stored as-is (typically snake_case identifiers). For a
+friendlier data-entry UI you can attach an optional human-readable **label** to
+any value with a `labels:` map keyed by value:
+
+```yaml
+types:
+  status:
+    values: [draft, in_progress, wont_fix]
+    labels:
+      in_progress: In Progress
+      wont_fix: Won't Fix
+```
+
+Labels also work on inline enums:
+
+```yaml
+properties:
+  status:
+    type: enum
+    values: [open, in_progress, closed]
+    labels:
+      in_progress: In Progress
+```
+
+Notes:
+
+- **Labels are display-only.** The stored value, the value submitted by forms,
+  validation, and badge colours all key on the raw value — only the text shown
+  in the data-entry UI changes. A value with no entry in `labels` renders raw.
+- Labels are surfaced in the data-entry web UI (select dropdowns, badges across
+  lists / detail / kanban, and filter menus). The CLI and the OpenAPI `enum`
+  output stay value-based.
+- `labels` is optional and backwards compatible: existing metamodels with plain
+  value lists are unchanged and need no migration.
+- When a property references a custom type, labels come from the **custom
+  type**; an inline `labels` map on such a property is ignored (mirroring how an
+  inline `values` list is ignored there).
 
 ### Regex Validations
 
@@ -200,9 +240,9 @@ types:
 
 Each validation requires:
 
-| Field     | Description                                        |
-| --------- | -------------------------------------------------- |
-| `pattern` | Regex pattern that values must match               |
+| Field     | Description                                             |
+| --------- | ------------------------------------------------------- |
+| `pattern` | Regex pattern that values must match                    |
 | `error`   | User-friendly error message shown when validation fails |
 
 **Benefits of multiple simple patterns vs one complex regex:**
@@ -224,6 +264,7 @@ The following names are reserved for built-in property types and cannot be used 
 
 - `string` - Free-form text
 - `date` - Date values
+- `datetime` - Time-bearing instants (date + time)
 - `integer` - Whole numbers
 - `boolean` - True/false values
 - `enum` - Inline enumeration (use `values:` directly in property definition)
@@ -238,24 +279,24 @@ cannot define custom type "string": name is reserved for built-in type
 
 Each entity type defines:
 
-| Field          | Description                                               |
-| -------------- | --------------------------------------------------------- |
-| `label`        | Display name                                              |
-| `label_plural` | Plural display name (defaults to label + "s")             |
-| `description`  | Documentation explaining intent and usage (optional)      |
-| `aliases`      | Alternative names for CLI (e.g., `req` for `requirement`) |
-| `id_type`      | `short` (default), `sequential`, or `manual` - controls ID generation |
-| `id_prefix`    | Single ID prefix (e.g., `REQ-`)                           |
-| `id_prefixes`  | Multiple ID prefixes (e.g., `["DEC-", "ADR-"]`)           |
-| `properties`   | Property definitions                                      |
-| `default_sort` | Default sort order for list views                         |
-| `color`        | Fill color for graph visualizations (hex or named)        |
-| `border_color` | Border color for graph visualizations                     |
+| Field              | Description                                                                     |
+| ------------------ | ------------------------------------------------------------------------------- |
+| `label`            | Display name                                                                    |
+| `label_plural`     | Plural display name (defaults to label + "s")                                   |
+| `description`      | Documentation explaining intent and usage (optional)                            |
+| `aliases`          | Alternative names for CLI (e.g., `req` for `requirement`)                       |
+| `id_type`          | `short` (default), `sequential`, or `manual` - controls ID generation           |
+| `id_prefix`        | Single ID prefix (e.g., `REQ-`)                                                 |
+| `id_prefixes`      | Multiple ID prefixes (e.g., `["DEC-", "ADR-"]`)                                 |
+| `properties`       | Property definitions                                                            |
+| `default_sort`     | Default sort order for list views                                               |
+| `color`            | Fill color for graph visualizations (hex or named)                              |
+| `border_color`     | Border color for graph visualizations                                           |
 | `display_property` | Property whose value names the entity. See [Display name](#display-name) below. |
 
 ### Display name
 
-Every entity type has a *primary property* — the property whose value
+Every entity type has a _primary property_ — the property whose value
 is the entity's display name. When unset, rela picks one
 automatically: it checks `title`, `name`, `label` in that order (when
 each is a required string property), then falls back to any required
@@ -280,7 +321,7 @@ entities:
 
 **Allowed types.** The named property must be `string`, `integer`,
 `boolean`, or `enum` (custom enum-like types are accepted). `date`,
-`file`, `rrule`, and list-typed (`list: true`) properties are
+`datetime`, `file`, `rrule`, and list-typed (`list: true`) properties are
 rejected at metamodel-load time — their default rendering produces
 strings nobody designed as a display name (e.g. `"2026-04-25 00:00:00
 +0000 UTC"`, `"[a b c]"`).
@@ -290,9 +331,38 @@ values) are stringified via `fmt.Sprintf("%v", val)`. The display
 falls back to the entity ID when the value is empty, missing, or
 `nil`.
 
-**Validation.** A typo, whitespace mistake, list-typed reference, or
-disallowed type fails metamodel-load with a diagnostic naming the
-entity, the offending value, and the available properties.
+**Templates.** When `display_property` contains a `{`, it is a
+template: each `{propname}` placeholder is replaced with that
+property's value, and literal text (spaces, commas) passes through.
+This composes a display name from several fields:
+
+```yaml
+entities:
+  persoon:
+    label: Persoon
+    display_property: "{voornaam} {tussenvoegsel} {achternaam}"
+    properties:
+      voornaam: { type: string }
+      tussenvoegsel: { type: string }
+      achternaam: { type: string, required: true }
+```
+
+renders `"Jeroen Vloothuis"` — and `"Jan van der Berg"` for someone
+with a `tussenvoegsel`. Consecutive whitespace collapses to one space
+and the result is trimmed, so an empty middle field doesn't leave a
+double space. The ID fallback applies only when the rendered result is
+empty after trimming — a template with literal text (e.g. `"Mr.
+{achternaam}"`) always renders that text, so it never falls back to the
+ID even when every placeholder is empty. Each placeholder must name a
+defined property of an allowed type (same rules as above), checked at
+load. A template names no single primary property, so it is
+display-only — it isn't a target for writing values.
+
+**Validation.** A typo, whitespace mistake, list-typed reference,
+disallowed type, or a malformed template (unclosed `{`, empty `{}`, or
+a placeholder naming an undefined property) fails metamodel-load with a
+diagnostic naming the entity, the offending value, and the available
+properties.
 
 How the data-entry app surfaces the display name across lists, cards,
 breadcrumbs, and related-entity links is documented in
@@ -302,11 +372,11 @@ breadcrumbs, and related-entity links is documented in
 
 Entity IDs can be auto-generated or manually specified:
 
-| Type         | Description                              | Example IDs                     |
-| ------------ | ---------------------------------------- | ------------------------------- |
-| `short`      | Random base36 IDs (default)              | `REQ-a3f8`, `REQ-k2m9`          |
-| `sequential` | Auto-incremented numeric IDs             | `REQ-001`, `REQ-002`, `DEC-003` |
-| `manual`     | Manually specified string IDs            | `auth-module`, `user-service`   |
+| Type         | Description                   | Example IDs                     |
+| ------------ | ----------------------------- | ------------------------------- |
+| `short`      | Random base36 IDs (default)   | `REQ-a3f8`, `REQ-k2m9`          |
+| `sequential` | Auto-incremented numeric IDs  | `REQ-001`, `REQ-002`, `DEC-003` |
+| `manual`     | Manually specified string IDs | `auth-module`, `user-service`   |
 
 **Short IDs** (default):
 
@@ -356,15 +426,15 @@ Creating entities:
 
 ```bash
 # Short ID (default, auto-generated)
-rela create requirement -t "User authentication"
+rela create requirement -P title="User authentication"
 # Creates REQ-a3f8
 
 # Sequential ID (auto-incremented)
-rela create decision -t "Use PostgreSQL for persistence"
+rela create decision -P title="Use PostgreSQL for persistence"
 # Creates ADR-001
 
 # Manual ID (requires --id)
-rela create component --id auth-service -t "Authentication Service"
+rela create component --id auth-service -P title="Authentication Service"
 # Creates auth-service
 ```
 
@@ -403,16 +473,16 @@ entities:
   risk:
     label: Risk
     id_prefix: RISK-
-    color: "#FFEBEE"         # Light red fill
-    border_color: "#C62828"  # Dark red border
+    color: "#FFEBEE" # Light red fill
+    border_color: "#C62828" # Dark red border
     properties:
       # ...
 
   control:
     label: Control
     id_prefix: CTL-
-    color: "#E8F5E9"         # Light green fill
-    border_color: "#2E7D32"  # Dark green border
+    color: "#E8F5E9" # Light green fill
+    border_color: "#2E7D32" # Dark green border
     properties:
       # ...
 ```
@@ -451,26 +521,32 @@ entities:
 
 ### Property Types
 
-| Type       | Description                             | Filter Operators                    |
-| ---------- | --------------------------------------- | ----------------------------------- |
-| `string`   | Free-form text                          | `=`, `!=`, `=~` (regex), glob (`*`) |
-| `date`     | Date value (ISO 8601 by default)        | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
-| `integer`  | Whole number                            | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
-| `boolean`  | True or false                           | `=`, `!=`                           |
-| `enum`     | Inline enum with `values`               | `=`, `!=`                           |
-| `file`     | File attachment (stored under `attachments/`)    | N/A                          |
-| `<custom>` | Reference to a type defined in `types:` | `=`, `!=`                           |
+| Type       | Description                                   | Filter Operators                    |
+| ---------- | --------------------------------------------- | ----------------------------------- |
+| `string`   | Free-form text                                | `=`, `!=`, `=~` (regex), glob (`*`) |
+| `date`     | Date value (ISO 8601 by default)              | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `datetime` | Time-bearing instant (RFC3339, stored as UTC) | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `integer`  | Whole number                                  | `=`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `boolean`  | True or false                                 | `=`, `!=`                           |
+| `enum`     | Inline enum with `values`                     | `=`, `!=`                           |
+| `file`     | File attachment (stored under `attachments/`) | N/A                                 |
+| `<custom>` | Reference to a type defined in `types:`       | `=`, `!=`                           |
 
 ### Property Options
 
-| Option           | Description                                          |
-| ---------------- | ---------------------------------------------------- |
-| `required: true` | Property must be provided                            |
-| `default`        | Default value for the property                       |
-| `format`         | Date format (Go layout string, e.g., `2006-01-02`)   |
-| `description`    | Documentation for the property                       |
-| `list: true`     | Allow multiple values (multi-select for enum types)  |
-| `max`            | For `file` properties: max attachments (default 1)   |
+| Option           | Description                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| `required: true` | Property must be provided                                                             |
+| `default`        | Default value for the property                                                        |
+| `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
+| `description`    | Documentation for the property                                                        |
+| `list: true`     | Allow multiple values (multi-select for enum types)                                   |
+| `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). Not for `list` properties. |
+| `max`            | For `file` properties: max attachments (default 1)                                    |
+| `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
+| `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
+| `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd`                |
+| `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}`                   |
 
 ### File attachments and `max`
 
@@ -481,7 +557,7 @@ A `file` property holds an attachment. By default it holds **one** file
 ```yaml
 supporting_docs:
   type: file
-  max: 5            # up to 5 files on this property
+  max: 5 # up to 5 files on this property
 ```
 
 With `max > 1` the property value is a **list** of attachment paths, the
@@ -489,6 +565,38 @@ data-entry UI shows a multi-file picker (add up to `max`, remove
 individually), and uploading a file whose name already exists auto-suffixes
 it (`report.pdf` → `report (1).pdf`). `max` must be `>= 1` and only applies
 to `file` properties.
+
+### Attachment security: scanning, allowlist & transforms
+
+Uploaded attachments are inspected before they are stored. A native MIME
+allowlist (sniffed, blocks SVG/HTML/executables) is always on; virus scanning
+and byte transforms (metadata strip, resize, document disarm) are opt-in and
+driven by **external commands you configure** — rela ships no scanner or image
+library. Policy lives in a global `attachments:` block plus per-property
+overrides:
+
+```yaml
+attachments:
+  allow: default-safe # MIME allowlist preset (or a list)
+  scan_cmd: [clamdscan, --no-summary, "{in}"] # configuring this enables scanning
+
+entities:
+  report:
+    properties:
+      evidence:
+        type: file
+        transform:
+          - cmd: [exiftool, -all=, "{in}", -o, "{out}"] # strip metadata
+```
+
+Commands use array args (no shell — no injection) with `{in}`/`{out}`
+placeholders rela substitutes with temp paths it owns; each runs under a
+timeout and output-size cap. **Configuring a `scan_cmd` enables scanning**
+(fail-closed: rejects on a hit **or** when the scanner can't run); a property
+can opt out with `scan: off`. See the dedicated
+[Attachment Security guide](attachment-security.md)
+for the full configuration and vetted command recipes (ClamAV, vips, exiftool,
+qpdf, ImageMagick).
 
 ### Date Formats
 
@@ -509,6 +617,42 @@ Common formats:
 | European | `01/02/2025` | `02/01/2006`           |
 | US       | `02/01/2025` | `01/02/2006`           |
 | Long     | `1 Feb 2025` | `2 Jan 2006`           |
+
+### Datetime Properties
+
+Use `datetime` for a **time-bearing instant** (a specific point in time, not
+just a calendar day). Unlike `date`, a `datetime` value carries a time-of-day.
+
+```yaml
+properties:
+  starts_at:
+    type: datetime
+    description: "When the event begins"
+```
+
+Semantics:
+
+- **Stored as UTC RFC3339** (e.g. `2026-07-13T12:30:00Z`). Values written
+  through the data-entry app are always normalized to a UTC instant.
+- **Bare dates are accepted as midnight UTC.** A hand-edited value like
+  `2026-07-13` on a `datetime` property is interpreted as
+  `2026-07-13T00:00:00Z`. (Note that such a midnight-UTC value displays on the
+  previous evening in time zones west of UTC — see the data-entry docs.)
+- **Values may be quoted or unquoted** in YAML frontmatter. An unquoted
+  timestamp is parsed as a timestamp; both round-trip correctly.
+- **Filtering and sorting compare as instants** (down to the second).
+  Equality (`=`) is therefore strict-instant: `starts_at=2026-07-13` (which
+  parses as midnight) does **not** match `2026-07-13T12:30:00Z`. Use `>=` and
+  `<` to query a day or range.
+- **Mixed `date` + `datetime` columns sort chronologically** together.
+
+The data-entry app renders `datetime` properties with a date+time picker and a
+configurable display time zone — see the data-entry guide.
+
+A calendar-feed source can use a `datetime` property (as its `date:` or
+`end_date:`) to emit a **timed** event; a `date` property emits an all-day
+event. Start and end must be the same kind (all-day or timed), and timed events
+are rendered in UTC.
 
 ### Property Type Examples
 
@@ -553,25 +697,25 @@ properties:
   tags:
     type: enum
     values: [frontend, backend, api, database, security]
-    list: true  # Allows selecting multiple values
+    list: true # Allows selecting multiple values
 ```
 
 ## Relations
 
 Relations define how entity types can be connected:
 
-| Field            | Description                                        |
-| ---------------- | -------------------------------------------------- |
-| `label`          | Display name                                       |
-| `description`    | Explanation of the relation's meaning              |
-| `from`           | Source entity types (list)                         |
-| `to`             | Target entity types (list)                         |
-| `inverse`        | Inverse relation definition (string or object)     |
-| `symmetric`      | `true` if relation is bidirectional                |
-| `min_outgoing`   | Minimum outgoing relations per from-side entity    |
-| `max_outgoing`   | Maximum outgoing relations per from-side entity    |
-| `min_incoming`   | Minimum incoming relations per to-side entity      |
-| `max_incoming`   | Maximum incoming relations per to-side entity      |
+| Field          | Description                                     |
+| -------------- | ----------------------------------------------- |
+| `label`        | Display name                                    |
+| `description`  | Explanation of the relation's meaning           |
+| `from`         | Source entity types (list)                      |
+| `to`           | Target entity types (list)                      |
+| `inverse`      | Inverse relation definition (string or object)  |
+| `symmetric`    | `true` if relation is bidirectional             |
+| `min_outgoing` | Minimum outgoing relations per from-side entity |
+| `max_outgoing` | Maximum outgoing relations per from-side entity |
+| `min_incoming` | Minimum incoming relations per to-side entity   |
+| `max_incoming` | Maximum incoming relations per to-side entity   |
 
 ### Example Relation
 
@@ -628,7 +772,7 @@ are rejected at load time:
     blocks:
       inverse: blockedBy
     prevents:
-      inverse: blockedBy   # rejected: collides with `blocks`
+      inverse: blockedBy # rejected: collides with `blocks`
   ```
 
 - **`inverse_shadows_canonical`** — a relation declares `inverse: X` where `X`
@@ -640,7 +784,7 @@ are rejected at load time:
   relations:
     r1:
       inverse: r2
-    r2:                    # rejected: shadows the inverse of `r1`
+    r2: # rejected: shadows the inverse of `r1`
       from: [...]
       to: [...]
   ```
@@ -651,7 +795,7 @@ are rejected at load time:
 relations:
   related-to:
     symmetric: true
-    inverse: related-to    # OK — symmetric self-inverse
+    inverse: related-to # OK — symmetric self-inverse
 ```
 
 Use the symmetric form when the relation has no preferred direction (e.g. "is
@@ -848,7 +992,7 @@ entities:
   requirement:
     label: Requirement
     aliases: [req]
-    id_prefixes: ["REQ-", "FR-", "NFR-"]  # Functional and non-functional
+    id_prefixes: ["REQ-", "FR-", "NFR-"] # Functional and non-functional
 ```
 
 ## After Modifying the Metamodel
@@ -901,10 +1045,10 @@ rela list control --where "status=implemented" --where "applicability=applicable
 | -------- | --------------------------- | ----------------- |
 | `=`      | Equal (exact match or glob) | All types         |
 | `!=`     | Not equal                   | All types         |
-| `<`      | Less than                   | `date`, `integer` |
-| `<=`     | Less than or equal          | `date`, `integer` |
-| `>`      | Greater than                | `date`, `integer` |
-| `>=`     | Greater than or equal       | `date`, `integer` |
+| `<`      | Less than                   | `date`, `datetime`, `integer` |
+| `<=`     | Less than or equal          | `date`, `datetime`, `integer` |
+| `>`      | Greater than                | `date`, `datetime`, `integer` |
+| `>=`     | Greater than or equal       | `date`, `datetime`, `integer` |
 | `=~`     | Regex match                 | `string`          |
 
 ### Error Handling
@@ -949,6 +1093,7 @@ Sorting is type-aware:
 - `string`: Lexicographic (alphabetical)
 - `enum`/custom types: By the order defined in the type's `values` list (not alphabetical)
 - `date`: Chronological
+- `datetime`: Chronological, to the second (interleaves with `date`)
 - `integer`: Numeric
 - `boolean`: `false` before `true`
 
@@ -1104,16 +1249,16 @@ The `required-headers` field accepts a list of header checks. Each check can be:
 
    ```yaml
    required-headers:
-     - "## Context"        # Requires exactly "## Context"
-     - "### Details"       # Requires exactly "### Details"
+     - "## Context" # Requires exactly "## Context"
+     - "### Details" # Requires exactly "### Details"
    ```
 
 2. **Pattern match** (regex): Use the `pattern:` prefix for flexible matching
 
    ```yaml
    required-headers:
-     - pattern: "## (Alternative|Alternatives)"  # Matches either spelling
-     - pattern: "## .+ Analysis"                 # Matches any "## X Analysis" header
+     - pattern: "## (Alternative|Alternatives)" # Matches either spelling
+     - pattern: "## .+ Analysis" # Matches any "## X Analysis" header
    ```
 
 #### Content Validation Example
@@ -1226,12 +1371,12 @@ return nil
 
 The `entity` global variable provides access to the entity being validated:
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `entity.id` | string | Entity ID (e.g., "REQ-001") |
-| `entity.type` | string | Entity type (e.g., "requirement") |
-| `entity.properties` | table | Property key-value pairs |
-| `entity.content` | string | Markdown body content |
+| Field               | Type   | Description                       |
+| ------------------- | ------ | --------------------------------- |
+| `entity.id`         | string | Entity ID (e.g., "REQ-001")       |
+| `entity.type`       | string | Entity type (e.g., "requirement") |
+| `entity.properties` | table  | Property key-value pairs          |
+| `entity.content`    | string | Markdown body content             |
 
 Access properties directly via `entity.properties.status` or `entity.properties["my-field"]`.
 
@@ -1283,9 +1428,9 @@ return {
 
 Each violation table has:
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `message` | string | Custom error message (required) |
+| Field      | Type   | Description                                                      |
+| ---------- | ------ | ---------------------------------------------------------------- |
+| `message`  | string | Custom error message (required)                                  |
 | `severity` | string | `"error"` or `"warning"` (optional, defaults to rule's severity) |
 
 #### Security and Sandboxing
@@ -1356,16 +1501,16 @@ automations:
 
 Automations fire based on entity changes:
 
-| Trigger Field     | Description                                    | Example                   |
-| ----------------- | ---------------------------------------------- | ------------------------- |
-| `entity`          | Entity types to watch (string or list)         | `[ticket, bug]`           |
-| `property`        | Property name to monitor                       | `status`                  |
-| `becomes`         | Value the property changed to                  | `in-progress`             |
-| `from`            | Value the property changed from                | `backlog`                 |
-| `created`         | Fires when entity is created                   | `true`                    |
-| `relation_created`| Fires when this relation type is created       | `implements`              |
-| `relation_removed`| Fires when this relation type is removed       | `implements`              |
-| `when`            | Property conditions that must match (AND)      | `["kind=enhancement"]`    |
+| Trigger Field      | Description                               | Example                |
+| ------------------ | ----------------------------------------- | ---------------------- |
+| `entity`           | Entity types to watch (string or list)    | `[ticket, bug]`        |
+| `property`         | Property name to monitor                  | `status`               |
+| `becomes`          | Value the property changed to             | `in-progress`          |
+| `from`             | Value the property changed from           | `backlog`              |
+| `created`          | Fires when entity is created              | `true`                 |
+| `relation_created` | Fires when this relation type is created  | `implements`           |
+| `relation_removed` | Fires when this relation type is removed  | `implements`           |
+| `when`             | Property conditions that must match (AND) | `["kind=enhancement"]` |
 
 ### Conditional Triggers
 
@@ -1442,13 +1587,13 @@ do:
 
 Automation values support template substitution:
 
-| Variable          | Description                              |
-| ----------------- | ---------------------------------------- |
-| `{{today}}`       | Current date in ISO 8601 format          |
-| `{{new.title}}`   | Property value from the changed entity   |
-| `{{new.status}}`  | Any property from the changed entity     |
-| `{{entity.id}}`   | Entity ID                                |
-| `{{user.name}}`   | Current user's name                      |
+| Variable         | Description                            |
+| ---------------- | -------------------------------------- |
+| `{{today}}`      | Current date in ISO 8601 format        |
+| `{{new.title}}`  | Property value from the changed entity |
+| `{{new.status}}` | Any property from the changed entity   |
+| `{{entity.id}}`  | Entity ID                              |
+| `{{user.name}}`  | Current user's name                    |
 
 ### Example: Workflow Checklists
 
@@ -1526,9 +1671,9 @@ automations:
 
 ### Automation Options
 
-| Field      | Description                                           |
-| ---------- | ----------------------------------------------------- |
-| `if_exists`| Behavior when `create_entity` target exists: `skip`   |
+| Field       | Description                                         |
+| ----------- | --------------------------------------------------- |
+| `if_exists` | Behavior when `create_entity` target exists: `skip` |
 
 ### Best Practices
 

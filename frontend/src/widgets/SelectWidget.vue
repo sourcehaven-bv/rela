@@ -2,9 +2,12 @@
 import { computed } from 'vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
+import { useSchemaStore } from '@/stores/schema'
 import Badge from '@/components/common/Badge.vue'
 
 const props = defineProps<WidgetProps>()
+
+const schemaStore = useSchemaStore()
 
 const emit = defineEmits<{
   'update:modelValue': [value: unknown]
@@ -32,6 +35,16 @@ const safeStringValue = computed(() => {
 })
 
 const options = computed(() => props.propertyDef?.values || [])
+
+// Display labels keyed by value (value stays the submitted identity). Shared
+// resolver so all enum pickers agree; see the store. Edit-mode `<option>` text
+// shows the label, falling back to the raw value when unlabeled.
+const optionLabels = computed(() =>
+  schemaStore.resolveOptionLabels(props.propertyDef, props.propertyName, props.entityType)
+)
+function optionLabel(opt: string): string {
+  return optionLabels.value[opt] ?? opt
+}
 
 const hasTransitions = computed(
   () => !!props.transitions && Object.keys(props.transitions).length > 0
@@ -91,7 +104,7 @@ function onChange(event: Event) {
         :disabled="isOptionDisabled(opt)"
         :class="{ 'disabled-transition': isOptionDisabled(opt) }"
       >
-        {{ opt }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
+        {{ optionLabel(opt) }}{{ isOptionDisabled(opt) ? ' (not allowed)' : '' }}
       </option>
     </select>
 

@@ -22,6 +22,7 @@ var validTopLevelKeys = map[string]bool{
 	"validations": true,
 	"automations": true,
 	"includes":    true,
+	"attachments": true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -359,28 +360,54 @@ func validateDisplayProperty(entityName string, def EntityDef) []string {
 		return errs
 	}
 
-	prop, ok := def.Properties[dp]
-	if !ok {
-		errs = append(errs, fmt.Sprintf(
-			"entity %q: display_property %q is not a defined property (have: %s)",
-			entityName, dp, available))
+	// A template (contains `{`) references properties via `{name}`
+	// placeholders. Each named property is checked exactly as a bare-name
+	// display_property would be.
+	if isDisplayTemplate(dp) {
+		names, err := parseDisplayTemplate(dp)
+		if err != nil {
+			return append(errs, fmt.Sprintf("entity %q: display_property: %s", entityName, err))
+		}
+		for _, name := range names {
+			errs = append(errs, validateDisplayPropertyRef(entityName, dp, name, def.Properties, available)...)
+		}
 		return errs
 	}
 
+	return append(errs, validateDisplayPropertyRef(entityName, dp, dp, def.Properties, available)...)
+}
+
+// validateDisplayPropertyRef checks that a single property referenced by a
+// display_property (bare name or template placeholder) exists and has a type
+// that renders meaningfully as a display name. dp is the whole
+// display_property value (for the error message); name is the referenced
+// property. See validateDisplayProperty for the type-restriction rationale.
+func validateDisplayPropertyRef(
+	entityName, dp, name string, props map[string]PropertyDef, available string,
+) []string {
+	prop, ok := props[name]
+	if !ok {
+		return []string{fmt.Sprintf(
+			"entity %q: display_property %q references undefined property %q (have: %s)",
+			entityName, dp, name, available)}
+	}
+
+	var errs []string
 	if prop.List {
 		errs = append(errs, fmt.Sprintf(
-			"entity %q: display_property %q is list-typed; lists cannot render as a display name",
-			entityName, dp))
+			"entity %q: display_property %q references list-typed property %q; lists cannot render as a display name",
+			entityName, dp, name))
 	}
 
 	// Allow string (default), integer, boolean, enum, custom enum-like
 	// types defined elsewhere. Reject the structured types whose default
 	// rendering is unhelpful.
 	switch prop.Type {
-	case PropertyTypeDate, PropertyTypeFile, PropertyTypeRrule:
+	case PropertyTypeDate, PropertyTypeDatetime, PropertyTypeFile, PropertyTypeRrule:
 		errs = append(errs, fmt.Sprintf(
-			"entity %q: display_property %q has type %q; only string, integer, boolean, or enum types render as display names",
-			entityName, dp, prop.Type))
+			"entity %q: display_property %q references property %q of type %q; "+
+				"only string, integer, boolean, or enum types render as display names",
+			entityName, dp, name, prop.Type))
 	}
 
 	return errs
@@ -661,19 +688,43 @@ func validatePropertyDefs(
 				"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
 		}
 
-		// `max` only applies to file properties and must be >= 1 when set.
-		if propDef.Max < 0 {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
-		}
-		if propDef.Max != 0 && propDef.Type != PropertyTypeFile {
-			errs = append(errs, fmt.Sprintf(
-				"%s: property %q sets 'max' but is type %q; 'max' only applies to type \"file\"",
-				schemaName, propName, propDef.Type))
-		}
+		errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	}
 
 	return errs
+}
+
+// validateFilePropertyOptions checks the attachment-only property options
+// (`max`, `accept`, `scan`, `scan_cmd`, `transform`): `max` must be >= 1, and
+// none of these may appear on a non-`file` property.
+func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDef) []string {
+	var errs []string
+	if propDef.Max < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
+	}
+	if propDef.Type == PropertyTypeFile {
+		return errs
+	}
+	// Below here the property is NOT a file: none of the attachment options apply.
+	if propDef.Max != 0 {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "max", propDef.Type))
+	}
+	if len(propDef.Accept) > 0 {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "accept", propDef.Type))
+	}
+	if propDef.Scan != ScanDefault {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan", propDef.Type))
+	}
+	if len(propDef.ScanCmd) > 0 || len(propDef.Transform) > 0 {
+		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan_cmd/transform", propDef.Type))
+	}
+	return errs
+}
+
+func fileOnlyOptionErr(schemaName, propName, option, gotType string) string {
+	return fmt.Sprintf("%s: property %q sets %q but is type %q; only applies to type \"file\"",
+		schemaName, propName, option, gotType)
 }
 
 // isKnownPropertyType checks if a property type is valid (built-in, legacy, or custom).

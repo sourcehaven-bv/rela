@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 )
 
@@ -132,7 +133,24 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 	}
 	if entry == appCSSEntry {
 		h.Set("Content-Type", "text/css; charset=utf-8")
-		_, _ = w.Write([]byte(appCSSSource()))
+		_, _ = w.Write([]byte(appCSSSource(a.palette.Resolved())))
+		return
+	}
+	if entry == appEditorEntry {
+		// ETag + revalidate so the 372KB bundle isn't re-transferred on every
+		// iframe (re)load. appContentTypes[".js"] is the single source for the
+		// content-type so it can't drift.
+		serveCachedAsset(w, r, appContentTypes[".js"], appEditorJSETag(), appEditorSource())
+		return
+	}
+	if entry == appEditorFontEntry {
+		// The app runs in a sandboxed iframe with an OPAQUE (null) origin, so an
+		// @font-face request for this font is cross-origin and the browser
+		// blocks it without CORS. Allow it: this is a static glyph webfont with
+		// no sensitive data (fonts are the canonical CORS-allowed cross-origin
+		// resource). Without this the editor toolbar renders as tofu boxes.
+		h.Set("Access-Control-Allow-Origin", "*")
+		serveCachedAsset(w, r, appContentTypes[".woff2"], appEditorFontETag(), appEditorFontSource())
 		return
 	}
 
@@ -170,13 +188,13 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 
 // appsToV1 projects the scanned apps to the client-facing view. Returns nil for
 // an empty list so the JSON omits the "apps" key entirely.
-func appsToV1(apps []appInfo) map[string]V1App {
+func appsToV1(apps []appInfo) map[string]v1.App {
 	if len(apps) == 0 {
 		return nil
 	}
-	out := make(map[string]V1App, len(apps))
+	out := make(map[string]v1.App, len(apps))
 	for _, app := range apps {
-		out[app.ID] = V1App{
+		out[app.ID] = v1.App{
 			Title:       app.Title,
 			Label:       app.Label,
 			Description: app.Description,

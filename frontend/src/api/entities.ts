@@ -45,12 +45,82 @@ export function getPlural(type: string): string {
 
 export async function listEntities(
   type: string,
-  params?: ListParams
+  params?: ListParams,
+  signal?: AbortSignal
 ): Promise<ListResponse<Entity>> {
   const path = `/${getPlural(type)}`
-  const res = await api.get<ListResponse<Entity>>(path, params as Record<string, unknown>)
+  const res = await api.get<ListResponse<Entity>>(path, params as Record<string, unknown>, signal)
   warnIfMissingActions(res, path)
   return res
+}
+
+// listAllEntities pages: a runaway guard, not a working limit. 50 pages at
+// the server's per_page cap of 100 is ~5,000 entities — far past a usable
+// board. On cap hit the merged meta keeps has_more: true so the consumer
+// can tell the user the set is incomplete instead of silently truncating.
+const MAX_LIST_ALL_PAGES = 50
+
+/**
+ * Fetches EVERY page of a collection and merges them into one ListResponse.
+ * A single listEntities call returns one PAGE (server default 25, cap 100);
+ * consumers that render the complete set client-side — the kanban board
+ * partitions all entities by column property — silently drop page 2+ if
+ * they treat that page as the full set (BUG-5OAQUG).
+ *
+ * Contract:
+ * - Response-driven paging: follows meta.has_more / meta.page and assumes
+ *   nothing about whether the requested per_page was honored (the server
+ *   silently falls back to 25 on out-of-range values).
+ * - data is deduped by entity ID (later page wins). Pages are fetched
+ *   sequentially against a live store; a write landing between fetches
+ *   shifts offsets, and a duplicated ID would break v-for keys and the
+ *   optimistic-list helpers. Entities that slip BETWEEN pages the same way
+ *   are healed by the SSE invalidation that write also triggers.
+ * - included maps are merged (later page wins, same rule as data);
+ *   _actions comes from the first page; meta reports the merged set
+ *   (page 1, per_page = data.length) with has_more true only when the
+ *   fetch stopped before the server ran out of pages.
+ * - signal aborts the loop between pages as well as in-flight: Pinia
+ *   Colada aborts it when a refetch supersedes this call (drag-drop
+ *   settle, SSE echo), and without it a superseded loop would keep
+ *   paging to the cap producing a result the cache discards.
+ */
+export async function listAllEntities(
+  type: string,
+  params?: ListParams,
+  signal?: AbortSignal
+): Promise<ListResponse<Entity>> {
+  const byId = new Map<string, Entity>()
+  const included: Record<string, Entity> = {}
+  let first: ListResponse<Entity> | undefined
+  let res: ListResponse<Entity>
+  let page = 1
+
+  for (let fetched = 1; ; fetched++) {
+    res = await listEntities(type, { ...params, page, per_page: 100 }, signal)
+    first ??= res
+    for (const e of res.data) byId.set(e.id, e)
+    Object.assign(included, res.included)
+    if (!res.meta.has_more || fetched >= MAX_LIST_ALL_PAGES) break
+    // Defensive: has_more with an empty page would otherwise spin to the
+    // cap re-fetching nothing. Break and keep has_more so the anomaly is
+    // visible to the consumer rather than silently reported as complete.
+    if (res.data.length === 0) break
+    page = res.meta.page + 1
+  }
+
+  const data = [...byId.values()]
+  return {
+    data,
+    included,
+    _actions: first._actions,
+    meta: {
+      total: res.meta.total,
+      page: 1,
+      per_page: data.length,
+      has_more: res.meta.has_more,
+    },
+  }
 }
 
 export async function getEntity(

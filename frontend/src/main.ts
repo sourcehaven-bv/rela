@@ -11,6 +11,7 @@ import '@fontsource/open-sans/700.css'
 import './styles/back-button.css'
 import './styles/mobile-bars.css'
 import './styles/text-utilities.css'
+import './styles/markdown-content.css'
 
 const app = createApp(App)
 

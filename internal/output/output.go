@@ -41,10 +41,51 @@ const (
 )
 
 // Writer handles formatted output
+//
+// TODO(TKT-N0IKN9): 23 exported methods, over the 20 exported-method line.
+// Output formatter; ratchet candidate — the per-shape Print* methods could
+// move behind a narrower interface.
+//
+//plimsoll:max-exported-methods=23
 type Writer struct {
 	Format  Format
 	Out     io.Writer
 	NoColor bool
+	// Titles resolves an entity's display title, honoring the metamodel's
+	// display_property (bare name or template). When nil, the writer falls
+	// back to the entity's literal `title` property. Consumer-side interface
+	// so output does not depend on the metamodel package. *metamodel.Metamodel
+	// satisfies it.
+	Titles TitleResolver
+}
+
+// TitleResolver resolves an entity's display title from its type and
+// properties. Implemented by *metamodel.Metamodel; the CLI wires it onto the
+// Writer once the project's metamodel is loaded.
+type TitleResolver interface {
+	DisplayTitle(id, entityType string, properties map[string]interface{}) string
+}
+
+// entityTitle returns the entity's display title via the resolver when one is
+// set, otherwise the literal `title` property. Centralizes the fallback for
+// the entity table and detail (WriteEntity) paths.
+func (w *Writer) entityTitle(e *entity.Entity) string {
+	if w.Titles != nil {
+		return w.Titles.DisplayTitle(e.ID, e.Type, e.Properties)
+	}
+	return e.Title()
+}
+
+// traceTitle resolves a trace node/step display title. The tracer is a pure
+// reader with no metamodel, so it carries the entity's id/type/properties plus
+// its literal `title`; here we resolve display_property via the resolver when
+// set, falling back to the literal title otherwise. Keeps trace tree output
+// consistent with the entity table.
+func (w *Writer) traceTitle(id, entityType, literalTitle string, properties map[string]interface{}) string {
+	if w.Titles != nil {
+		return w.Titles.DisplayTitle(id, entityType, properties)
+	}
+	return literalTitle
 }
 
 // New creates a new output writer
@@ -94,7 +135,7 @@ func (w *Writer) writeEntitiesTable(entities []*entity.Entity, showSummary bool)
 		if err := table.Append([]string{
 			e.ID,
 			e.Type,
-			truncate(e.Title(), tableTitleMaxLen),
+			truncate(w.entityTitle(e), tableTitleMaxLen),
 			statusDisplay,
 		}); err != nil {
 			return err
@@ -164,7 +205,7 @@ func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity
 	fmt.Fprintln(w.Out, strings.Repeat("─", headerSeparatorLen))
 
 	// Properties
-	if title := entity.Title(); title != "" {
+	if title := w.entityTitle(entity); title != "" {
 		fmt.Fprintf(w.Out, "Title:  %s\n", title)
 	}
 	if status := entity.GetString("status"); status != "" {
@@ -292,7 +333,7 @@ func (w *Writer) writeTraceNode(node *tracer.TraceResult, prefix string, isLast 
 		prefix,
 		connector,
 		color.CyanString(node.ID),
-		truncate(node.Title, traceNodeMaxLen),
+		truncate(w.traceTitle(node.ID, node.Type, node.Title, node.Properties), traceNodeMaxLen),
 		relInfo)
 
 	// Print children

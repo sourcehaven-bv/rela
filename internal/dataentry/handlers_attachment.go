@@ -39,7 +39,9 @@ const maxAttachmentUploadHeadroom = 16 * 1024
 // (the entity's `_attachments` map already lists the files; downloads use
 // the per-file route below). Writes inherit the entity's `update`
 // permission.
-func (a *App) handleV1AttachmentRoute(w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string) {
+func (a *App) handleV1AttachmentRoute(
+	w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string,
+) {
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
 		a.handleV1PutAttachment(w, r, typeName, plural, entityID, property)
@@ -52,7 +54,9 @@ func (a *App) handleV1AttachmentRoute(w http.ResponseWriter, r *http.Request, ty
 // /api/v1/{plural}/{id}/_attachments/{property}/{fileName}: GET downloads
 // that file's bytes, DELETE detaches it. Reads inherit the entity's read
 // permission, deletes inherit `update`.
-func (a *App) handleV1AttachmentFileRoute(w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string) {
+func (a *App) handleV1AttachmentFileRoute(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+) {
 	switch r.Method {
 	case http.MethodGet:
 		a.handleV1GetAttachment(w, r, typeName, entityID, property, fileName)
@@ -80,7 +84,9 @@ func (a *App) handleV1AttachmentFileRoute(w http.ResponseWriter, r *http.Request
 // there is no caller-supplied-path traversal surface. The fileName comes
 // from the URL but is only ever a store key (never a filesystem path the
 // handler builds), and the store's ValidateFileName rejects separators.
-func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string) {
+func (a *App) handleV1GetAttachment(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+) {
 	ctx := r.Context()
 
 	// ACL gate first — before any store access (see handleV1GetEntity).
@@ -88,7 +94,7 @@ func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, type
 		return
 	}
 
-	entity, found := a.getEntity(ctx, entityID)
+	entity, found := a.reader.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -118,16 +124,16 @@ func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, type
 	}
 	defer rc.Close()
 
-	// Serve user-supplied bytes defensively: never let the browser sniff a
-	// different (e.g. text/html) type, sandbox any active content, and
-	// send Content-Disposition with a sanitized filename so an SVG/HTML
-	// payload can't execute as stored XSS in the app's origin. Mirrors the
-	// theme-logo serve path.
+	// Serve user-supplied bytes defensively: force a download rather than
+	// inline rendering (Content-Disposition: attachment), never let the
+	// browser sniff a different (e.g. text/html) type, and sandbox any active
+	// content — so an SVG/HTML payload can't execute as stored XSS in the
+	// app's origin even if it slipped the upload allowlist.
 	h := w.Header()
 	h.Set("Content-Type", contentTypeForFilename(fileName))
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	h.Set("Content-Disposition", `inline; filename="`+safeAttachmentFilename(fileName)+`"`)
+	h.Set("Content-Disposition", `attachment; filename="`+safeAttachmentFilename(fileName)+`"`)
 
 	if _, err := io.Copy(w, rc); err != nil {
 		// Headers (and likely some bytes) are already written; we can't
@@ -146,7 +152,9 @@ func (a *App) handleV1GetAttachment(w http.ResponseWriter, r *http.Request, type
 // inherits the entity's `update` permission. The write is authorized
 // up front (before any bytes are written) to avoid orphaning a file on a
 // late deny — see attachment.Service.Attach's orphan note.
-func (a *App) handleV1PutAttachment(w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string) {
+func (a *App) handleV1PutAttachment(
+	w http.ResponseWriter, r *http.Request, typeName, plural, entityID, property string,
+) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	ctx := r.Context()
@@ -220,7 +228,7 @@ func (a *App) handleV1PutAttachment(w http.ResponseWriter, r *http.Request, type
 		return
 	}
 
-	result := a.serializeEntityForWire(ctx, entity, plural, true)
+	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 	writeV1JSON(w, http.StatusOK, result)
 }
 
@@ -237,6 +245,13 @@ func (a *App) writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, 
 			"Property already holds the maximum number of attachments", "")
 		return
 	}
+	// A processor rejection (disallowed MIME type, failed/positive scan) is a
+	// client error, not a server fault: 422 with the reason, not a 500.
+	if errors.Is(err, attachment.ErrRejected) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "attachment_rejected",
+			"Attachment rejected", strings.TrimPrefix(err.Error(), "attachment: rejected by processor: "))
+		return
+	}
 	if writeForbiddenIfACLDenied(w, err) {
 		return
 	}
@@ -245,21 +260,60 @@ func (a *App) writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, 
 		"Validation failed", err.Error())
 }
 
+// attachmentCmdTimeout bounds each external scan/transform command. Generous
+// for a single synchronous upload of small-ish files; the runner also caps
+// output size at the per-attachment limit.
+const attachmentCmdTimeout = 60 * time.Second
+
+// probeAttachmentCommands checks, at startup, that every scan/transform binary
+// referenced by the metamodel's file properties is resolvable on PATH, warning
+// (never failing) for any that are missing — so an operator learns a typo or an
+// uninstalled tool at boot rather than on the first upload.
+func (a *App) probeAttachmentCommands(meta *metamodel.Metamodel, runner *attachment.CmdRunner) {
+	seen := map[string]bool{}
+	probe := func(cmd []string) {
+		if len(cmd) == 0 || seen[cmd[0]] {
+			return
+		}
+		seen[cmd[0]] = true
+		if err := runner.Probe(cmd); err != nil {
+			slog.Warn("attachments: configured command not found", "binary", cmd[0], "err", err)
+		}
+	}
+	if meta.Attachments != nil {
+		probe(meta.Attachments.ScanCmd)
+	}
+	for _, def := range meta.Entities {
+		for _, prop := range def.Properties {
+			if prop.Type != metamodel.PropertyTypeFile {
+				continue
+			}
+			probe(prop.ScanCmd)
+			for _, step := range prop.Transform {
+				probe(step.Cmd)
+			}
+		}
+	}
+}
+
 // attachmentService builds the shared attachment write-policy service from
 // the App's dependencies and the GIVEN state snapshot. Cheap (a struct
 // wrapper). Takes the snapshot explicitly so the service enforces the same
 // metamodel the handler gated on — see "capture state once per operation".
-func (a *App) attachmentService(s *AppState) (*attachment.Service, error) {
+func (a *App) attachmentService(s *Schema) (*attachment.Service, error) {
 	return attachment.New(attachment.Deps{
 		Store:         a.store,
 		Meta:          s.Meta,
 		EntityManager: a.entityManager,
+		// Native MIME allowlist + (when a command runner is wired) scan/
+		// transform. a.attachmentRunner is nil out-of-box → MIME validation only.
+		Processor: attachment.NewPolicyProcessor(s.Meta, a.attachmentRunner),
 	})
 }
 
 // filePropertyDef returns the metamodel def for a property from the given
 // snapshot (callers gate on isFileProperty first, so a file def is expected).
-func filePropertyDef(s *AppState, typeName, property string) metamodel.PropertyDef {
+func filePropertyDef(s *Schema, typeName, property string) metamodel.PropertyDef {
 	if def, ok := s.Meta.GetEntityDef(typeName); ok {
 		return def.Properties[property]
 	}
@@ -275,7 +329,9 @@ func filePropertyDef(s *AppState, typeName, property string) metamodel.PropertyD
 // removed, then the property is re-stamped from the store's remaining
 // files and persisted. Idempotent: deleting a missing file still
 // re-stamps and returns 204.
-func (a *App) handleV1DeleteAttachment(w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string) {
+func (a *App) handleV1DeleteAttachment(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	ctx := r.Context()
@@ -312,7 +368,9 @@ func (a *App) handleV1DeleteAttachment(w http.ResponseWriter, r *http.Request, t
 // is a declared `file` type, reject a locked (inaccessible) entity, and
 // authorize the `update` write UP FRONT so a deny never reaches the store.
 // Returns the loaded entity and true when the write may proceed.
-func (a *App) attachmentWritePreflight(w http.ResponseWriter, r *http.Request, typeName, entityID, property string) (*entityPkg.Entity, bool) {
+func (a *App) attachmentWritePreflight(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, property string,
+) (*entityPkg.Entity, bool) {
 	ctx := r.Context()
 
 	// Read-gate first: a hidden or nonexistent id yields a uniform 404
@@ -321,7 +379,7 @@ func (a *App) attachmentWritePreflight(w http.ResponseWriter, r *http.Request, t
 		return nil, false
 	}
 
-	entity, found := a.getEntity(ctx, entityID)
+	entity, found := a.reader.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return nil, false
@@ -361,7 +419,7 @@ func (a *App) attachmentWritePreflight(w http.ResponseWriter, r *http.Request, t
 // promises a ceiling higher than the store will actually accept — a
 // misconfigured `max_attachment_bytes` above store.MaxAttachmentBytes
 // can't make the error message lie.
-func maxAttachmentBytes(s *AppState) int64 {
+func maxAttachmentBytes(s *Schema) int64 {
 	limit := int64(DefaultMaxAttachmentBytes)
 	if n := s.Cfg.App.MaxAttachmentBytes; n > 0 {
 		limit = n

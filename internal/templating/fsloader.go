@@ -121,7 +121,7 @@ func loadEntityTemplate(
 	relations := extractTemplateRelations(doc.Frontmatter)
 	properties := make(map[string]interface{})
 	for k, v := range doc.Frontmatter {
-		if k != "_template_relations" {
+		if k != templateRelationsKey {
 			properties[k] = v
 		}
 	}
@@ -134,10 +134,10 @@ func loadEntityTemplate(
 	}, nil
 }
 
-// extractTemplateRelations parses the _template_relations field from
-// frontmatter into a slice of Relation.
+// extractTemplateRelations parses the template-relations frontmatter
+// field into a slice of Relation.
 func extractTemplateRelations(frontmatter map[string]interface{}) []Relation {
-	raw, ok := frontmatter["_template_relations"]
+	raw, ok := frontmatter[templateRelationsKey]
 	if !ok {
 		return nil
 	}

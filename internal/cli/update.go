@@ -11,7 +11,12 @@ import (
 
 // UpdateCmd updates an existing entity.
 type UpdateCmd struct {
-	ID          string   `arg:"" help:"Entity ID."`
+	ID string `arg:"" help:"Entity ID."`
+	// Title writes the literal "title" property. Unlike the removed
+	// `create -t` flag (which wrote GetPrimaryProperty()'s resolved
+	// property), update never targeted the display property — so it stays.
+	// `create` deliberately has no -t: the display property may be a derived
+	// multi-property template (TKT-2SVA3L); use `-P <prop>=` there instead.
 	Title       string   `short:"t" help:"New title."`
 	Status      string   `short:"s" help:"New status."`
 	Priority    string   `short:"p" help:"New priority."`
@@ -23,8 +28,8 @@ type UpdateCmd struct {
 }
 
 // Run dispatches `rela update <id>`.
-func (c *UpdateCmd) Run(ctx context.Context, svc *cliServices) error {
-	entity, err := svc.Store().GetEntity(ctx, c.ID)
+func (c *UpdateCmd) Run(ctx context.Context, svc *writeServices) error {
+	entity, err := svc.Store.GetEntity(ctx, c.ID)
 	if err != nil {
 		return &entityNotFoundError{ID: c.ID}
 	}
@@ -69,7 +74,7 @@ func (c *UpdateCmd) Run(ctx context.Context, svc *cliServices) error {
 		return errors.New("no updates specified")
 	}
 
-	result, err := svc.EntityManager().UpdateEntity(ctx, entity)
+	result, err := svc.EntityManager.UpdateEntity(ctx, entity)
 	if err != nil {
 		return err
 	}

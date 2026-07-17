@@ -35,12 +35,18 @@ type Result struct {
 	FileName string
 }
 
-// Deps is the dependency bundle [New] requires. Every field is
-// mandatory; [New] returns an error if any is nil.
+// Deps is the dependency bundle [New] requires. Store, Meta and
+// EntityManager are mandatory; [New] returns an error if any is nil.
+// Processor is optional — when nil the service uses [NoopProcessor] and the
+// write path stays zero-copy.
 type Deps struct {
 	Store         store.Store
 	Meta          *metamodel.Metamodel
 	EntityManager entitymanager.EntityManager
+
+	// Processor inspects/rewrites attachment bytes before they are persisted
+	// (scan, MIME validation, transform). Optional; defaults to [NoopProcessor].
+	Processor Processor
 }
 
 // Service implements the attachment-facade methods that CLI invokes.
@@ -61,6 +67,9 @@ func New(d Deps) (*Service, error) {
 	}
 	if d.EntityManager == nil {
 		return nil, errors.New("attachment: EntityManager is required")
+	}
+	if d.Processor == nil {
+		d.Processor = NoopProcessor{}
 	}
 	return &Service{deps: d}, nil
 }
@@ -142,6 +151,22 @@ func (s *Service) WriteAttachment(
 	}
 
 	fileName, err := resolveAttachName(rawFileName, existing, maxCount)
+	if err != nil {
+		return nil, err
+	}
+
+	// Inspect / transform the bytes before persisting. With the default
+	// no-op processor this threads r straight through (zero-copy); a real
+	// processor may buffer (when it needs the full file), reject the upload
+	// (wrapping ErrRejected), or rewrite the stream and the file name.
+	pc := ProcessContext{EntityID: e.ID, EntityType: e.Type, Property: propName, FileName: fileName}
+	r, fileName, err = runProcessor(ctx, s.deps.Processor, pc, r, store.MaxAttachmentBytes)
+	if err != nil {
+		return nil, err
+	}
+	// A transform that changed the name may collide with an existing file or
+	// exceed the cap; re-resolve against the current set.
+	fileName, err = resolveAttachName(fileName, existing, maxCount)
 	if err != nil {
 		return nil, err
 	}

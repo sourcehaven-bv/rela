@@ -45,6 +45,15 @@ const (
 	// carries automation:<name>. Forensic: isolate every elevated write with
 	// `op == "acl-bypass"`.
 	OpACLBypass = "acl-bypass"
+
+	// OpPurgeVersion records an operator hard-delete of version snapshot rows
+	// (TKT-BW6UUL) — the deliberate, irreversible exception to append-only
+	// history, for compliance redaction. Subject names the entity/relation whose
+	// lineage was purged; Summary carries the count, the vseq(s) or content-hash
+	// targeted, and the operator's --reason. The purged CONTENT is never recorded
+	// (that would defeat the purge); this record is the surviving forensic trail
+	// showing who purged what and why. Isolate with `op == "purge-version"`.
+	OpPurgeVersion = "purge-version"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

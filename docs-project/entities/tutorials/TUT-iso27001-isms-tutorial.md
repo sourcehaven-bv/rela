@@ -320,16 +320,16 @@ Every ISMS starts with top-level policies that set the security direction.
 
 ```bash
 # Information Security Policy - the cornerstone
-rela create policy POL-001 --title "Information Security Policy"
+rela create policy POL-001 -P title="Information Security Policy"
 
 # Access Control Policy
-rela create policy POL-002 --title "Access Control Policy"
+rela create policy POL-002 -P title="Access Control Policy"
 
 # Acceptable Use Policy
-rela create policy POL-003 --title "Acceptable Use Policy"
+rela create policy POL-003 -P title="Acceptable Use Policy"
 
 # Risk Management Policy
-rela create policy POL-004 --title "Risk Management Policy"
+rela create policy POL-004 -P title="Risk Management Policy"
 ```
 
 Update the policy files to add properties. Edit `entities/policies/POL-001.md`:
@@ -376,11 +376,11 @@ POL-004  policy   Risk Management Policy       draft
 Identify critical information assets:
 
 ```bash
-rela create asset AST-001 --title "Customer Database"
-rela create asset AST-002 --title "Employee HR System"
-rela create asset AST-003 --title "Financial Records"
-rela create asset AST-004 --title "Email System"
-rela create asset AST-005 --title "Source Code Repository"
+rela create asset AST-001 -P title="Customer Database"
+rela create asset AST-002 -P title="Employee HR System"
+rela create asset AST-003 -P title="Financial Records"
+rela create asset AST-004 -P title="Email System"
+rela create asset AST-005 -P title="Source Code Repository"
 ```
 
 Edit asset files to add classification. For `entities/assets/AST-001.md`:
@@ -404,11 +404,11 @@ payment details.
 Create risks that threaten your assets:
 
 ```bash
-rela create risk RSK-001 --title "Unauthorized database access"
-rela create risk RSK-002 --title "Data breach via phishing"
-rela create risk RSK-003 --title "Ransomware attack"
-rela create risk RSK-004 --title "Insider data theft"
-rela create risk RSK-005 --title "System availability loss"
+rela create risk RSK-001 -P title="Unauthorized database access"
+rela create risk RSK-002 -P title="Data breach via phishing"
+rela create risk RSK-003 -P title="Ransomware attack"
+rela create risk RSK-004 -P title="Insider data theft"
+rela create risk RSK-005 -P title="System availability loss"
 ```
 
 Edit `entities/risks/RSK-001.md` to add risk details:
@@ -468,14 +468,14 @@ Create controls that map to ISO 27001:2022 Annex A. Note how we use internal IDs
 but store framework references as properties:
 
 ```bash
-rela create control CTRL-001 --title "Information security policies"
-rela create control CTRL-002 --title "Access control policy"
-rela create control CTRL-003 --title "User access provisioning"
-rela create control CTRL-004 --title "Malware protection"
-rela create control CTRL-005 --title "Backup of information"
-rela create control CTRL-006 --title "Logging and monitoring"
-rela create control CTRL-007 --title "Protection of records"
-rela create control CTRL-008 --title "Security awareness training"
+rela create control CTRL-001 -P title="Information security policies"
+rela create control CTRL-002 -P title="Access control policy"
+rela create control CTRL-003 -P title="User access provisioning"
+rela create control CTRL-004 -P title="Malware protection"
+rela create control CTRL-005 -P title="Backup of information"
+rela create control CTRL-006 -P title="Logging and monitoring"
+rela create control CTRL-007 -P title="Protection of records"
+rela create control CTRL-008 -P title="Security awareness training"
 ```
 
 Edit `entities/controls/CTRL-002.md` to add framework references:
@@ -525,11 +525,11 @@ rela link RSK-004 treatedBy CTRL-006
 ### Create Implementing Procedures
 
 ```bash
-rela create procedure PROC-001 --title "User access provisioning procedure"
-rela create procedure PROC-002 --title "Malware protection procedure"
-rela create procedure PROC-003 --title "Backup and recovery procedure"
-rela create procedure PROC-004 --title "Security monitoring procedure"
-rela create procedure PROC-005 --title "Security awareness training procedure"
+rela create procedure PROC-001 -P title="User access provisioning procedure"
+rela create procedure PROC-002 -P title="Malware protection procedure"
+rela create procedure PROC-003 -P title="Backup and recovery procedure"
+rela create procedure PROC-004 -P title="Security monitoring procedure"
+rela create procedure PROC-005 -P title="Security awareness training procedure"
 ```
 
 ### Link Controls to Procedures and Policies
@@ -568,12 +568,12 @@ rela trace path RSK-001 PROC-001
 ### Create Evidence Records
 
 ```bash
-rela create evidence EVD-001 --title "Access request tickets Q4 2024"
-rela create evidence EVD-002 --title "Security awareness training completion"
-rela create evidence EVD-003 --title "Antivirus deployment report"
-rela create evidence EVD-004 --title "Backup verification logs"
-rela create evidence EVD-005 --title "SIEM alert dashboard screenshot"
-rela create evidence EVD-006 --title "User access review minutes"
+rela create evidence EVD-001 -P title="Access request tickets Q4 2024"
+rela create evidence EVD-002 -P title="Security awareness training completion"
+rela create evidence EVD-003 -P title="Antivirus deployment report"
+rela create evidence EVD-004 -P title="Backup verification logs"
+rela create evidence EVD-005 -P title="SIEM alert dashboard screenshot"
+rela create evidence EVD-006 -P title="User access review minutes"
 ```
 
 Edit `entities/evidences/EVD-001.md` to add evidence details:
@@ -717,9 +717,9 @@ dot -Tsvg isms-graph.dot -o isms-graph.svg
 After an internal audit, create nonconformities:
 
 ```bash
-rela create nonconformity NC-001 --title "Missing evidence for user access reviews"
-rela create nonconformity NC-002 --title "Outdated backup procedure"
-rela create nonconformity NC-003 --title "Training records incomplete"
+rela create nonconformity NC-001 -P title="Missing evidence for user access reviews"
+rela create nonconformity NC-002 -P title="Outdated backup procedure"
+rela create nonconformity NC-003 -P title="Training records incomplete"
 ```
 
 Edit `entities/nonconformities/NC-001.md`:
@@ -754,9 +754,9 @@ rela link NC-003 affects CTRL-008
 ### Create Corrective Actions
 
 ```bash
-rela create corrective_action CA-001 --title "Document Q3 access reviews"
-rela create corrective_action CA-002 --title "Update backup procedure"
-rela create corrective_action CA-003 --title "Implement training tracking system"
+rela create corrective_action CA-001 -P title="Document Q3 access reviews"
+rela create corrective_action CA-002 -P title="Update backup procedure"
+rela create corrective_action CA-003 -P title="Implement training tracking system"
 ```
 
 Edit `entities/corrective_actions/CA-001.md`:
@@ -957,7 +957,7 @@ Control ← affects ← Nonconformity → addressedBy → Corrective Action
 | Find untreated risks           | `rela analyze cardinality`                      |
 | Find controls without evidence | `rela trace to CTRL-001`                        |
 | Track open findings            | `rela list nonconformity --where "status=open"` |
-| View full graph                | `rela graph --file isms.dot`                        |
+| View full graph                | `rela graph --file isms.dot`                    |
 | Search anything                | `rela tui` then `/`                             |
 
 ---

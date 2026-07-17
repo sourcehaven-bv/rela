@@ -53,6 +53,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/_schema", http.StatusOK},
 		{http.MethodGet, "/api/v1/_schema/ticket", 0},
 		{http.MethodGet, "/api/v1/_config", http.StatusOK},
+		{http.MethodGet, "/api/v1/_feeds/nope.ics", http.StatusNotFound}, // registered; unknown feed → 404
 		{http.MethodGet, "/api/v1/_search?q=ticket", 0},
 		{http.MethodGet, "/api/v1/_position?type=ticket&id=TKT-001", 0},
 		{http.MethodGet, "/api/v1/_analyze", 0},
@@ -79,6 +80,12 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/tickets/", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/relations", 0},
+
+		// Sync API (sync.go) — manifest is 501 on the non-pg test backend;
+		// record GET resolves to a handler answer (200 for the seeded entity).
+		{http.MethodGet, "/api/sync/manifest", http.StatusNotImplemented},
+		{http.MethodGet, "/api/sync/entities/TKT-001", http.StatusOK},
+
 		// Attachment download route. Probe with POST so the handler answers
 		// 405 (a JSON error) rather than a 404 — a GET against the fixture
 		// (no attachment seeded) would emit a handler http.NotFound that the

@@ -212,6 +212,33 @@ export function buildPrefixList(entityTypes: Map<string, EntityType>): PrefixIte
   return items
 }
 
+/** Rank-tier an entity by how its ID relates to what the user typed.
+ *  Lower is better. The query is the id-body partial (prefix already
+ *  stripped by the caller); we reconstruct the full typed id as
+ *  `prefix + query` to test against each entity's ID. */
+function idMatchRank(id: string, prefix: string, query: string): number {
+  const upperId = id.toUpperCase()
+  const typedId = (prefix + query).toUpperCase()
+  if (query !== '' && upperId === typedId) return 0 // exact id
+  if (typedId !== '' && upperId.startsWith(typedId)) return 1 // id-prefix match
+  if (query !== '' && upperId.includes(query.toUpperCase())) return 2 // id substring
+  return 3 // title-only match (backend relevance)
+}
+
+/** Re-rank entity search results so ID matches lead while preserving the
+ *  backend's relevance order within each tier (stable sort). Exported for
+ *  unit testing. See `runSearch` for why this is client-side. */
+export function rankByIdMatch(
+  entities: Entity[],
+  prefix: string,
+  query: string,
+): Entity[] {
+  return entities
+    .map((e, i) => ({ e, i, rank: idMatchRank(e.id, prefix, query) }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map((x) => x.e)
+}
+
 /** Driver. Wires the session to a live EasyMDE instance and returns a
  *  controller the parent component (popup + MarkdownEditor) consumes. */
 export function useBacktickAutocomplete(
@@ -400,7 +427,14 @@ export function useBacktickAutocomplete(
         query.length >= MIN_SEARCH_LEN
           ? await searchEntities(query, type, abort.signal)
           : await listEntities(type, { per_page: MAX_RESULTS })
-      state.entityItems = resp.data.slice(0, MAX_RESULTS)
+      // Bleve scores by title-token relevance, so for an id-prefix query
+      // like `VAD-ACT-` the entities the user is clearly targeting (whose
+      // ID starts with that prefix) get buried under loose title matches.
+      // The user has already committed to a type; re-rank client-side so
+      // ID matches lead. Stable within a rank tier preserves the
+      // backend's relevance order as the tie-breaker.
+      const ranked = rankByIdMatch(resp.data, state.resolvedPrefix.prefix, query)
+      state.entityItems = ranked.slice(0, MAX_RESULTS)
       state.errorMsg = ''
       state.highlightedIndex = 0
     } catch (err: unknown) {
@@ -467,13 +501,42 @@ export function useBacktickAutocomplete(
     }, openDelay)
   }
 
+  /** True when `typed` still begins with the resolved prefix (the
+   *  conventional `<PREFIX>-<id>` shape), i.e. the user is genuinely in
+   *  the id-body of that type. Used to detect a backspace that has
+   *  retreated across the prefix boundary so we can hand control back to
+   *  the prefix machine. */
+  function typedStillMatchesResolved(typed: string): boolean {
+    const prefix = state.resolvedPrefix?.prefix ?? ''
+    if (prefix === '') return true // manual type: no prefix to retreat across
+    return typed.toUpperCase().startsWith(prefix.toUpperCase())
+  }
+
   /** Re-evaluate the phase machine given the current typed-after-trigger
    *  text. Single source of truth for "the user typed something; now
    *  what does the popup show?" — called both from the open-delay timer
    *  (to handle prefix text typed while the popup was pending) and from
    *  the `change` event handler. Idempotent: safe to call when phase is
-   *  idle (no-op). */
+   *  idle (no-op).
+   *
+   *  Symmetric on backspace: when the user deletes back across the
+   *  resolved prefix boundary (e.g. `VAD-ACT-X` → `VAD-AC`), phase `id`
+   *  hands control back to the prefix machine instead of feeding the
+   *  now-partial prefix into the entity search as free text (which
+   *  returned title-scored noise — the "backspace kills completion"
+   *  report). */
   function applyTypedToPhase(typed: string): void {
+    if (state.phase === 'id' && !typedStillMatchesResolved(typed)) {
+      // Backspaced out of the id body. Rebuild the prefix list and let
+      // the prefix path below re-resolve (it may immediately re-enter
+      // phase id if `typed` is still an exact/longer prefix match).
+      state.phase = 'prefix'
+      state.resolvedPrefix = null
+      state.entityItems = []
+      allPrefixes = buildPrefixList(entityTypes())
+      state.prefixItems = allPrefixes
+      state.highlightedIndex = 0
+    }
     if (state.phase === 'prefix') {
       filterPrefixList(typed)
       if (state.phase !== 'prefix') return // filterPrefixList may have closed us

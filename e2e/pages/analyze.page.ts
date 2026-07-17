@@ -57,8 +57,16 @@ export class AnalyzePage extends BasePage {
     return this.issueRows.count();
   }
 
-  async clickFirstIssueRow() {
-    await this.issueRows.first().click();
+  /**
+   * Navigate to the entity of the first entity-linked issue. The row's
+   * click targets are split (TKT-IL499B): the entity-title cell
+   * navigates, while the message cell reveals detail. Navigation is
+   * triggered by clicking the title, not the row — and only rows with a
+   * real entity expose a clickable title (ID-gap / load-error rows do
+   * not), so target the first clickable title rather than the first row.
+   */
+  async clickFirstIssueEntity() {
+    await this.page.locator('.entity-title.clickable').first().click();
   }
 
   async clickRefresh() {

@@ -42,6 +42,14 @@ export interface ActionConfig {
 export interface AppConfig {
   name: string
   description?: string
+  /**
+   * Base URL of the configured PlantUML rendering server, or absent/empty
+   * when PlantUML rendering is disabled. A non-empty value is the on switch
+   * for ```plantuml diagram rendering (see renderPlantUMLDiagrams). The key
+   * is snake_case to match the server's JSON tag verbatim — there is no
+   * client-side casing transform.
+   */
+  plantuml_server_url?: string
 }
 
 export interface FormConfig {
@@ -116,6 +124,11 @@ export interface FormFieldOrRelation {
 export interface ListConfig {
   entity: string
   title?: string
+  /** Markdown rendered above the list. `description` is a fallback alias. */
+  header?: string
+  /** Markdown rendered below the list. */
+  footer?: string
+  /** Fallback for `header`; the previously-unused field, used when `header` is unset. */
   description?: string
   columns: ListColumn[]
   filters?: ListFilter[]
@@ -125,6 +138,22 @@ export interface ListConfig {
   edit_form?: string
   page_size?: number
   actions?: string[]
+}
+
+/**
+ * Resolve the raw markdown for a list's top info region. `header` is canonical;
+ * `description` is a fallback — the field predates this feature but was never
+ * rendered, so we adopt it as an alias rather than require every config to be
+ * rewritten. Returns '' when neither is set (a blank/whitespace-only value is
+ * treated as unset). The caller passes the result through renderMarkdown.
+ */
+export function listHeaderMarkdown(list: ListConfig | undefined): string {
+  return list?.header?.trim() || list?.description?.trim() || ''
+}
+
+/** Resolve the raw markdown for a list's bottom info region ('' when unset). */
+export function listFooterMarkdown(list: ListConfig | undefined): string {
+  return list?.footer?.trim() || ''
 }
 
 // Helper to get edit form for an entity type
@@ -149,6 +178,10 @@ export function getEditFormId(
 export interface FilterControl {
   property?: string
   relation?: string
+  // For relation filters: which edge direction the filter follows.
+  // `outgoing` (default) pulls option candidates from the relation's `to[*]`
+  // types; `incoming` from `from[*]`. Mirrors ListColumn.direction.
+  direction?: 'outgoing' | 'incoming'
   label?: string
 }
 
@@ -210,10 +243,17 @@ export interface KanbanSwimlane {
   label?: string
 }
 
+export interface KanbanCardField {
+  property?: string
+  relation?: string
+  direction?: 'outgoing' | 'incoming'
+  label?: string
+}
+
 export interface KanbanCard {
   title: string
   subtitle?: string
-  fields?: Array<{ property?: string; relation?: string }>
+  fields?: KanbanCardField[]
 }
 
 export interface DashboardConfig {
@@ -240,6 +280,13 @@ export interface AnalyzeIssue {
   message: string
   severity: 'error' | 'warning'
   checkType: string
+  /**
+   * Optional structured specifics about why the issue fired, beyond the
+   * flat message. For content required-headers violations it lists the
+   * missing exact headers. Absent on rows with no structured detail;
+   * the message cell reveals it in an expandable detail row.
+   */
+  detail?: string[]
   /**
    * Present only on validation script-error rows. Carries the same
    * envelope as the action surface so the UI can branch: rows with

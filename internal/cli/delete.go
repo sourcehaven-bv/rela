@@ -20,8 +20,8 @@ type DeleteCmd struct {
 }
 
 // Run dispatches `rela delete <id>`.
-func (c *DeleteCmd) Run(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
+func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
+	st := svc.Store
 
 	entity, err := st.GetEntity(ctx, c.ID)
 	if err != nil {
@@ -38,7 +38,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *cliServices) error {
 	}
 
 	if !c.Force {
-		fmt.Printf("Delete %s '%s'", entity.Type, entity.Title())
+		fmt.Printf("Delete %s '%s'", entity.Type, svc.Meta.DisplayTitle(entity.ID, entity.Type, entity.Properties))
 		if totalRelations > 0 {
 			fmt.Printf(" and %d relation(s)", totalRelations)
 		}
@@ -56,7 +56,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *cliServices) error {
 		}
 	}
 
-	result, err := svc.EntityManager().DeleteEntity(ctx, c.ID, c.Cascade)
+	result, err := svc.EntityManager.DeleteEntity(ctx, c.ID, c.Cascade)
 	if err != nil {
 		if errors.Is(err, entitymanager.ErrHasRelations) {
 			return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", c.ID)

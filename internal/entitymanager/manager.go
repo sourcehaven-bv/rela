@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -166,6 +167,52 @@ type Deps struct {
 	// missing ACL fails fast at wiring time, not later as a silently
 	// disabled authz gate.
 	ACL acl.ACL
+
+	// VersionRecorder captures a synchronous entity version for rename and
+	// delete (see [VersionRecorder]). Optional: nil disables synchronous
+	// version capture (fs/mem builds, and the postgres build's create/update
+	// versions are handled by the store's periodic sweep, not this hook).
+	VersionRecorder VersionRecorder
+
+	// RelationVersionRecorder captures a synchronous relation version for
+	// relation delete (explicit and entity-cascade) and endpoint rename (see
+	// [RelationVersionRecorder]). Optional: nil disables it (fs/mem builds; the
+	// postgres build's relation create/update versions come from the sweep).
+	RelationVersionRecorder RelationVersionRecorder
+
+	// Transitions enforces enum state machines on the write path (TKT-E4LW2):
+	// transition legality, guard permissions, and preconditions. Required so
+	// no write path can silently skip the machine — but a metamodel with no
+	// transitions compiles to an empty enforcer whose checks are no-ops, so
+	// "required" costs nothing when the feature is unused. Constructed once at
+	// startup by [statemachine.Compile] and injected; the Manager never
+	// re-derives it from the metamodel.
+	Transitions TransitionEnforcer
+
+	// TransitionGuard answers the guard question for a state-machine
+	// transition (does the ctx principal hold permission P for the subject).
+	// May be nil: a nil guard makes every guarded edge fail closed, which is
+	// the safe default when no ACL-backed guard was wired. Production wiring
+	// supplies an adapter over the ACL; the direct-CLI/no-policy case is
+	// handled inside that adapter (it allows when there is no policy).
+	TransitionGuard statemachine.Guard
+
+	// TransitionGraph answers has_relation/count_relations for a transition
+	// `when:` precondition. May be nil when no precondition needs the graph;
+	// a `when:` that queries the graph then evaluates against an empty graph.
+	TransitionGraph statemachine.GraphLookup
+}
+
+// TransitionEnforcer is the narrow contract the Manager needs from the
+// compiled state machines: enforce an update (old→new) and a create's entry
+// value. Defined at the call site (CLAUDE.md consumer-side interfaces);
+// [*statemachine.Set] satisfies it.
+type TransitionEnforcer interface {
+	EnforceUpdate(
+		ctx context.Context, old, updated *entity.Entity,
+		guard statemachine.Guard, lookup statemachine.GraphLookup,
+	) error
+	EnforceCreate(ctx context.Context, e *entity.Entity) error
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -184,6 +231,10 @@ func New(d Deps) (*Manager, error) {
 	}
 	if d.ACL == nil {
 		return nil, errors.New("entitymanager: New: ACL is required (use acl.NopACL{} to opt out)")
+	}
+	if d.Transitions == nil {
+		return nil, errors.New(
+			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
 	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
@@ -221,6 +272,30 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 	}
 	m.recordDeniedWrite(ctx, decision, req)
 	return &acl.ForbiddenError{Decision: decision}
+}
+
+// mapTransitionError translates a state-machine enforcement error into the
+// entitymanager's wire-facing error shape (TKT-E4LW2). A guard denial becomes
+// an [*acl.ForbiddenError] (RuleKind "transition-guard") so it flows through
+// the same 403 path — and audit row — as any other authorization denial;
+// legality and precondition failures pass through unchanged and surface as 422
+// validation-class errors at the HTTP boundary. Returns nil for a nil input.
+func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, err error) error {
+	if err == nil {
+		return nil
+	}
+	var ge *statemachine.GuardError
+	if errors.As(err, &ge) {
+		decision := acl.Decision{
+			Allow:    false,
+			RuleKind: "transition-guard",
+			RuleID:   ge.Permission, // the specific right, queryable in audit (RR-F30CZ/N1)
+			Reason:   err.Error(),
+		}
+		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject})
+		return &acl.ForbiddenError{Decision: decision}
+	}
+	return err
 }
 
 // recordACLBypass emits one audit row for an elevated (rela.bypass_acl) write.
@@ -352,6 +427,10 @@ func (m *Manager) CreateEntity(
 	if err != nil {
 		return nil, err
 	}
+	// State-machine entry is enforced INSIDE createCore, before the durable
+	// write (RR-HETEE), so an illegal entry never persists. No guard applies on
+	// create-entry today; if a future change adds one, route its ErrGuardDenied
+	// through mapTransitionError so it surfaces as 403, not 422 (RR-F30CZ/N2).
 
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
@@ -376,7 +455,21 @@ func (m *Manager) CreateEntity(
 		for prop, val := range autoResult.PropertiesSet {
 			created.SetString(prop, val)
 		}
-		if writeErr := upsertEntity(ctx, m.deps.Store, created); writeErr != nil {
+		// Re-enforce unique constraints against the POST-automation values:
+		// createCore's check ran before automations, so an automation that
+		// set a `unique` property could otherwise write a duplicate natural
+		// key that the update path would reject (the create path must not be
+		// the weaker one). excludeSelfID is created.ID — the entity is
+		// already persisted from createCore, so it must not collide with
+		// itself. A violation aborts before the duplicate is re-written.
+		if err := checkUniqueProperties(ctx, m.deps, created, created.ID); err != nil {
+			return nil, err
+		}
+		// UpdateEntity, not upsert: createCore already persisted this row
+		// above, so the post-automation re-write is unambiguously an
+		// update of an existing entity (BUG-ZWTDH9 — no create-then-
+		// update fallback anywhere).
+		if writeErr := m.deps.Store.UpdateEntity(ctx, created); writeErr != nil {
 			return nil, fmt.Errorf("write entity after automation: %w", writeErr)
 		}
 		// Recompute warnings against the post-automation state
@@ -507,7 +600,29 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		result.AutomationErrors = autoResult.Errors
 	}
 
-	if err := upsertEntity(ctx, m.deps.Store, e); err != nil {
+	// Enforce enum state machines on the final (post-automation) state, using
+	// the prior state to determine the transition (TKT-E4LW2). This is the
+	// unforgettable chokepoint: the enforcer is a required collaborator run in
+	// the fixed write pipeline, so no update path can skip legality/guard/
+	// precondition. An empty enforcer (metamodel with no transitions) is a
+	// no-op.
+	if err := m.deps.Transitions.EnforceUpdate(
+		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
+	); err != nil {
+		return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: e.Type, ID: e.ID}, err)
+	}
+
+	// Enforce `unique: true` natural-key constraints against the final
+	// (post-automation) property values, excluding this entity's own
+	// prior version so a re-save of an unchanged value does not collide.
+	if err := checkUniqueProperties(ctx, m.deps, e, e.ID); err != nil {
+		return nil, err
+	}
+
+	// UpdateEntity, not upsert: the GetEntity above already established
+	// the row exists (else we returned ErrEntityNotFound), so this is
+	// unambiguously an update (BUG-ZWTDH9).
+	if err := m.deps.Store.UpdateEntity(ctx, e); err != nil {
 		return nil, fmt.Errorf("write entity: %w", err)
 	}
 
@@ -569,6 +684,30 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 
 	if totalRelations > 0 && !cascade {
 		return nil, ErrHasRelations
+	}
+
+	// Capture the final pre-delete version BEFORE the store delete. The row is
+	// hard-deleted below, so a version taken after the delete would be
+	// unrecoverable if the process died in between — order-before closes that
+	// permanent-loss window (the store delete is still not transactional with
+	// this capture; strict atomicity is a future hardening).
+	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+
+	// Capture a final version for every relation this cascade destroys, BEFORE
+	// the store delete removes them. This is the ONLY place cascade-deleted
+	// relations get versioned: the store's DeleteEntity bulk-deletes them below
+	// the write choke-point, so without this their history would silently end
+	// with no `delete` marker and no restore path (RR-181AFY). Each is attributed
+	// to the triggering entity delete. Live rows still exist here, so
+	// WriteRelationVersion resolves rel_record_id from the key.
+	if cascade && totalRelations > 0 {
+		cascadeTB := "cascade:delete-entity:" + id
+		for _, rel := range incoming {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
+		for _, rel := range outgoing {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		}
 	}
 
 	// Delegate the actual deletion to the store's cascade, which removes
@@ -637,6 +776,18 @@ func (m *Manager) RenameEntity(
 	case !errors.Is(getErr, store.ErrNotFound):
 		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, getErr)
 	}
+
+	// Collect incident relations (with their content) BEFORE the rename: the
+	// rename rewrites each relation as create-new-triple + delete-old-triple at
+	// the store level, so afterward the old endpoints are gone. We capture the
+	// pre-rename state here to emit a `rename` version per relation below, so a
+	// renamed endpoint's relation history stays continuous instead of reading as
+	// a mass delete+create.
+	var preRenameRels []*entity.Relation
+	if !opts.DryRun && m.deps.RelationVersionRecorder != nil {
+		preRenameRels = collectRenameAffectedRelations(ctx, m.deps.Store, oldID)
+	}
+
 	res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
 	if err != nil || opts.DryRun {
 		return res, err
@@ -656,7 +807,61 @@ func (m *Manager) RenameEntity(
 		return res, nil
 	}
 	m.recordRenameAudit(ctx, oldID, postEntity)
+	// Capture the rename as a version event carrying the old id (prev_id), so a
+	// renamed entity's history is walkable back to its former id. Only the
+	// choke-point knows old->new; a later sweep sees the renamed entity as an
+	// ordinary update and cannot reconstruct this link.
+	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
+
+	// Capture a `rename` version for each incident relation, on its NEW triple,
+	// carrying the pre-rename endpoints (prev_from/prev_to). This stitches the
+	// relation's history across the endpoint rename so it reads as one continuous
+	// timeline rather than a delete of the old triple + create of the new one.
+	// The new triples exist now (the store's atomic RenameEntity created them);
+	// the version's key is the post-rename endpoint, so WriteRelationVersion
+	// resolves the new rel_record_id. triggered_by attributes the versions to
+	// this rename.
+	if len(preRenameRels) > 0 {
+		renameTB := "rename-entity:" + oldID + "->" + newID
+		for _, rel := range preRenameRels {
+			newFrom, newTo := rel.From, rel.To
+			if newFrom == oldID {
+				newFrom = newID
+			}
+			if newTo == oldID {
+				newTo = newID
+			}
+			after := &entity.Relation{
+				From: newFrom, Type: rel.Type, To: newTo,
+				Properties: rel.Properties, Content: rel.Content,
+			}
+			m.recordRelationVersion(ctx, store.VersionOpRename, after, rel.From, rel.To, renameTB)
+		}
+	}
 	return res, nil
+}
+
+// collectRenameAffectedRelations gathers the incident relations of id (both
+// directions) with their content, for pre-rename version capture. Self-
+// referential relations appear once (outgoing). Errors are swallowed — a
+// best-effort capture must never fail the rename.
+func collectRenameAffectedRelations(ctx context.Context, st store.Store, id string) []*entity.Relation {
+	seen := make(map[string]struct{})
+	out := make([]*entity.Relation, 0)
+	for _, dir := range []store.Direction{store.DirectionOutgoing, store.DirectionIncoming} {
+		for r, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: dir}) {
+			if err != nil {
+				continue
+			}
+			key := r.From + "\x00" + r.Type + "\x00" + r.To
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // CreateRelation creates a new relation, validating endpoints and
@@ -664,6 +869,29 @@ func (m *Manager) RenameEntity(
 func (m *Manager) CreateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
+	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
+	// peer must never let a write skip the ACL: if authz is deferred until
+	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
+	// and the dataentry fallback then writes directly to the store,
+	// bypassing the ACL and audit. The source type feeds the type-level
+	// grant check; it is best-effort (empty if the source doesn't exist
+	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
+	// decided from inputs that don't depend on peer existence.
+	var fromType string
+	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+		fromType = fromEntity.Type
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpCreate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: fromType, FromID: from,
+		},
+	}); aclErr != nil {
+		return nil, aclErr
+	}
+
 	fromEntity, err := m.deps.Store.GetEntity(ctx, from)
 	if err != nil {
 		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
@@ -671,15 +899,6 @@ func (m *Manager) CreateRelation(
 	toEntity, err := m.deps.Store.GetEntity(ctx, to)
 	if err != nil {
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
-	}
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: fromEntity.Type, FromID: from,
-		},
-	}); aclErr != nil {
-		return nil, aclErr
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
@@ -716,7 +935,18 @@ func (m *Manager) CreateRelation(
 		return nil, err
 	}
 
-	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
+	// CreateRelation, not upsert: a create must never fall through to an
+	// update (that would clobber a racing create of the same triple).
+	// The GetRelation pre-check above is advisory; the store's atomic
+	// create is the real guard, and a conflict surfaces as
+	// ErrRelationAlreadyExists (BUG-ZWTDH9).
+	if _, err := m.deps.Store.CreateRelation(ctx, from, relType, to, &store.RelationData{
+		Properties: rel.Properties,
+		Content:    rel.Content,
+	}); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists, from, relType, to)
+		}
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
@@ -729,11 +959,10 @@ func (m *Manager) CreateRelation(
 func (m *Manager) UpdateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
-	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
-	}
-	// ACL needs the source entity type for the type-level write check.
+	// Authorize BEFORE the relation-existence lookup (BUG-K6FEVB): a
+	// missing relation must not let a denied caller skip the ACL and get
+	// a soft not-found. The source type feeds the type-level grant check;
+	// it is best-effort (empty if the source doesn't exist).
 	var sourceType string
 	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
 		sourceType = fromEntity.Type
@@ -746,6 +975,11 @@ func (m *Manager) UpdateRelation(
 		},
 	}); aclErr != nil {
 		return nil, aclErr
+	}
+
+	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
 	}
 
 	// Snapshot pre-update meta keys so the audit summary names exactly
@@ -777,7 +1011,13 @@ func (m *Manager) UpdateRelation(
 		rel.Content = *opts.Content
 	}
 
-	if err := upsertRelation(ctx, m.deps.Store, rel); err != nil {
+	// UpdateRelation, not upsert: the GetRelation above established the
+	// triple exists (else we returned ErrRelationNotFound), so this is
+	// unambiguously an update (BUG-ZWTDH9).
+	if _, err := m.deps.Store.UpdateRelation(ctx, from, relType, to, store.RelationData{
+		Properties: rel.Properties,
+		Content:    rel.Content,
+	}); err != nil {
 		return nil, err
 	}
 	m.recordRelationAudit(ctx, audit.OpUpdateRelation, rel, updateRelationSummary(oldProps, rel.Properties))
@@ -792,11 +1032,9 @@ func (m *Manager) UpdateRelation(
 
 // DeleteRelation removes a relation. **No automation.**
 func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	// Fetch pre-delete so the audit record carries the full Subject
-	// (relation type + from + to). The relation may not exist — in
-	// that case the store delete returns an error and we skip audit.
-	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
-	// ACL needs the source entity type for the type-level write check.
+	// Authorize BEFORE touching the store (BUG-K6FEVB). The source type
+	// feeds the type-level grant check; it is best-effort (empty if the
+	// source doesn't exist).
 	var sourceType string
 	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
 		sourceType = fromEntity.Type
@@ -809,6 +1047,18 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 		},
 	}); aclErr != nil {
 		return aclErr
+	}
+	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
+	// ForbiddenError regardless of whether the relation exists) so the audit
+	// record and version snapshot carry the full Subject (relation type + from
+	// + to). The relation may not exist — then the store delete returns an
+	// error and we skip both the version capture and the audit.
+	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
+	// Capture the final pre-delete version BEFORE the store delete, while the
+	// live row (and its rel_record_id) still exists — the same order-before
+	// rationale as entity delete. Skipped if the relation was already gone.
+	if getErr == nil {
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
 	}
 	if err := m.deps.Store.DeleteRelation(ctx, from, relType, to); err != nil {
 		return fmt.Errorf("delete relation: %w", err)

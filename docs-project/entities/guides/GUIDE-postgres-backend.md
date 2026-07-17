@@ -54,8 +54,10 @@ CA) so the connection is never silently unencrypted.
 ## Schema and migrations
 
 On first start the PostgreSQL build creates its schema automatically
-(an `entities`, `relations`, `attachments`, and `schema_version` table,
-plus the `pg_trgm` extension for substring/fuzzy search). Migrations are
+(`entities`, `relations`, `attachments`, `schema_version`, and the
+`entity_versions` / `schema_versions` history tables — see
+[Version history](#version-history-time-machine) — plus the `pg_trgm`
+extension for substring/fuzzy search). Migrations are
 embedded in the binary and applied idempotently on every start — they run
 in a single transaction under an advisory lock, so concurrent starts are
 safe — and upgrading is just deploying a newer binary and restarting.
@@ -110,6 +112,141 @@ What you need to know to run it:
   updates are unavailable (a warning is logged).
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
+
+## Version history (time machine)
+
+The PostgreSQL build automatically keeps a **content version history** of every
+entity — the analogue of the git history a filesystem project gets for free.
+You can list an entity's past versions, view any one of them (rendered against
+the schema it was written under, not today's), diff two, and restore an entity
+to an earlier state — each version carrying who made the change and when.
+
+How capture works:
+
+- **Edits are debounced.** A background reconciliation sweep snapshots entities
+  that have been *settled* (un-edited) for a few minutes, so a burst of edits
+  collapses to one version rather than one-per-keystroke. An entity under
+  continuous editing is still snapshotted at least once per staleness ceiling
+  (default ~1 hour), so a long editing session is never entirely unrecorded.
+- **Deletes and renames are captured immediately** at write time (a delete
+  records the final pre-delete state so a deleted entity's history — and the
+  ability to restore it — survives; a rename records the old→new id so history
+  stays continuous across the rename).
+- Unchanged re-saves are de-duplicated (no version row when content is identical
+  to the latest).
+
+Attribution: the version's principal (user + tool) and any `triggered_by`
+(automation / schedule / cascade) are recorded. This inherits the same trust
+model as the [audit log](audit-log.md) — attribution is only as strong as your
+deployment's identity front door, so use a verifying (JWT) principal source
+where version attribution matters for accountability.
+
+Storage: two tables — `entity_versions` (one full snapshot per version, keyed by
+a versioning-internal record id so history survives id rename/reuse) and
+`schema_versions` (the content-addressed render-schema each snapshot was taken
+under, de-duplicated so an unchanged schema across thousands of writes stores
+one row). Both are separate from the hot `entities` table; the sweep filter adds
+an index on `entities(updated_at)`. History is retained indefinitely by default;
+apply your own retention (by age or count) if storage growth matters — but note
+audit/compliance deployments typically keep ≥ 12 months.
+
+From the CLI (PostgreSQL build):
+
+```bash
+rela history TKT-42                 # the version timeline with attribution
+rela history TKT-42 --version 3     # print version 3's snapshot (JSON) …
+rela history TKT-42 --version 3 | diff - <(rela history TKT-42 --version 5)
+                                   # … pipe two snapshots to any diff tool
+rela restore TKT-42 3              # restore the entity to version 3
+```
+
+The data-entry web UI shows the same timeline, an in-page diff, and a restore
+button (gated by your write permission) on each entity's detail page.
+
+Access control: reading the history of a **live** entity requires the same read
+permission as reading the entity itself. Reading the history of a **deleted**
+entity requires the global `history:read` permission — see
+[ACL security](acl-security.md). Restore is a normal write: it is authorized,
+validated, and audited like any edit, and produces a new version.
+
+Scope: an entity version captures that entity's content and properties. Its
+*relation set* as-of the version is not part of the entity snapshot, so an entity
+restore recovers content and properties — relations are versioned separately (see
+below).
+
+### Relation history
+
+Relations carry their own rich content (a property set plus a markdown body), and
+the PostgreSQL build versions them too, with the same time-machine model. Capture
+is the same hybrid: relation create/update are debounced by the sweep;
+**relation delete is captured immediately** — including when a relation is
+destroyed by an entity **cascade delete** (deleting a hub entity records a final
+version for every edge it removes, so an edge's history never just vanishes).
+
+An endpoint **rename** stitches, rather than forks: when an entity is renamed, its
+incident relations are recorded as a continuous timeline across the new endpoint
+(the version carries the pre-rename endpoints), so a rename reads as a rename —
+not as a mass delete-and-recreate.
+
+Each relation has a stable internal record id, so a delete-then-recreate of the
+same `from--type--to` starts a **fresh** history (the two lifetimes are not
+merged).
+
+From the CLI (PostgreSQL build):
+
+```bash
+rela relation-history TKT-42 blocks TKT-99            # the relation's timeline
+rela relation-history TKT-42 blocks TKT-99 --version 2  # print version 2 (JSON)
+rela relation-restore TKT-42 blocks TKT-99 2          # restore to version 2
+```
+
+Access control: relation history is read-gated on **both** endpoints — you must
+be able to read the `from` AND the `to` entity (a deleted relation uses the same
+global `history:read`). In the web UI, a relation's history is owned by its
+**source** (`from`) entity: each outgoing relation on an entity's detail page has
+a History affordance. Restore goes through the normal write path; re-creating a
+relation whose endpoint entity no longer exists is refused (409).
+
+### Purging history for compliance
+
+History is append-only by design. When you must actually **remove** content from
+history — a leaked secret, PII, a GDPR erasure request — the `history-purge` /
+`relation-history-purge` commands hard-delete version snapshot rows. This is the
+deliberate, audited, **irreversible** exception to the append-only model, and it
+is **operator-only**: the trust boundary is shell access plus the database
+credential (`RELA_DATABASE_URL`), the same as `rela db migrate` — the CLI applies
+no ACL check.
+
+```bash
+# Dry-run (the DEFAULT): shows exactly what would be purged, deletes nothing.
+rela history-purge TKT-42 --content-hash <h> --reason "erase SSN per DPO-42"
+
+# Commit the deletion (irreversible). Confirmation asks you to type the id.
+rela history-purge TKT-42 --content-hash <h> --reason "erase SSN per DPO-42" --commit
+```
+
+Target a specific row by `--vseq` (from `rela history`), every row holding a
+value by `--content-hash` (the "erase this value everywhere it was captured"
+operation — verifiable, since afterward no row carries that hash), or the whole
+lineage with `--all`. `--reason` is required and recorded in the audit trail;
+**do not put the secret itself in `--reason`** (it is logged in cleartext). The
+purge itself is audited (who, what, count, when) — that record is the surviving
+compliance trail and never contains the purged content.
+
+Two guardrails you will hit:
+
+- **Purge refuses while the live entity/relation still holds the content.** The
+  version sweep reconciles history *toward* the live row, so purging history
+  without first redacting the live value would just re-capture it within a few
+  minutes. Redact (or delete) the live value first; or pass `--force-live`, which
+  writes a tombstone that stops the sweep from re-capturing.
+- **Purge refuses a `rename` row** (purging one would sever unrelated history).
+  Select non-rename rows by `--vseq`/`--content-hash`.
+
+**Purge is one necessary step, not cryptographic erasure.** It removes rows from
+the primary database; a value may still survive in your PITR/base backups and WAL
+until their retention expires — accounting for the backup lifecycle is the
+operator's separate responsibility.
 
 ## Other scope notes
 

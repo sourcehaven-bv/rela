@@ -13,6 +13,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// templateRelationsKey is the frontmatter key that holds a template's
+// pre-filled relations. It is a templating-only reserved key: like the
+// entity identity keys (see [entity.IsReservedEntityKey]) it is
+// structural, never a property default.
+const templateRelationsKey = "_template_relations"
+
 // Relation is a pre-filled relation in a template.
 type Relation struct {
 	Type   string

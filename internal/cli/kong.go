@@ -25,11 +25,16 @@ import (
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // Version is set at build time.
 var Version = "dev"
+
+// The scheduler command's workspace is bound at the wiring site below;
+// kong.BindTo only verifies assignability at runtime, so pin it here.
+var _ scheduler.WorkspaceProvider = (*appbuild.Services)(nil)
 
 // Invocation-scoped globals populated by [runKong] before any Run
 // method executes. Subcommands read them for behavior driven by the
@@ -43,6 +48,12 @@ var (
 )
 
 // CLI is the kong-parsed root.
+//
+// TODO(TKT-N0IKN9): CLI has 38 exported fields (kong binds one per subcommand,
+// so growth is structural here) — over the 20-field load line. Revisit grouping
+// subcommands into sub-structs; ratchet this number down if/when that lands.
+//
+//plimsoll:max-fields=45
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -61,30 +72,40 @@ type CLI struct {
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
 
-	Show        ShowCmd        `cmd:"" help:"Show entity details."`
-	List        ListCmd        `cmd:"" help:"List entities."`
-	Create      CreateCmd      `cmd:"" help:"Create a new entity."`
-	Update      UpdateCmd      `cmd:"" help:"Update an entity."`
-	Delete      DeleteCmd      `cmd:"" help:"Delete an entity."`
-	Link        LinkCmd        `cmd:"" help:"Create a relation between entities."`
-	Unlink      UnlinkCmd      `cmd:"" help:"Remove a relation between entities."`
-	Trace       TraceCmd       `cmd:"" help:"Trace dependencies between entities."`
-	Graph       GraphCmd       `cmd:"" help:"Export graph to Graphviz DOT format."`
-	Export      ExportCmd      `cmd:"" help:"Export entities in JSON, CSV, or YAML format."`
-	Import      ImportCmd      `cmd:"" help:"Import entities and relations from JSON, YAML, or CSV."`
-	Fmt         FmtCmd         `cmd:"" help:"Format entity and relation files."`
-	Normalize   NormalizeCmd   `cmd:"" help:"Normalize markdown headers in entity files."`
-	Schema      SchemaCmd      `cmd:"" help:"View the metamodel schema."`
-	Template    TemplateCmd    `cmd:"" help:"Manage entity and relation templates."`
-	Analyze     AnalyzeCmd     `cmd:"" help:"Analyze the entity graph."`
-	Rename      RenameCmd      `cmd:"" help:"Rename entities or relations."`
-	Attach      AttachCmd      `cmd:"" help:"Attach file(s) to an entity."`
-	Attachments AttachmentsCmd `cmd:"" help:"List attachments for an entity."`
-	Detach      DetachCmd      `cmd:"" help:"Remove the attachment from an entity property."`
-	Gc          GcCmd          `cmd:"" name:"gc" help:"Garbage collect orphaned files."`
-	Script      ScriptCmd      `cmd:"" help:"Execute a Lua script against the graph."`
-	Scheduler   SchedulerCmd   `cmd:"" help:"Run scheduled Lua tasks."`
-	Renumber    RenumberCmd    `cmd:"" help:"Renumber managed order properties on orderable relations."`
+	Show      ShowCmd      `cmd:"" help:"Show entity details."`
+	List      ListCmd      `cmd:"" help:"List entities."`
+	Create    CreateCmd    `cmd:"" help:"Create a new entity."`
+	Update    UpdateCmd    `cmd:"" help:"Update an entity."`
+	Delete    DeleteCmd    `cmd:"" help:"Delete an entity."`
+	Link      LinkCmd      `cmd:"" help:"Create a relation between entities."`
+	Unlink    UnlinkCmd    `cmd:"" help:"Remove a relation between entities."`
+	Trace     TraceCmd     `cmd:"" help:"Trace dependencies between entities."`
+	Graph     GraphCmd     `cmd:"" help:"Export graph to Graphviz DOT format."`
+	Export    ExportCmd    `cmd:"" help:"Export entities in JSON, CSV, or YAML format."`
+	Import    ImportCmd    `cmd:"" help:"Import entities and relations from JSON, YAML, or CSV."`
+	Fmt       FmtCmd       `cmd:"" help:"Format entity and relation files."`
+	Normalize NormalizeCmd `cmd:"" help:"Normalize markdown headers in entity files."`
+	Schema    SchemaCmd    `cmd:"" help:"View the metamodel schema."`
+	Template  TemplateCmd  `cmd:"" help:"Manage entity and relation templates."`
+	Analyze   AnalyzeCmd   `cmd:"" help:"Analyze the entity graph."`
+	ACL       ACLCmd       `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
+	Rename    RenameCmd    `cmd:"" help:"Rename entities or relations."`
+	History   HistoryCmd   `cmd:"" help:"Show an entity's version history (postgres build)."`
+	Restore   RestoreCmd   `cmd:"" help:"Restore an entity to a past version (postgres build)."`
+
+	RelationHistory RelationHistoryCmd `cmd:"" name:"relation-history" help:"Show a relation's version history (postgres build)."`
+	RelationRestore RelationRestoreCmd `cmd:"" name:"relation-restore" help:"Restore a relation to a past version (postgres build)."`
+
+	HistoryPurge         HistoryPurgeCmd         `cmd:"" name:"history-purge" help:"Hard-delete an entity's version history for compliance (postgres build; irreversible)."`
+	RelationHistoryPurge RelationHistoryPurgeCmd `cmd:"" name:"relation-history-purge" help:"Hard-delete a relation's version history for compliance (postgres build; irreversible)."`
+	Attach               AttachCmd               `cmd:"" help:"Attach file(s) to an entity."`
+	Attachments          AttachmentsCmd          `cmd:"" help:"List attachments for an entity."`
+	Detach               DetachCmd               `cmd:"" help:"Remove the attachment from an entity property."`
+	Gc                   GcCmd                   `cmd:"" name:"gc" help:"Garbage collect orphaned files."`
+	Script               ScriptCmd               `cmd:"" help:"Execute a Lua script against the graph."`
+	Scheduler            SchedulerCmd            `cmd:"" help:"Run scheduled Lua tasks."`
+	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
+	Sync                 SyncCmd                 `cmd:"" help:"Sync local changes with a remote rela-server."`
 }
 
 // VersionCmd needs no services.
@@ -131,7 +152,7 @@ func runKong() int {
 	})
 
 	var svc *appbuild.Services
-	var cliSvc *cliServices
+	var bundles *cliBundles
 	if requiresProject(ktx.Command()) {
 		var err error
 		// The postgres build reads its DSN from $RELA_DATABASE_URL inside
@@ -143,17 +164,26 @@ func runKong() int {
 			return 1
 		}
 		defer svc.Close()
-		cliSvc, err = newCLIServicesFromAppbuild(svc)
+		bundles, err = newCLIBundles(svc)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		// Resolve entity display titles through the metamodel so the entity
+		// table, detail, and trace-tree output honor display_property (bare
+		// name or template), matching the data-entry app. Without a project
+		// (no metamodel) the writer falls back to the literal `title` property.
+		out.Titles = bundles.read.Meta
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
 	ktx.Bind(out)
-	if cliSvc != nil {
-		ktx.Bind(cliSvc)
+	if bundles != nil {
+		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis)
+		// The scheduler command's workspace is supplied here at the wiring
+		// site (consumer-side interface): appbuild.Services satisfies
+		// scheduler.WorkspaceProvider directly.
+		ktx.BindTo(svc, (*scheduler.WorkspaceProvider)(nil))
 	}
 
 	if err := ktx.Run(); err != nil {
@@ -188,7 +218,9 @@ func requiresProject(cmd string) bool {
 	case "show", "list", "trace", "graph", "export", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
-		"rename", "analyze", "attach", "attachments", "gc", "renumber":
+		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
+		"sync", "history", "restore",
+		"relation-history", "relation-restore", "history-purge", "relation-history-purge":
 		return true
 	}
 	return false

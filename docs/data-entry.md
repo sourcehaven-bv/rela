@@ -348,11 +348,36 @@ Each entry in `fields:` configures one property input:
 | `textarea` | Multi-line text area                             | Descriptions, notes            |
 | `number`   | Numeric input                                    | Integers                       |
 | `date`     | Date picker                                      | Date properties                |
+| `datetime` | Date + time picker                               | Datetime properties            |
 | `checkbox` | Toggle checkbox                                  | Boolean properties             |
 
 When no widget is specified, the system auto-detects from the property's type in the metamodel:
-enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, and everything
-else as text inputs.
+enum types render as a `<select>`, booleans as checkboxes, dates as date pickers, `datetime`
+properties as date+time pickers, and everything else as text inputs.
+
+### Datetime fields and time zones
+
+A `datetime` property renders as a native date + time picker. Because a
+datetime is a specific instant, the field must communicate which time zone the
+entered wall-clock time means:
+
+- **Values are stored as UTC** (RFC3339, e.g. `2026-07-13T12:30:00Z`). The
+  widget converts between your local wall-clock time and UTC as you type.
+- **The field shows the active time zone** beneath the input ("Times shown in
+  `Europe/Amsterdam`"), so the interpretation is never hidden.
+- **The display time zone is configurable** on the **Settings** page under
+  *Display timezone*. It defaults to your browser's time zone and applies to
+  every datetime field. It is a **display-only** preference stored in your
+  browser — changing it re-labels existing values but never rewrites the stored
+  UTC instant.
+- **Editing is non-destructive.** Viewing an entity, or saving an unrelated
+  field, never rewrites a datetime you didn't touch — so values authored in a
+  different time zone don't produce spurious diffs.
+
+Note: a value that is exactly midnight UTC (e.g. a bare `2026-07-13` written by
+hand and interpreted as `2026-07-13T00:00:00Z`) displays on the **previous
+evening** in time zones west of UTC. The picker itself always writes a full
+instant, so this only affects hand-authored midnight values.
 
 ### ID Controls on Create Forms
 
@@ -573,7 +598,9 @@ lists:
 | ----------------- | ------ | ----------------------------------------------------------- |
 | `entity_type`     | string | Entity type to list                                         |
 | `title`           | string | List heading                                                |
-| `description`     | string | Subtitle                                                    |
+| `header`          | string | Markdown rendered above the list (info/help; see below)     |
+| `footer`          | string | Markdown rendered below the list                            |
+| `description`     | string | Fallback for `header`; used only when `header` is unset      |
 | `columns`         | list   | Column definitions                                          |
 | `sort`            | object | Default sort order                                          |
 | `filters`         | list   | Static filters (always applied)                             |
@@ -582,6 +609,39 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
+
+#### Header and footer info regions
+
+`header` and `footer` add admin-authored context to a list — a short
+description, links to relevant guides, or a process note. Both accept Markdown
+(GFM: headings, lists, links, emphasis, tables) and render as sanitized HTML
+above and below the list respectively. Content is authored in `data-entry.yaml`
+only; there is no in-app editor.
+
+```yaml
+lists:
+  risicoregister:
+    entity_type: risico
+    title: "Risicoregister"
+    header: |
+      This register is **ISO 27001** scope. See the
+      [scoring guide](/entity/guide-risk-scoring) for how KANS and IMPACT map to
+      a level. New risks are reviewed weekly.
+    footer: |
+      _Questions? Contact the security officer._
+    columns:
+      - property: title
+        sortable: true
+```
+
+Notes:
+
+- Output is sanitized (DOMPurify), so raw HTML/scripts in the config cannot
+  inject executable markup.
+- Use standard Markdown links (`[text](/entity/ID)`) to point at other entities.
+- `description` is a fallback for the top region: it was previously unused, so a
+  config that already sets it now renders a header without a rewrite. When both
+  `header` and `description` are set, `header` wins.
 
 ### Column Options
 
@@ -675,7 +735,8 @@ escape it — choose property values that don't start with `$`.
 
 ### Filter Controls
 
-Interactive filters shown above the table:
+Interactive filters shown above the table. A control filters on either a
+**property** or a **relation** (set exactly one):
 
 ```yaml
 filter_controls:
@@ -685,12 +746,36 @@ filter_controls:
     widget: select
   - property: assignee
     widget: search
+  - relation: verantwoordelijk_voor
+    direction: incoming
+    label: Verantwoordelijke
 ```
 
-| Field      | Type   | Description                                              |
-| ---------- | ------ | -------------------------------------------------------- |
-| `property` | string | Property to filter on                                    |
-| `widget`   | string | `"select"`, `"multi-select"`, or `"search"`             |
+| Field       | Type   | Description                                                     |
+| ----------- | ------ | -------------------------------------------------------------- |
+| `property`  | string | Property to filter on                                          |
+| `relation`  | string | Relation to filter on (mutually exclusive with `property`)     |
+| `direction` | string | For `relation`: `"outgoing"` (default) or `"incoming"`         |
+| `widget`    | string | For `property`: `"select"`, `"multi-select"`, or `"search"`    |
+| `label`     | string | Optional display label override                                |
+
+**Relation filter controls** render as a **target selector** populated with the
+display titles of the relation's target entities — a plain `<select>` for a
+small set, upgrading to a typeahead combobox above ~10 options. `direction:
+incoming` pulls candidates from the relation's source types (`from`); `outgoing`
+(default) from its target types (`to`). The selected value the filter matches on
+is the target's **display title** (honoring each type's `display_property`), not
+its ID.
+
+Notes:
+
+- Two targets that resolve to the same display title collapse to one option and
+  the filter matches both (title-based matching).
+- The candidate list is fetched from the target types' entities; a type with
+  more than ~100 entities has its option set truncated.
+- A relation whose name is not a plain identifier (e.g. contains a hyphen)
+  cannot be deep-linked as a filter (the URL parser only accepts
+  `[a-zA-Z_][a-zA-Z0-9_]*` filter keys).
 
 ### URL Sync for Filters
 
@@ -1967,6 +2052,13 @@ with links to affected entities.
 When a dashboard is configured, a validation summary card is automatically appended showing the
 total error and warning counts with a link to the full analysis page.
 
+In each issue row the entity title links to that entity, while the message is a
+separate click target that reveals more about the failure. For a
+`content.required-headers` validation, clicking the message expands a detail row
+listing exactly which required headers the entity is missing (only exact-match
+headers; regex `pattern:` checks are not listed). A validation whose Lua script
+failed instead opens the script-error dialog from the same message click.
+
 No configuration is needed — the analysis page is always available in the sidebar.
 
 ## Documents
@@ -2270,6 +2362,124 @@ Editing `data-entry.yaml` to change a document's `script:` or `command:`
 takes effect on the next request; open document panels pick up the new
 renderer on their next reload.
 
+## Calendar feeds
+
+Feeds publish your entities as subscribable calendars. A feed is served as
+iCalendar (`.ics`) and JSON at `/api/v1/_feeds/<name>.<ext>`, so a calendar app
+(Apple Calendar, Google Calendar, Thunderbird, …) can subscribe to a URL and see
+your tasks, deadlines, or events — each linking back into the data-entry app.
+
+Feeds are declarative: you map entity properties to calendar fields. No scripting.
+
+```yaml
+feeds:
+  tasks:                          # → /api/v1/_feeds/tasks.ics and .json
+    meta:
+      name: "PIM tasks"           # calendar display name (default: the feed key)
+      color: "#C2185B"            # optional calendar color
+      description: "Open tasks"   # optional
+    sources:
+      - entity_type: task
+        where:                    # filter clauses, ALL ANDed (see below)
+          - "status != done"
+          - "due_date != "        # only tasks that have a due date
+        date: due_date            # date property → the event's day
+        summary: title            # property → event title (optional; see below)
+        description: notes        # property → event description (optional)
+        alarm: "-PT9H"            # optional reminder, 9h before (RFC 5545 duration)
+        rrule: "FREQ=DAILY"       # optional recurrence (see below)
+```
+
+### Sources and merging
+
+A feed has one or more **sources**. Each source projects a single entity type
+into events. All sources merge into one calendar — so a single calendar can mix
+`meeting` and `party` entities, each mapped its own way:
+
+```yaml
+feeds:
+  social:
+    sources:
+      - entity_type: meeting
+        where: ["status != cancelled"]
+        date: date
+        summary: title
+      - entity_type: party
+        date: date
+        summary: name
+```
+
+Multiple sources are also how you express **OR**: the filter language has no
+`or`, so "high-priority tasks OR overdue tasks" is two sources over the same type.
+
+### Source fields
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `entity_type` | yes | The entity type to project. |
+| `where` | no | A list of filter clauses, all ANDed. Empty = all entities of the type. |
+| `date` | yes | A **date**- or **datetime**-typed property mapped to the event start. A `date` property yields an all-day event; a `datetime` property yields a **timed** event (rendered in UTC). Entities without a value are skipped. |
+| `end_date` | no | A property for the event's end. Must be the **same kind** as `date` (both `date` or both `datetime`) — a feed event is all-day or timed, not a mix. Omit for single-day / no-end events. |
+| `summary` | no | A property mapped to the event title. Defaults to the entity type's display property. |
+| `description` | no | A property mapped to the event description. |
+| `alarm` | no | A static RFC 5545 duration (e.g. `-PT9H`, `-P1D`) for a reminder before the event. |
+| `rrule` | no | A recurrence rule — see below. |
+
+### Filters (`where`)
+
+`where` uses the same filter language as lists. It is a **list of
+`property operator value` clauses, all ANDed** — there is no OR, NOT, or
+parentheses (use multiple sources for OR). Operators: `=` (glob), `!=`, `<`,
+`<=`, `>`, `>=`, `=~` (regex), `~` (fuzzy). Dates compare chronologically:
+
+```yaml
+where:
+  - "due_date >= 2026-01-01"   # typed date comparison (unquoted value)
+  - "due_date != "             # existence: "!=" with an empty value = "has a value"
+  - "status != done"
+```
+
+### Recurrence (`rrule`)
+
+`rrule` makes a source's events repeat. Its value is interpreted by **syntax**:
+
+- A value containing `=` is a **literal** RFC 5545 rule applied to every event:
+  `rrule: "FREQ=DAILY"`, `rrule: "FREQ=WEEKLY;COUNT=10"`. Validated at load.
+- A **bare property name** reads the rule from that property per entity:
+  `rrule: recurrence` (where `recurrence` holds an RRULE string). An invalid
+  value in the property is dropped for that event rather than breaking the feed.
+
+A common use is keeping open items visible: an **unbounded** `rrule: "FREQ=DAILY"`
+makes each event repeat from its date onward, so an overdue task stays on today's
+calendar until it leaves the feed (e.g. your `status != done` filter drops it
+once done). An unbounded daily rule paints an all-day block on every future day
+for each matching entity — use `;COUNT=N` or `;UNTIL=…` to bound it if that's too
+dense.
+
+### The events
+
+Each entity becomes one event — **all-day** when the `date:` source is a `date`
+property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
+`datetime` property:
+
+- **UID** is `<type>--<id>@rela` — stable across refreshes so a calendar client
+  tracks the same event over time.
+- **Deep link** — every event carries an absolute `URL` back to the entity in the
+  data-entry app (Apple Calendar shows it in the event's Get Info panel).
+- **JSON** — the same feed at `.json` returns `{ name, color, events: [...] }`
+  for non-calendar consumers (a menubar plugin, a notification script).
+
+### Serving and access
+
+Point your calendar app at
+`http://<host>:<port>/api/v1/_feeds/<name>.ics`. The endpoint applies the
+server's ACL: a feed only ever exposes entities the request's principal may read.
+
+On a plain localhost server there is no authentication — the feed is readable by
+anything that can reach the port, which is appropriate for a single-user local
+setup (bind to `127.0.0.1`). Exposing feeds on a network is a deployment concern;
+see the server security guide.
+
 ## Custom apps
 
 Custom **apps** let you extend the data-entry web app with your own HTML+JS
@@ -2352,13 +2562,20 @@ linking the served stylesheet:
 (`_rela.css` is a relative URL — it resolves against the app's own base,
 `/api/v1/_apps/<id>/`, same as your other sibling assets.)
 
-`_rela.css` provides two things:
+`_rela.css` provides three things:
 
 - **Theme tokens** — CSS custom properties for colors (`--text-color`,
   `--bg-color`, `--card-bg`, `--border-color`, `--accent-color`,
   `--error/success/warning/info-color`, the `--badge-*` set), surfaces, and
   borders. Use them in your own CSS (`color: var(--text-color)`) so the app
   matches the host palette.
+- **Typography** — `--font-family` (the host UI font) and a small size scale
+  (`--font-size-sm` / `--font-size-base` / `--font-size-lg` / `--font-size-xl`).
+  Linking `_rela.css` applies `--font-family` and `--font-size-base` on your
+  app's `<html>` automatically, so text matches the host instead of the
+  browser's default serif — a sandboxed app iframe is a separate document with
+  no inherited typography. Use `var(--font-size-lg)` etc. for headings; override
+  per-element whenever you like.
 - **Base controls** — three atomic classes: `.btn` / `.btn-primary` (buttons),
   `.input` (text inputs), `.card` (a bordered surface). These are deliberately
   minimal; build anything more structural (tables, selects, modals) yourself

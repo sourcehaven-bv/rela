@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -160,7 +161,7 @@ func TestV1Schema_AdvertisesOrderableFlag(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var schema struct {
-		Relations map[string]V1RelationType `json:"relations"`
+		Relations map[string]v1.RelationType `json:"relations"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &schema); err != nil {
 		t.Fatalf("decode: %v", err)

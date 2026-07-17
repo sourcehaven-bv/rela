@@ -15,8 +15,8 @@ type FmtCmd struct {
 }
 
 // Run dispatches `rela fmt [type]`.
-func (c *FmtCmd) Run(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
+func (c *FmtCmd) Run(ctx context.Context, svc *readServices) error {
+	st := svc.Store
 	f, ok := st.(store.Formatter)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support formatting.")
@@ -27,7 +27,7 @@ func (c *FmtCmd) Run(ctx context.Context, svc *cliServices) error {
 
 	q := store.EntityQuery{}
 	if c.Type != "" {
-		resolvedType, _, err := resolveEntityType(svc.Meta(), c.Type)
+		resolvedType, err := resolveEntityType(svc.Meta, c.Type)
 		if err != nil {
 			return err
 		}

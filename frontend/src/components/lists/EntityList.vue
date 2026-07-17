@@ -13,9 +13,11 @@ import { beginOptimisticRemove, rollbackOptimistic } from '@/queries/optimisticL
 import { toApiOperator, filterStateToApiParams } from '@/utils/filters'
 import { entityDetailHref } from '@/utils/entityRoute'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { renderMarkdown } from '@/utils/markdown'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { getCellValue, formatCellValue, isEnumPropertyDef, asArray } from '@/utils/format'
 import type { Entity, ListMeta, ListParams, ListResponse, FilterState } from '@/types'
+import { listHeaderMarkdown, listFooterMarkdown } from '@/types'
 import FilterBar from './FilterBar.vue'
 import Pagination from './Pagination.vue'
 import SearchBox from './SearchBox.vue'
@@ -248,6 +250,14 @@ const entityType = computed(() => {
   if (!listConfig.value) return undefined
   return schemaStore.getEntityType(listConfig.value.entity)
 })
+
+// Admin-authored info regions (markdown from data-entry.yaml, sanitized by
+// renderMarkdown). `header` is canonical; `description` (previously unused) is a
+// fallback for the top slot, used only when `header` is unset. No refResolver
+// here — the /_config endpoint carries no mentions map, so bare-ID code spans
+// stay inert; standard [text](/entity/ID) links work.
+const headerHtml = computed(() => renderMarkdown(listHeaderMarkdown(listConfig.value)))
+const footerHtml = computed(() => renderMarkdown(listFooterMarkdown(listConfig.value)))
 
 // Pre-configured filters from list config
 const configuredFilters = computed(() => {
@@ -515,10 +525,31 @@ function isCellInaccessible(entity: Entity, column: { property?: string }): bool
   return entity.inaccessible.some((f) => f.name === column.property)
 }
 
-function getFormattedCellValue(entity: Entity, column: { property?: string; relation?: string }): string {
-  // For relation columns, resolve IDs to titles using included entities
+// relationCellKey returns the wire key in entity.relations that holds a
+// relation column's target IDs. Outgoing columns read the relation type
+// directly; incoming columns read the relation's inverse key — the declared
+// inverse name if the metamodel has one, else the `<relation>_inverse`
+// fallback. This mirrors the backend's inverseRelationKey (see MECHANISM.md);
+// the two must stay in lockstep.
+function relationCellKey(relation: string, direction?: 'outgoing' | 'incoming'): string {
+  if (direction === 'incoming') {
+    return schemaStore.getInverseName(relation) ?? `${relation}_inverse`
+  }
+  return relation
+}
+
+function getFormattedCellValue(
+  entity: Entity,
+  column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' },
+): string {
+  // For relation columns, resolve IDs to titles using included entities.
+  // Outgoing edges are serialized under the relation type; incoming edges
+  // under the relation's INVERSE key (matching the backend serializer, see
+  // MECHANISM.md). The included map carries both target and source entities
+  // because the list is fetched with ?include=*.
   if (column.relation) {
-    const relationIds = entity.relations?.[column.relation] || []
+    const key = relationCellKey(column.relation, column.direction)
+    const relationIds = entity.relations?.[key] || []
     const titles = relationIds.map((id) => {
       const included = includedEntities.value[id]
       return included ? entityDisplayTitle(included) : id
@@ -527,7 +558,9 @@ function getFormattedCellValue(entity: Entity, column: { property?: string; rela
   }
 
   const value = getCellValue(entity, column)
-  return formatCellValue(value, column.property, entityType.value)
+  // Pass the user's effective display zone so datetime cells honor the
+  // Settings display-timezone preference, matching the form widget (RR-K3WEW2).
+  return formatCellValue(value, column.property, entityType.value, uiStore.effectiveTimezone)
 }
 
 function handleDelete(entity: Entity, event: Event) {
@@ -630,6 +663,9 @@ watch(searchQuery, () => {
         + New <kbd>N</kbd>
       </router-link>
     </header>
+
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="headerHtml" class="list-info list-info--top" v-html="headerHtml"/>
 
     <div v-if="configuredFilters.length" class="configured-filters">
       <span
@@ -892,6 +928,9 @@ watch(searchQuery, () => {
         @page-change="handlePageChange"
       />
     </div>
+
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="footerHtml" class="list-info list-info--bottom" v-html="footerHtml"/>
   </div>
 
   <div v-else class="error-state">
@@ -905,6 +944,48 @@ watch(searchQuery, () => {
   color: var(--color-text-muted, #888);
   font-style: italic;
   cursor: help;
+}
+
+/* Admin-authored info regions (header/footer markdown). Rendered HTML is
+   sanitized by renderMarkdown; these styles only govern typography/spacing. */
+.list-info {
+  color: var(--text-color);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.list-info--top {
+  /* Pulls up against .list-header's margin-bottom: 24px so the info sits close
+     to the title rather than a full gap below it. Keep in sync if that changes. */
+  margin-top: -12px;
+  margin-bottom: 20px;
+}
+
+.list-info--bottom {
+  margin-top: 24px;
+}
+
+.list-info :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.list-info :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.list-info :deep(p),
+.list-info :deep(ul),
+.list-info :deep(ol) {
+  margin: 0 0 8px;
+}
+
+.list-info :deep(a) {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.list-info :deep(a:hover) {
+  text-decoration: underline;
 }
 
 .entity-list {

@@ -65,6 +65,11 @@ func stripShebang(code string) string {
 // write). A read-only runtime has no mutation bindings (create/update/delete
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
+//
+// TODO(TKT-N0IKN9): Runtime is a god-object (119 methods). Decompose toward the
+// 40-method load line; ratchet this number down as bindings move out.
+//
+//plimsoll:max-methods=119
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.
@@ -663,6 +668,12 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 
 	// Top-level http.* module (always registered; no configuration needed).
 	r.registerHTTPModule()
+
+	// Top-level crypto.* module — generic hashing primitives so a Lua action
+	// can sign an outbound request to an HMAC-authenticated upstream. Always
+	// registered; no configuration needed. Free function (see crypto.go) to keep
+	// the Runtime method count flat.
+	registerCryptoModule(r)
 }
 
 // registerReadBindings installs read-only bindings on the rela table: entity
@@ -692,6 +703,13 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "sort_entities", r.L.NewFunction(r.luaSortEntities))
 	r.L.SetField(rela, "days_since", r.L.NewFunction(luaDaysSince))
 	r.L.SetField(rela, "today", lua.LString(time.Now().Format("2006-01-02")))
+	// rela.now_unix: the current time as unix seconds, stamped once at runtime
+	// construction (like rela.today above). The Lua sandbox excludes the `os`
+	// library, so a script has no os.time(); this is the sanctioned way to read
+	// the current time — needed, e.g., to date an HMAC-signed outbound request
+	// (see examples/idp-sync.lua). An action runtime is built per invocation, so
+	// the value is fresh each run.
+	r.L.SetField(rela, "now_unix", lua.LNumber(time.Now().Unix()))
 
 	// Date and RRULE utility functions
 	registerDateHelpers(r.L, rela)

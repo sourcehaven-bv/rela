@@ -50,6 +50,14 @@ const (
 	ValidationErrorInvalidType  ValidationErrorType = "invalid_type"
 	ValidationErrorUnknownType  ValidationErrorType = "unknown_type"
 	ValidationErrorIDPrefix     ValidationErrorType = "id_prefix"
+	// ValidationErrorUnique reports a duplicate value for a property
+	// declared `unique: true`. It is a HARD error (IsSoft returns false):
+	// a natural-key collision is a constraint violation the write path
+	// must reject with a 422, not a tolerable hand-edit state. Unlike the
+	// other types, this one is raised by the entitymanager write path
+	// (which can query other entities), not by the pure per-entity
+	// [Metamodel.ValidateEntity].
+	ValidationErrorUnique ValidationErrorType = "unique"
 )
 
 // ValidationError represents a structured validation error with field information.
@@ -240,6 +248,34 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 				Type:     ValidationErrorInvalidValue,
 				Property: propName,
 				Message:  fmt.Sprintf("Invalid date %q (expected format: %s)", s, format),
+			}
+		}
+
+	case PropertyTypeDatetime:
+		// A datetime value is an RFC3339 instant. yaml.v3 auto-decodes an
+		// unquoted timestamp scalar to time.Time, while machine-written /
+		// quoted values arrive as string — accept both (RR-NY7PRB). A bare
+		// date (no time-of-day) is accepted and means midnight; we do NOT
+		// reject it, because after parsing "2026-07-13" and
+		// "2026-07-13T00:00:00Z" are indistinguishable time.Time values
+		// (RR-MYC2B6).
+		switch v := val.(type) {
+		case time.Time:
+			// Already a valid instant.
+		case string:
+			if _, err := ParseDateValue(v, propDef); err != nil {
+				format := propDef.GetDateFormat()
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid datetime %q (expected format: %s)", v, format),
+				}
+			}
+		default:
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a datetime string or timestamp",
 			}
 		}
 

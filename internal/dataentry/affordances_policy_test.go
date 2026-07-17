@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -52,7 +53,7 @@ func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBod
 	return rec.Code, rec.Body.String()
 }
 
-func getAs(t *testing.T, app *App, user, id string) V1Entity {
+func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id, http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),
@@ -62,7 +63,7 @@ func getAs(t *testing.T, app *App, user, id string) V1Entity {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s: got %d, want 200; body=%s", id, rec.Code, rec.Body.String())
 	}
-	var e V1Entity
+	var e v1.Entity
 	if err := json.NewDecoder(rec.Body).Decode(&e); err != nil {
 		t.Fatalf("decode GET: %v", err)
 	}

@@ -93,6 +93,17 @@ func (l *LinearSearch) Search(text string, limit int) ([]string, error) {
 	return ids, nil
 }
 
+// MatchedFields reports which logical fields of e the query text matched.
+// LinearSearch's matcher IS [MatchTextFields] (plain case-insensitive
+// substring), so this is the ground-truth provenance the conformance suite
+// checks the other backends against.
+func (l *LinearSearch) MatchedFields(e *entity.Entity, text string) map[string]struct{} {
+	return MatchTextFields(e, text)
+}
+
+// compile-time check: LinearSearch reports match provenance.
+var _ FieldMatcher = (*LinearSearch)(nil)
+
 func (l *LinearSearch) Close() error {
 	return nil
 }

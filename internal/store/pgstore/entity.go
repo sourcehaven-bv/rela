@@ -333,6 +333,12 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 			Op: store.EventRelationDeleted, RelationType: r.Type, From: r.From, To: r.To,
 		})
 	}
+	// Record a tombstone for each deletion in the same tx, so the durable
+	// "what changed since cursor X" manifest can report removals that the live
+	// rows no longer reflect (FEAT-NJ9FEN).
+	if err := s.writeTombstonesForEvents(ctx, tx, evs); err != nil {
+		return nil, err
+	}
 	for _, ev := range evs {
 		s.notify(ctx, tx, ev)
 	}
@@ -397,6 +403,19 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	}
 	newType := renamed.Type
 
+	// Capture the relation triples that reference oldID BEFORE re-keying them.
+	// A rename changes a relation's primary key (from_id/to_id), so to an
+	// id-keyed sync client the OLD triple is removed and the NEW one is created.
+	// We tombstone the old triples below so the manifest reports the removal —
+	// otherwise the client keeps a ghost edge forever (FEAT-NJ9FEN).
+	oldTriples, err := scanRelations(ctx, tx,
+		`SELECT from_id, rel_type, to_id, properties, content, updated_at
+		 FROM relations WHERE from_id = $1 OR to_id = $1
+		 ORDER BY from_id, rel_type, to_id`, oldID)
+	if err != nil {
+		return nil, err
+	}
+
 	tag, err := tx.Exec(ctx,
 		`UPDATE relations SET from_id = $2, seq = nextval('rela_seq') WHERE from_id = $1`, oldID, newID)
 	if err != nil {
@@ -414,6 +433,19 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		`UPDATE attachments SET entity_id = $2, seq = nextval('rela_seq') WHERE entity_id = $1`,
 		oldID, newID); err != nil {
 		return nil, err
+	}
+
+	// Tombstone the removed identities (the old entity id and each old relation
+	// triple) in the same tx, so the durable manifest reports a rename as the
+	// removal of oldID that it is, from an id-keyed client's view. The re-keyed
+	// rows already carry the new ids with fresh seqs (the "create" half).
+	if err := s.writeEntityTombstone(ctx, tx, oldID, newType); err != nil {
+		return nil, err
+	}
+	for _, r := range oldTriples {
+		if err := s.writeRelationTombstone(ctx, tx, r.From, r.Type, r.To); err != nil {
+			return nil, err
+		}
 	}
 
 	// A rename presents to other processes as "the new entity changed" (they

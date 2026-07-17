@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -125,14 +126,25 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.fs = fs
 	app.paths = paths
 	app.store = svc.Store()
+	app.visibleReader = newVisibleReader(svc.Store())
+	app.reader = entityReader{store: svc.Store()}
 	app.entityManager = svc.EntityManager()
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
 	app.validator = svc.Validator()
+	app.analyze = analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
+	app.userState = userStateStore{kv: svc.State()}
+	// logo + palette stores over the same kv; fresh fixtures have nothing on
+	// disk so the loads can't error (nil-returns match production's clean-boot
+	// path). Callers that need a specific project palette resolved re-wire
+	// app.palette after this with newPaletteService(kv, cfgPalette).
+	app.logo, _ = newLogoStore(svc.State())
+	app.palette, _ = newPaletteService(svc.State(), nil)
+	app.settings = newSettingsService(svc.State())
 	app.acl = svc.ACL()
 	app.auditSink = svc.Audit()
 	// Wire a minimal documentService for tests that hit the documents
@@ -141,6 +153,37 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	if app.scriptEngine != nil {
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps)
 	}
+	app.affordances = affordanceService{
+		acl:                func() acl.ACL { return app.acl },
+		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
+		store:              svc.Store(),
+		meta:               func() *metamodel.Metamodel { return app.State().Meta },
+		getEntity:          app.reader.getEntity,
+		currentEdgesByPeer: app.currentEdgesByPeer,
+	}
+	app.serializer = entitySerializer{affordances: app.affordances}
+	// Rebuild the sync handler over the rebound store/manager. writeMu is App's
+	// own, so sync writes serialize with the other mutation handlers just as in
+	// production.
+	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	// commandHandler holds closures over App methods, which read the fields
+	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
+	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
+	app.commands = &commandHandler{
+		schema:      app.State,
+		services:    app.Services,
+		projectRoot: app.ProjectRoot,
+		executeView: app.executeView,
+	}
+}
+
+// rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.
+// Production resolves the sync capabilities once at construction (the store is
+// fixed for App's lifetime); a test that swaps app.store after construction to
+// inject a fake manifest/apply source must call this so the handler re-resolves
+// against the swapped store.
+func rebindSyncHandler(app *App) {
+	app.sync = newSyncHandler(app.store, app.entityManager, &app.writeMu)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
@@ -184,13 +227,13 @@ func reseedStore(dst, src store.Store) {
 	}
 }
 
-// newAppFromParts builds an App with a populated AppState snapshot for
+// newAppFromParts builds an App with a populated Schema snapshot for
 // tests that previously used the struct-literal pattern
 // `&App{Cfg: cfg, meta: meta, g: g}`. The App.state pointer must be
 // populated because handlers now read from it; a nil snapshot would
 // nil-deref inside a.State().
 //
-// Populates ALL AppState fields with safe defaults (UserDefaults,
+// Populates the co-derived Schema fields with safe defaults (UserDefaults,
 // Palette, UserPalette, OpenAPIGen) so handlers that touch the
 // less-common fields don't nil-deref in tests that didn't ask for them.
 func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
@@ -223,15 +266,17 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture) *App {
 	if meta != nil {
 		openAPIGen = openapi.New(meta, openapi.Config{Title: cfg.App.Name})
 	}
-	app.state.Store(&AppState{
-		Cfg:          cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: &UserDefaults{},
-		Palette:      ResolvePalette(cfg.Palette, nil),
-		UserPalette:  &PaletteConfig{},
-		OpenAPIGen:   openAPIGen,
+	// Re-resolve the palette against this fixture's project palette (rebindApp
+	// wired a nil-cfg default).
+	if app.palette != nil {
+		_ = app.palette.Reresolve(cfg.Palette)
+	}
+	app.schema.Publish(&Schema{
+		Cfg:         cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
+		OpenAPIGen:  openAPIGen,
 	})
 	return app
 }
@@ -310,18 +355,21 @@ func newHandlerTestApp(t *testing.T) *App {
 		t.Fatalf("NewRootedFS: %v", err)
 	}
 	app.kv = state.NewFSKV(kvRoot)
+	// Resolve the palette against this fixture's project palette (rebindApp
+	// wired a nil-cfg default). The user palette stays nil: the theme tests
+	// use its nil-ness as the "nothing saved yet" signal.
+	if app.palette != nil {
+		_ = app.palette.Reresolve(cfg.Palette)
+	}
 	// Populate the snapshot fields handlers deref unconditionally — the
 	// router walk test hits every route, including _openapi.json, which
-	// panics on a nil OpenAPIGen. UserPalette stays nil on purpose: the
-	// theme tests use its nil-ness as the "nothing saved yet" signal.
-	app.state.Store(&AppState{
-		Cfg:          cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: &UserDefaults{},
-		Palette:      ResolvePalette(cfg.Palette, nil),
-		OpenAPIGen:   openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
+	// panics on a nil OpenAPIGen.
+	app.schema.Publish(&Schema{
+		Cfg:         cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
+		OpenAPIGen:  openapi.New(meta, openapi.Config{Title: cfg.App.Name}),
 	})
 	return app
 }

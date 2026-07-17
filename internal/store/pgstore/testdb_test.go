@@ -176,6 +176,18 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 	return s, search.New(s, backend), s
 }
 
+// fieldVisibleSearchFactory builds the pgstore-native FieldVisibleSearcher for
+// the property-level conformance suite (TKT-GGQ0JT).
+func fieldVisibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher) {
+	t.Helper()
+	pool := newScopedPool(t)
+	backend := pgstore.NewSearchBackend(pool)
+	s, err := pgstore.New(pool, pgstore.WithObserver(backend))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	return s, search.New(s, backend), s
+}
+
 // fuzzFactory adapts the per-schema helper to storetest.FuzzFactory.
 //
 // The FuzzFactory signature takes no testing handle and runs inside f.Fuzz

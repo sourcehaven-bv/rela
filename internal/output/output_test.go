@@ -420,6 +420,9 @@ func TestWriteTraceJSON(t *testing.T) {
 	trace := &tracer.TraceResult{
 		ID:    "REQ-001",
 		Title: "Root",
+		// Properties is json:"-" plumbing for text rendering; it must NOT
+		// appear in the trace JSON schema (TKT-COZN2E).
+		Properties: map[string]interface{}{"secret": "should-not-serialize"},
 	}
 
 	err := w.WriteTrace(trace)
@@ -433,6 +436,12 @@ func TestWriteTraceJSON(t *testing.T) {
 	}
 	if result.ID != "REQ-001" {
 		t.Errorf("expected ID REQ-001, got %s", result.ID)
+	}
+	// Pin the raw-JSON contract: Properties (text-rendering plumbing) stays
+	// out of the trace JSON, so the schema is unchanged and property maps
+	// don't bloat the output.
+	if strings.Contains(buf.String(), "Properties") || strings.Contains(buf.String(), "should-not-serialize") {
+		t.Errorf("trace JSON must not contain Properties, got:\n%s", buf.String())
 	}
 }
 
@@ -1084,4 +1093,128 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 	if result2["min_outgoing"] != float64(1) {
 		t.Error("expected min_outgoing in output")
 	}
+}
+
+// fakeTitleResolver renders a fixed title, ignoring the entity, so the test
+// can distinguish "resolver was used" from "literal title property was read".
+type fakeTitleResolver struct{ title string }
+
+func (f fakeTitleResolver) DisplayTitle(_, _ string, _ map[string]interface{}) string {
+	return f.title
+}
+
+// idTitleResolver returns a per-ID title, so a test can prove resolution is
+// applied to each node (e.g. at every depth of a trace tree) rather than only
+// the root.
+type idTitleResolver map[string]string
+
+func (r idTitleResolver) DisplayTitle(id, _ string, _ map[string]interface{}) string {
+	return r[id]
+}
+
+// TestWriter_TitleResolver verifies the entity table uses the injected
+// TitleResolver when set (honoring display_property) and falls back to the
+// literal `title` property when nil. TKT-VHSHOB.
+func TestWriter_TitleResolver(t *testing.T) {
+	// An entity whose display name is NOT in its `title` property — the case
+	// a bare/template display_property covers. Title() would return "".
+	e := &entity.Entity{
+		ID:   "PERS-1",
+		Type: "persoon",
+		Properties: map[string]interface{}{
+			"achternaam": "Vloothuis",
+			"status":     "draft",
+		},
+	}
+
+	t.Run("resolver set → uses resolved title", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable)
+		w.Titles = fakeTitleResolver{title: "Jeroen Vloothuis"}
+		if err := w.WriteEntities([]*entity.Entity{e}); err != nil {
+			t.Fatalf("WriteEntities: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Jeroen Vloothuis") {
+			t.Errorf("expected resolved title in output, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("resolver nil → falls back to literal title property", func(t *testing.T) {
+		withTitle := &entity.Entity{
+			ID:   "TKT-1",
+			Type: "ticket",
+			Properties: map[string]interface{}{
+				"title":  "Literal Title",
+				"status": "draft",
+			},
+		}
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable) // Titles left nil
+		if err := w.WriteEntities([]*entity.Entity{withTitle}); err != nil {
+			t.Fatalf("WriteEntities: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Literal Title") {
+			t.Errorf("expected literal title fallback in output, got:\n%s", buf.String())
+		}
+	})
+}
+
+// TestWriteTrace_TitleResolver verifies trace-tree output resolves node titles
+// via the TitleResolver (honoring display_property) when set, and falls back to
+// the node's literal Title when nil. TKT-COZN2E.
+func TestWriteTrace_TitleResolver(t *testing.T) {
+	// A node whose display name comes from properties, not the literal Title
+	// (which is empty — as it is for a type with no `title` property).
+	trace := &tracer.TraceResult{
+		ID:         "PERS-1",
+		Type:       "persoon",
+		Title:      "",
+		Properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+	}
+
+	t.Run("resolver set → renders resolved display title", func(t *testing.T) {
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable)
+		w.Titles = fakeTitleResolver{title: "Jeroen Vloothuis"}
+		if err := w.WriteTrace(trace); err != nil {
+			t.Fatalf("WriteTrace: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Jeroen Vloothuis") {
+			t.Errorf("expected resolved title in trace output, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("resolver nil → falls back to literal node Title", func(t *testing.T) {
+		node := &tracer.TraceResult{ID: "TKT-1", Type: "ticket", Title: "Literal Trace Title"}
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable) // Titles nil
+		if err := w.WriteTrace(node); err != nil {
+			t.Fatalf("WriteTrace: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Literal Trace Title") {
+			t.Errorf("expected literal title fallback in trace output, got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("resolver applies to nested child nodes", func(t *testing.T) {
+		tree := &tracer.TraceResult{
+			ID: "ROOT-1", Type: "persoon",
+			Children: []*tracer.TraceResult{
+				{ID: "CHILD-1", Type: "persoon", Relation: "leads"},
+			},
+		}
+		buf := &bytes.Buffer{}
+		w := NewWithWriter(buf, FormatTable)
+		w.Titles = idTitleResolver{"ROOT-1": "Root Person", "CHILD-1": "Child Person"}
+		if err := w.WriteTrace(tree); err != nil {
+			t.Fatalf("WriteTrace: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Root Person") {
+			t.Errorf("root title not resolved, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Child Person") {
+			t.Errorf("child title not resolved (resolution must recurse), got:\n%s", out)
+		}
+	})
 }

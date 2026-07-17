@@ -76,7 +76,10 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderHelpContent generates HTML for entity help content.
-func (a *App) renderHelpContent(w http.ResponseWriter, entityDesc htmltemplate.HTML, props []PropertyHelp, outgoingRels, incomingRels []RelationHelp) {
+func (a *App) renderHelpContent(
+	w http.ResponseWriter, entityDesc htmltemplate.HTML, props []PropertyHelp,
+	outgoingRels, incomingRels []RelationHelp,
+) {
 	fmt.Fprint(w, `<div class="help-content">`)
 	if entityDesc != "" {
 		fmt.Fprintf(w, `<div class="entity-description">%s</div>`, entityDesc)

@@ -10,7 +10,7 @@ import (
 )
 
 // testPolicy is the fixture used across declarative tests. Mirrors the
-// example operators see in docs/security.md: three real roles + the
+// example operators see in docs/server-security.md: three real roles + the
 // built-in everyone role, with one role-relation gated by a delegate
 // permission.
 func testPolicy() *acl.Policy {

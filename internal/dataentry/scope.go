@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -149,25 +150,6 @@ func (d ScopeDescriptor) toQuery() url.Values {
 	return q
 }
 
-// V1PositionRef identifies a neighboring entity in a scope. Type is included
-// because a scope (notably a search scope) can span entity types, so the SPA
-// must build the target's detail route from *its* type, not the current
-// entity's. ID alone would break cross-type prev/next.
-type V1PositionRef struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-}
-
-// V1Position is the scope-navigator payload: the neighbors plus the counter
-// the SPA needs, with no entity bodies shipped. current is 1-based; prev/next
-// are nil at the ends of the set.
-type V1Position struct {
-	Prev    *V1PositionRef `json:"prev"`
-	Next    *V1PositionRef `json:"next"`
-	Current int            `json:"current"`
-	Total   int            `json:"total"`
-}
-
 // handleV1EntityPosition resolves an entity's position within a scope. It
 // reproduces the scope's ordered set via resolveScope (the list pipeline for
 // source=list, the search pipeline for source=search) then locates the id,
@@ -217,12 +199,12 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pos := V1Position{Current: idx + 1, Total: len(entities)}
+	pos := v1.Position{Current: idx + 1, Total: len(entities)}
 	if idx > 0 {
-		pos.Prev = &V1PositionRef{ID: entities[idx-1].ID, Type: entities[idx-1].Type}
+		pos.Prev = &v1.PositionRef{ID: entities[idx-1].ID, Type: entities[idx-1].Type}
 	}
 	if idx < len(entities)-1 {
-		pos.Next = &V1PositionRef{ID: entities[idx+1].ID, Type: entities[idx+1].Type}
+		pos.Next = &v1.PositionRef{ID: entities[idx+1].ID, Type: entities[idx+1].Type}
 	}
 
 	writeV1JSON(w, http.StatusOK, pos)

@@ -1,0 +1,292 @@
+/* Re-skin EasyMDE's hardcoded light chrome with rela theme tokens so the
+ * <rela-editor> follows the host theme (light/dark) instead of EasyMDE's
+ * built-in white. Ported from the SPA's MarkdownEditor.vue token overrides,
+ * de-scoped (the element renders in light DOM, so these target EasyMDE's
+ * generated classes directly). The tokens themselves come from _rela.css,
+ * which the app links; this only maps them onto EasyMDE's elements.
+ *
+ * Injected AFTER easymde.min.css so these win the cascade.
+ *
+ * DRIFT: this is a hand-ported copy of MarkdownEditor.vue's scoped EasyMDE
+ * overrides (de-scoped + plain CSS). Keep them in sync; the eventual shared
+ * core is tracked in TKT-D2JML7. */
+
+.EasyMDEContainer {
+  width: 100%;
+}
+
+.EasyMDEContainer .CodeMirror {
+  border: 1px solid var(--border-color);
+  border-radius: 0 0 6px 6px;
+  font-family: monospace;
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.EasyMDEContainer .CodeMirror-cursor {
+  border-left-color: var(--text-color);
+}
+
+.EasyMDEContainer .CodeMirror-selected {
+  background: var(--accent-color) !important;
+  opacity: 0.3;
+}
+
+.EasyMDEContainer .CodeMirror-focused {
+  border-color: var(--accent-color);
+}
+
+.editor-toolbar {
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--card-bg);
+}
+
+.editor-toolbar button {
+  color: var(--muted-text) !important;
+}
+
+.editor-toolbar button:hover {
+  background: var(--hover-bg);
+}
+
+.editor-toolbar button.active {
+  background: var(--border-color);
+}
+
+.editor-toolbar i.separator {
+  border-left-color: var(--border-color);
+  border-right-color: var(--border-color);
+}
+
+.editor-preview,
+.editor-preview-side {
+  padding: 16px;
+  background: var(--card-bg);
+  color: var(--text-color);
+}
+
+.editor-preview-side {
+  border: 1px solid var(--border-color);
+  border-left: none;
+}
+
+/* Live-preview markdown element styling. This sandboxed app-editor bundle
+   inlines its own CSS and does NOT load the SPA's styles/markdown-content.css,
+   so the `.editor-preview` rules there are mirrored here. Keep the two in
+   sync (same values, both re-skin EasyMDE's hardcoded light-theme defaults to
+   theme tokens). Tracked with the other editor DRIFT in TKT-D2JML7. */
+.EasyMDEContainer .editor-preview h1,
+.EasyMDEContainer .editor-preview h2,
+.EasyMDEContainer .editor-preview h3,
+.EasyMDEContainer .editor-preview h4,
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  margin: 24px 0 12px;
+  color: var(--text-color);
+  line-height: 1.3;
+  font-weight: 600;
+}
+.EasyMDEContainer .editor-preview > :first-child {
+  margin-top: 0;
+}
+.EasyMDEContainer .editor-preview h1 {
+  font-size: 26px;
+}
+.EasyMDEContainer .editor-preview h2 {
+  font-size: 21px;
+}
+.EasyMDEContainer .editor-preview h3 {
+  font-size: 17px;
+}
+.EasyMDEContainer .editor-preview h4 {
+  font-size: 15px;
+}
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  font-size: 14px;
+  color: var(--muted-text);
+}
+.EasyMDEContainer .editor-preview {
+  /* Mirrors --md-list-pad from markdown-content.css: couples list indent to
+     the task-list checkbox pull-back below. */
+  --md-list-pad: 26px;
+  overflow-wrap: anywhere;
+}
+.EasyMDEContainer .editor-preview p {
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview ul,
+.EasyMDEContainer .editor-preview ol {
+  margin: 0 0 14px;
+  padding-left: var(--md-list-pad);
+}
+.EasyMDEContainer .editor-preview ul {
+  list-style: disc outside;
+}
+.EasyMDEContainer .editor-preview ol {
+  list-style: decimal outside;
+}
+.EasyMDEContainer .editor-preview ul ul {
+  list-style-type: circle;
+}
+.EasyMDEContainer .editor-preview ul ul ul {
+  list-style-type: square;
+}
+.EasyMDEContainer .editor-preview li {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+.EasyMDEContainer .editor-preview li > ul,
+.EasyMDEContainer .editor-preview li > ol {
+  margin: 4px 0 0;
+}
+.EasyMDEContainer .editor-preview li::marker {
+  color: var(--muted-text);
+}
+.EasyMDEContainer .editor-preview li:has(> input[type='checkbox']:first-child),
+.EasyMDEContainer .editor-preview li:has(> p:first-child > input[type='checkbox']:first-child) {
+  list-style: none;
+  margin-left: calc(-1 * var(--md-list-pad) + 4px);
+}
+.EasyMDEContainer .editor-preview li > p:first-child:has(> input[type='checkbox']:first-child) {
+  margin-bottom: 0;
+  display: inline;
+}
+.EasyMDEContainer .editor-preview code {
+  background: var(--hover-bg);
+  color: var(--text-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.EasyMDEContainer .editor-preview pre {
+  background: var(--hover-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+.EasyMDEContainer .editor-preview blockquote {
+  margin: 0 0 14px;
+  padding: 8px 16px;
+  background: var(--hover-bg);
+  border-left: 4px solid var(--accent-color);
+  color: var(--muted-text);
+  border-radius: 0 4px 4px 0;
+}
+.EasyMDEContainer .editor-preview blockquote > :last-child {
+  margin-bottom: 0;
+}
+.EasyMDEContainer .editor-preview hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 28px 0;
+}
+.EasyMDEContainer .editor-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.EasyMDEContainer .editor-preview a {
+  color: var(--accent-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.EasyMDEContainer .editor-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+}
+.EasyMDEContainer .editor-preview th,
+.EasyMDEContainer .editor-preview td {
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+}
+.EasyMDEContainer .editor-preview th {
+  background: var(--hover-bg);
+  font-weight: 600;
+}
+
+.CodeMirror-gutters {
+  background: var(--hover-bg);
+  border-right-color: var(--border-color);
+}
+
+.CodeMirror-linenumber {
+  color: var(--muted-text);
+}
+
+.EasyMDEContainer.fullscreen {
+  z-index: 9999 !important;
+}
+
+/* Fullscreen mode: EasyMDE hardcodes #fff on the fixed-position toolbar and
+   editor (and #fff fade gradients at the toolbar edges, #ddd on the side
+   preview border). Re-skin them with tokens so fullscreen matches the host
+   theme like the inline editor does. */
+.editor-toolbar.fullscreen {
+  background: var(--card-bg);
+}
+.editor-toolbar.fullscreen::before {
+  background: linear-gradient(to right, var(--card-bg) 0, transparent 100%);
+}
+.editor-toolbar.fullscreen::after {
+  background: linear-gradient(to left, var(--card-bg) 0, transparent 100%);
+}
+.CodeMirror-fullscreen {
+  background: var(--input-bg);
+}
+.editor-preview-side {
+  border-color: var(--border-color);
+}
+
+/* Backtick entity-reference autocomplete popup (relaBacktick.ts). Anchored at
+   the trigger backtick; rendered in light DOM at document.body, so styled with
+   the same rela tokens. z-index above EasyMDE's fullscreen layer (9999). */
+.rela-bt-popup {
+  position: fixed;
+  z-index: 10000;
+  min-width: 220px;
+  max-width: 420px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--card-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 0.9rem;
+}
+.rela-bt-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+}
+.rela-bt-option.active {
+  background: var(--hover-bg);
+}
+.rela-bt-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rela-bt-sub {
+  flex: 0 0 auto;
+  color: var(--muted-text);
+  font-size: 0.8rem;
+}

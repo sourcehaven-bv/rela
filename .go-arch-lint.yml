@@ -24,6 +24,7 @@ components:
 
   # CLI layer
   cli:              { in: internal/cli }
+  clisync:          { in: internal/cli/sync }
 
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
@@ -44,20 +45,25 @@ components:
   attachment:       { in: internal/attachment }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
+  calfeed:          { in: internal/calfeed }
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
-  rename:           { in: internal/rename }
   renametype:       { in: internal/renametype }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
+  statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
   validator:        { in: internal/validator }
 
   # Core domain
   entity:           { in: internal/entity }
+  # API wire contract — the v1 data-entry API vocabulary. A pure leaf:
+  # depends only on entity (+ dataentryconfig), NEVER on dataentry. Both the
+  # data-entry server and a future native bridge consume it.
+  apiwire:          { in: internal/apiwire/** }
   lua:              { in: internal/lua }
   scheduler:        { in: internal/scheduler }
   script:           { in: internal/script }
@@ -65,6 +71,7 @@ components:
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
+  sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   pattern:          { in: internal/pattern }
@@ -83,9 +90,12 @@ components:
 
   # Infrastructure
   acl:              { in: internal/acl }
+  aclaudit:         { in: internal/aclaudit }
+  aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
+  jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
   cache:            { in: internal/cache }
@@ -136,6 +146,10 @@ vendors:
     in:
       - golang.org/x/net/html
       - golang.org/x/net/html/**
+  jwtlib:
+    in:
+      - github.com/golang-jwt/jwt/**
+      - github.com/MicahParks/keyfunc/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
@@ -158,6 +172,7 @@ deps:
       - appbuild
       - audit
       - dataentry
+      - jwtauth
       - principal
       - scheduler
       - script
@@ -186,6 +201,8 @@ deps:
   cli:
     mayDependOn:
       - acl
+      - aclaudit
+      - aclmap
       - ai
       - analysis
       - app
@@ -195,6 +212,7 @@ deps:
       - autocascade
       - automation
       - bleveindex
+      - clisync
       - config
       - dataentryconfig
       - entitymanager
@@ -210,7 +228,6 @@ deps:
       - principal
       - project
       - projectsetup
-      - rename
       - renametype
       - scheduler
       - schema
@@ -229,13 +246,34 @@ deps:
       - huh
       - tablewriter
 
+  clisync:
+    mayDependOn:
+      - canonical
+      - entity
+      - entitymanager
+      - storage
+      - store
+
   # Web / UI layer
+  # apiwire is a leaf: it may use the domain types and the data-entry config
+  # types, but MUST NOT depend on dataentry (the contract can't depend on the
+  # server that serializes to it). No `dataentry` here is the whole point —
+  # arch-lint fails if anyone adds that import.
+  apiwire:
+    # entity/errors are commonComponents (importable by all), so only the
+    # data-entry config types need listing. Critically: NO `dataentry` — the
+    # contract must not depend on the server that serializes to it.
+    mayDependOn:
+      - dataentryconfig
   dataentry:
     mayDependOn:
       - acl
       - affordances
+      - apiwire
       - attachment
       - audit
+      - calfeed
+      - canonical
       - config
       - conflict
       - dataentryconfig
@@ -255,6 +293,7 @@ deps:
       - state
       - storage
       - store
+      - sync
       - templating
       - tracer
       - validator
@@ -262,11 +301,15 @@ deps:
       - goldmark
       - gogit
       - nethtml
+      - rrulego
       - singleflight
   dataentryconfig:
     mayDependOn:
+      - filter
       - git
       - metamodel
+    canUse:
+      - rrulego
   desktop:
     canUse:
       - wails
@@ -289,7 +332,6 @@ deps:
       - principal
       - lua
       - metamodel
-      - rename
       - schema
       - script
       - search
@@ -334,6 +376,7 @@ deps:
       - script
       - search
       - state
+      - statemachine
       - storage
       - store
       - templating
@@ -391,6 +434,15 @@ deps:
       - entity
       - principal
       - store
+  aclaudit:
+    mayDependOn:
+      - acl
+  aclmap:
+    mayDependOn:
+      - acl
+      - entity
+      - principal
+      - store
   affordances:
     mayDependOn:
       - acl
@@ -401,6 +453,11 @@ deps:
   audit:
     mayDependOn:
       - principal
+  jwtauth:
+    # Leaf: verifies signed JWTs against a JWKS. No internal deps; only the JWT
+    # vendor libs. The dataentry resolver consumes it via a local interface.
+    canUse:
+      - jwtlib
   renametype:
     mayDependOn:
       - metamodel
@@ -427,7 +484,7 @@ deps:
       - automation
       - metamodel
       - principal
-      - rename
+      - statemachine
       - store
       - templating
   importer:
@@ -436,9 +493,6 @@ deps:
       - storage
       - store
       - storeutil
-  rename:
-    mayDependOn:
-      - store
   schema:
     mayDependOn:
       - dataentryconfig
@@ -457,6 +511,11 @@ deps:
     mayDependOn: []
     canUse:
       - gopherlua
+  statemachine:
+    mayDependOn:
+      - entity
+      - metamodel
+      - predicate
   tracer:
     mayDependOn:
       - store
@@ -569,10 +628,12 @@ deps:
       - store
   pgstore:
     mayDependOn:
+      - canonical
       - graphquerynaive
       - search
       - store
       - storeutil
+      - sync
     canUse:
       - pgx
   storeutil:

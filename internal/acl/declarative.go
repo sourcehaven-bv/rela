@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -32,13 +33,28 @@ import (
 //     [ForPrincipal] check; the deny surfaces as RuleKind="role-grant"
 //     with a Reason that names ErrUnstampedPrincipal.
 type Declarative struct {
-	policy       *Policy
-	graph        Graph              // required: NewDeclarative rejects nil
-	graphQueryer store.GraphQueryer // required: needed by Request.PermitsRead / PermitsReadMany
+	policy          *Policy
+	graph           Graph              // required: NewDeclarative rejects nil
+	graphQueryer    store.GraphQueryer // required: needed by Request.PermitsRead / PermitsReadMany
+	principalLookup PrincipalLookup    // optional: required only when principal_property lookup is enabled
+}
+
+// DeclarativeOption configures optional [Declarative] collaborators.
+type DeclarativeOption func(*Declarative)
+
+// WithPrincipalLookup supplies the [PrincipalLookup] used to resolve the
+// raw principal to a user entity ID when the policy sets both
+// `user_entity_type` and `principal_property`. Wiring (appbuild) passes
+// [NewStorePrincipalLookup] over the store. When the policy enables the
+// lookup but no PrincipalLookup was supplied, [NewDeclarative] fails — a
+// silent no-op would degrade every authenticated user to the raw
+// principal without any signal (constructors-reject-nil rule).
+func WithPrincipalLookup(l PrincipalLookup) DeclarativeOption {
+	return func(d *Declarative) { d.principalLookup = l }
 }
 
 // NewDeclarative wraps a [Policy] + [Graph] + [store.GraphQueryer] as
-// an [ACL]. All three must be non-nil:
+// an [ACL]. The first three must be non-nil:
 //
 //   - Policy is the static role / assignment definitions.
 //   - Graph supplies the read-side access the resolver needs for
@@ -47,12 +63,16 @@ type Declarative struct {
 //     [Request.PermitsRead] / [Request.PermitsReadMany] for per-entity
 //     read gating.
 //
+// Optional collaborators are supplied via [DeclarativeOption]. When the
+// policy enables `principal_property` lookup, a [PrincipalLookup] MUST be
+// supplied via [WithPrincipalLookup] or construction fails.
+//
 // Tests that don't exercise group expansion can pass [NullGraph];
 // tests that don't exercise read gating can pass [NullGraphQueryer]
 // (returns false for every id probe). Production wiring (appbuild)
 // passes the store as both Graph (via [NewStoreGraph]) and as the
-// GraphQueryer.
-func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer) (*Declarative, error) {
+// GraphQueryer, and supplies [WithPrincipalLookup].
+func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer, opts ...DeclarativeOption) (*Declarative, error) {
 	if p == nil {
 		return nil, errors.New("acl: NewDeclarative: policy must be non-nil")
 	}
@@ -62,7 +82,71 @@ func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer) (*Declarative, er
 	if gq == nil {
 		return nil, errors.New("acl: NewDeclarative: graphQueryer must be non-nil")
 	}
-	return &Declarative{policy: p, graph: g, graphQueryer: gq}, nil
+	d := &Declarative{policy: p, graph: g, graphQueryer: gq}
+	for _, opt := range opts {
+		opt(d)
+	}
+	if p.principalPropertyLookupEnabled() && d.principalLookup == nil {
+		return nil, errors.New("acl: NewDeclarative: policy enables principal_property lookup " +
+			"but no PrincipalLookup was supplied (use WithPrincipalLookup)")
+	}
+	return d, nil
+}
+
+// ResolvePrincipal maps a raw principal identifier (e.g. the value of the
+// `X-Forwarded-User` header) to a user entity ID via the policy's
+// `principal_property` lookup. It returns:
+//
+//   - ("", nil)  when the lookup is disabled, rawUser is blank, or no
+//     entity matches — the caller keeps the raw principal.
+//   - (id, nil)  on exactly one match — the caller substitutes id.
+//   - ("", err)  when the lookup errored OR more than one entity matched
+//     (ambiguous natural key). The caller keeps the raw principal and
+//     logs; ambiguity is a data-integrity failure the resolver refuses
+//     to guess through.
+//
+// Substitution is performed by the wiring layer (the data-entry
+// attachACLRequest middleware) so the resolved ID reaches both the ACL
+// walk and the audit log; the resolver itself never mutates ctx.
+//
+// **Scope limitation — data-entry only (deliberate).** This method is
+// wired into exactly one caller: the `/api/` data-entry middleware. The
+// CLI, MCP, scheduler, and desktop entry points stamp their principal via
+// [principal.With] but do NOT call ResolvePrincipal, so a write over those
+// transports authorizes against the RAW principal, never the resolved
+// entity ID. Consequence: an `assignments`/`member-of`/`role_relations`
+// grant keyed on the resolved entity ID (e.g. `PERS-JV`) applies to
+// data-entry writes but not to the same human's CLI/MCP writes — those
+// fall back to whatever the raw identifier is assigned (typically
+// `everyone` only). This is fail-CLOSED (an unresolved principal loses
+// grants, never gains them — see the multi-match/no-match handling below),
+// and it matches the intended deployment: only the reverse-proxy
+// (`X-Forwarded-User`) path carries an identity worth resolving. If a
+// future entry point needs the same resolution, wire this in there too —
+// don't assume one `acl.yaml` means the same thing on every transport.
+func (d *Declarative) ResolvePrincipal(ctx context.Context, rawUser string) (string, error) {
+	if !d.policy.principalPropertyLookupEnabled() || strings.TrimSpace(rawUser) == "" {
+		return "", nil
+	}
+	if d.principalLookup == nil {
+		// Defense in depth: NewDeclarative rejects this combination, but a
+		// future direct construction path must not silently over-resolve.
+		return "", errors.New("acl: ResolvePrincipal: lookup enabled but no PrincipalLookup configured")
+	}
+	ids, err := d.principalLookup.LookupEntityByProperty(
+		ctx, d.policy.UserEntityType, d.policy.PrincipalProperty, rawUser)
+	if err != nil {
+		return "", err
+	}
+	switch len(ids) {
+	case 0:
+		return "", nil
+	case 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("acl: principal %q matches %d %s entities on %q (ambiguous natural key)",
+			rawUser, len(ids), d.policy.UserEntityType, d.policy.PrincipalProperty)
+	}
 }
 
 // Policy returns the policy this Declarative was constructed with.

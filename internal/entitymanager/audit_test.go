@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -24,11 +25,12 @@ func newManagerWithAudit(
 ) *entitymanager.Manager {
 	t.Helper()
 	deps := entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     sink,
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       sink,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)

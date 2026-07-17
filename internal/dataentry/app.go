@@ -2,21 +2,19 @@ package dataentry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -38,35 +36,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// AppState bundles the reloadable fields of App into an immutable snapshot.
-//
-// During this PR, App still holds the same fields as plain struct fields
-// (Cfg, meta, g, styleMap, styledTypes, userDefaults, palette, userPalette,
-// openAPIGen) and the AppState is published in parallel via atomic.Pointer.
-// Handlers will be migrated to read from the snapshot in a subsequent PR.
-//
-// The fields here mirror the workspace.workspaceState pattern: callers
-// Load() once and work against a coherent snapshot, instead of holding a
-// read lock around the entire request.
-type AppState struct {
-	Cfg          *Config
-	Meta         *metamodel.Metamodel
-	StyleMap     map[string]map[string]string
-	StyledTypes  map[string]bool
-	UserDefaults *UserDefaults
-	Palette      *ResolvedPalette
-	UserPalette  *PaletteConfig
-	OpenAPIGen   *openapi.Generator
-
-	// User-uploaded sidebar logo. Empty UserLogoExt means "no logo
-	// configured"; UserLogoBytes/UserLogoHash are populated together.
-	// Bytes live in-memory (≤256 KiB) so GET /_theme/logo doesn't hit
-	// disk on every request.
-	UserLogoBytes []byte
-	UserLogoExt   string
-	UserLogoHash  string
-}
-
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = dataentryconfig.ConfigFile
 
@@ -83,21 +52,33 @@ const userPaletteFile = "palette.yaml"
 //
 // # Concurrency model
 //
-// All reloadable state (config, metamodel, graph, style map, palette,
-// user defaults, OpenAPI generator) lives in an immutable AppState struct
-// held via atomic.Pointer. Handlers call a.State() once at entry and work
-// against a coherent snapshot for the duration of the request — no lock
-// acquisition, no risk of observing a half-reloaded world.
+// The co-derived reload core (config, metamodel, style map, OpenAPI
+// generator) lives in an immutable [Schema] published via [schemaProvider]'s
+// atomic.Pointer. Handlers call a.State() once at entry and work against a
+// coherent snapshot for the duration of the request — no lock acquisition, no
+// risk of observing a half-reloaded world. Independently-owned reloadable
+// state (logo, palette, user defaults) lives in its own self-synchronized
+// service, not the snapshot.
 //
-// Reloads (triggered by the file watcher or by Reload) build a new
-// AppState and publish it atomically via a.state.Store. The previous
-// state is garbage-collected once no reader holds it.
+// Reloads (triggered by the file watcher or by Reload) derive a new Schema
+// and publish it atomically via a.schema.Reload. The previous snapshot is
+// garbage-collected once no reader holds it.
 //
 // Mutations (CreateEntity, UpdateEntity, DeleteEntity, CreateRelation,
 // UpdateRelation, DeleteRelation, SetProperty, action scripts) serialize
 // via writeMu. writeMu excludes concurrent mutations but does NOT block
-// readers — readers go through state.Load(). The workspace's internal
+// readers — readers go through a.State(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
+//
+// TODO(TKT-R68TV8): App is a god-object. Decompose toward the
+// 40-method load line — extract the API/serialization/relation services into
+// their own types. Ratchet this number DOWN as methods move out; never up
+// EXCEPT for a new required route handler (App owns one method per registered
+// HTTP route by the router's design). The sync route cluster (16 methods) moved
+// to syncHandler (170 → 154); the command cluster (11 methods) moved to
+// commandHandler (154 → 143).
+//
+//plimsoll:max-methods=143
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -116,12 +97,64 @@ type App struct {
 	// the regular searcher on fs/memory builds, pgstore-native on the
 	// postgres build.
 	visibleSearcher search.VisibleSearcher
-	tracer          tracer.Tracer
-	validator       validator.Validator
-	templater       templating.Templater
-	cfgLoader       config.Loader
-	kv              state.KV
-	acl             acl.ACL
+	// visibleReader is the ACL-bounded entity-read seam (TKT-N26KLB): the
+	// entity-read analog of visibleSearcher. Read handlers gate single-GET
+	// and include-filtering through it so the read gate is applied
+	// structurally rather than by per-call-site convention. Wraps the same
+	// `store` handle; the gate is resolved per-request from the context.
+	visibleReader visibleReader
+	// reader is the ungated entity/relation read seam over the store. Extracted
+	// from App (TKT-N26KLB); a single-dep leaf shared by read/write/affordance
+	// paths. ACL scoping lives in visibleReader, not here.
+	reader    entityReader
+	tracer    tracer.Tracer
+	validator validator.Validator
+	// analyze runs the read-only graph-analysis checks. Extracted from App
+	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
+	// the metamodel snapshot per call.
+	analyze analyzeService
+	// affordances computes the _actions/field/relation affordance maps and runs
+	// write-time affordance validation. Extracted from App (TKT-N26KLB M5.2);
+	// shares the same acl.ACL as the write path (contract-test invariant).
+	affordances affordanceService
+	// serializer renders an entity into its v1.Entity wire shape. Extracted from
+	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
+	// loaded outgoing relations, the serializer does no loading.
+	serializer entitySerializer
+	// userState persists per-user UI state (UI state, defaults, palette)
+	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
+	userState userStateStore
+	// logo owns the user-uploaded sidebar logo — persistence AND the served
+	// in-memory cache — self-synchronized. Extracted from the schema snapshot so the
+	// logo no longer rides the App-wide snapshot + writeMu.
+	logo *logoStore
+	// palette owns the user palette override and the resolved palette (derived
+	// from Cfg.Palette + the override). Self-synchronized; extracted from
+	// Schema. The reload/save paths hand it the current Cfg.Palette so it can
+	// recompute — see paletteService.Reresolve.
+	palette *paletteService
+	// settings owns the per-user default values (create-form/relation defaults).
+	// Self-synchronized; extracted from the schema snapshot.
+	settings *settingsService
+	// sync owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
+	// surfaces plus a pointer to writeMu so its writes serialize with the other
+	// mutation handlers.
+	sync *syncHandler
+	// commands owns the user-configured command surface (SSE shell-exec,
+	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
+	// holds narrow closures over the schema snapshot, Services bundle, project
+	// root, and the view executor.
+	commands  *commandHandler
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
+
+	// attachmentRunner drives external scan/transform commands for uploads.
+	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
+	// the cmd: harness). See internal/attachment.PolicyProcessor.
+	attachmentRunner attachment.CommandRunner
 
 	// documents renders and caches documents. Created once in NewApp so
 	// singleflight deduplication is stable across requests.
@@ -133,10 +166,11 @@ type App struct {
 	// whole point of having a cache in a long-lived server.
 	scriptEngine *script.Engine
 
-	// state holds the current reloadable snapshot. Readers: a.State().
-	// Writers: onReload rebuilds and publishes a new state after file
-	// changes. Initial state is published in NewApp.
-	state atomic.Pointer[AppState]
+	// schema publishes the current reloadable co-derived core (config,
+	// metamodel, style map, OpenAPI generator). Readers: a.State(). Writers:
+	// the watcher's reload path (rebuildState → schema.Reload). Initial
+	// snapshot is published in NewApp.
+	schema schemaProvider
 
 	// writeMu serializes mutation handlers (CreateEntity, UpdateEntity,
 	// etc.) against each other. Readers never take it.
@@ -188,6 +222,12 @@ type App struct {
 	// interface.
 	fieldResolver FieldVerdictResolver
 
+	// webhook holds the inbound-IdP webhook receiver (verifier + target action +
+	// dedup). nil until SetWebhookReceiver is called, in which case the
+	// /webhooks/idp route is not mounted. Optional wiring, like security and
+	// principalResolver above.
+	webhook *webhookReceiver
+
 	// auditSink records short-circuit rejections (affordance gates)
 	// that never reach the entitymanager. ACL denials already get a
 	// `denied-write` row from the manager; affordance denials emit
@@ -215,11 +255,11 @@ func (a *App) StopWatching() {
 	}
 }
 
-// State returns the current reloadable snapshot. Handlers should call
+// State returns the current reloadable [Schema] snapshot. Handlers should call
 // State() once at entry and use the returned snapshot consistently
 // throughout, instead of making multiple calls that could see different
 // snapshots after a concurrent reload.
-func (a *App) State() *AppState { return a.state.Load() }
+func (a *App) State() *Schema { return a.schema.Current() }
 
 // Cfg returns the current data-entry config (convenience accessor).
 // Equivalent to a.State().Cfg.
@@ -228,7 +268,7 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 
-// luaWriteDeps builds a lua.WriteDeps bundle using the current AppState
+// luaWriteDeps builds a lua.WriteDeps bundle using the current Schema
 // metamodel. Called per action-script invocation so that metamodel reloads
 // propagate to scripts without requiring app reconstruction. All other
 // fields are immutable for the App's lifetime.
@@ -243,23 +283,6 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 		},
 		EntityManager: a.entityManager,
 	}
-}
-
-// mutateState atomically updates the published AppState. It takes
-// writeMu, builds a shallow copy of the current snapshot, runs the
-// caller's mutator on the copy, and publishes the copy via state.Store.
-//
-// This is the canonical way for mutation handlers to change reloadable
-// fields like UserDefaults or UserPalette. Reaching through a.State()
-// to assign field values directly is a bug — it scribbles on the shared
-// snapshot pointer that lock-free readers also hold.
-func (a *App) mutateState(fn func(*AppState)) {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-	cur := a.state.Load()
-	next := *cur // shallow copy of the snapshot
-	fn(&next)
-	a.state.Store(&next)
 }
 
 // SetSecurityConfig configures the HTTP security middlewares applied by
@@ -306,6 +329,8 @@ func (a *App) SetPrincipalHeader(name string) {
 // relation edits) is feature-detected on `st` inside
 // [App.StartWatching] via the [storeWatcher] interface; callers do
 // not wire it.
+//
+//nolint:gocognit,funlen // composition root: validates and wires many optional collaborators, each guarded independently; the branches are wiring steps, not shared logic to extract.
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
@@ -390,6 +415,13 @@ func NewApp(
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, validationErr)
 	}
 
+	// Non-fatal configuration warnings (e.g. a relation filter control whose
+	// incoming direction targets a type the relation never points to). Logged,
+	// not fatal — the app still serves, the filter just returns no rows.
+	for _, w := range CollectConfigWarnings(&cfg, meta) {
+		slog.Warn("data-entry config warning", "detail", w)
+	}
+
 	// Verify action scripts exist on disk (catches typos at startup).
 	// Skip set-only actions which have no script.
 	for id, action := range cfg.Actions {
@@ -429,11 +461,15 @@ func NewApp(
 		entityManager:   em,
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,
+		visibleReader:   newVisibleReader(st),
+		reader:          entityReader{store: st},
 		tracer:          trc,
 		validator:       val,
+		analyze:         analyzeService{store: st, tracer: trc, validator: val},
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,
+		userState:       userStateStore{kv: kv},
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		scriptEngine:    scriptEngine,
@@ -445,40 +481,68 @@ func NewApp(
 	// Constructed after app because luaWriteDeps is a method on App.
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps)
 
-	userDefaults := app.loadUserDefaults()
-	userPalette, paletteErr := app.loadUserPalette()
+	// affordanceService shares the App's acl/fieldResolver/store and takes the
+	// metamodel per-request via app.State(). The two relation-graph reads are
+	// App methods, so it's wired after the struct literal. It MUST share the
+	// same acl instance as the write path (contract-test invariant).
+	app.affordances = affordanceService{
+		acl:                func() acl.ACL { return app.acl },
+		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
+		store:              st,
+		meta:               func() *metamodel.Metamodel { return app.State().Meta },
+		getEntity:          app.reader.getEntity,
+		currentEdgesByPeer: app.currentEdgesByPeer,
+	}
+
+	app.serializer = entitySerializer{affordances: app.affordances}
+
+	app.settings = newSettingsService(kv)
+
+	// palette owns the user override + resolved palette. Surface a broken
+	// palette rather than silently falling back to defaults (which the next
+	// save would then persist, destroying the user's data).
+	palette, paletteErr := newPaletteService(kv, cfg.Palette)
 	if paletteErr != nil {
-		// Surface the error so users notice their palette is broken
-		// rather than silently falling back to defaults (which would
-		// then be persisted on the next save, destroying their data).
 		return nil, fmt.Errorf("load user palette: %w", paletteErr)
 	}
+	app.palette = palette
 
-	logoBytes, logoExt, logoErr := app.loadUserLogo()
+	// logo owns its own persistence + served cache. Same read-error policy as
+	// palette: surface a corrupt .rela/theme/ rather than silently overwriting
+	// it on the next save.
+	logo, logoErr := newLogoStore(kv)
 	if logoErr != nil {
-		// Same policy as palette: surface read errors so a corrupt
-		// .rela/theme/ doesn't get silently overwritten on next save.
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
-	var logoHash string
-	if logoExt != "" {
-		logoHash = hashLogoBytes(logoBytes)
+	app.logo = logo
+
+	// syncHandler owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). It shares App's store (reads), entityManager (deletes), and
+	// — crucially — a POINTER to App's writeMu so sync pushes/deletes serialize
+	// against every other data-entry mutation. The manifest/applier capabilities
+	// are resolved once from the concrete store/manager (nil on fs/memory builds,
+	// where the sync endpoints degrade to 501).
+	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+
+	// commandHandler owns the user-configured command surface. Its
+	// collaborators are narrow closures over App: the schema snapshot (command/
+	// list/view config), the Services read bundle, the project root (exec cwd +
+	// env), and the view executor for view-context commands.
+	app.commands = &commandHandler{
+		schema:      app.State,
+		services:    app.Services,
+		projectRoot: app.ProjectRoot,
+		executeView: app.executeView,
 	}
 
-	// Build and publish the initial AppState snapshot. All reloadable
+	// Build and publish the initial Schema snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep
 	// in sync.
-	app.state.Store(&AppState{
-		Cfg:           &cfg,
-		Meta:          meta,
-		StyleMap:      styleMap,
-		StyledTypes:   styledTypes,
-		UserDefaults:  userDefaults,
-		Palette:       ResolvePalette(cfg.Palette, userPalette),
-		UserPalette:   userPalette,
-		UserLogoBytes: logoBytes,
-		UserLogoExt:   logoExt,
-		UserLogoHash:  logoHash,
+	app.schema.Publish(&Schema{
+		Cfg:         &cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
 		OpenAPIGen: openapi.New(meta, openapi.Config{
 			Title:       cfg.App.Name + " API",
 			Description: cfg.App.Description,
@@ -490,6 +554,27 @@ func NewApp(
 	if cfg.Git != nil && cfg.Git.Enabled && git.IsRepo(paths.Root) {
 		app.gitOps = git.NewOps(paths.Root, *cfg.Git)
 		slog.Info("git sync enabled", "mode", cfg.Git.Mode)
+	}
+
+	// Wire the external-command runner for attachment scan/transform. It is
+	// always available; the PolicyProcessor only invokes it when a property's
+	// scan/transform config references a command. A nil runner (constructor
+	// failure) leaves uploads with native MIME validation only.
+	if runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes); rerr == nil {
+		app.attachmentRunner = runner
+		app.probeAttachmentCommands(meta, runner)
+	} else {
+		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
+	}
+
+	// Nudge the operator to make a conscious virus-scan choice: if the
+	// metamodel has file properties with no scan command configured (and no
+	// explicit `scan: off`), warn once. Configuring a scan_cmd or setting
+	// `scan: off` silences this. The warning never blocks startup or uploads.
+	if metamodel.NewAttachmentPolicy(meta).HasUnconfiguredScan() {
+		slog.Warn("attachments: no virus scanner configured for file properties; "+
+			"set attachments.scan_cmd to enable scanning, or `scan: off` on the property to silence this",
+			"docs", "docs/attachment-security.md")
 	}
 
 	return app, nil
@@ -538,7 +623,7 @@ func (a *App) enrichNavEntry(ctx context.Context, nav NavigationEntry) NavItem {
 // navElements returns the navigation structure with groups and items resolved.
 // The activeList parameter is used to auto-expand the group containing the active item.
 func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
-	uiState := a.loadUIState(ctx)
+	uiState := a.userState.loadUIState(ctx)
 	cfgNav := a.State().Cfg.Navigation
 	elements := make([]NavElement, 0, len(cfgNav))
 	for _, nav := range cfgNav {
@@ -567,109 +652,7 @@ func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
 	return elements
 }
 
-// loadUIState reads .rela/ui-state.json and returns the persisted state.
-// Returns an empty UIState if the file doesn't exist or can't be parsed.
-func (a *App) loadUIState(ctx context.Context) UIState {
-	st := UIState{CollapsedGroups: make(map[string]bool)}
-	if a.kv == nil {
-		return st
-	}
-	data, err := a.kv.Get(ctx, uiStateFile)
-	if err != nil {
-		return st
-	}
-	if err := json.Unmarshal(data, &st); err != nil {
-		return UIState{CollapsedGroups: make(map[string]bool)}
-	}
-	if st.CollapsedGroups == nil {
-		st.CollapsedGroups = make(map[string]bool)
-	}
-	return st
-}
-
-// saveUIState writes the UI state to .rela/ui-state.json.
-func (a *App) saveUIState(st UIState) error {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return err
-	}
-	return a.kv.Put(context.Background(), uiStateFile, data)
-}
-
-// loadUserDefaults reads .rela/user-defaults.yaml and returns the parsed defaults.
-// Returns nil if the file doesn't exist or can't be parsed.
-func (a *App) loadUserDefaults() *UserDefaults {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := a.kv.Get(context.Background(), userDefaultsFile)
-	if err != nil {
-		return nil
-	}
-	var ud UserDefaults
-	if err := yaml.Unmarshal(data, &ud); err != nil {
-		return nil
-	}
-	return &ud
-}
-
-// saveUserDefaults writes the user defaults to .rela/user-defaults.yaml.
-func (a *App) saveUserDefaults(ctx context.Context, ud *UserDefaults) error {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := yaml.Marshal(ud)
-	if err != nil {
-		return err
-	}
-	return a.kv.Put(ctx, userDefaultsFile, data)
-}
-
 // coverage-ignore: requires running workspace, tested via e2e
-
-// loadUserPalette reads .rela/palette.yaml and returns the parsed
-// palette. Returns (nil, nil) when the file does not exist (clean
-// "no user palette" state — matches how ResolvePalette consumes a
-// nil user palette pointer; a sentinel error or three-return shape
-// would be more confusing for the only two callers). Returns a
-// non-nil error if the file exists but cannot be read or parsed —
-// callers MUST surface this instead of silently falling back to
-// defaults, otherwise a subsequent save would silently overwrite
-// the user's palette with framework defaults (RR-OA4A).
-//
-//nolint:nilnil // see comment above
-func (a *App) loadUserPalette() (*PaletteConfig, error) {
-	if a.kv == nil {
-		return nil, nil
-	}
-	data, err := a.kv.Get(context.Background(), userPaletteFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", userPaletteFile, err)
-	}
-	var p PaletteConfig
-	if err := yaml.Unmarshal(data, &p); err != nil {
-		return nil, fmt.Errorf("parse %s: %w (legacy `dark: auto` is no longer supported — remove the `dark` line or set it to `false` or an explicit object)", userPaletteFile, err)
-	}
-	return &p, nil
-}
-
-// saveUserPalette writes the user palette to .rela/palette.yaml.
-func (a *App) saveUserPalette(ctx context.Context, p *PaletteConfig) error {
-	if a.kv == nil {
-		return nil
-	}
-	data, err := yaml.Marshal(p)
-	if err != nil {
-		return err
-	}
-	return a.kv.Put(ctx, userPaletteFile, data)
-}
 
 // firstNavTarget returns the first navigable item from the navigation config,
 // walking into groups as needed.
@@ -764,7 +747,7 @@ func (a *App) activeListForEntityType(entityType string) string {
 	return a.findListByEntityType(s, s.Cfg.Navigation, entityType)
 }
 
-func (a *App) findListByEntityType(s *AppState, entries []NavigationEntry, entityType string) string {
+func (a *App) findListByEntityType(s *Schema, entries []NavigationEntry, entityType string) string {
 	for _, nav := range entries {
 		if nav.IsGroup() {
 			if found := a.findListByEntityType(s, nav.Items, entityType); found != "" {
@@ -842,7 +825,9 @@ var colorToCSSClass = map[string]string{
 // autoColors assigns colors to enum values that have no explicit style.
 var autoColors = []string{"blue", "purple", "green", "orange", "yellow", "red", "gray"}
 
-func buildStyleMap(cfg *Config, meta *metamodel.Metamodel) (styleMap map[string]map[string]string, styledTypes map[string]bool) {
+func buildStyleMap(
+	cfg *Config, meta *metamodel.Metamodel,
+) (styleMap map[string]map[string]string, styledTypes map[string]bool) {
 	sm := make(map[string]map[string]string)
 	st := make(map[string]bool)
 

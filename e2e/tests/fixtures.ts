@@ -822,6 +822,12 @@ lists:
       - property: assignee
     create_form: task
     edit_form: task
+    # Relation filter control (TKT-DL16XM): filter tasks by the feature they
+    # implement. 'implements' is task -> feature, so options come from the
+    # relation's "to" (feature) entities. Exercised by list.spec.ts.
+    filter_controls:
+      - relation: implements
+        label: "Implements"
 
 # Custom entity-detail views. The task view deliberately renders a
 # "display: list" relation section with fields so the row mounts a

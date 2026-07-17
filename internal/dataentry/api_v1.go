@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -31,143 +32,8 @@ import (
 
 // --- API v1 Types ---
 
-// V1Entity is the JSON representation of an entity for API v1.
-type V1Entity struct {
-	ID           string                 `json:"id"`
-	Type         string                 `json:"type"`
-	Title        string                 `json:"_title,omitempty"`
-	Properties   map[string]interface{} `json:"properties"`
-	Content      string                 `json:"content,omitempty"`
-	Relations    map[string][]string    `json:"relations,omitempty"`
-	Included     map[string]V1Entity    `json:"included,omitempty"`
-	Self         string                 `json:"_self,omitempty"`
-	Actions      map[string]bool        `json:"_actions,omitempty"`
-	Inaccessible []V1InaccessibleField  `json:"inaccessible,omitempty"`
-	// FieldAffordances carries per-field write affordances on per-entity
-	// GET responses. Sparse: only fields whose verdict deviates from the
-	// permissive default appear. Hidden fields are omitted from
-	// `Properties` AND from this map entirely. Pointer semantics
-	// distinguish "absent on the wire" (nil pointer; list / mutation
-	// responses) from "present and empty" (`{}`; per-entity GET with no
-	// deviations under nop resolver — closed-world signal matching the
-	// `_actions` precedent).
-	FieldAffordances *map[string]V1FieldAffordance `json:"_fields,omitempty"`
-	// RelationAffordances carries per-relation-type affordances on
-	// per-entity GET responses. Same pointer / closed-world semantics
-	// as FieldAffordances.
-	RelationAffordances *map[string]V1RelationAffordance `json:"_relations,omitempty"`
-	// Attachments maps a `file`-type property name to the LIST of files
-	// currently attached to it (a property may hold several when its
-	// metamodel `max` > 1). The value is always an array — even a
-	// single-attachment property reports a 1-element list — matching how
-	// rela's `list:` properties and `_relations` are always arrays. Only
-	// properties that actually carry a file appear. Same pointer /
-	// closed-world semantics as FieldAffordances: present (possibly empty)
-	// on every per-entity response (GET, PATCH, POST create, clone — the
-	// ones that run serializeEntityForWire), nil on list rows and other
-	// non-per-entity shapes. The SPA's file widget reads this to render the
-	// download links / previews instead of the raw stored path string(s).
-	Attachments *map[string][]V1Attachment `json:"_attachments,omitempty"`
-	// Warnings lists soft-condition findings surfaced by the write
-	// path. Populated only by mutation responses (PATCH); read paths
-	// leave it nil. Each warning has a stable `code`, an RFC 6901
-	// JSON Pointer `path`, and a human-readable `detail`.
-	Warnings []Warning `json:"warnings,omitempty"`
-}
-
-// V1FieldAffordance describes per-field write / option affordances on
-// the wire. Sparse: `Writable` is nil when the default (writable)
-// holds; `Options` lists only the false entries (allowed options are
-// implicit via the metamodel). See the closed-world contract in
-// docs/data-entry/api-reference.md.
-type V1FieldAffordance struct {
-	Writable *bool           `json:"writable,omitempty"`
-	Options  map[string]bool `json:"options,omitempty"`
-}
-
-// V1RelationAffordance describes per-relation-type affordances on the
-// wire. Sparse: `Creatable` and `Removable` are nil when the default
-// (true) holds. `Fields` lists meta-field writability overrides, also
-// sparse.
-type V1RelationAffordance struct {
-	Creatable *bool                        `json:"creatable,omitempty"`
-	Removable *bool                        `json:"removable,omitempty"`
-	Fields    map[string]V1FieldAffordance `json:"fields,omitempty"`
-}
-
-// V1Attachment describes one file attached to a `file`-type property, as
-// surfaced on a per-entity GET response. ID is the file's identifier
-// within the property (its normalized file name) — used to build the
-// per-file download/delete URL. Href is the download URL for the bytes (an
-// ACL-gated endpoint that inherits the owning entity's read permission).
-// ContentType is inferred from the filename — the store does not persist
-// it on every backend.
-type V1Attachment struct {
-	ID          string `json:"id"`
-	FileName    string `json:"filename"`
-	Size        int64  `json:"size"`
-	ContentType string `json:"contentType"`
-	Href        string `json:"href"`
-}
-
-// V1InaccessibleField describes a property that is known to exist but
-// whose value is unreadable by the holder of the entity (e.g. the file
-// is git-crypt encrypted and the key is not present locally).
-type V1InaccessibleField struct {
-	Name   string `json:"name"`
-	Reason string `json:"reason"`
-}
-
-// V1ListResponse is the response for listing entities.
-type V1ListResponse struct {
-	Data    []V1Entity      `json:"data"`
-	Meta    V1ListMeta      `json:"meta"`
-	Actions map[string]bool `json:"_actions,omitempty"`
-}
-
-// V1ListMeta contains pagination metadata.
-type V1ListMeta struct {
-	Total   int  `json:"total"`
-	Page    int  `json:"page"`
-	PerPage int  `json:"per_page"`
-	HasMore bool `json:"has_more"`
-}
-
-// V1Schema is the JSON representation of the metamodel.
-type V1Schema struct {
-	Entities  map[string]V1EntityType   `json:"entities"`
-	Relations map[string]V1RelationType `json:"relations"`
-	Types     map[string]V1CustomType   `json:"types,omitempty"`
-}
-
-// V1EntityType is the JSON representation of an entity type.
-type V1EntityType struct {
-	Label       string                   `json:"label"`
-	Plural      string                   `json:"plural"`
-	Description string                   `json:"description,omitempty"`
-	Primary     string                   `json:"primary,omitempty"`
-	IDType      string                   `json:"id_type,omitempty"`
-	IDPrefix    string                   `json:"id_prefix,omitempty"`
-	IDPrefixes  []string                 `json:"id_prefixes,omitempty"`
-	Properties  map[string]V1PropertyDef `json:"properties"`
-}
-
-// V1PropertyDef is the JSON representation of a property definition.
-type V1PropertyDef struct {
-	Type        string   `json:"type"`
-	Required    bool     `json:"required"`
-	Default     string   `json:"default,omitempty"`
-	Values      []string `json:"values,omitempty"`
-	Description string   `json:"description,omitempty"`
-	List        bool     `json:"list,omitempty"`
-	// Max is the attachment cap for a `file` property (default 1). The SPA's
-	// file widget reads it to switch between replace-mode and multi-file
-	// add-mode. Omitted unless set above 1.
-	Max int `json:"max,omitempty"`
-}
-
-func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) V1PropertyDef {
-	pd := V1PropertyDef{
+func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.PropertyDef) v1.PropertyDef {
+	pd := v1.PropertyDef{
 		Type:        propDef.Type,
 		Required:    propDef.Required,
 		Default:     propDef.Default,
@@ -175,106 +41,27 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 		List:        propDef.List,
 		Max:         propDef.Max,
 	}
+	// Labels mirror Values: a property naming a custom type inherits that
+	// type's values and labels; an inline `labels` map on a custom-typed
+	// property is ignored, exactly as inline `values` is.
 	if ct, ok := meta.Types[propDef.Type]; ok {
 		pd.Values = ct.Values
+		pd.Labels = ct.Labels
 	} else if len(propDef.Values) > 0 {
 		pd.Values = propDef.Values
+		pd.Labels = propDef.Labels
 	}
 	return pd
 }
 
-// V1RelationType is the JSON representation of a relation type.
-type V1RelationType struct {
-	Label       string                   `json:"label"`
-	Description string                   `json:"description,omitempty"`
-	From        []string                 `json:"from"`
-	To          []string                 `json:"to"`
-	Inverse     *V1InverseDef            `json:"inverse,omitempty"`
-	Symmetric   bool                     `json:"symmetric,omitempty"`
-	MinOutgoing *int                     `json:"min_outgoing,omitempty"`
-	MaxOutgoing *int                     `json:"max_outgoing,omitempty"`
-	MinIncoming *int                     `json:"min_incoming,omitempty"`
-	MaxIncoming *int                     `json:"max_incoming,omitempty"`
-	Properties  map[string]V1PropertyDef `json:"properties,omitempty"`
-	// Orderable, when set, declares that the frontend may offer drag-to-reorder
-	// controls on the corresponding side. The managed property names are
-	// always the reserved `_order_out` (outgoing) and `_order_in` (incoming).
-	Orderable *V1RelationOrderable `json:"orderable,omitempty"`
-}
-
-// V1RelationOrderable describes per-side orderability for a relation type.
-type V1RelationOrderable struct {
-	Outgoing bool `json:"outgoing,omitempty"`
-	Incoming bool `json:"incoming,omitempty"`
-}
-
-// V1InverseDef mirrors metamodel.InverseDef on the wire. The SPA reads
-// `inverse.id` to find the inverse body key for incoming-direction
-// edits routed through the unified PATCH (TKT-GFQK).
-type V1InverseDef struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
-}
-
-// V1CustomType is the JSON representation of a custom type.
-type V1CustomType struct {
-	Values  []string `json:"values"`
-	Default string   `json:"default,omitempty"`
-}
-
-// V1Config is the JSON representation of the UI config.
-type V1Config struct {
-	App         V1AppConfig                                 `json:"app"`
-	Styles      map[string]map[string]string                `json:"styles"`
-	Forms       map[string]dataentryconfig.Form             `json:"forms"`
-	Lists       map[string]dataentryconfig.List             `json:"lists"`
-	Views       map[string]dataentryconfig.ViewConfig       `json:"views"`
-	EntityViews map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
-	Kanbans     map[string]dataentryconfig.Kanban           `json:"kanbans"`
-	Dashboard   *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
-	Actions     map[string]dataentryconfig.Action           `json:"actions,omitempty"`
-	Navigation  []dataentryconfig.NavigationEntry           `json:"navigation"`
-	Documents   map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
-	Apps        map[string]V1App                            `json:"apps,omitempty"`
-	Palette     *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
-}
-
-// V1App is the client-facing view of a custom app. It deliberately omits the
-// on-disk File path and the csp_origins allow-list — the SPA only needs enough
-// to render a sidebar entry and route to /app/{id}; the HTML is fetched from
-// GET /api/v1/_apps/{id}.
-type V1App struct {
-	Title       string `json:"title,omitempty"`
-	Label       string `json:"label,omitempty"`
-	Description string `json:"description,omitempty"`
-}
-
-// V1AppConfig is the JSON representation of the app config.
-type V1AppConfig struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-// V1Error is an RFC 7807 Problem Details response.
-type V1Error struct {
-	Type     string         `json:"type"`
-	Title    string         `json:"title"`
-	Status   int            `json:"status"`
-	Detail   string         `json:"detail,omitempty"`
-	Instance string         `json:"instance,omitempty"`
-	Errors   []V1FieldError `json:"errors,omitempty"`
-}
-
-// V1FieldError represents a validation error on a specific field.
-type V1FieldError struct {
-	Source V1ErrorSource `json:"source"`
-	Code   string        `json:"code"`
-	Detail string        `json:"detail"`
-}
-
-// V1ErrorSource points to the location of an error.
-type V1ErrorSource struct {
-	Pointer string `json:"pointer"`
+// toV1CustomType is the single serialization site for a metamodel custom type
+// onto the wire, so the _schema types map and any other consumer stay in sync.
+func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
+	return v1.CustomType{
+		Values:  ct.Values,
+		Labels:  ct.Labels,
+		Default: ct.Default,
+	}
 }
 
 // --- API v1 Router ---
@@ -290,6 +77,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
+	mux.HandleFunc("/api/v1/_feeds/", a.handleV1Feed)
 	mux.HandleFunc("/api/v1/_search", a.handleV1Search)
 	mux.HandleFunc("/api/v1/_position", a.handleV1EntityPosition)
 	mux.HandleFunc("/api/v1/_analyze", a.handleV1Analyze)
@@ -305,6 +93,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
 	mux.HandleFunc("/api/v1/_documents/", a.handleV1Documents)
+	mux.HandleFunc("/api/v1/_history/", func(w http.ResponseWriter, r *http.Request) { handleV1History(a, w, r) })
+	mux.HandleFunc("/api/v1/_relation_history/",
+		func(w http.ResponseWriter, r *http.Request) { handleV1RelationHistory(a, w, r) })
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
@@ -315,6 +106,15 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	// Dynamic entity routes are handled by a catch-all
 	mux.HandleFunc("/api/v1/", a.handleV1DynamicRoutes)
 }
+
+// Path-segment counts for the dynamic route dispatcher below. A
+// four-segment path selects a sub-resource collection
+// (relations/_actions/_attachments); a five-segment path targets a
+// single member within one of those.
+const (
+	segmentsSubResource   = 4 // /{plural}/{id}/{sub}/{key}
+	segmentsSubResourceID = 5 // /{plural}/{id}/{sub}/{key}/{member}
+)
 
 // handleV1DynamicRoutes routes requests to the appropriate entity handler
 // based on URL. Read operations work against the snapshot returned by
@@ -365,7 +165,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
-	case 4:
+	case segmentsSubResource:
 		// /{plural}/{id}/relations/{relType}, /{plural}/{id}/_actions/{action},
 		// or /{plural}/{id}/_attachments/{property}
 		switch parts[2] {
@@ -378,7 +178,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
-	case 5:
+	case segmentsSubResourceID:
 		// /{plural}/{id}/relations/{relType}/{targetId} or
 		// /{plural}/{id}/_attachments/{property}/{fileName}
 		switch parts[2] {
@@ -453,7 +253,11 @@ var errListLoad = errors.New("list load failed")
 // search_failed at the call site); ACL query failures are wrapped in
 // errACLListQuery so call sites map them via writeGateError. Everything
 // else degrades to an empty/whole set as the list endpoint always did.
-func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error) {
+func (a *App) scopedSortedEntities(
+	ctx context.Context,
+	typeName string,
+	query map[string][]string,
+) ([]*entityPkg.Entity, error) {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
 
 	var entities []*entityPkg.Entity
@@ -502,9 +306,232 @@ func (a *App) scopedSortedEntities(ctx context.Context, typeName string, query m
 		entities = filtered
 	}
 
-	entities = a.applyV1Filters(entities, query, typeName)
-	entities = a.applyV1Sorting(entities, query)
+	// Classify each filter[<key>] param as property vs relation ONCE, up
+	// front, so both passes agree on routing. The config's FilterControls are
+	// authoritative (RR-0HWAS0 / RR-B0JPPL): a relation filter applies only
+	// when a control on a list of this type configures it. Name-based
+	// GetRelationDef is only a fallback and only ever routes AWAY from
+	// properties, never toward relations without a control.
+	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
+	entities = applyV1Filters(entities, query, typeName, isRelationKey)
+	entities = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
+	entities = applyV1Sorting(entities, query)
 	return entities, nil
+}
+
+// relationFilterClassifier returns a predicate that decides, for a bare filter
+// param name (the property/relation segment, no operator), whether it should be
+// handled by the direction-aware relation pass rather than applyV1Filters.
+//
+// Relation filtering is restricted to configured filter_controls (RR-B0JPPL):
+// a `filter[<rel>]` param routes to the relation pass ONLY when a relation
+// FilterControl on a list of this entity type configures it. An arbitrary
+// metamodel relation with no control is NOT filterable and falls through to
+// applyV1Filters (where, absent a matching property, it fails closed rather
+// than silently widening the set).
+//
+// The config discriminator also resolves the property/relation NAME COLLISION
+// (RR-0HWAS0): properties (per-type) and relations (global) are disjoint
+// namespaces, so a property can share a name with a relation. An explicit
+// property FilterControl for the name forces the property pass; a name that is
+// only ever a relation control routes to the relation pass. When a name is both
+// a property of this type and a relation control with no disambiguating
+// property control, the property wins (safe, backward-compatible) and
+// CollectConfigWarnings flags the ambiguity at load.
+//
+// A free function (not an App method) taking the already-loaded meta/cfg
+// snapshot: it needs no other App state, and keeping it off the receiver keeps
+// App under its plimsoll method cap.
+func relationFilterClassifier(
+	meta *metamodel.Metamodel,
+	cfg *dataentryconfig.Config,
+	typeName string,
+) func(string) bool {
+	return func(key string) bool {
+		// Explicit property control → property pass.
+		if cfg.HasPropertyFilterControl(typeName, key) {
+			return false
+		}
+		// A relation control is required for relation filtering.
+		if _, ok := cfg.RelationFilterDirection(typeName, key); !ok {
+			return false
+		}
+		// Relation control exists, but the collision rule: if the name is
+		// also a property of this type (and no property control disambiguated
+		// above), the property wins.
+		if entDef, ok := meta.GetEntityDef(typeName); ok {
+			if _, isProp := entDef.Properties[key]; isProp {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// applyRelationFilters keeps only the entities that match every relation
+// filter present in the query. isRelationKey (the config-backed classifier
+// built in scopedSortedEntities) decides which `filter[<key>]` params are
+// relation filters; property filters are handled by applyV1Filters. Matching is
+// direction-aware: the FilterControl config on a list of this entity type
+// supplies the direction (default outgoing), and an entity matches iff it has
+// an edge of that (relation, direction) to a READABLE neighbor whose display
+// title equals the requested value.
+//
+// Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
+// (`filter[<rel>][ne]`) are supported. Any other operator segment fails CLOSED
+// — the whole result set is dropped to zero rows with an slog.Warn — matching
+// the fail-closed contract applyV1Filters enforces for unknown property
+// operators (RR-6RF60V). Never fail open.
+//
+// ACL (RR-HK1XNO): neighbor titles are resolved through the read gate, so a
+// filter value matching a neighbor the caller cannot read does NOT include the
+// edged rows (no title-match inference channel). Neighbors are gated in one
+// batch per relation param via matchRelationFilter → visibleNeighborTitles.
+// NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
+// this should converge on it; today it uses the same readGate.PermitsReadMany
+// batching pattern inline.
+//
+// Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
+// pagination, doing ListRelations + a batched GetEntity per row. It is
+// therefore O(N·edges) per request, uncached, where N is the unpaginated
+// visible row count — acceptable for the current dataset sizes but NOT a
+// store-side pushdown. A future optimization is to push the relation-title
+// predicate into the store query. Each row short-circuits: matchRelationFilter
+// stops scanning a row's edges as soon as one matches.
+//
+// This runs in scopedSortedEntities so BOTH the list handler and scope nav
+// (_position, via resolveScope) observe identical relation filtering — they
+// share this pipeline. Property filters are untouched (TKT-5U7QBR).
+func (a *App) applyRelationFilters(
+	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
+	isRelationKey func(string) bool,
+) []*entityPkg.Entity {
+	cfg := a.Cfg()
+	for key, values := range query {
+		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
+			continue
+		}
+		relation, operator, ok := parseRelationFilterKey(key)
+		if !ok || !isRelationKey(relation) {
+			continue // malformed, or a property filter handled elsewhere
+		}
+		want := values[len(values)-1]
+		if want == "" {
+			continue // empty control value = no constraint
+		}
+
+		// Fail CLOSED on any operator we don't support for relations. Never
+		// fall through and leave the set unfiltered (that would be the
+		// fail-open bug RR-6RF60V).
+		switch operator {
+		case "eq", "ne":
+			// supported below
+		default:
+			slog.Warn("relation filter uses unsupported operator; dropping all rows",
+				"key", key, "operator", operator)
+			return entities[:0]
+		}
+
+		direction, _ := cfg.RelationFilterDirection(typeName, relation)
+		filtered := entities[:0]
+		for _, e := range entities {
+			matched := a.matchRelationFilter(ctx, e.ID, relation, direction, want)
+			if (operator == "eq" && matched) || (operator == "ne" && !matched) {
+				filtered = append(filtered, e)
+			}
+		}
+		entities = filtered
+	}
+	return entities
+}
+
+// parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
+// using the SAME `][`-split logic as applyV1Filters, so an operator segment is
+// recognized rather than being swallowed into the relation name (RR-6RF60V,
+// the old TrimPrefix/TrimSuffix bug). Returns (relation, operator, ok) with
+// operator defaulting to "eq". ok is false for a malformed key (empty relation,
+// too many segments).
+func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
+	filterKey := strings.TrimPrefix(key, "filter[")
+	filterKey = strings.TrimSuffix(filterKey, "]")
+	filterKey = strings.TrimSuffix(filterKey, "][") // was "...[]"
+	parts := strings.Split(filterKey, "][")
+	if len(parts) > 2 || parts[0] == "" {
+		return "", "", false
+	}
+	operator = "eq"
+	if len(parts) == 2 {
+		if parts[1] == "" {
+			return "", "", false
+		}
+		operator = parts[1]
+	}
+	return parts[0], operator, true
+}
+
+// matchRelationFilter reports whether entityID has an edge of the given
+// relation+direction to a neighbor the caller can READ whose display title
+// equals want. It gates neighbor entities through the read gate so a hidden
+// neighbor cannot be used as a title-match inference channel (RR-HK1XNO), and
+// short-circuits as soon as a readable neighbor's title matches (RR-38K7K9).
+//
+// Neighbors are gated in batches grouped by type via readGate.PermitsReadMany
+// (one call per neighbor type on the row), rather than a per-neighbor gate
+// call. When the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
+// this should converge on it.
+func (a *App) matchRelationFilter(
+	ctx context.Context, entityID, relation string, direction dataentryconfig.Direction, want string,
+) bool {
+	svc := a.Services()
+	q := store.RelationQuery{
+		EntityID:  entityID,
+		Type:      relation,
+		Direction: relationDirection(direction),
+	}
+
+	// Load each neighbor once, keeping only those whose title matches want.
+	// Group the candidates by type so the read gate can batch per type.
+	candidatesByType := map[string][]string{}
+	entByID := map[string]*entityPkg.Entity{}
+	for r, err := range svc.Store.ListRelations(ctx, q) {
+		if err != nil {
+			return false
+		}
+		targetID := r.To
+		if direction.IsIncoming() {
+			targetID = r.From
+		}
+		if _, seen := entByID[targetID]; seen {
+			continue
+		}
+		e, err := svc.Store.GetEntity(ctx, targetID)
+		if err != nil {
+			continue // dangling relation
+		}
+		entByID[targetID] = e
+		if svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties) == want {
+			candidatesByType[e.Type] = append(candidatesByType[e.Type], targetID)
+		}
+	}
+	if len(candidatesByType) == 0 {
+		return false
+	}
+
+	// A row matches iff at least one title-matching neighbor is READABLE. Gate
+	// only the title-matching candidates (the minimal set) per type.
+	gate := readGateFromContext(ctx)
+	for typ, ids := range candidatesByType {
+		perm, err := gate.PermitsReadMany(ctx, typ, ids)
+		if err != nil {
+			continue
+		}
+		for _, id := range ids {
+			if perm[id] {
+				return true // readable title match (RR-HK1XNO honored)
+			}
+		}
+	}
+	return false
 }
 
 // queryGet returns the first value for key from a raw query map, or "".
@@ -542,11 +569,39 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	includes := query.Get("include")
 	wantIncludes := includes != ""
 
+	// Load each row's edges once. List rows carry BOTH outgoing edges (keyed
+	// by relation type) and incoming edges (keyed by the relation's inverse
+	// name) so that `direction: incoming` relation columns have a wire key to
+	// resolve against. The SPA computes the same inverse key and reads the
+	// source entities from the ?include=* peers. See MECHANISM.md.
+	outgoingByRow := make([][]*entityPkg.Relation, len(entities))
+	incomingByRow := make([][]*entityPkg.Relation, len(entities))
+	var pageNeighborIDs []string
+	for i, e := range entities {
+		outgoingByRow[i] = a.reader.outgoingRelations(r.Context(), e.ID)
+		incomingByRow[i] = a.reader.incomingRelations(r.Context(), e.ID)
+		pageNeighborIDs = append(pageNeighborIDs, neighborIDsOf(outgoingByRow[i], incomingByRow[i])...)
+	}
+
+	// Gate neighbor IDs for the WHOLE page in one type-batched pass
+	// (RR-HJV8CP + RR-FRK1): a neighbor's ID may appear in a row's relations
+	// map only if its entity is visible to the caller, so `relations` and the
+	// visibility-filtered `included` map can never disagree. Outgoing targets
+	// (edge.To) and incoming sources (edge.From) are gated together — an
+	// entity's visibility is direction-independent.
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, pageNeighborIDs)
+
 	// Build response - always include relations for relation column support
-	data := make([]V1Entity, 0, len(entities))
-	included := make(map[string]V1Entity)
-	for _, e := range entities {
-		v1Entity := a.serializeRelatedEntityForWire(r.Context(), e, plural, true)
+	data := make([]v1.Entity, 0, len(entities))
+	included := make(map[string]v1.Entity)
+	for i, e := range entities {
+		v1Entity := a.serializer.forWireRelated(
+			r.Context(), e,
+			outgoingByRow[i],
+			incomingByRow[i],
+			visibleNeighbors,
+			a.Meta(), plural,
+		)
 		data = append(data, v1Entity)
 
 		// Resolve includes if requested
@@ -557,19 +612,19 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	resp := V1ListResponse{
+	resp := v1.ListResponse{
 		Data: data,
-		Meta: V1ListMeta{
+		Meta: v1.ListMeta{
 			Total:   total,
 			Page:    page,
 			PerPage: perPage,
 			HasMore: end < total,
 		},
-		Actions: a.computeCollectionActions(r.Context(), typeName),
+		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
 	}
 
 	// Add Link header for pagination (RFC 5988)
-	a.addPaginationLinks(w, r, page, perPage, total, plural)
+	addPaginationLinks(w, r, page, perPage, total, plural)
 
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	w.Header().Set("X-Page", strconv.Itoa(page))
@@ -580,10 +635,10 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		// For list responses with includes, we need a different response structure
 		// Encode as JSON with additional "included" field
 		type listWithIncludes struct {
-			Data     []V1Entity          `json:"data"`
-			Meta     V1ListMeta          `json:"meta"`
-			Included map[string]V1Entity `json:"included,omitempty"`
-			Actions  map[string]bool     `json:"_actions,omitempty"`
+			Data     []v1.Entity          `json:"data"`
+			Meta     v1.ListMeta          `json:"meta"`
+			Included map[string]v1.Entity `json:"included,omitempty"`
+			Actions  map[string]bool      `json:"_actions,omitempty"`
 		}
 		writeV1JSON(w, http.StatusOK, listWithIncludes{
 			Data:     resp.Data,
@@ -607,11 +662,11 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Prefix     string                 `json:"prefix,omitempty"`
 		Properties map[string]interface{} `json:"properties"`
 		Content    string                 `json:"content,omitempty"`
-		Relations  V1RelationsField       `json:"relations,omitempty"`
+		Relations  v1.RelationsField      `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var werr *wireError
+		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 			return
@@ -642,7 +697,7 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// grants apply at create. Collection-level create authorization is
 	// enforced separately inside CreateEntity (acl.OpCreate).
 	candidate := &entityPkg.Entity{Type: typeName, Properties: req.Properties}
-	if denial := a.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
+	if denial := a.affordances.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, candidate, *denial)
 		return
 	}
@@ -687,7 +742,8 @@ func (a *App) handleV1CreateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializeEntityForWire(r.Context(), created, plural, true)
+	rels := a.reader.outgoingRelations(r.Context(), created.ID)
+	result := a.serializer.forWire(r.Context(), created, rels, a.Meta(), plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -799,7 +855,7 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// value-dependent predicates (e.g. field B read-only when A == x)
 	// re-derive as the form changes. includeRelations=false: no edges
 	// exist for an unsaved entity.
-	result := a.serializeEntityForWire(r.Context(), candidate, plural, false)
+	result := a.serializer.forWire(r.Context(), candidate, nil, a.Meta(), plural)
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)
 	}
@@ -866,27 +922,28 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
-	// ACL gate (TKT-VQGN). Runs BEFORE getEntity so a hidden id and a
-	// nonexistent id spend the same MatchingIDs roundtrip — otherwise
-	// the timing difference (in-memory lookup ~1µs vs. DB roundtrip
-	// ~1ms) is an id-enumeration side channel that defeats the
-	// indistinguishable-404-body invariant (RR-NGMI).
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
+	// ACL gate (TKT-VQGN). visibleReader.getVisible applies PermitsRead
+	// BEFORE the store read so a hidden id and a nonexistent id spend the
+	// same MatchingIDs roundtrip — otherwise the timing difference
+	// (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an id-enumeration
+	// side channel that defeats the indistinguishable-404-body invariant
+	// (RR-NGMI). A gate error surfaces via writeGateError; a deny is
+	// returned as (nil,false,nil), indistinguishable from a real miss.
+	entity, found, err := a.visibleReader.getVisible(ctx, typeName, entityID)
+	if err != nil {
+		writeGateError(w, r, err)
 		return
 	}
-
-	entity, found := a.getEntity(ctx, entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
 	query := r.URL.Query()
-	includeRelations := true
 
 	// Single per-entity serialization: strips hidden + attaches
 	// `_fields` / `_relations` per docs/data-entry/api-reference.md.
-	result := a.serializeEntityForWire(ctx, entity, plural, includeRelations)
+	result := a.serializer.forWire(ctx, entity, a.reader.outgoingRelations(ctx, entity.ID), a.Meta(), plural)
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
@@ -958,6 +1015,7 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 		"ACL read-permission check failed", "check server logs")
 }
 
+//nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
 func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	// Need write lock
 	a.writeMu.Lock()
@@ -974,7 +1032,7 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1004,13 +1062,13 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		Properties      map[string]interface{} `json:"properties,omitempty"`
 		PropertiesUnset []string               `json:"properties_unset,omitempty"`
 		Content         *string                `json:"content,omitempty"`
-		Relations       V1RelationsField       `json:"relations,omitempty"`
+		Relations       v1.RelationsField      `json:"relations,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// V1RelationsField's UnmarshalJSON returns *wireError for
+		// v1.RelationsField's UnmarshalJSON returns *v1.WireError for
 		// shape errors; surface them as 400 with the structured code.
-		var werr *wireError
+		var werr *v1.WireError
 		if errors.As(err, &werr) {
 			writeV1Error(w, r, http.StatusBadRequest, werr.Code,
 				werr.Detail, werr.Path)
@@ -1024,12 +1082,16 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 	// what the resolver would have surfaced on GET. Runs before any
 	// other validation so the failure mode is identical regardless of
 	// what else the PATCH body would have triggered.
-	if denial := a.validateFieldWrite(r.Context(), entity, req.Properties, req.PropertiesUnset); denial != nil {
+	if denial := a.affordances.validateFieldWrite(
+		r.Context(), entity, req.Properties, req.PropertiesUnset,
+	); denial != nil {
 		a.denyAffordance(r.Context(), w, entity, *denial)
 		return
 	}
 	if req.Relations.Modern != nil {
-		if denial := a.validateRelationsModernAffordances(r.Context(), entityID, entity, req.Relations.Modern); denial != nil {
+		if denial := a.affordances.validateRelationsModernAffordances(
+			r.Context(), entityID, entity, req.Relations.Modern,
+		); denial != nil {
 			a.denyAffordance(r.Context(), w, entity, *denial)
 			return
 		}
@@ -1109,7 +1171,8 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	result := a.serializeEntityForWire(r.Context(), entity, plural, true)
+	rels := a.reader.outgoingRelations(r.Context(), entity.ID)
+	result := a.serializer.forWire(r.Context(), entity, rels, a.Meta(), plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
@@ -1126,10 +1189,10 @@ func (a *App) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeN
 }
 
 // writeRelationsValidationError maps a Phase A validation error from
-// the modern reconciler to the corresponding HTTP response. wireError
+// the modern reconciler to the corresponding HTTP response. v1.WireError
 // → 400 (caller bug); structuralError → 422 (storage can't represent).
 func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Request, err error) {
-	var werr *wireError
+	var werr *v1.WireError
 	if errors.As(err, &werr) {
 		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
 		return
@@ -1145,10 +1208,15 @@ func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Reque
 // writeRelationsApplyError maps a Phase C write error to a 500 — the
 // entity may already have been updated, so a partial state is on disk.
 // This is the documented atomicity gap. ACL denials short-circuit to
-// the structured 403 path; everything else falls through to the
-// 500-with-detail body.
+// the structured 403 path; a dangling-peer structuralError maps to 422
+// (the reference did not resolve, so the edge was not stored —
+// BUG-K6FEVB); everything else falls through to the 500-with-detail body.
 func (a *App) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
 	if writeForbiddenIfACLDenied(w, err) {
+		return
+	}
+	if se, ok := asStructuralError(err); ok {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, se.Code, se.Detail, se.Path)
 		return
 	}
 	writeV1Error(w, r, http.StatusInternalServerError,
@@ -1169,7 +1237,7 @@ func (a *App) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1203,14 +1271,27 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	s := a.State()
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
 	}
 
-	outgoing := a.outgoingRelations(r.Context(), entityID)
-	incoming := a.incomingRelations(r.Context(), entityID)
+	outgoing := a.reader.outgoingRelations(r.Context(), entityID)
+	incoming := a.reader.incomingRelations(r.Context(), entityID)
+
+	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
+	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
+	// the source-only read gate. Mirror the list path (handleV1ListEntities):
+	// compute the visible neighbor set in one type-batched pass and drop any
+	// edge whose peer is not visible BEFORE reading its type. A visible neighbor
+	// stays; a hidden one is dropped (no over-filtering).
+	// TODO(BUG-ABXMAV): the "gate a set of neighbor edges" step is now
+	// replicated here, in handleV1GetRelationType, and in the list path — a
+	// shared chokepoint (P3) would collapse the three; deferred to avoid
+	// churning the list path in a security fix.
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader,
+		neighborIDsOf(outgoing, incoming))
 
 	relations := make(map[string][]map[string]interface{})
 
@@ -1219,9 +1300,12 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	groupSortProp := make(map[string]string)
 
 	for _, edge := range outgoing {
+		if !visibleNeighbors[edge.To] {
+			continue
+		}
 		rel := map[string]interface{}{
 			"id":        edge.To,
-			"type":      a.peerType(r.Context(), edge.To),
+			"type":      a.reader.entityType(r.Context(), edge.To),
 			"direction": "outgoing",
 		}
 		if len(edge.Properties) > 0 {
@@ -1236,17 +1320,17 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	for _, edge := range incoming {
+		if !visibleNeighbors[edge.From] {
+			continue
+		}
 		relDef, ok := s.Meta.Relations[edge.Type]
 		if !ok {
 			continue
 		}
-		inverseName := edge.Type + "_inverse"
-		if relDef.Inverse != nil && relDef.Inverse.ID != "" {
-			inverseName = relDef.Inverse.ID
-		}
+		inverseName := inverseRelationKey(edge.Type, relDef)
 		rel := map[string]interface{}{
 			"id":        edge.From,
-			"type":      a.peerType(r.Context(), edge.From),
+			"type":      a.reader.entityType(r.Context(), edge.From),
 			"direction": "incoming",
 		}
 		if len(edge.Properties) > 0 {
@@ -1324,7 +1408,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1334,10 +1418,28 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.incomingRelations(r.Context(), entityID)
+		edges = a.reader.incomingRelations(r.Context(), entityID)
 	} else {
-		edges = a.outgoingRelations(r.Context(), entityID)
+		edges = a.reader.outgoingRelations(r.Context(), entityID)
 	}
+
+	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP): same rationale as
+	// handleV1EntityRelations. Collect this relation-type's peers and compute
+	// the visible set in one batched pass, then skip any hidden peer BEFORE
+	// reading its type (so its type/meta never reach the wire). See the
+	// shared-chokepoint TODO in handleV1EntityRelations.
+	var peerIDs []string
+	for _, edge := range edges {
+		if edge.Type != relType {
+			continue
+		}
+		peerID := edge.To
+		if incoming {
+			peerID = edge.From
+		}
+		peerIDs = append(peerIDs, peerID)
+	}
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
 
 	relations := make([]map[string]interface{}, 0, len(edges))
 
@@ -1349,9 +1451,12 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		if incoming {
 			peerID = edge.From
 		}
+		if !visibleNeighbors[peerID] {
+			continue
+		}
 		rel := map[string]interface{}{
 			"id":   peerID,
-			"type": a.peerType(r.Context(), peerID),
+			"type": a.reader.entityType(r.Context(), peerID),
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
@@ -1387,7 +1492,7 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1412,21 +1517,23 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	// Affordance gates: creatable + meta-writable, evaluated against
 	// the SOURCE of the new edge (not necessarily the path entity —
 	// for incoming-direction creates the path entity is the target).
-	source := a.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
+	source := a.affordances.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
 	// Audit subject is the source of the new edge, matching the
 	// entity whose policy gated the write.
-	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
+	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
-	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
 
 	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
 
-	_, err := a.entityManager.CreateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta})
+	_, err := a.entityManager.CreateRelation(
+		r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta},
+	)
 	if err != nil {
 		if writeForbiddenIfACLDenied(w, err) {
 			return
@@ -1438,7 +1545,9 @@ func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typ
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (a *App) handleV1RelationTarget(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+func (a *App) handleV1RelationTarget(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+) {
 	switch r.Method {
 	case http.MethodPatch:
 		a.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
@@ -1449,7 +1558,9 @@ func (a *App) handleV1RelationTarget(w http.ResponseWriter, r *http.Request, typ
 	}
 }
 
-func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+func (a *App) handleV1UpdateRelation(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+) {
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
@@ -1459,7 +1570,7 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1478,8 +1589,8 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	// the edge (the path entity for outgoing; the peer for incoming).
 	// The edge already exists (PATCH is meta-only), so the create /
 	// remove gates don't apply.
-	source := a.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
-	if denial := a.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
+	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
+	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1530,7 +1641,9 @@ func (a *App) handleV1UpdateRelation(w http.ResponseWriter, r *http.Request, typ
 	writeV1JSON(w, http.StatusOK, result)
 }
 
-func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string) {
+func (a *App) handleV1DeleteRelation(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
+) {
 	// Need write lock
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
@@ -1540,7 +1653,7 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1551,8 +1664,8 @@ func (a *App) handleV1DeleteRelation(w http.ResponseWriter, r *http.Request, typ
 	// incoming). Per-relation-type uniform — a removable=false
 	// verdict applies to every link of this type.
 	direction := r.URL.Query().Get("direction")
-	source := a.relationSourceEntity(r.Context(), entity, targetID, direction)
-	if denial := a.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
+	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, direction)
+	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
 		a.denyAffordance(r.Context(), w, source, *denial)
 		return
 	}
@@ -1600,7 +1713,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 		return
 	}
 
-	entity, found := a.getEntity(r.Context(), entityID)
+	entity, found := a.reader.getEntity(r.Context(), entityID)
 	if !found || entity.Type != typeName {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 		return
@@ -1631,7 +1744,7 @@ func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeNa
 
 	entityDef := s.Meta.Entities[typeName]
 	plural := entityDef.GetPlural(typeName)
-	result := a.serializeEntityForWire(r.Context(), newEntity, plural, false)
+	result := a.serializer.forWire(r.Context(), newEntity, nil, a.Meta(), plural)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
 	writeV1JSON(w, http.StatusCreated, result)
@@ -1646,20 +1759,20 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s := a.State()
-	schema := V1Schema{
-		Entities:  make(map[string]V1EntityType),
-		Relations: make(map[string]V1RelationType),
-		Types:     make(map[string]V1CustomType),
+	schema := v1.Schema{
+		Entities:  make(map[string]v1.EntityType),
+		Relations: make(map[string]v1.RelationType),
+		Types:     make(map[string]v1.CustomType),
 	}
 
 	for name, def := range s.Meta.Entities {
-		et := V1EntityType{
+		et := v1.EntityType{
 			Label:       def.Label,
 			Plural:      def.GetPlural(name),
 			Description: def.Description,
 			Primary:     def.GetPrimaryProperty(),
 			IDType:      def.GetIDType(),
-			Properties:  make(map[string]V1PropertyDef),
+			Properties:  make(map[string]v1.PropertyDef),
 		}
 		prefixes := def.GetIDPrefixes()
 		if len(prefixes) > 0 {
@@ -1673,7 +1786,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for name, def := range s.Meta.Relations {
-		rt := V1RelationType{
+		rt := v1.RelationType{
 			Label:       def.Label,
 			Description: def.Description,
 			From:        def.From,
@@ -1685,16 +1798,16 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			MaxIncoming: def.MaxIncoming,
 		}
 		if def.Inverse != nil && def.Inverse.ID != "" {
-			rt.Inverse = &V1InverseDef{ID: def.Inverse.ID, Label: def.Inverse.Label}
+			rt.Inverse = &v1.InverseDef{ID: def.Inverse.ID, Label: def.Inverse.Label}
 		}
 		if len(def.Properties) > 0 {
-			rt.Properties = make(map[string]V1PropertyDef, len(def.Properties))
+			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
 			for propName, propDef := range def.Properties {
 				rt.Properties[propName] = a.toV1PropertyDef(s.Meta, propDef)
 			}
 		}
 		if def.OutgoingOrderProperty() != "" || def.IncomingOrderProperty() != "" {
-			rt.Orderable = &V1RelationOrderable{
+			rt.Orderable = &v1.RelationOrderable{
 				Outgoing: def.OutgoingOrderProperty() != "",
 				Incoming: def.IncomingOrderProperty() != "",
 			}
@@ -1703,10 +1816,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for name, def := range s.Meta.Types {
-		schema.Types[name] = V1CustomType{
-			Values:  def.Values,
-			Default: def.Default,
-		}
+		schema.Types[name] = toV1CustomType(def)
 	}
 
 	writeV1JSON(w, http.StatusOK, schema)
@@ -1734,13 +1844,13 @@ func (a *App) handleV1SchemaRoutes(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", "")
 			return
 		}
-		et := V1EntityType{
+		et := v1.EntityType{
 			Label:       def.Label,
 			Plural:      def.GetPlural(typeName),
 			Description: def.Description,
 			Primary:     def.GetPrimaryProperty(),
 			IDType:      def.GetIDType(),
-			Properties:  make(map[string]V1PropertyDef),
+			Properties:  make(map[string]v1.PropertyDef),
 		}
 		if prefixes := def.GetIDPrefixes(); len(prefixes) > 0 {
 			et.IDPrefix = prefixes[0]
@@ -1782,10 +1892,11 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		forms[id] = f
 	}
 
-	config := V1Config{
-		App: V1AppConfig{
-			Name:        s.Cfg.App.Name,
-			Description: s.Cfg.App.Description,
+	config := v1.Config{
+		App: v1.AppConfig{
+			Name:              s.Cfg.App.Name,
+			Description:       s.Cfg.App.Description,
+			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 		},
 		Styles:      s.StyleMap,
 		Forms:       forms,
@@ -1798,7 +1909,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Navigation:  s.Cfg.Navigation,
 		Documents:   s.Cfg.Documents,
 		Apps:        appsToV1(a.scanAppsOrLog()),
-		Palette:     s.Palette,
+		Palette:     a.palette.Resolved(),
 	}
 
 	writeV1JSON(w, http.StatusOK, config)
@@ -1812,7 +1923,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		writeV1JSON(w, http.StatusOK, V1ListResponse{Data: []V1Entity{}, Meta: V1ListMeta{}})
+		writeV1JSON(w, http.StatusOK, v1.ListResponse{Data: []v1.Entity{}, Meta: v1.ListMeta{}})
 		return
 	}
 
@@ -1837,7 +1948,7 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	meta := a.State().Meta
-	data := make([]V1Entity, 0, len(entities))
+	data := make([]v1.Entity, 0, len(entities))
 	for _, e := range entities {
 		entityDef := meta.Entities[e.Type]
 		plural := entityDef.GetPlural(e.Type)
@@ -1846,12 +1957,12 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		// {ID, Title} of related entities this principal may not read.
 		// Flipping this requires per-target gating first (RR-QO01XY) —
 		// TestACLSearch_VisibleHitRelatedToHidden pins the invariant.
-		data = append(data, a.serializeRelatedEntityForWire(r.Context(), e, plural, false))
+		data = append(data, a.serializer.forWireRelated(r.Context(), e, nil, nil, nil, a.Meta(), plural))
 	}
 
-	resp := V1ListResponse{
+	resp := v1.ListResponse{
 		Data: data,
-		Meta: V1ListMeta{
+		Meta: v1.ListMeta{
 			Total:   len(data),
 			Page:    1,
 			PerPage: len(data),
@@ -1867,7 +1978,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analysisResult := a.runAnalysis(r.Context())
+	analysisResult := a.analyze.runAnalysis(r.Context(), a.State().Meta)
 
 	// ACL gate (TKT-QU7REX): runAnalysis walks the WHOLE graph, so every issue
 	// carries an entityId/entityType/title that would leak existence + title to
@@ -1897,6 +2008,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 			Message:    issue.Message,
 			Severity:   issue.Severity,
 			CheckType:  section,
+			Detail:     issue.Detail,
 		}
 		if issue.ScriptError != nil {
 			env := buildScriptErrorEnvelope(issue.ScriptError, fullDetail, "")
@@ -1981,45 +2093,10 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 
 // --- Helper Functions ---
 
-func (a *App) entityToV1(ctx context.Context, e *entityPkg.Entity, plural string, includeRelations bool) V1Entity {
+//nolint:gocognit // resolves the include set (all vs. named relations) then fetches each target; the nesting is the include-expansion algorithm, not shared logic to extract.
+func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
 	s := a.State()
-	v1 := V1Entity{
-		ID:         e.ID,
-		Type:       e.Type,
-		Title:      s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
-		Properties: make(map[string]interface{}),
-		Content:    e.Content,
-		Self:       fmt.Sprintf("/api/v1/%s/%s", plural, e.ID),
-		Actions:    a.computeActions(ctx, e),
-	}
-
-	for k, v := range e.Properties {
-		v1.Properties[k] = v
-	}
-
-	if e.IsLocked() {
-		v1.Inaccessible = make([]V1InaccessibleField, 0, len(e.Inaccessible))
-		for _, f := range e.Inaccessible {
-			v1.Inaccessible = append(v1.Inaccessible, V1InaccessibleField{
-				Name:   f.Name,
-				Reason: string(f.Reason),
-			})
-		}
-	}
-
-	if includeRelations {
-		v1.Relations = make(map[string][]string)
-		for _, edge := range a.outgoingRelations(ctx, e.ID) {
-			v1.Relations[edge.Type] = append(v1.Relations[edge.Type], edge.To)
-		}
-	}
-
-	return v1
-}
-
-func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]V1Entity {
-	s := a.State()
-	included := make(map[string]V1Entity)
+	included := make(map[string]v1.Entity)
 
 	// Collect candidate target entities first; filter via the ACL
 	// gate per-type (batched), then serialize the survivors. The
@@ -2034,14 +2111,14 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	// filter so hidden neighbors don't trigger hidden nested probes.
 	nestedFor := make(map[string]string)
 
-	if includes == "*" {
-		for _, edge := range a.outgoingRelations(ctx, entity.ID) {
-			if target, found := a.getEntity(ctx, edge.To); found {
+	if includes == "*" { //nolint:nestif // include-all vs. named-include expansion is inherently nested; flattening would obscure the two-mode logic.
+		for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
+			if target, found := a.reader.getEntity(ctx, edge.To); found {
 				candidates = append(candidates, target)
 			}
 		}
-		for _, edge := range a.incomingRelations(ctx, entity.ID) {
-			if source, found := a.getEntity(ctx, edge.From); found {
+		for _, edge := range a.reader.incomingRelations(ctx, entity.ID) {
+			if source, found := a.reader.getEntity(ctx, edge.From); found {
 				candidates = append(candidates, source)
 			}
 		}
@@ -2053,11 +2130,11 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 			}
 			relParts := strings.SplitN(part, ".", 2)
 			relType := relParts[0]
-			for _, edge := range a.outgoingRelations(ctx, entity.ID) {
+			for _, edge := range a.reader.outgoingRelations(ctx, entity.ID) {
 				if edge.Type != relType {
 					continue
 				}
-				target, found := a.getEntity(ctx, edge.To)
+				target, found := a.reader.getEntity(ctx, edge.To)
 				if !found {
 					continue
 				}
@@ -2073,7 +2150,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	for _, target := range visible {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
-		included[target.ID] = a.serializeRelatedEntityForWire(ctx, target, plural, false)
+		included[target.ID] = a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
 
 		if nested, ok := nestedFor[target.ID]; ok {
 			for k, v := range a.resolveV1Includes(ctx, target, nested) {
@@ -2095,54 +2172,23 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 // effort" affordance; the explicit GET / list endpoints are the
 // authoritative read surface.
 func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg.Entity) []*entityPkg.Entity {
-	if len(candidates) == 0 {
-		return nil
-	}
-	gate := readGateFromContext(ctx)
-	byType := make(map[string][]*entityPkg.Entity)
-	for _, c := range candidates {
-		byType[c.Type] = append(byType[c.Type], c)
-	}
-	allowed := make(map[string]bool, len(candidates))
-	for typeName, group := range byType {
-		ids := make([]string, 0, len(group))
-		for _, c := range group {
-			ids = append(ids, c.ID)
-		}
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			// Fail-closed on gate error (RR-7TIU): drop the whole
-			// type's candidates rather than surface a partial subset
-			// the policy may actually deny. Log loud so operators see
-			// the underlying failure (SIG-3 from the cranky review:
-			// silent drops surface as "missing includes" support
-			// tickets with no signal on the cause).
-			slog.Warn("dataentry: filterVisibleIncludes: PermitsReadMany failed; dropping type",
-				"type", typeName,
-				"candidates", len(ids),
-				"err", err)
-			continue
-		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
-		}
-	}
-	// Preserve original candidate order so the response is stable.
-	// Allocate a fresh slice (RR-I2SI) — aliasing candidates' storage
-	// works today but is a non-obvious invariant that a future
-	// refactor retaining `candidates` would silently corrupt.
-	out := make([]*entityPkg.Entity, 0, len(candidates))
-	for _, c := range candidates {
-		if allowed[c.ID] {
-			out = append(out, c)
-		}
-	}
-	return out
+	return a.visibleReader.filterVisible(ctx, candidates)
 }
 
-func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]string, _ string) []*entityPkg.Entity {
+// applyV1Filters applies `filter[...]` query params to the entity slice. Pure
+// data transform — a free function, not App behavior (TKT-N26KLB M5.5).
+//
+// isRelationKey identifies filter keys that target a metamodel relation rather
+// than an entity property; those are skipped here and handled by the relation
+// pass in scopedSortedEntities (which has ctx + config for direction-aware
+// traversal). A relation key would otherwise match no property and nuke the
+// whole result set (TKT-5U7QBR). A nil predicate treats every key as a
+// property filter (the pre-TKT-5U7QBR behavior).
+//
+//nolint:gocognit,funlen // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
+func applyV1Filters(
+	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
+) []*entityPkg.Entity {
 	filtered := entities
 
 	for key, values := range query {
@@ -2173,6 +2219,14 @@ func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]st
 			slog.Warn("filter key has empty property", "key", key)
 			continue
 		}
+
+		// Relation filter keys are handled by the direction-aware relation
+		// pass in scopedSortedEntities. Skip them here so a relation key
+		// (which matches no property) doesn't nuke the result set.
+		if isRelationKey != nil && isRelationKey(property) {
+			continue
+		}
+
 		operator := "eq"
 		if len(parts) == 2 {
 			if parts[1] == "" {
@@ -2267,7 +2321,9 @@ func (a *App) applyV1Filters(entities []*entityPkg.Entity, query map[string][]st
 	return filtered
 }
 
-func (a *App) applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
+// applyV1Sorting applies `sort=` query params to the entity slice. Pure data
+// transform — a free function, not App behavior (TKT-N26KLB M5.5).
+func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
 	sortParam := ""
 	if vals, ok := query["sort"]; ok && len(vals) > 0 {
 		sortParam = vals[0]
@@ -2341,7 +2397,9 @@ func parseV1Pagination(query map[string][]string) (page, perPage int) {
 	return page, perPage
 }
 
-func (a *App) addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, total int, plural string) {
+// addPaginationLinks writes RFC 8288 Link headers for the collection page.
+// Pure data transform over its args — a free function (TKT-N26KLB M5.5).
+func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, total int, plural string) {
 	totalPages := (total + perPage - 1) / perPage
 	if totalPages == 0 {
 		totalPages = 1
@@ -2389,7 +2447,7 @@ func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string
 	// Fold outgoing relations into the hash so PATCHes that only change
 	// edges also change the ETag — otherwise If-Match / If-None-Match
 	// round-trips poison client caches.
-	edges := a.outgoingRelations(ctx, e.ID)
+	edges := a.reader.outgoingRelations(ctx, e.ID)
 	edgeKeys := make([]string, 0, len(edges))
 	for _, edge := range edges {
 		edgeKeys = append(edgeKeys, edge.Type+"|"+edge.To)
@@ -2459,7 +2517,7 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 
-	err := V1Error{
+	err := v1.Error{
 		Type:     "https://rela.dev/errors/" + errType,
 		Title:    title,
 		Status:   status,
@@ -2471,48 +2529,6 @@ func writeV1Error(w http.ResponseWriter, r *http.Request, status int, errType, t
 }
 
 // --- Side Panel API ---
-
-// V1SidePanelSection represents a section in the side panel response.
-type V1SidePanelSection struct {
-	Heading      string              `json:"heading"`
-	SectionID    string              `json:"sectionId"`
-	Display      string              `json:"display"`
-	IsEmpty      bool                `json:"isEmpty"`
-	EmptyMessage string              `json:"emptyMessage,omitempty"`
-	Fields       []V1SectionField    `json:"fields,omitempty"`
-	Entities     []V1SidePanelEntity `json:"entities,omitempty"`
-	AddInfo      *V1ViewAddInfo      `json:"addInfo,omitempty"`
-	LinkInfo     *V1ViewLinkInfo     `json:"linkInfo,omitempty"`
-}
-
-// V1SectionField represents a field in a side panel section.
-// Values is always an array so that list-typed properties retain per-item
-// structure; scalar properties become a one-element array. Empty fields emit
-// an empty array (omitted via omitempty when nil).
-//
-// Property carries the raw property name so consumers can correlate the
-// field with metamodel data (e.g. inaccessibility lookup); Label is the
-// human-readable rendering. Inaccessible is true when the underlying entity
-// is git-crypt encrypted — the field is known to exist in the schema but
-// its value cannot be read.
-type V1SectionField struct {
-	Property     string   `json:"property,omitempty"`
-	Label        string   `json:"label"`
-	Values       []string `json:"values,omitempty"`
-	PropType     string   `json:"propType,omitempty"`
-	Inaccessible bool     `json:"inaccessible,omitempty"`
-}
-
-// V1SidePanelEntity represents an entity in a side panel section.
-type V1SidePanelEntity struct {
-	ID         string           `json:"id"`
-	Title      string           `json:"title"`
-	Type       string           `json:"type"`
-	EditFormID string           `json:"editFormId,omitempty"`
-	Fields     []V1SectionField `json:"fields,omitempty"`
-	Content    string           `json:"content,omitempty"`
-	HasContent bool             `json:"hasContent"`
-}
 
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
 func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
@@ -2540,7 +2556,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 
 	// Check if form has side panel
 	if form.SidePanel == nil {
-		writeV1JSON(w, http.StatusOK, []V1SidePanelSection{})
+		writeV1JSON(w, http.StatusOK, []v1.SidePanelSection{})
 		return
 	}
 
@@ -2553,7 +2569,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the entry entity
-	entry, found := a.getEntity(r.Context(), entityID)
+	entry, found := a.reader.getEntity(r.Context(), entityID)
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
 		return
@@ -2562,7 +2578,7 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	// Execute side panel traversal
 	sections := a.executeSidePanel(r.Context(), form.SidePanel, entityID, form.EntityType)
 	if sections == nil {
-		writeV1JSON(w, http.StatusOK, []V1SidePanelSection{})
+		writeV1JSON(w, http.StatusOK, []v1.SidePanelSection{})
 		return
 	}
 
@@ -2575,9 +2591,9 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 	a.resolveSectionButtonsWithTraverse(viewConfig, sections, entry)
 
 	// Convert to API response format
-	result := make([]V1SidePanelSection, 0, len(sections))
+	result := make([]v1.SidePanelSection, 0, len(sections))
 	for _, sec := range sections {
-		apiSec := V1SidePanelSection{
+		apiSec := v1.SidePanelSection{
 			Heading:      sec.Heading,
 			SectionID:    sec.SectionID,
 			Display:      sec.Display,
@@ -2587,12 +2603,12 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 
 		// Convert fields
 		for _, f := range sec.Fields {
-			apiSec.Fields = append(apiSec.Fields, V1SectionField(f))
+			apiSec.Fields = append(apiSec.Fields, v1.SectionField(f))
 		}
 
 		// Convert entities
 		for _, e := range sec.Entities {
-			apiEnt := V1SidePanelEntity{
+			apiEnt := v1.SidePanelEntity{
 				ID:         e.ID,
 				Title:      e.Title,
 				Type:       e.Type,
@@ -2601,24 +2617,24 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 				HasContent: e.HasContent,
 			}
 			for _, f := range e.Fields {
-				apiEnt.Fields = append(apiEnt.Fields, V1SectionField(f))
+				apiEnt.Fields = append(apiEnt.Fields, v1.SectionField(f))
 			}
 			apiSec.Entities = append(apiSec.Entities, apiEnt)
 		}
 
 		// Convert add/link info
 		if sec.AddInfo != nil {
-			apiSec.AddInfo = &V1ViewAddInfo{
+			apiSec.AddInfo = &v1.ViewAddInfo{
 				Relation: sec.AddInfo.Relation,
 				LinkAs:   sec.AddInfo.LinkAs,
 				PeerID:   sec.AddInfo.PeerID,
 			}
 			for _, t := range sec.AddInfo.Targets {
-				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, V1ViewAddTarget(t))
+				apiSec.AddInfo.Targets = append(apiSec.AddInfo.Targets, v1.ViewAddTarget(t))
 			}
 		}
 		if sec.LinkInfo != nil {
-			apiSec.LinkInfo = &V1ViewLinkInfo{
+			apiSec.LinkInfo = &v1.ViewLinkInfo{
 				Relation:    sec.LinkInfo.Relation,
 				LinkAs:      sec.LinkInfo.LinkAs,
 				PeerID:      sec.LinkInfo.PeerID,
@@ -2634,33 +2650,6 @@ func (a *App) handleV1SidePanel(w http.ResponseWriter, r *http.Request) {
 
 // --- Sidebar API ---
 
-// V1SidebarItem represents a navigation item with count.
-type V1SidebarItem struct {
-	Label  string `json:"label"`
-	Href   string `json:"href"`
-	Icon   string `json:"icon,omitempty"`
-	Count  *int   `json:"count,omitempty"`
-	Action string `json:"action,omitempty"`
-}
-
-// V1SidebarGroup represents a navigation group with items.
-type V1SidebarGroup struct {
-	Group     string          `json:"group,omitempty"`
-	Collapsed bool            `json:"collapsed,omitempty"`
-	Items     []V1SidebarItem `json:"items"`
-}
-
-// V1SidebarResponse contains the sidebar data with app info and navigation.
-type V1SidebarResponse struct {
-	App        V1AppConfig      `json:"app"`
-	Navigation []V1SidebarGroup `json:"navigation"`
-	// LogoURL is the cache-busted URL of the user-uploaded sidebar logo,
-	// or nil when no logo is set. Included here (rather than in
-	// `_settings`) so the SPA can render the logo on first paint without
-	// blocking on a settings fetch.
-	LogoURL *string `json:"logoUrl,omitempty"`
-}
-
 // handleV1Sidebar returns denormalized sidebar data with entity counts.
 func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -2675,14 +2664,14 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build navigation with counts
-	navigation := make([]V1SidebarGroup, 0)
+	navigation := make([]v1.SidebarGroup, 0)
 
 	for _, entry := range s.Cfg.Navigation {
 		if entry.IsGroup() {
-			group := V1SidebarGroup{
+			group := v1.SidebarGroup{
 				Group:     entry.Group,
 				Collapsed: entry.Collapsed,
-				Items:     make([]V1SidebarItem, 0),
+				Items:     make([]v1.SidebarItem, 0),
 			}
 			for _, item := range entry.Items {
 				sidebarItem := a.navEntryToSidebarItem(r.Context(), item, counts)
@@ -2692,20 +2681,20 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Top-level item without group
 			item := a.navEntryToSidebarItem(r.Context(), entry, counts)
-			navigation = append(navigation, V1SidebarGroup{
-				Items: []V1SidebarItem{item},
+			navigation = append(navigation, v1.SidebarGroup{
+				Items: []v1.SidebarItem{item},
 			})
 		}
 	}
 
-	resp := V1SidebarResponse{
-		App: V1AppConfig{
+	resp := v1.SidebarResponse{
+		App: v1.AppConfig{
 			Name:        s.Cfg.App.Name,
 			Description: s.Cfg.App.Description,
 		},
 		Navigation: navigation,
 	}
-	resp.LogoURL = s.LogoURL()
+	resp.LogoURL = a.logo.URL()
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -2768,7 +2757,9 @@ func (c *sidebarCounts) kanbanCount(ctx context.Context, kanbanID string, kanban
 // filterCache keys on list/kanban id, not (type, filters); a
 // (type, filters)-keyed memo is the obvious upgrade if sidebar
 // latency ever warrants it.
-func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig) int {
+func (c *sidebarCounts) countWithFilters(
+	ctx context.Context, entityType string, filters []dataentryconfig.FilterConfig,
+) int {
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, entityType)
 	if rqr.DenyAll {
 		return 0
@@ -2801,9 +2792,11 @@ func (c *sidebarCounts) countWithFilters(ctx context.Context, entityType string,
 }
 
 // navEntryToSidebarItem converts a navigation entry to a sidebar item with count.
-func (a *App) navEntryToSidebarItem(ctx context.Context, entry dataentryconfig.NavigationEntry, counts sidebarCounts) V1SidebarItem {
+func (a *App) navEntryToSidebarItem(
+	ctx context.Context, entry dataentryconfig.NavigationEntry, counts sidebarCounts,
+) v1.SidebarItem {
 	s := a.State()
-	item := V1SidebarItem{
+	item := v1.SidebarItem{
 		Label: entry.Label,
 	}
 
@@ -2841,47 +2834,6 @@ func (a *App) navEntryToSidebarItem(ctx context.Context, entry dataentryconfig.N
 
 // --- Conflicts API ---
 
-// V1ConflictItem represents a conflicted file.
-type V1ConflictItem struct {
-	Path        string `json:"path"`
-	EntityType  string `json:"entity_type,omitempty"`
-	EntityID    string `json:"entity_id,omitempty"`
-	MarkerCount int    `json:"marker_count"`
-}
-
-// V1ConflictsResponse contains the list of conflicts.
-type V1ConflictsResponse struct {
-	Conflicts []V1ConflictItem `json:"conflicts"`
-	Count     int              `json:"count"`
-}
-
-// V1PropertyDiff represents a property difference.
-type V1PropertyDiff struct {
-	Property    string `json:"property"`
-	OursValue   string `json:"ours_value"`
-	TheirsValue string `json:"theirs_value"`
-	IsSame      bool   `json:"is_same"`
-}
-
-// V1ConflictDetail contains detailed info for resolving a conflict.
-type V1ConflictDetail struct {
-	Path          string           `json:"path"`
-	EntityType    string           `json:"entity_type,omitempty"`
-	EntityID      string           `json:"entity_id,omitempty"`
-	PropertyDiffs []V1PropertyDiff `json:"property_diffs"`
-	ContentSame   bool             `json:"content_same"`
-	ContentOurs   string           `json:"content_ours,omitempty"`
-	ContentTheirs string           `json:"content_theirs,omitempty"`
-}
-
-// V1ConflictResolveRequest contains the resolution choices.
-type V1ConflictResolveRequest struct {
-	Path            string            `json:"path"`
-	PropertyChoices map[string]string `json:"property_choices"`
-	ContentChoice   string            `json:"content_choice"`
-	ManualContent   string            `json:"manual_content,omitempty"`
-}
-
 // handleV1Conflicts returns the list of conflicted files as JSON.
 func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -2901,10 +2853,10 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]V1ConflictItem, 0, len(result.Files))
+	items := make([]v1.ConflictItem, 0, len(result.Files))
 	for _, cf := range result.Files {
 		relPath, _ := filepath.Rel(ctx.Root, cf.Path)
-		items = append(items, V1ConflictItem{
+		items = append(items, v1.ConflictItem{
 			Path:        relPath,
 			EntityType:  cf.EntityType,
 			EntityID:    cf.EntityID,
@@ -2912,7 +2864,7 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeV1JSON(w, http.StatusOK, V1ConflictsResponse{
+	writeV1JSON(w, http.StatusOK, v1.ConflictsResponse{
 		Conflicts: items,
 		Count:     len(items),
 	})
@@ -2947,9 +2899,9 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 
 	info := conflict.AnalyzeConflict(cf)
 
-	diffs := make([]V1PropertyDiff, 0, len(info.PropertyDiffs))
+	diffs := make([]v1.PropertyDiff, 0, len(info.PropertyDiffs))
 	for _, d := range info.PropertyDiffs {
-		diffs = append(diffs, V1PropertyDiff{
+		diffs = append(diffs, v1.PropertyDiff{
 			Property:    d.Property,
 			OursValue:   fmt.Sprintf("%v", d.OursValue),
 			TheirsValue: fmt.Sprintf("%v", d.TheirsValue),
@@ -2957,7 +2909,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	detail := V1ConflictDetail{
+	detail := v1.ConflictDetail{
 		Path:          path,
 		EntityType:    cf.EntityType,
 		EntityID:      cf.EntityID,
@@ -2972,7 +2924,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 
 // handleV1ConflictResolve applies a conflict resolution.
 func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
-	var req V1ConflictResolveRequest
+	var req v1.ConflictResolveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", err.Error())
 		return
@@ -3096,11 +3048,13 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 // fallback the manager uses). A deny records a `denied-write` audit
 // row and writes the standard 403 body; returns true when the write
 // may proceed.
-func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation) bool {
+func (a *App) authorizeConflictResolve(
+	ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation,
+) bool {
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		var fromType string
-		if fromEntity, ok := a.getEntity(ctx, rel.From); ok {
+		if fromEntity, ok := a.reader.getEntity(ctx, rel.From); ok {
 			fromType = fromEntity.Type
 		}
 		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
@@ -3127,7 +3081,9 @@ func (a *App) authorizeConflictResolve(ctx context.Context, w http.ResponseWrite
 // recordConflictResolveAudit emits the audit row for a successful
 // conflict resolution — the direct-file-write counterpart of the
 // records entitymanager emits for manager-routed writes.
-func (a *App) recordConflictResolveAudit(ctx context.Context, relPath string, e *entityPkg.Entity, rel *entityPkg.Relation) {
+func (a *App) recordConflictResolveAudit(
+	ctx context.Context, relPath string, e *entityPkg.Entity, rel *entityPkg.Relation,
+) {
 	op := audit.OpUpdateEntity
 	if rel != nil {
 		op = audit.OpUpdateRelation
@@ -3143,13 +3099,6 @@ func (a *App) recordConflictResolveAudit(ctx context.Context, relPath string, e 
 }
 
 // --- Documents API ---
-
-// V1DocumentResponse contains the rendered document content.
-type V1DocumentResponse struct {
-	HTML      string   `json:"html"`
-	Cached    bool     `json:"cached"`
-	EntityIDs []string `json:"entity_ids"` // IDs of entities involved in this document (for SSE filtering)
-}
 
 // handleV1Documents handles GET /api/v1/_documents/{docName}/{entityId}.
 // Returns JSON with rendered HTML content for Vue SPA consumption.
@@ -3234,7 +3183,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		result := a.documents.GetCached(r.Context(), entityID)
 		if result != nil {
 			html := RewriteDocumentLinks(result.HTML, returnPath, nil)
-			writeV1JSON(w, http.StatusOK, V1DocumentResponse{
+			writeV1JSON(w, http.StatusOK, v1.DocumentResponse{
 				HTML:      html,
 				Cached:    true,
 				EntityIDs: extractEntityIDs(result.Entities),
@@ -3260,7 +3209,7 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	html := RewriteDocumentLinks(result.HTML, returnPath, nil)
-	writeV1JSON(w, http.StatusOK, V1DocumentResponse{
+	writeV1JSON(w, http.StatusOK, v1.DocumentResponse{
 		HTML:      html,
 		Cached:    false,
 		EntityIDs: extractEntityIDs(result.Entities),
@@ -3278,15 +3227,6 @@ func extractEntityIDs(entities []*entityPkg.Entity) []string {
 
 // --- Commands API ---
 
-// V1Command is the JSON representation of an available command.
-type V1Command struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Confirm  string `json:"confirm,omitempty"`
-	Context  string `json:"context"`
-	AutoOpen *bool  `json:"auto_open,omitempty"`
-}
-
 // handleV1Commands returns available commands for a given page context.
 // Query params:
 //   - page_type: "entity", "list", "view", or "dashboard"
@@ -3303,28 +3243,14 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	qualifier := query.Get("qualifier")
 	entityType := query.Get("entity_type")
 
-	resolved := a.resolveCommands(pageType, qualifier, entityType)
+	resolved := a.commands.resolveCommands(pageType, qualifier, entityType)
 
-	commands := make([]V1Command, 0, len(resolved))
+	commands := make([]v1.Command, 0, len(resolved))
 	for _, cmd := range resolved {
-		commands = append(commands, V1Command(cmd))
+		commands = append(commands, v1.Command(cmd))
 	}
 
 	writeV1JSON(w, http.StatusOK, commands)
-}
-
-// V1Template represents a template for API responses.
-type V1Template struct {
-	Name       string                 `json:"name"`
-	Properties map[string]interface{} `json:"properties"`
-	Content    string                 `json:"content"`
-	Relations  []V1TemplateRelation   `json:"relations"`
-}
-
-// V1TemplateRelation represents a pre-filled relation in a template.
-type V1TemplateRelation struct {
-	Relation string `json:"relation"`
-	Target   string `json:"target"`
 }
 
 // handleV1Templates returns templates for an entity type.
@@ -3350,17 +3276,17 @@ func (a *App) handleV1Templates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	templates, _ := a.templater.EntityTemplates(r.Context(), entityType)
-	result := make([]V1Template, 0, len(templates))
+	result := make([]v1.Template, 0, len(templates))
 
 	for _, t := range templates {
-		relations := make([]V1TemplateRelation, 0, len(t.Relations))
+		relations := make([]v1.TemplateRelation, 0, len(t.Relations))
 		for _, rel := range t.Relations {
-			relations = append(relations, V1TemplateRelation{
+			relations = append(relations, v1.TemplateRelation{
 				Relation: rel.Type,
 				Target:   rel.Target,
 			})
 		}
-		result = append(result, V1Template{
+		result = append(result, v1.Template{
 			Name:       t.Name,
 			Properties: t.Properties,
 			Content:    t.Content,
@@ -3393,82 +3319,13 @@ func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 
 // --- Views API ---
 
-// V1ViewResponse contains the executed view data.
-//
-// Mentions carries the implicit-relation set discovered by scanning the
-// entry and section markdown contents for bare-content entity-ID code
-// spans (see collectMentions). The SPA's markdown renderer consumes this
-// map to rewrite those code spans into titled in-app links. Mirrors the
-// Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
-// that don't go through the Lua document path.
-//
-// Wire stability: `mentions` is part of the public v1 API. The set of
-// `inaccessible_reason` values may grow as new locking mechanisms are
-// added (today: `git-crypt`); clients must treat unknown reasons as
-// opaque rather than enumerating them.
-type V1ViewResponse struct {
-	Entry    V1Entity           `json:"entry"`
-	Sections []V1ViewSection    `json:"sections"`
-	Mentions map[string]Mention `json:"mentions,omitempty"`
-}
-
-// V1ViewSection represents a section with resolved data.
-type V1ViewSection struct {
-	Heading      string           `json:"heading"`
-	SectionID    string           `json:"sectionId"`
-	Display      string           `json:"display"`
-	IsEmpty      bool             `json:"isEmpty"`
-	EmptyMessage string           `json:"emptyMessage,omitempty"`
-	Fields       []V1SectionField `json:"fields,omitempty"`
-	Entities     []V1ViewEntity   `json:"entities,omitempty"`
-	Columns      []V1ViewColumn   `json:"columns,omitempty"`
-	Rows         []V1ViewRow      `json:"rows,omitempty"`
-	Groups       []V1ViewGroup    `json:"groups,omitempty"`
-	IsGrouped    bool             `json:"isGrouped"`
-	Content      string           `json:"content,omitempty"`
-	HasContent   bool             `json:"hasContent"`
-}
-
-// V1ViewEntity represents an entity in a view section.
-//
-// Props and FieldAffordances (TKT-IHC7D) carry the typed property
-// values and per-cell writability verdict that inline-edit hosts on
-// cards/list view sections consume. Both are hidden-property-stripped
-// — the consumer can assume:
-//
-//   - `keys(Props) ∩ hidden(e) == ∅` (hidden properties never leak via
-//     this surface)
-//   - `keys(FieldAffordances) ∩ hidden(e) == ∅` (same for the verdict)
-//   - `FieldAffordances` may have keys absent from `Props` when the
-//     property has no stored value but a non-default verdict (e.g.
-//     `writable: false` on an unset field)
-//
-// The pointer-to-map idiom on `FieldAffordances` mirrors
-// `V1Entity.FieldAffordances`: `nil` means "absent on the wire"
-// (table rows / non-cards paths), `&{}` means "evaluated, no
-// deviations" (closed-world signal matching `_actions`).
-//
-// `Props` is a plain map with `omitempty`: presence/absence is
-// sufficient, no closed-world semantic is needed.
-type V1ViewEntity struct {
-	ID               string                        `json:"id"`
-	Title            string                        `json:"title"`
-	Type             string                        `json:"type"`
-	EditFormID       string                        `json:"editFormId,omitempty"`
-	Fields           []V1SectionField              `json:"fields,omitempty"`
-	Content          string                        `json:"content,omitempty"`
-	HasContent       bool                          `json:"hasContent"`
-	Props            map[string]any                `json:"_props,omitempty"`
-	FieldAffordances *map[string]V1FieldAffordance `json:"_fields,omitempty"`
-}
-
 // sectionEntityToV1 lifts a section's row entity (template-side data)
-// onto the wire shape. Centralizes the `V1ViewEntity` construction so
+// onto the wire shape. Centralizes the `v1.ViewEntity` construction so
 // the typed `_props` and per-row `_fields` (TKT-IHC7D) stay consistent
 // across both the top-level entities path and the (currently dormant)
 // grouped-card entities path.
-func sectionEntityToV1(e SectionEntityData) V1ViewEntity {
-	v1Ent := V1ViewEntity{
+func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
+	v1Ent := v1.ViewEntity{
 		ID:         e.ID,
 		Title:      e.Title,
 		Type:       e.Type,
@@ -3478,76 +3335,13 @@ func sectionEntityToV1(e SectionEntityData) V1ViewEntity {
 		Props:      e.Props,
 	}
 	for _, f := range e.Fields {
-		v1Ent.Fields = append(v1Ent.Fields, V1SectionField(f))
+		v1Ent.Fields = append(v1Ent.Fields, v1.SectionField(f))
 	}
 	if e.FieldVerdicts != nil {
 		fa := e.FieldVerdicts
 		v1Ent.FieldAffordances = &fa
 	}
 	return v1Ent
-}
-
-// V1ViewColumn represents a column definition.
-type V1ViewColumn struct {
-	Property string `json:"property,omitempty"`
-	Label    string `json:"label,omitempty"`
-	Relation string `json:"relation,omitempty"`
-	Link     string `json:"link,omitempty"`
-}
-
-// V1ViewRow represents a table row.
-type V1ViewRow struct {
-	EntityID   string       `json:"entityId"`
-	EntityType string       `json:"entityType"`
-	EditFormID string       `json:"editFormId,omitempty"`
-	Cells      []V1ViewCell `json:"cells"`
-	Content    string       `json:"content,omitempty"`
-}
-
-// V1ViewCell represents a table cell.
-type V1ViewCell struct {
-	Values     []string `json:"values"`
-	PropType   string   `json:"propType,omitempty"`
-	Widget     string   `json:"widget,omitempty"`
-	Link       string   `json:"link,omitempty"`
-	EntityID   string   `json:"entityId,omitempty"`
-	EntityType string   `json:"entityType,omitempty"`
-}
-
-// V1ViewGroup represents a group of rows.
-type V1ViewGroup struct {
-	GroupName string         `json:"groupName"`
-	Rows      []V1ViewRow    `json:"rows,omitempty"`
-	Entities  []V1ViewEntity `json:"entities,omitempty"`
-}
-
-// V1ViewAddInfo describes an add button configuration. Despite the "View"
-// prefix this is now used only by V1SidePanelSection — see TKT-6ETQ for
-// the rename to V1SidePanelAddInfo. Do not reach for this type from a new
-// view-related response: the read-only-view invariant established by
-// TKT-651W means no view section should carry add affordances.
-type V1ViewAddInfo struct {
-	Relation string            `json:"relation"`
-	LinkAs   string            `json:"linkAs"`
-	PeerID   string            `json:"peerId"`
-	Targets  []V1ViewAddTarget `json:"targets"`
-}
-
-// V1ViewAddTarget represents a possible target for add action.
-// Side-panel-only post TKT-651W; see TKT-6ETQ for the rename plan.
-type V1ViewAddTarget struct {
-	EntityType string `json:"entityType"`
-	FormID     string `json:"formId"`
-	Label      string `json:"label"`
-}
-
-// V1ViewLinkInfo describes a link existing button configuration.
-// Side-panel-only post TKT-651W; see TKT-6ETQ for the rename plan.
-type V1ViewLinkInfo struct {
-	Relation    string   `json:"relation"`
-	LinkAs      string   `json:"linkAs"`
-	PeerID      string   `json:"peerId"`
-	EntityTypes []string `json:"entityTypes"`
 }
 
 // handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.
@@ -3557,6 +3351,8 @@ type V1ViewLinkInfo struct {
 // is registered for entityType, a default is synthesized from the
 // metamodel (see buildDefaultViewConfig) and executed through the same
 // pipeline so the response shape is identical.
+//
+//nolint:gocognit,funlen // routes the views sub-API over method and path shape; each branch is a distinct view endpoint, not shared logic to factor out.
 func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -3613,13 +3409,14 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)
 
-	resp := V1ViewResponse{
-		Entry:    a.serializeEntityForWire(r.Context(), result.Entry, plural, true),
-		Sections: make([]V1ViewSection, 0, len(sections)),
+	entryRels := a.reader.outgoingRelations(r.Context(), result.Entry.ID)
+	resp := v1.ViewResponse{
+		Entry:    a.serializer.forWire(r.Context(), result.Entry, entryRels, a.Meta(), plural),
+		Sections: make([]v1.ViewSection, 0, len(sections)),
 	}
 
 	for _, sec := range sections {
-		v1Sec := V1ViewSection{
+		v1Sec := v1.ViewSection{
 			Heading:      sec.Heading,
 			SectionID:    sec.SectionID,
 			Display:      sec.Display,
@@ -3632,7 +3429,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert fields
 		for _, f := range sec.Fields {
-			v1Sec.Fields = append(v1Sec.Fields, V1SectionField(f))
+			v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
 		}
 
 		// Convert entities
@@ -3642,7 +3439,7 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert columns
 		for _, col := range sec.Columns {
-			v1Sec.Columns = append(v1Sec.Columns, V1ViewColumn{
+			v1Sec.Columns = append(v1Sec.Columns, v1.ViewColumn{
 				Property: col.Property,
 				Label:    col.Label,
 				Relation: col.Relation,
@@ -3652,32 +3449,32 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert rows
 		for _, row := range sec.Rows {
-			v1Row := V1ViewRow{
+			v1Row := v1.ViewRow{
 				EntityID:   row.EntityID,
 				EntityType: row.EntityType,
 				EditFormID: row.EditFormID,
 				Content:    row.Content,
 			}
 			for _, cell := range row.Cells {
-				v1Row.Cells = append(v1Row.Cells, V1ViewCell(cell))
+				v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
 			}
 			v1Sec.Rows = append(v1Sec.Rows, v1Row)
 		}
 
 		// Convert groups
 		for _, grp := range sec.Groups {
-			v1Grp := V1ViewGroup{
+			v1Grp := v1.ViewGroup{
 				GroupName: grp.GroupName,
 			}
 			for _, row := range grp.Rows {
-				v1Row := V1ViewRow{
+				v1Row := v1.ViewRow{
 					EntityID:   row.EntityID,
 					EntityType: row.EntityType,
 					EditFormID: row.EditFormID,
 					Content:    row.Content,
 				}
 				for _, cell := range row.Cells {
-					v1Row.Cells = append(v1Row.Cells, V1ViewCell(cell))
+					v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
 				}
 				v1Grp.Rows = append(v1Grp.Rows, v1Row)
 			}

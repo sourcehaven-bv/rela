@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -59,23 +60,24 @@ func sidebarPolicy() *acl.Policy {
 // installSidebarConfig publishes a Config snapshot carrying one plain
 // list, one filtered list, and one kanban over tickets.
 func installSidebarConfig(app *App) {
-	app.mutateState(func(s *AppState) {
-		cfg := *s.Cfg
-		cfg.Lists = map[string]dataentryconfig.List{
-			"all-tickets": {EntityType: "ticket", Title: "All"},
-			"open-tickets": {EntityType: "ticket", Title: "Open",
-				Filters: []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}}},
-		}
-		cfg.Kanbans = map[string]dataentryconfig.Kanban{
-			"board": {EntityType: "ticket", ColumnProperty: "status"},
-		}
-		cfg.Navigation = []dataentryconfig.NavigationEntry{
-			{Label: "All", List: "all-tickets"},
-			{Label: "Open", List: "open-tickets"},
-			{Label: "Board", Kanban: "board"},
-		}
-		s.Cfg = &cfg
-	})
+	cur := app.State()
+	next := *cur // shallow copy of the snapshot
+	cfg := *cur.Cfg
+	cfg.Lists = map[string]dataentryconfig.List{
+		"all-tickets": {EntityType: "ticket", Title: "All"},
+		"open-tickets": {EntityType: "ticket", Title: "Open",
+			Filters: []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}}},
+	}
+	cfg.Kanbans = map[string]dataentryconfig.Kanban{
+		"board": {EntityType: "ticket", ColumnProperty: "status"},
+	}
+	cfg.Navigation = []dataentryconfig.NavigationEntry{
+		{Label: "All", List: "all-tickets"},
+		{Label: "Open", List: "open-tickets"},
+		{Label: "Board", Kanban: "board"},
+	}
+	next.Cfg = &cfg
+	app.schema.Publish(&next)
 }
 
 // sidebarCountsByLabel performs a sidebar request and returns the
@@ -89,7 +91,7 @@ func sidebarCountsByLabel(ctx context.Context, t *testing.T, app *App) map[strin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET _sidebar: %d %s", rec.Code, rec.Body)
 	}
-	var resp V1SidebarResponse
+	var resp v1.SidebarResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode sidebar: %v\nbody: %s", err, rec.Body)
 	}

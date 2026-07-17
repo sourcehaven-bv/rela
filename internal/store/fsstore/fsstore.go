@@ -94,6 +94,18 @@ type attachMeta struct {
 }
 
 // FSStore is a filesystem-backed store implementation.
+//
+// TODO(TKT-N0IKN9): FSStore is over the 40-method load line (84 methods).
+// Decompose; ratchet this number down as responsibilities move out.
+//
+// The exported surface (32) is mostly the mandated store.Store interface (~27
+// methods) plus the Formatter and watcher side-interfaces; consumers depend on
+// store.Store directly by design (see ./CLAUDE.md). Ratchet toward the
+// interface size as the non-interface public methods (FormatEntity/Relation,
+// Start/StopWatching) move to composed helpers.
+//
+//plimsoll:max-methods=84
+//plimsoll:max-exported-methods=32
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the

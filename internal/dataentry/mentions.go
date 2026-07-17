@@ -10,29 +10,11 @@ import (
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
-
-// Mention is the resolved target of an entity-ID code span found in
-// markdown content. Mirrors the Lua-side `rela.md.entity_refs`/`resolve_refs`
-// semantics (TKT-LXYHQ): only bare-content code spans whose entire text is
-// an entity ID are collected; the data-entry SPA uses this map to rewrite
-// those code spans into titled in-app links.
-//
-// `Inaccessible` is true when the entity's display title is unreadable
-// (e.g. the file is git-crypt encrypted) — the SPA renders such links
-// with a lock affordance using the same tooltip copy as inaccessible
-// properties. `InaccessibleReason` carries the matching
-// `entity.InaccessibleReason` value as a string so the wire shape stays
-// stable across reason-enum additions.
-type Mention struct {
-	Type               string `json:"type"`
-	Title              string `json:"title"`
-	Inaccessible       bool   `json:"inaccessible,omitempty"`
-	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
-}
 
 // collectMentions scans the supplied markdown blobs for inline code spans
 // whose entire content is an entity ID known to the store, and returns a
@@ -47,12 +29,14 @@ type Mention struct {
 // unknown-ID UX. Context cancellation is honored — callers (HTTP handlers)
 // have already bound the request context and abandoning further lookups
 // after the client disconnects saves wasted work.
-func collectMentions(ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string) map[string]Mention {
+func collectMentions(
+	ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string,
+) map[string]v1.Mention {
 	candidates := scanCodeSpanCandidates(contents...)
 	if len(candidates) == 0 {
 		return nil
 	}
-	out := make(map[string]Mention, len(candidates))
+	out := make(map[string]v1.Mention, len(candidates))
 	for id := range candidates {
 		if err := ctx.Err(); err != nil {
 			if len(out) == 0 {
@@ -77,58 +61,66 @@ func collectMentions(ctx context.Context, s store.EntityReader, meta *metamodel.
 	return out
 }
 
-// buildMention turns a resolved entity into a wire-shape Mention. Title
+// buildMention turns a resolved entity into a wire-shape v1.Mention. Title
 // uses the metamodel's DisplayTitle so entity types whose primary
 // property is something other than `title` (e.g. concept's `name`)
 // still produce readable link text. Inaccessibility flips on only when
 // the display-title source is itself unreadable — a partial lock on an
 // unrelated property must not turn a link into a lock affordance.
-func buildMention(e *entityPkg.Entity, meta *metamodel.Metamodel) Mention {
-	m := Mention{Type: e.Type}
+func buildMention(e *entityPkg.Entity, meta *metamodel.Metamodel) v1.Mention {
+	m := v1.Mention{Type: e.Type}
 	if meta != nil {
 		m.Title = meta.DisplayTitle(e.ID, e.Type, e.Properties)
 	} else {
 		m.Title = e.Title()
 	}
 
-	primary := displayProperty(meta, e.Type)
-	if reason, locked := lockedReasonFor(e, primary); locked {
+	titleProps := displayProperties(meta, e.Type)
+	if reason, locked := lockedReasonFor(e, titleProps); locked {
 		m.Inaccessible = true
 		m.InaccessibleReason = reason
 	}
 	return m
 }
 
-// displayProperty returns the property name whose value backs the display
-// title for this entity type. Empty when the metamodel has no entry for
-// the type or no primary property is configured — falls back to the ID
-// being the source of truth, in which case the entity can't really be
-// "locked behind its title."
-func displayProperty(meta *metamodel.Metamodel, entityType string) string {
+// displayProperties returns the property names whose values back the display
+// title for this entity type — a single name for a bare/autoderived primary,
+// or every placeholder for a templated display_property. Empty when the
+// metamodel has no entry for the type or no primary property is configured
+// (the ID is then the source of truth, so the entity can't be "locked behind
+// its title"). Any one of these being inaccessible locks the title, because
+// DisplayTitle would render an incomplete name.
+func displayProperties(meta *metamodel.Metamodel, entityType string) []string {
 	if meta == nil {
-		return "title"
+		return []string{"title"}
 	}
 	def, ok := meta.GetEntityDef(entityType)
 	if !ok {
-		return ""
+		return nil
 	}
-	return def.GetPrimaryProperty()
+	return def.DisplayProperties()
 }
 
 // lockedReasonFor reports whether the entity's display title is
 // unreadable (and the matching reason). The entity's whole content body
 // being inaccessible (`InaccessibleFieldContent`) counts too, because the
-// lookup of the title property may have failed for the same reason —
+// lookup of a title property may have failed for the same reason —
 // markdown loaders produce a `content` inaccessible field for the whole
 // file when git-crypt blocks the read. A property unrelated to the title
-// being locked does not affect the link.
-func lockedReasonFor(e *entityPkg.Entity, displayProp string) (string, bool) {
+// being locked does not affect the link; but any property the title reads
+// from (all placeholders of a template) being locked does.
+func lockedReasonFor(e *entityPkg.Entity, displayProps []string) (string, bool) {
 	if e == nil {
 		return "", false
 	}
 	for _, f := range e.Inaccessible {
-		if f.Name == displayProp || f.Name == entityPkg.InaccessibleFieldContent {
+		if f.Name == entityPkg.InaccessibleFieldContent {
 			return string(f.Reason), true
+		}
+		for _, dp := range displayProps {
+			if f.Name == dp {
+				return string(f.Reason), true
+			}
 		}
 	}
 	return "", false

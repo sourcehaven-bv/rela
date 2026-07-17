@@ -1,0 +1,9 @@
+---
+id: RR-VOYXRV
+type: review-response
+title: Restore replays full snapshot through UpdateEntity → bypasses per-field write ACL & resurrects redacted content
+finding: 'Field-level WRITE ACL (validateFieldWrite) is enforced only in the dataentry HTTP handlers (api_v1.go:664 create, :1047 PATCH), and only for fields present in the request body. entitymanager.UpdateEntity/CreateEntity authorize only the TYPE-level verb (manager.go:473, authz_write.go:34 — never consults RoleDef.Fields). The plan''s restore = ''replay a full snapshot through UpdateEntity'', which therefore BYPASSES the entire per-field write gate: a principal with type-level update but a fields: grant excluding e.g. priority/assignee can set those values via restore though a direct PATCH would be rejected (RuleFieldReadOnly/Hidden). It also resurrects compliance-redacted content as the new LIVE version (defeating any ''it''s only in history'' mitigation). Fix (recommended #1): restore must be treated as ''a PATCH whose body is the historical values'' — diff live vs snapshot and run the changed fields through validateFieldWrite before replay, rejecting/dropping fields the principal can''t write. Alternative #2: gate restore behind a distinct higher permission (history:restore) and document it as a field-ACL-bypassing operator-only op. Note CLI restore writes directly through entitymanager (always full-trust) — consistent only if CLI stays operator-only.'
+severity: critical
+resolution: 'Implemented in slice 7: restore is a field-validated PATCH, not a raw replay. internal/dataentry/history_restore.go diffs the snapshot vs the live entity (set/unset keys) and runs exactly those through affordanceService.validateFieldWrite before applying via entitymanager.UpdateEntity; a field the principal can''t write blocks the restore. Deleted-entity restore goes through CreateEntity (type-level authorized). TOCTOU races map to 409.'
+status: addressed
+---

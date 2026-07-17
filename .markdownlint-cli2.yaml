@@ -8,3 +8,6 @@ ignores:
   - .ignored/**
   - "**/.ignored/**"
   - tickets/**
+  # Go test fixtures: deliberately-malformed markdown used to exercise the
+  # renderer (idempotency, panic recovery). Linting them defeats their purpose.
+  - "**/testdata/**"

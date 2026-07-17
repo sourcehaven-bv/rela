@@ -17,7 +17,7 @@ type ImportCmd struct {
 }
 
 // Run dispatches `rela import <file>`.
-func (c *ImportCmd) Run(svc *cliServices) error {
+func (c *ImportCmd) Run(svc *readServices) error {
 	opts := importer.Options{
 		Format:        importer.Format(c.Format),
 		DryRun:        c.DryRun,
@@ -25,7 +25,7 @@ func (c *ImportCmd) Run(svc *cliServices) error {
 		SkipErrors:    c.SkipErrors,
 		RelationsFile: c.RelationsFile,
 	}
-	imp := importer.New(svc.Store(), svc.Meta(), opts, importer.NewImportSource(svc.FS()))
+	imp := importer.New(svc.Store, svc.Meta, opts, importer.NewImportSource(svc.FS))
 
 	if c.DryRun {
 		out.WriteInfo("Dry run - validating without creating files...")

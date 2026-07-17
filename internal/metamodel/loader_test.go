@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -883,6 +884,67 @@ widgets:
 	}
 }
 
+// TestParse_AttachmentsTopLevelKeyAccepted is the regression guard for
+// BUG-5XIN07: a documented top-level `attachments:` block must round-trip
+// through the real loader (not just unmarshal into the struct — the whitelist
+// in checkUnknownKeys is a separate gate that this exercises). Asserting the
+// parsed Attachments field is populated proves the wiring, not merely that no
+// error was returned.
+func TestParse_AttachmentsTopLevelKeyAccepted(t *testing.T) {
+	yaml := `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+types: {}
+relations: {}
+attachments:
+  allow: [image/png]
+  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
+`
+	m, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("valid attachments block rejected: %v", err)
+	}
+	if m.Attachments == nil {
+		t.Fatal("attachments block parsed but Attachments field is nil")
+	}
+	if got, want := m.Attachments.Allow, []string{"image/png"}; len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("attachments.allow = %v, want %v", got, want)
+	}
+	if len(m.Attachments.ScanCmd) == 0 || m.Attachments.ScanCmd[0] != "clamdscan" {
+		t.Errorf("attachments.scan_cmd = %v, want it to start with clamdscan", m.Attachments.ScanCmd)
+	}
+}
+
+// TestValidTopLevelKeysMatchStruct closes the systemic root cause of BUG-5XIN07:
+// validTopLevelKeys is a hand-maintained duplicate of the Metamodel struct's
+// top-level yaml tags, and the two silently drifted (the attachments field was
+// added without its whitelist entry). This asserts every top-level yaml tag on
+// the struct is whitelisted, so a future top-level field cannot be rejected by
+// its own loader without failing this test first.
+func TestValidTopLevelKeysMatchStruct(t *testing.T) {
+	for field := range reflect.TypeFor[Metamodel]().Fields() {
+		tag := field.Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue // computed field, not loaded from YAML
+		}
+		key := strings.Split(tag, ",")[0]
+		if key == "" {
+			continue
+		}
+		if !validTopLevelKeys[key] {
+			t.Errorf("Metamodel field %q (yaml:%q) is not in validTopLevelKeys — "+
+				"the loader will reject a metamodel that uses it", field.Name, key)
+		}
+	}
+}
+
 func TestParse_UnknownPropertyType(t *testing.T) {
 	yaml := `
 version: "1.0"
@@ -1694,6 +1756,127 @@ entities:
 	assertEqual(t, def.DisplayProperty, "number")
 }
 
+// TKT-NJTBQX: display_property as a template.
+
+// TestParse_DisplayPropertyTemplateSucceeds verifies a well-formed template
+// whose placeholders all reference defined properties loads cleanly.
+func TestParse_DisplayPropertyTemplateSucceeds(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam} {tussenvoegsel} {achternaam}"
+    properties:
+      voornaam:
+        type: string
+      tussenvoegsel:
+        type: string
+      achternaam:
+        type: string
+        required: true
+`
+	m, err := Parse([]byte(yaml))
+	assertNoError(t, err)
+	assertEqual(t, m.Entities["persoon"].DisplayProperty, "{voornaam} {tussenvoegsel} {achternaam}")
+}
+
+// TestParse_DisplayPropertyTemplateUnknownProperty verifies AC6: a placeholder
+// naming an undefined property is a load-time error.
+func TestParse_DisplayPropertyTemplateUnknownProperty(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam} {unknown_prop}"
+    properties:
+      voornaam:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "unknown_prop", `entity "persoon"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyTemplateUnclosed verifies AC7: a template with an
+// unclosed '{' is a load-time error.
+func TestParse_DisplayPropertyTemplateUnclosed(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam"
+    properties:
+      voornaam:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "unclosed", `entity "persoon"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// TestParse_DisplayPropertyTemplateEmptyPlaceholder verifies an empty
+// placeholder `{}` is a load-time error.
+func TestParse_DisplayPropertyTemplateEmptyPlaceholder(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  persoon:
+    label: Persoon
+    id_prefix: "PERS-"
+    display_property: "{voornaam} {}"
+    properties:
+      voornaam:
+        type: string
+        required: true
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	if !strings.Contains(err.Error(), "empty placeholder") {
+		t.Errorf("error should mention the empty placeholder: %v", err)
+	}
+}
+
+// TestParse_DisplayPropertyTemplateRejectsDatePlaceholder verifies the
+// per-property type restriction applies to each placeholder: a date-typed
+// property in a template is rejected just as a bare-name one is.
+func TestParse_DisplayPropertyTemplateRejectsDatePlaceholder(t *testing.T) {
+	yaml := `version: "1.0"
+entities:
+  event:
+    label: Event
+    id_prefix: "EVT-"
+    display_property: "{naam} ({datum})"
+    properties:
+      naam:
+        type: string
+        required: true
+      datum:
+        type: date
+`
+	_, err := Parse([]byte(yaml))
+	assertError(t, err)
+	msg := err.Error()
+	for _, want := range []string{"display_property", "datum"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q: %v", want, err)
+		}
+	}
+}
+
 // TestParse_DisplayPropertyAcrossIncludes verifies that display_property
 // validation runs on the merged metamodel when an entity is defined in
 // an included file. RR-GO9T7.
@@ -2269,5 +2452,63 @@ entities:
 	var prefixErr *InvalidIDPrefixError
 	if !errors.As(err, &prefixErr) {
 		t.Errorf("expected InvalidIDPrefixError, got %T: %v", err, err)
+	}
+}
+
+// TestParse_EnumLabels covers optional per-value display labels on both enum
+// forms: a named custom type and an inline `type: enum` property. Labels are
+// display-only; parsing must accept them and leave values untouched. A
+// string-list enum with no labels must parse with a nil Labels map (so it
+// round-trips byte-for-byte). See TKT-G6R5YE.
+func TestParse_EnumLabels(t *testing.T) {
+	yaml := `version: "1.0"
+types:
+  status_t:
+    values: [open, in_progress]
+    labels:
+      in_progress: In Progress
+entities:
+  ticket:
+    label: Ticket
+    id_prefix: "TKT-"
+    properties:
+      title:
+        type: string
+      status:
+        type: status_t
+      kind:
+        type: enum
+        values: [bug, feat]
+        labels:
+          feat: Feature
+      priority:
+        type: enum
+        values: [low, high]
+`
+	meta, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	// Custom type labels.
+	ct := meta.Types["status_t"]
+	if got := ct.Labels["in_progress"]; got != "In Progress" {
+		t.Errorf("custom type label: got %q, want %q", got, "In Progress")
+	}
+	// Values are untouched.
+	if len(ct.Values) != 2 || ct.Values[0] != "open" {
+		t.Errorf("custom type values changed: %v", ct.Values)
+	}
+
+	props := meta.Entities["ticket"].Properties
+
+	// Inline enum labels.
+	if got := props["kind"].Labels["feat"]; got != "Feature" {
+		t.Errorf("inline enum label: got %q, want %q", got, "Feature")
+	}
+
+	// A label-less inline enum has a nil Labels map (round-trip safety).
+	if props["priority"].Labels != nil {
+		t.Errorf("label-less enum should have nil Labels, got %v", props["priority"].Labels)
 	}
 }
