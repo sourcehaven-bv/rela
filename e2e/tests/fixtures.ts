@@ -3,7 +3,7 @@ import {
   type Page,
   type APIRequestContext,
 } from "@playwright/test";
-import { spawn, type ChildProcess, execSync } from "child_process";
+import { spawn, type ChildProcess, execFileSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
@@ -271,7 +271,10 @@ function buildIfMissing(binaryPath: string, target: string): string {
   }
   try {
     console.log(`Building ${path.basename(binaryPath)}...`);
-    execSync(`go build -o ${binaryPath} ${target}`, {
+    // execFileSync with an args array: no shell, so the absolute paths can't
+    // be interpreted as shell syntax (CodeQL js/shell-command-injection-from-
+    // environment; also just breaks on checkout paths containing spaces).
+    execFileSync("go", ["build", "-o", binaryPath, target], {
       cwd: PROJECT_ROOT,
       stdio: "inherit",
     });
