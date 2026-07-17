@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -70,11 +71,12 @@ func newOrderableManagerWithAudit(t *testing.T, mode string) (*entitymanager.Man
 	st := memstore.New()
 	mem := audit.NewMemory()
 	deps := entitymanager.Deps{
-		Store:     st,
-		Meta:      orderableMetamodel(t, mode),
-		Templater: nopTemplater{},
-		Audit:     mem,
-		ACL:       acl.NopACL{},
+		Store:       st,
+		Meta:        orderableMetamodel(t, mode),
+		Templater:   nopTemplater{},
+		Audit:       mem,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {

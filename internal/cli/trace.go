@@ -19,11 +19,11 @@ type TraceFromCmd struct {
 }
 
 // Run dispatches `rela trace from <id>`.
-func (c *TraceFromCmd) Run(ctx context.Context, svc *cliServices) error {
-	if _, err := svc.Store().GetEntity(ctx, c.ID); err != nil {
+func (c *TraceFromCmd) Run(ctx context.Context, svc *readServices) error {
+	if _, err := svc.Store.GetEntity(ctx, c.ID); err != nil {
 		return &entityNotFoundError{ID: c.ID}
 	}
-	result := svc.Tracer().TraceFrom(ctx, c.ID, c.Depth)
+	result := svc.Tracer.TraceFrom(ctx, c.ID, c.Depth)
 	if result == nil {
 		out.WriteMessage("No downstream dependencies found")
 		return nil
@@ -38,11 +38,11 @@ type TraceToCmd struct {
 }
 
 // Run dispatches `rela trace to <id>`.
-func (c *TraceToCmd) Run(ctx context.Context, svc *cliServices) error {
-	if _, err := svc.Store().GetEntity(ctx, c.ID); err != nil {
+func (c *TraceToCmd) Run(ctx context.Context, svc *readServices) error {
+	if _, err := svc.Store.GetEntity(ctx, c.ID); err != nil {
 		return &entityNotFoundError{ID: c.ID}
 	}
-	result := svc.Tracer().TraceTo(ctx, c.ID, c.Depth)
+	result := svc.Tracer.TraceTo(ctx, c.ID, c.Depth)
 	if result == nil {
 		out.WriteMessage("No upstream dependencies found")
 		return nil
@@ -58,14 +58,14 @@ type TracePathCmd struct {
 }
 
 // Run dispatches `rela trace path <from> <to>`.
-func (c *TracePathCmd) Run(ctx context.Context, svc *cliServices) error {
-	if _, err := svc.Store().GetEntity(ctx, c.From); err != nil {
+func (c *TracePathCmd) Run(ctx context.Context, svc *readServices) error {
+	if _, err := svc.Store.GetEntity(ctx, c.From); err != nil {
 		return fmt.Errorf("source entity not found: %s", c.From)
 	}
-	if _, err := svc.Store().GetEntity(ctx, c.To); err != nil {
+	if _, err := svc.Store.GetEntity(ctx, c.To); err != nil {
 		return fmt.Errorf("target entity not found: %s", c.To)
 	}
-	path := svc.Tracer().FindPath(ctx, c.From, c.To)
+	path := svc.Tracer.FindPath(ctx, c.From, c.To)
 	if path == nil {
 		out.WriteMessage("No path found between %s and %s", c.From, c.To)
 		return nil

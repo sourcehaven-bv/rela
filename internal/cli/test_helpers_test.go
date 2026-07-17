@@ -14,10 +14,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 )
 
-// storeSeeder builds a *cliServices around an in-memory store the
-// test populates via addEntity/addRelation. Same shape the production
-// code uses — newCLIServicesFromAppbuild wraps an appbuild.Services
-// that itself wraps the seeded memstore.
+// storeSeeder builds the CLI service bundles around an in-memory store
+// the test populates via addEntity/addRelation. Same shape the
+// production code uses — newCLIBundles wraps an appbuild.Services that
+// itself wraps the seeded memstore.
 type storeSeeder struct {
 	s    store.Store
 	meta *metamodel.Metamodel
@@ -40,22 +40,22 @@ func (ss *storeSeeder) addRelation(from, relType, to string) {
 	}
 }
 
-func (ss *storeSeeder) build(t *testing.T) *cliServices {
+func (ss *storeSeeder) build(t *testing.T) *cliBundles {
 	t.Helper()
-	svc, err := newCLIServicesFromAppbuild(
+	b, err := newCLIBundles(
 		appbuildtest.New(ss.meta, appbuildtest.WithStore(ss.s)),
 	)
 	if err != nil {
 		t.Fatalf("storeSeeder.build: %v", err)
 	}
-	return svc
+	return b
 }
 
-// fixtureEntities returns every entity of the given type from svc.
-func fixtureEntities(t *testing.T, svc *cliServices, entityType string) []*entity.Entity {
+// fixtureEntities returns every entity of the given type from st.
+func fixtureEntities(t *testing.T, st store.Store, entityType string) []*entity.Entity {
 	t.Helper()
 	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store().ListEntities(
+	for e, err := range st.ListEntities(
 		context.Background(),
 		store.EntityQuery{Type: entityType},
 	) {
@@ -67,11 +67,11 @@ func fixtureEntities(t *testing.T, svc *cliServices, entityType string) []*entit
 	return out
 }
 
-// fixtureAllEntities returns every entity in svc.
-func fixtureAllEntities(t *testing.T, svc *cliServices) []*entity.Entity {
+// fixtureAllEntities returns every entity in st.
+func fixtureAllEntities(t *testing.T, st store.Store) []*entity.Entity {
 	t.Helper()
 	out := make([]*entity.Entity, 0)
-	for e, err := range svc.Store().ListEntities(context.Background(), store.EntityQuery{}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{}) {
 		if err != nil {
 			continue
 		}
@@ -80,11 +80,11 @@ func fixtureAllEntities(t *testing.T, svc *cliServices) []*entity.Entity {
 	return out
 }
 
-// fixtureAllRelations returns every relation in svc.
-func fixtureAllRelations(t *testing.T, svc *cliServices) []*entity.Relation {
+// fixtureAllRelations returns every relation in st.
+func fixtureAllRelations(t *testing.T, st store.Store) []*entity.Relation {
 	t.Helper()
 	out := make([]*entity.Relation, 0)
-	for r, err := range svc.Store().ListRelations(context.Background(), store.RelationQuery{}) {
+	for r, err := range st.ListRelations(context.Background(), store.RelationQuery{}) {
 		if err != nil {
 			continue
 		}

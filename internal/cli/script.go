@@ -16,15 +16,15 @@ type ScriptCmd struct {
 }
 
 // Run dispatches `rela script <file.lua> [args...]`.
-func (c *ScriptCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *ScriptCmd) Run(ctx context.Context, svc *writeServices) error {
 	opts := []lua.Option{
 		lua.WithContext(ctx),
-		lua.WithCache(svc.LuaCache()),
+		lua.WithCache(svc.LuaCache),
 	}
 	if c.OutputDir != "" {
 		opts = append(opts, lua.WithOutputDir(c.OutputDir))
 	}
-	runtime, err := script.NewWriterRuntime(svc.LuaWriteDeps(), c.File,
+	runtime, err := script.NewWriterRuntime(svc.LuaWriteDeps, c.File,
 		os.Stdout, opts...)
 	if err != nil {
 		return err

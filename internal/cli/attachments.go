@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 )
 
@@ -14,8 +15,8 @@ type AttachmentsCmd struct {
 }
 
 // Run dispatches `rela attachments <entity-id>`.
-func (c *AttachmentsCmd) Run(ctx context.Context, svc *cliServices) error {
-	infos, err := svc.ListAttachments(ctx, c.EntityID)
+func (c *AttachmentsCmd) Run(ctx context.Context, att *attachment.Service) error {
+	infos, err := att.List(ctx, c.EntityID)
 	if err != nil {
 		return err
 	}
