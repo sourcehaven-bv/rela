@@ -4,5 +4,5 @@ type: ticket
 title: Extend predicate to a typed superset, then converge the filter/predicate evaluators
 kind: refactor
 priority: medium
-status: in-progress
+status: review
 ---

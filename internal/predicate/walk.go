@@ -130,11 +130,23 @@ func coerceOneLiteral(lit node, target Type, line int) (out node, handled bool, 
 	return lit, false, nil
 }
 
+// maxExactIntLiteral is 2^53, the largest magnitude at which every
+// integer is exactly representable in a float64. Number literals are
+// parsed to float64 (there is no int literal syntax), so an int-field
+// comparison against a literal at or beyond this magnitude cannot be
+// coerced without silent rounding — and Go's out-of-range float→int
+// conversion is implementation-defined (§ Conversions), which would make
+// the comparison arch-dependent. We reject such literals at compile
+// rather than mis-coerce them (RR-O0LM1). Real int-property comparisons
+// live far below 2^53; a literal above it is a mistake, not a use case.
+const maxExactIntLiteral = 1 << 53
+
 // coerceIntLiteral converts a number-literal Value to an Int, rejecting
-// a fractional value (e.g. `entity.count > 1.5` against an int field).
-// A String literal against an int field is a type mismatch left for the
-// checker to report, so it is passed through unchanged wrapped in an
-// error only when it is a Number that isn't integral.
+// a fractional value (e.g. `entity.count > 1.5` against an int field)
+// and a value too large to represent exactly as an int (see
+// maxExactIntLiteral). A String literal against an int field is a type
+// mismatch left for the checker to report, so it is passed through
+// unchanged; only a Number that isn't a safe integer errors here.
 func coerceIntLiteral(v Value, line int) (Value, error) {
 	n, ok := v.(Number)
 	if !ok {
@@ -144,6 +156,9 @@ func coerceIntLiteral(v Value, line int) (Value, error) {
 	}
 	if n.v != float64(int64(n.v)) {
 		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("cannot compare an int field with the non-integer literal %v", n.v)}
+	}
+	if n.v >= maxExactIntLiteral || n.v <= -maxExactIntLiteral {
+		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("integer literal %v is too large to compare exactly (must be within ±2^53)", n.v)}
 	}
 	return NewInt(int64(n.v)), nil
 }

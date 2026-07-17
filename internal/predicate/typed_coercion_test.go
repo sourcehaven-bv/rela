@@ -53,11 +53,16 @@ func TestTypedComparison_IntAndDate(t *testing.T) {
 		{"int lexico-would-be-wrong", "entity.count > 9", 100, "2026-01-01", true},
 		{"int eq", "entity.count == 42", 42, "2026-01-01", true},
 		{"int ne", "entity.count ~= 42", 7, "2026-01-01", true},
+		// Coercion symmetry: the literal on the LHS must coerce too.
+		{"int lhs-literal ordered", "9 < entity.count", 10, "2026-01-01", true},
+		{"int lhs-literal eq", "42 == entity.count", 42, "2026-01-01", true},
 		// Date ordering is instant-granular against the literal.
 		{"date lt true", "entity.due < '2026-02-01'", 0, "2026-01-15", true},
 		{"date lt false", "entity.due < '2026-02-01'", 0, "2026-03-01", false},
 		{"date gte boundary", "entity.due >= '2026-02-01'", 0, "2026-02-01", true},
 		{"date eq", "entity.due == '2026-02-01'", 0, "2026-02-01", true},
+		{"date ne", "entity.due ~= '2026-02-01'", 0, "2026-01-15", true},
+		{"date lhs-literal", "'2026-02-01' > entity.due", 0, "2026-01-15", true},
 		// Composition the old --where syntax could not express.
 		{"or across types", "entity.count > 100 or entity.due < '2026-02-01'", 5, "2026-01-01", true},
 	}
@@ -99,6 +104,11 @@ func TestTypedComparison_CoercionErrors(t *testing.T) {
 	}{
 		{"malformed date literal", "entity.due < 'not-a-date'"},
 		{"non-integer literal on int field", "entity.count > 1.5"},
+		// A literal beyond 2^53 can't coerce to an exact int64 (RR-O0LM1).
+		{"int literal beyond 2^53", "entity.count > 9007199254740993"},
+		// Type mismatch left for the checker: string literal vs int field.
+		{"string literal vs int field", "entity.count == 'x'"},
+		{"number literal vs date field", "entity.due == 5"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

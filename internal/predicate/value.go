@@ -30,7 +30,9 @@ type Number struct{ v float64 }
 func NewNumber(f float64) Number { return Number{v: f} }
 
 // NewNumberFromInt constructs a Number value from a Go int, with the
-// integer promoted to float64.
+// integer promoted to float64. Use it for a field declared NumberType.
+// For a field declared IntType use [NewInt] instead — binding a Number
+// to an IntType field fails the runtime type check at Eval (RR-4189H).
 func NewNumberFromInt(i int) Number { return Number{v: float64(i)} }
 
 // Float returns the underlying float64.
@@ -47,7 +49,10 @@ func (Number) sealedValue()     {}
 // number-literal RHS to Int when the LHS attribute is IntType.
 type Int struct{ v int64 }
 
-// NewInt constructs an Int value.
+// NewInt constructs an Int value. Bind it to a field declared IntType.
+// Do NOT use [NewNumberFromInt] for an IntType field — that returns a
+// Number (float64), which fails the runtime type check against an
+// IntType binding at Eval (RR-4189H).
 func NewInt(i int64) Int { return Int{v: i} }
 
 // Int64 returns the underlying int64.

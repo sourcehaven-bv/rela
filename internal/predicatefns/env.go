@@ -24,6 +24,17 @@ import (
 //
 // A property whose predicate type would be a list wraps the scalar
 // mapping; `contains(entity.tags, 'x')` then type-checks.
+//
+// NOT interchangeable with internal/affordances' own scalarPredicateType
+// (RR-TBG91). affordances predates the Int/Date value types and maps
+// integer->NumberType and date->StringType, binding matching
+// Number/String values. This adapter maps integer->IntType and
+// date->DateTypeWithLayout. The two are each internally consistent but
+// produce opposite types: do NOT feed a RecordType from this function
+// into the affordances eval path (whose binders supply Number/String) —
+// the declared Int/Date fields would fail the runtime type check at
+// Eval. Unifying the two adapters (and migrating the affordances binder
+// to NewInt/NewDate) is the Phase-2 consolidation.
 func EntityRecordType(def *metamodel.EntityDef) predicate.RecordType {
 	rt := make(predicate.RecordType, len(def.Properties))
 	for name, prop := range def.Properties {

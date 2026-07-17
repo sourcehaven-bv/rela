@@ -2,7 +2,7 @@
 id: PLAN-D4TKD
 type: planning-checklist
 title: 'Planning: Extend predicate to a typed superset, then converge the filter/predicate evaluators'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->

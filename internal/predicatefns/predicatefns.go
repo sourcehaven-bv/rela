@@ -81,11 +81,18 @@ func Declare(env *predicate.Env) error {
 }
 
 // Bind registers the implementations on b, matching Declare. `now` is
-// the instant today() returns, truncated to the day; passing it in
+// the instant today() returns, truncated to UTC midnight; passing it in
 // keeps the functions pure and testable (predicate scripts must not
 // read the wall clock during Eval — the caller decides "now").
+//
+// today() is truncated in UTC, not now.Location(), to match how date
+// literals are parsed (parseDateLiteral / time.Parse yield UTC when the
+// layout carries no zone). A local-midnight today() compared against a
+// UTC-midnight literal-derived Date would skew up to a day (RR-YPYTP);
+// pinning both to UTC keeps `entity.due < today()` consistent.
 func Bind(b *predicate.Bindings, now time.Time) error {
-	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	utc := now.UTC()
+	day := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
 	binds := []struct {
 		name string
 		fn   predicate.FuncFunc

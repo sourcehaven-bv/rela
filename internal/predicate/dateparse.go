@@ -5,13 +5,18 @@ import (
 	"time"
 )
 
-// Built-in fallback date layouts, used when a DateType carries no
-// explicit layout. They mirror internal/metamodel's DefaultDateFormat
-// ("2006-01-02") and DefaultDatetimeFormat (RFC3339) so a predicate
-// authored against an un-adapted env still parses the two canonical
-// forms. The metamodel->Env adapter should supply the field's real
-// layout via DateTypeWithLayout so a custom format is honored.
-var defaultDateLayouts = []string{"2006-01-02", time.RFC3339}
+// Built-in fallback date layouts. They mirror the fallback set
+// internal/metamodel.ParseDateValue accepts (validation.go) so a date
+// literal that internal/filter's --where would accept also coerces here
+// — keeping predicate a true superset of filter (RR-BNRMU). The
+// metamodel->Env adapter supplies the field's declared layout via
+// DateTypeWithLayout; these are only the fallbacks tried after it.
+var defaultDateLayouts = []string{
+	time.RFC3339,           // 2006-01-02T15:04:05Z07:00
+	"2006-01-02T15:04:05Z", // ISO 8601 with Z
+	"2006-01-02T15:04:05",  // ISO 8601 without timezone
+	"2006-01-02",           // ISO 8601 date only
+}
 
 // parseDateLiteral parses a date/datetime literal string. If layout is
 // non-empty it is tried first (the field's declared format); the
