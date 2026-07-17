@@ -60,7 +60,7 @@ type FullExport struct {
 }
 
 // Run dispatches `rela export [type]`.
-func (c *ExportCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *ExportCmd) Run(ctx context.Context, svc *readServices) error {
 	if c.All {
 		return c.exportAllData(ctx, svc)
 	}
@@ -69,15 +69,15 @@ func (c *ExportCmd) Run(ctx context.Context, svc *cliServices) error {
 	}
 
 	typeName := strings.TrimSuffix(c.Type, "s")
-	resolvedType, err := resolveEntityType(svc.Meta(), typeName)
+	resolvedType, err := resolveEntityType(svc.Meta, typeName)
 	if err != nil {
 		return err
 	}
 	return c.exportEntities(ctx, svc, resolvedType)
 }
 
-func (c *ExportCmd) exportEntities(ctx context.Context, svc *cliServices, entityType string) error {
-	st := svc.Store()
+func (c *ExportCmd) exportEntities(ctx context.Context, svc *readServices, entityType string) error {
+	st := svc.Store
 	entities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
 		if err != nil {
@@ -114,8 +114,8 @@ func (c *ExportCmd) exportEntities(ctx context.Context, svc *cliServices, entity
 	return c.writeExport(exportData, entities)
 }
 
-func (c *ExportCmd) exportAllData(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
+func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error {
+	st := svc.Store
 
 	allEntities := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
@@ -191,8 +191,8 @@ func entityToExport(e *entity.Entity) ExportEntity {
 	return ExportEntity{ID: e.ID, Type: e.Type, Properties: props}
 }
 
-func getEntityRelations(ctx context.Context, svc *cliServices, entityID string) *ExportRelations {
-	st := svc.Store()
+func getEntityRelations(ctx context.Context, svc *readServices, entityID string) *ExportRelations {
+	st := svc.Store
 	relations := &ExportRelations{
 		Outgoing: make(map[string][]RelationTarget),
 		Incoming: make(map[string][]RelationTarget),

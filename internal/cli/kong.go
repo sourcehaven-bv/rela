@@ -25,11 +25,16 @@ import (
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
 // Version is set at build time.
 var Version = "dev"
+
+// The scheduler command's workspace is bound at the wiring site below;
+// kong.BindTo only verifies assignability at runtime, so pin it here.
+var _ scheduler.WorkspaceProvider = (*appbuild.Services)(nil)
 
 // Invocation-scoped globals populated by [runKong] before any Run
 // method executes. Subcommands read them for behavior driven by the
@@ -147,7 +152,7 @@ func runKong() int {
 	})
 
 	var svc *appbuild.Services
-	var cliSvc *cliServices
+	var bundles *cliBundles
 	if requiresProject(ktx.Command()) {
 		var err error
 		// The postgres build reads its DSN from $RELA_DATABASE_URL inside
@@ -159,7 +164,7 @@ func runKong() int {
 			return 1
 		}
 		defer svc.Close()
-		cliSvc, err = newCLIServicesFromAppbuild(svc)
+		bundles, err = newCLIBundles(svc)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -168,13 +173,17 @@ func runKong() int {
 		// table, detail, and trace-tree output honor display_property (bare
 		// name or template), matching the data-entry app. Without a project
 		// (no metamodel) the writer falls back to the literal `title` property.
-		out.Titles = cliSvc.Meta()
+		out.Titles = bundles.read.Meta
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
 	ktx.Bind(out)
-	if cliSvc != nil {
-		ktx.Bind(cliSvc)
+	if bundles != nil {
+		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis)
+		// The scheduler command's workspace is supplied here at the wiring
+		// site (consumer-side interface): appbuild.Services satisfies
+		// scheduler.WorkspaceProvider directly.
+		ktx.BindTo(svc, (*scheduler.WorkspaceProvider)(nil))
 	}
 
 	if err := ktx.Run(); err != nil {

@@ -34,13 +34,13 @@ type ACLAuditCmd struct {
 }
 
 // Run executes `rela acl audit`.
-func (c *ACLAuditCmd) Run(svc *cliServices) error {
+func (c *ACLAuditCmd) Run(svc *readServices) error {
 	threshold, gate, err := c.resolveFailOn()
 	if err != nil {
 		return err
 	}
 
-	policyPath := filepath.Join(svc.Paths().Root, "acl.yaml")
+	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
 	policy, err := acl.LoadPolicy(policyPath)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
@@ -50,7 +50,7 @@ func (c *ACLAuditCmd) Run(svc *cliServices) error {
 		return fmt.Errorf("load acl.yaml: %w", err)
 	}
 
-	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta()})
+	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta})
 
 	if out.Format == "json" {
 		writeAuditJSON(findings)

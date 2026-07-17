@@ -48,10 +48,10 @@ inherit_roles_through: [belongs-to]
 // seedWhoCanGraph writes the canonical scenario into the svc store:
 // Alice (global security), Bob (member of ROLE-SECURITY), Carol
 // (responds-to INC-042), Dave (editor-of FOLDER-Q3 ⊃ INC-042).
-func seedWhoCanGraph(t *testing.T, svc *cliServices) {
+func seedWhoCanGraph(t *testing.T, svc *readServices) {
 	t.Helper()
 	ctx := context.Background()
-	st := svc.Store()
+	st := svc.Store
 	ents := []struct{ id, typ string }{
 		{"PERS-ALICE", "person"}, {"PERS-BOB", "person"}, {"PERS-CAROL", "person"}, {"PERS-DAVE", "person"},
 		{"ROLE-SECURITY", "team"}, {"FOLDER-Q3", "folder"}, {"INC-042", "incident"},
