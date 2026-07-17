@@ -28,21 +28,25 @@ coupling is gone and the handler clusters can move off `App` one at a time.
   - [x] [[TKT-VG9P1]] — sync route cluster → `syncHandler` (170 → 154). PR #1134.
   - [x] [[TKT-KUFLD]] — command route cluster → `commandHandler` (154 → 143).
 PR #1138.
-  - [ ] Attachment handler cluster (`handlers_attachment.go`, ~12 methods).
+  - [x] [[TKT-QTPUA]] — attachment cluster → `attachmentHandler` + package
+functions (143 → 131). PR #1149.
 - **M5.4 — write nucleus.** Carve the entity/relation/attachment write handlers
 behind one shared `writeMu`; drive `App` under 40 and delete the
 `//plimsoll:max-methods` directive in `internal/dataentry/app.go`.
-  - **Open question to settle first:** does write-serialization move *behind the
-store* (the CLAUDE.md-endorsed direction) or stay an App-level mutex the write
-handlers share by pointer (as `syncHandler` does today)? Worth a design-review
-before extracting the write handlers.
+  - **Open question — settled.** Researched in [[RES-Z1SJ5]], decided in
+[[DEC-8UIL0]]: write serialization becomes a `Tx` contract on `store.Store` (fs
+= mutex, postgres = native transactions + advisory lock), implemented as its
+**own follow-up arc** that deletes `writeMu` outright. M5.4 itself proceeds
+conservatively: the mutex moves with the write-nucleus struct, semantics
+untouched — refactors don't change concurrency behavior.
 
 ## Invariants (unchanged)
 
 - Read handlers take the ACL-bounded `visibleReader` only — never `store.Store`.
 - `writeMu` stays a single shared instance across all write handlers (race
 detector guards). The extracted handlers hold a *pointer* to `App`'s `writeMu`,
-preserving this.
+preserving this. (Holds until the [[DEC-8UIL0]] arc replaces the mutex with
+store `Tx`.)
 
 ## Related finding
 

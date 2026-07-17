@@ -107,6 +107,23 @@ What you need to know to run it:
 - Live updates cover **entity** create/update/delete. Relation and attachment
   edits are reflected on the next page load rather than pushed live.
 
+### Write transactions
+
+The store exposes a write-transaction contract (`store.Store.Tx`,
+DEC-8UIL0). On PostgreSQL a `Tx` callback runs inside one real database
+transaction, serialized **deployment-wide** by a transaction-scoped
+advisory lock (its own key, distinct from the migration and
+version-sweep locks): every process of the deployment executes write
+transactions one at a time. An error rolls the whole callback back —
+no rows, no cross-process NOTIFYs, and no in-process events are
+delivered (event fan-out is buffered until commit). On the filesystem
+backend the same contract degrades to a process-local write mutex with
+no rollback — acceptable for its single-user deployments.
+
+Because the advisory lock is deployment-wide, a slow transaction stalls
+every writer. Keep `Tx` callbacks short and never perform external I/O
+inside one.
+
 ## Version history (time machine)
 
 The PostgreSQL build automatically keeps a **content version history** of every

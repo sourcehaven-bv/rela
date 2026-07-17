@@ -73,8 +73,10 @@ type DBTX interface {
 // interface-mandated methods, not accreted public API; Required-interface
 // exception, tracks the interface size.
 //
-//plimsoll:max-exported-methods=39
-//plimsoll:max-methods=52
+// (39 → 40 exported / 52 → 53 total: store.Store gained Tx, TKT-GXHI8.)
+//
+//plimsoll:max-exported-methods=40
+//plimsoll:max-methods=53
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes
@@ -92,6 +94,13 @@ type Store struct {
 	subscribers map[int]chan store.Event
 	nextSubID   int
 	closed      bool
+
+	// txPending is nil on a normal store. On the tx-bound view a Tx
+	// callback receives (tx.go), it buffers in-process observer and
+	// subscriber notifications so they are delivered against the parent
+	// store only after the outer transaction commits — a subscriber must
+	// never observe a write that later rolls back.
+	txPending *txPending
 }
 
 // Option configures a Store.
@@ -196,6 +205,10 @@ func (s *Store) Subscribe(bufSize int) (events <-chan store.Event, cancel func()
 // It is called AFTER a write transaction commits — never while holding a DB
 // transaction — so subscribers never observe uncommitted state.
 func (s *Store) emit(ev store.Event) {
+	if s.txPending != nil { // inside Tx: deliver after the outer commit (tx.go)
+		s.txPending.add(func(p *Store) { p.emit(ev) })
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, ch := range s.subscribers {
@@ -210,6 +223,10 @@ func (s *Store) emit(ev store.Event) {
 // emitAll delivers a batch of events in order (used by cascade delete and
 // rename, which produce several events per operation).
 func (s *Store) emitAll(evs []store.Event) {
+	if s.txPending != nil { // inside Tx: deliver after the outer commit (tx.go)
+		s.txPending.add(func(p *Store) { p.emitAll(evs) })
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, ev := range evs {

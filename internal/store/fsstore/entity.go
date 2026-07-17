@@ -199,7 +199,7 @@ func (s *FSStore) PropertyValues(_ context.Context, property string, limit int) 
 
 // --- EntityWriter ---
 
-func (s *FSStore) CreateEntity(_ context.Context, e *entity.Entity) error {
+func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
 		return err
 	}
@@ -232,7 +232,7 @@ func (s *FSStore) CreateEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-func (s *FSStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
+func (s *FSStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -267,7 +267,7 @@ func (s *FSStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (s *FSStore) deleteEntity(_ context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -364,7 +364,7 @@ func (s *FSStore) DeleteEntity(_ context.Context, id string, cascade bool) (*sto
 	return result, nil
 }
 
-func (s *FSStore) RenameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := storeutil.ValidateID(newID); err != nil {
 		return nil, err
 	}
