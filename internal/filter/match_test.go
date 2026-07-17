@@ -125,7 +125,7 @@ func TestMatchDatetime(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		filter  string
 		want    bool
 		wantErr bool
@@ -146,7 +146,7 @@ func TestMatchDatetime(t *testing.T) {
 			ent := &entity.Entity{
 				ID:         "EVT-001",
 				Type:       "event",
-				Properties: map[string]interface{}{"starts_at": tt.value},
+				Properties: map[string]any{"starts_at": tt.value},
 			}
 			f, err := Parse(tt.filter)
 			if err != nil {

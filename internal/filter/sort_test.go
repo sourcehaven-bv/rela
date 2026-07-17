@@ -627,9 +627,9 @@ func TestSortMulti_MixedDateDatetimeChronological(t *testing.T) {
 	}
 
 	entities := []*entity.Entity{
-		{ID: "later", Type: "typeDate", Properties: map[string]interface{}{"when": "2026-07-14"}},
-		{ID: "middle", Type: "typeDatetime", Properties: map[string]interface{}{"when": "2026-07-13T13:00:00Z"}},
-		{ID: "earlier", Type: "typeDate", Properties: map[string]interface{}{"when": "2026-07-12"}},
+		{ID: "later", Type: "typeDate", Properties: map[string]any{"when": "2026-07-14"}},
+		{ID: "middle", Type: "typeDatetime", Properties: map[string]any{"when": "2026-07-13T13:00:00Z"}},
+		{ID: "earlier", Type: "typeDate", Properties: map[string]any{"when": "2026-07-12"}},
 	}
 
 	SortMulti(entities, testAccess, []SortSpec{{Property: "when"}}, entityDefs, nil)

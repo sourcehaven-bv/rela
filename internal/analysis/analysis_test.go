@@ -150,12 +150,12 @@ func TestFindUniqueViolations(t *testing.T) {
 	}
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "PERS-JV", "persoon", map[string]interface{}{"email": "jv@x.com", "nickname": "dup"})
-		addEntity(s, "PERS-DUP", "persoon", map[string]interface{}{"email": "jv@x.com", "nickname": "dup"})
-		addEntity(s, "PERS-TS", "persoon", map[string]interface{}{"email": "ts@x.com"})
+		addEntity(s, "PERS-JV", "persoon", map[string]any{"email": "jv@x.com", "nickname": "dup"})
+		addEntity(s, "PERS-DUP", "persoon", map[string]any{"email": "jv@x.com", "nickname": "dup"})
+		addEntity(s, "PERS-TS", "persoon", map[string]any{"email": "ts@x.com"})
 		addEntity(s, "PERS-NONE", "persoon", nil) // empty email — exempt
 		// Same email on a different type must NOT collide (scoped per type).
-		addEntity(s, "ACC-1", "account", map[string]interface{}{"email": "jv@x.com"})
+		addEntity(s, "ACC-1", "account", map[string]any{"email": "jv@x.com"})
 	})
 
 	t.Run("finds the email collision, not nickname or cross-type", func(t *testing.T) {
@@ -186,8 +186,8 @@ func TestFindUniqueViolations(t *testing.T) {
 			"doc": {Label: "Doc", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}}},
 		}}
 		s2 := newServiceWith(t, plain, func(s store.Store) {
-			addEntity(s, "DOC-1", "doc", map[string]interface{}{"title": "same"})
-			addEntity(s, "DOC-2", "doc", map[string]interface{}{"title": "same"})
+			addEntity(s, "DOC-1", "doc", map[string]any{"title": "same"})
+			addEntity(s, "DOC-2", "doc", map[string]any{"title": "same"})
 		})
 		if v := s2.FindUniqueViolations(context.Background(), analysis.Options{}); len(v) != 0 {
 			t.Errorf("got %d violations, want 0 (no unique props declared)", len(v))

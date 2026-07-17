@@ -158,7 +158,7 @@ func TestValidateEntity_DatetimeValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		value   interface{}
+		value   any
 		wantErr bool
 	}{
 		{name: "RFC3339 string with Z", value: "2026-07-13T14:30:00Z", wantErr: false},
@@ -172,7 +172,7 @@ func TestValidateEntity_DatetimeValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := meta.ValidateEntity("EVT-001", "event", map[string]interface{}{
+			errs := meta.ValidateEntity("EVT-001", "event", map[string]any{
 				"title":     "Standup",
 				"starts_at": tt.value,
 			})
