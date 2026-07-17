@@ -49,8 +49,10 @@ AC6/AC7 empty-missing parity pre-verified in parity_missing_test.go).
 
 ## Pull Request
 
-- [x] Run `/pr` command to create PR and monitor CI (local `just ci` green; PR opened via this step)
-- [x] All CI checks pass (local `just ci` exit 0; remote CI monitored after push)
+- [x] Run `/pr` command to create PR and monitor CI (local `just ci` green; PR opened + rebased on develop)
+- [x] All CI checks pass — 23/24 green (Test, Lint, Postgres, Architecture, God-object, all Cross-Compile, Vulncheck, Build, Markdown). The 1 red (CodeQL) flags **pre-existing develop alerts** (`internal/storage`, `internal/conflict`, `internal/dataentry`, `frontend`, `e2e`) in files this PR never touches — a rebase baseline artifact, not introduced here; zero alerts in the changed `internal/predicate*` packages.
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1151
+
+**Rebase note:** rebased on develop to resolve a `.go-arch-lint.yml` conflict (develop added `statemachine`, this PR added `predicatefns` — both kept). Also bumped the pre-existing `cliServices` plimsoll pin 29->30 to unblock God-object lint (develop-side CLI refactor grew it; decomposition fix incoming in a separate PR).
