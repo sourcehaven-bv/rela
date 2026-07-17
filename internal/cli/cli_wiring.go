@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -61,9 +62,16 @@ func (s *cliServices) FS() storage.FS                  { return s.svc.FS() }
 
 func (s *cliServices) EntityManager() entitymanager.EntityManager { return s.svc.EntityManager() }
 func (s *cliServices) Validator() validator.Validator             { return s.svc.Validator() }
-func (s *cliServices) LuaCache() *lua.Cache                       { return s.svc.ScriptEngine().LuaCache() }
-func (s *cliServices) LuaWriteDeps() lua.WriteDeps                { return s.svc.LuaWriteDeps() }
-func (s *cliServices) State() state.KV                            { return s.svc.State() }
+
+// Audit exposes the audit sink so the version-purge CLI commands (TKT-BW6UUL)
+// can record the forensic purge event. Purge is a store-level destructive op
+// with no entity write, so it does NOT route through entitymanager.Manager (the
+// write-path audit hook) — it emits the OpPurgeVersion record directly through
+// this sink, the same sink the Manager writes to.
+func (s *cliServices) Audit() audit.Audit          { return s.svc.Audit() }
+func (s *cliServices) LuaCache() *lua.Cache        { return s.svc.ScriptEngine().LuaCache() }
+func (s *cliServices) LuaWriteDeps() lua.WriteDeps { return s.svc.LuaWriteDeps() }
+func (s *cliServices) State() state.KV             { return s.svc.State() }
 
 // LuaReadDeps surfaces the read-only Lua capability bundle —
 // scheduler.WorkspaceProvider requires it.

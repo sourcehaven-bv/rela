@@ -63,7 +63,7 @@ func TestResolveCommands(t *testing.T) {
 	}
 
 	t.Run("entity page shows entity commands", func(t *testing.T) {
-		cmds := app.resolveCommands("entity", "", "ticket")
+		cmds := app.commands.resolveCommands("entity", "", "ticket")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "entity-cmd")
 		assertContains(t, ids, "unscoped-entity")
@@ -73,7 +73,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("entity page for non-matching type", func(t *testing.T) {
-		cmds := app.resolveCommands("entity", "", "component")
+		cmds := app.commands.resolveCommands("entity", "", "component")
 		ids := cmdIDs(cmds)
 		// unscoped entity command still shows (context matches)
 		assertContains(t, ids, "unscoped-entity")
@@ -82,7 +82,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("view page shows entity and view commands", func(t *testing.T) {
-		cmds := app.resolveCommands("view", "ticket_detail", "ticket")
+		cmds := app.commands.resolveCommands("view", "ticket_detail", "ticket")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "entity-cmd")
 		assertContains(t, ids, "view-cmd")
@@ -92,7 +92,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("list page shows list commands", func(t *testing.T) {
-		cmds := app.resolveCommands("list", "tickets", "ticket")
+		cmds := app.commands.resolveCommands("list", "tickets", "ticket")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "list-cmd")
 		assertNotContains(t, ids, "entity-cmd")
@@ -100,7 +100,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("dashboard shows global commands", func(t *testing.T) {
-		cmds := app.resolveCommands("dashboard", "", "")
+		cmds := app.commands.resolveCommands("dashboard", "", "")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "global-cmd")
 		assertNotContains(t, ids, "entity-cmd")
@@ -108,7 +108,7 @@ func TestResolveCommands(t *testing.T) {
 
 	t.Run("empty commands returns nil", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		cmds := app2.resolveCommands("entity", "", "ticket")
+		cmds := app2.commands.resolveCommands("entity", "", "ticket")
 		if cmds != nil {
 			t.Errorf("expected nil, got %v", cmds)
 		}
@@ -130,7 +130,7 @@ func TestResolveCommands(t *testing.T) {
 				Context: "entity",
 			},
 		}
-		cmds := app2.resolveCommands("entity", "", "ticket")
+		cmds := app2.commands.resolveCommands("entity", "", "ticket")
 		for _, c := range cmds {
 			if c.ID == "auto-cmd" {
 				if c.AutoOpen == nil || !*c.AutoOpen {
@@ -146,13 +146,13 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("deterministic order", func(t *testing.T) {
-		cmds := app.resolveCommands("view", "ticket_detail", "ticket")
+		cmds := app.commands.resolveCommands("view", "ticket_detail", "ticket")
 		if len(cmds) < 2 {
 			t.Skip("need at least 2 commands")
 		}
 		// Run multiple times and check order is stable
 		for range 5 {
-			cmds2 := app.resolveCommands("view", "ticket_detail", "ticket")
+			cmds2 := app.commands.resolveCommands("view", "ticket_detail", "ticket")
 			for j := range cmds {
 				if cmds[j].ID != cmds2[j].ID {
 					t.Fatalf("order not deterministic: %v vs %v", cmdIDs(cmds), cmdIDs(cmds2))
@@ -255,7 +255,7 @@ func TestBuildEntityInput(t *testing.T) {
 	bindRepo(app, "/test/project")
 	seedRelation(app, entity.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	input := app.buildEntityInput(context.Background(), entities.ticket1)
+	input := app.commands.buildEntityInput(context.Background(), entities.ticket1)
 
 	if input.Context != "entity" {
 		t.Errorf("expected entity context, got %s", input.Context)
@@ -289,7 +289,7 @@ func TestBuildListInput(t *testing.T) {
 	bindRepo(app, "/test/project")
 	entities := entitiesByType(app, "ticket")
 
-	input := app.buildListInput("tickets", entities)
+	input := app.commands.buildListInput("tickets", entities)
 
 	if input.Context != "list" {
 		t.Errorf("expected list context, got %s", input.Context)
@@ -319,7 +319,7 @@ func TestBuildViewInput(t *testing.T) {
 		t.Fatalf("executeView: %v", err)
 	}
 
-	input := app.buildViewInput(context.Background(), "test_view", vr)
+	input := app.commands.buildViewInput(context.Background(), "test_view", vr)
 
 	if input.Context != "view" {
 		t.Errorf("expected view context, got %s", input.Context)
@@ -342,7 +342,7 @@ func TestBuildGlobalInput(t *testing.T) {
 	app, _ := testAppInstance()
 	bindRepo(app, "/test/project")
 
-	input := app.buildGlobalInput()
+	input := app.commands.buildGlobalInput()
 
 	if input.Context != "global" {
 		t.Errorf("expected global context, got %s", input.Context)
@@ -363,8 +363,8 @@ func TestBuildCommandEnv(t *testing.T) {
 		Context: "entity",
 		Env:     map[string]string{"FORMAT": "pdf"},
 	}
-	input := app.buildEntityInput(context.Background(), entities.ticket1)
-	env := app.buildCommandEnv(cmd, input)
+	input := app.commands.buildEntityInput(context.Background(), entities.ticket1)
+	env := app.commands.buildCommandEnv(cmd, input)
 
 	envMap := envToMap(env)
 	if envMap["RELA_PROJECT_ROOT"] != "/test/project" {
@@ -389,8 +389,8 @@ func TestBuildCommandEnvListContext(t *testing.T) {
 	bindRepo(app, "/test/project")
 
 	cmd := CommandConfig{Script: "echo hi", Context: "list"}
-	input := app.buildListInput("tickets", nil)
-	env := app.buildCommandEnv(cmd, input)
+	input := app.commands.buildListInput("tickets", nil)
+	env := app.commands.buildCommandEnv(cmd, input)
 
 	envMap := envToMap(env)
 	if envMap["RELA_LIST_ID"] != "tickets" {
@@ -407,9 +407,9 @@ func TestBuildCommandEnvViewContext(t *testing.T) {
 		Context: "view",
 		ViewID:  "ticket_detail",
 		Entity:  entities.ticket1,
-		Project: app.projectInfo(),
+		Project: app.commands.projectInfo(),
 	}
-	env := app.buildCommandEnv(cmd, input)
+	env := app.commands.buildCommandEnv(cmd, input)
 
 	envMap := envToMap(env)
 	if envMap["RELA_VIEW_ID"] != "ticket_detail" {
@@ -576,7 +576,7 @@ func TestHandleCommandExec(t *testing.T) {
 	t.Run("success stream", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/command/test-echo?entity_id=TKT-001&entity_type=ticket", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleCommandExec(w, r)
+		app.commands.handleCommandExec(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -618,7 +618,7 @@ func TestHandleCommandExec(t *testing.T) {
 	t.Run("unknown command", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/command/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleCommandExec(w, r)
+		app.commands.handleCommandExec(w, r)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", w.Code)
 		}
@@ -627,7 +627,7 @@ func TestHandleCommandExec(t *testing.T) {
 	t.Run("entity not found", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/command/test-echo?entity_id=NOPE", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleCommandExec(w, r)
+		app.commands.handleCommandExec(w, r)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", w.Code)
 		}
@@ -636,7 +636,7 @@ func TestHandleCommandExec(t *testing.T) {
 	t.Run("method not allowed", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodDelete, "/api/command/test-echo", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleCommandExec(w, r)
+		app.commands.handleCommandExec(w, r)
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected 405, got %d", w.Code)
 		}
@@ -656,7 +656,7 @@ func TestHandleCommandExecFailing(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/command/fail-cmd?entity_id=TKT-001", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleCommandExec(w, r)
+	app.commands.handleCommandExec(w, r)
 
 	events := parseSSEEvents(t, w.Body)
 	var hasError, hasDone bool
@@ -692,7 +692,7 @@ func TestHandleCommandExecGlobalContext(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/command/global-cmd", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleCommandExec(w, r)
+	app.commands.handleCommandExec(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -722,7 +722,7 @@ func TestHandleCommandExecListContext(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/command/list-cmd?list_id=tickets", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleCommandExec(w, r)
+	app.commands.handleCommandExec(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -742,7 +742,7 @@ func TestHandleCommandExecViewContext(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/command/view-cmd?view_id=ticket_detail&entity_id=TKT-001", http.NoBody)
 	w := httptest.NewRecorder()
-	app.handleCommandExec(w, r)
+	app.commands.handleCommandExec(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -756,7 +756,7 @@ func TestHandleCommandCancel(t *testing.T) {
 		app, _ := testAppInstance()
 		r := httptest.NewRequest(http.MethodPost, "/api/command-cancel/nonexistent", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleCommandCancel(w, r)
+		app.commands.handleCommandCancel(w, r)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", w.Code)
 		}
@@ -766,7 +766,7 @@ func TestHandleCommandCancel(t *testing.T) {
 		app, _ := testAppInstance()
 		r := httptest.NewRequest(http.MethodGet, "/api/command-cancel/test", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleCommandCancel(w, r)
+		app.commands.handleCommandCancel(w, r)
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected 405, got %d", w.Code)
 		}
@@ -781,7 +781,7 @@ func TestHandleOpenURL(t *testing.T) {
 	t.Run("missing url", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/open-url", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleOpenURL(w, r)
+		app.commands.handleOpenURL(w, r)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
@@ -790,7 +790,7 @@ func TestHandleOpenURL(t *testing.T) {
 	t.Run("invalid scheme", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/open-url?url=ftp://evil.com", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleOpenURL(w, r)
+		app.commands.handleOpenURL(w, r)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
@@ -799,7 +799,7 @@ func TestHandleOpenURL(t *testing.T) {
 	t.Run("method not allowed", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/api/open-url?url=https://example.com", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleOpenURL(w, r)
+		app.commands.handleOpenURL(w, r)
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected 405, got %d", w.Code)
 		}
@@ -814,7 +814,7 @@ func TestHandleOpenFile(t *testing.T) {
 	t.Run("missing path", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/open-file", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleOpenFile(w, r)
+		app.commands.handleOpenFile(w, r)
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", w.Code)
 		}
@@ -823,7 +823,7 @@ func TestHandleOpenFile(t *testing.T) {
 	t.Run("method not allowed", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/api/open-file?path=/tmp/test", http.NoBody)
 		w := httptest.NewRecorder()
-		app.handleOpenFile(w, r)
+		app.commands.handleOpenFile(w, r)
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected 405, got %d", w.Code)
 		}

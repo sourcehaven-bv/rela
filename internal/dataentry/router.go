@@ -75,9 +75,7 @@ func (a *App) NewRouter() http.Handler {
 
 	// APIs used by Vue SPA
 	inner.HandleFunc("/api/help/", a.handleEntityHelp)
-	inner.HandleFunc("/api/command/", a.handleCommandExec)
-	inner.HandleFunc("/api/command-cancel/", a.handleCommandCancel)
-	inner.HandleFunc("/api/open-file", a.handleOpenFile)
+	a.commands.registerCommandRoutes(inner)
 	inner.HandleFunc("/api/git/status", a.handleGitStatus)
 	inner.HandleFunc("/api/git/sync", a.handleGitSync)
 
@@ -85,7 +83,7 @@ func (a *App) NewRouter() http.Handler {
 	a.registerAPIV1Routes(inner)
 
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
-	a.registerSyncRoutes(inner)
+	a.sync.registerSyncRoutes(inner)
 
 	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
 	// configured (SetWebhookReceiver). It lives OUTSIDE /api/ because it

@@ -70,13 +70,15 @@ const userPaletteFile = "palette.yaml"
 // readers — readers go through a.State(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object. Decompose toward the
+// TODO(TKT-R68TV8): App is a god-object. Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design) — this branch adds handleV1Feed (TKT-RDM9M5).
+// HTTP route by the router's design). The sync route cluster (16 methods) moved
+// to syncHandler (170 → 154); the command cluster (11 methods) moved to
+// commandHandler (154 → 143).
 //
-//plimsoll:max-methods=170
+//plimsoll:max-methods=143
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -133,7 +135,17 @@ type App struct {
 	palette *paletteService
 	// settings owns the per-user default values (create-form/relation defaults).
 	// Self-synchronized; extracted from the schema snapshot.
-	settings  *settingsService
+	settings *settingsService
+	// sync owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
+	// surfaces plus a pointer to writeMu so its writes serialize with the other
+	// mutation handlers.
+	sync *syncHandler
+	// commands owns the user-configured command surface (SSE shell-exec,
+	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
+	// holds narrow closures over the schema snapshot, Services bundle, project
+	// root, and the view executor.
+	commands  *commandHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -503,6 +515,25 @@ func NewApp(
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
 	app.logo = logo
+
+	// syncHandler owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). It shares App's store (reads), entityManager (deletes), and
+	// — crucially — a POINTER to App's writeMu so sync pushes/deletes serialize
+	// against every other data-entry mutation. The manifest/applier capabilities
+	// are resolved once from the concrete store/manager (nil on fs/memory builds,
+	// where the sync endpoints degrade to 501).
+	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+
+	// commandHandler owns the user-configured command surface. Its
+	// collaborators are narrow closures over App: the schema snapshot (command/
+	// list/view config), the Services read bundle, the project root (exec cwd +
+	// env), and the view executor for view-context commands.
+	app.commands = &commandHandler{
+		schema:      app.State,
+		services:    app.Services,
+		projectRoot: app.ProjectRoot,
+		executeView: app.executeView,
+	}
 
 	// Build and publish the initial Schema snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep

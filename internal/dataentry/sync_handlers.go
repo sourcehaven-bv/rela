@@ -25,14 +25,14 @@ func syncContext(ctx context.Context) context.Context {
 // handleSyncGet fetches a record's full content as JSON, plus its current hash
 // in the ETag header so the client can use it as an If-Match base on a later
 // push.
-func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest string) {
+func (h *syncHandler) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest string) {
 	switch kind {
 	case "entities":
 		if !validIDSegment(rest) {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_id", "Invalid entity id", "")
 			return
 		}
-		e, err := a.store.GetEntity(r.Context(), rest)
+		e, err := h.store.GetEntity(r.Context(), rest)
 		if err != nil {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 			return
@@ -41,7 +41,7 @@ func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest s
 		// apply the same read authorization every other read path does
 		// (RR IB-review #1). A denied read 404s indistinguishably from a
 		// missing one — same body as the err branch above.
-		if ok, err := a.permitsSyncReadEntity(r.Context(), e.Type, e.ID); err != nil {
+		if ok, err := h.permitsSyncReadEntity(r.Context(), e.Type, e.ID); err != nil {
 			writeGateError(w, r, err)
 			return
 		} else if !ok {
@@ -53,13 +53,13 @@ func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest s
 			ID: e.ID, Type: e.Type, Properties: e.Properties, Content: e.Content,
 		})
 	case "relations":
-		rel, ok := a.fetchRelation(w, r, rest)
+		rel, ok := h.fetchRelation(w, r, rest)
 		if !ok {
 			return
 		}
 		// A relation's read visibility follows its source entity, exactly
 		// as handleV1EntityRelations gates /relations (api_v1.go).
-		if ok, err := a.permitsSyncReadRelation(r.Context(), rel.From); err != nil {
+		if ok, err := h.permitsSyncReadRelation(r.Context(), rel.From); err != nil {
 			writeGateError(w, r, err)
 			return
 		} else if !ok {
@@ -87,26 +87,26 @@ func (a *App) handleSyncGet(w http.ResponseWriter, r *http.Request, kind, rest s
 //	422            : entitymanager rejected the content (validation) — NOT a
 //	                 conflict; the data is invalid
 //	403            : ACL denied
-func (a *App) handleSyncPut(w http.ResponseWriter, r *http.Request, kind, rest string) {
-	ap := a.syncApplierFor()
+func (h *syncHandler) handleSyncPut(w http.ResponseWriter, r *http.Request, kind, rest string) {
+	ap := h.applier
 	if ap == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "sync_unsupported", "Sync apply is not wired", "")
 		return
 	}
 	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
 
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
 
 	switch kind {
 	case "entities":
-		a.putEntity(w, r, ap, rest, ifMatch)
+		h.putEntity(w, r, ap, rest, ifMatch)
 	case "relations":
-		a.putRelation(w, r, ap, rest, ifMatch)
+		h.putRelation(w, r, ap, rest, ifMatch)
 	}
 }
 
-func (a *App) putEntity(w http.ResponseWriter, r *http.Request, ap syncApplier, id, ifMatch string) {
+func (h *syncHandler) putEntity(w http.ResponseWriter, r *http.Request, ap syncApplier, id, ifMatch string) {
 	if !validIDSegment(id) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_id", "Invalid entity id", "")
 		return
@@ -124,7 +124,7 @@ func (a *App) putEntity(w http.ResponseWriter, r *http.Request, ap syncApplier, 
 	// Precondition: the record's CURRENT hash must equal If-Match. A push with
 	// no If-Match is only valid if the record does not yet exist (a first
 	// create); otherwise the client must declare the base it edited.
-	cur, exists := a.currentEntityHash(r.Context(), id)
+	cur, exists := h.currentEntityHash(r.Context(), id)
 	if !preconditionOK(ifMatch, cur, exists) {
 		writeSyncConflict(w, r, cur, exists)
 		return
@@ -139,7 +139,7 @@ func (a *App) putEntity(w http.ResponseWriter, r *http.Request, ap syncApplier, 
 	writeV1JSON(w, http.StatusOK, map[string]string{"hash": canonical.HashEntity(*e)})
 }
 
-func (a *App) putRelation(w http.ResponseWriter, r *http.Request, ap syncApplier, rest, ifMatch string) {
+func (h *syncHandler) putRelation(w http.ResponseWriter, r *http.Request, ap syncApplier, rest, ifMatch string) {
 	from, relType, to, ok := parseRelationKey(rest)
 	if !ok {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_id", "Invalid relation key", "")
@@ -151,7 +151,7 @@ func (a *App) putRelation(w http.ResponseWriter, r *http.Request, ap syncApplier
 		return
 	}
 
-	cur, exists := a.currentRelationHash(r.Context(), from, relType, to)
+	cur, exists := h.currentRelationHash(r.Context(), from, relType, to)
 	if !preconditionOK(ifMatch, cur, exists) {
 		writeSyncConflict(w, r, cur, exists)
 		return
@@ -170,9 +170,9 @@ func (a *App) putRelation(w http.ResponseWriter, r *http.Request, ap syncApplier
 // the record's current hash — a client only deletes what it last saw, symmetric
 // with the push precondition (no blind delete of an existing record). 200 on
 // success, 412 on a missing/mismatched If-Match, 404 if the record is gone.
-func (a *App) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, rest string) {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
+func (h *syncHandler) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, rest string) {
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
 	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
 
 	switch kind {
@@ -181,7 +181,7 @@ func (a *App) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, res
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_id", "Invalid entity id", "")
 			return
 		}
-		cur, exists := a.currentEntityHash(r.Context(), rest)
+		cur, exists := h.currentEntityHash(r.Context(), rest)
 		if !exists {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
 			return
@@ -190,7 +190,7 @@ func (a *App) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, res
 			writeSyncConflict(w, r, cur, true)
 			return
 		}
-		if _, err := a.entityManager.DeleteEntity(syncContext(r.Context()), rest, true); err != nil {
+		if _, err := h.deleter.DeleteEntity(syncContext(r.Context()), rest, true); err != nil {
 			writeSyncApplyError(w, r, err)
 			return
 		}
@@ -201,7 +201,7 @@ func (a *App) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, res
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_id", "Invalid relation key", "")
 			return
 		}
-		cur, exists := a.currentRelationHash(r.Context(), from, relType, to)
+		cur, exists := h.currentRelationHash(r.Context(), from, relType, to)
 		if !exists {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Relation not found", "")
 			return
@@ -210,7 +210,7 @@ func (a *App) handleSyncDelete(w http.ResponseWriter, r *http.Request, kind, res
 			writeSyncConflict(w, r, cur, true)
 			return
 		}
-		if err := a.entityManager.DeleteRelation(syncContext(r.Context()), from, relType, to); err != nil {
+		if err := h.deleter.DeleteRelation(syncContext(r.Context()), from, relType, to); err != nil {
 			writeSyncApplyError(w, r, err)
 			return
 		}
@@ -234,7 +234,7 @@ func deletePreconditionOK(ifMatch, currentHash string) bool {
 // api_v1.go): the answer is "policy permits reading this (type, id)", evaluated
 // against the request principal's read scope. The nop gate (no ACL configured)
 // permits everything, preserving pre-ACL behavior.
-func (a *App) permitsSyncReadEntity(ctx context.Context, entityType, entityID string) (bool, error) {
+func (h *syncHandler) permitsSyncReadEntity(ctx context.Context, entityType, entityID string) (bool, error) {
 	return readGateFromContext(ctx).PermitsRead(ctx, entityType, entityID)
 }
 
@@ -244,9 +244,9 @@ func (a *App) permitsSyncReadEntity(ctx context.Context, entityType, entityID st
 // source entity's type is resolved from the store; if it cannot be loaded
 // (e.g. the source was deleted) the type is left empty, the same fallback the
 // relation write gate uses (authorizeConflictResolve), and the gate decides.
-func (a *App) permitsSyncReadRelation(ctx context.Context, from string) (bool, error) {
+func (h *syncHandler) permitsSyncReadRelation(ctx context.Context, from string) (bool, error) {
 	var fromType string
-	if e, err := a.store.GetEntity(ctx, from); err == nil {
+	if e, err := h.store.GetEntity(ctx, from); err == nil {
 		fromType = e.Type
 	}
 	return readGateFromContext(ctx).PermitsRead(ctx, fromType, from)
@@ -254,13 +254,13 @@ func (a *App) permitsSyncReadRelation(ctx context.Context, from string) (bool, e
 
 // fetchRelation parses the relation key from rest, loads it, and writes a 4xx if
 // the key is invalid or the relation is absent. Returns (rel, true) on success.
-func (a *App) fetchRelation(w http.ResponseWriter, r *http.Request, rest string) (*entity.Relation, bool) {
+func (h *syncHandler) fetchRelation(w http.ResponseWriter, r *http.Request, rest string) (*entity.Relation, bool) {
 	from, relType, to, ok := parseRelationKey(rest)
 	if !ok {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_id", "Invalid relation key", "")
 		return nil, false
 	}
-	rel, err := a.store.GetRelation(r.Context(), from, relType, to)
+	rel, err := h.store.GetRelation(r.Context(), from, relType, to)
 	if err != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Relation not found", "")
 		return nil, false
@@ -282,16 +282,16 @@ func parseRelationKey(rest string) (from, relType, to string, ok bool) {
 	return from, relType, to, true
 }
 
-func (a *App) currentEntityHash(ctx context.Context, id string) (hash string, exists bool) {
-	e, err := a.store.GetEntity(ctx, id)
+func (h *syncHandler) currentEntityHash(ctx context.Context, id string) (hash string, exists bool) {
+	e, err := h.store.GetEntity(ctx, id)
 	if err != nil {
 		return "", false
 	}
 	return canonical.HashEntity(*e), true
 }
 
-func (a *App) currentRelationHash(ctx context.Context, from, relType, to string) (hash string, exists bool) {
-	rel, err := a.store.GetRelation(ctx, from, relType, to)
+func (h *syncHandler) currentRelationHash(ctx context.Context, from, relType, to string) (hash string, exists bool) {
+	rel, err := h.store.GetRelation(ctx, from, relType, to)
 	if err != nil {
 		return "", false
 	}

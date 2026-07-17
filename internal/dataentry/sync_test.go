@@ -321,7 +321,7 @@ func TestSync_DeleteEntity(t *testing.T) {
 // ManifestSince, so the manifest endpoint reports 501 (not a crash).
 func TestSync_ManifestUnsupportedOnNonPostgres(t *testing.T) {
 	app := newHandlerTestApp(t)
-	if app.syncManifest() != nil {
+	if app.sync.manifest != nil {
 		t.Skip("test backend unexpectedly supports the manifest")
 	}
 	w := syncRequest(t, app, http.MethodGet, "/api/sync/manifest", "", nil)
@@ -369,6 +369,7 @@ func TestSync_ManifestSerialization(t *testing.T) {
 		{Kind: "e", IDA: "TKT-2", Typ: "ticket", Deleted: true, Seq: 6}, // tombstone
 		{Kind: "r", IDA: "TKT-1", IDB: "belongs_to", IDC: "CMP-1", Deleted: false, Seq: 7},
 	}}
+	rebindSyncHandler(app) // re-resolve the manifest capability against the swapped store
 
 	w := syncRequest(t, app, http.MethodGet, "/api/sync/manifest?cursor=4", "", nil)
 	if w.Code != http.StatusOK {
@@ -411,7 +412,7 @@ func syncGetAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	req := httptest.NewRequest(http.MethodGet, "/api/sync/"+kind+"/"+rest, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleSyncGet(rec, req, kind, rest)
+	app.sync.handleSyncGet(rec, req, kind, rest)
 	return rec
 }
 
@@ -489,6 +490,7 @@ func TestSync_Manifest_ACLFiltered(t *testing.T) {
 		{Kind: "r", IDA: "FEAT-1", IDB: "needs", IDC: "CMP-1", Seq: 8},     // sourced on feature — hidden
 		{Kind: "r", IDA: "TKT-1", IDB: "belongs_to", IDC: "CMP-1", Seq: 9}, // sourced on ticket — visible
 	}}
+	rebindSyncHandler(app) // re-resolve the manifest capability + gate reads against the swapped store
 
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
@@ -499,7 +501,7 @@ func TestSync_Manifest_ACLFiltered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/sync/manifest?cursor=4", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
 	rec := httptest.NewRecorder()
-	app.handleSyncManifest(rec, req)
+	app.sync.handleSyncManifest(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("manifest: %d %s", rec.Code, rec.Body.String())
@@ -540,7 +542,7 @@ func TestSync_PushRelation(t *testing.T) {
 	app := newHandlerTestApp(t)
 	// belongs_to: ticket -> component. Seed a component first.
 	comp := &entity.Entity{ID: "CMP-1", Type: "component", Properties: map[string]any{"name": "Core"}}
-	if _, err := app.syncApplierFor().ApplyEntity(t.Context(), comp); err != nil {
+	if _, err := app.sync.applier.ApplyEntity(t.Context(), comp); err != nil {
 		t.Fatalf("seed component: %v", err)
 	}
 	body := syncRelationBody{From: "TKT-001", Type: "belongs_to", To: "CMP-1"}
