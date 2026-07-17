@@ -53,4 +53,4 @@ AC6/AC7 empty-missing parity pre-verified in parity_missing_test.go).
 - [x] All CI checks pass (local `just ci` exit 0; remote CI monitored after push)
 - [x] PR URL documented below
 
-**PR:** see below (added after `gh pr create`)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1151
