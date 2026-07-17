@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"regexp"
+	"time"
 )
 
 // Metamodel represents the full metamodel configuration
@@ -133,6 +134,41 @@ type CustomType struct {
 	Default     string            `yaml:"default,omitempty"`     // Default value
 	Description string            `yaml:"description,omitempty"` // Documentation for the type
 	Validations []TypeValidation  `yaml:"validations,omitempty"` // Regex validations with error messages
+
+	// Transitions declares the legal value→value moves for this enum,
+	// making it a state machine (TKT-E4LW2). This is declarative source
+	// data only — the metamodel does not enforce it. At startup
+	// internal/statemachine.Compile reads these into an executable machine
+	// that the entitymanager runs on the write path (legality 422, guard
+	// 403, precondition 422). Empty means "any value may change to any
+	// other" (the historical, unconstrained behavior). Only meaningful on a
+	// named type — inline `type: enum` properties carry no transitions.
+	Transitions []TransitionDef `yaml:"transitions,omitempty"`
+
+	// Initial names the only legal entry value on entity create when this
+	// type is a state machine. Empty falls back to Default. Consumed by
+	// internal/statemachine at compile time.
+	Initial string `yaml:"initial,omitempty"`
+}
+
+// TransitionDef is one edge in an enum state machine: a legal move from one
+// value to another, optionally gated by an ACL permission (Guard) and/or a
+// data precondition (When). This is declarative source data; the executable
+// machine is built from it by internal/statemachine.Compile.
+type TransitionDef struct {
+	From string `yaml:"from"` // Source value; must be one of CustomType.Values
+	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
+
+	// Guard names an ACL permission the acting principal must hold for this
+	// transition. Enforced only on served paths (a principal exists); inert
+	// on direct CLI writes. Empty means the transition is legal for anyone
+	// who may otherwise write the entity.
+	Guard string `yaml:"guard,omitempty"`
+
+	// When is an internal/predicate expression evaluated as a precondition
+	// against the entity + graph at write time. False rejects the transition
+	// (422). Empty means no precondition.
+	When string `yaml:"when,omitempty"`
 }
 
 // EntityDef defines an entity type in the metamodel
@@ -271,13 +307,14 @@ func (p PropertyDef) FileMax() int {
 
 // Built-in property types
 const (
-	PropertyTypeString  = "string"
-	PropertyTypeDate    = "date"
-	PropertyTypeInteger = "integer"
-	PropertyTypeBoolean = "boolean"
-	PropertyTypeEnum    = "enum"
-	PropertyTypeFile    = "file"
-	PropertyTypeRrule   = "rrule"
+	PropertyTypeString   = "string"
+	PropertyTypeDate     = "date"
+	PropertyTypeDatetime = "datetime"
+	PropertyTypeInteger  = "integer"
+	PropertyTypeBoolean  = "boolean"
+	PropertyTypeEnum     = "enum"
+	PropertyTypeFile     = "file"
+	PropertyTypeRrule    = "rrule"
 )
 
 // ID types for entities
@@ -334,20 +371,30 @@ func (m OrderableMode) IsValid() bool {
 // DefaultDateFormat is the default format for date properties (ISO 8601)
 const DefaultDateFormat = "2006-01-02"
 
+// DefaultDatetimeFormat is the default format for datetime properties (RFC3339,
+// a time-bearing ISO 8601 instant). Unlike date, a datetime value carries a
+// time-of-day and (canonically) a UTC offset.
+const DefaultDatetimeFormat = time.RFC3339
+
 // IsBuiltinType returns true if the type is a built-in property type
 func IsBuiltinType(t string) bool {
 	switch t {
-	case PropertyTypeString, PropertyTypeDate, PropertyTypeInteger,
+	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeInteger,
 		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule:
 		return true
 	}
 	return false
 }
 
-// GetDateFormat returns the date format for a property, defaulting to ISO 8601
+// GetDateFormat returns the date format for a property, defaulting to ISO 8601.
+// For datetime properties the default is RFC3339 (time-bearing); an explicit
+// Format still overrides.
 func (p *PropertyDef) GetDateFormat() string {
 	if p.Format != "" {
 		return p.Format
+	}
+	if p.Type == PropertyTypeDatetime {
+		return DefaultDatetimeFormat
 	}
 	return DefaultDateFormat
 }

@@ -359,6 +359,40 @@ func TestRequest_ForEntityReusesGlobals(t *testing.T) {
 	}
 }
 
+// HoldsPermissionForEntity must see a permission carried by a role that is
+// conferred ONLY via a role-relation to the subject entity — the subject-scoped
+// case the globals-only holdsPermission cannot answer (RR-UJPW4). The same
+// permission must NOT be reported for an unrelated entity.
+func TestRequest_HoldsPermissionForEntity_SubjectScoped(t *testing.T) {
+	t.Parallel()
+	g := newFakeGraph()
+	// alice owns PRJ-foo (and nothing else). No global assignment.
+	g.add("alice", "owner-of", "PRJ-foo")
+
+	d := newTestDeclarative(t, &Policy{
+		Roles:         map[string]RoleDef{"owner": {Permissions: []string{"establish"}}},
+		RoleRelations: map[string]RoleRelationDef{"owner-of": {Confers: "owner"}},
+	}, g)
+
+	req, err := d.ForPrincipal(aliceDataEntry())
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+	ctx := context.Background()
+
+	if !req.HoldsPermissionForEntity(ctx, "PRJ-foo", "establish") {
+		t.Error("expected establish on owned PRJ-foo (role conferred via owner-of)")
+	}
+	if req.HoldsPermissionForEntity(ctx, "PRJ-other", "establish") {
+		t.Error("establish leaked to an unrelated entity PRJ-other")
+	}
+	// The globals-only path must NOT see it — proving the subject-aware path is
+	// load-bearing, not incidental.
+	if req.HoldsPermission(ctx, "establish") {
+		t.Error("globals-only HoldsPermission should not see a relation-conferred permission")
+	}
+}
+
 // RR-MBK0: ForEntity's local-role attribution iteration over
 // RoleRelations is a map iteration — Go intentionally randomizes it.
 // Without the sort fix, the resulting Attributions slice (and the

@@ -1206,10 +1206,15 @@ func (a *App) writeRelationsValidationError(w http.ResponseWriter, r *http.Reque
 // writeRelationsApplyError maps a Phase C write error to a 500 — the
 // entity may already have been updated, so a partial state is on disk.
 // This is the documented atomicity gap. ACL denials short-circuit to
-// the structured 403 path; everything else falls through to the
-// 500-with-detail body.
+// the structured 403 path; a dangling-peer structuralError maps to 422
+// (the reference did not resolve, so the edge was not stored —
+// BUG-K6FEVB); everything else falls through to the 500-with-detail body.
 func (a *App) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
 	if writeForbiddenIfACLDenied(w, err) {
+		return
+	}
+	if se, ok := asStructuralError(err); ok {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, se.Code, se.Detail, se.Path)
 		return
 	}
 	writeV1Error(w, r, http.StatusInternalServerError,
@@ -3229,7 +3234,7 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	qualifier := query.Get("qualifier")
 	entityType := query.Get("entity_type")
 
-	resolved := a.resolveCommands(pageType, qualifier, entityType)
+	resolved := a.commands.resolveCommands(pageType, qualifier, entityType)
 
 	commands := make([]v1.Command, 0, len(resolved))
 	for _, cmd := range resolved {

@@ -102,13 +102,13 @@ func propertyPredicateType(meta *metamodel.Metamodel, prop metamodel.PropertyDef
 }
 
 // scalarPredicateType maps a scalar metamodel type name to a predicate
-// scalar type. enum/date/rrule/string and string-valued custom types
-// become StringType; integer becomes NumberType; boolean becomes
+// scalar type. enum/date/datetime/rrule/string and string-valued custom
+// types become StringType; integer becomes NumberType; boolean becomes
 // BoolType. file and unknown types are unmodelled.
 func scalarPredicateType(meta *metamodel.Metamodel, typeName string) (predicate.Type, bool) {
 	switch typeName {
 	case "", metamodel.PropertyTypeString, metamodel.PropertyTypeEnum,
-		metamodel.PropertyTypeDate, metamodel.PropertyTypeRrule:
+		metamodel.PropertyTypeDate, metamodel.PropertyTypeDatetime, metamodel.PropertyTypeRrule:
 		return predicate.StringType, true
 	case metamodel.PropertyTypeInteger:
 		return predicate.NumberType, true

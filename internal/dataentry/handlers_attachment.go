@@ -300,7 +300,7 @@ func (a *App) probeAttachmentCommands(meta *metamodel.Metamodel, runner *attachm
 // the App's dependencies and the GIVEN state snapshot. Cheap (a struct
 // wrapper). Takes the snapshot explicitly so the service enforces the same
 // metamodel the handler gated on — see "capture state once per operation".
-func (a *App) attachmentService(s *AppState) (*attachment.Service, error) {
+func (a *App) attachmentService(s *Schema) (*attachment.Service, error) {
 	return attachment.New(attachment.Deps{
 		Store:         a.store,
 		Meta:          s.Meta,
@@ -313,7 +313,7 @@ func (a *App) attachmentService(s *AppState) (*attachment.Service, error) {
 
 // filePropertyDef returns the metamodel def for a property from the given
 // snapshot (callers gate on isFileProperty first, so a file def is expected).
-func filePropertyDef(s *AppState, typeName, property string) metamodel.PropertyDef {
+func filePropertyDef(s *Schema, typeName, property string) metamodel.PropertyDef {
 	if def, ok := s.Meta.GetEntityDef(typeName); ok {
 		return def.Properties[property]
 	}
@@ -419,7 +419,7 @@ func (a *App) attachmentWritePreflight(
 // promises a ceiling higher than the store will actually accept — a
 // misconfigured `max_attachment_bytes` above store.MaxAttachmentBytes
 // can't make the error message lie.
-func maxAttachmentBytes(s *AppState) int64 {
+func maxAttachmentBytes(s *Schema) int64 {
 	limit := int64(DefaultMaxAttachmentBytes)
 	if n := s.Cfg.App.MaxAttachmentBytes; n > 0 {
 		limit = n

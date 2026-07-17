@@ -411,19 +411,34 @@ jobs:
     name: Rela Tickets
     runs-on: ubuntu-latest
     steps:
-      - name: Decide whether ticket gate applies
+      - name: Decide whether the ticket gate applies
         id: gate
         env:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
+          # Two independent switches:
+          #   applies      — run the ticket gate at all (validation + done-check).
+          #   require_new  — additionally require this PR to add/modify a ticket.
+          #
+          # dependabot PRs are fully exempt (bot dependency bumps carry no ticket).
+          # chore/* PRs are NOT exempt from validation anymore: they still get the
+          # `validate` + done-check steps (this is the hole TKT-QXHFJZ slipped
+          # through — a chore branch merged a stale `ready` ticket). They are only
+          # exempt from the "must reference a ticket" requirement, since a pure
+          # chore may legitimately touch no ticket.
           if [[ "$EVENT_NAME" != "pull_request" ]] \
-             || [[ "$HEAD_REF" == chore/* ]] \
              || [[ "$HEAD_REF" == dependabot/* ]]; then
             echo "applies=false" >> "$GITHUB_OUTPUT"
+            echo "require_new=false" >> "$GITHUB_OUTPUT"
             echo "Ticket gate does not apply for $EVENT_NAME / $HEAD_REF; reporting success."
+          elif [[ "$HEAD_REF" == chore/* ]]; then
+            echo "applies=true" >> "$GITHUB_OUTPUT"
+            echo "require_new=false" >> "$GITHUB_OUTPUT"
+            echo "chore/* branch: validating tickets but not requiring a new/modified ticket."
           else
             echo "applies=true" >> "$GITHUB_OUTPUT"
+            echo "require_new=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/checkout@v7
@@ -442,14 +457,15 @@ jobs:
         run: go build -o bin/rela ./cmd/rela
 
       - name: Check for new or modified bug/feature/ticket entity
-        if: steps.gate.outputs.applies == 'true'
+        if: steps.gate.outputs.require_new == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          BASE_REF="${{ github.event.pull_request.base.sha }}"
 
           # Get list of added or modified entity files in this PR
           # A = Added (new tickets), M = Modified (continuation work on existing tickets)
-          CHANGED_ENTITIES=$(git diff --name-only --diff-filter=AM "${BASE_REF}"...HEAD -- \
+          CHANGED_ENTITIES=$(git diff --name-only --diff-filter=AM "${BASE_SHA}"...HEAD -- \
             'tickets/entities/bugs/*.md' \
             'tickets/entities/features/*.md' \
             'tickets/entities/tickets/*.md' || true)
@@ -479,6 +495,56 @@ jobs:
 
           echo ""
           echo "All rela checks passed!"
+
+      - name: Ticket done-before-merge check
+        if: steps.gate.outputs.applies == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          # Any ticket/bug touched by this PR must be brought to a terminal
+          # state (done / wont-fix / blocked), not left mid-flight or parked in
+          # `ready`. The `ci-no-*` validation rules already block planning /
+          # in-progress / review / analyzing / blocked; this catches the
+          # remaining hole: a work item left in `ready` while its code merges
+          # (how TKT-QXHFJZ shipped stale). backlog is allowed (untouched work).
+          CHANGED=$(git diff --name-only --diff-filter=AM "${BASE_SHA}"...HEAD -- \
+            'tickets/entities/bugs/*.md' \
+            'tickets/entities/tickets/*.md' || true)
+
+          # Read a frontmatter scalar: only scan between the first two `---`
+          # fences so a `status:`/`id:` mention in the markdown body can't be
+          # picked up.
+          fm_field() {
+            awk -v key="$2" '
+              /^---[[:space:]]*$/ { fence++; if (fence == 2) exit; next }
+              fence == 1 && $0 ~ "^" key ":" {
+                sub("^" key ":[[:space:]]*", ""); gsub(/["\x27]/, "");
+                print; exit
+              }' "$1"
+          }
+
+          FAIL=0
+          for f in $CHANGED; do
+            [[ -f "$f" ]] || continue
+            STATUS=$(fm_field "$f" status)
+            ID=$(fm_field "$f" id)
+            case "$STATUS" in
+              done|wont-fix|blocked|backlog) ;;
+              ready)
+                echo "ERROR: $ID is '$STATUS' — finish it (status=done) before merging its PR, or move it back to backlog."
+                FAIL=1
+                ;;
+              *)
+                # planning/in-progress/review/analyzing are caught by ci-no-* rules;
+                # flag here too for a clear message.
+                echo "ERROR: $ID is '$STATUS' — not a mergeable terminal state."
+                FAIL=1
+                ;;
+            esac
+          done
+          exit $FAIL
 
   demos:
     name: Demos

@@ -959,6 +959,7 @@ func TestIsBuiltinType(t *testing.T) {
 	}{
 		{name: "string is builtin", typ: PropertyTypeString, want: true},
 		{name: "date is builtin", typ: PropertyTypeDate, want: true},
+		{name: "datetime is builtin", typ: PropertyTypeDatetime, want: true},
 		{name: "integer is builtin", typ: PropertyTypeInteger, want: true},
 		{name: "boolean is builtin", typ: PropertyTypeBoolean, want: true},
 		{name: "enum is builtin", typ: PropertyTypeEnum, want: true},
@@ -997,6 +998,16 @@ func TestPropertyDef_GetDateFormat(t *testing.T) {
 			name: "empty format uses default",
 			prop: PropertyDef{Type: PropertyTypeDate, Format: ""},
 			want: DefaultDateFormat,
+		},
+		{
+			name: "datetime uses RFC3339 default",
+			prop: PropertyDef{Type: PropertyTypeDatetime},
+			want: DefaultDatetimeFormat,
+		},
+		{
+			name: "datetime custom format overrides",
+			prop: PropertyDef{Type: PropertyTypeDatetime, Format: "2006-01-02 15:04"},
+			want: "2006-01-02 15:04",
 		},
 	}
 

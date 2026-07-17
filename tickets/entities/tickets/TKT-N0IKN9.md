@@ -37,17 +37,23 @@ structural brake; this ticket is the cleanup of the debt that accrued before it.
 Per type: extract cohesive responsibilities into their own types with narrow,
 injected dependencies (consumer-side interfaces per the project rules), then
 lower the `//plimsoll:max-*` number. `App` is the priority — its decomposition
-into an `api` package with a gated read interface also closes the read-ACL
-class of bug (a route package that never holds `store.Store` can't skip the
-read gate). `CLI` growth is structural (kong binds one field per subcommand);
-revisit grouping into sub-structs but it may stay grandfathered.
+into an `api` package with a gated read interface also closes the read-ACL class
+of bug (a route package that never holds `store.Store` can't skip the read
+gate). `CLI` growth is structural (kong binds one field per subcommand); revisit
+grouping into sub-structs but it may stay grandfathered.
 
 ## Progress
 
 - `dataentry.App` decomposition tracked in sub-arc TKT-N26KLB (227 → ~166
-  methods; the `visibleReader` ACL seam landed), remainder in TKT-R68TV8.
+methods; the `visibleReader` ACL seam landed), remainder in TKT-R68TV8.
 - `metamodel.Metamodel`: the attachment-scan accessors (`ScanCommandFor`,
-  `HasUnconfiguredScan`) were moved behind a focused `AttachmentPolicy` view
-  rather than widening the metamodel's public surface — the plimsoll line held
-  at 30 instead of being bumped when the attachment feature landed. This is the
-  ratchet working as intended: the linter forced the extraction at write time.
+`HasUnconfiguredScan`) were moved behind a focused `AttachmentPolicy` view
+rather than widening the metamodel's public surface — the plimsoll line held at
+30 instead of being bumped when the attachment feature landed. This is the
+ratchet working as intended: the linter forced the extraction at write time.
+- `cli.cliServices` (grandfathered at 29 exported methods): **removed
+entirely** (TKT-45QYI) after PR #1142 pushed it to 30 and broke CI. Replaced by
+`readServices`/`writeServices` field bundles (à la `lua.ReadDeps`/ `WriteDeps`)
+plus direct kong bindings for the CLI-owned services; the directive was deleted,
+not bumped. `cli.CLI`'s `max-fields=45` directive is the one remaining CLI
+grandfather (structural — one field per subcommand).

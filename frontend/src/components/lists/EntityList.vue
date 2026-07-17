@@ -558,7 +558,9 @@ function getFormattedCellValue(
   }
 
   const value = getCellValue(entity, column)
-  return formatCellValue(value, column.property, entityType.value)
+  // Pass the user's effective display zone so datetime cells honor the
+  // Settings display-timezone preference, matching the form widget (RR-K3WEW2).
+  return formatCellValue(value, column.property, entityType.value, uiStore.effectiveTimezone)
 }
 
 function handleDelete(entity: Entity, event: Event) {

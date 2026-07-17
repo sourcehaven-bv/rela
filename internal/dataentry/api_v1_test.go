@@ -3362,10 +3362,12 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 }
 
 // TestV1UpdateEntity_Relations_UnknownTarget asserts that a missing
-// target id surfaces as a warning (DEC-HWZHA: soft condition, 200 with
-// structured warning) rather than a hard rejection. The edge is
-// written referencing a missing peer; analyze_orphans surfaces it on
-// the next run.
+// target id is a HARD 422, not a soft 200-with-warning (BUG-K6FEVB).
+// The old behavior wrote the edge via an ungated direct store call that
+// bypassed the ACL and audit; the fix rejects the write so the user
+// learns the reference did not resolve and the edge is NOT stored. This
+// is a deliberate reversal of DEC-HWZHA's soft-warn treatment for the
+// missing-peer case (see danglingPeerError).
 func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
@@ -3377,11 +3379,15 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-999"}]}}}`))
 	rec := httptest.NewRecorder()
 	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 (soft condition), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 (dangling peer), got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "target_not_found") || !strings.Contains(rec.Body.String(), "FEAT-999") {
-		t.Fatalf("response missing warning code/target, got: %s", rec.Body.String())
+		t.Fatalf("response missing target_not_found/FEAT-999, got: %s", rec.Body.String())
+	}
+	// The edge must NOT have been written to the store.
+	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "implements", "FEAT-999"); err == nil {
+		t.Fatal("dangling-peer edge was persisted; want no store mutation")
 	}
 }
 

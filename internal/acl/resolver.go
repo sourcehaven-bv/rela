@@ -224,11 +224,32 @@ func (r *Request) HoldsPermission(ctx context.Context, perm string) bool {
 	return r.holdsPermission(ctx, perm)
 }
 
+// HoldsPermissionForEntity reports whether the principal holds the given named
+// permission for the entity identified by entityID, considering BOTH global
+// roles AND roles conferred locally by graph relations to that entity (and its
+// ancestors via inherit_roles_through). This is the subject-aware sibling of
+// [Request.HoldsPermission]: it lets a caller express "the assignee may perform
+// X on their own entity" where the assignee role is conferred by an ownership
+// relation, not a global assignment.
+//
+// It is the entry point the statemachine transition guard uses (TKT-E4LW2):
+// the guard permission is a coarse capability noun (e.g. "establish"), and the
+// per-subject scope comes from whether a role-relation confers the granting
+// role for this entity — resolved here, not baked into the permission.
+func (r *Request) HoldsPermissionForEntity(ctx context.Context, entityID, perm string) bool {
+	return r.grantsPermission(r.computeForEntity(ctx, entityID), perm)
+}
+
 // holdsPermission reports whether any role in the principal's global
 // role set grants the given permission. Used by the delegate-X gate
 // on role-relation writes; permissions are global-only by design.
 func (r *Request) holdsPermission(ctx context.Context, perm string) bool {
-	for _, a := range r.Globals(ctx).Attributions {
+	return r.grantsPermission(r.Globals(ctx).Attributions, perm)
+}
+
+// grantsPermission reports whether any role in attrs grants perm.
+func (r *Request) grantsPermission(attrs []RoleAttribution, perm string) bool {
+	for _, a := range attrs {
 		role, ok := r.d.policy.Roles[a.Role]
 		if !ok {
 			continue

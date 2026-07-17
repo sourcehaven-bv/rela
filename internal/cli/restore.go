@@ -28,8 +28,8 @@ type RestoreCmd struct {
 }
 
 // Run dispatches `rela restore <id> <version>`.
-func (c *RestoreCmd) Run(ctx context.Context, svc *cliServices) error {
-	reader, ok := svc.Store().(store.HistoryReader)
+func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
+	reader, ok := svc.Store.(store.HistoryReader)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support version history " +
 			"(restore is a PostgreSQL-build feature).")
@@ -55,17 +55,17 @@ func (c *RestoreCmd) Run(ctx context.Context, svc *cliServices) error {
 	// ErrNotFound (update raced a delete) or ErrEntityAlreadyExists (create
 	// raced a recreate). Map either to a clear "state changed, retry" message
 	// rather than a baffling raw error.
-	_, getErr := svc.Store().GetEntity(ctx, c.ID)
+	_, getErr := svc.Store.GetEntity(ctx, c.ID)
 	switch {
 	case getErr == nil:
-		if _, err := svc.EntityManager().UpdateEntity(ctx, target); err != nil {
+		if _, err := svc.EntityManager.UpdateEntity(ctx, target); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("restore %q: entity state changed during restore (deleted concurrently) — re-run", c.ID)
 			}
 			return fmt.Errorf("restore (update) %q to v%d: %w", c.ID, c.Version, err)
 		}
 	case errors.Is(getErr, store.ErrNotFound):
-		if _, err := svc.EntityManager().CreateEntity(ctx, target, entity.CreateOptions{}); err != nil {
+		if _, err := svc.EntityManager.CreateEntity(ctx, target, entity.CreateOptions{}); err != nil {
 			if errors.Is(err, store.ErrConflict) {
 				return fmt.Errorf("restore %q: entity state changed during restore (re-created concurrently) — re-run", c.ID)
 			}

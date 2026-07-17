@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
@@ -37,24 +36,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
-// AppState bundles the reloadable fields of App into an immutable snapshot,
-// published via atomic.Pointer. Callers Load() once and work against a
-// coherent snapshot, instead of holding a read lock around the entire request.
-//
-// This snapshot is being decomposed: state owned by exactly one service is
-// moving out into that service (self-synchronized), leaving AppState to hold
-// only genuinely co-derived reload state. The user-uploaded logo was the first
-// to move — see [logoStore]. What remains here is the config/metamodel and the
-// fields derived from them together.
-type AppState struct {
-	Cfg          *Config
-	Meta         *metamodel.Metamodel
-	StyleMap     map[string]map[string]string
-	StyledTypes  map[string]bool
-	UserDefaults *UserDefaults
-	OpenAPIGen   *openapi.Generator
-}
-
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = dataentryconfig.ConfigFile
 
@@ -71,29 +52,33 @@ const userPaletteFile = "palette.yaml"
 //
 // # Concurrency model
 //
-// All reloadable state (config, metamodel, graph, style map, palette,
-// user defaults, OpenAPI generator) lives in an immutable AppState struct
-// held via atomic.Pointer. Handlers call a.State() once at entry and work
-// against a coherent snapshot for the duration of the request — no lock
-// acquisition, no risk of observing a half-reloaded world.
+// The co-derived reload core (config, metamodel, style map, OpenAPI
+// generator) lives in an immutable [Schema] published via [schemaProvider]'s
+// atomic.Pointer. Handlers call a.State() once at entry and work against a
+// coherent snapshot for the duration of the request — no lock acquisition, no
+// risk of observing a half-reloaded world. Independently-owned reloadable
+// state (logo, palette, user defaults) lives in its own self-synchronized
+// service, not the snapshot.
 //
-// Reloads (triggered by the file watcher or by Reload) build a new
-// AppState and publish it atomically via a.state.Store. The previous
-// state is garbage-collected once no reader holds it.
+// Reloads (triggered by the file watcher or by Reload) derive a new Schema
+// and publish it atomically via a.schema.Reload. The previous snapshot is
+// garbage-collected once no reader holds it.
 //
 // Mutations (CreateEntity, UpdateEntity, DeleteEntity, CreateRelation,
 // UpdateRelation, DeleteRelation, SetProperty, action scripts) serialize
 // via writeMu. writeMu excludes concurrent mutations but does NOT block
-// readers — readers go through state.Load(). The workspace's internal
+// readers — readers go through a.State(). The workspace's internal
 // reloadMu coordinates the reload itself with the mutation path.
 //
-// TODO(TKT-N26KLB): App is a god-object. Decompose toward the
+// TODO(TKT-R68TV8): App is a god-object. Decompose toward the
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design) — this branch adds handleV1Feed (TKT-RDM9M5).
+// HTTP route by the router's design). The sync route cluster (16 methods) moved
+// to syncHandler (170 → 154); the command cluster (11 methods) moved to
+// commandHandler (154 → 143).
 //
-//plimsoll:max-methods=170
+//plimsoll:max-methods=143
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -140,14 +125,27 @@ type App struct {
 	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
 	userState userStateStore
 	// logo owns the user-uploaded sidebar logo — persistence AND the served
-	// in-memory cache — self-synchronized. Extracted from AppState so the
+	// in-memory cache — self-synchronized. Extracted from the schema snapshot so the
 	// logo no longer rides the App-wide snapshot + writeMu.
 	logo *logoStore
 	// palette owns the user palette override and the resolved palette (derived
 	// from Cfg.Palette + the override). Self-synchronized; extracted from
-	// AppState. The reload/save paths hand it the current Cfg.Palette so it can
+	// Schema. The reload/save paths hand it the current Cfg.Palette so it can
 	// recompute — see paletteService.Reresolve.
-	palette   *paletteService
+	palette *paletteService
+	// settings owns the per-user default values (create-form/relation defaults).
+	// Self-synchronized; extracted from the schema snapshot.
+	settings *settingsService
+	// sync owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
+	// surfaces plus a pointer to writeMu so its writes serialize with the other
+	// mutation handlers.
+	sync *syncHandler
+	// commands owns the user-configured command surface (SSE shell-exec,
+	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
+	// holds narrow closures over the schema snapshot, Services bundle, project
+	// root, and the view executor.
+	commands  *commandHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -168,10 +166,11 @@ type App struct {
 	// whole point of having a cache in a long-lived server.
 	scriptEngine *script.Engine
 
-	// state holds the current reloadable snapshot. Readers: a.State().
-	// Writers: onReload rebuilds and publishes a new state after file
-	// changes. Initial state is published in NewApp.
-	state atomic.Pointer[AppState]
+	// schema publishes the current reloadable co-derived core (config,
+	// metamodel, style map, OpenAPI generator). Readers: a.State(). Writers:
+	// the watcher's reload path (rebuildState → schema.Reload). Initial
+	// snapshot is published in NewApp.
+	schema schemaProvider
 
 	// writeMu serializes mutation handlers (CreateEntity, UpdateEntity,
 	// etc.) against each other. Readers never take it.
@@ -256,11 +255,11 @@ func (a *App) StopWatching() {
 	}
 }
 
-// State returns the current reloadable snapshot. Handlers should call
+// State returns the current reloadable [Schema] snapshot. Handlers should call
 // State() once at entry and use the returned snapshot consistently
 // throughout, instead of making multiple calls that could see different
 // snapshots after a concurrent reload.
-func (a *App) State() *AppState { return a.state.Load() }
+func (a *App) State() *Schema { return a.schema.Current() }
 
 // Cfg returns the current data-entry config (convenience accessor).
 // Equivalent to a.State().Cfg.
@@ -269,7 +268,7 @@ func (a *App) Cfg() *Config { return a.State().Cfg }
 // Meta returns the current metamodel (convenience accessor).
 func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 
-// luaWriteDeps builds a lua.WriteDeps bundle using the current AppState
+// luaWriteDeps builds a lua.WriteDeps bundle using the current Schema
 // metamodel. Called per action-script invocation so that metamodel reloads
 // propagate to scripts without requiring app reconstruction. All other
 // fields are immutable for the App's lifetime.
@@ -284,23 +283,6 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 		},
 		EntityManager: a.entityManager,
 	}
-}
-
-// mutateState atomically updates the published AppState. It takes
-// writeMu, builds a shallow copy of the current snapshot, runs the
-// caller's mutator on the copy, and publishes the copy via state.Store.
-//
-// This is the canonical way for mutation handlers to change reloadable
-// fields like UserDefaults or UserPalette. Reaching through a.State()
-// to assign field values directly is a bug — it scribbles on the shared
-// snapshot pointer that lock-free readers also hold.
-func (a *App) mutateState(fn func(*AppState)) {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-	cur := a.state.Load()
-	next := *cur // shallow copy of the snapshot
-	fn(&next)
-	a.state.Store(&next)
 }
 
 // SetSecurityConfig configures the HTTP security middlewares applied by
@@ -514,7 +496,7 @@ func NewApp(
 
 	app.serializer = entitySerializer{affordances: app.affordances}
 
-	userDefaults := app.userState.loadUserDefaults()
+	app.settings = newSettingsService(kv)
 
 	// palette owns the user override + resolved palette. Surface a broken
 	// palette rather than silently falling back to defaults (which the next
@@ -534,15 +516,33 @@ func NewApp(
 	}
 	app.logo = logo
 
-	// Build and publish the initial AppState snapshot. All reloadable
+	// syncHandler owns the /api/sync/ route cluster (fs-client ↔ pg-server
+	// replication). It shares App's store (reads), entityManager (deletes), and
+	// — crucially — a POINTER to App's writeMu so sync pushes/deletes serialize
+	// against every other data-entry mutation. The manifest/applier capabilities
+	// are resolved once from the concrete store/manager (nil on fs/memory builds,
+	// where the sync endpoints degrade to 501).
+	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
+
+	// commandHandler owns the user-configured command surface. Its
+	// collaborators are narrow closures over App: the schema snapshot (command/
+	// list/view config), the Services read bundle, the project root (exec cwd +
+	// env), and the view executor for view-context commands.
+	app.commands = &commandHandler{
+		schema:      app.State,
+		services:    app.Services,
+		projectRoot: app.ProjectRoot,
+		executeView: app.executeView,
+	}
+
+	// Build and publish the initial Schema snapshot. All reloadable
 	// state lives here; there are no convenience aliases on App to keep
 	// in sync.
-	app.state.Store(&AppState{
-		Cfg:          &cfg,
-		Meta:         meta,
-		StyleMap:     styleMap,
-		StyledTypes:  styledTypes,
-		UserDefaults: userDefaults,
+	app.schema.Publish(&Schema{
+		Cfg:         &cfg,
+		Meta:        meta,
+		StyleMap:    styleMap,
+		StyledTypes: styledTypes,
 		OpenAPIGen: openapi.New(meta, openapi.Config{
 			Title:       cfg.App.Name + " API",
 			Description: cfg.App.Description,
@@ -747,7 +747,7 @@ func (a *App) activeListForEntityType(entityType string) string {
 	return a.findListByEntityType(s, s.Cfg.Navigation, entityType)
 }
 
-func (a *App) findListByEntityType(s *AppState, entries []NavigationEntry, entityType string) string {
+func (a *App) findListByEntityType(s *Schema, entries []NavigationEntry, entityType string) string {
 	for _, nav := range entries {
 		if nav.IsGroup() {
 			if found := a.findListByEntityType(s, nav.Items, entityType); found != "" {

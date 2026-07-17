@@ -44,6 +44,19 @@ type DuplicateGroup struct {
 	Entities []*entity.Entity
 }
 
+// UniqueViolation represents a group of entities of the same type that
+// share a value for a property declared `unique: true` in the metamodel
+// — i.e. a natural-key collision the write path would reject today, but
+// which may already exist in data that predates the constraint. Reported
+// by [Service.FindUniqueViolations] so an operator can find and fix
+// pre-existing duplicates before (or after) enabling `unique: true`.
+type UniqueViolation struct {
+	EntityType string
+	Property   string
+	Value      string
+	Entities   []*entity.Entity
+}
+
 // GapResult contains gaps in an ID sequence.
 type GapResult struct {
 	Prefix  string
@@ -73,6 +86,7 @@ type ValidationLoadError = validation.LoadError
 type Summary struct {
 	Orphans                int
 	Duplicates             int
+	UniqueViolations       int
 	Gaps                   int
 	Cardinality            int
 	PropertyErrors         int
@@ -178,6 +192,81 @@ func (s *Service) FindDuplicates(ctx context.Context, opts Options) []DuplicateG
 		}
 	}
 	return duplicates
+}
+
+// FindUniqueViolations returns groups of same-type entities that share a
+// non-empty value for a property declared `unique: true`, filtered by
+// scope. Each returned group has at least two entities. Results are
+// sorted by (entity type, property, value) for stable output.
+//
+// This is the read-side companion to the write-path unique constraint
+// (see internal/entitymanager checkUniqueProperties): the write path
+// rejects NEW duplicates, this surfaces ones that already exist — e.g.
+// after an operator adds `unique: true` to a property whose data already
+// contains collisions, which the constraint does not retroactively clean.
+// List properties are skipped (a natural key is a scalar), matching the
+// write-path check.
+func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) []UniqueViolation {
+	// (type, property) pairs the metamodel declares unique + non-list.
+	type uniqueProp struct{ entityType, property string }
+	var uniqueProps []uniqueProp
+	for typeName, def := range s.deps.Meta.Entities {
+		for propName, pd := range def.PropertyDefs() {
+			if pd.Unique && !pd.List {
+				uniqueProps = append(uniqueProps, uniqueProp{typeName, propName})
+			}
+		}
+	}
+	if len(uniqueProps) == 0 {
+		return nil
+	}
+
+	entities := filterByScope(collectEntities(ctx, s.deps.Store, store.EntityQuery{}), opts.Scope)
+
+	// Group by (type, property, value); a group with >1 entity is a
+	// violation. valueGroups keyed on the uniqueProp then the value.
+	type groupKey struct{ up uniqueProp }
+	valueGroups := make(map[groupKey]map[string][]*entity.Entity)
+	for _, e := range entities {
+		for _, up := range uniqueProps {
+			if e.Type != up.entityType {
+				continue
+			}
+			v := e.GetString(up.property)
+			if v == "" {
+				continue // empty values are exempt, per the write-path check
+			}
+			k := groupKey{up}
+			if valueGroups[k] == nil {
+				valueGroups[k] = make(map[string][]*entity.Entity)
+			}
+			valueGroups[k][v] = append(valueGroups[k][v], e)
+		}
+	}
+
+	var violations []UniqueViolation
+	for k, byValue := range valueGroups {
+		for value, group := range byValue {
+			if len(group) > 1 {
+				violations = append(violations, UniqueViolation{
+					EntityType: k.up.entityType,
+					Property:   k.up.property,
+					Value:      value,
+					Entities:   group,
+				})
+			}
+		}
+	}
+	sort.Slice(violations, func(i, j int) bool {
+		if violations[i].EntityType != violations[j].EntityType {
+			return violations[i].EntityType < violations[j].EntityType
+		}
+		if violations[i].Property != violations[j].Property {
+			return violations[i].Property < violations[j].Property
+		}
+		return violations[i].Value < violations[j].Value
+	})
+	return violations
 }
 
 // --- Gap analysis ---
@@ -443,10 +532,11 @@ func CountValidationsBySeverity(violations []ValidationViolation) (errors, warni
 // AnalyzeAll runs all analyses and returns a summary of counts.
 func (s *Service) AnalyzeAll(ctx context.Context, opts Options) *Summary {
 	summary := &Summary{
-		Orphans:     len(s.FindOrphansWithScope(ctx, opts)),
-		Duplicates:  len(s.FindDuplicates(ctx, opts)),
-		Gaps:        len(s.FindGaps(ctx, opts)),
-		Cardinality: len(s.CheckCardinality(ctx, opts)),
+		Orphans:          len(s.FindOrphansWithScope(ctx, opts)),
+		Duplicates:       len(s.FindDuplicates(ctx, opts)),
+		UniqueViolations: len(s.FindUniqueViolations(ctx, opts)),
+		Gaps:             len(s.FindGaps(ctx, opts)),
+		Cardinality:      len(s.CheckCardinality(ctx, opts)),
 	}
 
 	for _, pe := range schema.ValidateEntityProperties(ctx, s.deps.Store, s.deps.Meta) {

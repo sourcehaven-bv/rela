@@ -5,6 +5,7 @@ import TextareaWidget from './TextareaWidget.vue'
 import NumberWidget from './NumberWidget.vue'
 import CheckboxWidget from './CheckboxWidget.vue'
 import DateWidget from './DateWidget.vue'
+import DatetimeWidget from './DatetimeWidget.vue'
 import SelectWidget from './SelectWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
@@ -19,6 +20,7 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if ((propertyDef?.values?.length ?? 0) > 0) return 'select'
   if (propertyDef?.type === 'boolean') return 'checkbox'
   if (propertyDef?.type === 'date') return 'date'
+  if (propertyDef?.type === 'datetime') return 'datetime'
   if (propertyDef?.type === 'integer') return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
   if (propertyDef?.type === 'file') return 'file'
@@ -35,6 +37,7 @@ const hintKindToWidgetName: Record<WidgetHintKind, string> = {
   'enum-list': 'multi-select',
   boolean: 'checkbox',
   date: 'date',
+  datetime: 'datetime',
   integer: 'number',
   rrule: 'rrule',
 }
@@ -104,6 +107,7 @@ function buildDefaultRegistry(): WidgetRegistry {
   r.register('number', { component: NumberWidget, supportedPropertyTypes: ['integer'] })
   r.register('checkbox', { component: CheckboxWidget, supportedPropertyTypes: ['boolean'] })
   r.register('date', { component: DateWidget, supportedPropertyTypes: ['date'] })
+  r.register('datetime', { component: DatetimeWidget, supportedPropertyTypes: ['datetime'] })
   r.register('select', { component: SelectWidget, supportedPropertyTypes: ['enum', 'string'] })
   r.register('multi-select', {
     component: MultiSelectWidget,

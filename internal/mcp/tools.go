@@ -27,6 +27,7 @@ func (s *Server) registerTools() {
 	// Analysis tools
 	s.mcp.AddTool(toolAnalyzeOrphans(), s.handleAnalyzeOrphans)
 	s.mcp.AddTool(toolAnalyzeCardinality(), s.handleAnalyzeCardinality)
+	s.mcp.AddTool(toolAnalyzeUnique(), s.handleAnalyzeUnique)
 	s.mcp.AddTool(toolAnalyzeProperties(), s.handleAnalyzeProperties)
 	s.mcp.AddTool(toolAnalyzeValidations(), s.handleAnalyzeValidations)
 	s.mcp.AddTool(toolAnalyzeSchema(), s.handleAnalyzeSchema)
@@ -192,6 +193,14 @@ func toolAnalyzeOrphans() mcp.Tool {
 func toolAnalyzeCardinality() mcp.Tool {
 	return mcp.NewTool("analyze_cardinality",
 		mcp.WithDescription("Check relation cardinality constraints defined in the metamodel"),
+	)
+}
+
+func toolAnalyzeUnique() mcp.Tool {
+	return mcp.NewTool("analyze_unique",
+		mcp.WithDescription("Find entities that violate a `unique: true` property constraint "+
+			"(same-type entities sharing a value for a unique property) — e.g. pre-existing "+
+			"duplicates that predate the constraint"),
 	)
 }
 

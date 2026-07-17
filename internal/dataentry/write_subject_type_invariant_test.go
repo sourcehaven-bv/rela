@@ -72,7 +72,7 @@ assignments:
 			name: "sync PUT (ApplyEntity)",
 			attempt: func(t *testing.T, app *App) int {
 				t.Helper()
-				cur, exists := app.currentEntityHash(context.Background(), "SECRET-1")
+				cur, exists := app.sync.currentEntityHash(context.Background(), "SECRET-1")
 				if !exists {
 					t.Fatal("seed missing")
 				}

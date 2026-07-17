@@ -120,6 +120,8 @@ func (m *Metamodel) ResolveWidgetFromType(propType string) string {
 		return "text"
 	case PropertyTypeDate:
 		return "date"
+	case PropertyTypeDatetime:
+		return "datetime"
 	case PropertyTypeInteger:
 		return "number"
 	case PropertyTypeBoolean:

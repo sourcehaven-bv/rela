@@ -38,9 +38,9 @@ type SchemaOverviewCmd struct {
 }
 
 // Run runs the schema overview (or graphviz output when --graphviz is set).
-func (c *SchemaOverviewCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *SchemaOverviewCmd) Run(ctx context.Context, svc *readServices) error {
 	if c.Graphviz {
-		return runSchemaGraphviz(svc.Meta(), c.Constraints, c.Exclude, c.NoBundle, c.NoLegend)
+		return runSchemaGraphviz(svc.Meta, c.Constraints, c.Exclude, c.NoBundle, c.NoLegend)
 	}
 	return runSchemaOverview(ctx, svc)
 }
@@ -49,24 +49,24 @@ func (c *SchemaOverviewCmd) Run(ctx context.Context, svc *cliServices) error {
 type SchemaEntitiesCmd struct{}
 
 // Run lists all entity types.
-func (c *SchemaEntitiesCmd) Run(svc *cliServices) error {
-	return runSchemaEntities(svc.Meta())
+func (c *SchemaEntitiesCmd) Run(svc *readServices) error {
+	return runSchemaEntities(svc.Meta)
 }
 
 // SchemaRelationsCmd is `rela schema relations`.
 type SchemaRelationsCmd struct{}
 
 // Run lists all relation types.
-func (c *SchemaRelationsCmd) Run(svc *cliServices) error {
-	return runSchemaRelations(svc.Meta())
+func (c *SchemaRelationsCmd) Run(svc *readServices) error {
+	return runSchemaRelations(svc.Meta)
 }
 
 // SchemaTypesCmd is `rela schema types`.
 type SchemaTypesCmd struct{}
 
 // Run lists all custom types.
-func (c *SchemaTypesCmd) Run(svc *cliServices) error {
-	return runSchemaTypes(svc.Meta())
+func (c *SchemaTypesCmd) Run(svc *readServices) error {
+	return runSchemaTypes(svc.Meta)
 }
 
 // SchemaEntityCmd is `rela schema entity <name>`.
@@ -75,8 +75,8 @@ type SchemaEntityCmd struct {
 }
 
 // Run shows details for a specific entity type.
-func (c *SchemaEntityCmd) Run(svc *cliServices) error {
-	return runSchemaEntity(svc.Meta(), c.Name)
+func (c *SchemaEntityCmd) Run(svc *readServices) error {
+	return runSchemaEntity(svc.Meta, c.Name)
 }
 
 // SchemaRelationCmd is `rela schema relation <name>`.
@@ -85,12 +85,12 @@ type SchemaRelationCmd struct {
 }
 
 // Run shows details for a specific relation type.
-func (c *SchemaRelationCmd) Run(svc *cliServices) error {
-	return runSchemaRelation(svc.Meta(), c.Name)
+func (c *SchemaRelationCmd) Run(svc *readServices) error {
+	return runSchemaRelation(svc.Meta, c.Name)
 }
 
-func runSchemaOverview(ctx context.Context, svc *cliServices) error {
-	meta := svc.Meta()
+func runSchemaOverview(ctx context.Context, svc *readServices) error {
+	meta := svc.Meta
 	if out.Format == "json" {
 		return out.WriteSchemaOverview(meta)
 	}
@@ -111,7 +111,7 @@ func runSchemaOverview(ctx context.Context, svc *cliServices) error {
 	entityNames := getSortedEntityNames(meta)
 	entityCounts := make(map[string]int)
 	maxCount := 0
-	st := svc.Store()
+	st := svc.Store
 	for _, name := range entityNames {
 		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: name})
 		entityCounts[name] = count

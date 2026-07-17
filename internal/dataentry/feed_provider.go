@@ -56,7 +56,8 @@ type deepLinker func(entityType, id string) string
 
 // declarativeFeed is a feedProvider synthesized from a dataentryconfig.Feed. It
 // runs each source's filter over ACL-scoped entities and maps matching
-// entities' properties to all-day calendar events.
+// entities' properties to calendar events (all-day or timed, per the source
+// date property's type).
 type declarativeFeed struct {
 	cfg    dataentryconfig.Feed
 	meta   *metamodel.Metamodel
@@ -225,6 +226,10 @@ func (d *declarativeFeed) mapEntity(
 		Summary: e.GetString(summaryProp),
 		Start:   day,
 		URL:     d.link(e.Type, e.ID),
+		// A datetime-typed source emits a timed event; a date-typed source
+		// stays all-day. The end_date (if any) is the same kind — enforced by
+		// feed-source validation — so no separate branch is needed for End.
+		Timed: dateDef.Type == metamodel.PropertyTypeDatetime,
 	}
 	if s.Description != "" {
 		ev.Description = e.GetString(s.Description)

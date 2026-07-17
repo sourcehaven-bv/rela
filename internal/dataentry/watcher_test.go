@@ -522,7 +522,7 @@ func TestConcurrentReadDuringOnReload(t *testing.T) {
 						s.Cfg != nil, s.Meta != nil)
 					return
 				}
-				// Cross-field invariant: a published AppState always
+				// Cross-field invariant: a published Schema always
 				// has a StyleMap that covers every property type in
 				// its metamodel. A torn publish would yield zero or
 				// fewer entries.

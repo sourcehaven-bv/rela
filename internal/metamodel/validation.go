@@ -252,6 +252,34 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 			}
 		}
 
+	case PropertyTypeDatetime:
+		// A datetime value is an RFC3339 instant. yaml.v3 auto-decodes an
+		// unquoted timestamp scalar to time.Time, while machine-written /
+		// quoted values arrive as string — accept both (RR-NY7PRB). A bare
+		// date (no time-of-day) is accepted and means midnight; we do NOT
+		// reject it, because after parsing "2026-07-13" and
+		// "2026-07-13T00:00:00Z" are indistinguishable time.Time values
+		// (RR-MYC2B6).
+		switch v := val.(type) {
+		case time.Time:
+			// Already a valid instant.
+		case string:
+			if _, err := ParseDateValue(v, propDef); err != nil {
+				format := propDef.GetDateFormat()
+				return &ValidationError{
+					Type:     ValidationErrorInvalidValue,
+					Property: propName,
+					Message:  fmt.Sprintf("Invalid datetime %q (expected format: %s)", v, format),
+				}
+			}
+		default:
+			return &ValidationError{
+				Type:     ValidationErrorInvalidType,
+				Property: propName,
+				Message:  "Must be a datetime string or timestamp",
+			}
+		}
+
 	case PropertyTypeInteger:
 		switch v := val.(type) {
 		case int, int64:

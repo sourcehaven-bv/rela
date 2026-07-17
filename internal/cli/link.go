@@ -14,8 +14,8 @@ type LinkCmd struct {
 }
 
 // Run dispatches `rela link <from> <relation> <to>`.
-func (c *LinkCmd) Run(ctx context.Context, svc *cliServices) error {
-	_, err := svc.EntityManager().CreateRelation(
+func (c *LinkCmd) Run(ctx context.Context, svc *writeServices) error {
+	_, err := svc.EntityManager.CreateRelation(
 		ctx, c.From, c.Relation, c.To, entity.RelationOptions{})
 	if err != nil {
 		return err

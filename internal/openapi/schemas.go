@@ -86,6 +86,8 @@ func (g *Generator) propertyToSchema(prop metamodel.PropertyDef) *Schema {
 		base = &Schema{Type: "string"}
 	case metamodel.PropertyTypeDate:
 		base = &Schema{Type: "string", Format: "date"}
+	case metamodel.PropertyTypeDatetime:
+		base = &Schema{Type: "string", Format: "date-time"}
 	case metamodel.PropertyTypeInteger:
 		base = &Schema{Type: "integer"}
 	case metamodel.PropertyTypeBoolean:

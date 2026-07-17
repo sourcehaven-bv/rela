@@ -2,6 +2,7 @@ package filter
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -102,6 +103,56 @@ func TestMatchDate(t *testing.T) {
 			}
 
 			got, err := Match(toRecord(entity), f, propDef, mm)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Match error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Match = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchDatetime(t *testing.T) {
+	propDef := &metamodel.PropertyDef{Type: metamodel.PropertyTypeDatetime}
+	mm := &metamodel.Metamodel{}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		filter  string
+		want    bool
+		wantErr bool
+	}{
+		{"greater than true", "2026-07-13T14:30:00Z", "starts_at>2026-07-13T09:00:00Z", true, false},
+		{"greater than false", "2026-07-13T14:30:00Z", "starts_at>2026-07-13T20:00:00Z", false, false},
+		{"less than true", "2026-07-13T08:00:00Z", "starts_at<2026-07-13T09:00:00Z", true, false},
+		{"instant equal", "2026-07-13T14:30:00Z", "starts_at=2026-07-13T14:30:00Z", true, false},
+		// Strict-instant equality: a bare-date operand (midnight) does NOT
+		// match a value later the same day (RR-5R3QFJ).
+		{"bare-date operand not day-granular", "2026-07-13T14:30:00Z", "starts_at=2026-07-13", false, false},
+		{"time.Time value greater", time.Date(2026, 7, 13, 14, 30, 0, 0, time.UTC), "starts_at>2026-07-13T09:00:00Z", true, false},
+		{"invalid entity datetime", "not-a-datetime", "starts_at=2026-07-13T14:30:00Z", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ent := &entity.Entity{
+				ID:         "EVT-001",
+				Type:       "event",
+				Properties: map[string]interface{}{"starts_at": tt.value},
+			}
+			f, err := Parse(tt.filter)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.filter, err)
+			}
+			got, err := Match(toRecord(ent), f, propDef, mm)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")

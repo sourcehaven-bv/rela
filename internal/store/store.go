@@ -386,6 +386,14 @@ const (
 	VersionOpUpdate VersionOp = "update"
 	VersionOpRename VersionOp = "rename"
 	VersionOpDelete VersionOp = "delete"
+	// VersionOpPurge is a no-content tombstone marker written when a lineage's
+	// history is deliberately purged while its LIVE row still exists (a
+	// --force-live purge). It carries NO snapshot content — only the op,
+	// principal, and vseq — and exists so the reconciliation sweep recognizes
+	// "this lineage was purged on purpose" and does NOT re-capture the live
+	// content as a fresh version (TKT-BW6UUL RR-SH28E). It is never produced by
+	// an ordinary write.
+	VersionOpPurge VersionOp = "purge"
 )
 
 // VersionMeta is a single row of an entity's version timeline, without the
@@ -559,6 +567,97 @@ type RelationHistoryReader interface {
 	// in the relation's lineage. Returns ErrNotFound if the key has no such
 	// version.
 	GetRelationVersion(ctx context.Context, from, relType, to string, version int) (*RelationVersionSnapshot, error)
+}
+
+// --- Version purge (TKT-BW6UUL) ---
+//
+// Purge HARD-DELETES version snapshot rows — the deliberate, audited exception
+// to the append-only history model, for compliance redaction (PII / rotated
+// secret / GDPR erasure). It is an OPTIONAL, backend-specific capability
+// (pgstore only), type-asserted independently of the reader/writer capabilities.
+// Separate entity (VersionPurger) and relation (RelationVersionPurger)
+// capabilities, one method each. See the ticket + design-review responses for
+// the guardrails the implementation MUST enforce (they are load-bearing, not
+// optional): mutual exclusion with the reconciliation sweep, refuse-when-live,
+// non-rename-rows-only, fenced-lineage --all.
+
+// PurgeSelector chooses which version row(s) in a lineage a purge targets.
+// Exactly one of Vseq / ContentHash / All must be set. Vseq and ContentHash are
+// STABLE handles (unlike the read-time 1-based ordinal, which renumbers when a
+// row is purged) so an operator purges exactly the row they meant even under a
+// concurrent capture.
+type PurgeSelector struct {
+	Vseq        int64  // purge the single row with this vseq (0 = unset)
+	ContentHash string // purge every row in the lineage with this content_hash (GDPR "erase this value everywhere")
+	All         bool   // purge the entire fenced lineage
+}
+
+// VersionPurgeRequest is one entity-version purge. Target is the entity id whose
+// lineage is addressed. Reason is a required operator-supplied justification
+// recorded in the audit trail (the one record that survives a purge). ForceLive
+// overrides the refuse-when-a-live-row-exists guard by writing a no-content
+// purge tombstone the sweep respects (see VersionOpPurge). DryRun resolves and
+// returns the target rows WITHOUT deleting. Attribution arrives here from ctx at
+// the boundary — the store never learns the principal by another route.
+type VersionPurgeRequest struct {
+	EntityID      string
+	Selector      PurgeSelector
+	Reason        string
+	ForceLive     bool
+	DryRun        bool
+	PrincipalUser string
+	PrincipalTool string
+}
+
+// RelationVersionPurgeRequest is the relation analog, addressing a relation by
+// its composite key.
+type RelationVersionPurgeRequest struct {
+	From, Type, To string
+	Selector       PurgeSelector
+	Reason         string
+	ForceLive      bool
+	DryRun         bool
+	PrincipalUser  string
+	PrincipalTool  string
+}
+
+// PurgeTarget is one version row a purge would delete (or, in DryRun, would
+// delete): enough to show the operator and audit the action WITHOUT the snapshot
+// content (which must never be echoed — echoing it would defeat the purge).
+type PurgeTarget struct {
+	Vseq        int64
+	Op          VersionOp
+	ContentHash string
+	CreatedAt   time.Time
+	IsRename    bool // a rename row is REFUSED in v1 (purging it orphans lineage)
+}
+
+// PurgeResult reports what a purge did (or, in DryRun, would do). Targets is the
+// resolved set. Purged is how many rows were actually deleted (0 on DryRun).
+// LiveRowExists / RenameInTargets flag the two refuse conditions so a caller can
+// render the reason without re-querying.
+type PurgeResult struct {
+	Targets          []PurgeTarget
+	Purged           int
+	LiveRowExists    bool
+	RenameInTargets  bool
+	TombstoneWritten bool
+}
+
+// VersionPurger hard-deletes entity version snapshot rows. Optional,
+// backend-specific (pgstore only), type-asserted independently.
+type VersionPurger interface {
+	// PurgeVersions resolves the request's target rows and, unless DryRun,
+	// deletes them — under mutual exclusion with the reconciliation sweep. It
+	// REFUSES (deleting nothing, PurgeResult flags the reason) when the target
+	// set contains a rename row, or when a live row still holds the content and
+	// ForceLive is not set. Returns the resolved/purged set for audit + display.
+	PurgeVersions(ctx context.Context, req VersionPurgeRequest) (*PurgeResult, error)
+}
+
+// RelationVersionPurger is the relation analog.
+type RelationVersionPurger interface {
+	PurgeRelationVersions(ctx context.Context, req RelationVersionPurgeRequest) (*PurgeResult, error)
 }
 
 // EntityObserver receives notifications when entities are created, updated,

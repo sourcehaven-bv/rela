@@ -1,0 +1,9 @@
+---
+id: RR-NGFYE
+type: review-response
+title: Purge is necessary-not-sufficient for GDPR erasure; enumerate what survives; add dry-run + content-hash targeting
+finding: 'cranky S4 + L2/L3. The ticket over-claims ''hard-delete for GDPR erasure.'' Purging entity_versions/relation_versions leaves the value in: (1) the LIVE row (RR-SH28E — the main one), (2) the audit log of ORIGINAL writes (verify: audithook emits property NAMES only, so property-values safe; confirm no op logged the value), (3) DB table bloat / WAL / PITR base backups until VACUUM + WAL retention expire (out of scope to solve, must be acknowledged), (4) the search index IF the live row still holds it. Verify (and STATE, not assume): schema_versions holds only the render-schema PROJECTION (types/properties/options), never per-entity content, so it is correctly preserved by the FK. Add a doc sentence: ''purge removes rows from the primary; PITR/backup lifecycle is the operator''s separate responsibility — purge is one necessary step, not cryptographic erasure.'' Leverage: (L2) `--content-hash <h>` targeting purges EVERY version row across the lineage matching that hash — the actual GDPR ''remove this value everywhere'' op, verifiable (''0 rows remain with hash h''), and sidesteps ordinal instability entirely (content_hash is already stored). (L3) `--dry-run` printing exactly what dies (resolved vseqs, ops, rename-row severance warnings per RR-EQQP1, live-row-recapture warning per RR-SH28E) should arguably be the DEFAULT, --commit the opt-in, for an irreversible op.'
+severity: significant
+resolution: 'Design revised: docs state purge is necessary-not-sufficient (live row / backups / search index enumerated; schema_versions verified projection-only); --content-hash targeting for verifiable multi-row erasure; --dry-run is DEFAULT, --commit opt-in. See revised design #7/#8.'
+status: addressed
+---

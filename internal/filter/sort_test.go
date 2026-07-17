@@ -613,6 +613,36 @@ func TestSortMulti_CrossTypeDifferentPropertyType(t *testing.T) {
 	}
 }
 
+func TestSortMulti_MixedDateDatetimeChronological(t *testing.T) {
+	// A mixed date/datetime column must sort chronologically as instants,
+	// not lexically (RR-5R3QFJ). The datetime value (13:00 on the 13th) sits
+	// between the two bare-date values (the 12th and the 14th).
+	entityDefs := map[string]*metamodel.EntityDef{
+		"typeDate": {Properties: map[string]metamodel.PropertyDef{
+			"when": {Type: metamodel.PropertyTypeDate},
+		}},
+		"typeDatetime": {Properties: map[string]metamodel.PropertyDef{
+			"when": {Type: metamodel.PropertyTypeDatetime},
+		}},
+	}
+
+	entities := []*entity.Entity{
+		{ID: "later", Type: "typeDate", Properties: map[string]interface{}{"when": "2026-07-14"}},
+		{ID: "middle", Type: "typeDatetime", Properties: map[string]interface{}{"when": "2026-07-13T13:00:00Z"}},
+		{ID: "earlier", Type: "typeDate", Properties: map[string]interface{}{"when": "2026-07-12"}},
+	}
+
+	SortMulti(entities, testAccess, []SortSpec{{Property: "when"}}, entityDefs, nil)
+
+	wantOrder := []string{"earlier", "middle", "later"}
+	for i, want := range wantOrder {
+		if entities[i].ID != want {
+			t.Errorf("position %d: got %s, want %s (order=%v)", i,
+				entities[i].ID, want, []string{entities[0].ID, entities[1].ID, entities[2].ID})
+		}
+	}
+}
+
 func TestSortMulti_CrossTypeDifferentPropertyTypeSameRankFallback(t *testing.T) {
 	// Two different types with same rank — should fall back to string comparison
 	entityDefs := map[string]*metamodel.EntityDef{
@@ -707,6 +737,7 @@ func TestTypeRank(t *testing.T) {
 	}{
 		{"integer", &metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}, typeRankInteger},
 		{"date", &metamodel.PropertyDef{Type: metamodel.PropertyTypeDate}, typeRankDate},
+		{"datetime shares date rank", &metamodel.PropertyDef{Type: metamodel.PropertyTypeDatetime}, typeRankDate},
 		{"boolean", &metamodel.PropertyDef{Type: metamodel.PropertyTypeBoolean}, typeRankBoolean},
 		{"enum", &metamodel.PropertyDef{Type: metamodel.PropertyTypeEnum}, typeRankEnum},
 		{"string", &metamodel.PropertyDef{Type: metamodel.PropertyTypeString}, typeRankString},

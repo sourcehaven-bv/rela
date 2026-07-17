@@ -779,7 +779,7 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	bindRepoWithFS(app, fs, ctx)
 
 	t.Run("load returns nil when file missing", func(t *testing.T) {
-		ud := app.userState.loadUserDefaults()
+		ud := app.settings.UserDefaults()
 		if ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
 		}
@@ -797,10 +797,10 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 				},
 			},
 		}
-		if err := app.userState.saveUserDefaults(context.Background(), ud); err != nil {
+		if err := app.settings.Save(context.Background(), ud); err != nil {
 			t.Fatalf("save error: %v", err)
 		}
-		loaded := app.userState.loadUserDefaults()
+		loaded := app.settings.UserDefaults()
 		if loaded == nil {
 			t.Fatal("expected non-nil loaded defaults")
 		}
@@ -822,13 +822,11 @@ func TestUserDefaultsLoadSave(t *testing.T) {
 	})
 
 	t.Run("nil kv is safe", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.kv = nil
-		ud := app2.userState.loadUserDefaults()
-		if ud != nil {
+		nilSettings := newSettingsService(nil)
+		if ud := nilSettings.UserDefaults(); ud != nil {
 			t.Errorf("expected nil, got %+v", ud)
 		}
-		if err := app2.userState.saveUserDefaults(context.Background(), &UserDefaults{}); err != nil {
+		if err := nilSettings.Save(context.Background(), &UserDefaults{}); err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 	})

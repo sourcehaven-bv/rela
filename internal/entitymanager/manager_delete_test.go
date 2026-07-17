@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -33,11 +34,12 @@ func TestDeleteEntity_PropagatesStoreError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("simulated delete failure")
 	deps := entitymanager.Deps{
-		Store:     &failingDeleteStore{Store: memstore.New(), err: sentinel},
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       &failingDeleteStore{Store: memstore.New(), err: sentinel},
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {
@@ -71,11 +73,12 @@ func TestDeleteEntity_CascadeAuditsReportedRelations(t *testing.T) {
 	t.Parallel()
 	mem := audit.NewMemory()
 	deps := entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     mem,
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       mem,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {

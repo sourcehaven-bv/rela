@@ -49,11 +49,11 @@ components:
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
-  rename:           { in: internal/rename }
   renametype:       { in: internal/renametype }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
+  statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
   validation:       { in: internal/validation }
   validator:        { in: internal/validator }
@@ -91,6 +91,7 @@ components:
   # Infrastructure
   acl:              { in: internal/acl }
   aclaudit:         { in: internal/aclaudit }
+  aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
@@ -201,6 +202,7 @@ deps:
     mayDependOn:
       - acl
       - aclaudit
+      - aclmap
       - ai
       - analysis
       - app
@@ -226,7 +228,6 @@ deps:
       - principal
       - project
       - projectsetup
-      - rename
       - renametype
       - scheduler
       - schema
@@ -331,7 +332,6 @@ deps:
       - principal
       - lua
       - metamodel
-      - rename
       - schema
       - script
       - search
@@ -376,6 +376,7 @@ deps:
       - script
       - search
       - state
+      - statemachine
       - storage
       - store
       - templating
@@ -436,6 +437,12 @@ deps:
   aclaudit:
     mayDependOn:
       - acl
+  aclmap:
+    mayDependOn:
+      - acl
+      - entity
+      - principal
+      - store
   affordances:
     mayDependOn:
       - acl
@@ -477,7 +484,7 @@ deps:
       - automation
       - metamodel
       - principal
-      - rename
+      - statemachine
       - store
       - templating
   importer:
@@ -486,9 +493,6 @@ deps:
       - storage
       - store
       - storeutil
-  rename:
-    mayDependOn:
-      - store
   schema:
     mayDependOn:
       - dataentryconfig
@@ -507,6 +511,11 @@ deps:
     mayDependOn: []
     canUse:
       - gopherlua
+  statemachine:
+    mayDependOn:
+      - entity
+      - metamodel
+      - predicate
   tracer:
     mayDependOn:
       - store

@@ -22,8 +22,8 @@ type HistoryCmd struct {
 }
 
 // Run dispatches `rela history <id> [--version N]`.
-func (c *HistoryCmd) Run(ctx context.Context, svc *cliServices) error {
-	reader, ok := svc.Store().(store.HistoryReader)
+func (c *HistoryCmd) Run(ctx context.Context, svc *readServices) error {
+	reader, ok := svc.Store.(store.HistoryReader)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support version history " +
 			"(content versioning is a PostgreSQL-build feature; filesystem deployments use git).")

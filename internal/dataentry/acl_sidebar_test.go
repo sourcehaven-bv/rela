@@ -60,23 +60,24 @@ func sidebarPolicy() *acl.Policy {
 // installSidebarConfig publishes a Config snapshot carrying one plain
 // list, one filtered list, and one kanban over tickets.
 func installSidebarConfig(app *App) {
-	app.mutateState(func(s *AppState) {
-		cfg := *s.Cfg
-		cfg.Lists = map[string]dataentryconfig.List{
-			"all-tickets": {EntityType: "ticket", Title: "All"},
-			"open-tickets": {EntityType: "ticket", Title: "Open",
-				Filters: []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}}},
-		}
-		cfg.Kanbans = map[string]dataentryconfig.Kanban{
-			"board": {EntityType: "ticket", ColumnProperty: "status"},
-		}
-		cfg.Navigation = []dataentryconfig.NavigationEntry{
-			{Label: "All", List: "all-tickets"},
-			{Label: "Open", List: "open-tickets"},
-			{Label: "Board", Kanban: "board"},
-		}
-		s.Cfg = &cfg
-	})
+	cur := app.State()
+	next := *cur // shallow copy of the snapshot
+	cfg := *cur.Cfg
+	cfg.Lists = map[string]dataentryconfig.List{
+		"all-tickets": {EntityType: "ticket", Title: "All"},
+		"open-tickets": {EntityType: "ticket", Title: "Open",
+			Filters: []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}}},
+	}
+	cfg.Kanbans = map[string]dataentryconfig.Kanban{
+		"board": {EntityType: "ticket", ColumnProperty: "status"},
+	}
+	cfg.Navigation = []dataentryconfig.NavigationEntry{
+		{Label: "All", List: "all-tickets"},
+		{Label: "Open", List: "open-tickets"},
+		{Label: "Board", Kanban: "board"},
+	}
+	next.Cfg = &cfg
+	app.schema.Publish(&next)
 }
 
 // sidebarCountsByLabel performs a sidebar request and returns the

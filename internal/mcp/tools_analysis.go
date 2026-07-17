@@ -145,6 +145,58 @@ func (s *Server) checkCardinalityBound(
 	return violations
 }
 
+type uniqueViolation struct {
+	EntityType string   `json:"entity_type"`
+	Property   string   `json:"property"`
+	Value      string   `json:"value"`
+	EntityIDs  []string `json:"entity_ids"`
+}
+
+// handleAnalyzeUnique reports same-type entities that share a value for a
+// property declared `unique: true` — collisions the write path rejects on
+// new writes but which may already exist in older data. Mirrors the
+// read-side analysis.Service.FindUniqueViolations; kept here against
+// Store+Meta because the MCP server has no analysis.Service dependency.
+func (s *Server) handleAnalyzeUnique(
+	ctx context.Context, _ mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	violations := make([]uniqueViolation, 0)
+
+	for typeName, def := range s.deps.Meta.Entities {
+		for propName, pd := range def.PropertyDefs() {
+			if !pd.Unique || pd.List {
+				continue
+			}
+			byValue := map[string][]string{}
+			for e, err := range s.deps.Store.ListEntities(ctx, store.EntityQuery{Type: typeName}) {
+				if err != nil {
+					break
+				}
+				if v := e.GetString(propName); v != "" {
+					byValue[v] = append(byValue[v], e.ID)
+				}
+			}
+			for value, ids := range byValue {
+				if len(ids) > 1 {
+					violations = append(violations, uniqueViolation{
+						EntityType: typeName, Property: propName, Value: value, EntityIDs: ids,
+					})
+				}
+			}
+		}
+	}
+
+	if len(violations) == 0 {
+		return mcp.NewToolResultText("No unique constraint violations found"), nil
+	}
+	text, err := marshalJSON(violations)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(
+		fmt.Sprintf("Found %d unique constraint violations:\n\n%s", len(violations), text)), nil
+}
+
 func (s *Server) handleAnalyzeProperties(
 	ctx context.Context, _ mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {

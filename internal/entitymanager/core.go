@@ -95,6 +95,16 @@ func createCore(
 		return nil, nil, err
 	}
 
+	// Enforce state-machine entry BEFORE the durable write (TKT-E4LW2,
+	// RR-HETEE): the candidate carries the resolved post-template property
+	// values, so the entry-value check needs no persisted row. Running it
+	// here — not after Store.CreateEntity — means an illegal entry is
+	// rejected without ever emitting a store event (no orphaned index entry,
+	// no SSE broadcast, no un-audited row).
+	if err := deps.Transitions.EnforceCreate(ctx, e); err != nil {
+		return nil, nil, err
+	}
+
 	// Enforce `unique: true` natural-key constraints before the durable
 	// write. excludeSelfID is empty: on create there is no prior version
 	// of this entity to exclude.

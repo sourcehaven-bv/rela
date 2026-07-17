@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
@@ -130,6 +131,56 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 			}
 			if !tt.wantErr && len(errs) > 0 {
 				t.Errorf("unexpected validation error for date %q: %v", tt.dateValue, errs)
+			}
+		})
+	}
+}
+
+func TestValidateEntity_DatetimeValidation(t *testing.T) {
+	// A datetime value is an RFC3339 instant. The arm must accept both a
+	// string (machine/quoted) and a time.Time (yaml auto-decodes unquoted
+	// timestamps), accept a bare date as midnight, and reject junk.
+	meta := &Metamodel{
+		Entities: map[string]EntityDef{
+			"event": {
+				Label:    "Event",
+				IDPrefix: "EVT-",
+				Properties: map[string]PropertyDef{
+					"title": {Type: PropertyTypeString, Required: true},
+					"starts_at": {
+						Type:     PropertyTypeDatetime,
+						Required: false,
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		value   interface{}
+		wantErr bool
+	}{
+		{name: "RFC3339 string with Z", value: "2026-07-13T14:30:00Z", wantErr: false},
+		{name: "RFC3339 string with offset", value: "2026-07-13T14:30:00+02:00", wantErr: false},
+		{name: "time.Time value (yaml-decoded)", value: time.Date(2026, 7, 13, 14, 30, 0, 0, time.UTC), wantErr: false},
+		{name: "bare date accepted as midnight", value: "2026-07-13", wantErr: false},
+		{name: "empty string on non-required datetime", value: "", wantErr: false},
+		{name: "garbage input rejected", value: "not-a-datetime", wantErr: true},
+		{name: "wrong type (int) rejected", value: 42, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := meta.ValidateEntity("EVT-001", "event", map[string]interface{}{
+				"title":     "Standup",
+				"starts_at": tt.value,
+			})
+			if tt.wantErr && len(errs) == 0 {
+				t.Errorf("expected validation error for %v, got none", tt.value)
+			}
+			if !tt.wantErr && len(errs) > 0 {
+				t.Errorf("unexpected validation error for %v: %v", tt.value, errs)
 			}
 		})
 	}

@@ -465,6 +465,64 @@ rela relation-restore TKT-42 blocks TKT-99 2
 
 ---
 
+### rela history-purge
+
+Hard-delete an entity's version history for compliance (leaked secret, PII, GDPR
+erasure). The deliberate, audited, **irreversible** exception to append-only
+history. **PostgreSQL build only.** Operator-only: the trust boundary is shell +
+`RELA_DATABASE_URL` access (no ACL check), like `rela db migrate`.
+
+```bash
+rela history-purge <id> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+```
+
+**Arguments / flags:**
+
+- `id` — the entity whose history to purge
+- `--vseq N` — purge the single version row with this vseq (from `rela history`)
+- `--content-hash H` — purge every row in the lineage with this content hash
+  (erase a value everywhere it was captured; verifiable afterward)
+- `--all` — purge the entity's entire (fenced) history
+- `--reason "..."` — **required**; recorded in the audit trail. Do NOT put the
+  secret here (logged in cleartext)
+- `--commit` — actually delete. **Without it the command is a dry-run** that only
+  shows what would be purged
+- `--yes` — skip the type-the-id confirmation (scripts); requires `--commit`
+- `--force-live` — purge even though the live row still holds the content (writes
+  a tombstone so the sweep will not re-capture it). Prefer redacting the live
+  value first.
+
+Purge **refuses** while the live row still holds the content (unless
+`--force-live`) and **refuses** a rename row. It is one necessary step, not
+cryptographic erasure — PITR/backup lifecycle is the operator's responsibility.
+
+**Examples:**
+
+```bash
+rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42"          # dry-run
+rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42" --commit  # do it
+```
+
+---
+
+### rela relation-history-purge
+
+The relation analog of `rela history-purge`, addressing a relation by its
+three-part key. Same flags, guardrails, and irreversibility. **PostgreSQL build
+only.**
+
+```bash
+rela relation-history-purge <from> <type> <to> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+```
+
+**Examples:**
+
+```bash
+rela relation-history-purge TKT-42 blocks TKT-99 --all --reason "erase per request" --commit
+```
+
+---
+
 ### rela attach
 
 Attach file(s) to an entity.
@@ -1068,6 +1126,18 @@ Find entities with similar titles.
 
 ```bash
 rela analyze duplicates
+```
+
+#### rela analyze unique
+
+Find entities that violate a `unique: true` property constraint — same-type
+entities sharing a value for a unique property. The write path rejects new
+duplicates; this surfaces ones that already exist (e.g. after adding
+`unique: true` to a property whose data already contains collisions, which
+the constraint does not clean retroactively).
+
+```bash
+rela analyze unique
 ```
 
 #### rela analyze gaps

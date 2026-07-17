@@ -16,7 +16,8 @@ import (
 
 // ACLCmd groups access-control commands.
 type ACLCmd struct {
-	Audit ACLAuditCmd `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
+	Audit  ACLAuditCmd  `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
+	WhoCan ACLWhoCanCmd `cmd:"" name:"who-can" help:"List every principal who can perform a verb on an entity, with the route each grant took."`
 }
 
 // ACLAuditCmd runs the on-demand authorization-misconfiguration linter over the
@@ -33,13 +34,13 @@ type ACLAuditCmd struct {
 }
 
 // Run executes `rela acl audit`.
-func (c *ACLAuditCmd) Run(svc *cliServices) error {
+func (c *ACLAuditCmd) Run(svc *readServices) error {
 	threshold, gate, err := c.resolveFailOn()
 	if err != nil {
 		return err
 	}
 
-	policyPath := filepath.Join(svc.Paths().Root, "acl.yaml")
+	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
 	policy, err := acl.LoadPolicy(policyPath)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
@@ -49,7 +50,7 @@ func (c *ACLAuditCmd) Run(svc *cliServices) error {
 		return fmt.Errorf("load acl.yaml: %w", err)
 	}
 
-	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta()})
+	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta})
 
 	if out.Format == "json" {
 		writeAuditJSON(findings)

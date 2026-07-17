@@ -144,4 +144,17 @@ describe('FieldRenderer affordance plumbing', () => {
     expect(label.attributes('for')).toBe('field-automated')
     wrapper.unmount()
   })
+
+  it('routes a datetime property to the datetime-local widget', () => {
+    // End-to-end dispatch: a datetime PropertyDef resolves to DatetimeWidget,
+    // which renders a native datetime-local input plus the timezone indicator.
+    const wrapper = renderField({
+      field: { property: 'starts_at', label: 'Starts at' },
+      propertyDef: { type: 'datetime' },
+      value: '2026-07-13T12:30:00Z',
+    })
+    expect(wrapper.find('input[type="datetime-local"]').exists()).toBe(true)
+    expect(wrapper.find('.tz-indicator').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })

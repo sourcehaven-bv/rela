@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
@@ -179,6 +180,40 @@ type Deps struct {
 	// [RelationVersionRecorder]). Optional: nil disables it (fs/mem builds; the
 	// postgres build's relation create/update versions come from the sweep).
 	RelationVersionRecorder RelationVersionRecorder
+
+	// Transitions enforces enum state machines on the write path (TKT-E4LW2):
+	// transition legality, guard permissions, and preconditions. Required so
+	// no write path can silently skip the machine — but a metamodel with no
+	// transitions compiles to an empty enforcer whose checks are no-ops, so
+	// "required" costs nothing when the feature is unused. Constructed once at
+	// startup by [statemachine.Compile] and injected; the Manager never
+	// re-derives it from the metamodel.
+	Transitions TransitionEnforcer
+
+	// TransitionGuard answers the guard question for a state-machine
+	// transition (does the ctx principal hold permission P for the subject).
+	// May be nil: a nil guard makes every guarded edge fail closed, which is
+	// the safe default when no ACL-backed guard was wired. Production wiring
+	// supplies an adapter over the ACL; the direct-CLI/no-policy case is
+	// handled inside that adapter (it allows when there is no policy).
+	TransitionGuard statemachine.Guard
+
+	// TransitionGraph answers has_relation/count_relations for a transition
+	// `when:` precondition. May be nil when no precondition needs the graph;
+	// a `when:` that queries the graph then evaluates against an empty graph.
+	TransitionGraph statemachine.GraphLookup
+}
+
+// TransitionEnforcer is the narrow contract the Manager needs from the
+// compiled state machines: enforce an update (old→new) and a create's entry
+// value. Defined at the call site (CLAUDE.md consumer-side interfaces);
+// [*statemachine.Set] satisfies it.
+type TransitionEnforcer interface {
+	EnforceUpdate(
+		ctx context.Context, old, updated *entity.Entity,
+		guard statemachine.Guard, lookup statemachine.GraphLookup,
+	) error
+	EnforceCreate(ctx context.Context, e *entity.Entity) error
 }
 
 // New constructs a Manager and validates required collaborators.
@@ -197,6 +232,10 @@ func New(d Deps) (*Manager, error) {
 	}
 	if d.ACL == nil {
 		return nil, errors.New("entitymanager: New: ACL is required (use acl.NopACL{} to opt out)")
+	}
+	if d.Transitions == nil {
+		return nil, errors.New(
+			"entitymanager: New: Transitions is required (use statemachine.Compile; an empty set is a no-op)")
 	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
@@ -234,6 +273,30 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 	}
 	m.recordDeniedWrite(ctx, decision, req)
 	return &acl.ForbiddenError{Decision: decision}
+}
+
+// mapTransitionError translates a state-machine enforcement error into the
+// entitymanager's wire-facing error shape (TKT-E4LW2). A guard denial becomes
+// an [*acl.ForbiddenError] (RuleKind "transition-guard") so it flows through
+// the same 403 path — and audit row — as any other authorization denial;
+// legality and precondition failures pass through unchanged and surface as 422
+// validation-class errors at the HTTP boundary. Returns nil for a nil input.
+func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, err error) error {
+	if err == nil {
+		return nil
+	}
+	var ge *statemachine.GuardError
+	if errors.As(err, &ge) {
+		decision := acl.Decision{
+			Allow:    false,
+			RuleKind: "transition-guard",
+			RuleID:   ge.Permission, // the specific right, queryable in audit (RR-F30CZ/N1)
+			Reason:   err.Error(),
+		}
+		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject})
+		return &acl.ForbiddenError{Decision: decision}
+	}
+	return err
 }
 
 // recordACLBypass emits one audit row for an elevated (rela.bypass_acl) write.
@@ -365,6 +428,10 @@ func (m *Manager) CreateEntity(
 	if err != nil {
 		return nil, err
 	}
+	// State-machine entry is enforced INSIDE createCore, before the durable
+	// write (RR-HETEE), so an illegal entry never persists. No guard applies on
+	// create-entry today; if a future change adds one, route its ErrGuardDenied
+	// through mapTransitionError so it surfaces as 403, not 422 (RR-F30CZ/N2).
 
 	result := &entity.CreateResult{Entity: created, Warnings: warnings}
 
@@ -532,6 +599,18 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		}
 		result.AutomationWarnings = autoResult.Warnings
 		result.AutomationErrors = autoResult.Errors
+	}
+
+	// Enforce enum state machines on the final (post-automation) state, using
+	// the prior state to determine the transition (TKT-E4LW2). This is the
+	// unforgettable chokepoint: the enforcer is a required collaborator run in
+	// the fixed write pipeline, so no update path can skip legality/guard/
+	// precondition. An empty enforcer (metamodel with no transitions) is a
+	// no-op.
+	if err := m.deps.Transitions.EnforceUpdate(
+		ctx, oldEntity, e, m.deps.TransitionGuard, m.deps.TransitionGraph,
+	); err != nil {
+		return nil, m.mapTransitionError(ctx, acl.EntitySubject{Type: e.Type, ID: e.ID}, err)
 	}
 
 	// Enforce `unique: true` natural-key constraints against the final
@@ -739,9 +818,10 @@ func (m *Manager) RenameEntity(
 	// carrying the pre-rename endpoints (prev_from/prev_to). This stitches the
 	// relation's history across the endpoint rename so it reads as one continuous
 	// timeline rather than a delete of the old triple + create of the new one.
-	// The new triples exist now (rename.Rename created them); the version's key
-	// is the post-rename endpoint, so WriteRelationVersion resolves the new
-	// rel_record_id. triggered_by attributes the versions to this rename.
+	// The new triples exist now (the store's atomic RenameEntity created them);
+	// the version's key is the post-rename endpoint, so WriteRelationVersion
+	// resolves the new rel_record_id. triggered_by attributes the versions to
+	// this rename.
 	if len(preRenameRels) > 0 {
 		renameTB := "rename-entity:" + oldID + "->" + newID
 		for _, rel := range preRenameRels {
@@ -790,6 +870,29 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 func (m *Manager) CreateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
+	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
+	// peer must never let a write skip the ACL: if authz is deferred until
+	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
+	// and the dataentry fallback then writes directly to the store,
+	// bypassing the ACL and audit. The source type feeds the type-level
+	// grant check; it is best-effort (empty if the source doesn't exist
+	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
+	// decided from inputs that don't depend on peer existence.
+	var fromType string
+	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
+		fromType = fromEntity.Type
+	}
+	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op: acl.OpCreate,
+		Subject: acl.RelationSubject{
+			Type:     relType,
+			FromType: fromType, FromID: from,
+		},
+	}); aclErr != nil {
+		return nil, aclErr
+	}
+
 	fromEntity, err := m.deps.Store.GetEntity(ctx, from)
 	if err != nil {
 		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
@@ -797,15 +900,6 @@ func (m *Manager) CreateRelation(
 	toEntity, err := m.deps.Store.GetEntity(ctx, to)
 	if err != nil {
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
-	}
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpCreate,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: fromEntity.Type, FromID: from,
-		},
-	}); aclErr != nil {
-		return nil, aclErr
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, fromEntity.Type, toEntity.Type); vErr != nil {
 		return nil, fmt.Errorf("invalid relation: %w", vErr)
@@ -864,11 +958,10 @@ func (m *Manager) CreateRelation(
 func (m *Manager) UpdateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
-	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
-	}
-	// ACL needs the source entity type for the type-level write check.
+	// Authorize BEFORE the relation-existence lookup (BUG-K6FEVB): a
+	// missing relation must not let a denied caller skip the ACL and get
+	// a soft not-found. The source type feeds the type-level grant check;
+	// it is best-effort (empty if the source doesn't exist).
 	var sourceType string
 	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
 		sourceType = fromEntity.Type
@@ -881,6 +974,11 @@ func (m *Manager) UpdateRelation(
 		},
 	}); aclErr != nil {
 		return nil, aclErr
+	}
+
+	rel, err := m.deps.Store.GetRelation(ctx, from, relType, to)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound, from, relType, to)
 	}
 
 	// Snapshot pre-update meta keys so the audit summary names exactly
@@ -931,11 +1029,9 @@ func (m *Manager) UpdateRelation(
 
 // DeleteRelation removes a relation. **No automation.**
 func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	// Fetch pre-delete so the audit record carries the full Subject
-	// (relation type + from + to). The relation may not exist — in
-	// that case the store delete returns an error and we skip audit.
-	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
-	// ACL needs the source entity type for the type-level write check.
+	// Authorize BEFORE touching the store (BUG-K6FEVB). The source type
+	// feeds the type-level grant check; it is best-effort (empty if the
+	// source doesn't exist).
 	var sourceType string
 	if fromEntity, ferr := m.deps.Store.GetEntity(ctx, from); ferr == nil {
 		sourceType = fromEntity.Type
@@ -949,6 +1045,12 @@ func (m *Manager) DeleteRelation(ctx context.Context, from, relType, to string) 
 	}); aclErr != nil {
 		return aclErr
 	}
+	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
+	// ForbiddenError regardless of whether the relation exists) so the audit
+	// record and version snapshot carry the full Subject (relation type + from
+	// + to). The relation may not exist — then the store delete returns an
+	// error and we skip both the version capture and the audit.
+	rel, getErr := m.deps.Store.GetRelation(ctx, from, relType, to)
 	// Capture the final pre-delete version BEFORE the store delete, while the
 	// live row (and its rel_record_id) still exists — the same order-before
 	// rationale as entity delete. Skipped if the relation was already gone.

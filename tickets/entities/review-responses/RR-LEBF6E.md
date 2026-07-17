@@ -1,0 +1,9 @@
+---
+id: RR-LEBF6E
+type: review-response
+title: Package doc advertises 're-run to converge' idempotency that the code does not honor
+finding: 'rename.go:10-13 package doc promises ''re-run the same rename command to converge — every step is idempotent except the terminal old-entity delete.'' False after the entity create lands: on a partial failure (entity created, some relation write fails), a re-run hits validatePreconditions GetEntity(newID) which now succeeds and returns ErrEntityAlreadyExists BEFORE reaching any write — no convergence. Verified by trace. The old upsertEntity fallback did not actually enable this convergence either (validation blocked the re-run first), so strict-create doesn''t newly break it, but this PR is the right moment to stop advertising a guarantee the code contradicts on step one. Risk: an operator following the doc re-runs, gets ''already exists'', misreads it as a foreign collision (see RR-645O6I), and deletes newID to ''clear it'' — destroying the partial rename''s completed work. Rated significant not critical: data-loss is operator-mediated and the doc inaccuracy is pre-existing. Fix: correct the doc to state rename is NOT re-runnable once the entity create succeeds and partial-failure recovery needs manual inspection or the atomic store.RenameEntity path (see RR-PUI4JF).'
+severity: significant
+resolution: 'Resolved by the re-route (RR-PUI4JF): the internal/rename package (whose doc carried the false ''re-run to converge'' idempotency claim) is deleted. The atomic store.RenameEntity is all-or-nothing — it either fully applies in one transaction (pgstore) / one locked section (mem/fs) or returns an error leaving state untouched — so there is no partial-failure state to converge from and no misleading recovery instruction to correct.'
+status: addressed
+---
