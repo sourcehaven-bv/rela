@@ -49,17 +49,48 @@
  *
  * - {@link parse} — **throws** {@link ConditionError} on a *statically* broken
  *   expression: syntax error, comparison chaining, bare/unknown namespace,
- *   over-budget size, or an invalid/oversized *literal* `=~` pattern. These are
- *   config bugs; they fail loud.
+ *   over-budget size, or an invalid/oversized/non-literal `=~` pattern. These
+ *   are config bugs; they fail loud.
  * - {@link Program.eval} — **never throws.** A per-node *data-dependent* failure
- *   (a reference that resolves to nil in a bad way, a rejected function call, a
- *   *dynamic* `=~` pattern that only resolves at eval) coerces to `false`
- *   locally and evaluation continues, so one broken leaf does not sink an
- *   otherwise-valid `or`.
+ *   (a reference that resolves to nil in a bad way, a rejected function call, an
+ *   over-long `=~` value) coerces to `false` locally and evaluation continues,
+ *   so one broken leaf does not sink an otherwise-valid `or`.
  *
- * Note the `=~` asymmetry, which is deliberate and matches JS: a *literal*
- * pattern is validated at parse (throws), a *binding-sourced* pattern is only
- * knowable at eval (fail-safe false + warn).
+ * # Threat model — `=~` regex (why patterns must be literals)
+ *
+ * Two inputs meet at `=~`, and they are not equally trusted:
+ *
+ * - **The pattern** comes from `data-entry.yaml` — written by an operator who
+ *   already controls the whole form. **Trusted.**
+ * - **The value** comes from a binding (`form.*`, `entity.*`) — i.e. whatever
+ *   an end user typed. **Untrusted.**
+ *
+ * JS's RegExp backtracks with no match timeout, so a catastrophic pattern
+ * (`(a+)+$`) hangs the render thread on a ~40-char input. Nothing bounds that
+ * once such a pattern runs: it is short, so a *pattern* length cap cannot catch
+ * it, and it blows up on tiny inputs, so a *value* length cap cannot either.
+ * Length caps only bound linear work. The only real controls are to never run
+ * an untrusted pattern, or to change engines (RE2) / add a timeout (Worker).
+ *
+ * So the pattern **must be a string literal** — the parser rejects
+ * `form.v =~ form.pat` outright. A regex sourced from data is the one way a
+ * *user* could supply a hostile pattern, and it is refused rather than
+ * mitigated.
+ *
+ * What this deliberately does NOT fix: an operator who writes a pathological
+ * literal into their own YAML still hangs the tab (measured: `'(a+)+$'` against
+ * a 27-char value ≈ 10s). That is a foot-gun, not a vulnerability — the same
+ * operator can write `visible_when: false` and hide the field outright — and it
+ * misfires in their own browser while authoring, not in a user's. If `=~` ever
+ * needs to accept a pattern from data, no length cap will do: it needs RE2 or a
+ * Worker timeout, and that is a different ticket.
+ *
+ * This is a deliberate narrowing of `internal/predicate` congruence: the Go
+ * engine has no such restriction because it never runs on a render thread.
+ *
+ * Consequence for the parse/eval split: `=~` has **no** eval-time pattern
+ * failure mode left — an invalid or oversized pattern is always a parse throw,
+ * never a fail-safe false.
  *
  * The engine ships **no leniency wrapper and no one-shot helper**. Deciding what
  * a broken or unmet condition *means* — hide a branch, surface an inline error,
@@ -77,8 +108,23 @@
  */
 const MAX_NODES = 500
 
-/** Maximum length of a `=~` regex pattern, to bound ReDoS exposure. */
+/** Maximum length of a `=~` regex pattern — a sanity bound on config, not a
+ * ReDoS control (a hostile regex is short; see the module threat model). */
 const MAX_REGEX_LENGTH = 200
+
+/**
+ * Maximum length of the VALUE a `=~` regex is tested against — hygiene, not a
+ * ReDoS boundary (see {@link compareRegex}). Bounds the *linear* scan an
+ * untrusted value can demand on the render thread; a pasted megabyte is not a
+ * real condition input. 10k is far above any genuine form field or entity
+ * property.
+ *
+ * Measured in UTF-16 code units (`String.length`), not codepoints, so astral
+ * characters (emoji, rarer CJK) count double — the effective limit for such a
+ * field is ~5k glyphs. That is deliberate: the scan cost really is per code
+ * unit, and both figures are far above a real value.
+ */
+const MAX_MATCH_VALUE_LENGTH = 10_000
 
 /** A compiled, reusable condition. Immutable; safe to cache and re-eval. */
 export interface Program {
@@ -331,12 +377,18 @@ class Parser {
         throw new ConditionError(`comparison operators do not chain at ${after.pos}`)
       }
       const op = normalizeCompareOp(tok.value)
-      // A `=~` whose pattern is a string LITERAL is statically knowable, so
-      // validate it now: an invalid or oversized literal regex is a config
-      // bug and throws at parse (like JS rejecting `/[/` at parse time). A
-      // pattern that comes from a binding can only be checked at eval, where
-      // it stays fail-safe (see compareRegex).
-      if (op === '=~' && right.kind === 'lit' && typeof right.value === 'string') {
+      // A `=~` pattern MUST be a string literal — see the threat model in the
+      // module doc. A literal comes from operator-authored config (trusted);
+      // a binding-sourced pattern would be attacker-controlled data, and a
+      // hostile regex is unbounded (JS has no match timeout), so that form is
+      // rejected outright rather than mitigated. Being static, it throws at
+      // parse like every other config bug.
+      if (op === '=~') {
+        if (right.kind !== 'lit' || typeof right.value !== 'string') {
+          throw new ConditionError(
+            `=~ pattern must be a string literal at ${tok.pos} (a pattern from data is not allowed)`
+          )
+        }
         validateRegexLiteral(right.value, tok.pos)
       }
       return this.node({ kind: 'compare', op, left, right })
@@ -604,12 +656,15 @@ function compareOrdered(op: CompareOp, a: Value, b: Value): boolean {
 }
 
 /**
- * Validate a `=~` pattern known at PARSE time (a string literal). Throws
- * {@link ConditionError} on an oversized or syntactically-invalid pattern so
- * the config bug surfaces loudly at parse, consistent with every other static
- * error. The length cap bounds ReDoS exposure: JS's backtracking RegExp engine
- * has no match timeout, so a pathological pattern (e.g. `(a+)+$`) could hang
- * the thread — the cap is a coarse ceiling on that.
+ * Validate a `=~` pattern. Every `=~` pattern is a string literal (the parser
+ * rejects any other form), so this always runs at parse: an oversized or
+ * syntactically-invalid pattern surfaces loudly as the config bug it is,
+ * consistent with every other static error.
+ *
+ * The length cap is a sanity bound on hand-authored config, NOT a ReDoS control
+ * — a catastrophic pattern is short (`(a+)+$` is six chars), so no length limit
+ * could stop one. What contains ReDoS is that patterns are trusted operator
+ * config; see the module threat model.
  */
 function validateRegexLiteral(pattern: string, pos: number): void {
   if (pattern.length > MAX_REGEX_LENGTH) {
@@ -624,25 +679,27 @@ function validateRegexLiteral(pattern: string, pos: number): void {
   }
 }
 
+/**
+ * Match `value` against `pattern`. The pattern is always a string literal that
+ * {@link validateRegexLiteral} already accepted at parse — the parser rejects
+ * every other form — so it is operator-authored and trusted, and cannot fail to
+ * compile here.
+ *
+ * The value length cap is hygiene, NOT a ReDoS boundary: a backtracking pattern
+ * blows up on inputs far shorter than any usable cap (`(a+)+$` needs ~40 chars),
+ * so a cap cannot bound a hostile pattern and is not what makes this safe —
+ * requiring a trusted literal is. What the cap does buy is a ceiling on the
+ * *linear* work an untrusted value can demand, e.g. a pasted megabyte scanned on
+ * the render thread.
+ */
 function compareRegex(value: Value, pattern: Value): boolean {
   if (pattern === NIL || value === NIL) return false
-  const src = String(pattern)
-  // Reached with a DYNAMIC pattern (from a binding) — literals were already
-  // validated at parse. A dynamic pattern can only be checked now, so it stays
-  // fail-safe: oversized or invalid → false + warn, never throw. (Same length
-  // cap as validateRegexLiteral; see that function for the ReDoS rationale.)
-  if (src.length > MAX_REGEX_LENGTH) {
-    console.warn(`[conditions] regex pattern too long (>${MAX_REGEX_LENGTH} chars); rejected`)
+  const target = String(value)
+  if (target.length > MAX_MATCH_VALUE_LENGTH) {
+    console.warn(`[conditions] regex value too long (>${MAX_MATCH_VALUE_LENGTH} chars); rejected`)
     return false
   }
-  let re: RegExp
-  try {
-    re = new RegExp(src)
-  } catch {
-    console.warn(`[conditions] invalid regex ${JSON.stringify(src)}`)
-    return false
-  }
-  return re.test(String(value))
+  return new RegExp(String(pattern)).test(target)
 }
 
 function toBool(v: Value): boolean | undefined {
@@ -685,6 +742,11 @@ function toNumber(v: Value): number | undefined {
 // unmet condition *means* (hide a branch? surface an inline error? refuse to
 // render?) is the calling layer's policy, made where the error can actually be
 // surfaced. A library that swallowed it would take that decision away.
+//
+// Unbounded by design, and that rests on the module's threat model: sources are
+// operator-authored config, so the key space is bounded by the size of the YAML.
+// Parsing a user-typed or data-interpolated source would make this a leak — as
+// well as breaking the `=~` trust assumption. Don't.
 const cache = new Map<string, Program | ConditionError>()
 
 /**

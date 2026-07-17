@@ -251,35 +251,60 @@ describe('conditions', () => {
     })
   })
 
-  describe('ReDoS guard on =~ (RR-IROUO)', () => {
+  // What actually contains ReDoS here is that a `=~` pattern must be a trusted
+  // literal — NOT the length caps. A catastrophic pattern is short and blows up
+  // on a ~40-char input, so neither cap could stop one; see the module doc's
+  // threat model. These tests pin the restriction, not a mitigation.
+  describe('=~ patterns must be trusted literals (RR-IROUO, TKT-CCFUQ)', () => {
+    it('a pattern sourced from DATA is rejected at parse — the one untrusted-regex path', () => {
+      // The vulnerability: a user typing into `form.pat` would supply the regex.
+      // No cap can make that safe, so the form does not exist.
+      expect(() => parse('form.v =~ form.pat')).toThrow(/must be a string literal/)
+      expect(() => parse('form.v =~ entity.pat')).toThrow(/must be a string literal/)
+      expect(() => parse('form.v =~ form.a')).toThrow(/a pattern from data is not allowed/)
+    })
+
+    it('a non-string literal pattern is rejected at parse', () => {
+      expect(() => parse('form.v =~ 42')).toThrow(/must be a string literal/)
+      expect(() => parse('form.v =~ true')).toThrow(/must be a string literal/)
+      expect(() => parse('form.v =~ nil')).toThrow(/must be a string literal/)
+    })
+
     it('a LITERAL invalid/oversized pattern throws at parse (statically knowable)', () => {
       expect(() => parse("form.v =~ '('")).toThrow(/invalid regex/) // bad syntax
       const evil = "'" + '(a+)+' + 'a'.repeat(300) + "'"
       expect(() => parse(`form.v =~ ${evil}`)).toThrow(/too long/) // oversized
     })
 
-    it('a DYNAMIC (binding-sourced) oversized pattern is fail-safe at eval, not executed', () => {
+    it('a normal literal pattern still matches', () => {
+      expect(evalWith("form.v =~ '^foo'", { form: { v: 'foobar' } })).toBe(true)
+      expect(evalWith("form.v =~ '^foo'", { form: { v: 'barfoo' } })).toBe(false)
+    })
+
+    it('=~ against a nil value is false', () => {
+      expect(evalWith("form.missing =~ '.*'", { form: {} })).toBe(false)
+    })
+  })
+
+  describe('=~ value length cap — hygiene, not a ReDoS boundary (TKT-CCFUQ)', () => {
+    it('an over-cap value is rejected fail-safe (false + warn), never throws', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const evilPat = '(a+)+' + 'a'.repeat(300)
-      const prog = parse('form.v =~ form.pat') // parses fine — pattern unknown yet
-      const t0 = performance.now()
-      expect(prog.eval({ form: { v: 'x', pat: evilPat } })).toBe(false)
-      expect(performance.now() - t0).toBeLessThan(100) // rejected on length, not run
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('too long'))
+      const prog = parse("form.v =~ '^a'") // trusted literal; only the value is hostile
+      const huge = 'a'.repeat(10_001)
+      expect(() => prog.eval({ form: { v: huge } })).not.toThrow()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('value too long'))
       warn.mockRestore()
     })
 
-    it('a normal literal pattern still matches', () => {
-      expect(evalWith("form.v =~ '^foo'", { form: { v: 'foobar' } })).toBe(true)
-    })
-
-    it('a dynamic normal-length pattern still matches', () => {
-      expect(evalWith('form.v =~ form.pat', { form: { v: 'foobar', pat: '^foo' } })).toBe(true)
-    })
-
-    it('=~ against a nil value or nil pattern is false', () => {
-      expect(evalWith('form.missing =~ form.pat', { form: { pat: '.*' } })).toBe(false)
-      expect(evalWith('form.v =~ form.missing', { form: { v: 'x' } })).toBe(false)
+    it('the cap is exact: at-cap evaluates and does not warn, one-over is rejected', () => {
+      // The not-warned assertion is the load-bearing one: it fails if the cap
+      // moves, which a bare at-cap match would not (it passes with no cap too).
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      expect(evalWith("form.v =~ '^a+$'", { form: { v: 'a'.repeat(10_000) } })).toBe(true)
+      expect(warn).not.toHaveBeenCalled()
+      expect(evalWith("form.v =~ '^a+$'", { form: { v: 'a'.repeat(10_001) } })).toBe(false)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('value too long'))
+      warn.mockRestore()
     })
   })
 
