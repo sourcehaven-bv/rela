@@ -5,7 +5,7 @@ title: 'Resolved transition affordance: performable transitions for (principal, 
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
