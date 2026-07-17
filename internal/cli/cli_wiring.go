@@ -34,12 +34,18 @@ import (
 // interfaces enforced; the consumer of *cliServices is each kong
 // command's Run method.
 //
-// TODO(TKT-N0IKN9): 29 exported methods, over the 20 exported-method line.
+// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
 // This is the CLI service bundle each command binds to; the count tracks the
 // breadth of the CLI surface. Ratchet candidate — purpose-grouped sub-bundles
 // (read / write / analyze) would let each command bind only what it uses.
 //
-//plimsoll:max-exported-methods=29
+// The pin below is a ceiling, not a budget: it exists to stop this type
+// growing, so a new method means the directive AND the count above move
+// together in the same commit (29→30 was Audit(), TKT-BW6UUL). If you find
+// yourself bumping it a second time, decompose instead — that is what
+// TKT-N0IKN9 is for.
+//
+//plimsoll:max-exported-methods=30
 type cliServices struct {
 	svc        *appbuild.Services
 	attachment *attachment.Service
