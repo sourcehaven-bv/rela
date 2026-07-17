@@ -22,9 +22,9 @@ type GraphCmd struct {
 }
 
 // Run dispatches `rela graph`.
-func (c *GraphCmd) Run(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
-	meta := svc.Meta()
+func (c *GraphCmd) Run(ctx context.Context, svc *readServices) error {
+	st := svc.Store
+	meta := svc.Meta
 
 	var entities []*entity.Entity
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {

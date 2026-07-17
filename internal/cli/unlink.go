@@ -13,11 +13,11 @@ type UnlinkCmd struct {
 }
 
 // Run dispatches `rela unlink <from> <relation> <to>`.
-func (c *UnlinkCmd) Run(ctx context.Context, svc *cliServices) error {
-	if _, err := svc.Store().GetRelation(ctx, c.From, c.Relation, c.To); err != nil {
+func (c *UnlinkCmd) Run(ctx context.Context, svc *writeServices) error {
+	if _, err := svc.Store.GetRelation(ctx, c.From, c.Relation, c.To); err != nil {
 		return fmt.Errorf("relation not found: %s --%s--> %s", c.From, c.Relation, c.To)
 	}
-	if err := svc.EntityManager().DeleteRelation(ctx, c.From, c.Relation, c.To); err != nil {
+	if err := svc.EntityManager.DeleteRelation(ctx, c.From, c.Relation, c.To); err != nil {
 		return err
 	}
 	out.WriteSuccess("Removed link: %s --%s--> %s", c.From, c.Relation, c.To)

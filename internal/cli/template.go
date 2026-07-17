@@ -24,15 +24,15 @@ type TemplateInitCmd struct {
 }
 
 // Run dispatches `rela template init [type...]`.
-func (c *TemplateInitCmd) Run(ctx context.Context, svc *cliServices) error {
-	meta := svc.Meta()
+func (c *TemplateInitCmd) Run(ctx context.Context, svc *readServices) error {
+	meta := svc.Meta
 	entityTypes, relationTypes, err := c.resolveTemplateTypes(meta)
 	if err != nil {
 		return err
 	}
 
 	createdCount, skippedCount := 0, 0
-	tmpl := svc.Templater()
+	tmpl := svc.Templater
 
 	for _, entityType := range entityTypes {
 		created, err := c.generateEntityTemplate(ctx, tmpl, meta, entityType)

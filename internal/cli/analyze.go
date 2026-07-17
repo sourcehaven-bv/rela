@@ -62,12 +62,12 @@ func writeAnalysisJSON(count int, details interface{}, successMsg, issuesFmt str
 type AnalyzeOrphansCmd struct{}
 
 // Run dispatches `rela analyze orphans`.
-func (c *AnalyzeOrphansCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeOrphansCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	orphans := svc.FindOrphansWithScope(ctx, *opts)
+	orphans := analyzer.FindOrphansWithScope(ctx, *opts)
 	filter.SortByID(orphans, storeEntityRecord, false)
 
 	orphansMsg := "No orphan entities found"
@@ -87,12 +87,12 @@ func (c *AnalyzeOrphansCmd) Run(ctx context.Context, svc *cliServices) error {
 type AnalyzeDuplicatesCmd struct{}
 
 // Run dispatches `rela analyze duplicates`.
-func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	duplicates := svc.FindDuplicates(ctx, *opts)
+	duplicates := analyzer.FindDuplicates(ctx, *opts)
 
 	if out.Format == "json" {
 		type duplicateGroup struct {
@@ -128,12 +128,12 @@ func (c *AnalyzeDuplicatesCmd) Run(ctx context.Context, svc *cliServices) error 
 type AnalyzeUniqueCmd struct{}
 
 // Run dispatches `rela analyze unique`.
-func (c *AnalyzeUniqueCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	violations := svc.FindUniqueViolations(ctx, *opts)
+	violations := analyzer.FindUniqueViolations(ctx, *opts)
 
 	if out.Format == "json" {
 		type uniqueViolation struct {
@@ -172,12 +172,12 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, svc *cliServices) error {
 type AnalyzeGapsCmd struct{}
 
 // Run dispatches `rela analyze gaps`.
-func (c *AnalyzeGapsCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeGapsCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	allGaps := svc.FindGaps(ctx, *opts)
+	allGaps := analyzer.FindGaps(ctx, *opts)
 	gapsMsg := "No ID sequence gaps found"
 	if writeAnalysisJSON(len(allGaps), allGaps, gapsMsg, "Found gaps in %d ID sequences") {
 		return nil
@@ -198,12 +198,12 @@ func (c *AnalyzeGapsCmd) Run(ctx context.Context, svc *cliServices) error {
 type AnalyzeCardinalityCmd struct{}
 
 // Run dispatches `rela analyze cardinality`.
-func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	violations := svc.CheckCardinality(ctx, *opts)
+	violations := analyzer.CheckCardinality(ctx, *opts)
 	cardMsg := "All cardinality constraints satisfied"
 	if writeAnalysisJSON(len(violations), violations, cardMsg, "Found %d cardinality violations") {
 		return nil
@@ -233,12 +233,12 @@ func (c *AnalyzeCardinalityCmd) Run(ctx context.Context, svc *cliServices) error
 type AnalyzeRelationOrderCmd struct{}
 
 // Run dispatches `rela analyze relation-order`.
-func (c *AnalyzeRelationOrderCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeRelationOrderCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	issues := svc.CheckRelationOrder(ctx, *opts)
+	issues := analyzer.CheckRelationOrder(ctx, *opts)
 
 	if writeAnalysisJSON(len(issues), issues,
 		"All orderable relations have consistent order values",
@@ -265,7 +265,7 @@ func (c *AnalyzeRelationOrderCmd) Run(ctx context.Context, svc *cliServices) err
 type AnalyzePropertiesCmd struct{}
 
 // Run dispatches `rela analyze properties`.
-func (c *AnalyzePropertiesCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzePropertiesCmd) Run(ctx context.Context, svc *readServices) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
@@ -273,8 +273,8 @@ func (c *AnalyzePropertiesCmd) Run(ctx context.Context, svc *cliServices) error 
 	return runPropertyValidation(ctx, svc, *opts)
 }
 
-func runPropertyValidation(ctx context.Context, svc *cliServices, opts analysis.Options) error {
-	allEntityErrors := schema.ValidateEntityProperties(ctx, svc.Store(), svc.Meta())
+func runPropertyValidation(ctx context.Context, svc *readServices, opts analysis.Options) error {
+	allEntityErrors := schema.ValidateEntityProperties(ctx, svc.Store, svc.Meta)
 	if opts.Scope != nil {
 		filtered := allEntityErrors[:0]
 		for _, ee := range allEntityErrors {
@@ -284,7 +284,7 @@ func runPropertyValidation(ctx context.Context, svc *cliServices, opts analysis.
 		}
 		allEntityErrors = filtered
 	}
-	allRelationErrors := schema.ValidateRelationProperties(ctx, svc.Store(), svc.Meta())
+	allRelationErrors := schema.ValidateRelationProperties(ctx, svc.Store, svc.Meta)
 
 	errorCount := 0
 	for _, ee := range allEntityErrors {
@@ -385,20 +385,20 @@ func writePropertyValidationText(
 type AnalyzeValidationsCmd struct{}
 
 // Run dispatches `rela analyze validations`.
-func (c *AnalyzeValidationsCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeValidationsCmd) Run(ctx context.Context, svc *readServices, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	return runValidations(ctx, svc, *opts)
+	return runValidations(ctx, svc, analyzer, *opts)
 }
 
-func runValidations(ctx context.Context, svc *cliServices, opts analysis.Options) error {
-	rules := svc.Meta().Validations
+func runValidations(ctx context.Context, svc *readServices, analyzer *analysis.Service, opts analysis.Options) error {
+	rules := svc.Meta.Validations
 	if len(rules) == 0 {
 		return writeNoValidationRules()
 	}
-	result := svc.RunValidations(ctx, opts)
+	result := analyzer.RunValidations(ctx, opts)
 	errorCount, warningCount := countValidationViolationsBySeverity(result.Violations)
 	if out.Format == "json" {
 		return writeValidationsJSON(rules, result, errorCount, warningCount)
@@ -522,17 +522,17 @@ func renderValidationErrors(scriptErrors []*lua.ScriptError, loadErrors []analys
 type AnalyzeAllCmd struct{}
 
 // Run dispatches `rela analyze all`.
-func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AnalyzeAllCmd) Run(ctx context.Context, svc *readServices, analyzer *analysis.Service) error {
 	opts, err := resolveAnalyzeOpts()
 	if err != nil {
 		return err
 	}
-	summary := svc.AnalyzeAll(ctx, *opts)
+	summary := analyzer.AnalyzeAll(ctx, *opts)
 	if out.Format == "json" {
 		return writeAnalyzeAllJSON(summary)
 	}
 	writeAnalyzeAllSummary(svc, summary)
-	return runAnalyzeAllSections(ctx, svc, *opts)
+	return runAnalyzeAllSections(ctx, svc, analyzer, *opts)
 }
 
 type allAnalysisSummary struct {
@@ -582,7 +582,7 @@ func writeAnalyzeAllJSON(summary *analysis.Summary) error {
 	})
 }
 
-func writeAnalyzeAllSummary(svc *cliServices, summary *analysis.Summary) {
+func writeAnalyzeAllSummary(svc *readServices, summary *analysis.Summary) {
 	summaryItems := []string{
 		fmt.Sprintf("Orphans: %d", summary.Orphans),
 		fmt.Sprintf("Cardinality: %d", summary.Cardinality),
@@ -591,7 +591,7 @@ func writeAnalyzeAllSummary(svc *cliServices, summary *analysis.Summary) {
 		fmt.Sprintf("Gaps: %d", summary.Gaps),
 		fmt.Sprintf("Properties: %d", summary.PropertyErrors),
 	}
-	if len(svc.Meta().Validations) > 0 {
+	if len(svc.Meta.Validations) > 0 {
 		summaryItems = append(summaryItems,
 			fmt.Sprintf("Validation Errors: %d", summary.ValidationErrors),
 			fmt.Sprintf("Validation Warnings: %d", summary.ValidationWarnings))
@@ -608,30 +608,32 @@ func writeAnalyzeAllSummary(svc *cliServices, summary *analysis.Summary) {
 	out.WriteMessage("")
 }
 
-func runAnalyzeAllSections(ctx context.Context, svc *cliServices, opts analysis.Options) error {
+func runAnalyzeAllSections(
+	ctx context.Context, svc *readServices, analyzer *analysis.Service, opts analysis.Options,
+) error {
 	var errs []error
 	out.WriteSectionHeader("Orphan Analysis")
-	if err := (&AnalyzeOrphansCmd{}).Run(ctx, svc); err != nil {
+	if err := (&AnalyzeOrphansCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("orphan analysis: %w", err))
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("Duplicate Analysis")
-	if err := (&AnalyzeDuplicatesCmd{}).Run(ctx, svc); err != nil {
+	if err := (&AnalyzeDuplicatesCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("duplicate analysis: %w", err))
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("Unique Constraint Analysis")
-	if err := (&AnalyzeUniqueCmd{}).Run(ctx, svc); err != nil {
+	if err := (&AnalyzeUniqueCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("unique analysis: %w", err))
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("ID Gap Analysis")
-	if err := (&AnalyzeGapsCmd{}).Run(ctx, svc); err != nil {
+	if err := (&AnalyzeGapsCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("gap analysis: %w", err))
 	}
 	out.WriteMessage("")
 	out.WriteSectionHeader("Cardinality Analysis")
-	if err := (&AnalyzeCardinalityCmd{}).Run(ctx, svc); err != nil {
+	if err := (&AnalyzeCardinalityCmd{}).Run(ctx, analyzer); err != nil {
 		errs = append(errs, fmt.Errorf("cardinality analysis: %w", err))
 	}
 	out.WriteMessage("")
@@ -639,10 +641,10 @@ func runAnalyzeAllSections(ctx context.Context, svc *cliServices, opts analysis.
 	if err := runPropertyValidation(ctx, svc, opts); err != nil {
 		errs = append(errs, fmt.Errorf("property validation: %w", err))
 	}
-	if len(svc.Meta().Validations) > 0 {
+	if len(svc.Meta.Validations) > 0 {
 		out.WriteMessage("")
 		out.WriteSectionHeader("Custom Validations")
-		if err := runValidations(ctx, svc, opts); err != nil {
+		if err := runValidations(ctx, svc, analyzer, opts); err != nil {
 			errs = append(errs, fmt.Errorf("custom validations: %w", err))
 		}
 	}
@@ -660,12 +662,12 @@ type AnalyzeSchemaCmd struct {
 }
 
 // Run dispatches `rela analyze schema`.
-func (c *AnalyzeSchemaCmd) Run(svc *cliServices) error {
+func (c *AnalyzeSchemaCmd) Run(svc *readServices) error {
 	if c.Threshold < 0 {
 		return stderrors.New("--threshold must be non-negative")
 	}
 	dataEntry := loadDataEntryConfig(svc)
-	analysisResult := schema.Analyze(svc.Meta(), &schema.StoreCounter{Store: svc.Store()}, dataEntry, c.Threshold)
+	analysisResult := schema.Analyze(svc.Meta, &schema.StoreCounter{Store: svc.Store}, dataEntry, c.Threshold)
 
 	if c.Cleanup {
 		return runSchemaCleanup(svc, analysisResult, c.DryRun)
@@ -673,8 +675,8 @@ func (c *AnalyzeSchemaCmd) Run(svc *cliServices) error {
 	return outputSchemaAnalysis(analysisResult)
 }
 
-func loadDataEntryConfig(svc *cliServices) *dataentryconfig.Config {
-	data, err := svc.Config().Load(context.Background(), dataentryconfig.ConfigFile)
+func loadDataEntryConfig(svc *readServices) *dataentryconfig.Config {
+	data, err := svc.Config.Load(context.Background(), dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}
@@ -685,7 +687,7 @@ func loadDataEntryConfig(svc *cliServices) *dataentryconfig.Config {
 	return &cfg
 }
 
-func runSchemaCleanup(svc *cliServices, analysisResult *schema.Analysis, dryRun bool) error {
+func runSchemaCleanup(svc *readServices, analysisResult *schema.Analysis, dryRun bool) error {
 	plan := schema.PlanCleanup(analysisResult)
 	if plan.IsEmpty() {
 		if out.Format == "json" {
@@ -727,7 +729,7 @@ func runSchemaCleanup(svc *cliServices, analysisResult *schema.Analysis, dryRun 
 		return nil
 	}
 
-	projectRoot := filepath.Dir(svc.Paths().MetamodelPath)
+	projectRoot := filepath.Dir(svc.Paths.MetamodelPath)
 	if err := schema.ExecuteCleanup(plan, projectRoot, false); err != nil {
 		return err
 	}

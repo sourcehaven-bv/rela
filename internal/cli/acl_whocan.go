@@ -44,8 +44,8 @@ type ACLWhoCanCmd struct {
 }
 
 // Run executes `rela acl who-can`.
-func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *cliServices) error {
-	policyPath := filepath.Join(svc.Paths().Root, "acl.yaml")
+func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *readServices) error {
+	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
 	policy, err := acl.LoadPolicy(policyPath)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
@@ -59,17 +59,17 @@ func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *cliServices) error {
 	// declare (e.g. a non-unique principal_property) — the same gate the
 	// server applies at wiring time, so who-can can't report against a
 	// policy the server would reject.
-	if vErr := policy.ValidateAgainstMetamodel(aclMetamodelView{svc.Meta()}); vErr != nil {
+	if vErr := policy.ValidateAgainstMetamodel(aclMetamodelView{svc.Meta}); vErr != nil {
 		return fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
 	}
 
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store()), svc.Store(),
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store())))
+	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
+		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store)))
 	if err != nil {
 		return fmt.Errorf("build ACL resolver: %w", err)
 	}
 
-	engine, err := aclmap.New(svc.Store(), decl)
+	engine, err := aclmap.New(svc.Store, decl)
 	if err != nil {
 		return fmt.Errorf("build access engine: %w", err)
 	}
