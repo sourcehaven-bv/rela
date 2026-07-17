@@ -145,7 +145,7 @@ format; invalid regex pattern -> compile error, not eval panic.
 ## Design Review
 
 - [x] Run `/design-review` — done; findings below folded into this plan.
-- [ ] All critical/significant findings addressed in plan (review-responses to be created)
+- [x] All critical/significant findings addressed in plan (review-responses RR-A3EZR/RR-N176T/RR-S251K addressed, RR-XJBGB deferred)
 
 **Design Review Findings (this pass):**
 1. *(significant)* Empty/missing-value parity — `filter`'s (match.go:30-63) contract vs predicate's `NewNil()` on absent field must be reconciled by the transpiler exactly, or automation/validation verdicts silently drift.
