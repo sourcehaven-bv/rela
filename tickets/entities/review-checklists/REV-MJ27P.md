@@ -94,28 +94,38 @@ Noted in-code so nobody parses a user-typed source and turns it into a leak.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI
-- [x] All CI checks pass — every job green **except God-object lint, which is
-  broken on `develop` itself and is not caused by this PR** (evidence below).
-  Green: Frontend (the job covering this change), Test, Lint, CodeQL, Analyze
-  (go / js-ts / actions), Architecture, Vulnerability Check, Fuzz, Postgres
-  Backend, Lint Markdown, Rela Tickets, and all 6 Cross-Compile matrix jobs.
+- [x] All CI checks pass — every job green.
 
-**God-object lint — pre-existing failure on `develop`, not this PR.** Proven, not
-assumed: checking out develop's tip (`40e94f44`) and running plimsoll reproduces
-the identical error —
+**God-object lint — was a pre-existing `develop` failure; fixed here on request.**
+Diagnosed, not assumed: checking out develop's tip (`40e94f44`) and running
+plimsoll reproduced the identical error —
 
 ```
 internal/cli/cli_wiring.go:43:6: type cliServices has 30 exported methods,
 over the load line of 29
 ```
 
-`40e94f44` (**TKT-BW6UUL / PR #1142**, operator version-purge) modified
-`cli_wiring.go` (+11/-3) and pushed `cliServices` past its pinned
-`//plimsoll:max-exported-methods=29`. That commit landed on develop *after* this
-branch, so this PR merely inherits a red base. This change is TypeScript-only —
-a Go linter never reads it — and plimsoll passes on this branch's tree.
-Out of scope here; raised with the user separately rather than silently widening
-this PR.
+`40e94f44` (**TKT-BW6UUL / PR #1142**, operator version-purge) added
+`cliServices.Audit()` for the purge commands' forensic trail — 29→30 exported
+methods — but left the `//plimsoll:max-exported-methods=29` pin at 29. Every
+branch cut from develop inherited the red.
+
+**Fix (`internal/cli/cli_wiring.go`):** merged develop in and bumped the pin to
+30. Weighed against the alternatives first:
+- *Drop the method?* No — kong injects `*cliServices` into every `Run`, so
+  `history_purge.go:82,144` can only reach the audit sink through it.
+- *Decompose?* Not here — 38 binding sites / 113 usages. That is **TKT-N0IKN9**,
+  which this type's TODO already names. Bumping a grandfathered pin is precisely
+  the mechanism CLAUDE.md documents for offenders awaiting a ratchet.
+
+Also fixed the **drift that caused it**: the count lived in two places (the
+directive *and* the TODO text, both "29"), so a new method only tripped one.
+Both now move together, with a note that the pin is a ceiling, not a budget —
+a second bump means decompose instead.
+
+**Verified by mutation:** a 31st method still fails (`exit status 3`), so the pin
+is a real ceiling, not a silenced error. `go build`, `go vet`, `just arch-lint`,
+`go test ./internal/cli/` all pass; frontend suite still 41/41 after the merge.
 
 **Rela Tickets** — was failing on a self-inflicted bookkeeping loop: this
 checklist is `done`, and the "all CI checks pass" item was legitimately unchecked
