@@ -67,7 +67,7 @@ func verdictByTo(vs []statemachine.TransitionVerdict, to string) (statemachine.T
 
 func TestTransitionVerdicts_GuardHeld(t *testing.T) {
 	r := newTransitionResolver(t, "review-it")
-	e := ticket("T-1", map[string]interface{}{"status": "open"})
+	e := ticket("T-1", map[string]any{"status": "open"})
 
 	got := r.TransitionVerdicts(ctxAs("alice"), e)
 	vs := got["status"]
@@ -82,7 +82,7 @@ func TestTransitionVerdicts_GuardHeld(t *testing.T) {
 
 func TestTransitionVerdicts_GuardDenied(t *testing.T) {
 	r := newTransitionResolver(t, "" /* no perms */)
-	e := ticket("T-1", map[string]interface{}{"status": "open"})
+	e := ticket("T-1", map[string]any{"status": "open"})
 
 	v := r.TransitionVerdicts(ctxAs("alice"), e)["status"][0]
 	if v.Allowed || v.Reason != statemachine.VerdictGuard {
@@ -98,7 +98,7 @@ func TestTransitionVerdicts_PreconditionGate(t *testing.T) {
 	// alice holds both guards; review→done additionally needs a signed-off edge.
 	t.Run("precondition unmet", func(t *testing.T) {
 		r := newTransitionResolver(t, "review-it, close-it") // no signed-off edge
-		e := ticket("T-1", map[string]interface{}{"status": "review"})
+		e := ticket("T-1", map[string]any{"status": "review"})
 		done, ok := verdictByTo(r.TransitionVerdicts(ctxAs("alice"), e)["status"], "done")
 		if !ok {
 			t.Fatal("expected a →done verdict")
@@ -109,7 +109,7 @@ func TestTransitionVerdicts_PreconditionGate(t *testing.T) {
 	})
 	t.Run("precondition met", func(t *testing.T) {
 		r := newTransitionResolver(t, "review-it, close-it", [3]string{"T-1", "signed-off", "PERS-x"})
-		e := ticket("T-1", map[string]interface{}{"status": "review"})
+		e := ticket("T-1", map[string]any{"status": "review"})
 		done, _ := verdictByTo(r.TransitionVerdicts(ctxAs("alice"), e)["status"], "done")
 		if !done.Allowed {
 			t.Errorf("review→done with signed-off + close-it should be allowed, got %+v", done)
@@ -125,7 +125,7 @@ func TestTransitionVerdicts_NoMachinesWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if got := r.TransitionVerdicts(ctxAs("alice"), ticket("T-1", map[string]interface{}{"status": "open"})); len(got) != 0 {
+	if got := r.TransitionVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": "open"})); len(got) != 0 {
 		t.Errorf("no machines wired should give empty map, got %+v", got)
 	}
 }
@@ -133,7 +133,7 @@ func TestTransitionVerdicts_NoMachinesWired(t *testing.T) {
 func TestTransitionVerdicts_NonMachineType(t *testing.T) {
 	r := newTransitionResolver(t, "review-it")
 	// feature has no status machine (not even in transitionMeta) → empty.
-	if got := r.TransitionVerdicts(ctxAs("alice"), ticket("T-1", map[string]interface{}{"status": "done"})); len(got) != 0 {
+	if got := r.TransitionVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": "done"})); len(got) != 0 {
 		// "done" is terminal → no out-edges → empty map.
 		t.Errorf("terminal state should give empty map, got %+v", got)
 	}
