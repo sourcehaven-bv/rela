@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -174,6 +175,22 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
 		executeView: app.executeView,
+	}
+	// attachmentHandler mirrors production wiring: closures for the swappable
+	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl
+	// after this rebind), values for the fixed store/manager handles.
+	app.attachments = &attachmentHandler{
+		schema:     app.State,
+		store:      svc.Store(),
+		manager:    svc.EntityManager(),
+		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
+		reader:     app.reader,
+		serializer: app.serializer,
+		acl:        func() acl.ACL { return app.acl },
+		audit:      func() audit.Audit { return app.auditSink },
+		fields:     func() FieldVerdictResolver { return app.fieldResolver },
+		gateRead:   app.gateReadOrNotFound,
+		writeMu:    &app.writeMu,
 	}
 }
 
