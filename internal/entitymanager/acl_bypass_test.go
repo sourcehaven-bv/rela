@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -132,6 +133,7 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 		Templater:    nopTemplater{},
 		Audit:        audit.Nop{},
 		ACL:          acl.ReadOnlyACL{}, // deny-all, so a gated write is refused
+		Transitions:  statemachine.EmptySet(),
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,

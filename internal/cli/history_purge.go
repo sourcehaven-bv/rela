@@ -38,8 +38,8 @@ type HistoryPurgeCmd struct {
 }
 
 // Run dispatches `rela history-purge <id> ...`.
-func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *cliServices) error {
-	purger, ok := svc.Store().(store.VersionPurger)
+func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
+	purger, ok := svc.Store.(store.VersionPurger)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support version purge " +
 			"(a PostgreSQL-build compliance feature).")
@@ -79,7 +79,7 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *cliServices) error {
 	if err != nil {
 		return fmt.Errorf("purge history for %q: %w", c.ID, err)
 	}
-	auditPurge(svc.Audit(), p, audit.Subject{Kind: "entity", ID: c.ID}, final, c.Reason)
+	auditPurge(svc.Audit, p, audit.Subject{Kind: "entity", ID: c.ID}, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, c.ID)
 	if final.TombstoneWritten {
 		out.WriteInfo("Wrote a purge tombstone (a live row still held the content); the sweep will not re-capture it.")
@@ -102,8 +102,8 @@ type RelationHistoryPurgeCmd struct {
 }
 
 // Run dispatches `rela relation-history-purge <from> <type> <to> ...`.
-func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *cliServices) error {
-	purger, ok := svc.Store().(store.RelationVersionPurger)
+func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
+	purger, ok := svc.Store.(store.RelationVersionPurger)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support relation version purge " +
 			"(a PostgreSQL-build compliance feature).")
@@ -141,7 +141,7 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *cliServices) err
 	if err != nil {
 		return fmt.Errorf("purge relation history for %s: %w", key, err)
 	}
-	auditPurge(svc.Audit(), p, audit.Subject{
+	auditPurge(svc.Audit, p, audit.Subject{
 		Kind: "relation", RelationType: c.Type, FromID: c.From, ToID: c.To,
 	}, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, key)

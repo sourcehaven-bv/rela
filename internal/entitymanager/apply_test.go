@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -17,11 +18,12 @@ import (
 func newApplyManager(t *testing.T, st store.Store, sink audit.Audit) *entitymanager.Manager {
 	t.Helper()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     st,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     sink,
-		ACL:       acl.NopACL{},
+		Store:       st,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       sink,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -402,7 +404,7 @@ func TestApplyRelation_EndpointProbeFailsClosed(t *testing.T) {
 func seedViaManager(t *testing.T, st store.Store, id, typ string) {
 	t.Helper()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
+		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seedViaManager: %v", err)
@@ -420,7 +422,7 @@ func seedViaManager(t *testing.T, st store.Store, id, typ string) {
 func TestApplyEntity_ACLDenied(t *testing.T) {
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.ReadOnlyACL{},
+		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.ReadOnlyACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

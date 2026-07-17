@@ -19,9 +19,9 @@ type RenumberCmd struct {
 }
 
 // Run dispatches `rela renumber`.
-func (c *RenumberCmd) Run(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
-	schema := svc.Meta()
+func (c *RenumberCmd) Run(ctx context.Context, svc *writeServices) error {
+	st := svc.Store
+	schema := svc.Meta
 
 	var plan []renumberEntry
 
@@ -61,7 +61,7 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *cliServices) error {
 	// paths. A merge-style RelationOptions carrying only the order property is
 	// enough — Manager preserves the relation's other properties and content.
 	// See issue #886.
-	em := svc.EntityManager()
+	em := svc.EntityManager
 	for _, p := range plan {
 		opts := entity.RelationOptions{Properties: map[string]interface{}{p.prop: p.newVal}}
 		if _, err := em.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, opts); err != nil {

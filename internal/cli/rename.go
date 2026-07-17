@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/renametype"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -29,8 +30,8 @@ type RenameEntityCmd struct {
 }
 
 // Run dispatches `rela rename entity <old> <new>`.
-func (c *RenameEntityCmd) Run(svc *cliServices) error {
-	return runRenameEntity(svc, c.OldType, c.NewType, c.Force, c.Plural)
+func (c *RenameEntityCmd) Run(svc *writeServices, rt *renametype.Service) error {
+	return runRenameEntity(svc, rt, c.OldType, c.NewType, c.Force, c.Plural)
 }
 
 type renameEntityInfo struct {
@@ -47,7 +48,9 @@ type renameEntityInfo struct {
 }
 
 // coverage-ignore: interactive CLI - tested via integration tests
-func runRenameEntity(svc *cliServices, oldType, newType string, force bool, plural string) error {
+func runRenameEntity(
+	svc *writeServices, rt *renametype.Service, oldType, newType string, force bool, plural string,
+) error {
 	info, err := resolveRenameEntity(svc, oldType, newType, plural)
 	if err != nil {
 		return err
@@ -64,11 +67,11 @@ func runRenameEntity(svc *cliServices, oldType, newType string, force bool, plur
 			return nil
 		}
 	}
-	return applyRenameEntity(svc, info)
+	return applyRenameEntity(rt, info)
 }
 
-func resolveRenameEntity(svc *cliServices, oldType, newType, renamePlural string) (*renameEntityInfo, error) {
-	meta := svc.Meta()
+func resolveRenameEntity(svc *writeServices, oldType, newType, renamePlural string) (*renameEntityInfo, error) {
+	meta := svc.Meta
 	resolvedOld := meta.ResolveAlias(oldType)
 	oldDef, ok := meta.GetEntityDef(resolvedOld)
 	if !ok {
@@ -85,10 +88,10 @@ func resolveRenameEntity(svc *cliServices, oldType, newType, renamePlural string
 	if newPlural == "" {
 		newPlural = newType + "s"
 	}
-	paths := svc.Paths()
+	paths := svc.Paths
 	oldTemplatePath := paths.EntityTemplatePath(resolvedOld)
-	_, statErr := svc.FS().Stat(oldTemplatePath)
-	entityCount, _ := svc.Store().CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
+	_, statErr := svc.FS.Stat(oldTemplatePath)
+	entityCount, _ := svc.Store.CountEntities(context.Background(), store.EntityQuery{Type: resolvedOld})
 
 	return &renameEntityInfo{
 		resolvedOld:     resolvedOld,
@@ -145,8 +148,8 @@ func confirmRename() (bool, error) {
 	return response == "y" || response == "yes", nil
 }
 
-func applyRenameEntity(svc *cliServices, info *renameEntityInfo) error {
-	count, err := svc.RenameEntityType(info.resolvedOld, info.newType, info.newPlural)
+func applyRenameEntity(rt *renametype.Service, info *renameEntityInfo) error {
+	count, err := rt.Rename(info.resolvedOld, info.newType, info.newPlural)
 	if err != nil {
 		return err
 	}
@@ -182,8 +185,8 @@ type RenameIDCmd struct {
 }
 
 // Run dispatches `rela rename id <old> <new>`.
-func (c *RenameIDCmd) Run(svc *cliServices) error {
-	result, err := svc.EntityManager().RenameEntity(
+func (c *RenameIDCmd) Run(svc *writeServices) error {
+	result, err := svc.EntityManager.RenameEntity(
 		context.Background(), c.OldID, c.NewID, entity.RenameOptions{DryRun: c.DryRun})
 	if err != nil {
 		return err

@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -47,11 +48,12 @@ func newUniqueManager(t *testing.T) *entitymanager.Manager {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     memstore.New(),
-		Meta:      meta,
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       memstore.New(),
+		Meta:        meta,
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -79,6 +81,7 @@ func newUniqueManagerWithAutomation(t *testing.T, autos []automation.Automation)
 		Templater:   nopTemplater{},
 		Audit:       audit.Nop{},
 		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 		Automations: engine,
 		Cascade:     runner,
 	})

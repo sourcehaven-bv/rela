@@ -134,6 +134,41 @@ type CustomType struct {
 	Default     string            `yaml:"default,omitempty"`     // Default value
 	Description string            `yaml:"description,omitempty"` // Documentation for the type
 	Validations []TypeValidation  `yaml:"validations,omitempty"` // Regex validations with error messages
+
+	// Transitions declares the legal value→value moves for this enum,
+	// making it a state machine (TKT-E4LW2). This is declarative source
+	// data only — the metamodel does not enforce it. At startup
+	// internal/statemachine.Compile reads these into an executable machine
+	// that the entitymanager runs on the write path (legality 422, guard
+	// 403, precondition 422). Empty means "any value may change to any
+	// other" (the historical, unconstrained behavior). Only meaningful on a
+	// named type — inline `type: enum` properties carry no transitions.
+	Transitions []TransitionDef `yaml:"transitions,omitempty"`
+
+	// Initial names the only legal entry value on entity create when this
+	// type is a state machine. Empty falls back to Default. Consumed by
+	// internal/statemachine at compile time.
+	Initial string `yaml:"initial,omitempty"`
+}
+
+// TransitionDef is one edge in an enum state machine: a legal move from one
+// value to another, optionally gated by an ACL permission (Guard) and/or a
+// data precondition (When). This is declarative source data; the executable
+// machine is built from it by internal/statemachine.Compile.
+type TransitionDef struct {
+	From string `yaml:"from"` // Source value; must be one of CustomType.Values
+	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
+
+	// Guard names an ACL permission the acting principal must hold for this
+	// transition. Enforced only on served paths (a principal exists); inert
+	// on direct CLI writes. Empty means the transition is legal for anyone
+	// who may otherwise write the entity.
+	Guard string `yaml:"guard,omitempty"`
+
+	// When is an internal/predicate expression evaluated as a precondition
+	// against the entity + graph at write time. False rejects the transition
+	// (422). Empty means no precondition.
+	When string `yaml:"when,omitempty"`
 }
 
 // EntityDef defines an entity type in the metamodel

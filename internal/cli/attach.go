@@ -17,7 +17,7 @@ type AttachCmd struct {
 }
 
 // Run dispatches `rela attach <entity-id> <file>...`.
-func (c *AttachCmd) Run(ctx context.Context, svc *cliServices) error {
+func (c *AttachCmd) Run(ctx context.Context, att *attachment.Service) error {
 	var attached int
 	for _, filePath := range c.Files {
 		matches, err := filepath.Glob(filePath)
@@ -32,7 +32,7 @@ func (c *AttachCmd) Run(ctx context.Context, svc *cliServices) error {
 			if err != nil {
 				return fmt.Errorf("invalid path %q: %w", match, err)
 			}
-			result, err := svc.AttachFile(ctx, c.EntityID, absPath, c.Property)
+			result, err := att.Attach(ctx, c.EntityID, absPath, c.Property)
 			if err != nil {
 				if errors.Is(err, attachment.ErrAtCapacity) {
 					return fmt.Errorf("cannot attach %q: property is full — detach a file first (rela attachments %s)",

@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -24,11 +25,12 @@ func newManagerWithACL(
 	t.Helper()
 	cs := &countingStore{Store: memstore.New()}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     cs,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     sink,
-		ACL:       aclImpl,
+		Store:       cs,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       sink,
+		ACL:         aclImpl,
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -43,11 +45,12 @@ func newManagerWithACL(
 func seedEntity(t *testing.T, store *countingStore, entityType, title string) {
 	t.Helper()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     store,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       store,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seedEntity: New: %v", err)
@@ -63,11 +66,12 @@ func seedEntity(t *testing.T, store *countingStore, entityType, title string) {
 func seedRelation(t *testing.T, store *countingStore, from, relType, to string) {
 	t.Helper()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     store,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       store,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seedRelation: New: %v", err)
@@ -370,7 +374,7 @@ role_relations:
 	store := &countingStore{Store: memstore.New()}
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
 		Store: store, Meta: meta, Templater: nopTemplater{},
-		Audit: audit.Nop{}, ACL: acl.NopACL{},
+		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seed Manager.New: %v", err)
@@ -418,7 +422,7 @@ role_relations:
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: store, Meta: meta, Templater: nopTemplater{},
-		Audit: sink, ACL: declarative,
+		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -533,7 +537,7 @@ assignments:
 	store := &countingStore{Store: memstore.New()}
 	seedMgr, err := entitymanager.New(entitymanager.Deps{
 		Store: store, Meta: meta, Templater: nopTemplater{},
-		Audit: audit.Nop{}, ACL: acl.NopACL{},
+		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("seed Manager.New: %v", err)
@@ -568,7 +572,7 @@ assignments:
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: store, Meta: meta, Templater: nopTemplater{},
-		Audit: sink, ACL: declarative,
+		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

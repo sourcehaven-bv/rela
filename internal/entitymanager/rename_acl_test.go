@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -52,11 +53,12 @@ func TestRename_FailsClosedOnNonNotFoundFetchError(t *testing.T) {
 	// proceed without ever consulting the ACL. With the fix the fetch
 	// error short-circuits before either the ACL or the rename run.
 	deps := entitymanager.Deps{
-		Store:     st,
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.ReadOnlyACL{},
+		Store:       st,
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.ReadOnlyACL{},
+		Transitions: statemachine.EmptySet(),
 	}
 	mgr, err := entitymanager.New(deps)
 	if err != nil {

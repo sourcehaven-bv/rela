@@ -22,8 +22,8 @@ type RelationHistoryCmd struct {
 }
 
 // Run dispatches `rela relation-history <from> <type> <to> [--version N]`.
-func (c *RelationHistoryCmd) Run(ctx context.Context, svc *cliServices) error {
-	reader, ok := svc.Store().(store.RelationHistoryReader)
+func (c *RelationHistoryCmd) Run(ctx context.Context, svc *writeServices) error {
+	reader, ok := svc.Store.(store.RelationHistoryReader)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support relation version history " +
 			"(content versioning is a PostgreSQL-build feature; filesystem deployments use git).")
@@ -102,8 +102,8 @@ type RelationRestoreCmd struct {
 }
 
 // Run dispatches `rela relation-restore <from> <type> <to> <version>`.
-func (c *RelationRestoreCmd) Run(ctx context.Context, svc *cliServices) error {
-	reader, ok := svc.Store().(store.RelationHistoryReader)
+func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error {
+	reader, ok := svc.Store.(store.RelationHistoryReader)
 	if !ok {
 		out.WriteMessage("The active storage backend does not support relation version history " +
 			"(restore is a PostgreSQL-build feature).")
@@ -121,14 +121,14 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *cliServices) error {
 	content := snap.Content
 	opts := entity.RelationOptions{Properties: snap.Properties, Content: &content}
 
-	_, getErr := svc.Store().GetRelation(ctx, c.From, c.Type, c.To)
+	_, getErr := svc.Store.GetRelation(ctx, c.From, c.Type, c.To)
 	switch {
 	case getErr == nil:
-		if _, err := svc.EntityManager().UpdateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.UpdateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
 			return fmt.Errorf("restore (update) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	case errors.Is(getErr, store.ErrNotFound):
-		if _, err := svc.EntityManager().CreateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.CreateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
 			return fmt.Errorf("restore (re-create) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	default:

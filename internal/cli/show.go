@@ -14,8 +14,8 @@ type ShowCmd struct {
 }
 
 // Run dispatches `rela show <id>`.
-func (c *ShowCmd) Run(ctx context.Context, svc *cliServices) error {
-	st := svc.Store()
+func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
+	st := svc.Store
 
 	e, err := st.GetEntity(ctx, c.ID)
 	if err != nil {

@@ -28,8 +28,8 @@ type UpdateCmd struct {
 }
 
 // Run dispatches `rela update <id>`.
-func (c *UpdateCmd) Run(ctx context.Context, svc *cliServices) error {
-	entity, err := svc.Store().GetEntity(ctx, c.ID)
+func (c *UpdateCmd) Run(ctx context.Context, svc *writeServices) error {
+	entity, err := svc.Store.GetEntity(ctx, c.ID)
 	if err != nil {
 		return &entityNotFoundError{ID: c.ID}
 	}
@@ -74,7 +74,7 @@ func (c *UpdateCmd) Run(ctx context.Context, svc *cliServices) error {
 		return errors.New("no updates specified")
 	}
 
-	result, err := svc.EntityManager().UpdateEntity(ctx, entity)
+	result, err := svc.EntityManager.UpdateEntity(ctx, entity)
 	if err != nil {
 		return err
 	}

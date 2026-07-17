@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
@@ -89,11 +90,12 @@ func setupAttachmentService(t *testing.T) attachmentFixture {
 		t.Fatalf("OpenStore: %v", err)
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:     st,
-		Meta:      meta,
-		Templater: templating.NewFSTemplater(fs, ctx),
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		Store:       st,
+		Meta:        meta,
+		Templater:   templating.NewFSTemplater(fs, ctx),
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
