@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path"
 
@@ -260,9 +261,7 @@ func (s *FSStore) renameAttachmentDir(oldID, newID string) error {
 		a.entityID = newID
 		reKey[attachmentKey(newID, a.property, a.fileName)] = a
 	}
-	for k, v := range reKey {
-		s.attachments[k] = v
-	}
+	maps.Copy(s.attachments, reKey)
 	return nil
 }
 

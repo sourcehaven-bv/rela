@@ -37,7 +37,7 @@ func (h historyStore) GetVersion(_ context.Context, id string, version int) (*st
 	return &s, nil
 }
 
-func snapshot(version int, typ, content string, props map[string]interface{}) store.VersionSnapshot {
+func snapshot(version int, typ, content string, props map[string]any) store.VersionSnapshot {
 	return store.VersionSnapshot{
 		VersionMeta: store.VersionMeta{Version: version, Op: store.VersionOpCreate, Type: typ},
 		Content:     content,
@@ -121,13 +121,13 @@ func TestAuthorizeHistoryRead_AbsentEntityWithPermissionAllowed(t *testing.T) {
 func TestHandleV1History_CrossTypeIs404(t *testing.T) {
 	f := newFixture()
 	tkt := entity.New("TKT-SECRET", "ticket")
-	tkt.Properties = map[string]interface{}{"title": "secret ticket"}
+	tkt.Properties = map[string]any{"title": "secret ticket"}
 	f.AddNode(tkt)
 	app := newAppFromParts(nil, testMeta(), f)
 	app.store = historyStore{
 		Store: app.store,
 		versions: map[string][]store.VersionSnapshot{
-			"TKT-SECRET": {snapshot(1, "ticket", "body", map[string]interface{}{"title": "secret ticket"})},
+			"TKT-SECRET": {snapshot(1, "ticket", "body", map[string]any{"title": "secret ticket"})},
 		},
 	}
 

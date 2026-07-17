@@ -298,16 +298,14 @@ func TestHandleV1Action_Concurrent(t *testing.T) {
 	const N = 5
 	var wg sync.WaitGroup
 	for range N {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/noop", http.NoBody)
 			rec := httptest.NewRecorder()
 			callAction(app, req, rec)
 			if rec.Code != http.StatusOK {
 				t.Errorf("expected 200, got %d", rec.Code)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

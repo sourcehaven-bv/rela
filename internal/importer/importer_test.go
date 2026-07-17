@@ -274,7 +274,7 @@ func TestImportDryRun(t *testing.T) {
 
 	data := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Test"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "Test"}},
 		},
 	}
 
@@ -302,8 +302,8 @@ func TestImportEntities(t *testing.T) {
 
 	data := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "First requirement", "status": "draft"}},
-			{ID: "REQ-002", Type: "requirement", Properties: map[string]interface{}{"title": "Second requirement", "status": "accepted"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "First requirement", "status": "draft"}},
+			{ID: "REQ-002", Type: "requirement", Properties: map[string]any{"title": "Second requirement", "status": "accepted"}},
 		},
 	}
 
@@ -337,8 +337,8 @@ func TestImportWithRelations(t *testing.T) {
 
 	data := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Requirement"}},
-			{ID: "DEC-001", Type: "decision", Properties: map[string]interface{}{"title": "Decision"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "Requirement"}},
+			{ID: "DEC-001", Type: "decision", Properties: map[string]any{"title": "Decision"}},
 		},
 		Relations: []RelationData{
 			{From: "DEC-001", Relation: "addresses", To: "REQ-001"},
@@ -373,28 +373,28 @@ func TestImportValidationErrors(t *testing.T) {
 		{
 			name: "missing id",
 			data: &ImportData{
-				Entities: []EntityData{{Type: "requirement", Properties: map[string]interface{}{"title": "Test"}}},
+				Entities: []EntityData{{Type: "requirement", Properties: map[string]any{"title": "Test"}}},
 			},
 			wantErr: "missing required field: id",
 		},
 		{
 			name: "missing type",
 			data: &ImportData{
-				Entities: []EntityData{{ID: "REQ-001", Properties: map[string]interface{}{"title": "Test"}}},
+				Entities: []EntityData{{ID: "REQ-001", Properties: map[string]any{"title": "Test"}}},
 			},
 			wantErr: "missing required field: type",
 		},
 		{
 			name: "unknown type",
 			data: &ImportData{
-				Entities: []EntityData{{ID: "FOO-001", Type: "unknown", Properties: map[string]interface{}{"title": "Test"}}},
+				Entities: []EntityData{{ID: "FOO-001", Type: "unknown", Properties: map[string]any{"title": "Test"}}},
 			},
 			wantErr: "unknown entity type",
 		},
 		{
 			name: "missing required property",
 			data: &ImportData{
-				Entities: []EntityData{{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{}}},
+				Entities: []EntityData{{ID: "REQ-001", Type: "requirement", Properties: map[string]any{}}},
 			},
 			wantErr: "This field is required",
 		},
@@ -425,7 +425,7 @@ func TestImportUpdate(t *testing.T) {
 	imp := New(st, meta, Options{}, src)
 	data := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Original"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "Original"}},
 		},
 	}
 	_, err := imp.Import(data)
@@ -437,7 +437,7 @@ func TestImportUpdate(t *testing.T) {
 	imp2 := New(st, meta, Options{}, src)
 	data2 := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Updated"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "Updated"}},
 		},
 	}
 	_, err = imp2.Import(data2)
@@ -470,9 +470,9 @@ func TestImportSkipErrors(t *testing.T) {
 
 	data := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "Valid"}},
-			{ID: "BAD-001", Type: "unknown", Properties: map[string]interface{}{"title": "Invalid type"}},
-			{ID: "REQ-002", Type: "requirement", Properties: map[string]interface{}{"title": "Also valid"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "Valid"}},
+			{ID: "BAD-001", Type: "unknown", Properties: map[string]any{"title": "Invalid type"}},
+			{ID: "REQ-002", Type: "requirement", Properties: map[string]any{"title": "Also valid"}},
 		},
 	}
 
@@ -500,7 +500,7 @@ func TestImportDefaultStatus(t *testing.T) {
 
 	data := &ImportData{
 		Entities: []EntityData{
-			{ID: "REQ-001", Type: "requirement", Properties: map[string]interface{}{"title": "No status"}},
+			{ID: "REQ-001", Type: "requirement", Properties: map[string]any{"title": "No status"}},
 		},
 	}
 

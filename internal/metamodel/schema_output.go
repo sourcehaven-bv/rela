@@ -13,17 +13,17 @@ func (m *Metamodel) GetNamespace() string {
 }
 
 // GetEntities returns the entities map for JSON output
-func (m *Metamodel) GetEntities() interface{} {
+func (m *Metamodel) GetEntities() any {
 	return m.Entities
 }
 
 // GetRelations returns the relations map for JSON output
-func (m *Metamodel) GetRelations() interface{} {
+func (m *Metamodel) GetRelations() any {
 	return m.Relations
 }
 
 // GetTypes returns the custom types map for JSON output
-func (m *Metamodel) GetTypes() interface{} {
+func (m *Metamodel) GetTypes() any {
 	return m.Types
 }
 
@@ -160,7 +160,7 @@ func (e *EntityDef) GetIDPatterns() []string {
 // GetProperties returns the entity properties for JSON output.
 // Note: This returns interface{} to satisfy the SchemaEntityDef interface.
 // For typed access, use PropertyDefs() which implements PropertySchema.
-func (e *EntityDef) GetProperties() interface{} {
+func (e *EntityDef) GetProperties() any {
 	return e.Properties
 }
 
@@ -202,7 +202,7 @@ func (r *RelationDef) GetDescription() string {
 }
 
 // GetInverse returns the inverse definition for JSON output
-func (r *RelationDef) GetInverse() interface{} {
+func (r *RelationDef) GetInverse() any {
 	if r.Inverse == nil {
 		return nil
 	}

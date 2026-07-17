@@ -283,7 +283,7 @@ func (d AffordanceDenialError) Error() string {
 // requested value for each key in setValues. Unknown values default
 // to allowed (an option entry of `nil` means "no override").
 func (svc affordanceService) validateFieldWrite(
-	ctx context.Context, e *entityPkg.Entity, setKeys map[string]interface{}, unsetKeys []string,
+	ctx context.Context, e *entityPkg.Entity, setKeys map[string]any, unsetKeys []string,
 ) *AffordanceDenialError {
 	if e == nil {
 		return nil
@@ -291,7 +291,7 @@ func (svc affordanceService) validateFieldWrite(
 	v := svc.resolver().FieldVerdicts(ctx, e)
 	declared := declaredProperties(svc.meta(), e.Type)
 
-	check := func(key string, value interface{}, present bool) *AffordanceDenialError {
+	check := func(key string, value any, present bool) *AffordanceDenialError {
 		// Unknown field (not in metamodel, not in resolver overrides) →
 		// hidden-shape rejection (F8 side-channel closure).
 		if !declared[key] && !knownToResolver(v, key) {
@@ -360,7 +360,7 @@ func (svc affordanceService) validateFieldWrite(
 // Non-string/non-list values fall through silently — the existing
 // type-validation pipeline catches those upstream; the affordance
 // gate only cares about disallowed-but-otherwise-valid values.
-func checkEnumOption(key string, value interface{}, opts map[string]bool) *AffordanceDenialError {
+func checkEnumOption(key string, value any, opts map[string]bool) *AffordanceDenialError {
 	deny := func(option string) *AffordanceDenialError {
 		return &AffordanceDenialError{
 			Rule:   RuleFieldEnumFiltered,
@@ -373,7 +373,7 @@ func checkEnumOption(key string, value interface{}, opts map[string]bool) *Affor
 		if allowed, ok := opts[v]; ok && !allowed {
 			return deny(v)
 		}
-	case []interface{}:
+	case []any:
 		for _, elem := range v {
 			str, ok := elem.(string)
 			if !ok {
@@ -637,7 +637,7 @@ func (svc affordanceService) validateRelationsModernAffordances(
 // relation validation. The affordance check focuses on rejecting
 // keys explicitly marked non-writable.
 func (svc affordanceService) validateRelationMetaWrite(
-	ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]interface{}, metaUnset []string,
+	ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]any, metaUnset []string,
 ) *AffordanceDenialError {
 	if e == nil {
 		return nil

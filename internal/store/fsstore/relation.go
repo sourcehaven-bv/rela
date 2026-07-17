@@ -141,7 +141,7 @@ func (s *FSStore) CreateRelation(
 	if data != nil {
 		r.Content = data.Content
 		if data.Properties != nil {
-			r.Properties = make(map[string]interface{}, len(data.Properties))
+			r.Properties = make(map[string]any, len(data.Properties))
 			for k, v := range data.Properties {
 				r.Properties[k] = entity.CloneValue(v)
 			}
@@ -185,7 +185,7 @@ func (s *FSStore) UpdateRelation(
 
 	r.Content = data.Content
 	if data.Properties != nil {
-		r.Properties = make(map[string]interface{}, len(data.Properties))
+		r.Properties = make(map[string]any, len(data.Properties))
 		for k, v := range data.Properties {
 			r.Properties[k] = entity.CloneValue(v)
 		}

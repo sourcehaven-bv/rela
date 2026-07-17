@@ -379,8 +379,7 @@ func TestStartBackground_NoConfig(t *testing.T) {
 	ws := newMockWorkspace(t)
 
 	// ws.Config().Load returns notFoundError for missing file.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Should not panic, should not log errors.
 	StartBackground(ctx, ws, discardLogger())
@@ -390,8 +389,7 @@ func TestStartBackground_InvalidConfig(t *testing.T) {
 	ws := newMockWorkspace(t)
 	ws.cacheFiles["project:"+ConfigFile] = []byte("not: valid: yaml: at all:")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Should log error and return without starting a goroutine.
 	StartBackground(ctx, ws, discardLogger())
@@ -401,8 +399,7 @@ func TestStartBackground_EmptyTasks(t *testing.T) {
 	ws := newMockWorkspace(t)
 	ws.cacheFiles["project:"+ConfigFile] = []byte("tasks: []\n")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	StartBackground(ctx, ws, discardLogger())
 }

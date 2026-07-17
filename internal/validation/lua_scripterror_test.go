@@ -34,7 +34,7 @@ func TestLuaValidation_InlineCompileErrorSurfacesAsScriptError(t *testing.T) {
 		Validations: []metamodel.ValidationRule{rule},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -106,7 +106,7 @@ func TestLuaValidation_InlineRuntimeErrorIncludesSourceSlice(t *testing.T) {
 		Validations: []metamodel.ValidationRule{rule},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -156,7 +156,7 @@ func TestLuaValidation_InlineRuleUsesDistinctCacheNamespace(t *testing.T) {
 		Validations: []metamodel.ValidationRule{rule},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 	svc := New(meta, ws.services(t.TempDir()))
 	result := svc.Check(context.Background(), entities, nil)
@@ -220,7 +220,7 @@ func TestLuaValidation_FileRuntimeErrorIncludesSourceSlice(t *testing.T) {
 		Validations: []metamodel.ValidationRule{rule},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(tmpDir))
@@ -324,7 +324,7 @@ func TestLuaValidation_FailOpenWithMixedRules(t *testing.T) {
 		},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 	svc := New(meta, ws.services(t.TempDir()))
 	result := svc.Check(context.Background(), entities, nil)
@@ -361,7 +361,7 @@ func TestLuaValidation_LoadErrorWhenFileMissing(t *testing.T) {
 		Validations: []metamodel.ValidationRule{rule},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(tmpDir))
@@ -411,7 +411,7 @@ func TestLuaValidation_LuaErrorDoesNotSuppressContentCheck(t *testing.T) {
 	}
 	entities := []*entity.Entity{
 		// No "## Required" header in content => content check fails.
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}, Content: "no header here"},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}, Content: "no header here"},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -454,7 +454,7 @@ func TestLuaValidation_ContractErrorReturnNumber(t *testing.T) {
 		},
 	}
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 	svc := New(meta, ws.services(t.TempDir()))
 	result := svc.Check(context.Background(), entities, nil)
@@ -496,7 +496,7 @@ func TestLuaValidation_ContractErrorArrayElementMissingMessage(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace()
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	meta := &metamodel.Metamodel{

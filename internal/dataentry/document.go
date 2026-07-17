@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,12 +43,7 @@ func isFormRoute(path string) bool {
 	if len(segments) > 2 {
 		return false
 	}
-	for _, s := range segments {
-		if s == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(segments, "")
 }
 
 // documentScriptEngine is the minimum contract documentService needs from
@@ -176,7 +172,7 @@ func (s *documentService) Render(
 	// configs) target the same entry, they are distinct renders and must
 	// not collapse onto one another's HTML (RR-4QSBN).
 	sfKey := entryID + "|" + cfg.ConfigID
-	result, err, _ := s.group.Do(sfKey, func() (interface{}, error) {
+	result, err, _ := s.group.Do(sfKey, func() (any, error) {
 		return s.doRender(ctx, entryID, cfg, entities, contentHash, cacheFile)
 	})
 	if err != nil {
@@ -646,14 +642,14 @@ func formAnchorID(base string, occ map[string]int) string {
 		return ""
 	}
 	rest := base[len(formPrefix):]
-	slash := strings.Index(rest, "/")
+	_, after, ok := strings.Cut(rest, "/")
 	var key string
-	if slash < 0 {
+	if !ok {
 		// create form: /form/<name>
 		key = "create-" + strings.ToLower(rest)
 	} else {
 		// edit form: /form/<name>/<entity-id>
-		entityID := rest[slash+1:]
+		entityID := after
 		if entityID == "" {
 			return ""
 		}

@@ -78,7 +78,7 @@ func findText(n *html.Node, text string) bool {
 func TestPropertyContains(t *testing.T) {
 	tests := []struct {
 		name  string
-		prop  interface{}
+		prop  any
 		value string
 		want  bool
 	}{
@@ -88,8 +88,8 @@ func TestPropertyContains(t *testing.T) {
 		{"string no match", "foo", "bar", false},
 		{"[]string contains", []string{"foo", "bar"}, "bar", true},
 		{"[]string does not contain", []string{"foo", "bar"}, "baz", false},
-		{"[]interface{} contains", []interface{}{"foo", "bar"}, "foo", true},
-		{"[]interface{} does not contain", []interface{}{"foo", "bar"}, "baz", false},
+		{"[]interface{} contains", []any{"foo", "bar"}, "foo", true},
+		{"[]interface{} does not contain", []any{"foo", "bar"}, "baz", false},
 		{"empty []string does not match", []string{}, "foo", false},
 	}
 	for _, tt := range tests {
@@ -105,7 +105,7 @@ func TestPropertyContains(t *testing.T) {
 func TestPropertyIsEmpty(t *testing.T) {
 	tests := []struct {
 		name string
-		prop interface{}
+		prop any
 		want bool
 	}{
 		{"nil is empty", nil, true},
@@ -113,8 +113,8 @@ func TestPropertyIsEmpty(t *testing.T) {
 		{"non-empty string is not empty", "foo", false},
 		{"empty []string is empty", []string{}, true},
 		{"non-empty []string is not empty", []string{"foo"}, false},
-		{"empty []interface{} is empty", []interface{}{}, true},
-		{"non-empty []interface{} is not empty", []interface{}{"foo"}, false},
+		{"empty []interface{} is empty", []any{}, true},
+		{"non-empty []interface{} is not empty", []any{"foo"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,7 +206,7 @@ func TestApplyFiltersMultiSelect(t *testing.T) {
 		testutil.Entity("clause").ID("E-002").WithList("applies_to", "client", "provider").Build(),
 		testutil.Entity("clause").ID("E-003").WithList("applies_to", "provider", "employee").Build(),
 		testutil.Entity("clause").ID("E-004").With("applies_to", "employee").Build(),
-		testutil.Entity("clause").ID("E-005").With("applies_to", []interface{}{"client", "provider"}).Build(), // from YAML
+		testutil.Entity("clause").ID("E-005").With("applies_to", []any{"client", "provider"}).Build(), // from YAML
 	}
 
 	tests := []struct {

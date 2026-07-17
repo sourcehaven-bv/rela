@@ -2,6 +2,7 @@ package metamodel
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -52,7 +53,7 @@ func parseDisplayTemplate(tmpl string) ([]string, error) {
 // succeeded and every placeholder names a defined property), so a malformed
 // template here degrades gracefully rather than erroring: an unclosed '{' is
 // emitted verbatim.
-func renderDisplayTemplate(tmpl string, properties map[string]interface{}) string {
+func renderDisplayTemplate(tmpl string, properties map[string]any) string {
 	var b strings.Builder
 	for i := 0; i < len(tmpl); i++ {
 		if tmpl[i] != '{' {
@@ -241,7 +242,7 @@ func (e *EntityDef) DisplayProperties() []string {
 // When display_property is a template (contains `{`), the placeholders are
 // substituted from properties, whitespace is collapsed, and the result is
 // returned — falling back to the ID when it renders empty.
-func (e *EntityDef) DisplayTitle(id string, properties map[string]interface{}) string {
+func (e *EntityDef) DisplayTitle(id string, properties map[string]any) string {
 	if isDisplayTemplate(e.DisplayProperty) {
 		if s := renderDisplayTemplate(e.DisplayProperty, properties); s != "" {
 			return s
@@ -316,12 +317,7 @@ func (e *EntityDef) GetIDPrefixes() []string {
 
 // HasPattern checks if the entity type matches a given ID pattern
 func (e *EntityDef) HasPattern(pattern string) bool {
-	for _, p := range e.GetIDPrefixes() {
-		if p == pattern {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(e.GetIDPrefixes(), pattern)
 }
 
 // MatchesID checks if an ID matches any of this entity type's prefixes

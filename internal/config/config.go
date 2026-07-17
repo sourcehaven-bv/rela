@@ -100,7 +100,7 @@ func validateName(name string) error {
 	if strings.HasPrefix(name, "/") {
 		return errors.New("config: name must be relative")
 	}
-	for _, seg := range strings.Split(name, "/") {
+	for seg := range strings.SplitSeq(name, "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			return errors.New("config: traversal or empty segment not allowed")
 		}

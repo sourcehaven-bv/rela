@@ -3,6 +3,7 @@ package conflict
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -40,7 +41,7 @@ func resolveEntity(cf *ConflictedFile, resolution *Resolution) *entity.Entity {
 	resolved := &entity.Entity{
 		ID:         ours.ID,
 		Type:       ours.Type,
-		Properties: make(map[string]interface{}),
+		Properties: make(map[string]any),
 	}
 
 	// If IDs differ, prefer theirs if explicitly chosen
@@ -89,7 +90,7 @@ func resolveRelation(cf *ConflictedFile, resolution *Resolution) *entity.Relatio
 		From:       ours.From,
 		Type:       ours.Type,
 		To:         ours.To,
-		Properties: make(map[string]interface{}),
+		Properties: make(map[string]any),
 	}
 
 	// Handle from/to/type differences
@@ -218,10 +219,8 @@ func WriteResolved(path string, e *entity.Entity, relation *entity.Relation) err
 
 // writeEntityFile formats and writes an entity to disk.
 func writeEntityFile(path string, e *entity.Entity) error {
-	fm := map[string]interface{}{"id": e.ID, "type": e.Type}
-	for k, v := range e.Properties {
-		fm[k] = v
-	}
+	fm := map[string]any{"id": e.ID, "type": e.Type}
+	maps.Copy(fm, e.Properties)
 	content := e.Content
 	if content != "" {
 		content = markdown.FormatMarkdown(content)
@@ -235,10 +234,8 @@ func writeEntityFile(path string, e *entity.Entity) error {
 
 // writeRelationFile formats and writes a relation to disk.
 func writeRelationFile(path string, r *entity.Relation) error {
-	fm := map[string]interface{}{"from": r.From, "relation": r.Type, "to": r.To}
-	for k, v := range r.Properties {
-		fm[k] = v
-	}
+	fm := map[string]any{"from": r.From, "relation": r.Type, "to": r.To}
+	maps.Copy(fm, r.Properties)
 	content := r.Content
 	if content != "" {
 		content = markdown.FormatMarkdown(content)
@@ -274,7 +271,7 @@ func RemoveConflictMarkers(path string, keepSide Side) error {
 }
 
 // collectPropertyKeys returns all unique property keys from both maps.
-func collectPropertyKeys(a, b map[string]interface{}) []string {
+func collectPropertyKeys(a, b map[string]any) []string {
 	keys := make(map[string]bool)
 	for k := range a {
 		keys[k] = true

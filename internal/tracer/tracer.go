@@ -25,7 +25,7 @@ type TraceResult struct {
 	ID         string
 	Type       string
 	Title      string
-	Properties map[string]interface{} `json:"-"`
+	Properties map[string]any `json:"-"`
 	Depth      int
 	Relation   string // relation that led to this node
 	Incoming   bool   // reached via an incoming relation

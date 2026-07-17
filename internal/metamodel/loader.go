@@ -744,7 +744,7 @@ func isKnownPropertyType(typeName string, m *Metamodel) bool {
 // checkUnknownKeys detects unknown top-level keys in the metamodel YAML.
 // This catches common typos like "entity" instead of "entities".
 func checkUnknownKeys(data []byte) error {
-	var raw map[string]interface{}
+	var raw map[string]any
 	if unmarshalErr := yaml.Unmarshal(data, &raw); unmarshalErr != nil {
 		// If we can't unmarshal as a map, the struct unmarshal already failed
 		// with a better error, so skip this check

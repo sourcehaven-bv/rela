@@ -17,7 +17,7 @@ import (
 // addEntity / addRelation: terse seed helpers that panic on error.
 // Used widely below; tests stay focused on the behavior under check.
 
-func addEntity(s store.Store, id, entityType string, props map[string]interface{}) {
+func addEntity(s store.Store, id, entityType string, props map[string]any) {
 	if err := s.CreateEntity(context.Background(), &entity.Entity{
 		ID: id, Type: entityType, Properties: props,
 	}); err != nil {
@@ -109,9 +109,9 @@ func TestFindDuplicates(t *testing.T) {
 	}
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "DOC-001", "doc", map[string]interface{}{"title": "Test Document"})
-		addEntity(s, "DOC-002", "doc", map[string]interface{}{"title": "test document"})
-		addEntity(s, "DOC-003", "doc", map[string]interface{}{"title": "Different"})
+		addEntity(s, "DOC-001", "doc", map[string]any{"title": "Test Document"})
+		addEntity(s, "DOC-002", "doc", map[string]any{"title": "test document"})
+		addEntity(s, "DOC-003", "doc", map[string]any{"title": "Different"})
 	})
 
 	t.Run("finds duplicates", func(t *testing.T) {
@@ -150,12 +150,12 @@ func TestFindUniqueViolations(t *testing.T) {
 	}
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "PERS-JV", "persoon", map[string]interface{}{"email": "jv@x.com", "nickname": "dup"})
-		addEntity(s, "PERS-DUP", "persoon", map[string]interface{}{"email": "jv@x.com", "nickname": "dup"})
-		addEntity(s, "PERS-TS", "persoon", map[string]interface{}{"email": "ts@x.com"})
+		addEntity(s, "PERS-JV", "persoon", map[string]any{"email": "jv@x.com", "nickname": "dup"})
+		addEntity(s, "PERS-DUP", "persoon", map[string]any{"email": "jv@x.com", "nickname": "dup"})
+		addEntity(s, "PERS-TS", "persoon", map[string]any{"email": "ts@x.com"})
 		addEntity(s, "PERS-NONE", "persoon", nil) // empty email — exempt
 		// Same email on a different type must NOT collide (scoped per type).
-		addEntity(s, "ACC-1", "account", map[string]interface{}{"email": "jv@x.com"})
+		addEntity(s, "ACC-1", "account", map[string]any{"email": "jv@x.com"})
 	})
 
 	t.Run("finds the email collision, not nickname or cross-type", func(t *testing.T) {
@@ -186,8 +186,8 @@ func TestFindUniqueViolations(t *testing.T) {
 			"doc": {Label: "Doc", Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}}},
 		}}
 		s2 := newServiceWith(t, plain, func(s store.Store) {
-			addEntity(s, "DOC-1", "doc", map[string]interface{}{"title": "same"})
-			addEntity(s, "DOC-2", "doc", map[string]interface{}{"title": "same"})
+			addEntity(s, "DOC-1", "doc", map[string]any{"title": "same"})
+			addEntity(s, "DOC-2", "doc", map[string]any{"title": "same"})
 		})
 		if v := s2.FindUniqueViolations(context.Background(), analysis.Options{}); len(v) != 0 {
 			t.Errorf("got %d violations, want 0 (no unique props declared)", len(v))
@@ -287,7 +287,7 @@ func TestRunValidations(t *testing.T) {
 	meta.InitAliases()
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "TKT-001", "ticket", map[string]interface{}{"status": "in-progress"})
+		addEntity(s, "TKT-001", "ticket", map[string]any{"status": "in-progress"})
 	})
 
 	violations := svc.RunValidations(context.Background(), analysis.Options{}).Violations
@@ -333,8 +333,8 @@ func TestRunValidationsFiltered(t *testing.T) {
 	meta.InitAliases()
 
 	svc := newServiceWith(t, meta, func(s store.Store) {
-		addEntity(s, "TKT-001", "ticket", map[string]interface{}{"status": "bad"})
-		addEntity(s, "BUG-001", "bug", map[string]interface{}{"status": "bad"})
+		addEntity(s, "TKT-001", "ticket", map[string]any{"status": "bad"})
+		addEntity(s, "BUG-001", "bug", map[string]any{"status": "bad"})
 	})
 
 	t.Run("filter by rule name", func(t *testing.T) {

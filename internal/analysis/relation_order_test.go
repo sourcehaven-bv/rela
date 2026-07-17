@@ -28,8 +28,8 @@ func orderableMeta(t *testing.T, mode metamodel.OrderableMode) *metamodel.Metamo
 	}
 }
 
-func addOrderedRelation(s store.Store, to string, order interface{}) {
-	props := map[string]interface{}{}
+func addOrderedRelation(s store.Store, to string, order any) {
+	props := map[string]any{}
 	if order != nil {
 		props[metamodel.OrderPropertyOut] = order
 	}

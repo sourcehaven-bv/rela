@@ -18,19 +18,19 @@ func newTestValidator(t *testing.T) *validator.GenericValidator {
 
 	_ = s.CreateEntity(ctx, &entity.Entity{
 		ID: "REQ-1", Type: "requirement",
-		Properties: map[string]interface{}{"status": "approved", "owner": "alice"},
+		Properties: map[string]any{"status": "approved", "owner": "alice"},
 	})
 	_ = s.CreateEntity(ctx, &entity.Entity{
 		ID: "REQ-2", Type: "requirement",
-		Properties: map[string]interface{}{"status": "approved"}, // missing owner
+		Properties: map[string]any{"status": "approved"}, // missing owner
 	})
 	_ = s.CreateEntity(ctx, &entity.Entity{
 		ID: "REQ-3", Type: "requirement",
-		Properties: map[string]interface{}{"status": "draft"}, // status filter won't match
+		Properties: map[string]any{"status": "draft"}, // status filter won't match
 	})
 	_ = s.CreateEntity(ctx, &entity.Entity{
 		ID: "DEC-1", Type: "decision",
-		Properties: map[string]interface{}{"status": "approved"},
+		Properties: map[string]any{"status": "approved"},
 	})
 
 	meta := &metamodel.Metamodel{

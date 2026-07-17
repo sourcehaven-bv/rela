@@ -3,6 +3,7 @@ package storage_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -184,13 +185,7 @@ func TestMemFS_WalkSkipDir(t *testing.T) {
 	}
 
 	// Should contain /root/keep/file.txt.
-	found := false
-	for _, p := range walked {
-		if p == "/root/keep/file.txt" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(walked, "/root/keep/file.txt")
 	if !found {
 		t.Errorf("expected /root/keep/file.txt in walked paths: %v", walked)
 	}

@@ -20,8 +20,8 @@ func (s *Server) resolveType(typeName string) string {
 	// Try stripping plural
 	for _, suffix := range []string{"ies", "es", "s"} {
 		replacements := map[string]string{"ies": "y", "es": "", "s": ""}
-		if strings.HasSuffix(typeName, suffix) {
-			singular := strings.TrimSuffix(typeName, suffix) + replacements[suffix]
+		if before, ok := strings.CutSuffix(typeName, suffix); ok {
+			singular := before + replacements[suffix]
 			resolved = meta.ResolveAlias(singular)
 			if _, ok := meta.GetEntityDef(resolved); ok {
 				return resolved
@@ -47,7 +47,7 @@ func (s *Server) resolveEntityType(typeName string) (string, *metamodel.EntityDe
 
 // extractProperties parses the `properties` argument and filters out both nil
 // and empty-string entries (both treated as "no value"). Used by create paths.
-func extractProperties(request mcp.CallToolRequest) map[string]interface{} {
+func extractProperties(request mcp.CallToolRequest) map[string]any {
 	props, ok := parsePropertiesArg(request)
 	if !ok {
 		return nil
@@ -59,7 +59,7 @@ func extractProperties(request mcp.CallToolRequest) map[string]interface{} {
 // entries so update_entity can use them as a delete sentinel. Empty strings are
 // still filtered (kept as a no-op for consistency with the create path).
 // Returns nil iff the argument is missing/malformed or contains only empty strings.
-func extractPropertiesAllowNil(request mcp.CallToolRequest) map[string]interface{} {
+func extractPropertiesAllowNil(request mcp.CallToolRequest) map[string]any {
 	props, ok := parsePropertiesArg(request)
 	if !ok {
 		return nil
@@ -70,7 +70,7 @@ func extractPropertiesAllowNil(request mcp.CallToolRequest) map[string]interface
 // parsePropertiesArg extracts the raw properties map from a tool request, handling
 // both the native map argument and the JSON-encoded string fallback. Returns
 // (nil, false) when the argument is missing, of an unsupported type, or malformed/null JSON.
-func parsePropertiesArg(request mcp.CallToolRequest) (map[string]interface{}, bool) {
+func parsePropertiesArg(request mcp.CallToolRequest) (map[string]any, bool) {
 	args := request.GetArguments()
 	propsRaw, ok := args["properties"]
 	if !ok {
@@ -78,10 +78,10 @@ func parsePropertiesArg(request mcp.CallToolRequest) (map[string]interface{}, bo
 	}
 
 	switch p := propsRaw.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		return p, true
 	case string:
-		var props map[string]interface{}
+		var props map[string]any
 		if err := json.Unmarshal([]byte(p), &props); err != nil {
 			return nil, false
 		}
@@ -98,11 +98,11 @@ func parsePropertiesArg(request mcp.CallToolRequest) (map[string]interface{}, bo
 // filterProperties removes empty-string values from a property map. When
 // keepNil is false, nil values are also removed. Returns nil if the resulting
 // map is empty.
-func filterProperties(props map[string]interface{}, keepNil bool) map[string]interface{} {
+func filterProperties(props map[string]any, keepNil bool) map[string]any {
 	if props == nil {
 		return nil
 	}
-	filtered := make(map[string]interface{}, len(props))
+	filtered := make(map[string]any, len(props))
 	for k, v := range props {
 		if !keepNil && v == nil {
 			continue
@@ -123,7 +123,7 @@ func filterProperties(props map[string]interface{}, keepNil bool) map[string]int
 // (a nil value means "delete" in update_entity; deleting a required property would leave
 // the entity invalid, so we surface that as an actionable error rather than a misleading
 // success that analyze_validations later catches).
-func (s *Server) validatePropertyNames(entityType string, properties map[string]interface{}) *mcp.CallToolResult {
+func (s *Server) validatePropertyNames(entityType string, properties map[string]any) *mcp.CallToolResult {
 	if properties == nil {
 		return nil
 	}

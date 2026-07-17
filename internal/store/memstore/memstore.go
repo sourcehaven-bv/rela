@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -481,9 +482,7 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 		a.entityID = newID
 		reKey[attachmentKey(newID, a.property, a.fileName)] = a
 	}
-	for k, v := range reKey {
-		m.attachments[k] = v
-	}
+	maps.Copy(m.attachments, reKey)
 
 	m.emit(store.Event{
 		Op:         store.EventEntityUpdated,
@@ -588,7 +587,7 @@ func (m *MemStore) CreateRelation(
 	if data != nil {
 		r.Content = data.Content
 		if data.Properties != nil {
-			r.Properties = make(map[string]interface{}, len(data.Properties))
+			r.Properties = make(map[string]any, len(data.Properties))
 			for k, v := range data.Properties {
 				r.Properties[k] = entity.CloneValue(v)
 			}
@@ -627,7 +626,7 @@ func (m *MemStore) UpdateRelation(
 	updated := r.Clone()
 	updated.Content = data.Content
 	if data.Properties != nil {
-		updated.Properties = make(map[string]interface{}, len(data.Properties))
+		updated.Properties = make(map[string]any, len(data.Properties))
 		for k, v := range data.Properties {
 			updated.Properties[k] = entity.CloneValue(v)
 		}

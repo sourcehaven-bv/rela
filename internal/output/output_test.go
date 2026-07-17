@@ -45,7 +45,7 @@ func TestWriteEntities(t *testing.T) {
 		{
 			ID:   "REQ-001",
 			Type: "requirement",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Test Requirement",
 				"status": "accepted",
 			},
@@ -53,7 +53,7 @@ func TestWriteEntities(t *testing.T) {
 		{
 			ID:   "REQ-002",
 			Type: "requirement",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Another Requirement",
 				"status": "draft",
 			},
@@ -83,7 +83,7 @@ func TestWriteEntitiesJSON(t *testing.T) {
 		{
 			ID:   "REQ-001",
 			Type: "requirement",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title": "Test",
 			},
 		},
@@ -113,7 +113,7 @@ func TestWriteEntitiesWithSummary(t *testing.T) {
 		{
 			ID:   "REQ-001",
 			Type: "requirement",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Test",
 				"status": "accepted",
 			},
@@ -121,7 +121,7 @@ func TestWriteEntitiesWithSummary(t *testing.T) {
 		{
 			ID:   "REQ-002",
 			Type: "requirement",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Test 2",
 				"status": "draft",
 			},
@@ -213,7 +213,7 @@ func TestWriteEntity(t *testing.T) {
 	e := &entity.Entity{
 		ID:   "REQ-001",
 		Type: "requirement",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":       "Test Requirement",
 			"status":      "accepted",
 			"priority":    "high",
@@ -262,7 +262,7 @@ func TestWriteEntity(t *testing.T) {
 	entity2 := &entity.Entity{
 		ID:         "REQ-002",
 		Type:       "requirement",
-		Properties: map[string]interface{}{},
+		Properties: map[string]any{},
 	}
 	err = w2.WriteEntity(entity2, nil, nil)
 	if err != nil {
@@ -290,7 +290,7 @@ func TestWriteEntityJSON(t *testing.T) {
 	}
 
 	// Verify it's valid JSON
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestWriteTraceJSON(t *testing.T) {
 		Title: "Root",
 		// Properties is json:"-" plumbing for text rendering; it must NOT
 		// appear in the trace JSON schema (TKT-COZN2E).
-		Properties: map[string]interface{}{"secret": "should-not-serialize"},
+		Properties: map[string]any{"secret": "should-not-serialize"},
 	}
 
 	err := w.WriteTrace(trace)
@@ -905,26 +905,26 @@ func TestWriteAnalysisResultJSON(t *testing.T) {
 // Mock types for schema testing
 type mockMetamodel struct{}
 
-func (m *mockMetamodel) GetVersion() string        { return "1.0" }
-func (m *mockMetamodel) GetNamespace() string      { return "test" }
-func (m *mockMetamodel) GetEntities() interface{}  { return map[string]interface{}{} }
-func (m *mockMetamodel) GetRelations() interface{} { return map[string]interface{}{} }
-func (m *mockMetamodel) GetTypes() interface{}     { return map[string]interface{}{} }
+func (m *mockMetamodel) GetVersion() string   { return "1.0" }
+func (m *mockMetamodel) GetNamespace() string { return "test" }
+func (m *mockMetamodel) GetEntities() any     { return map[string]any{} }
+func (m *mockMetamodel) GetRelations() any    { return map[string]any{} }
+func (m *mockMetamodel) GetTypes() any        { return map[string]any{} }
 
 type mockEntityDef struct{}
 
-func (e *mockEntityDef) GetLabel() string           { return "Test Entity" }
-func (e *mockEntityDef) GetAliases() []string       { return []string{"test"} }
-func (e *mockEntityDef) GetIDPatterns() []string    { return []string{"TEST-*"} }
-func (e *mockEntityDef) GetProperties() interface{} { return map[string]interface{}{} }
-func (e *mockEntityDef) GetRDFType() string         { return "test:Entity" }
-func (e *mockEntityDef) GetColor() string           { return "#FF0000" }
-func (e *mockEntityDef) GetBorderColor() string     { return "#000000" }
+func (e *mockEntityDef) GetLabel() string        { return "Test Entity" }
+func (e *mockEntityDef) GetAliases() []string    { return []string{"test"} }
+func (e *mockEntityDef) GetIDPatterns() []string { return []string{"TEST-*"} }
+func (e *mockEntityDef) GetProperties() any      { return map[string]any{} }
+func (e *mockEntityDef) GetRDFType() string      { return "test:Entity" }
+func (e *mockEntityDef) GetColor() string        { return "#FF0000" }
+func (e *mockEntityDef) GetBorderColor() string  { return "#000000" }
 
 type mockRelationDef struct {
 	symmetric bool
 	desc      string
-	inverse   interface{}
+	inverse   any
 	srcMin    *int
 	srcMax    *int
 	tgtMin    *int
@@ -940,12 +940,12 @@ func (r *mockRelationDef) GetDescription() string {
 	}
 	return ""
 }
-func (r *mockRelationDef) GetInverse() interface{} { return r.inverse }
-func (r *mockRelationDef) IsSymmetric() bool       { return r.symmetric }
-func (r *mockRelationDef) GetMinOutgoing() *int    { return r.srcMin }
-func (r *mockRelationDef) GetMaxOutgoing() *int    { return r.srcMax }
-func (r *mockRelationDef) GetMinIncoming() *int    { return r.tgtMin }
-func (r *mockRelationDef) GetMaxIncoming() *int    { return r.tgtMax }
+func (r *mockRelationDef) GetInverse() any      { return r.inverse }
+func (r *mockRelationDef) IsSymmetric() bool    { return r.symmetric }
+func (r *mockRelationDef) GetMinOutgoing() *int { return r.srcMin }
+func (r *mockRelationDef) GetMaxOutgoing() *int { return r.srcMax }
+func (r *mockRelationDef) GetMinIncoming() *int { return r.tgtMin }
+func (r *mockRelationDef) GetMaxIncoming() *int { return r.tgtMax }
 
 // TestWriteSchemaOverview tests schema overview output
 func TestWriteSchemaOverview(t *testing.T) {
@@ -958,7 +958,7 @@ func TestWriteSchemaOverview(t *testing.T) {
 		t.Fatalf("WriteSchemaOverview failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -978,7 +978,7 @@ func TestWriteSchemaEntities(t *testing.T) {
 		t.Fatalf("WriteSchemaEntities failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -995,7 +995,7 @@ func TestWriteSchemaRelations(t *testing.T) {
 		t.Fatalf("WriteSchemaRelations failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -1012,7 +1012,7 @@ func TestWriteSchemaTypes(t *testing.T) {
 		t.Fatalf("WriteSchemaTypes failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -1030,7 +1030,7 @@ func TestWriteSchemaEntityDetail(t *testing.T) {
 		t.Fatalf("WriteSchemaEntityDetail failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -1050,7 +1050,7 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 		t.Fatalf("WriteSchemaRelationDetail failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if unmarshalErr := json.Unmarshal(buf.Bytes(), &result); unmarshalErr != nil {
 		t.Fatalf("failed to parse JSON output: %v", unmarshalErr)
 	}
@@ -1080,7 +1080,7 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 		t.Fatalf("WriteSchemaRelationDetail with optional fields failed: %v", err)
 	}
 
-	var result2 map[string]interface{}
+	var result2 map[string]any
 	if err := json.Unmarshal(buf2.Bytes(), &result2); err != nil {
 		t.Fatalf("failed to parse JSON output: %v", err)
 	}
@@ -1099,7 +1099,7 @@ func TestWriteSchemaRelationDetail(t *testing.T) {
 // can distinguish "resolver was used" from "literal title property was read".
 type fakeTitleResolver struct{ title string }
 
-func (f fakeTitleResolver) DisplayTitle(_, _ string, _ map[string]interface{}) string {
+func (f fakeTitleResolver) DisplayTitle(_, _ string, _ map[string]any) string {
 	return f.title
 }
 
@@ -1108,7 +1108,7 @@ func (f fakeTitleResolver) DisplayTitle(_, _ string, _ map[string]interface{}) s
 // the root.
 type idTitleResolver map[string]string
 
-func (r idTitleResolver) DisplayTitle(id, _ string, _ map[string]interface{}) string {
+func (r idTitleResolver) DisplayTitle(id, _ string, _ map[string]any) string {
 	return r[id]
 }
 
@@ -1121,7 +1121,7 @@ func TestWriter_TitleResolver(t *testing.T) {
 	e := &entity.Entity{
 		ID:   "PERS-1",
 		Type: "persoon",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"achternaam": "Vloothuis",
 			"status":     "draft",
 		},
@@ -1143,7 +1143,7 @@ func TestWriter_TitleResolver(t *testing.T) {
 		withTitle := &entity.Entity{
 			ID:   "TKT-1",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Literal Title",
 				"status": "draft",
 			},
@@ -1169,7 +1169,7 @@ func TestWriteTrace_TitleResolver(t *testing.T) {
 		ID:         "PERS-1",
 		Type:       "persoon",
 		Title:      "",
-		Properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+		Properties: map[string]any{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
 	}
 
 	t.Run("resolver set → renders resolved display title", func(t *testing.T) {

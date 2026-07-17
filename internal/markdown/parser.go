@@ -28,7 +28,7 @@ var conflictMarkerStart = []byte("<<<<<<<")
 
 // Document represents a parsed markdown document with YAML frontmatter
 type Document struct {
-	Frontmatter map[string]interface{}
+	Frontmatter map[string]any
 	Content     string
 }
 
@@ -80,7 +80,7 @@ func ParseDocument(content string) (*Document, error) {
 
 	fmBlock, body := frontmatter.Split(content)
 
-	var fm map[string]interface{}
+	var fm map[string]any
 	if fmBlock != "" {
 		if err := yaml.Unmarshal([]byte(fmBlock), &fm); err != nil {
 			return nil, fmt.Errorf("failed to parse frontmatter: %w", err)
@@ -95,14 +95,14 @@ func ParseDocument(content string) (*Document, error) {
 
 // FormatDocument formats a document back to markdown with YAML frontmatter.
 // Keys are output in alphabetical order (yaml.Marshal default behavior).
-func FormatDocument(frontmatter map[string]interface{}, content string) (string, error) {
+func FormatDocument(frontmatter map[string]any, content string) (string, error) {
 	return FormatDocumentOrdered(frontmatter, content, nil)
 }
 
 // FormatDocumentOrdered formats a document with YAML frontmatter in a specific key order.
 // If keyOrder is nil or empty, keys are sorted alphabetically.
 // Keys in keyOrder appear first (in that order), followed by any remaining keys alphabetically.
-func FormatDocumentOrdered(frontmatter map[string]interface{}, content string, keyOrder []string) (string, error) {
+func FormatDocumentOrdered(frontmatter map[string]any, content string, keyOrder []string) (string, error) {
 	var sb strings.Builder
 
 	if len(frontmatter) > 0 {
@@ -138,7 +138,7 @@ func FormatDocumentOrdered(frontmatter map[string]interface{}, content string, k
 
 // marshalOrdered marshals a map to YAML with keys in the specified order.
 // Keys in keyOrder appear first, followed by remaining keys alphabetically.
-func marshalOrdered(data map[string]interface{}, keyOrder []string) ([]byte, error) {
+func marshalOrdered(data map[string]any, keyOrder []string) ([]byte, error) {
 	// Build yaml.Node with ordered keys
 	node := &yaml.Node{
 		Kind: yaml.MappingNode,
@@ -189,7 +189,7 @@ func marshalOrdered(data map[string]interface{}, keyOrder []string) ([]byte, err
 }
 
 // valueToNode converts a Go value to a yaml.Node.
-func valueToNode(val interface{}) (*yaml.Node, error) {
+func valueToNode(val any) (*yaml.Node, error) {
 	var node yaml.Node
 	if err := node.Encode(val); err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ func (d *Document) GetStringSlice(key string) []string {
 	}
 	if v, ok := d.Frontmatter[key]; ok {
 		switch val := v.(type) {
-		case []interface{}:
+		case []any:
 			result := make([]string, 0, len(val))
 			for _, item := range val {
 				if s, ok := item.(string); ok {

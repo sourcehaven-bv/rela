@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -98,10 +99,5 @@ func TestACLList_HiddenNeighborExcludedFromRelations(t *testing.T) {
 }
 
 func containsID(ids []string, want string) bool {
-	for _, id := range ids {
-		if id == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ids, want)
 }

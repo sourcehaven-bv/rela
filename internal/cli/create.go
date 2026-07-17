@@ -30,7 +30,7 @@ func (c *CreateCmd) Run(ctx context.Context, svc *writeServices) error {
 		return err
 	}
 
-	props := make(map[string]interface{})
+	props := make(map[string]any)
 	for _, prop := range c.Property {
 		key, value, parseErr := parsePropertyFlag(prop)
 		if parseErr != nil {
@@ -114,12 +114,12 @@ func (c *CreateCmd) getBodyContent() (string, error) {
 
 // parsePropertyFlag parses a "key=value" property flag.
 func parsePropertyFlag(prop string) (key, value string, err error) {
-	idx := strings.Index(prop, "=")
-	if idx == -1 {
+	before, after, ok := strings.Cut(prop, "=")
+	if !ok {
 		return "", "", fmt.Errorf("invalid property format %q: expected key=value", prop)
 	}
-	key = strings.TrimSpace(prop[:idx])
-	value = strings.TrimSpace(prop[idx+1:])
+	key = strings.TrimSpace(before)
+	value = strings.TrimSpace(after)
 	if key == "" {
 		return "", "", fmt.Errorf("invalid property format %q: key cannot be empty", prop)
 	}

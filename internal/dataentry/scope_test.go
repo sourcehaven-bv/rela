@@ -41,9 +41,9 @@ func getPosition(t *testing.T, app *App, id string, scope ScopeDescriptor) (*htt
 
 func seedTickets(app *App) {
 	// Seeded out of title order to prove sort, not insertion order, wins.
-	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"title": "B", "status": "open"}})
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "A", "status": "open"}})
-	seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{"title": "C", "status": "closed"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "B", "status": "open"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A", "status": "open"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket", Properties: map[string]any{"title": "C", "status": "closed"}})
 }
 
 func TestV1Position(t *testing.T) {
@@ -154,7 +154,7 @@ func TestV1Position(t *testing.T) {
 	t.Run("search scope spans mixed entity types in relevance order", func(t *testing.T) {
 		app := newTestAppV1(t)
 		seedTickets(app)
-		seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "Feat"}})
+		seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "Feat"}})
 		// Relevance order interleaves a feature between tickets. _position must
 		// resolve across types — the prev/next of the feature are the tickets
 		// on either side of it in the search result, NOT same-type neighbors.
@@ -189,7 +189,7 @@ func TestV1Position(t *testing.T) {
 	t.Run("search scope with type narrows mixed results to that type", func(t *testing.T) {
 		app := newTestAppV1(t)
 		seedTickets(app)
-		seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]interface{}{"title": "Feat"}})
+		seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "Feat"}})
 		app.searcher = &fakeSearcher{hits: []search.Hit{
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "FEAT-001", Type: "feature"},

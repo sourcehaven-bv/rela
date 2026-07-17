@@ -40,7 +40,7 @@ func newMockWorkspace() *mockWorkspace {
 		{
 			ID:   "TKT-001",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Valid ticket",
 				"status": "ready",
 			},
@@ -48,7 +48,7 @@ func newMockWorkspace() *mockWorkspace {
 		{
 			ID:   "TKT-002",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Invalid ticket",
 				"status": "draft",
 			},
@@ -56,7 +56,7 @@ func newMockWorkspace() *mockWorkspace {
 		{
 			ID:   "PARENT-001",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Parent ticket",
 				"status": "approved",
 			},
@@ -120,12 +120,12 @@ func TestLuaValidation_SingleViolation(t *testing.T) {
 		{
 			ID:         "TKT-001",
 			Type:       "ticket",
-			Properties: map[string]interface{}{"status": "ready"},
+			Properties: map[string]any{"status": "ready"},
 		},
 		{
 			ID:         "TKT-002",
 			Type:       "ticket",
-			Properties: map[string]interface{}{"status": ""},
+			Properties: map[string]any{"status": ""},
 		},
 	}
 
@@ -172,7 +172,7 @@ func TestLuaValidation_MultipleViolations(t *testing.T) {
 		{
 			ID:         "TKT-001",
 			Type:       "ticket",
-			Properties: map[string]interface{}{}, // missing both status and owner
+			Properties: map[string]any{}, // missing both status and owner
 		},
 	}
 
@@ -214,7 +214,7 @@ func TestLuaValidation_SeverityOverride(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -241,7 +241,7 @@ func TestLuaValidation_SeverityDefault(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -313,7 +313,7 @@ func TestLuaValidation_ReturnValues(t *testing.T) {
 			})
 
 			entities := []*entity.Entity{
-				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+				{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 			}
 
 			svc := New(meta, ws.services(t.TempDir()))
@@ -362,7 +362,7 @@ func TestLuaValidation_EntityContext(t *testing.T) {
 		{
 			ID:   "TKT-001",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Test Ticket",
 				"status": "open",
 			},
@@ -399,7 +399,7 @@ func TestLuaValidation_ReadOnlyWorkspace(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -431,7 +431,7 @@ func TestLuaValidation_MutationsBlocked(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -462,13 +462,13 @@ func TestLuaValidation_CombinedWithWhenThen(t *testing.T) {
 
 	entities := []*entity.Entity{
 		// Passes both when/then and Lua
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "ready", "priority": "high"}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"status": "ready", "priority": "high"}},
 		// Fails when/then (no priority)
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "ready"}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"status": "ready"}},
 		// Passes when/then but fails Lua (priority is "invalid")
-		{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{"status": "ready", "priority": "invalid"}},
+		{ID: "TKT-003", Type: "ticket", Properties: map[string]any{"status": "ready", "priority": "invalid"}},
 		// Doesn't match when (status!=ready), so no check
-		{ID: "TKT-004", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}},
+		{ID: "TKT-004", Type: "ticket", Properties: map[string]any{"status": "draft"}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -503,7 +503,7 @@ func TestLuaValidation_SyntaxError(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -527,7 +527,7 @@ func TestLuaValidation_RuntimeError(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -570,8 +570,8 @@ func TestLuaValidation_ScriptFile(t *testing.T) {
 	}, "status")
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "valid"}},
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "invalid"}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"status": "valid"}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"status": "invalid"}},
 	}
 
 	svc := New(meta, ws.services(tmpDir))
@@ -608,7 +608,7 @@ func TestLuaValidation_ScriptFileNotFound(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(tmpDir))
@@ -651,8 +651,8 @@ func TestLuaValidation_CrossEntityValidation(t *testing.T) {
 	// TKT-001 has a parent (PARENT-001) which is approved - should pass
 	// TKT-002 has no parent - should pass
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"status": "ready"}},
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{"status": "draft"}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"status": "ready"}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"status": "draft"}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -676,7 +676,7 @@ func TestLuaValidation_Timeout(t *testing.T) {
 	})
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	// Should complete within reasonable time (timeout kicks in)
@@ -753,7 +753,7 @@ func TestLuaValidation_PathTraversal(t *testing.T) {
 			})
 
 			entities := []*entity.Entity{
-				{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+				{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 			}
 
 			svc := New(meta, ws.services(tmpDir))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"strings"
@@ -24,7 +25,11 @@ var ValidBadgeNames = map[string]bool{
 type PaletteConfig struct {
 	PaletteColors `yaml:",inline"`
 	Badges        map[string]string `yaml:"badges,omitempty" json:"badges,omitempty"`
-	Dark          DarkMode          `yaml:"dark,omitempty"   json:"dark,omitempty"`
+	// Dark is a struct, so json `omitempty` would not omit it (it has no
+	// effect on struct fields); `omitzero` omits a zero-value DarkMode,
+	// which is the intended "no dark config" behavior. Its MarshalJSON
+	// still renders a non-zero value as `false` or an explicit palette.
+	Dark DarkMode `yaml:"dark,omitempty" json:"dark,omitzero"`
 }
 
 // PaletteColors holds the 8 named color roles. All fields are optional;
@@ -90,7 +95,7 @@ func (d *DarkMode) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // MarshalYAML serializes DarkMode back to YAML.
-func (d DarkMode) MarshalYAML() (interface{}, error) {
+func (d DarkMode) MarshalYAML() (any, error) {
 	if d.Explicit != nil {
 		return d.Explicit, nil
 	}
@@ -105,7 +110,8 @@ func (d DarkMode) MarshalYAML() (interface{}, error) {
 
 // MarshalJSON serializes DarkMode to JSON. Returns `false` or the
 // explicit PaletteColors object. A zero-value DarkMode marshals to
-// `null` (omitted in `omitempty` contexts).
+// `null`; the enclosing field uses `json:",omitzero"` so an unset
+// DarkMode is omitted entirely rather than emitted as `"dark":null`.
 func (d DarkMode) MarshalJSON() ([]byte, error) {
 	if d.Explicit != nil {
 		return json.Marshal(d.Explicit)
@@ -384,16 +390,12 @@ func applyOver(base, over PaletteColors) PaletteColors {
 
 func copyBadges(src map[string]string) map[string]string {
 	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 
 func mergeBadges(dst, src map[string]string) {
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 }
 
 // deriveTheme produces the full 21-variable CSS map from 8 base colors + 7 badges.

@@ -73,7 +73,7 @@ func (c *RelationHistoryCmd) printSnapshot(ctx context.Context, reader store.Rel
 	if err != nil {
 		return fmt.Errorf("read version %d for %s--%s--%s: %w", c.Version, c.From, c.Type, c.To, err)
 	}
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"from":       snap.From,
 		"type":       snap.Type,
 		"to":         snap.To,

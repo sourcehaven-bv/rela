@@ -257,7 +257,7 @@ func (s *Server) handleAnalyzeProperties(
 		return mcp.NewToolResultText("All entity and relation properties are valid"), nil
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 	errorCount := 0
 
 	if totalEntityErrors > 0 {

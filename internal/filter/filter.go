@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -183,12 +184,12 @@ func ParseAll(filters []string) ([]*Filter, error) {
 // For list values ([]string, []interface{}):
 //   - For = operator: returns true if ANY element matches
 //   - For != operator: returns true if NO element matches
-func MatchValue(value interface{}, f *Filter) bool {
+func MatchValue(value any, f *Filter) bool {
 	// Handle list types
 	switch v := value.(type) {
 	case []string:
 		return matchStringList(v, f)
-	case []interface{}:
+	case []any:
 		strList := make([]string, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok {
@@ -223,12 +224,7 @@ func matchStringList(list []string, f *Filter) bool {
 
 	// For != operator: return true only if NO element matches the value
 	if f.Operator == OpNotEqual {
-		for _, s := range list {
-			if s == f.Value {
-				return false // Found a match, so "not equal" is false
-			}
-		}
-		return true // No element matched
+		return !slices.Contains(list, f.Value) // No element matched
 	}
 
 	// For all other operators: return true if ANY element matches

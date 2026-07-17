@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -327,11 +328,8 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 	// Find all relations where this entity type can be the source
 	validRelations := make(map[string]metamodel.RelationDef)
 	for relName, relDef := range g.meta.Relations {
-		for _, from := range relDef.From {
-			if from == typeName {
-				validRelations[relName] = relDef
-				break
-			}
+		if slices.Contains(relDef.From, typeName) {
+			validRelations[relName] = relDef
 		}
 	}
 

@@ -1,6 +1,8 @@
 package automation
 
 import (
+	"slices"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -158,13 +160,7 @@ func (e *Engine) Process(event Event) *Result {
 func (e *Engine) matches(trigger Trigger, event Event) bool {
 	// Check entity type constraint
 	if len(trigger.Entity) > 0 && event.Entity != nil {
-		matched := false
-		for _, entityType := range trigger.Entity {
-			if event.Entity.Type == entityType {
-				matched = true
-				break
-			}
-		}
+		matched := slices.Contains(trigger.Entity, event.Entity.Type)
 		if !matched {
 			return false
 		}
@@ -281,7 +277,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			return
 		}
 
-		props := make(map[string]interface{})
+		props := make(map[string]any)
 		for k, v := range action.CreateEntity.Properties {
 			props[k] = e.interpolate(v, event)
 		}
@@ -358,7 +354,7 @@ func (e *Engine) matchProperty(ent *entity.Entity, f *filter.Filter) bool {
 	if matched, handled := e.matchTyped(ent, f); handled {
 		return matched
 	}
-	var val interface{}
+	var val any
 	if ent != nil {
 		val = ent.Properties[f.Property]
 	}
@@ -394,7 +390,7 @@ func (e *Engine) matchTyped(ent *entity.Entity, f *filter.Filter) (matched, hand
 
 // matchSimple does simple value matching without metamodel context.
 // Handles the most common automation validation cases.
-func matchSimple(val interface{}, f *filter.Filter) bool {
+func matchSimple(val any, f *filter.Filter) bool {
 	// Handle nil/missing/empty values
 	if val == nil || val == "" {
 		// Only match if explicitly comparing to empty with = operator

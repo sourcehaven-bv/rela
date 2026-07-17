@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,13 +129,7 @@ func TestEntityFor_AutoFillsRequired(t *testing.T) {
 	}
 	// Status should be a valid value
 	validStatuses := []string{"open", "closed", "pending"}
-	found := false
-	for _, v := range validStatuses {
-		if status == v {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(validStatuses, status)
 	if !found {
 		t.Errorf("status = %q, want one of %v", status, validStatuses)
 	}

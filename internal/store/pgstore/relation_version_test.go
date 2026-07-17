@@ -33,7 +33,7 @@ func newRelVersionInput(recordID int64, from, relType, to, content string) store
 		Type:          relType,
 		To:            to,
 		Content:       content,
-		Properties:    map[string]interface{}{"weight": "high"},
+		Properties:    map[string]any{"weight": "high"},
 		SchemaHash:    "schema-rel",
 		Projection:    []byte(`{"relations":{}}`),
 		PrincipalUser: "alice",
@@ -51,7 +51,7 @@ func TestRelationVersionWriteAndList(t *testing.T) {
 	ctx := context.Background()
 
 	_, err = s.CreateRelation(ctx, "TKT-1", "blocks", "TKT-2",
-		&store.RelationData{Content: "first", Properties: map[string]interface{}{"weight": "high"}})
+		&store.RelationData{Content: "first", Properties: map[string]any{"weight": "high"}})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "TKT-1", "blocks", "TKT-2")
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -37,7 +39,7 @@ func (m *Manager) assignManagedOrder(ctx context.Context, rel *entity.Relation, 
 			return nil
 		}
 		if rel.Properties == nil {
-			rel.Properties = make(map[string]interface{})
+			rel.Properties = make(map[string]any)
 		}
 		if _, ok := FiniteOrder(rel.Properties[prop]); ok {
 			return nil
@@ -80,12 +82,7 @@ func touchesOrderKey(opts entity.RelationOptions, key string) bool {
 	if _, ok := opts.Properties[key]; ok {
 		return true
 	}
-	for _, k := range opts.MetaUnset {
-		if k == key {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(opts.MetaUnset, key)
 }
 
 // validateOrderUpdate rejects non-finite numeric values on managed order
@@ -134,10 +131,8 @@ func (m *Manager) maybeRenumberSide(ctx context.Context, q store.RelationQuery, 
 		}
 		c := *r
 		if r.Properties != nil {
-			c.Properties = make(map[string]interface{}, len(r.Properties))
-			for k, v := range r.Properties {
-				c.Properties[k] = v
-			}
+			c.Properties = make(map[string]any, len(r.Properties))
+			maps.Copy(c.Properties, r.Properties)
 		}
 		sibs = append(sibs, &c)
 	}
@@ -195,10 +190,8 @@ func (m *Manager) maybeRenumberSide(ctx context.Context, q store.RelationQuery, 
 	// from the user-initiated UpdateRelation that spawned them. See issue #886.
 	renumberCtx := audit.WithTriggeredBy(ctx, "renumber:"+prop)
 	for _, p := range plan {
-		props := make(map[string]interface{}, len(p.rel.Properties)+1)
-		for k, v := range p.rel.Properties {
-			props[k] = v
-		}
+		props := make(map[string]any, len(p.rel.Properties)+1)
+		maps.Copy(props, p.rel.Properties)
 		props[prop] = p.newVal
 		data := store.RelationData{Properties: props, Content: p.rel.Content}
 		updated, err := m.deps.Store.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, data)

@@ -42,7 +42,7 @@ func TestAffordances_BidirectionalContract(t *testing.T) {
 			seedEntity(app, &entity.Entity{
 				ID:   "TKT-001",
 				Type: "ticket",
-				Properties: map[string]interface{}{
+				Properties: map[string]any{
 					"title":  "Contract test ticket",
 					"status": "open",
 				},

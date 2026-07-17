@@ -41,12 +41,12 @@ type InaccessibleField struct {
 
 // Entity represents any architecture entity (requirement, decision, etc.).
 type Entity struct {
-	ID           string                 `json:"id"`
-	Type         string                 `json:"type"`
-	Properties   map[string]interface{} `json:"properties,omitempty"`
-	Content      string                 `json:"content,omitempty"`
-	UpdatedAt    time.Time              `json:"updated_at,omitempty"`
-	Inaccessible []InaccessibleField    `json:"inaccessible,omitempty"`
+	ID           string              `json:"id"`
+	Type         string              `json:"type"`
+	Properties   map[string]any      `json:"properties,omitempty"`
+	Content      string              `json:"content,omitempty"`
+	UpdatedAt    time.Time           `json:"updated_at,omitzero"`
+	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 }
 
 // IsInaccessible reports whether the named property is in [Entity.Inaccessible].
@@ -77,7 +77,7 @@ func New(id, entityType string) *Entity {
 	return &Entity{
 		ID:         id,
 		Type:       entityType,
-		Properties: make(map[string]interface{}),
+		Properties: make(map[string]any),
 	}
 }
 
@@ -94,7 +94,7 @@ func (e *Entity) GetString(key string) string {
 // SetString sets a string property value.
 func (e *Entity) SetString(key, value string) {
 	if e.Properties == nil {
-		e.Properties = make(map[string]interface{})
+		e.Properties = make(map[string]any)
 	}
 	e.Properties[key] = value
 }
@@ -116,7 +116,7 @@ func (e *Entity) Description() string {
 
 // GetAttribute returns struct fields (id, type) or property map values
 // uniformly.
-func (e *Entity) GetAttribute(name string) interface{} {
+func (e *Entity) GetAttribute(name string) any {
 	switch name {
 	case "id":
 		return e.ID
@@ -148,7 +148,7 @@ func (e *Entity) GetAttributeStrings(name string) []string {
 	switch v := val.(type) {
 	case []string:
 		return v
-	case []interface{}:
+	case []any:
 		result := make([]string, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok {
@@ -168,7 +168,7 @@ func (e *Entity) Clone() *Entity {
 		Type:       e.Type,
 		Content:    e.Content,
 		UpdatedAt:  e.UpdatedAt,
-		Properties: make(map[string]interface{}, len(e.Properties)),
+		Properties: make(map[string]any, len(e.Properties)),
 	}
 	for k, v := range e.Properties {
 		clone.Properties[k] = CloneValue(v)
@@ -181,20 +181,20 @@ func (e *Entity) Clone() *Entity {
 }
 
 // CloneValue returns a deep copy of a property value.
-func CloneValue(v interface{}) interface{} {
+func CloneValue(v any) any {
 	switch val := v.(type) {
 	case []string:
 		cp := make([]string, len(val))
 		copy(cp, val)
 		return cp
-	case []interface{}:
-		cp := make([]interface{}, len(val))
+	case []any:
+		cp := make([]any, len(val))
 		for i, item := range val {
 			cp[i] = CloneValue(item)
 		}
 		return cp
-	case map[string]interface{}:
-		cp := make(map[string]interface{}, len(val))
+	case map[string]any:
+		cp := make(map[string]any, len(val))
 		for k, item := range val {
 			cp[k] = CloneValue(item)
 		}
@@ -206,13 +206,13 @@ func CloneValue(v interface{}) interface{} {
 
 // Relation represents a directed relationship between two entities.
 type Relation struct {
-	From         string                 `json:"from"`
-	Type         string                 `json:"relation"`
-	To           string                 `json:"to"`
-	Properties   map[string]interface{} `json:"properties,omitempty"`
-	Content      string                 `json:"content,omitempty"`
-	UpdatedAt    time.Time              `json:"updated_at,omitempty"`
-	Inaccessible []InaccessibleField    `json:"inaccessible,omitempty"`
+	From         string              `json:"from"`
+	Type         string              `json:"relation"`
+	To           string              `json:"to"`
+	Properties   map[string]any      `json:"properties,omitempty"`
+	Content      string              `json:"content,omitempty"`
+	UpdatedAt    time.Time           `json:"updated_at,omitzero"`
+	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 }
 
 // IsInaccessible reports whether the named property is in [Relation.Inaccessible].
@@ -255,7 +255,7 @@ func (r *Relation) Clone() *Relation {
 		UpdatedAt: r.UpdatedAt,
 	}
 	if r.Properties != nil {
-		clone.Properties = make(map[string]interface{}, len(r.Properties))
+		clone.Properties = make(map[string]any, len(r.Properties))
 		for k, v := range r.Properties {
 			clone.Properties[k] = CloneValue(v)
 		}

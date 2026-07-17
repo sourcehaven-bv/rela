@@ -244,9 +244,9 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 		case 0:
 			e.Properties[propName] = []string{"a", "b", "c"}
 		case 1:
-			e.Properties[propName] = map[string]interface{}{"key": "original"}
+			e.Properties[propName] = map[string]any{"key": "original"}
 		case 2:
-			e.Properties[propName] = []interface{}{"x", "y"}
+			e.Properties[propName] = []any{"x", "y"}
 		}
 
 		require.NoError(t, s.CreateEntity(bg, e))
@@ -259,9 +259,9 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 			if len(v) > 0 {
 				v[0] = "MUTATED"
 			}
-		case map[string]interface{}:
+		case map[string]any:
 			v["key"] = "MUTATED"
-		case []interface{}:
+		case []any:
 			if len(v) > 0 {
 				v[0] = "MUTATED"
 			}
@@ -274,10 +274,10 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 		case []string:
 			assert.NotContains(t, v, "MUTATED",
 				"clone mutation leaked into stored entity ([]string)")
-		case map[string]interface{}:
+		case map[string]any:
 			assert.NotEqual(t, "MUTATED", v["key"],
 				"clone mutation leaked into stored entity (map)")
-		case []interface{}:
+		case []any:
 			for _, item := range v {
 				assert.NotEqual(t, "MUTATED", item,
 					"clone mutation leaked into stored entity ([]interface{})")
@@ -317,7 +317,7 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 		case 4:
 			e.Properties[propName] = strings.Split(raw, ",")
 		case 5:
-			e.Properties[propName] = map[string]interface{}{"v": raw}
+			e.Properties[propName] = map[string]any{"v": raw}
 		}
 
 		require.NoError(t, s.CreateEntity(bg, e))

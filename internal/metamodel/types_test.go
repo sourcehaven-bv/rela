@@ -328,13 +328,7 @@ func TestGetPrimaryPropertyDeterministic(t *testing.T) {
 	// The result should be one of the valid properties
 	validProps := []string{"foo", "bar", "baz"}
 	sort.Strings(validProps)
-	found := false
-	for _, v := range validProps {
-		if first == v {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(validProps, first)
 	if !found {
 		t.Errorf("GetPrimaryProperty() = %q, expected one of %v", first, validProps)
 	}
@@ -353,7 +347,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 	tests := []struct {
 		name       string
 		def        EntityDef
-		properties map[string]interface{}
+		properties map[string]any
 		want       string
 	}{
 		{
@@ -363,7 +357,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"title": {Type: "string", Required: true},
 				},
 			},
-			properties: map[string]interface{}{"title": "Hello"},
+			properties: map[string]any{"title": "Hello"},
 			want:       "Hello",
 		},
 		{
@@ -373,7 +367,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"title": {Type: "string", Required: true},
 				},
 			},
-			properties: map[string]interface{}{"title": ""},
+			properties: map[string]any{"title": ""},
 			want:       "ENT-001",
 		},
 		{
@@ -383,7 +377,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"title": {Type: "string", Required: true},
 				},
 			},
-			properties: map[string]interface{}{},
+			properties: map[string]any{},
 			want:       "ENT-001",
 		},
 		{
@@ -393,7 +387,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"status": {Type: "status", Required: true},
 				},
 			},
-			properties: map[string]interface{}{"status": "open"},
+			properties: map[string]any{"status": "open"},
 			want:       "ENT-001",
 		},
 		// TKT-RT3Y3: explicit display_property pointed at non-string field.
@@ -405,7 +399,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"status": {Type: "status"},
 				},
 			},
-			properties: map[string]interface{}{"status": "open"},
+			properties: map[string]any{"status": "open"},
 			want:       "open",
 		},
 		{
@@ -416,7 +410,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"version": {Type: PropertyTypeInteger},
 				},
 			},
-			properties: map[string]interface{}{"version": 42},
+			properties: map[string]any{"version": 42},
 			want:       "42",
 		},
 		{
@@ -427,7 +421,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"active": {Type: "boolean"},
 				},
 			},
-			properties: map[string]interface{}{"active": true},
+			properties: map[string]any{"active": true},
 			want:       "true",
 		},
 		{
@@ -438,7 +432,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"status": {Type: "status"},
 				},
 			},
-			properties: map[string]interface{}{"status": nil},
+			properties: map[string]any{"status": nil},
 			want:       "ENT-001",
 		},
 		{
@@ -449,7 +443,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"naam": {Type: "string", Required: true},
 				},
 			},
-			properties: map[string]interface{}{"other": "foo"},
+			properties: map[string]any{"other": "foo"},
 			want:       "ENT-001",
 		},
 		// TKT-NJTBQX: display_property as a template.
@@ -462,7 +456,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+			properties: map[string]any{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
 			want:       "Jeroen Vloothuis",
 		},
 		{
@@ -475,7 +469,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam":    {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"voornaam": "Jeroen", "tussenvoegsel": "", "achternaam": "Vloothuis"},
+			properties: map[string]any{"voornaam": "Jeroen", "tussenvoegsel": "", "achternaam": "Vloothuis"},
 			want:       "Jeroen Vloothuis",
 		},
 		{
@@ -488,7 +482,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam":    {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"voornaam": "", "tussenvoegsel": "", "achternaam": ""},
+			properties: map[string]any{"voornaam": "", "tussenvoegsel": "", "achternaam": ""},
 			want:       "ENT-001",
 		},
 		{
@@ -500,7 +494,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{},
+			properties: map[string]any{},
 			want:       "ENT-001",
 		},
 		{
@@ -512,7 +506,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
+			properties: map[string]any{"voornaam": "Jeroen", "achternaam": "Vloothuis"},
 			want:       "Vloothuis, Jeroen",
 		},
 		{
@@ -523,7 +517,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"version": {Type: PropertyTypeInteger},
 				},
 			},
-			properties: map[string]interface{}{"version": 42},
+			properties: map[string]any{"version": 42},
 			want:       "v42",
 		},
 		{
@@ -535,7 +529,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"voornaam": nil, "achternaam": "Vloothuis"},
+			properties: map[string]any{"voornaam": nil, "achternaam": "Vloothuis"},
 			want:       "Vloothuis",
 		},
 		{
@@ -547,7 +541,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"b": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"a": "foo", "b": "bar"},
+			properties: map[string]any{"a": "foo", "b": "bar"},
 			want:       "foobar",
 		},
 		{
@@ -558,7 +552,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"a": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"a": "{b}"},
+			properties: map[string]any{"a": "{b}"},
 			want:       "{b}",
 		},
 		{
@@ -570,7 +564,7 @@ func TestEntityDef_DisplayTitle(t *testing.T) {
 					"achternaam": {Type: "string"},
 				},
 			},
-			properties: map[string]interface{}{"voornaam": "José", "achternaam": "Müller"},
+			properties: map[string]any{"voornaam": "José", "achternaam": "Müller"},
 			want:       "José Müller",
 		},
 	}
@@ -1847,7 +1841,7 @@ func TestParseDisplayTemplate(t *testing.T) {
 }
 
 func TestRenderDisplayTemplate(t *testing.T) {
-	props := map[string]interface{}{"a": "foo", "b": "bar", "n": 7}
+	props := map[string]any{"a": "foo", "b": "bar", "n": 7}
 	tests := []struct {
 		name string
 		tmpl string

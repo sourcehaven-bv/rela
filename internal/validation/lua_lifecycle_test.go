@@ -39,9 +39,9 @@ func TestLuaValidation_RuntimeHoistedAcrossEntities(t *testing.T) {
 	}
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{}},
-		{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{}},
+		{ID: "TKT-003", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -105,9 +105,9 @@ func TestLuaValidation_RuntimeRebuiltAfterScriptError(t *testing.T) {
 	}
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{}},
-		{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{}},
+		{ID: "TKT-003", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -149,9 +149,9 @@ func TestLuaValidation_RuntimeRebuiltAfterEveryError(t *testing.T) {
 	}
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
-		{ID: "TKT-002", Type: "ticket", Properties: map[string]interface{}{}},
-		{ID: "TKT-003", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
+		{ID: "TKT-002", Type: "ticket", Properties: map[string]any{}},
+		{ID: "TKT-003", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))
@@ -194,7 +194,7 @@ func TestLuaValidation_FreshRuntimePerCheckCall(t *testing.T) {
 	}
 
 	entities := []*entity.Entity{
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}},
 	}
 
 	svc := New(meta, ws.services(t.TempDir()))

@@ -73,12 +73,7 @@ func (g *fakeGraph) add(from, relType, to string) {
 
 func (g *fakeGraph) HasEdge(_ context.Context, from, relType, to string) bool {
 	g.hasEdgeCalls++
-	for _, t := range g.edges[edgeKey{from, relType}] {
-		if t == to {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(g.edges[edgeKey{from, relType}], to)
 }
 
 func (g *fakeGraph) OutgoingRelations(_ context.Context, from, relType string) ([]string, error) {

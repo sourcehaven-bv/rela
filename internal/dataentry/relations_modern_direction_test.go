@@ -63,12 +63,12 @@ relations:
 func seedDirectionFixture(t *testing.T, app *App) (sourceID, targetID string) {
 	t.Helper()
 	sourceID, targetID = "FEAT-A", "FEAT-B"
-	seedEntity(app, &entity.Entity{ID: sourceID, Type: "feature", Properties: map[string]interface{}{"title": "source"}})
-	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]interface{}{"title": "target"}})
+	seedEntity(app, &entity.Entity{ID: sourceID, Type: "feature", Properties: map[string]any{"title": "source"}})
+	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]any{"title": "target"}})
 	if _, err := app.store.CreateRelation(
 		context.Background(),
 		sourceID, "blocks", targetID,
-		&store.RelationData{Properties: map[string]interface{}{"reason": "test block"}},
+		&store.RelationData{Properties: map[string]any{"reason": "test block"}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestApplyRelationsModern_MixedCanonicalAndInverse(t *testing.T) {
 	app := newDirectionTestApp(t)
 	// FEAT-A is in the middle: blocks FEAT-B, blocked by FEAT-C.
 	for _, id := range []string{"FEAT-A", "FEAT-B", "FEAT-C"} {
-		seedEntity(app, &entity.Entity{ID: id, Type: "feature", Properties: map[string]interface{}{"title": id}})
+		seedEntity(app, &entity.Entity{ID: id, Type: "feature", Properties: map[string]any{"title": id}})
 	}
 
 	body := `{"relations":{
@@ -245,7 +245,7 @@ func TestApplyRelationsModern_MixedCanonicalAndInverse(t *testing.T) {
 // the path entity is in both desired sets, returns 400 shape_conflict.
 func TestApplyRelationsModern_SelfLoopShapeConflict(t *testing.T) {
 	app := newDirectionTestApp(t)
-	seedEntity(app, &entity.Entity{ID: "FEAT-A", Type: "feature", Properties: map[string]interface{}{"title": "A"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-A", Type: "feature", Properties: map[string]any{"title": "A"}})
 
 	body := `{"relations":{
 		"blocks":{"data":[{"type":"feature","id":"FEAT-A"}]},

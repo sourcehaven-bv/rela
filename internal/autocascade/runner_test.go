@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,9 +61,7 @@ func (h *stubHost) CreateEntity(ctx context.Context, entityType string, opts aut
 		id = fmt.Sprintf("AUTO-%03d", h.createCounter)
 	}
 	e := entity.New(id, entityType)
-	for k, v := range opts.Properties {
-		e.Properties[k] = v
-	}
+	maps.Copy(e.Properties, opts.Properties)
 	if h.store != nil {
 		if err := h.store.CreateEntity(ctx, e); err != nil {
 			h.t.Fatalf("stub CreateEntity: %v", err)
@@ -207,13 +207,7 @@ func TestRunnerDepthLimit(t *testing.T) {
 	}
 
 	expectedWarning := fmt.Sprintf("automation iteration limit (%d) reached; 1 pending items skipped", autocascade.MaxDepth)
-	found := false
-	for _, w := range outcome.Warnings {
-		if w == expectedWarning {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(outcome.Warnings, expectedWarning)
 	if !found {
 		t.Errorf("expected warning %q, got warnings: %v", expectedWarning, outcome.Warnings)
 	}

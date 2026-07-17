@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -106,13 +107,7 @@ func TestRandomEnumValue(t *testing.T) {
 		v := RandomEnumValue(values)
 		seen[v] = true
 		// Verify value is in list
-		found := false
-		for _, valid := range values {
-			if v == valid {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(values, v)
 		if !found {
 			t.Errorf("RandomEnumValue returned %q, not in %v", v, values)
 		}

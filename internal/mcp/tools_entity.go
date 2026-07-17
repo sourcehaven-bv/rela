@@ -61,7 +61,7 @@ func (s *Server) handleListEntities(
 		entities = entities[:limit]
 	}
 
-	summaries := make([]map[string]interface{}, len(entities))
+	summaries := make([]map[string]any, len(entities))
 	for i, e := range entities {
 		summaries[i] = convertStoreEntitySummary(e)
 	}
@@ -111,12 +111,12 @@ func (s *Server) handleSearchEntities(
 	}
 
 	st := s.deps.Store
-	summaries := make([]map[string]interface{}, 0)
+	summaries := make([]map[string]any, 0)
 	for hit, searchErr := range s.deps.Searcher.Search(ctx, q) {
 		if searchErr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", searchErr)), nil
 		}
-		summary := map[string]interface{}{"id": hit.ID, "type": hit.Type}
+		summary := map[string]any{"id": hit.ID, "type": hit.Type}
 		if hit.Title != "" {
 			summary["title"] = hit.Title
 		}
