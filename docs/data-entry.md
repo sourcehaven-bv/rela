@@ -552,6 +552,96 @@ relations:
     max_outgoing: 10
 ```
 
+### Multi-step (wizard) forms
+
+A form can be split into ordered, titled **steps** instead of a single page.
+The user moves next/back, per-step validation gates "Next", and steps or fields
+can appear/disappear based on earlier answers. Wizard mode is opt-in: a form
+declares `steps:` **instead of** top-level `fields:`/`relations:` (a form may
+not set both).
+
+```yaml
+forms:
+  new_processing_record:
+    entity_type: processing-record
+    title: "New processing record"
+    steps:
+      - title: "Controller"
+        fields:
+          - property: controller_name
+          - property: has_processors
+            widget: checkbox
+
+      - title: "Processor"
+        # This whole step is skipped unless the toggle is on.
+        visible_when: "form.has_processors == true"
+        fields:
+          - property: processor_name
+            # Required only while the step is shown.
+            required_when: "form.has_processors == true"
+        relations:
+          - relation: processed-by
+            target_type: organisation
+
+      - title: "Publish"
+        fields:
+          - property: published
+```
+
+Each step takes a `title`, an optional `description`, an optional `visible_when`
+condition, and its own `fields:` / `relations:` (identical in shape to a
+single-page form).
+
+**Navigation and the URL.** The active step is encoded in the URL query as
+`?step=N` (zero-based), so a refresh or a shared deep link returns to the same
+step. An out-of-range or non-numeric `?step=` falls back to the first step.
+
+**Validation.** "Next" validates only the current step's visible fields and
+blocks progression while any are invalid. The final step's Submit re-validates
+every visible step.
+
+**Hidden branches are not saved.** If a step or field is hidden by a
+`visible_when` that is false at submit time, its values are dropped from the
+created/updated entity — a toggled-off branch never persists stale data.
+
+#### Condition expressions (`visible_when` / `required_when`)
+
+`visible_when` (on a step, field, or relation) hides its target when the
+expression is false. `required_when` (on a field) makes the field required only
+when the expression is true. Both are boolean expressions evaluated in the
+browser against the form's current values.
+
+| Feature | Syntax |
+| --- | --- |
+| Reference a field | `form.<property>` (e.g. `form.status`) |
+| String / number / boolean / nil literals | `'open'`, `3`, `true`, `false`, `nil` |
+| Comparisons | `==` `!=` `<` `<=` `>` `>=`, regex `=~` |
+| Boolean logic | `and`, `or`, `not`, parentheses |
+
+Examples:
+
+```yaml
+visible_when: "form.kind == 'processor'"
+visible_when: "form.country == 'US' or form.country == 'CA'"
+required_when: "form.has_dpia != true"
+visible_when: "form.q1 == 'no' or form.q2 == 'no'"   # WP248-style decision chain
+```
+
+Notes:
+
+- Comparisons are **permissive**: a checkbox `true` matches both the boolean
+  `true` and the string `'true'`; `form.count == 3` matches the number `3` or
+  the string `'3'`.
+- A condition may reference **any** earlier field; referencing a field the user
+  hasn't reached yet simply reads as unset (`nil`).
+- Conditions are a **UX affordance only** — the server re-validates every write
+  regardless of what the wizard showed or hid. Do not rely on `required_when`
+  as a server-side constraint.
+- Bad conditions are caught by `rela validate`: a syntax error or a reference to
+  a property that doesn't exist on the entity is reported at author time. (The
+  check uses a slightly stricter grammar than the browser, so it may flag a few
+  conditions the runtime would tolerate — treat every reported error as real.)
+
 ## Lists
 
 Lists display entities in a sortable, filterable table with optional create/edit actions.

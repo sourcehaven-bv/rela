@@ -500,8 +500,15 @@ function resolveRef(ns: string, field: string, bindings: Bindings): Value {
   if (FORBIDDEN_KEYS.has(field)) throw new EvalFail(`forbidden field: ${field}`)
   const scope = bindings[ns]
   if (scope == null || typeof scope !== 'object') return NIL
-  if (!Object.prototype.hasOwnProperty.call(scope, field)) return NIL
+  // Read the property BEFORE the own-property check. When `scope` is a Vue
+  // reactive object, the read is what registers the dependency — including for
+  // a key that is currently absent (undefined). Checking hasOwnProperty first
+  // would short-circuit without ever reading, so a condition that references a
+  // not-yet-set field would never re-evaluate when that field is later set.
   const raw = (scope as Record<string, unknown>)[field]
+  // Own-property only: an inherited value (e.g. from a poisoned prototype) is
+  // treated as absent, preserving the prototype-pollution guarantee.
+  if (!Object.prototype.hasOwnProperty.call(scope, field)) return NIL
   return normalizeValue(raw)
 }
 
