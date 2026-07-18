@@ -77,7 +77,11 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-// applyEdge runs the three checks for one changed machine property.
+// applyEdge runs the three checks for one changed machine property, mapping a
+// failing gate to the wire-facing error. Legality (undeclared edge) and the
+// gate evaluation share one code path — [evalEdge] — with the read-side
+// [Set.Performable], so enforcement and the "what can I do" affordance can
+// never disagree about whether a transition is allowed (the drift guard).
 func (s *Set) applyEdge(
 	ctx context.Context, m *Machine, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
 ) error {
@@ -85,25 +89,58 @@ func (s *Set) applyEdge(
 	if !ok {
 		return fmt.Errorf("%w: %s %q→%q is not a declared transition", ErrIllegalTransition, prop, from, to)
 	}
+	switch res := evalEdge(ctx, ed, prop, e, guard, lookup); res.gate {
+	case gateNone:
+		return nil
+	case gateGuard:
+		return &GuardError{Prop: prop, From: from, To: to, Permission: ed.guard}
+	default: // gatePrecondition
+		if res.err != nil {
+			return fmt.Errorf("%w: %s %q→%q when: %s", ErrPreconditionFailed, prop, from, to, res.err.Error())
+		}
+		return fmt.Errorf("%w: %s %q→%q precondition not met", ErrPreconditionFailed, prop, from, to)
+	}
+}
 
-	// Guard: the guard decides served-vs-inert (it resolves the principal from
-	// ctx and allows when there is nothing to evaluate). A nil guard on a
-	// guarded edge fails closed.
+// gate identifies which check on an edge failed (or none).
+type gate int
+
+const (
+	gateNone gate = iota
+	gateGuard
+	gatePrecondition
+)
+
+// edgeResult is the outcome of evaluating one edge's gates.
+type edgeResult struct {
+	gate gate
+	err  error // non-nil only when a `when:` predicate errored (gatePrecondition)
+}
+
+// evalEdge evaluates an edge's guard then precondition for (principal-on-ctx,
+// entity e), in the same order and with the same semantics the write path
+// enforces. It is the single source of truth shared by [Set.applyEdge] (write,
+// maps to errors) and [Set.Performable] (read, maps to verdicts) so the two can
+// never drift. A guard is checked first (an unheld guard short-circuits without
+// evaluating the precondition, matching enforcement). A nil guard on a guarded
+// edge fails closed. The guard's served-vs-inert decision lives in the Guard
+// implementation.
+func evalEdge(
+	ctx context.Context, ed edge, prop string, e *entity.Entity, guard Guard, lookup GraphLookup,
+) edgeResult {
 	if ed.guard != "" {
 		if guard == nil || !guard.HoldsPermission(ctx, e.ID, ed.guard) {
-			return &GuardError{Prop: prop, From: from, To: to, Permission: ed.guard}
+			return edgeResult{gate: gateGuard}
 		}
 	}
-
-	// Precondition.
 	if ed.when != nil {
 		ok, err := evalWhen(ctx, ed.when, e, prop, lookup)
 		if err != nil {
-			return fmt.Errorf("%w: %s %q→%q when: %s", ErrPreconditionFailed, prop, from, to, err.Error())
+			return edgeResult{gate: gatePrecondition, err: err}
 		}
 		if !ok {
-			return fmt.Errorf("%w: %s %q→%q precondition not met", ErrPreconditionFailed, prop, from, to)
+			return edgeResult{gate: gatePrecondition}
 		}
 	}
-	return nil
+	return edgeResult{gate: gateNone}
 }

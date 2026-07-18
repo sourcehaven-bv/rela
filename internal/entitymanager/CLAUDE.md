@@ -66,6 +66,17 @@ wiring boundary is explicit.
   on reads is the perf cliff every comparable system regrets — see
   `.ignored/acl-design.md`.
 
+  **What this rule is about: unbounded, hot paths — list/collection reads
+  where a predicate runs once per row across hundreds of entities. That is
+  the perf cliff.** It is NOT a blanket ban on ever evaluating a predicate
+  during a read. A *bounded, on-demand* evaluation — e.g. resolving the
+  performable state-machine transitions for one field on the one entity a
+  user is viewing (O(out-edges), single entity) — is consistent with the
+  rule's intent, not a violation of it. When in doubt, ask: does this scale
+  with the size of a result set (banned) or is it a fixed, single-subject
+  computation the caller explicitly requested (fine)? Don't cite this rule to
+  block the latter.
+
 See `docs/server-security.md` (schema reference), `.ignored/acl-design.md` (design
 rationale, four-layer model: users → groups → roles → local roles), and
 `docs/audit-log.md` (the `denied-write` audit op).
