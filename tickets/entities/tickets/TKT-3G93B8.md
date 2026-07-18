@@ -5,7 +5,7 @@ title: 'Machine-aware status control: surface _transitions on the wire + SPA per
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 <!-- @managed: claude-workflow v1 -->

@@ -20,10 +20,18 @@ import (
 type fakeTransitionResolver struct {
 	verdicts map[string][]statemachine.TransitionVerdict
 	entries  map[string]string
+	hidden   map[string]bool // field name → hidden (Visible=false)
 }
 
 func (f fakeTransitionResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
-	return FieldVerdicts{}
+	if len(f.hidden) == 0 {
+		return FieldVerdicts{}
+	}
+	vis := map[string]bool{}
+	for name := range f.hidden {
+		vis[name] = false
+	}
+	return FieldVerdicts{Visible: vis}
 }
 
 func (f fakeTransitionResolver) RelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
@@ -117,6 +125,63 @@ func TestTransitionsWire_AbsentWithoutTransitionResolver(t *testing.T) {
 	e := getEntityV1(t, app, "ticket", "tickets", "TKT-002")
 	if e.Transitions != nil {
 		t.Fatalf("expected _transitions absent under non-TransitionResolver, got %+v", *e.Transitions)
+	}
+}
+
+// RR-DENG8U: a machine field hidden by field-visibility policy must NOT leak its
+// current state via `_transitions` — the out-edge set is a function of the
+// current value, so emitting it would defeat the hidden-field strip.
+func TestTransitionsWire_HiddenMachineFieldOmitted(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeTransitionResolver{
+		verdicts: map[string][]statemachine.TransitionVerdict{
+			"status": {{To: "doing", Label: "Start progress", Allowed: true}},
+		},
+		hidden: map[string]bool{"status": true},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-003",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "x", "status": "todo"},
+	})
+
+	e := getEntityV1(t, app, "ticket", "tickets", "TKT-003")
+	// The hidden value is stripped from properties...
+	if _, present := e.Properties["status"]; present {
+		t.Errorf("hidden status must be stripped from properties, got %v", e.Properties["status"])
+	}
+	// ...and must not reappear via _transitions.
+	if e.Transitions != nil {
+		if _, present := (*e.Transitions)["status"]; present {
+			t.Errorf("hidden machine field must not carry _transitions (leak), got %+v", *e.Transitions)
+		}
+	}
+}
+
+// RR-C3OJ33: the create dry-run must not re-insert a hidden machine field's entry
+// value into the response (which would re-leak it AND re-surface it in the SPA
+// create form, whose visible-field set derives from the response property keys).
+func TestTransitionsWire_CreateLockSkipsHiddenField(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeTransitionResolver{
+		entries: map[string]string{"status": "todo"},
+		hidden:  map[string]bool{"status": true},
+	}
+
+	body := `{"properties":{"title":"new ticket"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.handleV1DryRunCreate(rec, req, "ticket", "tickets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dry-run create: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var e v1.Entity
+	if err := json.NewDecoder(rec.Body).Decode(&e); err != nil {
+		t.Fatalf("decode dry-run: %v", err)
+	}
+	// The hidden field's entry value must NOT be re-added to the wire.
+	if _, present := e.Properties["status"]; present {
+		t.Errorf("create-lock must not re-insert a hidden field, got %v", e.Properties["status"])
 	}
 }
 

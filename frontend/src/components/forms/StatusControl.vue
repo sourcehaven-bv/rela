@@ -54,7 +54,10 @@ const hasMoves = computed(() => allowedMoves.value.length > 0)
 // else the raw target value. Keeps transitions reading as verbs, not states.
 function moveLabel(t: TransitionOption): string {
   if (t.label && t.label.trim() !== '') return t.label
-  return schemaStore.getEnumLabel(t.to, props.property, props.entityType) ?? t.to
+  // `||` not `??`: an explicit empty-string enum label must fall through to the
+  // raw value, not render a blank move (RR-NN5414).
+  const stateLabel = schemaStore.getEnumLabel(t.to, props.property, props.entityType)
+  return stateLabel && stateLabel.trim() !== '' ? stateLabel : t.to
 }
 
 const open = ref(false)

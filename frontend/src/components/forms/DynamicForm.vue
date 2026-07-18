@@ -32,6 +32,7 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { useFormWizard } from '@/composables/useFormWizard'
 import type { Bindings } from '@/utils/conditions'
 import { registerForm } from './dirtyFormRegistry'
+import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -526,17 +527,12 @@ async function refreshStagedAffordances() {
 
     fieldAffordances.value = candidate._fields ?? {}
     relationAffordances.value = candidate._relations ?? {}
-    // Entry-locked create fields (TKT-3G93B8 / BUG-X1C7S): the server pins a
-    // state-machine field to its initial value and marks it writable=false. Adopt
-    // that value into formData so the locked control DISPLAYS the initial state
-    // (not whatever the user may have typed before it locked). The commit filter
-    // already omits writable=false keys, so the server applies the initial
-    // regardless — this only keeps the visible value honest.
-    for (const [name, verdict] of Object.entries(candidate._fields ?? {})) {
-      if (verdict.writable === false && candidate.properties && name in candidate.properties) {
-        formData.value[name] = candidate.properties[name]
-      }
-    }
+    // Entry-locked create fields (TKT-3G93B8 / BUG-X1C7S): adopt the server's
+    // authoritative value for every read-only field (a machine field the server
+    // pinned to its initial value, or any policy-read-only field) so the locked
+    // control DISPLAYS the server value, not stale user input. Scoped to read-only
+    // fields, so it never clobbers an editable one. See adoptLockedFieldValues.
+    adoptLockedFieldValues(candidate._fields, candidate.properties, formData.value)
     // The dry-run strips hidden fields from `properties`; the remaining
     // keys are exactly the visible-by-default props the field filter
     // needs to render (since they won't appear in the sparse `_fields`).
@@ -1217,6 +1213,16 @@ onMounted(async () => {
           delete formData.value[property]
         } else {
           formData.value[property] = value
+        }
+        // A committed state-machine move changes which transitions are now
+        // performable — the loaded `_transitions` reflect the PRE-move state
+        // (RR-NI145G). The PATCH response's fresh `_transitions` isn't threaded
+        // through the autosave merge, so reload the entity to refresh the
+        // status control (mirrors onAttachmentChanged's reload for
+        // `_attachments`). Fire-and-forget: this is a UI-hint refresh, and the
+        // write already succeeded.
+        if (property in transitions.value) {
+          void loadEntity(true)
         }
       },
       applyServerContent: (c) => {

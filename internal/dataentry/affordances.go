@@ -924,8 +924,15 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 // TransitionResolver whose machines don't cover e's type; it serializes as
 // `_transitions: {}`, the same closed-world "resolver present, no deviations"
 // signal the other affordance maps use.
+//
+// fieldVerdicts is the same [FieldVerdicts] the caller resolved for `_fields` /
+// `_attachments`; a property hidden by field-visibility policy is OMITTED here
+// (RR-DENG8U). A machine's out-edge set is a function of its current value, so
+// emitting `_transitions` for a hidden field would leak that value back through
+// the wire past the strip that `stripHiddenProperties` performs on `properties`
+// / `_title` — mirror the same boundary attachments already keep.
 func (svc affordanceService) computeTransitions(
-	ctx context.Context, e *entityPkg.Entity,
+	ctx context.Context, e *entityPkg.Entity, fieldVerdicts FieldVerdicts,
 ) map[string][]v1.Transition {
 	tr, ok := svc.resolver().(TransitionResolver)
 	if !ok {
@@ -934,6 +941,9 @@ func (svc affordanceService) computeTransitions(
 	verdicts := tr.TransitionVerdicts(ctx, e)
 	out := make(map[string][]v1.Transition, len(verdicts))
 	for prop, vs := range verdicts {
+		if !fieldVerdicts.IsVisible(prop) {
+			continue // hidden field: don't leak its state via out-edges
+		}
 		wire := make([]v1.Transition, 0, len(vs))
 		for _, v := range vs {
 			wire = append(wire, v1.Transition{
@@ -963,23 +973,37 @@ func (svc affordanceService) computeTransitions(
 // No-op when the resolver can't answer entry values (Nop / Demo) or the type has
 // no machine field. Called only from the create dry-run path — GET / PATCH keep
 // the normal editable + _transitions shape.
-func (svc affordanceService) applyCreateLock(result *v1.Entity, entityType string) {
+//
+// A machine field hidden by field-visibility policy is skipped entirely
+// (RR-C3OJ33): stripHiddenProperties already removed it from result.Properties,
+// and re-inserting its entry value here would both re-leak it on the wire and
+// make it re-appear in the SPA create form (which derives visible create fields
+// from the response's property keys). Its create is still constrained — the
+// server rejects a non-entry value on the real create regardless of the hint.
+func (svc affordanceService) applyCreateLock(
+	ctx context.Context, result *v1.Entity, candidate *entityPkg.Entity,
+) {
 	tr, ok := svc.resolver().(TransitionResolver)
 	if !ok {
 		return
 	}
-	entries := tr.EntryValues(entityType)
+	entries := tr.EntryValues(candidate.Type)
 	if len(entries) == 0 {
 		return
 	}
+	fieldVerdicts := svc.resolver().FieldVerdicts(ctx, candidate)
 	fields := map[string]v1.FieldAffordance{}
 	if result.FieldAffordances != nil {
 		fields = *result.FieldAffordances
 	}
+	if result.Properties == nil {
+		result.Properties = map[string]any{}
+	}
 	for prop, entry := range entries {
-		if result.Properties != nil {
-			result.Properties[prop] = entry
+		if !fieldVerdicts.IsVisible(prop) {
+			continue // hidden: leave it stripped, don't re-add to the wire
 		}
+		result.Properties[prop] = entry
 		locked := false
 		fa := fields[prop]
 		fa.Writable = &locked
@@ -1001,7 +1025,7 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	relations := svc.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
-	if transitions := svc.computeTransitions(ctx, e); transitions != nil {
+	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
 		result.Transitions = &transitions
 	}
 	// Pass the same verdicts so a policy-hidden `file` property's attachments

@@ -859,7 +859,7 @@ func (a *App) handleV1DryRunCreate(w http.ResponseWriter, r *http.Request, typeN
 	// A create ENTERS the machine at its initial state; it is not a transition.
 	// Lock every state-machine field to its entry value so the create form
 	// renders it read-only at the initial state (BUG-X1C7S / TKT-3G93B8).
-	a.serializer.affordances.applyCreateLock(&result, typeName)
+	a.serializer.affordances.applyCreateLock(r.Context(), &result, candidate)
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)
 	}
