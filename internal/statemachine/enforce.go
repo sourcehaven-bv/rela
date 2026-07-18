@@ -50,11 +50,12 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 
 // EnforceCreate checks the entry value of every state-machine property on a
 // newly created entity. A create has no prior state, so there is no edge to
-// traverse; the only rule is that a machine property must enter at its entry
-// value (Initial, else Default). A machine with no entry value (neither set)
-// imposes no constraint. Guards do not apply on create-entry in this first cut
-// (the entry itself is not a guarded edge — see the ticket's deferred
-// alternative).
+// traverse; the rule is that a machine property must enter at its entry value
+// (Initial, else Default). Compile guarantees every machine HAS an entry value
+// (BUG-X1C7S), so a create can never deviate from the initial state — a
+// non-entry value is rejected with [ErrIllegalEntry] (422). Guards do not apply
+// on create: create is entry, not a transition, and the operator's `initial`
+// declares the (trusted) entry point.
 func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	if s.Empty() || e == nil {
 		return nil
@@ -63,7 +64,10 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	for _, prop := range sortedKeys(props) {
 		m := s.machines[props[prop]]
 		if m.entry == "" {
-			continue // unconstrained entry
+			// Unreachable for a compiled Set (Compile requires an entry value on
+			// any machine with transitions). Kept as a defensive guard against a
+			// hand-built Machine; a create then imposes no constraint.
+			continue
 		}
 		got := e.GetString(prop)
 		if got == "" {

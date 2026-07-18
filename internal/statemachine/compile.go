@@ -95,7 +95,19 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 	if entry == "" {
 		entry = ct.Default
 	}
-	if entry != "" && !values[entry] {
+	switch {
+	case entry == "":
+		// A state machine (compileMachine is only reached for types WITH
+		// transitions) MUST declare an entry value, so create is pinned to it
+		// (BUG-X1C7S). Without one, EnforceCreate would treat create as
+		// unconstrained — letting an entity enter ANY state, including a
+		// guard-protected target, bypassing the machine via create instead of
+		// a transition. Reject at boot; the operator declares `initial` (or
+		// `default`) to say which state new entities start in.
+		problems = append(problems, fmt.Sprintf(
+			"type %q: a state machine (has transitions) must declare an `initial` "+
+				"(or `default`) entry value so creates are constrained to it", typeName))
+	case !values[entry]:
 		source := "initial"
 		if ct.Initial == "" {
 			source = "default"
