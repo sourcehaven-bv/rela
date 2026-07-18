@@ -125,7 +125,7 @@ Effort: l (confirmed).
 **Documentation Impact:**
 - [x] docs/data-entry/api-reference.md — `_transitions` wire shape
 - [x] docs/metamodel.md — TransitionDef `label`
-- [ ] N/A others
+- [x] ~~other docs~~ (N/A: no README/tutorial/CLI impact)
 
 ## Design Review
 

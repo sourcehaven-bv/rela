@@ -2,55 +2,67 @@
 id: REV-B7UX67
 type: review-checklist
 title: 'Review: Machine-aware status control: surface _transitions on the wire + SPA performable-transition UI + entry-locked create field'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass — Go `go test ./...` clean; frontend `npm run test:run` 1342 pass
+- [x] Lint clean — `just lint` 0 issues; `just arch-lint` OK; eslint 0 errors on changed files
+- [x] Coverage maintained — `just coverage-check` PASS (total 76.2%, all floors met)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Ran `/code-review` (cranky-code-reviewer agent)
+- [x] All critical review-responses addressed (RR-DENG8U, RR-C3OJ33)
+- [x] All significant review-responses addressed (RR-NI145G)
+- [x] Self-reviewed the diff for unrelated changes — reverted 117 files of stray
+Prettier reformatting that `npm run format` swept in; final diff is scoped to
+the ticket only
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** RR-DENG8U (critical, addressed), RR-C3OJ33 (critical,
+addressed), RR-NI145G (significant, addressed), RR-NN5414 (minor, addressed),
+RR-SG2I1G (minor, addressed), RR-IQZ62Y (nit, addressed). No open
+critical/significant.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (see planning PLAN-QQLK3F + impl IMPL-ZPQHEW)
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+- AC1 (wire `_transitions`, machine-only, absent otherwise): PASS —
+TestTransitionsWire_GETCarriesTransitions / _AbsentWithoutTransitionResolver;
+hidden-field variant TestTransitionsWire_HiddenMachineFieldOmitted.
+- AC2 (SPA renders performable moves, falls back for non-machine): PASS —
+FieldRenderer.test.ts routing + StatusControl.test.ts (only-allowed, labels).
+- AC3 (select commits atomic PATCH, 403/422 surfaces): PASS — StatusControl emits
+target → useAutoSave field-save; existing structured-error path unchanged.
+- AC4 (create locked to initial, non-editable): PASS —
+TestTransitionsWire_CreateLocksMachineField + _CreateLockSkipsHiddenField;
+adoptLockedFieldValues unit tests.
+- AC5 (label fallback chain): PASS — TestPerformable_SurfacesLabel;
+StatusControl.test.ts raw-value fallback.
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs` (DOCS-V9830X)
+- [x] User-facing documentation updated (api-reference.md, metamodel.md)
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-V9830X
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit messages explain the why (feat + fix(review) with RR references)
+- [x] No TODOs/FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] ~~Run `/pr` command to create PR and monitor CI~~ (done-before-PR gate: PR runs AFTER this ticket is `done`; will complete via `/pr`)
+- [x] ~~All CI checks pass~~ (verified locally: `just lint`/`go test ./...`/frontend `test:run`/`coverage-check` all green; CI confirmation on PR)
+- [x] ~~PR URL documented below~~ (recorded when `/pr` opens it)
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** *pending — `/pr` runs next per the done-before-PR gate*
