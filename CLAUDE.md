@@ -232,7 +232,16 @@ Rules when touching this:
   lose history). Rename **stitches** (not forks): the entitymanager captures a
   `rename` version per incident relation on the new triple carrying
   `prev_from`/`prev_to`, and `relationLineageIDs` walks those links so history is
-  continuous. Read/restore is gated on **both** endpoints (FROM ∧ TO) — the FROM
+  continuous. Since #1127 the store renames **atomically** (bulk in-place
+  `UPDATE relations SET from_id=...`), so a relation KEEPS its `rel_record_id`
+  across the rename — the lineage is already continuous on one id and the
+  `rename` version merely appends a marker (the `prev_from`/`prev_to` stitch walk
+  finds no fork; it stays as belt-and-braces for any future non-atomic path).
+  Rename capture is **sync-only best-effort**: the atomic re-key does NOT bump
+  `relations.updated_at` (TKT-9TQ6I), so the sweep cannot back-fill a rename the
+  synchronous hook misses — acceptable because a miss loses only the rename
+  marker, never lineage continuity. Read/restore is gated on **both** endpoints
+  (FROM ∧ TO) — the FROM
   entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
   oracle otherwise). Relations have NO field-level redaction today; relation
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/

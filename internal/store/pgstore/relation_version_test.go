@@ -147,51 +147,123 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 	require.Equal(t, "gen2", snap.Content)
 }
 
-// TestRelationVersionRenameStitchesLineage proves the prev_from/prev_to rename
-// link stitches a renamed relation's history into one continuous timeline
-// across the fresh rel_record_id the new triple gets. Mirrors what the
-// entitymanager does on an endpoint rename (old triple deleted, new triple
-// created + a rename version carrying the old endpoints).
-func TestRelationVersionRenameStitchesLineage(t *testing.T) {
+// TestRelationVersionRenameAtomicPath verifies relation-rename versioning
+// against the REAL production path (TKT-9TQ6I). Since #1127, the entitymanager
+// renames an entity via the store's ATOMIC RenameEntity (a single bulk
+// `UPDATE relations SET from_id=$2 ...`), NOT the old rename.Rename
+// decomposition (delete-old + create-new). Two consequences this test pins:
+//
+//  1. The relation row keeps the SAME rel_record_id across the rename (in-place
+//     UPDATE, not delete+create). So the lineage is ALREADY continuous on one
+//     id — no fork, and the prev_from/prev_to stitch walk is redundant (it just
+//     finds no predecessor). The rename `version` the entitymanager records
+//     (via WriteRelationVersion with RecordID=0 → resolves the key → the
+//     surviving rel_record_id) simply appends to that one lineage.
+//  2. The atomic re-key does NOT bump relations.updated_at (RR-N5YK81, now the
+//     live path) — see TestRelationRenameDoesNotBumpUpdatedAt. That means the
+//     sweep cannot back-fill a missed rename capture; documented as best-effort
+//     (the lineage stays continuous regardless, so a missed rename version only
+//     loses the rename MARKER, not history continuity).
+//
+// This is the STORE half of rename-version coverage: it asserts the store
+// persists the rename version on the surviving rel_record_id. The MANAGER half —
+// that Manager.RenameEntity emits the right record (new triple, prev_from/
+// prev_to, per incident edge) — is asserted in the entitymanager package by
+// TestRelationVersionHook_RenameStitchesEndpoints. Neither is redundant; keep
+// both.
+func TestRelationVersionRenameAtomicPath(t *testing.T) {
 	pool := newScopedPool(t)
 	s, err := pgstore.New(pool)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	// Old edge A--links-->B: create + a captured version.
-	_, err = s.CreateRelation(ctx, "A", "links", "B", &store.RelationData{Content: "v1"})
+	// A live edge A--links-->X with a captured create version.
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "ticket", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "")))
+	_, err = s.CreateRelation(ctx, "A", "links", "X", &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
-	oldRID := relRecordID(ctx, t, pool, "A", "links", "B")
-	c := newRelVersionInput(oldRID, "A", "links", "B", "v1")
+	rid := relRecordID(ctx, t, pool, "A", "links", "X")
+	c := newRelVersionInput(rid, "A", "links", "X", "v1")
 	c.Op = store.VersionOpCreate
 	require.NoError(t, s.WriteRelationVersion(ctx, c))
 
-	// Rename A->A2: the new triple A2--links-->B is created (fresh rel_record_id)
-	// and the old one deleted, exactly as rename.Rename does.
-	_, err = s.CreateRelation(ctx, "A2", "links", "B", &store.RelationData{Content: "v1"})
+	// Rename A->A2 through the REAL atomic store path.
+	_, err = s.RenameEntity(ctx, "A", "A2")
 	require.NoError(t, err)
-	require.NoError(t, s.DeleteRelation(ctx, "A", "links", "B"))
-	newRID := relRecordID(ctx, t, pool, "A2", "links", "B")
-	require.NotEqual(t, oldRID, newRID)
 
-	// The rename version lands on the NEW lineage, carrying the old endpoints.
-	ren := newRelVersionInput(newRID, "A2", "links", "B", "v1")
+	// The relation kept its rel_record_id — continuous single lineage, no fork.
+	ridAfter := relRecordID(ctx, t, pool, "A2", "links", "X")
+	require.Equal(t, rid, ridAfter, "atomic rename carries rel_record_id (no fork)")
+
+	// Capture the rename version exactly as the entitymanager does: keyed on the
+	// NEW triple, RecordID=0 (WriteRelationVersion resolves it to the surviving
+	// rel_record_id), carrying the pre-rename endpoints.
+	ren := newRelVersionInput(0, "A2", "links", "X", "v1")
 	ren.Op = store.VersionOpRename
 	ren.PrevFrom = "A"
-	ren.PrevTo = "B"
+	ren.PrevTo = "X"
 	require.NoError(t, s.WriteRelationVersion(ctx, ren))
 
-	// Reading history via the NEW key must include BOTH the pre-rename create
-	// (old lineage) and the rename row — one continuous timeline.
-	metas, err := s.ListRelationVersions(ctx, "A2", "links", "B")
+	// History via the new key is one continuous timeline on the surviving
+	// lineage: the pre-rename create + the rename row. No orphaned lineage.
+	metas, err := s.ListRelationVersions(ctx, "A2", "links", "X")
 	require.NoError(t, err)
-	require.Len(t, metas, 2, "history stitches old create + new rename")
+	require.Len(t, metas, 2, "continuous timeline on the surviving rel_record_id")
 	require.Equal(t, store.VersionOpCreate, metas[0].Op)
-	require.Equal(t, "A", metas[0].From, "oldest version carries the pre-rename endpoint")
+	require.Equal(t, "A", metas[0].From, "the create version still carries the pre-rename endpoint")
 	require.Equal(t, store.VersionOpRename, metas[1].Op)
 	require.Equal(t, "A2", metas[1].From)
 	require.Equal(t, "A", metas[1].PrevFrom)
+
+	// Prove no FORK directly, not just via Len==2 (which the stitch-walk could
+	// satisfy from two lineages): both version rows must sit on the ONE surviving
+	// rel_record_id, and that id must be `rid`.
+	var distinctLineages int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(DISTINCT rel_record_id) FROM relation_versions WHERE rel_record_id = $1`, rid).Scan(&distinctLineages))
+	require.Equal(t, 1, distinctLineages)
+	var total, onRid int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM relation_versions`).Scan(&total))
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM relation_versions WHERE rel_record_id = $1`, rid).Scan(&onRid))
+	require.Equal(t, total, onRid, "every version row is on the surviving lineage — no forked rel_record_id")
+}
+
+// TestRelationRenameDoesNotBumpUpdatedAt pins the RR-N5YK81 fact (now the live
+// atomic path): the entity rename's relation re-key does NOT touch
+// relations.updated_at. Consequence: the sweep (which uses updated_at) cannot
+// back-fill a rename capture that the synchronous hook missed. This is accepted
+// as best-effort — the lineage stays continuous on the surviving rel_record_id
+// regardless, so a missed rename version loses only the rename MARKER, not
+// history continuity. If a future change wants sweep back-fill for renames, bump
+// updated_at in the atomic re-key (entity.go RenameEntity) — this test guards
+// the current documented behavior.
+func TestRelationRenameDoesNotBumpUpdatedAt(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("A", "ticket", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "")))
+	_, err = s.CreateRelation(ctx, "A", "links", "X", &store.RelationData{Content: "v1"})
+	require.NoError(t, err)
+
+	var before string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT updated_at::text FROM relations WHERE from_id='A' AND rel_type='links' AND to_id='X'`).Scan(&before))
+
+	_, err = s.RenameEntity(ctx, "A", "A2")
+	require.NoError(t, err)
+
+	var after string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT updated_at::text FROM relations WHERE from_id='A2' AND rel_type='links' AND to_id='X'`).Scan(&after))
+
+	require.Equal(t, before, after,
+		"atomic rename re-key does not bump relations.updated_at (documented best-effort; sweep can't back-fill a missed rename)")
 }
 
 // TestSweepCapturesSettledRelations drives the sweep against a settled relation

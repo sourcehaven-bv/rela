@@ -4,7 +4,8 @@ type: ticket
 title: 'Re-verify relation-rename versioning against the atomic store.RenameEntity path (post #1127)'
 kind: test
 priority: medium
-status: backlog
+effort: s
+status: done
 ---
 
 ## Context

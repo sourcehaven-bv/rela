@@ -94,12 +94,19 @@ func contentHashOfRelation(in store.RelationVersionInput) string {
 //
 // Unlike entity history, relation lineage needs NO recursive rename-fencing CTE:
 // rel_record_id is a stable surrogate carried across delete+recreate (a fresh id
-// is minted), so it fences those lifecycles apart for free. An endpoint RENAME,
-// however, rewrites a relation as create-new-triple + delete-old-triple at the
-// store level, so the new triple gets a FRESH rel_record_id and a `rename`
-// version row (on the new lineage) carries prev_from/prev_to = the old triple.
-// A relation's full history is therefore the current rel_record_id PLUS every
-// predecessor lineage reachable by following those rename links back — see
+// is minted), so it fences those lifecycles apart for free.
+//
+// Since #1127 an endpoint RENAME is an ATOMIC in-place `UPDATE relations SET
+// from_id/to_id=...` (see entity.go RenameEntity), so the relation KEEPS its
+// rel_record_id across the rename — the lineage is already continuous on one id
+// and the `rename` version row (carrying prev_from/prev_to = the old triple) is
+// just a marker on that same lineage, not a fork. The predecessor-lineage walk
+// below (relationLineageIDs) therefore normally finds no fork on the current
+// live path; it remains as belt-and-braces for any historical or future path
+// that DOES mint a fresh id on rename (the pre-#1127 delete-old + create-new
+// decomposition, whose rows may still exist in older databases). A relation's
+// full history is therefore the current rel_record_id PLUS every predecessor
+// lineage reachable by following those rename links back — see
 // relationLineageIDs.
 
 // relationLineageIDs returns every rel_record_id that makes up a relation's
