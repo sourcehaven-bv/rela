@@ -61,8 +61,8 @@ StatusControl.test.ts raw-value fallback.
 
 ## Pull Request
 
-- [x] ~~Run `/pr` command to create PR and monitor CI~~ (done-before-PR gate: PR runs AFTER this ticket is `done`; will complete via `/pr`)
-- [x] ~~All CI checks pass~~ (verified locally: `just lint`/`go test ./...`/frontend `test:run`/`coverage-check` all green; CI confirmation on PR)
-- [x] ~~PR URL documented below~~ (recorded when `/pr` opens it)
+- [x] Ran `/pr` — PR #1156 created and CI monitored
+- [x] All CI checks pass — 0 failing on the full matrix (Test, Frontend, E2E, Cross-Compile ×8, Postgres, Fuzz, Lint, Architecture, God-object, Markdown, Rela Tickets, CodeQL); `mergeable: MERGEABLE` (BLOCKED only on required human review)
+- [x] PR URL documented below
 
-**PR:** *pending — `/pr` runs next per the done-before-PR gate*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1156
