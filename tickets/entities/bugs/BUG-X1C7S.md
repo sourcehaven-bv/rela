@@ -2,6 +2,7 @@
 id: BUG-X1C7S
 type: bug
 title: 'State machine: create with no initial/default lets an entity enter any state (incl. guarded), unconstrained'
+description: 'A CustomType with transitions but no initial/default left EnforceCreate unconstrained, so a create could set the machine property to any value including a guard-protected state, bypassing the machine via create instead of a transition. Fix: Compile requires an entry value on any machine with transitions, pinning every create to the initial state. Reported as ISMS finding rela#1146; pre-release (feature on develop, not shipped).'
 priority: medium
 effort: s
 why1: EnforceCreate returns early (unconstrained) when a machine has no entry value (m.entry == ""), so a create can set a machine property to any value including a guard-protected target.
@@ -10,7 +11,7 @@ why3: The create-path design (RR-1SMG4) only specified entry semantics for the c
 why4: The threat model (PLAN-5BYO6 Security Considerations) reasoned about the guard on transitions but not about create as an unguarded entry point that can land directly in a guarded state.
 why5: A create is entry into the machine, not a transition, so it was mentally excluded from the guard/legality model — but 'which states may a create enter' is itself a constraint the machine must express, and the absence of an entry value silently means 'any'.
 prevention: 'Compile now rejects a machine that declares transitions but no initial/default (entry value required to constrain creates). EnforceCreate''s existing ''must enter at entry value'' check then pins every create to the initial state. Regression tests cover: guarded machine with no entry rejected at compile; create with a non-initial value rejected 422.'
-status: review
+status: done
 ---
 
 ## Summary
