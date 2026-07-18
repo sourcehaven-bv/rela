@@ -159,6 +159,14 @@ type TransitionDef struct {
 	From string `yaml:"from"` // Source value; must be one of CustomType.Values
 	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
 
+	// Label is optional display text for the MOVE (the action), not the
+	// destination state — e.g. "Start progress" for todo→doing rather than the
+	// state noun "Doing". Purely presentational: a machine-aware status control
+	// lists transitions as verbs. Empty falls back to the target value's display
+	// label (CustomType.Labels[To]) and then the raw To value. Display-only; the
+	// executable machine ignores it for enforcement.
+	Label string `yaml:"label,omitempty"`
+
 	// Guard names an ACL permission the acting principal must hold for this
 	// transition. Enforced only on served paths (a principal exists); inert
 	// on direct CLI writes. Empty means the transition is legal for anyone

@@ -17,6 +17,7 @@ import type {
   FieldAffordance,
   RelationAffordance,
   AttachmentInfo,
+  TransitionOption,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -72,6 +73,11 @@ const relationAffordances = ref<Record<string, RelationAffordance>>({})
 // Per-`file`-property attachment metadata from the loaded entity, passed
 // to the file widget so it can show the current file + drive upload/remove.
 const attachments = ref<Record<string, AttachmentInfo[]>>({})
+// Per-state-machine-field transition verdicts from the loaded entity
+// (`_transitions`, TKT-3G93B8). Present only for machine-typed fields; drives
+// the StatusControl (only-allowed moves) instead of the plain enum select. A
+// field absent here renders as an ordinary widget.
+const transitions = ref<Record<string, TransitionOption[]>>({})
 // TKT-3I5U: in create mode the form models a staged `++new++` entity
 // and re-derives affordances from the server's dry-run (no persist) as
 // the user types. `stagedVisibleProps` holds the property keys the
@@ -267,6 +273,16 @@ function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> 
   return optionVerdictsForVerdict(fieldAffordances.value[field.property])
 }
 
+// TKT-3G93B8 transition helper: the server-resolved outgoing transitions for a
+// state-machine field (`_transitions`). Undefined for a non-machine field, so
+// FieldRenderer renders the ordinary widget; a machine field routes to the
+// StatusControl. Only present in edit mode (a create locks the field instead —
+// see applyCreateLock on the backend).
+function transitionsFor(field: FormFieldOrRelation): TransitionOption[] | undefined {
+  if (!field.property) return undefined
+  return transitions.value[field.property]
+}
+
 // TKT-3I5U: build the create-commit property map, sending ONLY visible
 // and writable keys. Hidden fields (stripped from the staged dry-run's
 // visible set) and read-only fields (writable=false in `_fields`) are
@@ -331,6 +347,7 @@ async function loadEntity(force = false) {
     fieldAffordances.value = entity._fields ?? {}
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
+    transitions.value = entity._transitions ?? {}
     originalData.value = JSON.stringify({
       formData: formData.value,
       relations: relations.value,
@@ -509,6 +526,17 @@ async function refreshStagedAffordances() {
 
     fieldAffordances.value = candidate._fields ?? {}
     relationAffordances.value = candidate._relations ?? {}
+    // Entry-locked create fields (TKT-3G93B8 / BUG-X1C7S): the server pins a
+    // state-machine field to its initial value and marks it writable=false. Adopt
+    // that value into formData so the locked control DISPLAYS the initial state
+    // (not whatever the user may have typed before it locked). The commit filter
+    // already omits writable=false keys, so the server applies the initial
+    // regardless — this only keeps the visible value honest.
+    for (const [name, verdict] of Object.entries(candidate._fields ?? {})) {
+      if (verdict.writable === false && candidate.properties && name in candidate.properties) {
+        formData.value[name] = candidate.properties[name]
+      }
+    }
     // The dry-run strips hidden fields from `properties`; the remaining
     // keys are exactly the visible-by-default props the field filter
     // needs to render (since they won't appear in the sparse `_fields`).
@@ -1392,6 +1420,7 @@ onBeforeRouteLeave(async () => {
               :get-property-def="getPropertyDef"
               :is-field-readonly="isFieldReadonly"
               :option-verdicts-for="optionVerdictsFor"
+              :transitions-for="transitionsFor"
               @update-field="updateField"
               @attachment-changed="onAttachmentChanged"
               @update-relation="updateRelation"

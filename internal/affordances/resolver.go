@@ -169,6 +169,24 @@ func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
 	return r
 }
 
+// EntryValues returns, for each state-machine-typed property of entityType, the
+// value a create must enter at (the machine's Initial, else Default — BUG-X1C7S)
+// (TKT-3G93B8). A create form uses it to lock a machine field to its initial
+// value: the field is not freely editable on create. Returns an empty map when
+// no machines are wired or entityType has no machine-typed property.
+func (r *PolicyResolver) EntryValues(entityType string) map[string]string {
+	out := map[string]string{}
+	if r.machines == nil || r.machines.Empty() {
+		return out
+	}
+	for _, prop := range r.machines.MachineProps(entityType) {
+		if entry := r.machines.EntryValue(entityType, prop); entry != "" {
+			out[prop] = entry
+		}
+	}
+	return out
+}
+
 // env returns (compiling on first use) the predicate env for an entity
 // type. Envs are cached so every grant of a type shares one.
 func (r *PolicyResolver) env(entityType string) (*predicate.Env, error) {

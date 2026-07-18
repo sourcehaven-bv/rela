@@ -15,6 +15,7 @@ import (
 // this entity", suitable for a UI status control or a CLI.
 type TransitionVerdict struct {
 	To      string
+	Label   string      // display text for the MOVE; "" falls back to the target value's label at the display layer
 	Guard   string      // ACL permission name; "" when the edge is unguarded
 	Allowed bool        // true iff the guard is held AND the precondition holds
 	Reason  VerdictGate // why Allowed is false; VerdictAllowed when it's true
@@ -85,6 +86,7 @@ func (s *Set) Performable(
 		res := evalEdge(ctx, ed, prop, after, guard, lookup)
 		out = append(out, TransitionVerdict{
 			To:      key.to,
+			Label:   ed.label,
 			Guard:   ed.guard,
 			Allowed: res.gate == gateNone,
 			Reason:  reasonFor(res.gate),
