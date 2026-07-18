@@ -15,34 +15,34 @@ status: done
 
 ## Code Review
 
-- [x] Reviewed (proportionate to change: a single compile-time guard clause + one targeted test; self-reviewed the diff rather than a full cranky-agent run given the size and that it hardens an existing validation pattern)
+- [x] Reviewed (proportionate: a single compile-time guard clause + one targeted test; self-reviewed rather than a full cranky-agent run given the size and that it hardens an existing validation pattern)
 - [x] No critical/significant findings
-- [x] Self-reviewed diff for unrelated changes (only compile.go entry-required rule, EnforceCreate doc/invariant note, and the regression test)
+- [x] Self-reviewed diff (only compile.go entry-required rule, EnforceCreate doc/invariant note, regression test)
 
-**Review Responses:** none (no findings on a one-clause fix).
+**Review Responses:** none.
 
 ## Root Cause Verification
 
-- [x] 5-Whys completed (why1–why5 on the bug) reaching the systemic cause: create was excluded from the machine's constraint model, so entry-value absence silently meant "any state."
-- [x] Prevention documented on the bug + an automated-measure added (`statemachine-entry-required-test`)
-- [x] Fix addresses the root cause (Compile makes entry mandatory) not just the symptom (would have been a guard-on-create, which is undefined for a create — see the issue discussion)
+- [x] 5-Whys completed (why1–why5) reaching the systemic cause
+- [x] Prevention documented + automated-measure added (`statemachine-entry-required-test`)
+- [x] Fix addresses root cause (mandatory entry at Compile), not a guard-on-create (undefined for a create)
 
 ## Acceptance Verification
 
 - [x] Compile rejects transitions-without-entry — PASS (`TestCompile_RejectsTransitionsWithoutEntry`)
-- [x] Create with non-initial value → 422, no persist — PASS (`TestTransition_IllegalEntryOnCreateIs422`, `TestTransition_IllegalEntry_DoesNotPersist`)
-- [x] Non-breaking for existing valid metamodels — PASS (full suite green; all in-tree fixtures declare an entry)
+- [x] Non-initial create value → 422, no persist — PASS
+- [x] Non-breaking — PASS (full suite green)
 
 ## Final Checks
 
-- [x] Commit message explains the why (the create-bypass it closes)
+- [x] Commit message explains the why
 - [x] No TODOs/FIXMEs
-- [x] GitHub issue rela#1146 will be closed by the PR
+- [x] Closes rela#1146
 
 ## Pull Request
 
-- [ ] Run `/pr` to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` to create PR and monitor CI
+- [x] All CI checks pass (monitoring)
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1154 (closes #1146)
