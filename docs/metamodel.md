@@ -333,7 +333,7 @@ Each entity type defines:
 
 ### Display name
 
-Every entity type has a _primary property_ — the property whose value
+Every entity type has a *primary property* — the property whose value
 is the entity's display name. When unset, rela picks one
 automatically: it checks `title`, `name`, `label` in that order (when
 each is a required string property), then falls back to any required
