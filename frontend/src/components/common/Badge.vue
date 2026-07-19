@@ -62,6 +62,9 @@ const displayText = computed(() => label.value ?? props.value)
        never v-html. -->
   <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined }]">
     {{ displayText }}
+    <!-- Optional trailing adornment (e.g. a dropdown caret when the badge is an
+         interactive control). Empty for the common read-only badge. -->
+    <slot />
   </span>
 </template>
 

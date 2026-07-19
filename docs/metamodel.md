@@ -205,6 +205,49 @@ Notes:
   type**; an inline `labels` map on such a property is ignored (mirroring how an
   inline `values` list is ignored there).
 
+### State Machines (transitions)
+
+An enum custom type becomes a **state machine** when it declares `transitions:` —
+the legal value→value moves. Instead of any value changing to any other, only the
+declared edges are allowed; the write path rejects an undeclared move (`422`), and
+each edge can additionally require an ACL permission (`guard`, `403`) and/or a data
+precondition (`when`, `422`).
+
+```yaml
+types:
+  ticket-status:
+    values: [todo, doing, review, done]
+    initial: todo # the only value a newly created entity may enter at
+    transitions:
+      - from: todo
+        to: doing
+        label: Start progress # optional: names the MOVE (an action verb)
+      - from: doing
+        to: review
+        label: Send to review
+      - from: review
+        to: done
+        guard: close # requires the `close` ACL permission
+        when: 'count_relations(entity, "reviewed-by") > 0' # precondition
+      - from: review
+        to: doing
+        label: Reopen
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `from` / `to` | Source and target values; both must be declared in `values`. |
+| `initial` | The only value a **create** may set (else `default`). New entities are pinned to it — a create cannot enter a guarded mid-lifecycle state. |
+| `guard` | An ACL permission the acting principal must hold for the move. Enforced on served paths; inert on a direct CLI write with no policy. |
+| `when` | A predicate (same language as validations, evaluated against the entity + graph) that must hold for the move. |
+| `label` | **Optional** display text for the move (the *action*, e.g. "Start progress"), used by the data-entry status control. Display-only — the stored value is still `to`. Absent → the UI falls back to the target value's display label, then the raw value. |
+
+The data-entry UI reads these to render a **status control** that offers only the
+moves the current user can perform right now (see the `_transitions` affordance in
+the [data-entry API reference](data-entry/api-reference.md)). `transitions` is
+optional and backwards compatible: an enum type without it keeps the historical
+"any value may change to any other" behavior.
+
 ### Regex Validations
 
 Define validation patterns with user-friendly error messages. Multiple patterns
@@ -290,7 +333,7 @@ Each entity type defines:
 
 ### Display name
 
-Every entity type has a _primary property_ — the property whose value
+Every entity type has a *primary property* — the property whose value
 is the entity's display name. When unset, rela picks one
 automatically: it checks `title`, `name`, `label` in that order (when
 each is a required string property), then falls back to any required

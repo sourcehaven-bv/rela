@@ -169,6 +169,24 @@ func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
 	return r
 }
 
+// EntryValues returns, for each state-machine-typed property of entityType, the
+// value a create must enter at (the machine's Initial, else Default — BUG-X1C7S)
+// (TKT-3G93B8). A create form uses it to lock a machine field to its initial
+// value: the field is not freely editable on create. Returns an empty map when
+// no machines are wired or entityType has no machine-typed property.
+func (r *PolicyResolver) EntryValues(entityType string) map[string]string {
+	out := map[string]string{}
+	if r.machines == nil || r.machines.Empty() {
+		return out
+	}
+	for _, prop := range r.machines.MachineProps(entityType) {
+		if entry := r.machines.EntryValue(entityType, prop); entry != "" {
+			out[prop] = entry
+		}
+	}
+	return out
+}
+
 // env returns (compiling on first use) the predicate env for an entity
 // type. Envs are cached so every grant of a type shares one.
 func (r *PolicyResolver) env(entityType string) (*predicate.Env, error) {
@@ -455,9 +473,20 @@ func (r *PolicyResolver) TransitionVerdicts(
 	}
 	guard := r.transitionGuard(ctx)
 	for _, prop := range r.machines.MachineProps(e.Type) {
-		if vs := r.machines.Performable(ctx, e, prop, guard, r.lookup); len(vs) > 0 {
-			out[prop] = vs
+		// Emit an entry for EVERY machine-typed property, even when there are no
+		// performable out-edges (a terminal state, or all edges gated). The
+		// presence of the key is how a consumer distinguishes "this field is a
+		// state machine (render the status control, possibly empty)" from "not a
+		// machine field (render the ordinary enum widget)". Dropping terminal
+		// fields would make a done ticket's status fall back to a full enum
+		// select that offers illegal moves — see TKT-3G93B8. A nil slice from
+		// Performable normalizes to an empty (non-nil) slice so it serializes as
+		// [] rather than null.
+		vs := r.machines.Performable(ctx, e, prop, guard, r.lookup)
+		if vs == nil {
+			vs = []statemachine.TransitionVerdict{}
 		}
+		out[prop] = vs
 	}
 	return out
 }

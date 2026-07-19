@@ -16,6 +16,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -160,6 +161,27 @@ func (svc affordanceService) computeCollectionActions(ctx context.Context, entit
 type FieldVerdictResolver interface {
 	FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts
 	RelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
+}
+
+// TransitionResolver is the OPTIONAL sibling of [FieldVerdictResolver] that
+// answers state-machine transition verdicts for an entity (TKT-3G93B8). It is
+// kept separate — and type-asserted, not embedded — because only the
+// policy-backed resolver can answer it; the Nop and Demo resolvers don't
+// implement it, so `_transitions` is simply absent under them (the SPA falls
+// back to the ordinary enum control). This mirrors the store's optional
+// capabilities (e.g. HistoryReader), which are also type-asserted rather than
+// forced into the base interface.
+//
+// The returned map is keyed by property name; each value is the resolved
+// outgoing transitions for the ctx principal on e. An empty map means "no
+// machine-typed property on this entity" (or no machines wired).
+type TransitionResolver interface {
+	TransitionVerdicts(ctx context.Context, e *entityPkg.Entity) map[string][]statemachine.TransitionVerdict
+	// EntryValues returns, per state-machine-typed property of entityType, the
+	// value a create must enter at (the machine's Initial/Default — BUG-X1C7S).
+	// The create form uses it to lock the field to its initial value. Empty when
+	// entityType has no machine-typed property.
+	EntryValues(entityType string) map[string]string
 }
 
 // FieldVerdicts carries per-entity field-level affordance decisions.
@@ -893,6 +915,106 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 	}
 }
 
+// computeTransitions returns the per-entity `_transitions` wire map: for each
+// state-machine-typed property, the resolved outgoing transitions for the ctx
+// principal on e. Returns nil (→ `_transitions` omitted from the wire) when the
+// active resolver does not implement [TransitionResolver] (Nop / Demo) or has no
+// machine-typed property for this entity — the SPA then falls back to the
+// ordinary enum control. An empty (non-nil) map is possible for a
+// TransitionResolver whose machines don't cover e's type; it serializes as
+// `_transitions: {}`, the same closed-world "resolver present, no deviations"
+// signal the other affordance maps use.
+//
+// fieldVerdicts is the same [FieldVerdicts] the caller resolved for `_fields` /
+// `_attachments`; a property hidden by field-visibility policy is OMITTED here
+// (RR-DENG8U). A machine's out-edge set is a function of its current value, so
+// emitting `_transitions` for a hidden field would leak that value back through
+// the wire past the strip that `stripHiddenProperties` performs on `properties`
+// / `_title` — mirror the same boundary attachments already keep.
+func (svc affordanceService) computeTransitions(
+	ctx context.Context, e *entityPkg.Entity, fieldVerdicts FieldVerdicts,
+) map[string][]v1.Transition {
+	tr, ok := svc.resolver().(TransitionResolver)
+	if !ok {
+		return nil
+	}
+	verdicts := tr.TransitionVerdicts(ctx, e)
+	out := make(map[string][]v1.Transition, len(verdicts))
+	for prop, vs := range verdicts {
+		if !fieldVerdicts.IsVisible(prop) {
+			continue // hidden field: don't leak its state via out-edges
+		}
+		wire := make([]v1.Transition, 0, len(vs))
+		for _, v := range vs {
+			wire = append(wire, v1.Transition{
+				To:      v.To,
+				Label:   v.Label,
+				Guard:   v.Guard,
+				Allowed: v.Allowed,
+				Reason:  string(v.Reason),
+			})
+		}
+		out[prop] = wire
+	}
+	return out
+}
+
+// applyCreateLock adjusts a create-candidate response so every state-machine
+// field is locked to its entry value (BUG-X1C7S / TKT-3G93B8). A create is an
+// ENTRY, not a transition: the machine field must not be freely editable and
+// must carry the initial value the server will accept. For each machine-typed
+// property of entityType it (a) pins result.Properties[field] to the entry
+// value, (b) marks it read-only in _fields so the SPA renders it locked and the
+// create-commit filter omits it (the server then applies the initial), and (c)
+// drops it from _transitions — offering "moves" on an entity that does not yet
+// exist would be nonsensical, and the SPA keys the locked-field render off the
+// entry, not off transitions.
+//
+// No-op when the resolver can't answer entry values (Nop / Demo) or the type has
+// no machine field. Called only from the create dry-run path — GET / PATCH keep
+// the normal editable + _transitions shape.
+//
+// A machine field hidden by field-visibility policy is skipped entirely
+// (RR-C3OJ33): stripHiddenProperties already removed it from result.Properties,
+// and re-inserting its entry value here would both re-leak it on the wire and
+// make it re-appear in the SPA create form (which derives visible create fields
+// from the response's property keys). Its create is still constrained — the
+// server rejects a non-entry value on the real create regardless of the hint.
+func (svc affordanceService) applyCreateLock(
+	ctx context.Context, result *v1.Entity, candidate *entityPkg.Entity,
+) {
+	tr, ok := svc.resolver().(TransitionResolver)
+	if !ok {
+		return
+	}
+	entries := tr.EntryValues(candidate.Type)
+	if len(entries) == 0 {
+		return
+	}
+	fieldVerdicts := svc.resolver().FieldVerdicts(ctx, candidate)
+	fields := map[string]v1.FieldAffordance{}
+	if result.FieldAffordances != nil {
+		fields = *result.FieldAffordances
+	}
+	if result.Properties == nil {
+		result.Properties = map[string]any{}
+	}
+	for prop, entry := range entries {
+		if !fieldVerdicts.IsVisible(prop) {
+			continue // hidden: leave it stripped, don't re-add to the wire
+		}
+		result.Properties[prop] = entry
+		locked := false
+		fa := fields[prop]
+		fa.Writable = &locked
+		fields[prop] = fa
+		if result.Transitions != nil {
+			delete(*result.Transitions, prop)
+		}
+	}
+	result.FieldAffordances = &fields
+}
+
 // attachEntityAffordances writes the per-entity `_fields` and
 // `_relations` wire maps onto result. Called by paths that return a
 // per-entity response (GET, PATCH, POST, clone, action) — list rows
@@ -903,6 +1025,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	relations := svc.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
+	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
+		result.Transitions = &transitions
+	}
 	// Pass the same verdicts so a policy-hidden `file` property's attachments
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a

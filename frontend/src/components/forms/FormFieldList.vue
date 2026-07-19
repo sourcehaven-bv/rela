@@ -8,7 +8,13 @@
  * The parent owns all state and validation; this component is presentational
  * and re-emits every edit so the parent's handlers stay authoritative.
  */
-import type { FormFieldOrRelation, PropertyDef, RelationAffordance, AttachmentInfo } from '@/types'
+import type {
+  FormFieldOrRelation,
+  PropertyDef,
+  RelationAffordance,
+  AttachmentInfo,
+  TransitionOption,
+} from '@/types'
 import FieldRenderer from './FieldRenderer.vue'
 import RelationCards from './RelationCards.vue'
 import RelationPicker from './RelationPicker.vue'
@@ -28,6 +34,9 @@ defineProps<{
   getPropertyDef: (name: string) => PropertyDef | undefined
   isFieldReadonly: (field: FormFieldOrRelation) => boolean
   optionVerdictsFor: (field: FormFieldOrRelation) => Record<string, boolean> | undefined
+  // Resolved state-machine transitions per field (TKT-3G93B8); undefined for a
+  // non-machine field. Present → FieldRenderer renders the StatusControl.
+  transitionsFor: (field: FormFieldOrRelation) => TransitionOption[] | undefined
 }>()
 
 const emit = defineEmits<{
@@ -53,6 +62,7 @@ const emit = defineEmits<{
       :error="errors[field.property]"
       :readonly="isFieldReadonly(field)"
       :option-verdicts="optionVerdictsFor(field)"
+      :transition-options="transitionsFor(field)"
       :entity-type="entityType"
       :entity-id="entityId"
       :attachments="attachments[field.property]"

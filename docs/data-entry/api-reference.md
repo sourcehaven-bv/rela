@@ -527,6 +527,67 @@ fields, omit hidden fields, and filter enum options, then commits only
 the visible + writable keys; the server fills hidden / read-only
 defaults itself (downstream of the gate).
 
+## Transition affordances: `_transitions` (TKT-3G93B8)
+
+A per-entity GET response also carries `_transitions` for every property whose
+type is an **enum state machine** (a `CustomType` with declared `transitions:` —
+see [the metamodel guide](../metamodel.md)). It is the resolved answer to "which
+moves can *this* principal make on *this* field of *this* entity right now",
+computed from the same evaluation the write path enforces (guard + `when:`
+precondition). The SPA renders a machine field as a status control offering only
+the performable moves, rather than a plain enum select listing every value.
+
+### Wire shape
+
+```json
+{
+  "id": "TKT-001",
+  "type": "ticket",
+  "properties": { "status": "todo" },
+  "_transitions": {
+    "status": [
+      { "to": "doing", "label": "Start progress", "allowed": true },
+      { "to": "done",  "label": "Complete", "guard": "close",
+        "allowed": false, "reason": "guard" }
+    ]
+  }
+}
+```
+
+Each entry is one declared out-edge from the field's current value:
+
+| Field | Meaning |
+|---|---|
+| `to` | Target value the move lands on. |
+| `label` | Optional display text for the **move** (the action, e.g. "Start progress"). Absent → the SPA falls back to the target value's display label, then the raw value. Authored via `label:` on the transition in the metamodel. |
+| `guard` | ACL permission the move requires; absent when unguarded. |
+| `allowed` | `true` iff the principal holds the guard AND the `when:` precondition holds. |
+| `reason` | Why `allowed` is false: `guard` or `precondition`. Absent when allowed. Advisory (the control shows only allowed moves, so this feeds a tooltip/CLI, not the render gate). |
+
+`_transitions` is **keyed by every machine-typed property** — a plain enum field
+has no entry, and the SPA falls back to the ordinary enum control. A machine
+field in a **terminal state** (no performable out-edges) still carries its key
+with an **empty list** (`"status": []`): the key's presence is what tells the SPA
+"this is a state machine — render the status control (here, with no moves)"
+rather than a full enum select that would offer illegal targets. The map is
+**absent entirely** when the server wires no state machines (no policy /
+non-machine metamodel / older server), the same "feature not available" signal
+`_fields` uses via its pointer. Like every affordance map it is a **UI hint,
+never authorization**: the write path re-enforces the transition (guard 403,
+legality / precondition 422), so a stale verdict simply surfaces the existing
+structured error (attempt-and-recover).
+
+### Create is an entry, not a transition
+
+On the create form there is no prior state to move *from*, and a machine may only
+be entered at its initial value (see BUG-X1C7S). The create dry-run
+(`?dry_run=true`) therefore **locks** every machine field: it pins the property to
+the machine's entry value, marks it `writable: false` in `_fields`, and omits it
+from `_transitions`. The SPA renders it read-only at the initial state; the
+create-commit filter drops the (non-writable) key so the server applies the
+initial itself. A client cannot enter a machine at a non-initial state — the real
+create rejects it regardless of the hint.
+
 ### View-section row entities (TKT-IHC7D)
 
 Cards/list view sections (`display: properties | list | content | cards`)

@@ -42,6 +42,16 @@ export interface Entity {
   // on every per-entity response (GET, PATCH, POST, clone), absent on list
   // rows. The file widget reads this to render download links / previews.
   _attachments?: Record<string, AttachmentInfo[]>
+  // Per-state-machine-field transition verdicts on per-entity GET
+  // responses (TKT-3G93B8). Keyed by property name; the value lists the
+  // outgoing transitions resolved for the requesting principal on this
+  // entity. Only state-machine-typed fields appear — a plain enum field
+  // has no key, and the SPA falls back to the ordinary enum control.
+  // Absent entirely when the server wires no state machines (older server
+  // or no policy). A UI hint, never authorization — the write path
+  // re-enforces every transition (attempt-and-recover). See
+  // docs/data-entry/api-reference.md.
+  _transitions?: Record<string, TransitionOption[]>
   inaccessible?: InaccessibleField[]
   // Soft-validation findings on mutation responses (DEC-HWZHA).
   // Present on PATCH/POST results; absent on GETs.
@@ -65,6 +75,23 @@ export interface RelationAffordance {
   creatable?: boolean
   removable?: boolean
   fields?: Record<string, FieldAffordance>
+}
+
+// TransitionOption is one resolved outgoing move of a state-machine field
+// (TKT-3G93B8), the wire projection of the backend's TransitionVerdict.
+// `to` is the target value; `label` is optional display text for the MOVE
+// (the action, e.g. "Start progress") — when absent the UI falls back to the
+// target value's display label. `guard` names the permission the move
+// requires (empty when unguarded). `allowed` reports whether the requesting
+// principal may perform it now. `reason` names the blocking gate when not
+// allowed (`guard` | `precondition`); empty when allowed. The status control
+// shows only allowed moves, so `reason` is advisory (tooltip), not a gate.
+export interface TransitionOption {
+  to: string
+  label?: string
+  guard?: string
+  allowed: boolean
+  reason?: string
 }
 
 // AttachmentInfo describes one file attached to a `file`-type property,

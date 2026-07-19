@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import FieldRenderer from './FieldRenderer.vue'
-import type { FormFieldOrRelation, PropertyDef } from '@/types'
+import type { FormFieldOrRelation, PropertyDef, TransitionOption } from '@/types'
 
 function renderField(opts: {
   field: FormFieldOrRelation
@@ -15,6 +15,7 @@ function renderField(opts: {
   value: unknown
   readonly?: boolean
   optionVerdicts?: Record<string, boolean>
+  transitionOptions?: TransitionOption[]
 }) {
   return mount(FieldRenderer, {
     props: {
@@ -23,6 +24,7 @@ function renderField(opts: {
       value: opts.value,
       readonly: opts.readonly,
       optionVerdicts: opts.optionVerdicts,
+      transitionOptions: opts.transitionOptions,
     },
     attachTo: document.body,
   })
@@ -142,6 +144,47 @@ describe('FieldRenderer affordance plumbing', () => {
     const label = wrapper.find('.checkbox-wrapper label')
     expect(input.attributes('id')).toBe('field-automated')
     expect(label.attributes('for')).toBe('field-automated')
+    wrapper.unmount()
+  })
+
+  // TKT-3G93B8: a state-machine field (transitionOptions present) routes to
+  // the StatusControl instead of the plain enum select.
+  it('routes a machine field to StatusControl when _transitions present', () => {
+    const wrapper = renderField({
+      field: { property: 'status', label: 'Status' },
+      propertyDef: { type: 'enum', values: ['todo', 'doing', 'done'] },
+      value: 'todo',
+      transitionOptions: [{ to: 'doing', label: 'Start progress', allowed: true }],
+    })
+    // StatusControl renders its trigger; no plain enum <select>.
+    expect(wrapper.find('.status-control').exists()).toBe(true)
+    expect(wrapper.find('select').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('falls back to the enum select for a non-machine field (no _transitions)', () => {
+    const wrapper = renderField({
+      field: { property: 'kind', label: 'Kind' },
+      propertyDef: { type: 'enum', values: ['enhancement', 'refactor'] },
+      value: 'enhancement',
+      // transitionOptions undefined → ordinary widget.
+    })
+    expect(wrapper.find('select').exists()).toBe(true)
+    expect(wrapper.find('.status-control').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('routes a terminal machine field (empty _transitions) to StatusControl', () => {
+    // An empty array is still a machine field — it must NOT fall back to the
+    // full enum select (which would misleadingly offer every value).
+    const wrapper = renderField({
+      field: { property: 'status', label: 'Status' },
+      propertyDef: { type: 'enum', values: ['todo', 'done'] },
+      value: 'done',
+      transitionOptions: [],
+    })
+    expect(wrapper.find('.status-control').exists()).toBe(true)
+    expect(wrapper.find('select').exists()).toBe(false)
     wrapper.unmount()
   })
 

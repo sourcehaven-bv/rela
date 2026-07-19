@@ -145,7 +145,7 @@ func compileMachine(typeName string, ct metamodel.CustomType) (machine *Machine,
 					"type %q: transition[%d] %s→%s when: %v", typeName, i, tr.From, tr.To, err))
 			}
 		}
-		edges[key] = edge{guard: tr.Guard, when: prog}
+		edges[key] = edge{guard: tr.Guard, when: prog, label: tr.Label}
 	}
 
 	return &Machine{name: typeName, edges: edges, entry: entry}, problems

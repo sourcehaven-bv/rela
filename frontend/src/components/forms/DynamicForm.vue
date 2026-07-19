@@ -17,6 +17,7 @@ import type {
   FieldAffordance,
   RelationAffordance,
   AttachmentInfo,
+  TransitionOption,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -31,6 +32,7 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { useFormWizard } from '@/composables/useFormWizard'
 import type { Bindings } from '@/utils/conditions'
 import { registerForm } from './dirtyFormRegistry'
+import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -72,6 +74,11 @@ const relationAffordances = ref<Record<string, RelationAffordance>>({})
 // Per-`file`-property attachment metadata from the loaded entity, passed
 // to the file widget so it can show the current file + drive upload/remove.
 const attachments = ref<Record<string, AttachmentInfo[]>>({})
+// Per-state-machine-field transition verdicts from the loaded entity
+// (`_transitions`, TKT-3G93B8). Present only for machine-typed fields; drives
+// the StatusControl (only-allowed moves) instead of the plain enum select. A
+// field absent here renders as an ordinary widget.
+const transitions = ref<Record<string, TransitionOption[]>>({})
 // TKT-3I5U: in create mode the form models a staged `++new++` entity
 // and re-derives affordances from the server's dry-run (no persist) as
 // the user types. `stagedVisibleProps` holds the property keys the
@@ -267,6 +274,16 @@ function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> 
   return optionVerdictsForVerdict(fieldAffordances.value[field.property])
 }
 
+// TKT-3G93B8 transition helper: the server-resolved outgoing transitions for a
+// state-machine field (`_transitions`). Undefined for a non-machine field, so
+// FieldRenderer renders the ordinary widget; a machine field routes to the
+// StatusControl. Only present in edit mode (a create locks the field instead —
+// see applyCreateLock on the backend).
+function transitionsFor(field: FormFieldOrRelation): TransitionOption[] | undefined {
+  if (!field.property) return undefined
+  return transitions.value[field.property]
+}
+
 // TKT-3I5U: build the create-commit property map, sending ONLY visible
 // and writable keys. Hidden fields (stripped from the staged dry-run's
 // visible set) and read-only fields (writable=false in `_fields`) are
@@ -331,6 +348,7 @@ async function loadEntity(force = false) {
     fieldAffordances.value = entity._fields ?? {}
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
+    transitions.value = entity._transitions ?? {}
     originalData.value = JSON.stringify({
       formData: formData.value,
       relations: relations.value,
@@ -509,6 +527,12 @@ async function refreshStagedAffordances() {
 
     fieldAffordances.value = candidate._fields ?? {}
     relationAffordances.value = candidate._relations ?? {}
+    // Entry-locked create fields (TKT-3G93B8 / BUG-X1C7S): adopt the server's
+    // authoritative value for every read-only field (a machine field the server
+    // pinned to its initial value, or any policy-read-only field) so the locked
+    // control DISPLAYS the server value, not stale user input. Scoped to read-only
+    // fields, so it never clobbers an editable one. See adoptLockedFieldValues.
+    adoptLockedFieldValues(candidate._fields, candidate.properties, formData.value)
     // The dry-run strips hidden fields from `properties`; the remaining
     // keys are exactly the visible-by-default props the field filter
     // needs to render (since they won't appear in the sparse `_fields`).
@@ -1190,6 +1214,16 @@ onMounted(async () => {
         } else {
           formData.value[property] = value
         }
+        // A committed state-machine move changes which transitions are now
+        // performable — the loaded `_transitions` reflect the PRE-move state
+        // (RR-NI145G). The PATCH response's fresh `_transitions` isn't threaded
+        // through the autosave merge, so reload the entity to refresh the
+        // status control (mirrors onAttachmentChanged's reload for
+        // `_attachments`). Fire-and-forget: this is a UI-hint refresh, and the
+        // write already succeeded.
+        if (property in transitions.value) {
+          void loadEntity(true)
+        }
       },
       applyServerContent: (c) => {
         content.value = c
@@ -1392,6 +1426,7 @@ onBeforeRouteLeave(async () => {
               :get-property-def="getPropertyDef"
               :is-field-readonly="isFieldReadonly"
               :option-verdicts-for="optionVerdictsFor"
+              :transitions-for="transitionsFor"
               @update-field="updateField"
               @attachment-changed="onAttachmentChanged"
               @update-relation="updateRelation"

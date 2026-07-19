@@ -46,6 +46,18 @@ type Entity struct {
 	// non-per-entity shapes. The SPA's file widget reads this to render the
 	// download links / previews instead of the raw stored path string(s).
 	Attachments *map[string][]Attachment `json:"_attachments,omitempty"`
+	// Transitions maps a state-machine-typed property name to the LIST of its
+	// outgoing transitions resolved for the requesting principal on this entity
+	// (TKT-3G93B8): each carries the target value, an optional action label,
+	// the guard permission (if any), whether the principal may perform it right
+	// now, and — when not — which gate blocked it. Only properties whose type is
+	// a state machine appear; a plain enum field has no entry, and the SPA falls
+	// back to the ordinary enum control. Same pointer / closed-world semantics as
+	// FieldAffordances: present (possibly empty) on every per-entity response
+	// (GET / PATCH / POST create / clone) when the resolver can answer
+	// transitions, nil on list rows and when no state machines are wired. It is a
+	// UI hint, never authorization — the write path re-enforces every transition.
+	Transitions *map[string][]Transition `json:"_transitions,omitempty"`
 	// Warnings lists soft-condition findings surfaced by the write
 	// path. Populated only by mutation responses (PATCH); read paths
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
@@ -71,6 +83,26 @@ type RelationAffordance struct {
 	Creatable *bool                      `json:"creatable,omitempty"`
 	Removable *bool                      `json:"removable,omitempty"`
 	Fields    map[string]FieldAffordance `json:"fields,omitempty"`
+}
+
+// Transition is one resolved outgoing move of a state-machine-typed property
+// on a per-entity response (TKT-3G93B8). It is the wire projection of
+// statemachine.TransitionVerdict.
+//
+// To is the target value. Label is optional display text for the MOVE (the
+// action, e.g. "Start progress"); when empty the SPA falls back to the target
+// value's display label. Guard is the ACL permission the move requires (empty
+// when unguarded). Allowed reports whether the requesting principal may perform
+// it now (guard held AND precondition met). Reason names the blocking gate when
+// Allowed is false ("guard" or "precondition"); empty when Allowed is true. The
+// SPA shows only Allowed transitions, so Reason is advisory (tooltip/CLI), not a
+// rendering gate.
+type Transition struct {
+	To      string `json:"to"`
+	Label   string `json:"label,omitempty"`
+	Guard   string `json:"guard,omitempty"`
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // Attachment describes one file attached to a `file`-type property, as

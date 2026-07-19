@@ -75,6 +75,35 @@ describe('buildSectionEditFields', () => {
     const title = out.find((f) => f.property === 'title')
     expect(title?.verdict).toBeUndefined()
   })
+
+  it('attaches per-field transitions from entry._transitions (TKT-3G93B8)', () => {
+    const entry = makeEntity({
+      _transitions: { status: [{ to: 'closed', label: 'Close', allowed: true }] },
+    })
+    const out = buildSectionEditFields(makeFields(), entry, schemaResolver)
+    const status = out.find((f) => f.property === 'status')
+    // A machine field carries its transitions → routes to StatusControl.
+    expect(status?.transitions).toEqual([{ to: 'closed', label: 'Close', allowed: true }])
+    // A non-machine field has no transitions → renders its ordinary widget.
+    const title = out.find((f) => f.property === 'title')
+    expect(title?.transitions).toBeUndefined()
+  })
+
+  it('passes an empty transitions list through (terminal machine field)', () => {
+    // Key present with [] must survive so the detail view still routes to the
+    // StatusControl (not a full enum select) at a terminal state.
+    const entry = makeEntity({ _transitions: { status: [] } })
+    const out = buildSectionEditFields(makeFields(), entry, schemaResolver)
+    const status = out.find((f) => f.property === 'status')
+    expect(status?.transitions).toEqual([])
+  })
+
+  it('leaves transitions undefined for a source without _transitions (list row)', () => {
+    // A ViewEntity row carries no `_transitions`, so its status field keeps the
+    // ordinary widget rather than a status control.
+    const out = buildSectionEditFields(makeFields(), makeEntity(), schemaResolver)
+    expect(out.find((f) => f.property === 'status')?.transitions).toBeUndefined()
+  })
 })
 
 describe('sectionShouldRouteToInlineEdit', () => {

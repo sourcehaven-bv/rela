@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
@@ -130,11 +131,31 @@ func TestTransitionVerdicts_NoMachinesWired(t *testing.T) {
 	}
 }
 
-func TestTransitionVerdicts_NonMachineType(t *testing.T) {
+func TestTransitionVerdicts_TerminalStateKeyPresentEmpty(t *testing.T) {
 	r := newTransitionResolver(t, "review-it")
-	// feature has no status machine (not even in transitionMeta) → empty.
-	if got := r.TransitionVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": "done"})); len(got) != 0 {
-		// "done" is terminal → no out-edges → empty map.
-		t.Errorf("terminal state should give empty map, got %+v", got)
+	// "done" is terminal (no out-edges), but status IS a machine field: the key
+	// must be PRESENT with an empty slice so a consumer still renders the status
+	// control (not a full enum select that would offer illegal moves) — TKT-3G93B8.
+	got := r.TransitionVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": "done"}))
+	vs, ok := got["status"]
+	if !ok {
+		t.Fatalf("terminal machine field must keep its key, got %+v", got)
+	}
+	if len(vs) != 0 {
+		t.Errorf("terminal state should have no performable moves, got %+v", vs)
+	}
+	if vs == nil {
+		t.Errorf("empty verdict slice must be non-nil so it serializes as [] not null")
+	}
+}
+
+func TestTransitionVerdicts_NonMachineTypeAbsent(t *testing.T) {
+	r := newTransitionResolver(t, "review-it")
+	// An entity type with NO machine-typed property (not in transitionMeta) gets
+	// no keys at all — this is the signal the SPA uses to fall back to the
+	// ordinary enum widget.
+	got := r.TransitionVerdicts(ctxAs("alice"), entity.New("F-1", "feature"))
+	if len(got) != 0 {
+		t.Errorf("non-machine entity type should give empty map, got %+v", got)
 	}
 }
