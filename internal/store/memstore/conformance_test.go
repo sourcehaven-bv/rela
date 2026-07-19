@@ -65,3 +65,10 @@ func FuzzCloneNestedValues(f *testing.F) {
 func FuzzPropertyValuesTypeZoo(f *testing.F) {
 	storetest.FuzzPropertyValuesTypeZoo(f, fuzzFactory)
 }
+
+// TestTxStress runs the shared mixed-workload soak (watchdogged deadlock
+// detection + lost-update and pair-atomicity invariants) against memstore.
+// Duration 2s by default; RELA_STRESS_SECONDS extends it for local shakes.
+func TestTxStress(t *testing.T) {
+	storetest.RunTxStressTest(t, factory)
+}

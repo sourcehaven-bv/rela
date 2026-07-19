@@ -33,7 +33,7 @@ func attachmentKey(entityID, property, fileName string) string {
 	return entityID + "/" + property + "/" + fileName
 }
 
-func (s *FSStore) AttachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
+func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := storeutil.ValidateProperty(property); err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (s *FSStore) ReadAttachment(_ context.Context, entityID, property, fileName
 	return s.rooted.Open(fileKey)
 }
 
-func (s *FSStore) DeleteAttachment(_ context.Context, entityID, property, fileName string) error {
+func (s *FSStore) deleteAttachment(_ context.Context, entityID, property, fileName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

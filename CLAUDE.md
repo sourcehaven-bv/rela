@@ -18,7 +18,13 @@
 - **No repository or transaction abstractions.** Depend directly on
   `store.Store`, `tracer.Tracer`, `search.Searcher`,
   `entitymanager.EntityManager`. The old `repo` and `tx` layers are gone
-  — do not reintroduce equivalents.
+  — do not reintroduce equivalents. The one sanctioned transaction seam
+  is `store.Store.Tx` itself (DEC-8UIL0): a contract ON the store with
+  per-backend meaning (fs/mem: write mutex, mutual exclusion only;
+  postgres: native transaction + advisory lock, rollback, events at
+  commit) — not a generic unit-of-work layer stacked above it. Don't
+  wrap `Tx` in a new abstraction, and don't do slow external I/O inside
+  a `Tx` callback.
 - **Capture state once per operation.** Call `ws.Snapshot()` (or the
   equivalent `appState.Load()`) at the top of every handler, command, MCP
   tool, or observer; reuse the returned value for every read in that

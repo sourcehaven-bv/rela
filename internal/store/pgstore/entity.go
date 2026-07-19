@@ -469,12 +469,20 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 // --- observers ---
 
 func (s *Store) notifyPut(e *entity.Entity) {
+	if s.txPending != nil { // inside Tx: deliver after the outer commit (tx.go)
+		s.txPending.add(func(p *Store) { p.notifyPut(e) })
+		return
+	}
 	for _, o := range s.observers {
 		_ = o.EntityPut(e)
 	}
 }
 
 func (s *Store) notifyDelete(id string) {
+	if s.txPending != nil { // inside Tx: deliver after the outer commit (tx.go)
+		s.txPending.add(func(p *Store) { p.notifyDelete(id) })
+		return
+	}
 	for _, o := range s.observers {
 		_ = o.EntityDelete(id)
 	}
