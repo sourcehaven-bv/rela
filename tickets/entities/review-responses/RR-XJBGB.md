@@ -1,0 +1,9 @@
+---
+id: RR-XJBGB
+type: review-response
+title: Enum RHS validation gap in predicate migration
+finding: 'internal/filter/match.go:365-404 (matchEnum) validates the filter''s RHS value against the property''s allowed enum set and returns an ERROR if the value is not a member (e.g. `status=notavalue` on a status property errors). predicate has no notion of enum membership — status/priority would be treated as plain strings, so `entity.status == ''notavalue''` silently compiles and evaluates to false rather than erroring. This is a behavior change on migration: a typo in an automation/validation rule that filter would have surfaced as an error becomes a silently-never-matching rule under predicate. Decision needed and must be pinned by a test: either (a) accept plain-string enums in phase 1 and document the lost validation (recommended — simpler, and the enum members can enter predicate''s type system later), or (b) carry allowed-values into the predicate type so invalid enum literals are a compile error (closer parity, more work). Recommend (a) for phase 1 with an explicit note.'
+severity: significant
+reason: 'Phase-1 decision: option (a) chosen — enum/status/priority properties map to predicate StringType (predicatefns/env.go scalarPredicateType), so an invalid enum literal in a predicate compiles and evaluates to false rather than erroring as filter.Match does. This is an accepted, documented gap for Phase 1 (noted in the scalarPredicateType godoc). Closing it (carrying allowed-values into the predicate type for a compile-time invalid-enum error) is deferred to a follow-up: it requires threading enum members through the type descriptor and is not needed for the core convergence. The current behavior (silently-false on typo) is strictly no worse than an author writing a nonexistent status in a raw predicate today; the pre-existing analyze tooling still flags invalid property values on entities.'
+status: deferred
+---

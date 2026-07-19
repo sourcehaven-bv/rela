@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"time"
 )
 
 // Eval evaluates the program against bindings and returns the result
@@ -201,6 +202,12 @@ func valuesEqual(a, b Value) bool {
 	case Number:
 		bv, ok := b.(Number)
 		return ok && av.v == bv.v
+	case Int:
+		bv, ok := b.(Int)
+		return ok && av.v == bv.v
+	case Date:
+		bv, ok := b.(Date)
+		return ok && av.v.Equal(bv.v)
 	case String:
 		bv, ok := b.(String)
 		return ok && av.v == bv.v
@@ -222,6 +229,18 @@ func evalOrdered(op string, a, b Value) (Value, error) {
 			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Number", op, b.Type().typeName())}
 		}
 		return NewBool(cmpNumber(op, av.v, bv.v)), nil
+	case Int:
+		bv, ok := b.(Int)
+		if !ok {
+			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Int", op, b.Type().typeName())}
+		}
+		return NewBool(cmpInt(op, av.v, bv.v)), nil
+	case Date:
+		bv, ok := b.(Date)
+		if !ok {
+			return nil, &EvalError{Reason: fmt.Sprintf("internal: ordered cmp %q: rhs type %s mismatches lhs Date", op, b.Type().typeName())}
+		}
+		return NewBool(cmpDate(op, av.v, bv.v)), nil
 	case String:
 		bv, ok := b.(String)
 		if !ok {
@@ -242,6 +261,36 @@ func cmpNumber(op string, x, y float64) bool {
 		return x > y
 	case ">=":
 		return x >= y
+	}
+	return false
+}
+
+func cmpInt(op string, x, y int64) bool {
+	switch op {
+	case "<":
+		return x < y
+	case "<=":
+		return x <= y
+	case ">":
+		return x > y
+	case ">=":
+		return x >= y
+	}
+	return false
+}
+
+// cmpDate orders two instants. Mirrors internal/filter.matchDate:
+// Before/After for strict, Before||Equal / After||Equal for inclusive.
+func cmpDate(op string, x, y time.Time) bool {
+	switch op {
+	case "<":
+		return x.Before(y)
+	case "<=":
+		return x.Before(y) || x.Equal(y)
+	case ">":
+		return x.After(y)
+	case ">=":
+		return x.After(y) || x.Equal(y)
 	}
 	return false
 }
