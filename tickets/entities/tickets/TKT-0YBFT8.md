@@ -5,7 +5,7 @@ title: 'Metamodel doc-fields: top-level description, per-enum-value descriptions
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
