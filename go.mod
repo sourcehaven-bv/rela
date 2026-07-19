@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
-	github.com/alecthomas/kong v1.15.0
+	github.com/alecthomas/kong v1.16.0
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/huh v1.0.0
