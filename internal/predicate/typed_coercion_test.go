@@ -106,9 +106,9 @@ func TestTypedComparison_CoercionErrors(t *testing.T) {
 		{"non-integer literal on int field", "entity.count > 1.5"},
 		// A literal beyond 2^53 can't coerce to an exact int64 (RR-O0LM1).
 		{"int literal beyond 2^53", "entity.count > 9007199254740993"},
-		// Hex literals parse via ParseUint and can exceed int64; the range
-		// guard must reject them before any float→int64 conversion.
-		{"hex literal beyond int64", "entity.count > 0xFFFFFFFFFFFFFFFF"},
+		// Hex literals are capped at 53 bits at parse (exact-float64
+		// invariant); a 64-bit one is rejected before coercion.
+		{"hex literal beyond 2^53", "entity.count > 0xFFFFFFFFFFFFFFFF"},
 		// Type mismatch left for the checker: string literal vs int field.
 		{"string literal vs int field", "entity.count == 'x'"},
 		{"number literal vs date field", "entity.due == 5"},
