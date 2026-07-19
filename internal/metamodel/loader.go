@@ -16,6 +16,7 @@ import (
 var validTopLevelKeys = map[string]bool{
 	"version":     true,
 	"namespace":   true,
+	"description": true,
 	"types":       true,
 	"entities":    true,
 	"relations":   true,
