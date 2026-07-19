@@ -378,4 +378,85 @@ describe('Schema Store', () => {
       expect(store.getEnumLabel('x', 'status')).toBe('Bug X')
     })
   })
+
+  describe('stylesForProperty', () => {
+    // The server keys `styles` by custom-type name (buildStyleMap /
+    // validateStyles), so resolution must go property -> custom type -> styles.
+    it('resolves styles via the custom-type name when property ≠ type (BUG-28Y0Y2)', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],
+      ]) as never
+      store.customTypes = new Map([['ticket-status', { values: ['todo', 'doing'] }]]) as never
+      store.styles = { 'ticket-status': { todo: 'badge-yellow' } }
+      expect(store.stylesForProperty('status')).toEqual({ todo: 'badge-yellow' })
+    })
+
+    it('prefers the type-keyed entry over a property-keyed one', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],
+      ]) as never
+      store.customTypes = new Map([['ticket-status', { values: ['todo'] }]]) as never
+      store.styles = {
+        'ticket-status': { todo: 'badge-yellow' },
+        status: { todo: 'badge-red' },
+      }
+      expect(store.stylesForProperty('status')).toEqual({ todo: 'badge-yellow' })
+    })
+
+    it('resolves a TYPE name passed as the property (EntityDetail view sections pass PropType)', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],
+      ]) as never
+      store.customTypes = new Map([['ticket-status', { values: ['todo'] }]]) as never
+      store.styles = { 'ticket-status': { todo: 'badge-yellow' } }
+      // No property is *named* ticket-status; the direct-key fallback must hit.
+      expect(store.stylesForProperty('ticket-status')).toEqual({ todo: 'badge-yellow' })
+    })
+
+    it('falls back to the property name when the property has no custom type', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'enum', values: ['open'] } } }],
+      ]) as never
+      store.styles = { status: { open: 'badge-blue' } }
+      expect(store.stylesForProperty('status')).toEqual({ open: 'badge-blue' })
+    })
+
+    it('disambiguates via the given entity type when property types differ across entities', () => {
+      const store = useSchemaStore()
+      store.entityTypes = new Map([
+        ['bug', { label: 'Bug', properties: { status: { type: 'bug-status' } } }],
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],
+      ]) as never
+      store.customTypes = new Map([
+        ['bug-status', { values: ['open'] }],
+        ['ticket-status', { values: ['open'] }],
+      ]) as never
+      store.styles = {
+        'bug-status': { open: 'badge-red' },
+        'ticket-status': { open: 'badge-blue' },
+      }
+      expect(store.stylesForProperty('status', 'ticket')).toEqual({ open: 'badge-blue' })
+      // Without a disambiguator the first-inserted type wins (documented tie-break).
+      expect(store.stylesForProperty('status')).toEqual({ open: 'badge-red' })
+    })
+
+    it('resolves relation-type properties too', () => {
+      const store = useSchemaStore()
+      store.relationTypes = new Map([
+        ['blocks', { label: 'blocks', properties: { weight: { type: 'weight_t' } } }],
+      ]) as never
+      store.customTypes = new Map([['weight_t', { values: ['high'] }]]) as never
+      store.styles = { weight_t: { high: 'badge-orange' } }
+      expect(store.stylesForProperty('weight')).toEqual({ high: 'badge-orange' })
+    })
+
+    it('returns undefined when nothing is styled', () => {
+      const store = useSchemaStore()
+      expect(store.stylesForProperty('status')).toBeUndefined()
+    })
+  })
 })

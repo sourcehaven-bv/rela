@@ -82,6 +82,78 @@ describe('Badge', () => {
     })
   })
 
+  describe('custom-type keyed styles (BUG-28Y0Y2)', () => {
+    // The server keys the styles map by custom-type name, not property name.
+    function withCustomType() {
+      const schemaStore = useSchemaStore()
+      schemaStore.entityTypes = new Map([
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],
+      ]) as never
+      schemaStore.customTypes = new Map([
+        ['ticket-status', { values: ['todo', 'doing', 'done'] }],
+      ]) as never
+      return schemaStore
+    }
+
+    it('resolves the color via the custom-type name when property ≠ type', () => {
+      const schemaStore = withCustomType()
+      schemaStore.styles = { 'ticket-status': { todo: 'badge-yellow' } }
+
+      const wrapper = mount(Badge, {
+        props: { value: 'todo', property: 'status' },
+      })
+
+      expect(wrapper.find('.badge').classes()).toContain('badge--yellow')
+    })
+
+    it('prefers the type-keyed styles over property-keyed ones', () => {
+      const schemaStore = withCustomType()
+      schemaStore.styles = {
+        'ticket-status': { todo: 'badge-yellow' },
+        status: { todo: 'badge-red' },
+      }
+
+      const wrapper = mount(Badge, {
+        props: { value: 'todo', property: 'status' },
+      })
+
+      expect(wrapper.find('.badge').classes()).toContain('badge--yellow')
+    })
+
+    it('uses the entityType prop to disambiguate same-named properties', () => {
+      const schemaStore = useSchemaStore()
+      schemaStore.entityTypes = new Map([
+        ['bug', { label: 'Bug', properties: { status: { type: 'bug-status' } } }],
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],
+      ]) as never
+      schemaStore.customTypes = new Map([
+        ['bug-status', { values: ['open'] }],
+        ['ticket-status', { values: ['open'] }],
+      ]) as never
+      schemaStore.styles = {
+        'bug-status': { open: 'badge-red' },
+        'ticket-status': { open: 'badge-blue' },
+      }
+
+      const wrapper = mount(Badge, {
+        props: { value: 'open', property: 'status', entityType: 'ticket' },
+      })
+
+      expect(wrapper.find('.badge').classes()).toContain('badge--blue')
+    })
+
+    it('still normalizes the value when resolving through the type key', () => {
+      const schemaStore = withCustomType()
+      schemaStore.styles = { 'ticket-status': { in_progress: 'badge-orange' } }
+
+      const wrapper = mount(Badge, {
+        props: { value: 'In Progress', property: 'status' },
+      })
+
+      expect(wrapper.find('.badge').classes()).toContain('badge--orange')
+    })
+  })
+
   describe('fallback color', () => {
     it('uses gray class for unknown values', () => {
       const wrapper = mount(Badge, {
