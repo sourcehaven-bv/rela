@@ -94,8 +94,9 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
       :aria-expanded="open"
       @click.stop="toggle"
     >
-      <Badge :value="modelValue" :property="property" />
-      <span v-if="hasMoves" class="status-caret" aria-hidden="true">&#9662;</span>
+      <Badge :value="modelValue" :property="property">
+        <span v-if="hasMoves" class="status-caret" aria-hidden="true">&#9662;</span>
+      </Badge>
     </button>
 
     <ul v-if="open && hasMoves" class="status-menu" role="menu">
@@ -139,7 +140,8 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
    its type + padding up (scoped, so list/table badges elsewhere are untouched). */
 .status-trigger :deep(.badge) {
   font-size: 14px;
-  padding: 6px 12px;
+  /* Extra right padding so the in-badge caret has room. */
+  padding: 6px 10px 6px 12px;
 }
 
 .status-trigger:hover:not(:disabled) {
@@ -152,9 +154,14 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   background: transparent;
 }
 
+/* Caret lives INSIDE the badge (Badge's trailing slot), so it inherits the
+   badge's text colour and reads as part of the colored control. Bumped up from
+   the old 10px so it's clearly a dropdown affordance. */
 .status-caret {
-  font-size: 10px;
-  color: var(--muted-text);
+  margin-left: 6px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.75;
 }
 
 .status-menu {
