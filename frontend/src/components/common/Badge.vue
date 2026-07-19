@@ -6,7 +6,10 @@ import type { EntityType } from '@/types'
 const props = defineProps<{
   value: string
   property?: string
-  entityType?: EntityType
+  // Accepts a type-name string OR a resolved EntityType, matching the schema
+  // store's resolution API — widget call sites hold the name, list/kanban
+  // call sites hold the object.
+  entityType?: string | EntityType
 }>()
 
 const schemaStore = useSchemaStore()
@@ -23,17 +26,20 @@ const badgeClassNames: Record<string, string> = {
   'badge-yellow': 'badge--yellow',
 }
 
-// Look up style by (property, value). The cross-property fallback that
-// scanned every styled property for a value match was removed (RR-UD2D):
-// it produced non-deterministic colours when a value (e.g. 'open') was
-// styled under multiple properties. Audited consumers all pass an
-// explicit :property=. A missing property -> the default gray; that's
-// the correct "no styling configured" answer.
+// Look up style by (property, value). The server keys the styles map by
+// custom-type name, so resolution goes through the schema store's
+// stylesForProperty (property -> its custom type -> styles), with a
+// property-name fallback. The cross-property fallback that scanned every
+// styled property for a value match was removed (RR-UD2D): it produced
+// non-deterministic colours when a value (e.g. 'open') was styled under
+// multiple properties. Audited consumers all pass an explicit :property=.
+// A missing property -> the default gray; that's the correct "no styling
+// configured" answer.
 const badgeClass = computed(() => {
   if (!props.property) return 'badge--gray'
   // Normalize: lowercase, spaces to underscores (keep underscores as-is)
   const valueKey = props.value.toLowerCase().replace(/\s/g, '_')
-  const propStyles = schemaStore.styles[props.property]
+  const propStyles = schemaStore.stylesForProperty(props.property, props.entityType)
   if (propStyles && propStyles[valueKey]) {
     return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
   }
