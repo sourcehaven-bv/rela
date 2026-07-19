@@ -154,11 +154,15 @@ func coerceIntLiteral(v Value, line int) (Value, error) {
 		// same-type checker produce the clearer "cannot compare" error.
 		return v, nil
 	}
-	if n.v != float64(int64(n.v)) {
-		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("cannot compare an int field with the non-integer literal %v", n.v)}
-	}
+	// Range-check before any float→int64 conversion: out-of-range
+	// float→int conversion is implementation-defined, so the guard must
+	// dominate both conversions below (also keeps CodeQL happy about the
+	// hex-literal ParseUint value flowing in from parseLuaNumber).
 	if n.v >= maxExactIntLiteral || n.v <= -maxExactIntLiteral {
 		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("integer literal %v is too large to compare exactly (must be within ±2^53)", n.v)}
+	}
+	if n.v != float64(int64(n.v)) {
+		return nil, &CompileError{Line: line, Reason: fmt.Sprintf("cannot compare an int field with the non-integer literal %v", n.v)}
 	}
 	return NewInt(int64(n.v)), nil
 }
