@@ -134,6 +134,14 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   transition: background 0.15s;
 }
 
+/* The base Badge is a small 12px table pill; as the primary edit control it
+   needs more presence so it doesn't read as tiny next to bordered inputs. Scale
+   its type + padding up (scoped, so list/table badges elsewhere are untouched). */
+.status-trigger :deep(.badge) {
+  font-size: 14px;
+  padding: 6px 12px;
+}
+
 .status-trigger:hover:not(:disabled) {
   background: var(--hover-bg);
 }
