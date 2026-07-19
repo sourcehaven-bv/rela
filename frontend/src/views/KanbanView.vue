@@ -345,6 +345,16 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
   return String(entity.properties[field.property] || '')
 }
 
+// Card fields with an unset value are dropped entirely: a dangling
+// "effort:" label next to an empty Badge pill (enum fields render a
+// styled chip even for "") is noise on every card that hasn't set the
+// property, worst on mobile where card space is scarce.
+function visibleCardFields(entity: Entity): KanbanCardField[] {
+  return (kanbanConfig.value?.card.fields ?? []).filter(
+    (field) => getCardFieldValue(entity, field) !== ''
+  )
+}
+
 function getCardFieldLabel(field: KanbanCardField): string {
   if (field.label) return field.label
   return field.relation || field.property || ''
@@ -498,9 +508,9 @@ function createNew() {
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title">{{ getCardTitle(entity) }}</div>
-            <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
+            <div v-if="visibleCardFields(entity).length" class="card-fields">
               <div
-                v-for="(field, fieldIndex) in kanbanConfig.card.fields"
+                v-for="(field, fieldIndex) in visibleCardFields(entity)"
                 :key="field.relation || field.property || fieldIndex"
                 class="card-field"
               >
@@ -511,7 +521,7 @@ function createNew() {
                   :property="field.property"
                   :entity-type="entityType"
                 />
-                <span v-else class="field-value">{{ getCardFieldValue(entity, field) || '-' }}</span>
+                <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
               </div>
             </div>
           </div>
@@ -564,9 +574,9 @@ function createNew() {
           >
             <div class="card-id">{{ entity.id }}</div>
             <div class="card-title">{{ getCardTitle(entity) }}</div>
-            <div v-if="kanbanConfig?.card.fields?.length" class="card-fields">
+            <div v-if="visibleCardFields(entity).length" class="card-fields">
               <div
-                v-for="(field, fieldIndex) in kanbanConfig.card.fields"
+                v-for="(field, fieldIndex) in visibleCardFields(entity)"
                 :key="field.relation || field.property || fieldIndex"
                 class="card-field"
               >
@@ -577,7 +587,7 @@ function createNew() {
                   :property="field.property"
                   :entity-type="entityType"
                 />
-                <span v-else class="field-value">{{ getCardFieldValue(entity, field) || '-' }}</span>
+                <span v-else class="field-value">{{ getCardFieldValue(entity, field) }}</span>
               </div>
             </div>
           </div>

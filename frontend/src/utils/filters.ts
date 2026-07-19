@@ -18,6 +18,10 @@ export const OPERATOR_MAP: Record<string, string> = {
   '<': 'lt',
   '<=': 'lte',
   '~': 'contains',
+  // `in` is its own name on both sides. It was missing here for months,
+  // silently degrading configured `in` filters to `eq` via the old
+  // unknown-operator fallback below.
+  in: 'in',
 }
 
 /**
@@ -31,8 +35,9 @@ export const OPERATOR_MAP: Record<string, string> = {
  * `'=='`, which is valid UI but surprising. The override pins `eq → '='` so
  * the canonical form is the shorter symbol.
  *
- * `'in'` is added explicitly because it's its own UI symbol with no entry
- * in `OPERATOR_MAP`.
+ * `'in'` maps to itself on both sides (it now has an OPERATOR_MAP entry;
+ * the explicit override here is redundant but harmless and kept for
+ * clarity next to `eq`).
  */
 export const API_TO_UI_OPERATOR: Record<string, string> = {
   ...Object.fromEntries(Object.entries(OPERATOR_MAP).map(([ui, api]) => [api, ui])),
@@ -41,10 +46,19 @@ export const API_TO_UI_OPERATOR: Record<string, string> = {
 }
 
 /**
- * Convert a UI operator to its API equivalent
+ * Convert a UI operator to its API equivalent.
+ *
+ * An operator we don't know is passed through UNCHANGED (with a console
+ * warning) so the server's 400 names it — the old `|| 'eq'` fallback
+ * silently turned any unknown operator into equality, which made a config
+ * typo (`=~`) look like an applied filter returning zero rows.
  */
 export function toApiOperator(operator: string | undefined): string {
-  return OPERATOR_MAP[operator || '='] || 'eq'
+  if (!operator) return 'eq'
+  const mapped = OPERATOR_MAP[operator]
+  if (mapped) return mapped
+  console.warn(`[filters] unknown filter operator ${JSON.stringify(operator)}; passing through to the API`)
+  return operator
 }
 
 /**

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -278,17 +279,6 @@ func TestV1ListRelationFilterOperatorFailsClosed(t *testing.T) {
 			query:   url.Values{"filter[verantwoordelijk_voor][ne]": {"Jeroen Vloothuis"}, "sort": {"title"}},
 			wantIDs: []string{"TAAK-002", "TAAK-004"},
 		},
-		{
-			// `contains` is NOT supported on relations → fail closed, zero rows.
-			name:    "unsupported operator drops all rows (not fail-open)",
-			query:   url.Values{"filter[verantwoordelijk_voor][contains]": {"Jeroen"}, "sort": {"title"}},
-			wantIDs: []string{},
-		},
-		{
-			name:    "unknown operator drops all rows (not fail-open)",
-			query:   url.Values{"filter[belongs_to][weird]": {"Apollo"}},
-			wantIDs: []string{},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -296,6 +286,29 @@ func TestV1ListRelationFilterOperatorFailsClosed(t *testing.T) {
 			got := listTaken(t, app, tt.query)
 			if !equalStringSlices(got, tt.wantIDs) {
 				t.Errorf("ids = %v, want %v (fail-open would return all 4 tasks)", got, tt.wantIDs)
+			}
+		})
+	}
+
+	// Unsupported operators on relation filters reject the request (400,
+	// invalid_filter) — never fail open, and no longer the silent
+	// zero-rows drop (which read as "no data" instead of naming the typo).
+	rejected := []url.Values{
+		{"filter[verantwoordelijk_voor][contains]": {"Jeroen"}},
+		{"filter[belongs_to][weird]": {"Apollo"}},
+	}
+	for _, q := range rejected {
+		t.Run("rejects "+q.Encode(), func(t *testing.T) {
+			app := relationFilterApp(t)
+			path := "/api/v1/taaks?" + q.Encode()
+			req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+			rec := httptest.NewRecorder()
+			app.handleV1ListEntities(rec, req, "taak", "taaks")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (body %s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "invalid_filter") {
+				t.Errorf("expected invalid_filter code in body, got %s", rec.Body.String())
 			}
 		})
 	}

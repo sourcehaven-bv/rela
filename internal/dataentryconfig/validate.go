@@ -48,15 +48,23 @@ var knownTypos = map[string]string{
 	"navaigation": "navigation",
 }
 
-// Valid filter operators
+// Valid filter operators for list/kanban static filters. This is the UI
+// operator set the SPA can translate to a wire operator the API evaluates
+// (utils/filters.ts OPERATOR_MAP → eq/ne/contains/in/lt/lte/gt/gte) — the
+// docs table in docs/data-entry.md "Static Filters" is the same set. `=~`
+// (regex, from search/calfeed/CLI filter syntax) was wrongly allowed here
+// for months while no layer below could evaluate it: the SPA degraded it
+// to `eq` and the config's list silently showed zero rows.
 var validFilterOperators = map[string]bool{
 	"=":  true,
+	"==": true, // alias for "="
 	"!=": true,
+	"~":  true, // substring, case-insensitive
 	"<":  true,
 	"<=": true,
 	">":  true,
 	">=": true,
-	"=~": true,
+	"in": true, // comma-separated list, matches any
 }
 
 // Valid sort directions

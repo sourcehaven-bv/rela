@@ -2168,10 +2168,27 @@ func TestV1ComputeEntityActions_VerbVocabulary(t *testing.T) {
 	}
 }
 
+// runListFilterExpect400 drives the list handler with a filter query the
+// pipeline must refuse, asserting HTTP 400 with the invalid_filter code.
+func runListFilterExpect400(t *testing.T, app *App, query string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?"+query, http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1ListEntities(rec, req, "ticket", "tickets")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("query %q: expected 400, got %d (body %s)", query, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid_filter") {
+		t.Errorf("query %q: expected invalid_filter code in body, got %s", query, rec.Body.String())
+	}
+}
+
 // TestV1FilterUnknownOperator verifies that an unknown operator (e.g. a
-// typo) is SKIPPED entirely rather than falling through to a pass-all
-// default. The previous fail-open behavior would have silently bypassed any
-// configured scope filter whenever the URL carried a malformed operator.
+// typo) rejects the request with 400. The previous behaviors were both
+// silent: originally the per-entity switch included everything (fail-open),
+// then the clause was dropped with only a server log — which STILL returned
+// the unfiltered superset (BUG-*: the active_tickets `=~` config typo hid
+// behind exactly that). A 400 makes the broken operator visible.
 func TestV1FilterUnknownOperator(t *testing.T) {
 	app := newTestAppV1(t)
 
@@ -2182,53 +2199,39 @@ func TestV1FilterUnknownOperator(t *testing.T) {
 			"title": "Test Ticket",
 		},
 	})
-	seedEntity(app, &entity.Entity{
-		ID:   "TKT-002",
-		Type: "ticket",
-		Properties: map[string]any{
-			"title": "Another Ticket",
-		},
-	})
 
-	// Unknown operator: the filter is dropped entirely (fail-closed), so
-	// all entities are returned because no filter was actually applied.
-	// Importantly, this is NOT "unknown operator matches everything" — it's
-	// "unknown operator is logged and skipped, so the remaining filter set
-	// is empty, so nothing constrains the list".
-	got := runListFilter(t, app, "filter[title][unknown]=test")
-	if len(got) != 2 {
-		t.Errorf("expected 2 entities when unknown operator is skipped, got %d", len(got))
-	}
+	runListFilterExpect400(t, app, "filter[title][unknown]=test")
+	// The `=~` regex operator from rela's other filter languages (search,
+	// calfeed where, CLI) is NOT a list-filter operator — pinned here since
+	// this exact confusion produced a months-broken list config. The `=` in
+	// the key must be percent-encoded or the query parser splits on it.
+	runListFilterExpect400(t, app, "filter%5Bstatus%5D%5B%3D~%5D=a%7Cb")
 }
 
-// TestV1FilterMalformedKeySkipped verifies that malformed filter keys
-// (empty property, empty operator, too many segments) are skipped with a
-// log warning rather than silently passing every entity.
-func TestV1FilterMalformedKeySkipped(t *testing.T) {
+// TestV1FilterMalformedKeyRejected verifies that malformed filter keys
+// (empty property, empty operator, too many segments) reject the request
+// with 400 rather than silently dropping the clause (which returned the
+// unfiltered superset).
+func TestV1FilterMalformedKeyRejected(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
 		Properties: map[string]any{"status": "open"},
 	})
-	seedEntity(app, &entity.Entity{
-		ID:         "TKT-002",
-		Type:       "ticket",
-		Properties: map[string]any{"status": "closed"},
-	})
 
-	// Malformed keys: should be dropped, so another valid filter on the
-	// same request still applies cleanly. Here we combine a bogus key with
-	// a legit status=open filter and assert the legit one still works.
-	got := runListFilter(t, app, "filter[status][][weird]=nope&filter[status]=open")
+	// Too many segments (even alongside a valid filter).
+	runListFilterExpect400(t, app, "filter[status][][weird]=nope&filter[status]=open")
+	// Empty property.
+	runListFilterExpect400(t, app, "filter[][eq]=anything")
+	// Empty operator segment (the `[][]` form; plain `[]` is the valid
+	// multi-value array suffix).
+	runListFilterExpect400(t, app, "filter[status][][]=x")
+
+	// Sanity: a valid filter still works after the rejections above.
+	got := runListFilter(t, app, "filter[status]=open")
 	if len(got) != 1 || got[0] != "TKT-001" {
-		t.Errorf("malformed key + valid filter: expected [TKT-001], got %v", got)
-	}
-
-	// Empty property: dropped.
-	got = runListFilter(t, app, "filter[][eq]=anything&filter[status]=closed")
-	if len(got) != 1 || got[0] != "TKT-002" {
-		t.Errorf("empty property + valid filter: expected [TKT-002], got %v", got)
+		t.Errorf("valid filter: expected [TKT-001], got %v", got)
 	}
 }
 

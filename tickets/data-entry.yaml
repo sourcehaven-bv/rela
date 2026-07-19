@@ -732,8 +732,8 @@ lists:
         sortable: true
     filters:
       - property: status
-        operator: "=~"
-        value: "exploring|validated"
+        operator: "in"
+        value: "exploring,validated"
     sort:
       - property: value
         direction: desc
@@ -857,8 +857,8 @@ lists:
       - property: effort
     filters:
       - property: status
-        operator: "=~"
-        value: "ready|in-progress|blocked"
+        operator: "in"
+        value: "ready,in-progress,blocked"
     sort:
       - property: priority
     create_form: create_ticket

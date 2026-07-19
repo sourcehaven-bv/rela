@@ -664,11 +664,14 @@ func TestValidateConfig_InvalidSortDirection(t *testing.T) {
 
 func TestValidateConfig_InvalidFilterOperator(t *testing.T) {
 	meta := testMetamodel()
+	// `=~` is regex syntax from rela's OTHER filter languages (search,
+	// calfeed where, CLI) and was wrongly accepted here for months while
+	// no layer below could evaluate it (the SPA degraded it to `eq`).
 	cfg := &Config{
 		Lists: map[string]List{
 			"test": {
 				EntityType: "ticket",
-				Filters:    []FilterConfig{{Property: "status", Operator: "=="}},
+				Filters:    []FilterConfig{{Property: "status", Operator: "=~"}},
 			},
 		},
 	}
@@ -677,8 +680,29 @@ func TestValidateConfig_InvalidFilterOperator(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid filter operator")
 	}
-	if !strings.Contains(err.Error(), `invalid operator "=="`) {
+	if !strings.Contains(err.Error(), `invalid operator "=~"`) {
 		t.Errorf("expected error about invalid operator, got: %v", err)
+	}
+}
+
+// TestValidateConfig_DocumentedFilterOperatorsAccepted pins the full
+// documented operator set (docs/data-entry.md "Static Filters") so the
+// validator can't drift from the docs/SPA/API again — `in` and `~` were
+// documented and evaluable but rejected here until this test existed.
+func TestValidateConfig_DocumentedFilterOperatorsAccepted(t *testing.T) {
+	meta := testMetamodel()
+	for _, op := range []string{"=", "==", "!=", "~", "<", "<=", ">", ">=", "in"} {
+		cfg := &Config{
+			Lists: map[string]List{
+				"test": {
+					EntityType: "ticket",
+					Filters:    []FilterConfig{{Property: "status", Operator: op, Value: "x"}},
+				},
+			},
+		}
+		if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+			t.Errorf("operator %q: expected valid, got: %v", op, err)
+		}
 	}
 }
 
