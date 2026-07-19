@@ -473,9 +473,20 @@ func (r *PolicyResolver) TransitionVerdicts(
 	}
 	guard := r.transitionGuard(ctx)
 	for _, prop := range r.machines.MachineProps(e.Type) {
-		if vs := r.machines.Performable(ctx, e, prop, guard, r.lookup); len(vs) > 0 {
-			out[prop] = vs
+		// Emit an entry for EVERY machine-typed property, even when there are no
+		// performable out-edges (a terminal state, or all edges gated). The
+		// presence of the key is how a consumer distinguishes "this field is a
+		// state machine (render the status control, possibly empty)" from "not a
+		// machine field (render the ordinary enum widget)". Dropping terminal
+		// fields would make a done ticket's status fall back to a full enum
+		// select that offers illegal moves — see TKT-3G93B8. A nil slice from
+		// Performable normalizes to an empty (non-nil) slice so it serializes as
+		// [] rather than null.
+		vs := r.machines.Performable(ctx, e, prop, guard, r.lookup)
+		if vs == nil {
+			vs = []statemachine.TransitionVerdict{}
 		}
+		out[prop] = vs
 	}
 	return out
 }

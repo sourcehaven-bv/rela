@@ -54,11 +54,13 @@ var (
 	_ TransitionResolver   = fakeTransitionResolver{}
 )
 
-func getEntityV1(t *testing.T, app *App, typeName, plural, id string) v1.Entity {
+// getEntityV1 GETs a ticket (the only type newTestAppV1 defines) and decodes
+// the v1 wire shape.
+func getEntityV1(t *testing.T, app *App, id string) v1.Entity {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/"+plural+"/"+id, http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1GetEntity(rec, req, typeName, plural, id)
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", id)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s: got %d, want 200; body=%s", id, rec.Code, rec.Body.String())
 	}
@@ -88,7 +90,7 @@ func TestTransitionsWire_GETCarriesTransitions(t *testing.T) {
 		Properties: map[string]any{"title": "x", "status": "todo"},
 	})
 
-	e := getEntityV1(t, app, "ticket", "tickets", "TKT-001")
+	e := getEntityV1(t, app, "TKT-001")
 	if e.Transitions == nil {
 		t.Fatalf("expected _transitions present, got nil")
 	}
@@ -122,9 +124,38 @@ func TestTransitionsWire_AbsentWithoutTransitionResolver(t *testing.T) {
 		Properties: map[string]any{"title": "x", "status": "todo"},
 	})
 
-	e := getEntityV1(t, app, "ticket", "tickets", "TKT-002")
+	e := getEntityV1(t, app, "TKT-002")
 	if e.Transitions != nil {
 		t.Fatalf("expected _transitions absent under non-TransitionResolver, got %+v", *e.Transitions)
+	}
+}
+
+// A terminal machine field (no performable out-edges) must keep its key with an
+// empty list, so the SPA still renders the status control instead of falling
+// back to a full enum select that would offer illegal moves (TKT-3G93B8).
+func TestTransitionsWire_TerminalStateKeyPresent(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeTransitionResolver{
+		verdicts: map[string][]statemachine.TransitionVerdict{
+			"status": {}, // terminal: key present, no moves
+		},
+	}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-004",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "x", "status": "done"},
+	})
+
+	e := getEntityV1(t, app, "TKT-004")
+	if e.Transitions == nil {
+		t.Fatalf("expected _transitions present for a machine field")
+	}
+	got, ok := (*e.Transitions)["status"]
+	if !ok {
+		t.Fatalf("terminal machine field must keep its key, got %+v", *e.Transitions)
+	}
+	if len(got) != 0 {
+		t.Errorf("terminal field should have no moves, got %+v", got)
 	}
 }
 
@@ -145,7 +176,7 @@ func TestTransitionsWire_HiddenMachineFieldOmitted(t *testing.T) {
 		Properties: map[string]any{"title": "x", "status": "todo"},
 	})
 
-	e := getEntityV1(t, app, "ticket", "tickets", "TKT-003")
+	e := getEntityV1(t, app, "TKT-003")
 	// The hidden value is stripped from properties...
 	if _, present := e.Properties["status"]; present {
 		t.Errorf("hidden status must be stripped from properties, got %v", e.Properties["status"])

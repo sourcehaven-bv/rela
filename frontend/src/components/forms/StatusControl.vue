@@ -115,33 +115,31 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   display: inline-block;
 }
 
+/* The badge carries its own colour/shape, so the trigger stays chromeless —
+   no border or fill — just the badge plus a caret. A rounded-hover tint is the
+   only affordance that it's interactive. */
 .status-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--border-color);
+  gap: 4px;
+  padding: 2px 4px;
+  border: none;
   border-radius: 6px;
-  background: var(--input-bg);
+  background: transparent;
   color: var(--text-color);
   cursor: pointer;
   font-size: 14px;
-  transition: all 0.15s;
+  transition: background 0.15s;
 }
 
 .status-trigger:hover:not(:disabled) {
-  border-color: var(--accent-color, #6366f1);
+  background: var(--hover-bg);
 }
 
+.status-trigger:disabled,
 .status-trigger.is-static {
   cursor: default;
-  border-color: transparent;
   background: transparent;
-  padding-left: 0;
-}
-
-.status-trigger:disabled {
-  cursor: not-allowed;
 }
 
 .status-caret {

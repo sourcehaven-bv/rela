@@ -564,8 +564,12 @@ Each entry is one declared out-edge from the field's current value:
 | `allowed` | `true` iff the principal holds the guard AND the `when:` precondition holds. |
 | `reason` | Why `allowed` is false: `guard` or `precondition`. Absent when allowed. Advisory (the control shows only allowed moves, so this feeds a tooltip/CLI, not the render gate). |
 
-`_transitions` is **keyed only by machine-typed properties** — a plain enum field
-has no entry, and the SPA falls back to the ordinary enum control. The map is
+`_transitions` is **keyed by every machine-typed property** — a plain enum field
+has no entry, and the SPA falls back to the ordinary enum control. A machine
+field in a **terminal state** (no performable out-edges) still carries its key
+with an **empty list** (`"status": []`): the key's presence is what tells the SPA
+"this is a state machine — render the status control (here, with no moves)"
+rather than a full enum select that would offer illegal targets. The map is
 **absent entirely** when the server wires no state machines (no policy /
 non-machine metamodel / older server), the same "feature not available" signal
 `_fields` uses via its pointer. Like every affordance map it is a **UI hint,
