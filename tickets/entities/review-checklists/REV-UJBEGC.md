@@ -16,7 +16,8 @@ status: done
 `just test` + `just lint` (0 issues) + `just coverage-check` (package 50% /
 total 65% thresholds satisfied, total 76.1%) all passed. After the review fixes,
 the frontend suite re-ran green (1340 tests), typecheck clean, ESLint 0 errors,
-jscpd no new duplication; the review fixes touched no Go code.
+jscpd no new duplication; the review fixes touched no Go code. `just ci` passed
+end-to-end before push.
 
 ## Code Review
 
@@ -67,6 +68,4 @@ Skip this section for bugs and internal refactors.
 - [x] All CI checks pass
 - [x] PR URL documented below
 
-**PR:** in flight — /pr running now (done-gate requires the bug done +
-validation clean before the PR exists); URL recorded here as soon as it is open
-and CI is green.
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1157
