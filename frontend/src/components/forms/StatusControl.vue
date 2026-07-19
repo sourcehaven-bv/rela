@@ -101,7 +101,6 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
     <ul v-if="open && hasMoves" class="status-menu" role="menu">
       <li v-for="move in allowedMoves" :key="move.to" role="none">
         <button type="button" class="status-move" role="menuitem" @click.stop="selectMove(move)">
-          <span class="status-move-arrow" aria-hidden="true">&rarr;</span>
           <span class="status-move-label">{{ moveLabel(move) }}</span>
         </button>
       </li>
@@ -122,7 +121,10 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 4px;
+  /* Match the vertical footprint of sibling inputs/selects so the control
+     aligns in a form grid instead of floating small next to them. */
+  min-height: 40px;
+  padding: 2px 6px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -163,7 +165,6 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 .status-move {
   display: flex;
   align-items: center;
-  gap: 8px;
   width: 100%;
   padding: 8px 10px;
   border: none;
@@ -177,9 +178,5 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 
 .status-move:hover {
   background: var(--hover-bg);
-}
-
-.status-move-arrow {
-  color: var(--muted-text);
 }
 </style>
