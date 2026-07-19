@@ -506,13 +506,16 @@ onMounted(() => {
 
 @media (max-width: 480px) {
   .dashboard-grid {
-    /* Two compact stat cards per row instead of one tall one. */
-    grid-template-columns: repeat(2, 1fr);
+    /* Two compact stat cards per row instead of one tall one. minmax(0, …)
+       lets a track shrink below item min-content — with plain 1fr the
+       full-width table cards blow the tracks past the viewport. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* Breakdown cards still want full width — too cramped at half width. */
+  /* Breakdown and table cards still want full width — too cramped at
+     half width. */
   .dashboard-card:has(.card-breakdown),
-  .dashboard-card:has(.card-list) {
+  .dashboard-card:has(.card-table) {
     grid-column: 1 / -1;
   }
 }

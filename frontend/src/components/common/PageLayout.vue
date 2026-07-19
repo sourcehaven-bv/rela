@@ -132,7 +132,10 @@ defineSlots<{
   .page-layout__sticky {
     position: sticky;
     top: 0;
-    z-index: 102;
+    /* Below App.vue's fixed hamburger (z-index 101), which paints on the
+       64px slot this bar reserves — an opaque bar above it would hide
+       the button (same reasoning as .mobile-topbar--with-menu). */
+    z-index: 10;
     background: var(--bg-color);
     /* Pull the sticky stack up under .main-content's 60px padding-top
        plus the safe-area inset, so its background fills the status-bar
