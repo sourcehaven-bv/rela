@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -689,13 +690,7 @@ func renderLegendNode(meta *metamodel.Metamodel, entries []relPair, entityNames 
 			`<TR><TD ALIGN="LEFT" SIDES="LTR"><B>%s</B> <I>%s</I></TD></TR>`,
 			src, rel)
 		effTotal := total
-		srcInTargets := false
-		for _, t := range e.to {
-			if t == e.source {
-				srcInTargets = true
-				break
-			}
-		}
+		srcInTargets := slices.Contains(e.to, e.source)
 		if !srcInTargets {
 			effTotal--
 		}
@@ -756,10 +751,7 @@ func formatTargets(
 		const perLine = 2
 		var lines []string
 		for i := 0; i < len(labels); i += perLine {
-			end := i + perLine
-			if end > len(labels) {
-				end = len(labels)
-			}
+			end := min(i+perLine, len(labels))
 			lines = append(lines, strings.Join(labels[i:end], ", "))
 		}
 		return strings.Join(lines, `<BR ALIGN="LEFT"/>`) + `<BR ALIGN="LEFT"/>`
@@ -856,10 +848,5 @@ func getSortedTypeNames(m *metamodel.Metamodel) []string {
 }
 
 func sliceContains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }

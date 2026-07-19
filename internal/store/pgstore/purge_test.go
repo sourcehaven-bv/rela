@@ -19,7 +19,7 @@ func seedEntityHistory(t *testing.T, s *pgstore.Store, id string, contents ...st
 	ctx := context.Background()
 	require.NoError(t, s.CreateEntity(ctx, mkEntity(id, "ticket", contents[len(contents)-1])))
 	for i, c := range contents {
-		in := newVersionInput(id, c, map[string]interface{}{"n": i})
+		in := newVersionInput(id, c, map[string]any{"n": i})
 		if i == 0 {
 			in.Op = store.VersionOpCreate
 		} else {
@@ -141,11 +141,11 @@ func TestPurgeByContentHash(t *testing.T) {
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("TKT-1", "ticket", "dup")))
 	for i, c := range []struct {
 		content string
-		props   map[string]interface{}
+		props   map[string]any
 	}{
-		{"dup", map[string]interface{}{"k": "same"}},
-		{"other", map[string]interface{}{"k": "diff"}},
-		{"dup", map[string]interface{}{"k": "same"}}, // identical to row 0
+		{"dup", map[string]any{"k": "same"}},
+		{"other", map[string]any{"k": "diff"}},
+		{"dup", map[string]any{"k": "same"}}, // identical to row 0
 	} {
 		in := newVersionInput("TKT-1", c.content, c.props)
 		if i == 0 {

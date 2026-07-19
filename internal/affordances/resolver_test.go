@@ -2,6 +2,7 @@ package affordances_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -102,11 +103,9 @@ func ctxAs(user string) context.Context {
 		principal.Principal{User: user, Tool: principal.ToolDataEntry})
 }
 
-func ticket(id string, props map[string]interface{}) *entity.Entity {
+func ticket(id string, props map[string]any) *entity.Entity {
 	e := entity.New(id, "ticket")
-	for k, v := range props {
-		e.Properties[k] = v
-	}
+	maps.Copy(e.Properties, props)
 	return e
 }
 
@@ -179,13 +178,13 @@ assignments:
 	}
 
 	// alice is NOT the assignee → status denied.
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", map[string]interface{}{"assignee": "bob"}))
+	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"assignee": "bob"}))
 	if v, ok := fv.Writable["status"]; !ok || v {
 		t.Errorf("status should be denied (predicate false), got ok=%v v=%v", ok, v)
 	}
 
 	// alice IS the assignee → status writable (absent from deny map).
-	fv = r.FieldVerdicts(ctxAs("alice"), ticket("T-2", map[string]interface{}{"assignee": "alice"}))
+	fv = r.FieldVerdicts(ctxAs("alice"), ticket("T-2", map[string]any{"assignee": "alice"}))
 	if _, denied := fv.Writable["status"]; denied {
 		t.Errorf("status should be writable when predicate passes")
 	}
@@ -374,7 +373,7 @@ assignments:
 	}
 	// priority declared integer; store it as a string "5" — coerces to
 	// number 5, predicate passes, no Eval failure.
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", map[string]interface{}{"priority": "5"}))
+	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"priority": "5"}))
 	if _, denied := fv.Writable["status"]; denied {
 		t.Errorf("status should be writable: priority '5' coerces to number 5")
 	}
@@ -382,7 +381,7 @@ assignments:
 	// store a map where integer expected — coerces to Nil, predicate
 	// (nil == 5) is false → denied, but NO Eval error / no panic.
 	fv = r.FieldVerdicts(ctxAs("alice"),
-		ticket("T-2", map[string]interface{}{"priority": map[string]interface{}{"x": 1}}))
+		ticket("T-2", map[string]any{"priority": map[string]any{"x": 1}}))
 	if v, ok := fv.Writable["status"]; !ok || v {
 		t.Errorf("status should be denied (priority uncoercible → nil != 5), got ok=%v v=%v", ok, v)
 	}
@@ -542,7 +541,7 @@ assignments:
 	}
 
 	// status=done → note meta-field denied (predicate false).
-	rv := r.RelationVerdicts(ctxAs("alice"), ticket("T-1", map[string]interface{}{"status": "done"}))
+	rv := r.RelationVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": "done"}))
 	v, ok := rv.Types["has-planning"]
 	if !ok {
 		t.Fatalf("has-planning verdict missing")
@@ -553,7 +552,7 @@ assignments:
 
 	// status=open → note meta-field allowed (sparse: absent from Fields,
 	// or the type itself fully permissive and absent from Types).
-	rv = r.RelationVerdicts(ctxAs("alice"), ticket("T-2", map[string]interface{}{"status": "open"}))
+	rv = r.RelationVerdicts(ctxAs("alice"), ticket("T-2", map[string]any{"status": "open"}))
 	if v, ok := rv.Types["has-planning"]; ok {
 		if w, denied := v.Fields["note"]; denied && !w {
 			t.Errorf("note meta should be writable when predicate passes")

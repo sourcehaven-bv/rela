@@ -116,7 +116,7 @@ func (s *FSStore) CountRelations(_ context.Context, q store.RelationQuery) (int,
 
 // --- RelationWriter ---
 
-func (s *FSStore) CreateRelation(
+func (s *FSStore) createRelation(
 	_ context.Context, from, relType, to string, data *store.RelationData,
 ) (*entity.Relation, error) {
 	for _, id := range []string{from, to} {
@@ -141,7 +141,7 @@ func (s *FSStore) CreateRelation(
 	if data != nil {
 		r.Content = data.Content
 		if data.Properties != nil {
-			r.Properties = make(map[string]interface{}, len(data.Properties))
+			r.Properties = make(map[string]any, len(data.Properties))
 			for k, v := range data.Properties {
 				r.Properties[k] = entity.CloneValue(v)
 			}
@@ -166,7 +166,7 @@ func (s *FSStore) CreateRelation(
 	return r.Clone(), nil
 }
 
-func (s *FSStore) UpdateRelation(
+func (s *FSStore) updateRelation(
 	_ context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	s.mu.Lock()
@@ -185,7 +185,7 @@ func (s *FSStore) UpdateRelation(
 
 	r.Content = data.Content
 	if data.Properties != nil {
-		r.Properties = make(map[string]interface{}, len(data.Properties))
+		r.Properties = make(map[string]any, len(data.Properties))
 		for k, v := range data.Properties {
 			r.Properties[k] = entity.CloneValue(v)
 		}
@@ -208,7 +208,7 @@ func (s *FSStore) UpdateRelation(
 	return r.Clone(), nil
 }
 
-func (s *FSStore) DeleteRelation(_ context.Context, from, relType, to string) error {
+func (s *FSStore) deleteRelation(_ context.Context, from, relType, to string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

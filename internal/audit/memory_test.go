@@ -46,11 +46,9 @@ func TestMemory_ConcurrentRecord(t *testing.T) {
 	var wg sync.WaitGroup
 	const n = 100
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			m.Record(audit.Record{Op: audit.OpCreateEntity})
-		}()
+		})
 	}
 	wg.Wait()
 	if len(m.Records()) != n {

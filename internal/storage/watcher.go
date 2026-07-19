@@ -4,6 +4,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -186,12 +187,7 @@ func (w *Watcher) isRelevantFile(path string) bool {
 		return true
 	}
 	ext := filepath.Ext(path)
-	for _, e := range w.cfg.Extensions {
-		if ext == e {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(w.cfg.Extensions, ext)
 }
 
 func toChangeOp(op fsnotify.Op) ChangeOp {

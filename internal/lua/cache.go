@@ -82,7 +82,7 @@ type cacheEntry struct {
 	// values is the sequence of values the memoizer captured (or a
 	// single-element slice produced by set). Stored as []interface{} so
 	// round-tripping through GoToLuaValue yields the same Lua shape.
-	values []interface{}
+	values []any
 
 	// expiresAt is the absolute time at which this entry becomes
 	// unreadable. A zero value means "never expires" (still subject to
@@ -124,7 +124,7 @@ func (c *Cache) SetNow(f func() time.Time) {
 // entry is removed lazily if its TTL has passed. lastAccess is updated on
 // a hit so LRU eviction orders entries by real access time, not just
 // insert time.
-func (c *Cache) get(key string) ([]interface{}, bool) {
+func (c *Cache) get(key string) ([]any, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
@@ -138,7 +138,7 @@ func (c *Cache) get(key string) ([]interface{}, bool) {
 	}
 	e.lastAccess = now
 	// Return a shallow copy so callers can't mutate our internal slice.
-	out := make([]interface{}, len(e.values))
+	out := make([]any, len(e.values))
 	copy(out, e.values)
 	return out, true
 }
@@ -146,7 +146,7 @@ func (c *Cache) get(key string) ([]interface{}, bool) {
 // set stores values under key with the given TTL. A ttl of zero or
 // negative means "never expires". When the cache is at capacity, the
 // least-recently-accessed entry is evicted.
-func (c *Cache) set(key string, values []interface{}, ttl time.Duration) {
+func (c *Cache) set(key string, values []any, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
@@ -162,7 +162,7 @@ func (c *Cache) set(key string, values []interface{}, ttl time.Duration) {
 	// Copy the values so later external mutation can't affect cached
 	// state. (luaValueToGo already allocates fresh maps/slices; the
 	// wrapper slice is ours too.)
-	stored := make([]interface{}, len(values))
+	stored := make([]any, len(values))
 	copy(stored, values)
 	c.entries[key] = &cacheEntry{
 		values:     stored,
@@ -455,7 +455,7 @@ func (r *Runtime) luaCacheSet(ls *glua.LState) int {
 		return 0
 	}
 
-	r.cache.set(namespacedKey, []interface{}{luaValueToGo(valArg)}, opts.ttlOrDefault())
+	r.cache.set(namespacedKey, []any{luaValueToGo(valArg)}, opts.ttlOrDefault())
 	slog.Debug("cache store", logFields("store", namespacedKey)...)
 	return 0
 }
@@ -523,7 +523,7 @@ func (r *Runtime) luaCacheMemoize(ls *glua.LState) int {
 			return 0
 		}
 	}
-	goValues := make([]interface{}, nRet)
+	goValues := make([]any, nRet)
 	for i := range nRet {
 		goValues[i] = luaValueToGo(ls.Get(topBefore + 1 + i))
 	}

@@ -162,6 +162,21 @@ func TestCompile_RejectsUndeclaredDefaultEntry(t *testing.T) {
 	}
 }
 
+func TestCompile_RejectsTransitionsWithoutEntry(t *testing.T) {
+	// BUG-X1C7S: a machine with transitions but no initial/default must be
+	// rejected at boot — otherwise create is unconstrained and an entity could
+	// enter a guarded state directly, bypassing the machine.
+	m := snapshotMeta()
+	ct := m.Types["snapshot-status"]
+	ct.Initial = ""
+	ct.Default = "" // no entry value at all
+	m.Types["snapshot-status"] = ct
+	_, err := Compile(m)
+	if err == nil || !strings.Contains(err.Error(), "must declare an `initial`") {
+		t.Fatalf("expected entry-required boot error, got %v", err)
+	}
+}
+
 func TestCompile_RejectsTransitionsOnListProperty(t *testing.T) {
 	// A machine-typed property that is also list:true is nonsensical and must
 	// be rejected at boot (RR-F30CZ/N4).

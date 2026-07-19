@@ -36,6 +36,7 @@ linters:
     - mirror
     - misspell
     - mnd
+    - modernize
     - nakedret
     - nestif
     - nilerr

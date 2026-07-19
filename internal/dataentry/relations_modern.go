@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 
@@ -366,7 +367,7 @@ func (a *App) applyRelationsModern(
 // (which is `to` for outgoing edges and `from` for incoming).
 func (a *App) writeCreateRelation(
 	ctx context.Context, from, to, relType string, ref v1.ResourceIdentifier,
-	finalProps map[string]interface{}, finalContent string,
+	finalProps map[string]any, finalContent string,
 ) error {
 	opts := entity.RelationOptions{
 		Properties: finalProps,
@@ -490,18 +491,14 @@ func danglingPeerError(relType, peerID string) *structuralError {
 // the desired ref. contentSet reports whether ref.Content was non-nil
 // (so the caller can distinguish "leave alone" from "set to value").
 func mergeEdgeMeta(existing *entity.Relation, ref v1.ResourceIdentifier) (
-	props map[string]interface{}, content string, contentSet bool,
+	props map[string]any, content string, contentSet bool,
 ) {
-	props = make(map[string]interface{})
+	props = make(map[string]any)
 	if existing != nil {
-		for k, v := range existing.Properties {
-			props[k] = v
-		}
+		maps.Copy(props, existing.Properties)
 		content = existing.Content
 	}
-	for k, v := range ref.Meta {
-		props[k] = v
-	}
+	maps.Copy(props, ref.Meta)
 	for _, k := range ref.MetaUnset {
 		delete(props, k)
 	}
@@ -516,7 +513,7 @@ func mergeEdgeMeta(existing *entity.Relation, ref v1.ResourceIdentifier) (
 // the existing edge byte-for-byte. Auto-save's primary path hits this:
 // re-PATCHing a form that hasn't changed performs zero writes.
 func isEdgeNoOp(
-	existing *entity.Relation, finalProps map[string]interface{},
+	existing *entity.Relation, finalProps map[string]any,
 	finalContent string, contentSet bool, ref v1.ResourceIdentifier,
 ) bool {
 	// If the request has no per-edge upsert fields at all and the
@@ -539,7 +536,7 @@ func isEdgeNoOp(
 // nil != empty map, which would produce false-positive writes on
 // edges whose existing properties are nil and whose final state is
 // an empty map after merge.)
-func mapsEqual(a, b map[string]interface{}) bool {
+func mapsEqual(a, b map[string]any) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}
@@ -556,7 +553,7 @@ func mapsEqual(a, b map[string]interface{}) bool {
 // affect WHICH keys are required — it only labels the output.
 func requiredMetaWarnings(
 	relType string, relDef *metamodel.RelationDef, ref v1.ResourceIdentifier,
-	finalProps map[string]interface{}, dataPath, direction string,
+	finalProps map[string]any, dataPath, direction string,
 ) []Warning {
 	var ws []Warning
 	for k, propDef := range relDef.Properties {

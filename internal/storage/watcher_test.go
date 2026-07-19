@@ -81,13 +81,7 @@ func TestWatcher_WatchesIndividualFiles(t *testing.T) {
 	defer w.Stop()
 
 	watchList := w.WatchList()
-	found := false
-	for _, p := range watchList {
-		if p == filePath {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(watchList, filePath)
 	if !found {
 		t.Errorf("file %s is not being watched", filePath)
 	}
@@ -121,13 +115,7 @@ func TestWatcher_SkipHidden(t *testing.T) {
 		}
 	}
 
-	foundVisible := false
-	for _, p := range watchList {
-		if p == visibleDir {
-			foundVisible = true
-			break
-		}
-	}
+	foundVisible := slices.Contains(watchList, visibleDir)
 	if !foundVisible {
 		t.Errorf("visible directory %s should be watched", visibleDir)
 	}

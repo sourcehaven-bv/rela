@@ -876,14 +876,14 @@ func TestUpdateRelation_MergesProperties(t *testing.T) {
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
 	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{
-		Properties: map[string]interface{}{"weight": "high", "extra": "keep"},
+		Properties: map[string]any{"weight": "high", "extra": "keep"},
 	}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
 	// Merge a new value and unset "extra".
 	rel, err := mgr.UpdateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{
-		Properties: map[string]interface{}{"weight": "low"},
+		Properties: map[string]any{"weight": "low"},
 		MetaUnset:  []string{"extra"},
 	})
 	if err != nil {
@@ -1086,7 +1086,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 	updated := &entity.Entity{
 		ID:         created.Entity.ID,
 		Type:       created.Entity.Type,
-		Properties: map[string]interface{}{"title": "Cleared"},
+		Properties: map[string]any{"title": "Cleared"},
 	}
 	result, err := mgr.UpdateEntity(ctx, updated)
 	if err != nil {

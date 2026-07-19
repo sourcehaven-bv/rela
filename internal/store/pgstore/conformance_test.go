@@ -20,6 +20,14 @@ func TestVisibleFieldConformance(t *testing.T) {
 	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
 }
 
+// TestTxRollback runs the strong-Tx suite only pgstore meets: rollback on
+// error and post-commit-only event delivery (DEC-8UIL0). fsstore/memstore
+// deliberately provide the reduced mutual-exclusion-only guarantees and do
+// not run this.
+func TestTxRollback(t *testing.T) {
+	storetest.RunTxRollbackTests(t, factory)
+}
+
 func FuzzRelationKeyCollision(f *testing.F) {
 	storetest.FuzzRelationKeyCollision(f, fuzzFactory(f))
 }

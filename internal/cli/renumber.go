@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -63,7 +64,7 @@ func (c *RenumberCmd) Run(ctx context.Context, svc *writeServices) error {
 	// See issue #886.
 	em := svc.EntityManager
 	for _, p := range plan {
-		opts := entity.RelationOptions{Properties: map[string]interface{}{p.prop: p.newVal}}
+		opts := entity.RelationOptions{Properties: map[string]any{p.prop: p.newVal}}
 		if _, err := em.UpdateRelation(ctx, p.rel.From, p.rel.Type, p.rel.To, opts); err != nil {
 			return fmt.Errorf("renumber write failed for %s--%s--%s: %w", p.rel.From, p.rel.Type, p.rel.To, err)
 		}
@@ -99,10 +100,8 @@ func buildRenumberPlan(
 		}
 		c := *r
 		if r.Properties != nil {
-			c.Properties = make(map[string]interface{}, len(r.Properties))
-			for k, v := range r.Properties {
-				c.Properties[k] = v
-			}
+			c.Properties = make(map[string]any, len(r.Properties))
+			maps.Copy(c.Properties, r.Properties)
 		}
 		parents[parent] = append(parents[parent], &c)
 	}

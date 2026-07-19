@@ -16,7 +16,7 @@ import (
 var testMetaFS = storage.NewOsFS()
 
 // Test helpers to avoid import cycle
-func assertEqual(t *testing.T, got, want interface{}) {
+func assertEqual(t *testing.T, got, want any) {
 	t.Helper()
 	if got != want {
 		t.Errorf("got %v, want %v", got, want)

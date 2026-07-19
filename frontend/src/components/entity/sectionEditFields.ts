@@ -6,7 +6,7 @@
 // the SFC's router / pinia / schema-store wiring (TKT-IHC7B).
 
 import type { ViewEntity, ViewSectionField } from '@/api'
-import type { Entity, FieldAffordance, PropertyDef } from '@/types'
+import type { Entity, FieldAffordance, PropertyDef, TransitionOption } from '@/types'
 import { defaultRegistry } from '@/widgets/registry'
 import { viewFieldRoutingHint } from '@/widgets/viewRouting'
 import { isFieldWritable } from '@/utils/affordances'
@@ -25,6 +25,11 @@ void defaultRegistry
 export interface FieldVerdictSource {
   type: string
   _fields?: Record<string, FieldAffordance>
+  // Present on a full Entity (the entry section), absent on a cards/list
+  // ViewEntity row. When present for a property, that field is a state machine
+  // and routes to the StatusControl (TKT-3G93B8); rows have no `_transitions`,
+  // so they keep the ordinary widget.
+  _transitions?: Record<string, TransitionOption[]>
 }
 
 // buildSectionEditFields shapes a properties section's fields for
@@ -47,11 +52,13 @@ export function buildSectionEditFields(
     if (!f.property) continue
     const def = getPropertyDef(source.type, f.property)
     const verdict = source._fields?.[f.property]
+    const transitions = source._transitions?.[f.property]
     if (def) {
       out.push({
         property: f.property,
         label: f.label,
         verdict,
+        transitions,
         kind: 'schema',
         propertyDef: def,
       })
@@ -60,6 +67,7 @@ export function buildSectionEditFields(
         property: f.property,
         label: f.label,
         verdict,
+        transitions,
         kind: 'hint',
         routingHint: viewFieldRoutingHint(f),
       })

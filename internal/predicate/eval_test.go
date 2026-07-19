@@ -3,6 +3,7 @@ package predicate_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
@@ -42,9 +43,7 @@ func stubBindings(t *testing.T, vars map[string]predicate.Value, overrides map[s
 			return predicate.NewBool(false), nil
 		}),
 	}
-	for name, f := range overrides {
-		defaults[name] = f
-	}
+	maps.Copy(defaults, overrides)
 	for name, f := range defaults {
 		if err := b.SetFunc(name, f); err != nil {
 			t.Fatalf("SetFunc %q: %v", name, err)

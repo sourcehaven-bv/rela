@@ -1,6 +1,9 @@
 package affordances
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // validateField checks that field is a declared property of entityType.
 // A typo'd field name would otherwise allow the bogus name and
@@ -43,10 +46,8 @@ func (r *PolicyResolver) validateOption(roleName, entityType string, idx int, fi
 		return fmt.Errorf("roles.%s.options.%s[%d]: field %q on type %q is not enum-typed",
 			roleName, entityType, idx, field, entityType)
 	}
-	for _, v := range values {
-		if v == option {
-			return nil
-		}
+	if slices.Contains(values, option) {
+		return nil
 	}
 	return fmt.Errorf("roles.%s.options.%s[%d]: option %q is not a declared value of field %q",
 		roleName, entityType, idx, option, field)
@@ -63,10 +64,8 @@ func (r *PolicyResolver) validateRelation(roleName, entityType string, idx int, 
 	// A relation grant on an entity type only gates outgoing edges of
 	// that type; require entityType to be a valid source.
 	if len(rel.From) > 0 {
-		for _, from := range rel.From {
-			if from == entityType {
-				return nil
-			}
+		if slices.Contains(rel.From, entityType) {
+			return nil
 		}
 		return fmt.Errorf("roles.%s.relations.%s[%d]: relation %q does not originate from type %q",
 			roleName, entityType, idx, relType, entityType)

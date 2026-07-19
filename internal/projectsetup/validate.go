@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/conditionlint"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -91,7 +93,18 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 		return fmt.Errorf("parsing YAML: %w", err)
 	}
 
-	return dataentryconfig.ValidateConfig(data, &cfg, mm)
+	if err := dataentryconfig.ValidateConfig(data, &cfg, mm); err != nil {
+		return err
+	}
+
+	// Author-time sanity check of wizard-form condition expressions
+	// (visible_when / required_when) via the predicate grammar. Reported
+	// together with structural validation so a typo'd condition surfaces at
+	// `rela validate` time instead of silently misbehaving in the browser.
+	if issues := conditionlint.Lint(&cfg, mm); len(issues) > 0 {
+		return fmt.Errorf("condition errors:\n  %s", strings.Join(issues, "\n  "))
+	}
+	return nil
 }
 
 func fileExists(path string, fs storage.FS) (bool, error) {

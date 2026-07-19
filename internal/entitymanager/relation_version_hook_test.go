@@ -155,6 +155,11 @@ func TestRelationVersionHook_CascadeDeleteCapturesEveryEdge(t *testing.T) {
 // records a `rename` relation version per incident edge, on the NEW triple,
 // carrying the pre-rename endpoints — so the edge's history stays continuous
 // instead of reading as a delete+create.
+//
+// This is the MANAGER half of rename-version coverage: it asserts the record
+// Manager.RenameEntity emits. The STORE half — that pgstore persists that
+// rename version on the surviving rel_record_id (no fork) — is asserted by
+// pgstore.TestRelationVersionRenameAtomicPath. Neither is redundant.
 func TestRelationVersionHook_RenameStitchesEndpoints(t *testing.T) {
 	mgr, rec := newRelationVersionManager(t)
 	ctx := ctxWithPrincipal("bob", principal.ToolMCP)

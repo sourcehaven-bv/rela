@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
 // FieldVerdicts carries per-entity field-level affordance decisions.
@@ -56,6 +57,12 @@ type PolicyResolver struct {
 	// groups, containment, and typed-Source attribution. Required
 	// (never nil after [New] returns); [New] rejects a nil argument.
 	declarative *acl.Declarative
+
+	// machines is the compiled enum state machines (TKT-E4LW2). Used by
+	// [PolicyResolver.TransitionVerdicts] to resolve which transitions the
+	// current principal can perform on an entity. May be nil / empty (a
+	// metamodel with no transitions) — TransitionVerdicts then returns nil.
+	machines *statemachine.Set
 
 	// envs holds the compiled predicate env per entity type, reused
 	// across grants of that type.
@@ -142,6 +149,42 @@ func New(
 		return nil, errors.Join(errs...)
 	}
 	return r, nil
+}
+
+// WithMachines injects the compiled enum state machines so
+// [PolicyResolver.TransitionVerdicts] can resolve performable transitions.
+// Optional and chainable: a resolver without machines (or with an empty set)
+// answers TransitionVerdicts with nil, so existing callers that don't wire
+// transitions are unaffected.
+//
+// CONCURRENCY: this is the one mutator on an otherwise-immutable-after-[New]
+// resolver, so the "safe for concurrent use" guarantee holds only if it is
+// called during single-threaded wiring, BEFORE the resolver is shared — which
+// is the sole production call site ([ResolverFromProfile], synchronous, before
+// the resolver escapes). It is a setter rather than a [New] parameter
+// deliberately: machines are optional and adding a required arg would churn all
+// [New] callers. Never call WithMachines concurrently with TransitionVerdicts.
+func (r *PolicyResolver) WithMachines(m *statemachine.Set) *PolicyResolver {
+	r.machines = m
+	return r
+}
+
+// EntryValues returns, for each state-machine-typed property of entityType, the
+// value a create must enter at (the machine's Initial, else Default — BUG-X1C7S)
+// (TKT-3G93B8). A create form uses it to lock a machine field to its initial
+// value: the field is not freely editable on create. Returns an empty map when
+// no machines are wired or entityType has no machine-typed property.
+func (r *PolicyResolver) EntryValues(entityType string) map[string]string {
+	out := map[string]string{}
+	if r.machines == nil || r.machines.Empty() {
+		return out
+	}
+	for _, prop := range r.machines.MachineProps(entityType) {
+		if entry := r.machines.EntryValue(entityType, prop); entry != "" {
+			out[prop] = entry
+		}
+	}
+	return out
 }
 
 // env returns (compiling on first use) the predicate env for an entity
@@ -406,6 +449,88 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 	}
 	out.Types = acc.verdicts()
 	return out
+}
+
+// TransitionVerdicts resolves, per state-machine-typed property on e, the
+// transitions the ctx principal can perform right now — guard held
+// (subject-aware) AND `when:` precondition met — plus, for blocked edges, which
+// gate blocked them (TKT-FT8J9). It is the read-side counterpart of the write
+// path's transition enforcement, sharing the same evaluation via
+// [statemachine.Set.Performable], so the "what can I do" answer here cannot
+// disagree with what a write would accept.
+//
+// Returns an empty map when no machines are wired, e is nil, or e's type has no
+// state-machine property. This is a bounded per-entity read (only e's machine
+// fields and their out-edges are evaluated), which is why running the `when:`
+// predicate here is consistent with the no-predicate-on-reads rule — see
+// internal/entitymanager/CLAUDE.md.
+func (r *PolicyResolver) TransitionVerdicts(
+	ctx context.Context, e *entity.Entity,
+) map[string][]statemachine.TransitionVerdict {
+	out := map[string][]statemachine.TransitionVerdict{}
+	if e == nil || r.machines == nil || r.machines.Empty() {
+		return out
+	}
+	guard := r.transitionGuard(ctx)
+	for _, prop := range r.machines.MachineProps(e.Type) {
+		// Emit an entry for EVERY machine-typed property, even when there are no
+		// performable out-edges (a terminal state, or all edges gated). The
+		// presence of the key is how a consumer distinguishes "this field is a
+		// state machine (render the status control, possibly empty)" from "not a
+		// machine field (render the ordinary enum widget)". Dropping terminal
+		// fields would make a done ticket's status fall back to a full enum
+		// select that offers illegal moves — see TKT-3G93B8. A nil slice from
+		// Performable normalizes to an empty (non-nil) slice so it serializes as
+		// [] rather than null.
+		vs := r.machines.Performable(ctx, e, prop, guard, r.lookup)
+		if vs == nil {
+			vs = []statemachine.TransitionVerdict{}
+		}
+		out[prop] = vs
+	}
+	return out
+}
+
+// transitionGuard adapts the resolver's ACL into the subject-aware
+// [statemachine.Guard] the transition resolver needs, bound to the ctx
+// principal. It resolves via the per-request [acl.Request] on ctx when present
+// (reusing the list-handler scope), else opens one for the principal. Answers
+// via [acl.Request.HoldsPermissionForEntity] so ownership-relation-conferred
+// permissions are honored (the same subject-aware resolution the write-path
+// guard uses).
+//
+// This guard fails CLOSED unconditionally: an unstamped/unresolvable principal
+// holds no permission, so guarded transitions read as not-performable. Unlike
+// the write-path guard (appbuild.transitionGuard), it has NO "no policy → inert
+// allow" tier — because it is only ever wired under an active policy
+// (ResolverFromProfile constructs the machine-backed resolver only when the
+// policy declares affordance grants). Do NOT wire TransitionVerdicts from a
+// no-policy/CLI path expecting inert behavior: there, an unstamped principal
+// would be shown zero performable transitions even where a write would succeed
+// inert. If such a caller is ever needed, add the policy-active tier here first.
+func (r *PolicyResolver) transitionGuard(ctx context.Context) statemachine.Guard {
+	req := acl.FromContext(ctx)
+	if req == nil {
+		var err error
+		req, err = r.declarative.ForPrincipal(principal.From(ctx))
+		if err != nil {
+			req = nil // unstamped principal → holds no guarded permission
+		}
+	}
+	return requestGuard{req: req}
+}
+
+// requestGuard evaluates a transition guard against an acl.Request. A nil
+// request (unresolved/unstamped principal) holds no permission → guarded edges
+// resolve as not-performable (fail closed). See [PolicyResolver.transitionGuard]
+// for why there is no inert tier.
+type requestGuard struct{ req *acl.Request }
+
+func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
+	if g.req == nil {
+		return false
+	}
+	return g.req.HoldsPermissionForEntity(ctx, subjectID, permission)
 }
 
 // bindingFor resolves the effective role set for (principal, entity)

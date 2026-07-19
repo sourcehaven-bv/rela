@@ -101,10 +101,13 @@ type GraphLookup interface {
 }
 
 // edge is one compiled transition. guard is the (possibly empty) ACL
-// permission; when is the (possibly nil) compiled precondition.
+// permission; when is the (possibly nil) compiled precondition; label is the
+// (possibly empty) display text for the move, surfaced on a read verdict for a
+// status control (display-only, never consulted for enforcement).
 type edge struct {
 	guard string
 	when  *predicate.Program
+	label string
 }
 
 // Machine is one compiled enum state machine: the indexed edge set plus the
@@ -140,6 +143,21 @@ type Set struct {
 // Empty reports whether the set has no machines. A metamodel with no
 // transitions compiles to an empty set; Enforce is then a no-op.
 func (s *Set) Empty() bool { return s == nil || len(s.machines) == 0 }
+
+// EntryValue returns the compiled entry value (Initial, else Default) for the
+// state-machine property prop on entityType — the only value a create may set
+// (BUG-X1C7S). Returns "" when prop is not a state machine on entityType or the
+// Set is empty; a create form uses it to lock the field to its initial state.
+func (s *Set) EntryValue(entityType, prop string) string {
+	if s.Empty() {
+		return ""
+	}
+	typeName, ok := s.propType[entityType][prop]
+	if !ok {
+		return ""
+	}
+	return s.machines[typeName].entry
+}
 
 // EmptySet returns a machine-less [Set] whose Enforce methods are no-ops. It is
 // the explicit "no state machines" value for wiring sites and tests that need a

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -27,10 +28,10 @@ type ExportCmd struct {
 
 // ExportEntity is the per-entity export shape.
 type ExportEntity struct {
-	ID         string                 `json:"id" yaml:"id"`
-	Type       string                 `json:"type" yaml:"type"`
-	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
-	Relations  *ExportRelations       `json:"relations,omitempty" yaml:"relations,omitempty"`
+	ID         string           `json:"id" yaml:"id"`
+	Type       string           `json:"type" yaml:"type"`
+	Properties map[string]any   `json:"properties,omitempty" yaml:"properties,omitempty"`
+	Relations  *ExportRelations `json:"relations,omitempty" yaml:"relations,omitempty"`
 }
 
 // ExportRelations groups relations by direction and type.
@@ -47,10 +48,10 @@ type RelationTarget struct {
 
 // ExportRelation is the per-relation export shape.
 type ExportRelation struct {
-	From       string                 `json:"from" yaml:"from"`
-	Relation   string                 `json:"relation" yaml:"relation"`
-	To         string                 `json:"to" yaml:"to"`
-	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"`
+	From       string         `json:"from" yaml:"from"`
+	Relation   string         `json:"relation" yaml:"relation"`
+	To         string         `json:"to" yaml:"to"`
+	Properties map[string]any `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
 // FullExport is the --all export shape.
@@ -184,10 +185,8 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 }
 
 func entityToExport(e *entity.Entity) ExportEntity {
-	props := make(map[string]interface{})
-	for k, v := range e.Properties {
-		props[k] = v
-	}
+	props := make(map[string]any)
+	maps.Copy(props, e.Properties)
 	return ExportEntity{ID: e.ID, Type: e.Type, Properties: props}
 }
 
@@ -249,13 +248,13 @@ func (c *ExportCmd) writeExport(data []ExportEntity, entities []*entity.Entity) 
 	}
 }
 
-func writeJSON(data interface{}) error {
+func writeJSON(data any) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(data)
 }
 
-func writeYAML(data interface{}) error {
+func writeYAML(data any) error {
 	encoder := yaml.NewEncoder(os.Stdout)
 	encoder.SetIndent(2)
 	return encoder.Encode(data)
@@ -332,7 +331,7 @@ func collectPropertyKeys(entities []*entity.Entity) []string {
 	return result
 }
 
-func formatValue(v interface{}) string {
+func formatValue(v any) string {
 	switch val := v.(type) {
 	case string:
 		return val

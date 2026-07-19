@@ -387,14 +387,8 @@ func sourceLinesAround(code string, failingLine, context int) []lua.SourceLine {
 	if failingLine > len(lines) {
 		return nil
 	}
-	from := failingLine - context
-	if from < 1 {
-		from = 1
-	}
-	to := failingLine + context
-	if to > len(lines) {
-		to = len(lines)
-	}
+	from := max(failingLine-context, 1)
+	to := min(failingLine+context, len(lines))
 	out := make([]lua.SourceLine, 0, to-from+1)
 	for n := from; n <= to; n++ {
 		out = append(out, lua.SourceLine{

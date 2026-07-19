@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
@@ -17,6 +17,7 @@ import type {
   FieldAffordance,
   RelationAffordance,
   AttachmentInfo,
+  TransitionOption,
 } from '@/types'
 import { getTemplates, createRelation, dryRunCreateEntity, ApiError, getErrorMessage } from '@/api'
 import type { RelationCardState } from './RelationCards.vue'
@@ -28,11 +29,12 @@ import {
   INCOMING_SUFFIX,
 } from './relationsPatch'
 import { useAutoSave } from '@/composables/useAutoSave'
+import { useFormWizard } from '@/composables/useFormWizard'
+import type { Bindings } from '@/utils/conditions'
 import { registerForm } from './dirtyFormRegistry'
+import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
-import FieldRenderer from './FieldRenderer.vue'
-import RelationPicker from './RelationPicker.vue'
-import RelationCards from './RelationCards.vue'
+import FormFieldList from './FormFieldList.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import SidePanel from './SidePanel.vue'
 import HelpModal from '@/components/ui/HelpModal.vue'
@@ -72,6 +74,11 @@ const relationAffordances = ref<Record<string, RelationAffordance>>({})
 // Per-`file`-property attachment metadata from the loaded entity, passed
 // to the file widget so it can show the current file + drive upload/remove.
 const attachments = ref<Record<string, AttachmentInfo[]>>({})
+// Per-state-machine-field transition verdicts from the loaded entity
+// (`_transitions`, TKT-3G93B8). Present only for machine-typed fields; drives
+// the StatusControl (only-allowed moves) instead of the plain enum select. A
+// field absent here renders as an ordinary widget.
+const transitions = ref<Record<string, TransitionOption[]>>({})
 // TKT-3I5U: in create mode the form models a staged `++new++` entity
 // and re-derives affordances from the server's dry-run (no persist) as
 // the user types. `stagedVisibleProps` holds the property keys the
@@ -125,17 +132,9 @@ const isEdit = computed(() => !!props.entityId)
 const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' | 'edit')
 
 const idControls = useEntityIDControls(entityType, formMode)
-const {
-  showManualIDInput,
-  showPrefixPicker,
-  prefixOptions,
-  manualId,
-  selectedPrefix,
-} = idControls
+const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
-const showReadOnlyID = computed(
-  () => isEdit.value && entityType.value?.id_type === 'manual'
-)
+const showReadOnlyID = computed(() => isEdit.value && entityType.value?.id_type === 'manual')
 
 const title = computed(() => {
   if (!formConfig.value) return ''
@@ -145,14 +144,86 @@ const title = computed(() => {
 
 const allFields = computed((): FormFieldOrRelation[] => {
   if (!formConfig.value) return []
-  if (formConfig.value.sections?.length) {
-    return formConfig.value.sections.flatMap((s) => s.fields) as FormFieldOrRelation[]
+  // Wizard forms carry their fields under steps; flatten them so affordance
+  // filtering, payload assembly, and load-time hydration see every field the
+  // same way single-page forms do. Per-step visibility is applied separately
+  // by the wizard layer at render/validate time.
+  if (formConfig.value.steps?.length) {
+    return formConfig.value.steps.flatMap((s) => [
+      ...((s.fields || []) as FormFieldOrRelation[]),
+      ...((s.relations || []) as FormFieldOrRelation[]),
+    ])
   }
   // Combine property fields and relation fields into a single list
   const propFields = (formConfig.value.fields || []) as FormFieldOrRelation[]
   const relFields = (formConfig.value.relations || []) as FormFieldOrRelation[]
   return [...propFields, ...relFields]
 })
+
+// Live binding namespaces for condition evaluation. Supplied as a getter (not a
+// computed) so the reactive read of formData happens inside each wizard
+// computed's tracking scope — see useFormWizard. `entity`/`current_user` are
+// reserved for future ACL/view use (form conditions reference `form.<field>`).
+const conditionBindings = (): Bindings => ({
+  form: formData.value,
+  entity: {},
+  current_user: {},
+})
+
+const wizard = useFormWizard(formConfig, conditionBindings)
+
+// Visible-step indices that currently have a validation error, so the stepper
+// can flag them. Recomputes as `errors` changes, so a pill's flag clears the
+// moment its field becomes valid.
+const stepsWithErrors = computed<Set<number>>(() => {
+  const flagged = new Set<number>()
+  for (const property of Object.keys(errors.value)) {
+    const idx = wizard.visibleStepIndexForProperty(property)
+    if (idx >= 0) flagged.add(idx)
+  }
+  return flagged
+})
+
+const errorCount = computed(() => Object.keys(errors.value).length)
+
+// React to a conditional field/step becoming hidden (its `visible_when` flipped
+// false). Two effects, both keyed on a property leaving `activeProperties`:
+//   1. Always: drop any standing validation error for the now-hidden field, so
+//      a hidden field can't leave a phantom "N fields need attention" with no
+//      flagged, reachable step (RR-U9ERK).
+//   2. Edit mode only: unset its stored value (autosave) — the edit analogue of
+//      create's submit-time hidden-branch pruning, so a toggled-off branch
+//      doesn't linger on the entity.
+// Skips the initial hydration (`loading`); only touches wizard-governed
+// (managed) fields, so a plain non-conditional field is never affected.
+watch(
+  () => wizard.activeProperties.value,
+  (active, prevActive) => {
+    if (loading.value || !prevActive) return
+    const managed = wizard.managedProperties.value
+    let nextErrors: Record<string, string> | null = null
+    for (const prop of prevActive) {
+      if (active.has(prop) || !managed.has(prop)) continue // still shown / not governed
+      // Clear a standing error for the now-hidden field.
+      if (errors.value[prop]) {
+        nextErrors ??= { ...errors.value }
+        delete nextErrors[prop]
+      }
+      // Edit mode: unset a stored value so the hidden branch doesn't persist.
+      if (
+        isEdit.value &&
+        autoSave.value &&
+        formData.value[prop] !== undefined &&
+        formData.value[prop] !== '' &&
+        formData.value[prop] !== null
+      ) {
+        delete formData.value[prop]
+        autoSave.value.scheduleUnset(prop)
+      }
+    }
+    if (nextErrors) errors.value = nextErrors
+  }
+)
 
 // TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
 // the entity's affordances. A property field is rendered only if it is
@@ -203,6 +274,16 @@ function optionVerdictsFor(field: FormFieldOrRelation): Record<string, boolean> 
   return optionVerdictsForVerdict(fieldAffordances.value[field.property])
 }
 
+// TKT-3G93B8 transition helper: the server-resolved outgoing transitions for a
+// state-machine field (`_transitions`). Undefined for a non-machine field, so
+// FieldRenderer renders the ordinary widget; a machine field routes to the
+// StatusControl. Only present in edit mode (a create locks the field instead —
+// see applyCreateLock on the backend).
+function transitionsFor(field: FormFieldOrRelation): TransitionOption[] | undefined {
+  if (!field.property) return undefined
+  return transitions.value[field.property]
+}
+
 // TKT-3I5U: build the create-commit property map, sending ONLY visible
 // and writable keys. Hidden fields (stripped from the staged dry-run's
 // visible set) and read-only fields (writable=false in `_fields`) are
@@ -251,11 +332,7 @@ async function loadEntity(force = false) {
   if (!props.entityId || !formConfig.value) return
 
   try {
-    const entity = await entitiesStore.fetchEntity(
-      formConfig.value.entity,
-      props.entityId,
-      force
-    )
+    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
     // Route-guard: if the server says this entity is not updatable,
     // render an inline "not editable" message instead of the form.
     // The EntityDetail Edit button already hides for the same
@@ -271,7 +348,12 @@ async function loadEntity(force = false) {
     fieldAffordances.value = entity._fields ?? {}
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
-    originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+    transitions.value = entity._transitions ?? {}
+    originalData.value = JSON.stringify({
+      formData: formData.value,
+      relations: relations.value,
+      content: content.value,
+    })
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
@@ -385,7 +467,11 @@ function initializeDefaults() {
     }
   }
 
-  originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
 }
 
 async function loadTemplates() {
@@ -431,7 +517,7 @@ async function refreshStagedAffordances() {
     const candidate = await dryRunCreateEntity(
       formConfig.value.entity,
       { properties: { ...formData.value }, content: content.value || undefined },
-      controller.signal,
+      controller.signal
     )
     // A newer request superseded this one between await points — discard.
     if (controller !== stagedDryRunController) return
@@ -441,6 +527,12 @@ async function refreshStagedAffordances() {
 
     fieldAffordances.value = candidate._fields ?? {}
     relationAffordances.value = candidate._relations ?? {}
+    // Entry-locked create fields (TKT-3G93B8 / BUG-X1C7S): adopt the server's
+    // authoritative value for every read-only field (a machine field the server
+    // pinned to its initial value, or any policy-read-only field) so the locked
+    // control DISPLAYS the server value, not stale user input. Scoped to read-only
+    // fields, so it never clobbers an editable one. See adoptLockedFieldValues.
+    adoptLockedFieldValues(candidate._fields, candidate.properties, formData.value)
     // The dry-run strips hidden fields from `properties`; the remaining
     // keys are exactly the visible-by-default props the field filter
     // needs to render (since they won't appear in the sparse `_fields`).
@@ -487,7 +579,11 @@ function applyTemplate(template: Template) {
       relations.value[rel.relation].push(rel.target)
     }
   }
-  originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+  originalData.value = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
 }
 
 function selectTemplate(name: string) {
@@ -509,17 +605,32 @@ function getTemplateLabel(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
-function validate(): boolean {
-  errors.value = {}
-
+// Validate the form. `scopeFields` restricts validation to a subset (used for
+// per-step validation on wizard "Next"); when omitted, all shown fields are
+// validated (single-page submit, or wizard final submit over visible steps).
+// `requiredProps` are property keys made required by a matching `required_when`
+// condition, in addition to the metamodel's own `required` flag.
+//
+// Errors are updated **only for the scope's fields**: existing errors on fields
+// OUTSIDE the scope are preserved. This is what lets a wizard's per-step Next
+// re-check just the current step while leaving flags on other errored steps
+// standing until they're actually resolved. Returns whether the SCOPE is valid.
+function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<string>): boolean {
   if (!entityType.value) return true
 
+  const scope = scopeFields ?? fields.value
   // Only validate properties that are shown in the form (not hidden)
   const formPropertyNames = new Set(
-    fields.value
+    scope
       .filter((f): f is typeof f & { property: string } => !!f.property && !f.hidden)
       .map((f) => f.property)
   )
+
+  // Start from the existing errors, then clear this scope's entries so a
+  // fixed field drops out while out-of-scope errors are untouched.
+  const next: Record<string, string> = { ...errors.value }
+  for (const prop of formPropertyNames) delete next[prop]
+  let scopeValid = true
 
   for (const [propName, propDef] of Object.entries(entityType.value.properties)) {
     // Skip properties not in the form - backend will validate them
@@ -527,9 +638,11 @@ function validate(): boolean {
 
     const value = formData.value[propName]
 
-    // Required check
-    if (propDef.required && (value === undefined || value === null || value === '')) {
-      errors.value[propName] = 'This field is required'
+    // Required check (metamodel `required` OR a matching `required_when`)
+    const isRequired = propDef.required || (requiredProps?.has(propName) ?? false)
+    if (isRequired && (value === undefined || value === null || value === '')) {
+      next[propName] = 'This field is required'
+      scopeValid = false
       continue
     }
 
@@ -538,14 +651,16 @@ function validate(): boolean {
       if (propDef.type === 'integer' && typeof value === 'string') {
         const num = parseInt(value, 10)
         if (isNaN(num)) {
-          errors.value[propName] = 'Must be a valid number'
+          next[propName] = 'Must be a valid number'
+          scopeValid = false
         }
       }
 
       if (propDef.type === 'date' && typeof value === 'string') {
         const date = new Date(value)
         if (isNaN(date.getTime())) {
-          errors.value[propName] = 'Must be a valid date'
+          next[propName] = 'Must be a valid date'
+          scopeValid = false
         }
       }
 
@@ -554,17 +669,145 @@ function validate(): boolean {
         const items = propDef.list && Array.isArray(value) ? value : [value]
         const invalid = items.some((v) => !allowed.includes(String(v)))
         if (invalid) {
-          errors.value[propName] = `Must be one of: ${allowed.join(', ')}`
+          next[propName] = `Must be one of: ${allowed.join(', ')}`
+          scopeValid = false
         }
       }
     }
   }
 
-  return Object.keys(errors.value).length === 0
+  errors.value = next
+  return scopeValid
+}
+
+// The affordance filter applied to flat forms in `fields`, reusable for a
+// wizard step's field list so policy-hidden fields are dropped consistently.
+function affordanceVisible(f: FormFieldOrRelation): boolean {
+  if (!f.property) return true // relations / non-property fields untouched
+  if (loading.value) return true
+  if (!isEdit.value && !stagedAffordancesReady.value) return true
+  if (f.property in fieldAffordances.value) return true
+  if (isEdit.value && f.property in formData.value) return true
+  if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
+  return false
+}
+
+// A wizard step's fields to render: per-field `visible_when` (wizard layer)
+// intersected with the affordance filter (same rule as flat `fields`).
+function visibleStepFields(step: import('@/types').FormStep): FormFieldOrRelation[] {
+  return wizard.visibleFieldsOf(step).filter(affordanceVisible)
+}
+
+// Fields in scope for submit: the visible fields of the currently-visible
+// steps (for a flat/one-step form that's just its fields). Applies the same
+// affordance filter as rendering (visibleStepFields), so validation never
+// demands a policy-hidden field the user can't see or fill.
+function submitScopeFields(): FormFieldOrRelation[] {
+  return wizard.visibleSteps.value.flatMap((s) => visibleStepFields(s))
+}
+
+// Drop property keys under a condition-hidden step/field so a revealed-then-
+// hidden branch is not persisted. Applied by BOTH submit paths — including on
+// top of the create path's affordance prune — so the two pruning systems
+// reconcile in one place. For a flat form with no conditions this is a no-op
+// (nothing is hidden).
+function pruneWizardHidden(props: Record<string, unknown>): Record<string, unknown> {
+  const active = wizard.activeProperties.value
+  const managed = wizard.managedProperties.value
+  // Drop a key only if the wizard governs it (named by some step) AND it is not
+  // currently active (its step/field is condition-hidden). A key no step
+  // mentions — e.g. a metamodel default seeded into form state — is left as-is,
+  // matching how a single-page form submits it.
+  return Object.fromEntries(
+    Object.entries(props).filter(([key]) => !managed.has(key) || active.has(key))
+  )
+}
+
+// Relation analogue of pruneWizardHidden: drop a relation's edges when it is
+// wizard-governed but currently hidden (its step/field visible_when is false),
+// so a revealed-then-hidden relation is not persisted. `rels` is keyed by
+// relation name (as relations.value is).
+function pruneWizardHiddenRelations(rels: Record<string, string[]>): Record<string, string[]> {
+  const active = wizard.activeRelations.value
+  const managed = wizard.managedRelations.value
+  return Object.fromEntries(
+    Object.entries(rels).filter(([rel]) => !managed.has(rel) || active.has(rel))
+  )
+}
+
+// Property keys made required right now by a matching `required_when`.
+function requiredWhenProps(scope: FormFieldOrRelation[]): Set<string> {
+  const req = new Set<string>()
+  for (const f of scope) {
+    if (f.property && wizard.isFieldRequired(f)) req.add(f.property)
+  }
+  return req
+}
+
+// Wizard "Next": validate only the current step's visible fields; advance only
+// when valid, so an invalid step blocks progression with per-field errors.
+// `validate` is scope-local, so it re-checks just this step and leaves any
+// flags on OTHER errored steps standing until they're resolved.
+function handleNext() {
+  const step = wizard.currentStepDef.value
+  if (!step) return
+  // Same scope as the step renders (visibleStepFields), so Next doesn't block
+  // on a policy-hidden field the user can't see.
+  const scope = visibleStepFields(step)
+  if (!validate(scope, requiredWhenProps(scope))) return
+  wizard.next()
+}
+
+function handleBack() {
+  // Back never validates and never clears errors — navigating isn't fixing.
+  wizard.back()
+}
+
+// Clicking a step pill jumps straight there. A deliberate jump is not gated by
+// per-step validation (unlike Next): visible_when keeps unmet branches hidden
+// and the final Submit re-validates every visible step, so a jump can't persist
+// invalid data. Errors are left intact — a flag clears when its field is fixed,
+// not when the user navigates away.
+function handleStepClick(index: number) {
+  if (index === wizard.currentStep.value) return
+  wizard.goTo(index)
+}
+
+// On a failed submit, take the user to the first step that has an error and
+// focus its first invalid field, so the fix is one glance + zero hunting. For a
+// one-step form this just focuses the field on the only step.
+function focusFirstError() {
+  // First errored property in visible order.
+  let firstStep = Infinity
+  let firstProp: string | null = null
+  for (const property of Object.keys(errors.value)) {
+    const idx = wizard.visibleStepIndexForProperty(property)
+    if (idx >= 0 && idx < firstStep) {
+      firstStep = idx
+      firstProp = property
+    }
+  }
+  if (firstProp === null) return
+  wizard.goTo(firstStep)
+  // Focus after the step renders.
+  const prop = firstProp
+  nextTick(() => {
+    const el = document.getElementById(`field-${prop}`)
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el?.focus()
+  })
 }
 
 async function handleSubmit() {
-  if (!validate() || !formConfig.value) return
+  if (!formConfig.value) return
+  // Edit mode has no explicit submit — autosave persists per field. Guard
+  // against an Enter-key form submit doing anything (there's no Save button).
+  if (isEdit.value) return
+  const scope = submitScopeFields()
+  if (!validate(scope, requiredWhenProps(scope))) {
+    focusFirstError()
+    return
+  }
 
   saving.value = true
   try {
@@ -572,12 +815,13 @@ async function handleSubmit() {
     // `filteredRelations` IDs-only map — they're delivered through
     // pendingCardChanges and the unified PATCH-with-relations shape.
     const cardRelations = new Set(
-      fields.value
-        .filter((f) => f.relation && f.widget === 'cards')
-        .map((f) => f.relation!)
+      fields.value.filter((f) => f.relation && f.widget === 'cards').map((f) => f.relation!)
     )
+    // Drop relations under a condition-hidden branch (mirrors property pruning),
+    // then exclude card-managed relations (delivered via pendingCardChanges).
+    const prunedRelations = pruneWizardHiddenRelations(relations.value)
     const filteredRelations: Record<string, string[]> = {}
-    for (const [rel, ids] of Object.entries(relations.value)) {
+    for (const [rel, ids] of Object.entries(prunedRelations)) {
       if (!cardRelations.has(rel)) {
         filteredRelations[rel] = ids
       }
@@ -602,7 +846,7 @@ async function handleSubmit() {
       // and tell the user to reload (the type comes from backend Step 0
       // and is normally always present).
       uiStore.error(
-        'Some related entities have unknown types. Save aborted; reload the form and try again.',
+        'Some related entities have unknown types. Save aborted; reload the form and try again.'
       )
       // Drop the outgoing card-edit Map entries so they aren't
       // mistakenly cleared on success below.
@@ -621,7 +865,12 @@ async function handleSubmit() {
       relations: ModernRelationsField
       content?: string
     } = {
-      properties: formData.value,
+      // For a wizard, drop values under a hidden step/field so a toggled-off
+      // branch doesn't persist stale data (matches OpenVWR's isFieldEnabled).
+      // Single-page forms submit formData as-is. The create path re-derives
+      // this from the affordance-pruned set below (line ~734); this covers the
+      // edit path.
+      properties: pruneWizardHidden(formData.value),
       relations: relationsPayload,
       content: content.value || undefined,
     }
@@ -642,8 +891,12 @@ async function handleSubmit() {
       // entirely from reshaped picker selections.
       //
       // TKT-3I5U: send only visible + writable property keys; the server
-      // fills hidden / read-only defaults after the affordance gate.
-      payload.properties = visibleWritablePropertiesForCommit()
+      // fills hidden / read-only defaults after the affordance gate. For a
+      // wizard, also drop keys under a condition-hidden step/field — a
+      // `visible_when=false` branch wins over the affordance filter's
+      // userTouched-preserve rule, so a revealed-then-hidden field is not
+      // persisted (TKT-CHLAJ).
+      payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
       Object.assign(payload, idControls.buildPayloadFields())
       const entity = await entitiesStore.create(formConfig.value.entity, payload)
 
@@ -677,7 +930,11 @@ async function handleSubmit() {
     }
 
     dirty.value = false
-    originalData.value = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+    originalData.value = JSON.stringify({
+      formData: formData.value,
+      relations: relations.value,
+      content: content.value,
+    })
 
     // Navigate to return_to or back
     if (returnTo.value) {
@@ -693,11 +950,13 @@ async function handleSubmit() {
     if (isCancelledFetch(err)) return
     const validationErrors = err instanceof ApiError ? err.validationErrors : []
     if (validationErrors.length > 0) {
+      const next = { ...errors.value }
       for (const e of validationErrors) {
         if (e.field) {
-          errors.value[e.field] = e.message || e.detail || 'Invalid value'
+          next[e.field] = e.message || e.detail || 'Invalid value'
         }
       }
+      errors.value = next
       uiStore.error('Please fix the validation errors')
     } else {
       uiStore.error(getErrorMessage(err, 'Failed to save entity'))
@@ -714,6 +973,15 @@ function handleCancel() {
 
 function updateField(property: string, value: unknown) {
   formData.value[property] = value
+  // Clear a standing validation error for this field as the user edits it, so
+  // the wizard's per-step error flags and summary update live. A full re-check
+  // happens on the next Next/Submit; this just avoids a stale "needs attention"
+  // marker after the user has addressed it.
+  if (errors.value[property]) {
+    const next = { ...errors.value }
+    delete next[property]
+    errors.value = next
+  }
   checkDirty()
   // TKT-3I5U: in create mode, re-derive affordances from the staged
   // entity's new values (value-dependent verdicts) — debounced. Also
@@ -797,15 +1065,13 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   if (!hasModernCards && !hasLegacy) return null
   // Reshape legacy IDs to modern shape (autosave always uses modern;
   // shape_mixed 400 otherwise).
-  const reshaped = hasLegacy
-    ? reshapeLegacyToModern(filteredRelations, pickerTypes.value)
-    : {}
+  const reshaped = hasLegacy ? reshapeLegacyToModern(filteredRelations, pickerTypes.value) : {}
   if (reshaped === null) {
     // Pathological: a picker target without a known type. Surface
     // and skip — explicit Save in create mode handles this case;
     // autosave is best-effort.
     uiStore.error(
-      'Some related entities have unknown types; relation changes were not saved. Reload the form and try again.',
+      'Some related entities have unknown types; relation changes were not saved. Reload the form and try again.'
     )
     return null
   }
@@ -826,10 +1092,7 @@ function updateRelationCards(relation: string, state: RelationCardState) {
 // write. RelationPicker emits enough state (loadedEntries +
 // currentEntries) for us to build a proper RelationCardState the
 // builder can consume.
-function updateIncomingPicker(
-  relation: string,
-  state: RelationPickerIncomingState,
-) {
+function updateIncomingPicker(relation: string, state: RelationPickerIncomingState) {
   pendingCardChanges.value.set(`${relation}${INCOMING_SUFFIX}`, {
     entries: state.currentEntries,
     added: state.added,
@@ -858,7 +1121,11 @@ function updateContent(value: string) {
 }
 
 function checkDirty() {
-  const currentData = JSON.stringify({ formData: formData.value, relations: relations.value, content: content.value })
+  const currentData = JSON.stringify({
+    formData: formData.value,
+    relations: relations.value,
+    content: content.value,
+  })
   const hasCardChanges = pendingCardChanges.value.size > 0
   dirty.value = currentData !== originalData.value || hasCardChanges
 }
@@ -877,10 +1144,16 @@ function handleBeforeUnload(e: BeforeUnloadEvent) {
   }
 }
 
-// Cmd/Ctrl+Enter to submit
+// Cmd/Ctrl+Enter: on the last (or only) step it submits (create); on an earlier
+// wizard step it advances — matching the visible Create-only-on-last-step
+// affordance rather than submitting from the middle of a wizard. No-op in edit
+// mode (autosave; handleSubmit early-returns).
 function handleKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-    e.preventDefault()
+  if (!((e.metaKey || e.ctrlKey) && e.key === 'Enter')) return
+  e.preventDefault()
+  if (!isEdit.value && wizard.isMultiStep.value && !wizard.isLastStep.value) {
+    handleNext()
+  } else {
     handleSubmit()
   }
 }
@@ -903,6 +1176,12 @@ onMounted(async () => {
     await loadTemplates()
   }
   loading.value = false
+
+  // Re-seed the wizard step from `?step=` now that entity/defaults are loaded:
+  // a step whose `visible_when` needs loaded data is only in `visibleSteps`
+  // after this point, so the construction-time seed may have clamped a
+  // deep-link to the wrong step (RR-TXMU6).
+  wizard.seedFromUrl()
 
   // TKT-3I5U: derive the staged entity's initial affordances from the
   // dry-run so the first affordance-filtered paint reflects defaults +
@@ -935,8 +1214,20 @@ onMounted(async () => {
         } else {
           formData.value[property] = value
         }
+        // A committed state-machine move changes which transitions are now
+        // performable — the loaded `_transitions` reflect the PRE-move state
+        // (RR-NI145G). The PATCH response's fresh `_transitions` isn't threaded
+        // through the autosave merge, so reload the entity to refresh the
+        // status control (mirrors onAttachmentChanged's reload for
+        // `_attachments`). Fire-and-forget: this is a UI-hint refresh, and the
+        // write already succeeded.
+        if (property in transitions.value) {
+          void loadEntity(true)
+        }
       },
-      applyServerContent: (c) => { content.value = c },
+      applyServerContent: (c) => {
+        content.value = c
+      },
       onError: (msg) => uiStore.error(msg),
     })
     // Register with the dirty registry so SSE-driven re-fetches in
@@ -946,7 +1237,7 @@ onMounted(async () => {
     // instance, so Vue would silently drop it and leak the registration.
     unregisterDirtyForm = registerForm(
       props.entityId,
-      (property) => _autoSaveInstance.value?.isDirty(property) ?? false,
+      (property) => _autoSaveInstance.value?.isDirty(property) ?? false
     )
   }
 
@@ -962,7 +1253,7 @@ onMounted(async () => {
       if (!inverse) {
         uiStore.warning(
           `Relation '${f.relation}' has no 'inverse:' declared in the metamodel. ` +
-            `Saving changes from this widget will fail until the metamodel is updated.`,
+            `Saving changes from this widget will fail until the metamodel is updated.`
         )
       }
     }
@@ -1051,7 +1342,7 @@ onBeforeRouteLeave(async () => {
       </div>
 
       <div v-if="loading" class="loading-state">
-        <div class="spinner"/>
+        <div class="spinner" />
         <span>Loading...</span>
       </div>
 
@@ -1059,8 +1350,8 @@ onBeforeRouteLeave(async () => {
         <h2>This entity is not editable</h2>
         <p>
           Your current permissions don't allow updating
-          <code>{{ entityId }}</code>. Return to the entity view to see
-          available actions.
+          <code>{{ entityId }}</code
+          >. Return to the entity view to see available actions.
         </p>
         <router-link
           v-if="formConfig && entityId"
@@ -1088,103 +1379,69 @@ onBeforeRouteLeave(async () => {
           </select>
         </div>
 
-        <template v-if="formConfig.sections?.length">
-          <div
-            v-for="section in formConfig.sections"
-            :key="section.title"
-            class="form-section"
-          >
-            <h2 v-if="section.title">{{ section.title }}</h2>
-            <p v-if="section.description" class="section-description">
-              {{ section.description }}
-            </p>
+        <!-- Every form renders through the same step model. A single-page (flat)
+             form is one implicit, title-less step, so the stepper bar only shows
+             when there is more than one step. -->
+        <ol v-if="wizard.isMultiStep.value" class="wizard-steps" aria-label="Form steps">
+          <li v-for="(step, sIdx) in wizard.visibleSteps.value" :key="sIdx">
+            <button
+              type="button"
+              class="wizard-step-pill"
+              :class="{
+                active: sIdx === wizard.currentStep.value,
+                done: sIdx < wizard.currentStep.value,
+                'has-errors': stepsWithErrors.has(sIdx),
+              }"
+              :aria-current="sIdx === wizard.currentStep.value ? 'step' : undefined"
+              @click="handleStepClick(sIdx)"
+            >
+              <span class="wizard-step-num">{{ stepsWithErrors.has(sIdx) ? '!' : sIdx + 1 }}</span>
+              <span class="wizard-step-title">{{ step.title }}</span>
+            </button>
+          </li>
+        </ol>
 
-            <div class="form-fields">
-              <template v-for="(field, fieldIdx) in section.fields" :key="`${fieldIdx}-${field.property || field.relation}`">
-                <FieldRenderer
-                  v-if="field.property && !field.hidden"
-                  :field="field"
-                  :property-def="getPropertyDef(field.property)"
-                  :value="formData[field.property]"
-                  :error="errors[field.property]"
-                  :readonly="isFieldReadonly(field)"
-                  :option-verdicts="optionVerdictsFor(field)"
-                  :entity-type="formConfig.entity"
-                  :entity-id="entityId"
-                  :attachments="attachments[field.property]"
-                  :max="getPropertyDef(field.property)?.max"
-                  @update="updateField(field.property!, $event)"
-                  @attachment-changed="onAttachmentChanged"
-                />
-                <RelationCards
-                  v-else-if="field.relation && field.widget === 'cards' && entityId"
-                  :key="`cards-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-                  :field="field"
-                  :entity-type="formConfig.entity"
-                  :entity-id="entityId"
-                  :verdict="relationAffordances[field.relation!]"
-                  @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
-                />
-                <RelationPicker
-                  v-else-if="field.relation"
-                  :key="`picker-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-                  :field="field"
-                  :entity-type="formConfig.entity"
-                  :entity-id="entityId"
-                  :value="relations[field.relation] || []"
-                  :verdict="relationAffordances[field.relation!]"
-                  @update="updateRelation(field.relation!, $event)"
-                  @update:types="(types) => updateRelationTypes(field.relation!, types)"
-                  @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
-                />
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <div v-else class="form-fields">
-          <template v-for="(field, fieldIdx) in fields" :key="`${fieldIdx}-${field.property || field.relation}`">
-            <FieldRenderer
-              v-if="field.property && !field.hidden"
-              :field="field"
-              :property-def="getPropertyDef(field.property)"
-              :value="formData[field.property]"
-              :error="errors[field.property]"
-              :readonly="isFieldReadonly(field)"
-              :option-verdicts="optionVerdictsFor(field)"
+        <div
+          v-if="wizard.currentStepDef.value"
+          class="form-section"
+          :class="{ 'wizard-panel': wizard.isMultiStep.value }"
+        >
+          <h2 v-if="wizard.currentStepDef.value.title">
+            {{ wizard.currentStepDef.value.title }}
+          </h2>
+          <p v-if="wizard.currentStepDef.value.description" class="section-description">
+            {{ wizard.currentStepDef.value.description }}
+          </p>
+          <div class="form-fields">
+            <FormFieldList
+              :fields="visibleStepFields(wizard.currentStepDef.value)"
               :entity-type="formConfig.entity"
               :entity-id="entityId"
-              :attachments="attachments[field.property]"
-              :max="getPropertyDef(field.property)?.max"
-              @update="updateField(field.property!, $event)"
+              :form-data="formData"
+              :relations="relations"
+              :errors="errors"
+              :relation-affordances="relationAffordances"
+              :attachments="attachments"
+              :save-generation="saveGeneration"
+              :get-property-def="getPropertyDef"
+              :is-field-readonly="isFieldReadonly"
+              :option-verdicts-for="optionVerdictsFor"
+              :transitions-for="transitionsFor"
+              @update-field="updateField"
               @attachment-changed="onAttachmentChanged"
+              @update-relation="updateRelation"
+              @update-relation-types="updateRelationTypes"
+              @incoming-changed="updateIncomingPicker"
+              @cards-changed="updateRelationCards"
             />
-            <RelationCards
-              v-else-if="field.relation && field.widget === 'cards' && entityId"
-              :key="`cards-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-              :field="field"
-              :entity-type="formConfig.entity"
-              :entity-id="entityId"
-              :verdict="relationAffordances[field.relation!]"
-              @cards-changed="(state) => updateRelationCards(`${field.relation}-${field.direction || 'outgoing'}`, state)"
-            />
-            <RelationPicker
-              v-else-if="field.relation"
-              :key="`picker-${field.relation}-${field.direction || 'outgoing'}-${saveGeneration}`"
-              :field="field"
-              :entity-type="formConfig.entity"
-              :entity-id="entityId"
-              :value="relations[field.relation] || []"
-              :verdict="relationAffordances[field.relation!]"
-              @update="updateRelation(field.relation!, $event)"
-              @update:types="(types) => updateRelationTypes(field.relation!, types)"
-              @incoming-changed="(state) => updateIncomingPicker(field.relation!, state)"
-            />
-          </template>
+          </div>
         </div>
 
-        <!-- Content field (markdown body) -->
-        <div class="form-field content-field">
+        <!-- Degenerate config: every step is conditionally hidden right now. -->
+        <p v-else class="section-description">No fields to display.</p>
+
+        <!-- Content field (markdown body). Shown on the final (or only) step. -->
+        <div v-if="wizard.isLastStep.value" class="form-field content-field">
           <label for="content">Content</label>
           <MarkdownEditor
             :model-value="content"
@@ -1193,51 +1450,77 @@ onBeforeRouteLeave(async () => {
           />
         </div>
 
-        <div class="form-actions mobile-actionbar">
-          <!-- Edit mode: ambient autosave indicator replaces the
-               explicit Save button. Cancel is repurposed as a Back
-               button to navigate away (with the autosave-flushing
-               route guard catching any pending edits). -->
-          <template v-if="autoSave">
+        <!-- Submit-time validation summary (create only — edit autosaves and has
+             no submit gate). Announced via role=alert. -->
+        <p v-if="!isEdit && errorCount > 0" class="wizard-error-summary" role="alert">
+          ⚠ {{ errorCount }}
+          {{ errorCount === 1 ? 'field needs' : 'fields need' }} attention<template
+            v-if="wizard.isMultiStep.value && stepsWithErrors.size > 0"
+          >
+            — see the flagged step{{ stepsWithErrors.size === 1 ? '' : 's' }} above</template
+          >.
+        </p>
+
+        <!--
+          Actions branch on MODE, not on wizard-ness, so a wizard and a flat form
+          behave identically:
+          - EDIT: autosave per field, no Save button (the route guard flushes
+            pending edits on leave); step Back/Next only when multi-step.
+          - CREATE: Cancel + Back/Next (when multi-step) + Create on the last step.
+        -->
+        <div v-if="wizard.currentStepDef.value" class="form-actions mobile-actionbar">
+          <!-- Leave-the-form control (autosave Back in edit, Cancel in create). -->
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="!autoSave && saving"
+            @click="handleCancel"
+          >
+            {{ autoSave ? 'Back' : 'Cancel' }} <kbd>Esc</kbd>
+          </button>
+
+          <!-- Step navigation (multi-step only). -->
+          <template v-if="wizard.isMultiStep.value">
             <button
               type="button"
               class="btn btn-secondary"
-              @click="handleCancel"
+              :disabled="wizard.isFirstStep.value"
+              @click="handleBack"
             >
-              Back <kbd>Esc</kbd>
+              ← Prev step
             </button>
-            <AutoSaveIndicator
-              :status="autoSave.status"
-              :error="autoSave.lastError"
-            />
-          </template>
-          <template v-else>
             <button
+              v-if="!wizard.isLastStep.value"
               type="button"
-              class="btn btn-secondary"
-              :disabled="saving"
-              @click="handleCancel"
-            >
-              Cancel <kbd>Esc</kbd>
-            </button>
-            <button
-              type="submit"
               class="btn btn-primary"
-              :disabled="saving"
+              @click="handleNext"
             >
-              {{ saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create') }} <kbd>&#8984;&#8629;</kbd>
+              Next step →
             </button>
           </template>
+
+          <!-- Create only: the commit button, on the last (or only) step. -->
+          <button
+            v-if="!isEdit && wizard.isLastStep.value"
+            type="submit"
+            class="btn btn-primary"
+            :disabled="saving"
+          >
+            {{ saving ? 'Saving...' : 'Create' }} <kbd>&#8984;&#8629;</kbd>
+          </button>
+
+          <!-- Edit: ambient autosave status stands in for a Save button. -->
+          <AutoSaveIndicator
+            v-if="autoSave"
+            :status="autoSave.status"
+            :error="autoSave.lastError"
+          />
         </div>
       </form>
     </div>
 
     <!-- Side panel for edit mode -->
-    <SidePanel
-      v-if="isEdit && entityId"
-      :form-id="formId"
-      :entity-id="entityId"
-    />
+    <SidePanel v-if="isEdit && entityId" :form-id="formId" :entity-id="entityId" />
   </div>
 
   <div v-else class="error-state">
@@ -1326,6 +1609,110 @@ onBeforeRouteLeave(async () => {
   margin-bottom: 24px;
 }
 
+/* Wizard stepper */
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.wizard-step-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  color: var(--muted-text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.wizard-step-pill:hover {
+  border-color: var(--accent-color);
+  color: var(--text-color);
+}
+
+.wizard-step-pill:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+/* "You are here" = a filled pill. This is the primary cue and is INDEPENDENT
+   of the error color, so an active step still reads as active even when it also
+   has an error (see .active.has-errors below). */
+.wizard-step-pill.active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+  font-weight: 600;
+}
+
+.wizard-step-pill.done {
+  color: var(--text-color);
+}
+
+.wizard-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border-color);
+  font-size: 12px;
+}
+
+.wizard-step-pill.done .wizard-step-num {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+/* On the filled active pill, the number badge is inverted (light on accent). */
+.wizard-step-pill.active .wizard-step-num {
+  background: #fff;
+  color: var(--accent-color);
+}
+
+/* An errored step: red outline + red number badge, but NOT active. */
+.wizard-step-pill.has-errors:not(.active) {
+  border-color: var(--error-color);
+  color: var(--error-color);
+}
+
+.wizard-step-pill.has-errors:not(.active) .wizard-step-num {
+  background: var(--error-color);
+  color: #fff;
+}
+
+/* The active step that also has an error: filled with the error color, so it
+   still reads as "you are here" while signalling the problem. */
+.wizard-step-pill.active.has-errors {
+  background: var(--error-color);
+  border-color: var(--error-color);
+  color: #fff;
+}
+
+.wizard-step-pill.active.has-errors .wizard-step-num {
+  background: #fff;
+  color: var(--error-color);
+}
+
+.wizard-error-summary {
+  color: var(--error-color);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
 .form-fields {
   display: flex;
   flex-direction: column;
@@ -1383,7 +1770,6 @@ onBeforeRouteLeave(async () => {
   margin-top: 16px;
   margin-bottom: 24px;
 }
-
 
 .form-actions {
   display: flex;

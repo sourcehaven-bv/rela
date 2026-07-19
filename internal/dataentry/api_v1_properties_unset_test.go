@@ -20,10 +20,10 @@ import (
 // the parsed response body so individual tests can assert on it. The
 // existing TestV1UpdateEntity_* fixtures don't expose this pattern.
 type updateResponse struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties"`
-	Warnings   []Warning              `json:"warnings,omitempty"`
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+	Warnings   []Warning      `json:"warnings,omitempty"`
 }
 
 func patchTicketJSON(t *testing.T, app *App, body string) (int, updateResponse) {
@@ -62,7 +62,7 @@ func TestV1UpdateEntity_PropertiesUnset_RemovesKeys(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Original",
 			"status": "open",
 		},
@@ -104,7 +104,7 @@ func TestV1UpdateEntity_PropertiesUnset_UnknownKey_Forbidden(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x", "status": "open"},
+		Properties: map[string]any{"title": "x", "status": "open"},
 	})
 
 	code, body := patchTicketRaw(t, app,
@@ -131,7 +131,7 @@ func TestV1UpdateEntity_PropertiesAndUnset_Together(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Original",
 			"status": "open",
 		},
@@ -160,7 +160,7 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":  "Original",
 			"status": "open",
 		},
@@ -168,7 +168,7 @@ func TestV1UpdateEntity_PropertiesUnsetAndRelations_Together(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "FEAT-001",
 		Type:       "feature",
-		Properties: map[string]interface{}{"title": "Feature"},
+		Properties: map[string]any{"title": "Feature"},
 	})
 
 	body := `{
@@ -205,7 +205,7 @@ func TestV1UpdateEntity_PropertiesUnset_AbsentDeclaredKey_Silent(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "x"},
+		Properties: map[string]any{"title": "x"},
 	})
 
 	code, resp := patchTicketJSON(t, app,

@@ -77,9 +77,9 @@ func TestReadOnlyACL_EveryWriteRoute_DeniesAndDoesNotMutate(t *testing.T) {
 		t.Run(p.name, func(t *testing.T) {
 			app := buildAppWithACLAndAudit(t, acl.ReadOnlyACL{}, nil)
 			seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
-				Properties: map[string]interface{}{"title": "T"}})
+				Properties: map[string]any{"title": "T"}})
 			seedEntity(app, &entity.Entity{ID: "CMP-001", Type: "component",
-				Properties: map[string]interface{}{"name": "C"}})
+				Properties: map[string]any{"name": "C"}})
 
 			before := storeSnapshot(t, app.store)
 

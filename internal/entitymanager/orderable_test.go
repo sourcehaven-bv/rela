@@ -178,7 +178,7 @@ func TestCreateRelation_ExplicitOrderRespected(t *testing.T) {
 	step := mkStep(t, mgr, "Chop")
 
 	rel, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
-		Properties: map[string]interface{}{metamodel.OrderPropertyOut: 42.5},
+		Properties: map[string]any{metamodel.OrderPropertyOut: 42.5},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -195,7 +195,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
-		value interface{}
+		value any
 	}{
 		{"non-numeric string", "abc"},
 		{"explicit nil", nil},
@@ -212,7 +212,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 			step := mkStep(t, mgr, "Y")
 
 			rel, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
-				Properties: map[string]interface{}{metamodel.OrderPropertyOut: tt.value},
+				Properties: map[string]any{metamodel.OrderPropertyOut: tt.value},
 			})
 			if err != nil {
 				t.Fatalf("create: %v", err)
@@ -241,7 +241,7 @@ func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
 	}
 
 	_, err = mgr.UpdateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
-		Properties: map[string]interface{}{metamodel.OrderPropertyOut: 5.5},
+		Properties: map[string]any{metamodel.OrderPropertyOut: 5.5},
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -263,7 +263,7 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
-		value interface{}
+		value any
 	}{
 		{"non-numeric string", "abc"},
 		{"boolean", true},
@@ -283,7 +283,7 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 			}
 
 			_, err := mgr.UpdateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
-				Properties: map[string]interface{}{metamodel.OrderPropertyOut: tt.value},
+				Properties: map[string]any{metamodel.OrderPropertyOut: tt.value},
 			})
 			if err == nil {
 				t.Fatalf("expected update to fail for value %v, got nil error", tt.value)
@@ -325,7 +325,7 @@ func TestRenumber_EmitsAuditRecords(t *testing.T) {
 	// writes are additional records.
 	before := len(mem.Records())
 	if _, err := mgr.UpdateRelation(ctx, recipe.ID, "has-step", s3.ID, entity.RelationOptions{
-		Properties: map[string]interface{}{metamodel.OrderPropertyOut: 2.0},
+		Properties: map[string]any{metamodel.OrderPropertyOut: 2.0},
 	}); err != nil {
 		t.Fatalf("update relation: %v", err)
 	}

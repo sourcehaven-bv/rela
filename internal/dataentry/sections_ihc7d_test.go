@@ -163,7 +163,7 @@ func TestSectionEntityToV1_WiresPropsAndFields(t *testing.T) {
 	// AC 4: the wire converter dumb-copies Props and FieldVerdicts off
 	// SectionEntityData into v1.ViewEntity._props and ._fields.
 	verdict := map[string]v1.FieldAffordance{
-		"status": {Writable: ptrTo(false)},
+		"status": {Writable: new(false)},
 	}
 	sed := SectionEntityData{
 		ID:            "TKT-001",
@@ -217,5 +217,3 @@ func TestSectionEntityToV1_EmptyFieldVerdicts_EmitsPresentButEmpty(t *testing.T)
 		t.Errorf("*FieldAffordances: got %+v, want empty map", *got.FieldAffordances)
 	}
 }
-
-func ptrTo[T any](v T) *T { return &v }

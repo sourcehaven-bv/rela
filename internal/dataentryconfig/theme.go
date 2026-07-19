@@ -22,8 +22,7 @@ func checkManifestTagsUnique() error {
 	seen := make(map[string]string)
 	var visit func(t reflect.Type, path string) error
 	visit = func(t reflect.Type, path string) error {
-		for i := range t.NumField() {
-			f := t.Field(i)
+		for f := range t.Fields() {
 			tag := strings.Split(f.Tag.Get("yaml"), ",")
 			name := strings.TrimSpace(tag[0])
 			inline := false

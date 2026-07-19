@@ -42,10 +42,10 @@ type ParsedSide struct {
 
 // PropertyDiff represents the difference in a single property between sides.
 type PropertyDiff struct {
-	Property    string      // Property name
-	OursValue   interface{} // Value on "ours" side (nil if not present)
-	TheirsValue interface{} // Value on "theirs" side (nil if not present)
-	IsSame      bool        // True if both sides have the same value
+	Property    string // Property name
+	OursValue   any    // Value on "ours" side (nil if not present)
+	TheirsValue any    // Value on "theirs" side (nil if not present)
+	IsSame      bool   // True if both sides have the same value
 }
 
 // Info provides a structured view of differences between sides.

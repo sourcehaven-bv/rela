@@ -31,7 +31,7 @@ func FuzzStripShebang(f *testing.F) {
 		}
 
 		// If input had a newline after shebang, line count must be preserved
-		if idx := strings.Index(cleaned, "\n"); idx != -1 {
+		if found := strings.Contains(cleaned, "\n"); found {
 			inputLines := strings.Count(cleaned, "\n")
 			resultLines := strings.Count(result, "\n")
 			if resultLines != inputLines {

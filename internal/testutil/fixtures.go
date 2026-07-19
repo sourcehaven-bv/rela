@@ -62,13 +62,13 @@ func (b *EntityBuilder) ID(id string) *EntityBuilder {
 }
 
 // WithProperty adds a property to the entity.
-func (b *EntityBuilder) WithProperty(key string, value interface{}) *EntityBuilder {
+func (b *EntityBuilder) WithProperty(key string, value any) *EntityBuilder {
 	b.entity.Properties[key] = value
 	return b
 }
 
 // With is an alias for WithProperty for more concise syntax.
-func (b *EntityBuilder) With(key string, value interface{}) *EntityBuilder {
+func (b *EntityBuilder) With(key string, value any) *EntityBuilder {
 	return b.WithProperty(key, value)
 }
 
@@ -158,7 +158,7 @@ func (b *EntityBuilder) autoFillProperties() {
 }
 
 // generatePropertyValue generates a random value for a property based on its type.
-func (b *EntityBuilder) generatePropertyValue(_ string, prop metamodel.PropertyDef) interface{} {
+func (b *EntityBuilder) generatePropertyValue(_ string, prop metamodel.PropertyDef) any {
 	// Check for enum values (inline or from custom type)
 	values := prop.Values
 	if len(values) == 0 && b.meta != nil {
@@ -230,9 +230,9 @@ func (b *RelationBuilder) To(id string) *RelationBuilder {
 }
 
 // WithProperty adds a property to the relation.
-func (b *RelationBuilder) WithProperty(key string, value interface{}) *RelationBuilder {
+func (b *RelationBuilder) WithProperty(key string, value any) *RelationBuilder {
 	if b.relation.Properties == nil {
-		b.relation.Properties = make(map[string]interface{})
+		b.relation.Properties = make(map[string]any)
 	}
 	b.relation.Properties[key] = value
 	return b

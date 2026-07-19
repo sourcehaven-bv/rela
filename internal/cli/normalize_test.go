@@ -6,7 +6,7 @@ import (
 )
 
 func TestNormalizeCmd_DryRunFlagExists(t *testing.T) {
-	rt := reflect.TypeOf(NormalizeCmd{})
+	rt := reflect.TypeFor[NormalizeCmd]()
 	f, ok := rt.FieldByName("DryRun")
 	if !ok {
 		t.Fatal("normalize command struct should have a DryRun field")

@@ -14,13 +14,14 @@
 
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
 import type { Component } from 'vue'
-import type { FieldAffordance, PropertyDef, Entity, AttachmentInfo } from '@/types'
+import type { FieldAffordance, PropertyDef, Entity, AttachmentInfo, TransitionOption } from '@/types'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import { defaultRegistry } from '@/widgets/registry'
 import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
 import FieldShell from './FieldShell.vue'
+import StatusControl from './StatusControl.vue'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 
 // Discriminated union: each field resolves its widget via either the
@@ -30,6 +31,11 @@ export type SectionEditField = {
   property: string
   label: string
   verdict?: FieldAffordance
+  // Machine-aware status control (TKT-3G93B8): when present (even empty), the
+  // field is a state machine and renders as a StatusControl instead of its
+  // resolved widget. Undefined = not a machine field (or a surface without
+  // `_transitions`, e.g. cards/list rows) → the ordinary widget.
+  transitions?: TransitionOption[]
 } & (
   | { kind: 'schema'; propertyDef: PropertyDef }
   | { kind: 'hint'; routingHint: WidgetRoutingHint }
@@ -224,8 +230,17 @@ defineExpose({
       >
         <dt>{{ row.field.label }}</dt>
         <dd>
+          <StatusControl
+            v-if="row.field.transitions !== undefined"
+            :model-value="formData[row.field.property] == null ? '' : String(formData[row.field.property])"
+            :property="row.field.property"
+            :entity-type="entityType"
+            :transitions="row.field.transitions"
+            :disabled="!row.writable"
+            @update:model-value="(v: string) => onFieldUpdate(row.field, v)"
+          />
           <FieldShell
-            v-if="row.writable"
+            v-else-if="row.writable"
             :field-id="`section-edit-${row.field.property}`"
             :error="autoSave.fieldErrors.value[row.field.property]"
           >

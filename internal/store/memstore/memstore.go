@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -36,13 +37,25 @@ import (
 
 // MemStore is an in-memory store implementation.
 //
-// TODO(TKT-N0IKN9): the exported surface (27) is the mandated store.Store
-// interface, which consumers depend on directly by design. This is a
-// required-interface exception, not accreted public API — it tracks the
-// interface size and ratchets only if store.Store itself is narrowed.
+// TODO(TKT-N0IKN9): the exported surface (28) is the mandated store.Store
+// interface (incl. Tx, TKT-GXHI8), which consumers depend on directly by
+// design. This is a required-interface exception, not accreted public API —
+// it tracks the interface size and ratchets only if store.Store itself is
+// narrowed.
 //
-//plimsoll:max-exported-methods=27
+// Total methods crossed the 40 line with the Tx contract (TKT-GXHI8):
+// each store.Store write method split into an exported txMu wrapper +
+// unexported core so Tx callbacks can re-enter. Interface-driven, not
+// accreted sprawl; ratchets with the interface.
+//
+//plimsoll:max-methods=42
+//plimsoll:max-exported-methods=28
 type MemStore struct {
+	// txMu serializes an open Tx against ordinary writers: Tx holds it
+	// for the whole callback, every exported write method takes it
+	// briefly before mu (lock order: txMu → mu; see tx.go). Readers
+	// never take it.
+	txMu          sync.Mutex
 	mu            sync.RWMutex
 	entities      map[string]*entity.Entity   // ID -> entity
 	entityOrder   []string                    // sorted entity IDs
@@ -309,7 +322,7 @@ func (m *MemStore) PropertyValues(_ context.Context, property string, limit int)
 
 // --- EntityWriter ---
 
-func (m *MemStore) CreateEntity(_ context.Context, e *entity.Entity) error {
+func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if err := validateID(e.ID); err != nil {
 		return err
 	}
@@ -335,7 +348,7 @@ func (m *MemStore) CreateEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-func (m *MemStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
+func (m *MemStore) updateEntity(_ context.Context, e *entity.Entity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -356,7 +369,7 @@ func (m *MemStore) UpdateEntity(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-func (m *MemStore) DeleteEntity(_ context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -416,7 +429,7 @@ func (m *MemStore) DeleteEntity(_ context.Context, id string, cascade bool) (*st
 	return result, nil
 }
 
-func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := validateID(newID); err != nil {
 		return nil, err
 	}
@@ -481,9 +494,7 @@ func (m *MemStore) RenameEntity(_ context.Context, oldID, newID string) (*store.
 		a.entityID = newID
 		reKey[attachmentKey(newID, a.property, a.fileName)] = a
 	}
-	for k, v := range reKey {
-		m.attachments[k] = v
-	}
+	maps.Copy(m.attachments, reKey)
 
 	m.emit(store.Event{
 		Op:         store.EventEntityUpdated,
@@ -568,7 +579,7 @@ func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int
 
 // --- RelationWriter ---
 
-func (m *MemStore) CreateRelation(
+func (m *MemStore) createRelation(
 	_ context.Context, from, relType, to string, data *store.RelationData,
 ) (*entity.Relation, error) {
 	for _, id := range []string{from, to} {
@@ -588,7 +599,7 @@ func (m *MemStore) CreateRelation(
 	if data != nil {
 		r.Content = data.Content
 		if data.Properties != nil {
-			r.Properties = make(map[string]interface{}, len(data.Properties))
+			r.Properties = make(map[string]any, len(data.Properties))
 			for k, v := range data.Properties {
 				r.Properties[k] = entity.CloneValue(v)
 			}
@@ -612,7 +623,7 @@ func (m *MemStore) CreateRelation(
 	return r.Clone(), nil
 }
 
-func (m *MemStore) UpdateRelation(
+func (m *MemStore) updateRelation(
 	_ context.Context, from, relType, to string, data store.RelationData,
 ) (*entity.Relation, error) {
 	m.mu.Lock()
@@ -627,7 +638,7 @@ func (m *MemStore) UpdateRelation(
 	updated := r.Clone()
 	updated.Content = data.Content
 	if data.Properties != nil {
-		updated.Properties = make(map[string]interface{}, len(data.Properties))
+		updated.Properties = make(map[string]any, len(data.Properties))
 		for k, v := range data.Properties {
 			updated.Properties[k] = entity.CloneValue(v)
 		}
@@ -646,7 +657,7 @@ func (m *MemStore) UpdateRelation(
 	return updated.Clone(), nil
 }
 
-func (m *MemStore) DeleteRelation(_ context.Context, from, relType, to string) error {
+func (m *MemStore) deleteRelation(_ context.Context, from, relType, to string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -673,7 +684,7 @@ func attachmentKey(entityID, property, fileName string) string {
 	return entityID + "/" + property + "/" + fileName
 }
 
-func (m *MemStore) AttachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
+func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := validateProperty(property); err != nil {
 		return err
 	}
@@ -719,7 +730,7 @@ func (m *MemStore) ReadAttachment(_ context.Context, entityID, property, fileNam
 	return io.NopCloser(bytes.NewReader(a.data)), nil
 }
 
-func (m *MemStore) DeleteAttachment(_ context.Context, entityID, property, fileName string) error {
+func (m *MemStore) deleteAttachment(_ context.Context, entityID, property, fileName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

@@ -164,4 +164,5 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	}
 	t.Run("Watcher", func(t *testing.T) { RunWatcherTests(t, f) })
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
+	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })
 }

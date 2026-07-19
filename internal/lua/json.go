@@ -67,7 +67,7 @@ func luaJSONEncode(ls *lua.LState) int {
 // Wrong arg type raises; invalid JSON returns (nil, err_table) with kind="bad_response".
 func luaJSONDecode(ls *lua.LState) int {
 	str := ls.CheckString(1)
-	var goVal interface{}
+	var goVal any
 	if err := json.Unmarshal([]byte(str), &goVal); err != nil {
 		ls.Push(lua.LNil)
 		tbl := ls.NewTable()
@@ -87,11 +87,11 @@ func luaJSONDecode(ls *lua.LState) int {
 // goJSONToLua converts a Go value (from json.Unmarshal) to a Lua value.
 // Recursion is capped at jsonMaxDecodeDepth to prevent stack-overflow
 // DoS from deeply nested JSON.
-func goJSONToLua(ls *lua.LState, val interface{}) lua.LValue {
+func goJSONToLua(ls *lua.LState, val any) lua.LValue {
 	return goJSONToLuaSafe(ls, val, 0)
 }
 
-func goJSONToLuaSafe(ls *lua.LState, val interface{}, depth int) lua.LValue {
+func goJSONToLuaSafe(ls *lua.LState, val any, depth int) lua.LValue {
 	if depth >= jsonMaxDecodeDepth {
 		return lua.LString(jsonMaxDepthSentinel)
 	}
@@ -104,13 +104,13 @@ func goJSONToLuaSafe(ls *lua.LState, val interface{}, depth int) lua.LValue {
 		return lua.LNumber(v)
 	case string:
 		return lua.LString(v)
-	case []interface{}:
+	case []any:
 		tbl := ls.NewTable()
 		for i, item := range v {
 			tbl.RawSetInt(i+1, goJSONToLuaSafe(ls, item, depth+1))
 		}
 		return tbl
-	case map[string]interface{}:
+	case map[string]any:
 		tbl := ls.NewTable()
 		for key, item := range v {
 			tbl.RawSetString(key, goJSONToLuaSafe(ls, item, depth+1))

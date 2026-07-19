@@ -271,7 +271,7 @@ func TestSchemaOverviewJSON(t *testing.T) {
 		t.Fatalf("schema overview JSON failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestSchemaEntitiesJSON(t *testing.T) {
 		t.Fatalf("schema entities JSON failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestSchemaEntityJSON(t *testing.T) {
 		t.Fatalf("schema entity JSON failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestSchemaRelationJSON(t *testing.T) {
 		t.Fatalf("schema relation JSON failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
@@ -675,29 +675,29 @@ func TestFormatCardinality(t *testing.T) {
 		},
 		{
 			name:        "min outgoing only",
-			minOutgoing: intPtr(1),
+			minOutgoing: new(1),
 			expected:    "out:1..*",
 		},
 		{
 			name:        "max outgoing only",
-			maxOutgoing: intPtr(5),
+			maxOutgoing: new(5),
 			expected:    "out:0..5",
 		},
 		{
 			name:        "min and max outgoing same",
-			minOutgoing: intPtr(1),
-			maxOutgoing: intPtr(1),
+			minOutgoing: new(1),
+			maxOutgoing: new(1),
 			expected:    "out:1",
 		},
 		{
 			name:        "min incoming only",
-			minIncoming: intPtr(1),
+			minIncoming: new(1),
 			expected:    "in:1..*",
 		},
 		{
 			name:        "both outgoing and incoming",
-			minOutgoing: intPtr(1),
-			maxIncoming: intPtr(1),
+			minOutgoing: new(1),
+			maxIncoming: new(1),
 			expected:    "out:1..* in:0..1",
 		},
 	}
@@ -716,10 +716,6 @@ func TestFormatCardinality(t *testing.T) {
 			}
 		})
 	}
-}
-
-func intPtr(i int) *int {
-	return &i
 }
 
 // captureStdoutVoid runs fn while redirecting os.Stdout. Returns captured output and fn's err.

@@ -111,11 +111,11 @@ const (
 
 // EntityToCreate specifies an entity to be created by automation.
 type EntityToCreate struct {
-	Type                string                 // Entity type to create
-	Template            string                 // Optional: template variant name
-	Properties          map[string]interface{} // Properties for the new entity
-	RelationFromTrigger string                 // Optional: relation type from triggering entity
-	IfExists            string                 // Behavior when relation exists: skip (default), error, replace
+	Type                string         // Entity type to create
+	Template            string         // Optional: template variant name
+	Properties          map[string]any // Properties for the new entity
+	RelationFromTrigger string         // Optional: relation type from triggering entity
+	IfExists            string         // Behavior when relation exists: skip (default), error, replace
 }
 
 // LuaToExecute specifies Lua code to be executed by the workspace layer.

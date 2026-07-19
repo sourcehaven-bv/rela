@@ -80,7 +80,7 @@ func TestExternalUpdateEmitsUpdated(t *testing.T) {
 	require.NoError(t, s.CreateEntity(context.Background(), &entity.Entity{
 		ID:         "T-1",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"status": "open"},
+		Properties: map[string]any{"status": "open"},
 	}))
 
 	ch, cancel := s.Subscribe(16)

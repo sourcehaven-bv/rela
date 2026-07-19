@@ -1768,11 +1768,11 @@ func readMarkdownBody(t *testing.T, path string) (string, bool) {
 		return s, true
 	}
 	rest := s[4:]
-	idx := strings.Index(rest, "\n---\n")
-	if idx < 0 {
+	_, after, ok := strings.Cut(rest, "\n---\n")
+	if !ok {
 		return "", false
 	}
-	body := rest[idx+5:]
+	body := after
 	if body == "" {
 		return "", false
 	}
@@ -2117,7 +2117,7 @@ func TestMdEntityRefs_TitleInjection(t *testing.T) {
 	mw.seedEntity(&entity.Entity{
 		ID:         "TKT-EVIL",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": `]"](javascript:alert(1))[evil`},
+		Properties: map[string]any{"title": `]"](javascript:alert(1))[evil`},
 	})
 	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
 	defer rt.Close()
@@ -2138,7 +2138,7 @@ func TestMdEntityRefs_UnicodeTitle(t *testing.T) {
 	mw.seedEntity(&entity.Entity{
 		ID:         "TKT-EU",
 		Type:       "ticket",
-		Properties: map[string]interface{}{"title": "Café Résumé"},
+		Properties: map[string]any{"title": "Café Résumé"},
 	})
 	rt := NewWriter(mw.services("/tmp"), &strings.Builder{})
 	defer rt.Close()

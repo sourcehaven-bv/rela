@@ -57,10 +57,10 @@ type RelationsUpdate struct {
 // §9-shaped relation update. `Type` and `ID` identify the target;
 // `Meta`, `MetaUnset`, and `Content` carry per-edge upsert data.
 type ResourceIdentifier struct {
-	Type      string                 `json:"type"`
-	ID        string                 `json:"id"`
-	Meta      map[string]interface{} `json:"meta,omitempty"`
-	MetaUnset []string               `json:"meta_unset,omitempty"`
+	Type      string         `json:"type"`
+	ID        string         `json:"id"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	MetaUnset []string       `json:"meta_unset,omitempty"`
 	// Content is a pointer so a missing field (leave alone) can be
 	// distinguished from an explicit empty string (clear the body).
 	Content *string `json:"content,omitempty"`

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -17,9 +18,7 @@ func minimalManifestYAML(extra map[string]string) string {
 		"version": "1.0.0",
 		"accent":  "#6366f1",
 	}
-	for k, v := range extra {
-		defaults[k] = v
-	}
+	maps.Copy(defaults, extra)
 	var b strings.Builder
 	for k, v := range defaults {
 		b.WriteString(k)

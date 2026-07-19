@@ -100,7 +100,7 @@ func TestHandleListEntities_All(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var entities []map[string]interface{}
+	var entities []map[string]any
 	if err := json.Unmarshal([]byte(text), &entities); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -112,13 +112,13 @@ func TestHandleListEntities_All(t *testing.T) {
 func TestHandleListEntities_ByType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"type": "requirement"})
+	req := makeToolRequest(map[string]any{"type": "requirement"})
 	result, err := s.handleListEntities(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var entities []map[string]interface{}
+	var entities []map[string]any
 	if err := json.Unmarshal([]byte(text), &entities); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestHandleListEntities_ByType(t *testing.T) {
 func TestHandleListEntities_WithFilter(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"type":  "requirement",
 		"where": "status=accepted",
 	})
@@ -139,7 +139,7 @@ func TestHandleListEntities_WithFilter(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var entities []map[string]interface{}
+	var entities []map[string]any
 	if err := json.Unmarshal([]byte(text), &entities); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestHandleListEntities_WithFilter(t *testing.T) {
 func TestHandleListEntities_WithPagination(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"limit":  float64(2),
 		"offset": float64(1),
 	})
@@ -160,7 +160,7 @@ func TestHandleListEntities_WithPagination(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var entities []map[string]interface{}
+	var entities []map[string]any
 	if err := json.Unmarshal([]byte(text), &entities); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestHandleListEntities_WithPagination(t *testing.T) {
 func TestHandleShowEntity(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	req := makeToolRequest(map[string]any{"id": "REQ-001"})
 	result, err := s.handleShowEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -189,7 +189,7 @@ func TestHandleShowEntity(t *testing.T) {
 func TestHandleShowEntity_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "NONEXISTENT"})
+	req := makeToolRequest(map[string]any{"id": "NONEXISTENT"})
 	result, err := s.handleShowEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -206,13 +206,13 @@ func TestHandleShowEntity_NotFound(t *testing.T) {
 func TestHandleSearchEntities(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"query": "accepted"})
+	req := makeToolRequest(map[string]any{"query": "accepted"})
 	result, err := s.handleSearchEntities(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var entities []map[string]interface{}
+	var entities []map[string]any
 	if err := json.Unmarshal([]byte(text), &entities); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestHandleSearchEntities(t *testing.T) {
 func TestHandleSearchEntities_ByType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"query": "accepted",
 		"type":  "decision",
 	})
@@ -234,7 +234,7 @@ func TestHandleSearchEntities_ByType(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var entities []map[string]interface{}
+	var entities []map[string]any
 	if err := json.Unmarshal([]byte(text), &entities); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestHandleSearchEntities_ByType(t *testing.T) {
 func TestHandleUpdateEntity_NoUpdates(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	req := makeToolRequest(map[string]any{"id": "REQ-001"})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -264,9 +264,9 @@ func TestHandleUpdateEntity_NoUpdates(t *testing.T) {
 func TestHandleUpdateEntity_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "NONEXISTENT",
-		"properties": map[string]interface{}{"title": "new"},
+		"properties": map[string]any{"title": "new"},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -281,9 +281,9 @@ func TestHandleUpdateEntity_DeletesPropertyOnNil(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	// REQ-001 starts with status=accepted; null should remove it.
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"status": nil},
+		"properties": map[string]any{"status": nil},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -305,9 +305,9 @@ func TestHandleUpdateEntity_DeleteOnlyCallSurvivesGuard(t *testing.T) {
 	t.Parallel()
 	// AC 7: a delete-only call must NOT trigger the "no updates specified" guard.
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"status": nil},
+		"properties": map[string]any{"status": nil},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -331,9 +331,9 @@ func TestHandleUpdateEntity_DeleteAbsentPropertyIsNoOp(t *testing.T) {
 		t.Fatalf("test setup: REQ-001 should not have a priority property")
 	}
 
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"priority": nil},
+		"properties": map[string]any{"priority": nil},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -359,9 +359,9 @@ func TestHandleUpdateEntity_DeleteRequiredPropertyRejected(t *testing.T) {
 	before, _ := s.deps.Store.GetEntity(context.Background(), "REQ-001")
 	beforeTitle := before.GetString("title")
 
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"title": nil},
+		"properties": map[string]any{"title": nil},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -384,7 +384,7 @@ func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
 	t.Parallel()
 	// End-to-end check that the JSON-string `properties` fallback also supports null-as-delete.
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
 		"properties": `{"status": null}`,
 	})
@@ -404,9 +404,9 @@ func TestHandleUpdateEntity_JSONStringPropertiesNullDeletes(t *testing.T) {
 func TestHandleUpdateEntity_DeleteUnknownPropertyRejected(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"unknown_prop": nil},
+		"properties": map[string]any{"unknown_prop": nil},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -423,9 +423,9 @@ func TestHandleUpdateEntity_DeleteUnknownPropertyRejected(t *testing.T) {
 func TestHandleUpdateEntity_MixedSetAndUnset(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id": "REQ-001",
-		"properties": map[string]interface{}{
+		"properties": map[string]any{
 			"status": nil,           // delete
 			"title":  "Renamed Req", // set
 		},
@@ -451,9 +451,9 @@ func TestHandleUpdateEntity_EmptyStringIsNoOp(t *testing.T) {
 	// AC 8: empty string is silently filtered, so it must NOT delete an existing value
 	// AND it must NOT itself satisfy the "no updates specified" guard alone.
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"status": ""},
+		"properties": map[string]any{"status": ""},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -477,9 +477,9 @@ func TestHandleUpdateEntity_SetAndOverwriteStillWorks(t *testing.T) {
 	t.Parallel()
 	// AC 3: regression guard for the existing positive set/overwrite path.
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"id":         "REQ-001",
-		"properties": map[string]interface{}{"status": "rejected"},
+		"properties": map[string]any{"status": "rejected"},
 	})
 	result, err := s.handleUpdateEntity(context.Background(), req)
 	if err != nil {
@@ -501,7 +501,7 @@ func TestUpdateEntityToolDescriptionMentionsNullDelete(t *testing.T) {
 	if !strings.Contains(strings.ToLower(tool.Description), phrase) {
 		t.Errorf("tool description should mention %q, got: %q", phrase, tool.Description)
 	}
-	propsSchema, ok := tool.InputSchema.Properties["properties"].(map[string]interface{})
+	propsSchema, ok := tool.InputSchema.Properties["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("properties schema not found or wrong type: %#v", tool.InputSchema.Properties["properties"])
 	}
@@ -514,7 +514,7 @@ func TestUpdateEntityToolDescriptionMentionsNullDelete(t *testing.T) {
 func TestHandleDeleteEntity_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "NONEXISTENT"})
+	req := makeToolRequest(map[string]any{"id": "NONEXISTENT"})
 	result, err := s.handleDeleteEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -528,7 +528,7 @@ func TestHandleDeleteEntity_NoCascade(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	// DEC-001 has a relation, so delete without cascade should fail
-	req := makeToolRequest(map[string]interface{}{"id": "DEC-001", "cascade": false})
+	req := makeToolRequest(map[string]any{"id": "DEC-001", "cascade": false})
 	result, err := s.handleDeleteEntity(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -564,7 +564,7 @@ func TestHandleListRelations_All(t *testing.T) {
 func TestHandleListRelations_ByType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"type": "addresses"})
+	req := makeToolRequest(map[string]any{"type": "addresses"})
 	result, err := s.handleListRelations(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -582,7 +582,7 @@ func TestHandleListRelations_ByType(t *testing.T) {
 func TestHandleListRelations_ByFrom(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"from": "DEC-001"})
+	req := makeToolRequest(map[string]any{"from": "DEC-001"})
 	result, err := s.handleListRelations(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -600,7 +600,7 @@ func TestHandleListRelations_ByFrom(t *testing.T) {
 func TestHandleListRelations_NoMatch(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"type": "implements"})
+	req := makeToolRequest(map[string]any{"type": "implements"})
 	result, err := s.handleListRelations(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -619,7 +619,7 @@ func TestHandleListRelations_Pagination(t *testing.T) {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	req := makeToolRequest(map[string]interface{}{"limit": float64(1)})
+	req := makeToolRequest(map[string]any{"limit": float64(1)})
 	result, err := s.handleListRelations(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -638,7 +638,7 @@ func TestHandleCreateRelation_MissingFields(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	// Missing "type".
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"from": "DEC-001",
 		"to":   "REQ-001",
 	})
@@ -651,7 +651,7 @@ func TestHandleCreateRelation_MissingFields(t *testing.T) {
 	}
 
 	// Missing "from".
-	req = makeToolRequest(map[string]interface{}{
+	req = makeToolRequest(map[string]any{
 		"type": "addresses",
 		"to":   "REQ-001",
 	})
@@ -664,7 +664,7 @@ func TestHandleCreateRelation_MissingFields(t *testing.T) {
 	}
 
 	// Missing "to".
-	req = makeToolRequest(map[string]interface{}{
+	req = makeToolRequest(map[string]any{
 		"from": "DEC-001",
 		"type": "addresses",
 	})
@@ -680,10 +680,10 @@ func TestHandleCreateRelation_MissingFields(t *testing.T) {
 func TestHandleCreateEntity_RejectsCustomIDForShortType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"type":       "requirement",
 		"id":         "my-custom-id",
-		"properties": map[string]interface{}{"title": "Nope"},
+		"properties": map[string]any{"title": "Nope"},
 	})
 	result, err := s.handleCreateEntity(context.Background(), req)
 	if err != nil {
@@ -706,7 +706,7 @@ func TestHandleDeleteRelation_MissingFields(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
 	// Missing "type".
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"from": "DEC-001",
 		"to":   "REQ-001",
 	})
@@ -722,7 +722,7 @@ func TestHandleDeleteRelation_MissingFields(t *testing.T) {
 func TestHandleDeleteRelation_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{
+	req := makeToolRequest(map[string]any{
 		"from": "REQ-001",
 		"type": "nonexistent",
 		"to":   "REQ-002",
@@ -741,7 +741,7 @@ func TestHandleDeleteRelation_NotFound(t *testing.T) {
 func TestHandleTraceFrom(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	req := makeToolRequest(map[string]any{"id": "REQ-001"})
 	result, err := s.handleTraceFrom(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -755,7 +755,7 @@ func TestHandleTraceFrom(t *testing.T) {
 func TestHandleTraceFrom_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "NONEXISTENT"})
+	req := makeToolRequest(map[string]any{"id": "NONEXISTENT"})
 	result, err := s.handleTraceFrom(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -768,7 +768,7 @@ func TestHandleTraceFrom_NotFound(t *testing.T) {
 func TestHandleTraceTo(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"id": "REQ-001"})
+	req := makeToolRequest(map[string]any{"id": "REQ-001"})
 	result, err := s.handleTraceTo(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -782,7 +782,7 @@ func TestHandleTraceTo(t *testing.T) {
 func TestHandleFindPath(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"from": "DEC-001", "to": "REQ-001"})
+	req := makeToolRequest(map[string]any{"from": "DEC-001", "to": "REQ-001"})
 	result, err := s.handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -796,7 +796,7 @@ func TestHandleFindPath(t *testing.T) {
 func TestHandleFindPath_NoPath(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"from": "REQ-002", "to": "REQ-003"})
+	req := makeToolRequest(map[string]any{"from": "REQ-002", "to": "REQ-003"})
 	result, err := s.handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -810,7 +810,7 @@ func TestHandleFindPath_NoPath(t *testing.T) {
 func TestHandleFindPath_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"from": "NONEXISTENT", "to": "REQ-001"})
+	req := makeToolRequest(map[string]any{"from": "NONEXISTENT", "to": "REQ-001"})
 	result, err := s.handleFindPath(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -839,7 +839,7 @@ func TestHandleAnalyzeOrphans(t *testing.T) {
 func TestHandleAnalyzeOrphans_ByType(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
-	req := makeToolRequest(map[string]interface{}{"type": "decision"})
+	req := makeToolRequest(map[string]any{"type": "decision"})
 	result, err := s.handleAnalyzeOrphans(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -922,7 +922,7 @@ func TestHandleGetMetamodel(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -942,7 +942,7 @@ func TestHandleListEntityTypes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var types []map[string]interface{}
+	var types []map[string]any
 	if err := json.Unmarshal([]byte(text), &types); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
@@ -959,7 +959,7 @@ func TestHandleListRelationTypes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := getResultText(t, result)
-	var types []map[string]interface{}
+	var types []map[string]any
 	if err := json.Unmarshal([]byte(text), &types); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}

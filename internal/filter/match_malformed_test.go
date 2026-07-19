@@ -33,7 +33,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 			entity: &entity.Entity{
 				ID:   "CTRL-001",
 				Type: "control",
-				Properties: map[string]interface{}{
+				Properties: map[string]any{
 					"implementation_cost": 15000,
 					"title":               "Valid Control",
 					"status":              "accepted",
@@ -48,7 +48,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 			entity: &entity.Entity{
 				ID:   "CTRL-002",
 				Type: "control",
-				Properties: map[string]interface{}{
+				Properties: map[string]any{
 					"implementation_cost": 5000,
 					"title":               "Cheap Control",
 					"status":              "accepted",
@@ -63,7 +63,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 			entity: &entity.Entity{
 				ID:   "CTRL-BAD",
 				Type: "control",
-				Properties: map[string]interface{}{
+				Properties: map[string]any{
 					"implementation_cost": "not-a-number",
 					"title":               "Bad Entity",
 					"status":              "draft",
@@ -79,7 +79,7 @@ func TestMatchAll_MalformedEntityData(t *testing.T) {
 			entity: &entity.Entity{
 				ID:   "CTRL-BAD2",
 				Type: "control",
-				Properties: map[string]interface{}{
+				Properties: map[string]any{
 					"implementation_cost": []string{"a", "b"},
 					"title":               "Bad Entity 2",
 					"status":              "draft",
@@ -139,7 +139,7 @@ func TestMatchAll_MixedValidAndMalformedEntities(t *testing.T) {
 		{
 			ID:   "CTRL-001",
 			Type: "control",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"implementation_cost": 15000,
 				"title":               "Valid Control 1",
 				"status":              "accepted",
@@ -148,7 +148,7 @@ func TestMatchAll_MixedValidAndMalformedEntities(t *testing.T) {
 		{
 			ID:   "CTRL-BAD",
 			Type: "control",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"implementation_cost": "not-a-number", // Malformed!
 				"title":               "Bad Entity",
 				"status":              "draft",
@@ -157,7 +157,7 @@ func TestMatchAll_MixedValidAndMalformedEntities(t *testing.T) {
 		{
 			ID:   "CTRL-002",
 			Type: "control",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"implementation_cost": 20000,
 				"title":               "Valid Control 2",
 				"status":              "accepted",

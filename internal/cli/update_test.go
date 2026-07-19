@@ -11,7 +11,7 @@ import (
 // entity package tests — no need to duplicate either here.
 
 func TestUpdateCmd_PropertyFlagExists(t *testing.T) {
-	rt := reflect.TypeOf(UpdateCmd{})
+	rt := reflect.TypeFor[UpdateCmd]()
 	f, ok := rt.FieldByName("Property")
 	if !ok {
 		t.Fatal("update command struct should have a Property field")

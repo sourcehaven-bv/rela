@@ -53,7 +53,13 @@ function onUpdate(value: string[]) {
       {{ arrayValue.join(', ') }}
     </span>
     <template v-else>
-      <Badge v-for="v in arrayValue" :key="v" :value="v" :property="propertyName" />
+      <Badge
+        v-for="v in arrayValue"
+        :key="v"
+        :value="v"
+        :property="propertyName"
+        :entity-type="entityType"
+      />
     </template>
   </span>
   <TagSelect

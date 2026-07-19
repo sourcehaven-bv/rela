@@ -2,6 +2,7 @@ package markdown
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -51,12 +52,7 @@ func MatchHeaderExact(headers []string, exact string) bool {
 	if exact == "" {
 		return true
 	}
-	for _, h := range headers {
-		if h == exact {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(headers, exact)
 }
 
 // MatchHeaderPattern returns true if any of headers matches the regex
@@ -69,12 +65,7 @@ func MatchHeaderPattern(headers []string, pattern string) bool {
 	if err != nil {
 		return false
 	}
-	for _, h := range headers {
-		if re.MatchString(h) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(headers, re.MatchString)
 }
 
 // ChecklistItem represents a task list item in markdown.

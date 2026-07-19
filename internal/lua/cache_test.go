@@ -498,7 +498,7 @@ func TestCacheSetDeletePersistsAcrossGet(t *testing.T) {
 	// Tests that set(nil) also wipes the in-memory entry, not just
 	// some flagged-as-deleted state. Uses the Cache directly.
 	c := NewCache()
-	c.set("ns\x00k", []interface{}{"v"}, 0)
+	c.set("ns\x00k", []any{"v"}, 0)
 	if v, ok := c.get("ns\x00k"); !ok || len(v) != 1 || v[0] != "v" {
 		t.Fatalf("unexpected state: %v ok=%v", v, ok)
 	}

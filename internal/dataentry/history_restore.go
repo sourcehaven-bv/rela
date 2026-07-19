@@ -78,7 +78,7 @@ func restoreOntoLive(a *App,
 
 	// Property diff: keys the snapshot sets to a new/changed value, and keys the
 	// live entity has that the snapshot does not (to be unset).
-	setKeys := make(map[string]interface{})
+	setKeys := make(map[string]any)
 	for k, v := range snap.Properties {
 		if cur, ok := live.Properties[k]; !ok || !reflect.DeepEqual(cur, v) {
 			setKeys[k] = v
@@ -175,11 +175,11 @@ func writeRestoreResult(a *App,
 
 // cloneProps returns a shallow copy so the entity handed to the write path does
 // not alias the snapshot's map.
-func cloneProps(p map[string]interface{}) map[string]interface{} {
+func cloneProps(p map[string]any) map[string]any {
 	if p == nil {
 		return nil
 	}
-	out := make(map[string]interface{}, len(p))
+	out := make(map[string]any, len(p))
 	maps.Copy(out, p)
 	return out
 }

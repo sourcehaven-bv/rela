@@ -15,7 +15,7 @@ func TestLuaNumberToGo_PreservesIntegers(t *testing.T) {
 	tests := []struct {
 		name string
 		in   lua.LNumber
-		want interface{}
+		want any
 	}{
 		{"small int", lua.LNumber(42), int64(42)},
 		{"zero", lua.LNumber(0), int64(0)},

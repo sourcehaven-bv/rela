@@ -159,6 +159,14 @@ type TransitionDef struct {
 	From string `yaml:"from"` // Source value; must be one of CustomType.Values
 	To   string `yaml:"to"`   // Target value; must be one of CustomType.Values
 
+	// Label is optional display text for the MOVE (the action), not the
+	// destination state — e.g. "Start progress" for todo→doing rather than the
+	// state noun "Doing". Purely presentational: a machine-aware status control
+	// lists transitions as verbs. Empty falls back to the target value's display
+	// label (CustomType.Labels[To]) and then the raw To value. Display-only; the
+	// executable machine ignores it for enforcement.
+	Label string `yaml:"label,omitempty"`
+
 	// Guard names an ACL permission the acting principal must hold for this
 	// transition. Enforced only on served paths (a principal exists); inert
 	// on direct CLI writes. Empty means the transition is legal for anyone
@@ -524,7 +532,7 @@ func camelCaseToSpaced(s string) string {
 // UnmarshalYAML allows InverseDef to be unmarshaled from either a string or an object.
 // String form: "addressedBy" (ID only, label auto-derived)
 // Object form: { id: "addressedBy", label: "addressed by" }
-func (i *InverseDef) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (i *InverseDef) UnmarshalYAML(unmarshal func(any) error) error {
 	// First try to unmarshal as a string (simple form)
 	var simpleForm string
 	if err := unmarshal(&simpleForm); err == nil {
@@ -648,7 +656,7 @@ func (h *HeaderCheck) GetMatchString() string {
 // UnmarshalYAML allows HeaderCheck to be unmarshaled from either a string or an object.
 // String form: "## Context" (exact header match)
 // Object form: { pattern: "## (Alternative|Alternatives)" }
-func (h *HeaderCheck) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (h *HeaderCheck) UnmarshalYAML(unmarshal func(any) error) error {
 	// First try to unmarshal as a string (simple form - exact match)
 	var simpleForm string
 	if err := unmarshal(&simpleForm); err == nil {
@@ -671,7 +679,7 @@ func (h *HeaderCheck) UnmarshalYAML(unmarshal func(interface{}) error) error {
 type StringOrSlice []string
 
 // UnmarshalYAML allows StringOrSlice to be unmarshaled from either a string or a slice.
-func (s *StringOrSlice) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (s *StringOrSlice) UnmarshalYAML(unmarshal func(any) error) error {
 	// Try string first
 	var single string
 	if err := unmarshal(&single); err == nil {

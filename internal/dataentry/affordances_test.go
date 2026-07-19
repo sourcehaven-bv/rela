@@ -159,7 +159,7 @@ func TestComputeActions_NoAuditNoise(t *testing.T) {
 			app := buildAppWithACLAndAudit(t, a, sink)
 			seedEntity(app, &entity.Entity{
 				ID: "TKT-001", Type: "ticket",
-				Properties: map[string]interface{}{"title": "audit-test"},
+				Properties: map[string]any{"title": "audit-test"},
 			})
 
 			// Per-entity GET triggers computeActions +

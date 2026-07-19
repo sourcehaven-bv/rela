@@ -29,6 +29,7 @@ components:
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
   dataentryconfig:  { in: internal/dataentryconfig }
+  conditionlint:    { in: internal/conditionlint }
   desktop:          { in: internal/desktop }
 
   # Server protocols
@@ -291,6 +292,7 @@ deps:
       - search
       - searchparser
       - state
+      - statemachine
       - storage
       - store
       - sync
@@ -310,6 +312,14 @@ deps:
       - metamodel
     canUse:
       - rrulego
+  # conditionlint reuses the predicate parser to sanity-check wizard-form
+  # condition expressions at author time. It sits above dataentryconfig so the
+  # config package stays free of the predicate dependency.
+  conditionlint:
+    mayDependOn:
+      - dataentryconfig
+      - metamodel
+      - predicate
   desktop:
     canUse:
       - wails
@@ -407,6 +417,7 @@ deps:
       - validator
   projectsetup:
     mayDependOn:
+      - conditionlint
       - dataentryconfig
       - metamodel
       - migration
@@ -450,6 +461,7 @@ deps:
       - metamodel
       - predicate
       - principal
+      - statemachine
   audit:
     mayDependOn:
       - principal

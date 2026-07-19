@@ -505,7 +505,7 @@ _template_relations:
 }
 
 func TestExtractTemplateRelations_Empty(t *testing.T) {
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"status": "draft",
 	}
 
@@ -516,7 +516,7 @@ func TestExtractTemplateRelations_Empty(t *testing.T) {
 }
 
 func TestExtractTemplateRelations_InvalidFormat(t *testing.T) {
-	frontmatter := map[string]interface{}{
+	frontmatter := map[string]any{
 		"_template_relations": "invalid",
 	}
 
@@ -527,11 +527,11 @@ func TestExtractTemplateRelations_InvalidFormat(t *testing.T) {
 }
 
 func TestExtractTemplateRelations_PartialData(t *testing.T) {
-	frontmatter := map[string]interface{}{
-		"_template_relations": []interface{}{
-			map[string]interface{}{"relation": "addresses"},                       // missing target
-			map[string]interface{}{"target": "COMP-001"},                          // missing relation
-			map[string]interface{}{"relation": "implements", "target": "REQ-001"}, // valid
+	frontmatter := map[string]any{
+		"_template_relations": []any{
+			map[string]any{"relation": "addresses"},                       // missing target
+			map[string]any{"target": "COMP-001"},                          // missing relation
+			map[string]any{"relation": "implements", "target": "REQ-001"}, // valid
 		},
 	}
 

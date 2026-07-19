@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -123,12 +125,7 @@ func contextMatchesPage(cmdContext, pageType string) bool {
 
 // contains checks if a string slice contains a value.
 func contains(slice []string, val string) bool {
-	for _, s := range slice {
-		if s == val {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, val)
 }
 
 // --- Stdin JSON builders ---
@@ -207,9 +204,7 @@ func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *
 	}
 
 	collections := make(map[string][]*entity.Entity, len(vr.Collections))
-	for k, es := range vr.Collections {
-		collections[k] = es
-	}
+	maps.Copy(collections, vr.Collections)
 
 	return &commandInput{
 		Context:     "view",
@@ -254,8 +249,8 @@ type CommandMessage struct {
 // If the line has the ::rela:: prefix, it returns the parsed message.
 // Otherwise it returns a log-type message with the raw text.
 func parseCommandOutput(line string) CommandMessage {
-	if strings.HasPrefix(line, commandOutputPrefix) {
-		payload := strings.TrimPrefix(line, commandOutputPrefix)
+	if after, ok := strings.CutPrefix(line, commandOutputPrefix); ok {
+		payload := after
 		var msg CommandMessage
 		if err := json.Unmarshal([]byte(payload), &msg); err == nil {
 			return msg

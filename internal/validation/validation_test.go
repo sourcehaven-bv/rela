@@ -38,7 +38,7 @@ func TestCheck(t *testing.T) {
 		{
 			ID:   "TKT-001",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":    "Valid ticket",
 				"status":   "ready",
 				"priority": "high",
@@ -47,7 +47,7 @@ func TestCheck(t *testing.T) {
 		{
 			ID:   "TKT-002",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Invalid ticket",
 				"status": "ready",
 				// missing priority
@@ -56,7 +56,7 @@ func TestCheck(t *testing.T) {
 		{
 			ID:   "TKT-003",
 			Type: "ticket",
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"title":  "Draft ticket",
 				"status": "draft",
 				// no priority needed for draft
@@ -124,7 +124,7 @@ func TestCheckWarnings(t *testing.T) {
 		{
 			ID:         "DOC-001",
 			Type:       "doc",
-			Properties: map[string]interface{}{"reviewed": false},
+			Properties: map[string]any{"reviewed": false},
 		},
 	}
 
@@ -243,8 +243,8 @@ func TestAllEntityTypes(t *testing.T) {
 	}
 
 	entities := []*entity.Entity{
-		{ID: "DOC-001", Type: "doc", Properties: map[string]interface{}{"status": "draft"}},
-		{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{}}, // missing status
+		{ID: "DOC-001", Type: "doc", Properties: map[string]any{"status": "draft"}},
+		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}}, // missing status
 	}
 
 	svc := New(meta, lua.ReadDeps{})

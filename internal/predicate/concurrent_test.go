@@ -31,9 +31,7 @@ func TestProgram_Eval_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	ctx := context.Background()
 	for g := range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range iter {
 				value := float64((g*iter + i) % 200)
 				b := predicate.NewBindings()
@@ -53,7 +51,7 @@ func TestProgram_Eval_Concurrent(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -87,9 +85,7 @@ func TestProgram_Eval_Concurrent_Complex(t *testing.T) {
 	var wg sync.WaitGroup
 	ctx := context.Background()
 	for g := range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range iter {
 				isAdmin := (g+i)%2 == 0
 				status := "ready"
@@ -118,7 +114,7 @@ func TestProgram_Eval_Concurrent_Complex(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

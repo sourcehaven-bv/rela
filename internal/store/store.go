@@ -162,7 +162,8 @@ func attachmentExt(name string) string {
 // the index is always consistent with the persisted state.
 //
 // Reads are cheap. Writes serialize internally — callers do not need
-// external locking.
+// external locking. Multi-write operations that must not interleave
+// with other writers group their writes with [Transactor.Tx].
 //
 // Read methods return cloned entities/relations — callers own the
 // returned values and may mutate them freely.
@@ -176,6 +177,40 @@ type Store interface {
 	Watcher
 	Lifecycle
 	Freshness
+	Transactor
+}
+
+// Transactor groups writes into one serialized unit (DEC-8UIL0).
+//
+// Tx runs fn with a transaction-bound view of the store. The contract
+// specifies behavior, not mechanism — each backend meets it with its
+// native machinery:
+//
+//   - Writes made through the view are serialized against every other
+//     writer and every other Tx for the full duration of fn —
+//     cross-process where the backend can see other processes
+//     (pgstore: native transaction + advisory lock), in-process
+//     otherwise (fsstore/memstore: write mutex; single-user
+//     deployments by nature).
+//   - Reads through the view observe fn's own writes.
+//   - An error from fn is returned unchanged. Where the backend
+//     supports rollback (pgstore), the transaction's writes are
+//     discarded and no events are delivered; fsstore/memstore keep
+//     the writes already made (no rollback — deliberate reduced
+//     guarantee, they cannot promise crash atomicity either).
+//   - A nested Tx on the view joins the open transaction; there is no
+//     nested-transaction API.
+//
+// All store calls inside fn MUST go through the view, and the view
+// must not escape fn or be shared across goroutines — writes on the
+// outer store from inside fn deadlock (fs/mem) or bypass the
+// transaction (pg). Beware that using an ESCAPED view after Tx
+// returns is the one misuse that fails silently: on fs/mem it writes
+// without the serialization lock (racing any open Tx), on pg it
+// errors against a closed transaction. Do not perform slow external
+// I/O inside fn: on pgstore the whole deployment's writers wait.
+type Transactor interface {
+	Tx(ctx context.Context, fn func(Store) error) error
 }
 
 // Freshness exposes the store's overall "last modified" timestamp, covering
@@ -335,7 +370,7 @@ type RelationWriter interface {
 
 // RelationData holds optional properties and content for a relation.
 type RelationData struct {
-	Properties map[string]interface{}
+	Properties map[string]any
 	Content    string
 }
 
@@ -421,7 +456,7 @@ type VersionMeta struct {
 type VersionSnapshot struct {
 	VersionMeta
 	Content    string
-	Properties map[string]interface{}
+	Properties map[string]any
 	Projection []byte // the schema_versions.projection JSON for SchemaHash
 }
 
@@ -436,7 +471,7 @@ type VersionInput struct {
 	PrevID        string
 	Type          string
 	Content       string
-	Properties    map[string]interface{}
+	Properties    map[string]any
 	SchemaHash    string
 	Projection    []byte
 	PrincipalUser string
@@ -511,7 +546,7 @@ type RelationVersionMeta struct {
 type RelationVersionSnapshot struct {
 	RelationVersionMeta
 	Content    string
-	Properties map[string]interface{}
+	Properties map[string]any
 	Projection []byte // the schema_versions.projection JSON for SchemaHash
 }
 
@@ -530,7 +565,7 @@ type RelationVersionInput struct {
 	PrevFrom      string
 	PrevTo        string
 	Content       string
-	Properties    map[string]interface{}
+	Properties    map[string]any
 	SchemaHash    string
 	Projection    []byte
 	PrincipalUser string

@@ -29,7 +29,7 @@ func TestReadOnlyACL_DanglingPeerRelationWrite_Refused(t *testing.T) {
 	// Only the source exists; the peer (CMP-999) does not.
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
-		Properties: map[string]interface{}{"title": "T"},
+		Properties: map[string]any{"title": "T"},
 	})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
@@ -77,8 +77,8 @@ func TestReadOnlyACL_ExistingPeerRelationWrite_Forbidden(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.ReadOnlyACL{}, sink)
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
-	seedEntity(app, &entity.Entity{ID: "CMP-001", Type: "component", Properties: map[string]interface{}{"name": "C"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "CMP-001", Type: "component", Properties: map[string]any{"name": "C"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"belongs_to":{"data":[{"type":"component","id":"CMP-001"}]}}}`))
@@ -102,7 +102,7 @@ func TestDanglingPeerRelationWrite_AllowedACL_422(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
 
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]interface{}{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"belongs_to":{"data":[{"type":"component","id":"CMP-999"}]}}}`))

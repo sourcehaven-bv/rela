@@ -116,7 +116,7 @@ func TestAnalyzeAll_JSONIncludesScriptAndLoadErrorCounts(t *testing.T) {
 		t.Fatalf("unmarshal JSON: %v", err)
 	}
 
-	details, ok := result.Details.(map[string]interface{})
+	details, ok := result.Details.(map[string]any)
 	if !ok {
 		t.Fatalf("Details is not a map: %T", result.Details)
 	}

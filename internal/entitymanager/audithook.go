@@ -3,6 +3,7 @@ package entitymanager
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -105,7 +106,7 @@ func updateEntitySummary(oldE, newE *entity.Entity) string {
 
 // updateRelationSummary builds an update-relation record's Summary
 // from the pre- / post-update relation meta maps.
-func updateRelationSummary(oldProps, newProps map[string]interface{}) string {
+func updateRelationSummary(oldProps, newProps map[string]any) string {
 	names := changedPropertyNames(oldProps, newProps)
 	if names == "" {
 		return "updated"
@@ -115,14 +116,12 @@ func updateRelationSummary(oldProps, newProps map[string]interface{}) string {
 
 // cloneProperties returns a shallow copy of props. Used to snapshot
 // pre-update state for change-summary computation.
-func cloneProperties(props map[string]interface{}) map[string]interface{} {
+func cloneProperties(props map[string]any) map[string]any {
 	if props == nil {
 		return nil
 	}
-	out := make(map[string]interface{}, len(props))
-	for k, v := range props {
-		out[k] = v
-	}
+	out := make(map[string]any, len(props))
+	maps.Copy(out, props)
 	return out
 }
 
@@ -134,7 +133,7 @@ func cloneProperties(props map[string]interface{}) map[string]interface{} {
 // "Changed" means: the stringified values differ. fmt.Sprint
 // stringification is good enough for change detection in summaries —
 // we're not relying on this for correctness elsewhere.
-func changedPropertyNames(oldProps, newProps map[string]interface{}) string {
+func changedPropertyNames(oldProps, newProps map[string]any) string {
 	seen := make(map[string]bool, len(oldProps)+len(newProps))
 	for k := range oldProps {
 		seen[k] = true

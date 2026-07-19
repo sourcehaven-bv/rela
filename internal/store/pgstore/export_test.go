@@ -59,6 +59,10 @@ func NotificationEmitsForTest(t *testing.T, selfOrigin, payload string) bool {
 	}
 }
 
+// WriteAdvisoryLockKeyForTest exposes the Tx write-serialization advisory
+// key so the stress tests can assert it never leaks in pg_locks. Test-only.
+const WriteAdvisoryLockKeyForTest = writeAdvisoryLockKey
+
 // BuildGraphQuerySQLForTest exposes the internal SQL builder so
 // explain-plan tests can render the SQL without going through a pgx
 // round-trip. Keeps the production surface narrow while letting

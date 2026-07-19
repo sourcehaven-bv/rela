@@ -38,7 +38,7 @@ type VersionRecord struct {
 	PrevID        string // rename only: the entity's former id
 	Type          string
 	Content       string
-	Properties    map[string]interface{}
+	Properties    map[string]any
 	SchemaHash    string
 	Projection    []byte
 	PrincipalUser string
@@ -105,7 +105,7 @@ type RelationVersionRecord struct {
 	PrevFrom      string // rename only: the relation's former from endpoint
 	PrevTo        string // rename only: the relation's former to endpoint
 	Content       string
-	Properties    map[string]interface{}
+	Properties    map[string]any
 	SchemaHash    string
 	Projection    []byte
 	PrincipalUser string

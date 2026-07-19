@@ -50,11 +50,12 @@ func (s *Set) EnforceUpdate(ctx context.Context, old, updated *entity.Entity, gu
 
 // EnforceCreate checks the entry value of every state-machine property on a
 // newly created entity. A create has no prior state, so there is no edge to
-// traverse; the only rule is that a machine property must enter at its entry
-// value (Initial, else Default). A machine with no entry value (neither set)
-// imposes no constraint. Guards do not apply on create-entry in this first cut
-// (the entry itself is not a guarded edge — see the ticket's deferred
-// alternative).
+// traverse; the rule is that a machine property must enter at its entry value
+// (Initial, else Default). Compile guarantees every machine HAS an entry value
+// (BUG-X1C7S), so a create can never deviate from the initial state — a
+// non-entry value is rejected with [ErrIllegalEntry] (422). Guards do not apply
+// on create: create is entry, not a transition, and the operator's `initial`
+// declares the (trusted) entry point.
 func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	if s.Empty() || e == nil {
 		return nil
@@ -63,7 +64,10 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	for _, prop := range sortedKeys(props) {
 		m := s.machines[props[prop]]
 		if m.entry == "" {
-			continue // unconstrained entry
+			// Unreachable for a compiled Set (Compile requires an entry value on
+			// any machine with transitions). Kept as a defensive guard against a
+			// hand-built Machine; a create then imposes no constraint.
+			continue
 		}
 		got := e.GetString(prop)
 		if got == "" {
@@ -77,7 +81,11 @@ func (s *Set) EnforceCreate(_ context.Context, e *entity.Entity) error {
 	return nil
 }
 
-// applyEdge runs the three checks for one changed machine property.
+// applyEdge runs the three checks for one changed machine property, mapping a
+// failing gate to the wire-facing error. Legality (undeclared edge) and the
+// gate evaluation share one code path — [evalEdge] — with the read-side
+// [Set.Performable], so enforcement and the "what can I do" affordance can
+// never disagree about whether a transition is allowed (the drift guard).
 func (s *Set) applyEdge(
 	ctx context.Context, m *Machine, prop, from, to string, e *entity.Entity, guard Guard, lookup GraphLookup,
 ) error {
@@ -85,25 +93,58 @@ func (s *Set) applyEdge(
 	if !ok {
 		return fmt.Errorf("%w: %s %q→%q is not a declared transition", ErrIllegalTransition, prop, from, to)
 	}
+	switch res := evalEdge(ctx, ed, prop, e, guard, lookup); res.gate {
+	case gateNone:
+		return nil
+	case gateGuard:
+		return &GuardError{Prop: prop, From: from, To: to, Permission: ed.guard}
+	default: // gatePrecondition
+		if res.err != nil {
+			return fmt.Errorf("%w: %s %q→%q when: %s", ErrPreconditionFailed, prop, from, to, res.err.Error())
+		}
+		return fmt.Errorf("%w: %s %q→%q precondition not met", ErrPreconditionFailed, prop, from, to)
+	}
+}
 
-	// Guard: the guard decides served-vs-inert (it resolves the principal from
-	// ctx and allows when there is nothing to evaluate). A nil guard on a
-	// guarded edge fails closed.
+// gate identifies which check on an edge failed (or none).
+type gate int
+
+const (
+	gateNone gate = iota
+	gateGuard
+	gatePrecondition
+)
+
+// edgeResult is the outcome of evaluating one edge's gates.
+type edgeResult struct {
+	gate gate
+	err  error // non-nil only when a `when:` predicate errored (gatePrecondition)
+}
+
+// evalEdge evaluates an edge's guard then precondition for (principal-on-ctx,
+// entity e), in the same order and with the same semantics the write path
+// enforces. It is the single source of truth shared by [Set.applyEdge] (write,
+// maps to errors) and [Set.Performable] (read, maps to verdicts) so the two can
+// never drift. A guard is checked first (an unheld guard short-circuits without
+// evaluating the precondition, matching enforcement). A nil guard on a guarded
+// edge fails closed. The guard's served-vs-inert decision lives in the Guard
+// implementation.
+func evalEdge(
+	ctx context.Context, ed edge, prop string, e *entity.Entity, guard Guard, lookup GraphLookup,
+) edgeResult {
 	if ed.guard != "" {
 		if guard == nil || !guard.HoldsPermission(ctx, e.ID, ed.guard) {
-			return &GuardError{Prop: prop, From: from, To: to, Permission: ed.guard}
+			return edgeResult{gate: gateGuard}
 		}
 	}
-
-	// Precondition.
 	if ed.when != nil {
 		ok, err := evalWhen(ctx, ed.when, e, prop, lookup)
 		if err != nil {
-			return fmt.Errorf("%w: %s %q→%q when: %s", ErrPreconditionFailed, prop, from, to, err.Error())
+			return edgeResult{gate: gatePrecondition, err: err}
 		}
 		if !ok {
-			return fmt.Errorf("%w: %s %q→%q precondition not met", ErrPreconditionFailed, prop, from, to)
+			return edgeResult{gate: gatePrecondition}
 		}
 	}
-	return nil
+	return edgeResult{gate: gateNone}
 }

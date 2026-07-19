@@ -18,7 +18,13 @@
 - **No repository or transaction abstractions.** Depend directly on
   `store.Store`, `tracer.Tracer`, `search.Searcher`,
   `entitymanager.EntityManager`. The old `repo` and `tx` layers are gone
-  — do not reintroduce equivalents.
+  — do not reintroduce equivalents. The one sanctioned transaction seam
+  is `store.Store.Tx` itself (DEC-8UIL0): a contract ON the store with
+  per-backend meaning (fs/mem: write mutex, mutual exclusion only;
+  postgres: native transaction + advisory lock, rollback, events at
+  commit) — not a generic unit-of-work layer stacked above it. Don't
+  wrap `Tx` in a new abstraction, and don't do slow external I/O inside
+  a `Tx` callback.
 - **Capture state once per operation.** Call `ws.Snapshot()` (or the
   equivalent `appState.Load()`) at the top of every handler, command, MCP
   tool, or observer; reuse the returned value for every read in that
@@ -62,7 +68,10 @@
   `appbuild.New` or takes focused interfaces at the call site.
 - **Don't run user-supplied Lua on the read path.** ACL gates evaluate
   against declarative policy + the graph; Lua participates only at write
-  time. See `internal/entitymanager/CLAUDE.md`.
+  time. This targets unbounded/hot paths (per-row predicates on list reads),
+  NOT a bounded single-subject evaluation the caller explicitly requested
+  (e.g. performable transitions for one field on one entity). See
+  `internal/entitymanager/CLAUDE.md`.
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 
@@ -229,7 +238,16 @@ Rules when touching this:
   lose history). Rename **stitches** (not forks): the entitymanager captures a
   `rename` version per incident relation on the new triple carrying
   `prev_from`/`prev_to`, and `relationLineageIDs` walks those links so history is
-  continuous. Read/restore is gated on **both** endpoints (FROM ∧ TO) — the FROM
+  continuous. Since #1127 the store renames **atomically** (bulk in-place
+  `UPDATE relations SET from_id=...`), so a relation KEEPS its `rel_record_id`
+  across the rename — the lineage is already continuous on one id and the
+  `rename` version merely appends a marker (the `prev_from`/`prev_to` stitch walk
+  finds no fork; it stays as belt-and-braces for any future non-atomic path).
+  Rename capture is **sync-only best-effort**: the atomic re-key does NOT bump
+  `relations.updated_at` (TKT-9TQ6I), so the sweep cannot back-fill a rename the
+  synchronous hook misses — acceptable because a miss loses only the rename
+  marker, never lineage continuity. Read/restore is gated on **both** endpoints
+  (FROM ∧ TO) — the FROM
   entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
   oracle otherwise). Relations have NO field-level redaction today; relation
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/

@@ -93,7 +93,7 @@ func newRelHistoryApp(t *testing.T) *App {
 				RelationVersionMeta: store.RelationVersionMeta{
 					Version: 1, Op: store.VersionOpCreate, From: "DEC-1", Type: "addresses", To: "REQ-1",
 				},
-				Content: "why", Properties: map[string]interface{}{"weight": "high"},
+				Content: "why", Properties: map[string]any{"weight": "high"},
 			}},
 		},
 	}

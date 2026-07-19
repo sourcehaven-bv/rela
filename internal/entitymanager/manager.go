@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"time"
 
@@ -814,13 +815,21 @@ func (m *Manager) RenameEntity(
 	m.recordEntityVersion(ctx, store.VersionOpRename, postEntity, oldID)
 
 	// Capture a `rename` version for each incident relation, on its NEW triple,
-	// carrying the pre-rename endpoints (prev_from/prev_to). This stitches the
-	// relation's history across the endpoint rename so it reads as one continuous
-	// timeline rather than a delete of the old triple + create of the new one.
-	// The new triples exist now (the store's atomic RenameEntity created them);
-	// the version's key is the post-rename endpoint, so WriteRelationVersion
-	// resolves the new rel_record_id. triggered_by attributes the versions to
-	// this rename.
+	// carrying the pre-rename endpoints (prev_from/prev_to). The version's key is
+	// the post-rename endpoint, so WriteRelationVersion resolves the surviving
+	// rel_record_id; triggered_by attributes the versions to this rename.
+	//
+	// Since #1127 the store renames atomically (a bulk in-place
+	// `UPDATE relations SET from_id=...`), so the relation KEEPS its
+	// rel_record_id across the rename — the lineage is already continuous on one
+	// id and this version merely appends a rename MARKER to it (the
+	// prev_from/prev_to stitch walk finds no fork; it is harmless belt-and-braces
+	// for a future non-atomic path). Capture here is SYNC-ONLY BEST-EFFORT: the
+	// atomic re-key does not bump relations.updated_at (see
+	// TestRelationRenameDoesNotBumpUpdatedAt), so the reconciliation sweep cannot
+	// back-fill a rename this hook misses. That is acceptable — a missed capture
+	// loses only the rename marker, never history continuity, because the
+	// underlying lineage stays intact on the surviving rel_record_id.
 	if len(preRenameRels) > 0 {
 		renameTB := "rename-entity:" + oldID + "->" + newID
 		for _, rel := range preRenameRels {
@@ -918,11 +927,9 @@ func (m *Manager) CreateRelation(
 	}
 
 	if len(opts.Properties) > 0 && rel.Properties == nil {
-		rel.Properties = make(map[string]interface{})
+		rel.Properties = make(map[string]any)
 	}
-	for k, v := range opts.Properties {
-		rel.Properties[k] = v
-	}
+	maps.Copy(rel.Properties, opts.Properties)
 	if opts.Content != nil {
 		rel.Content = *opts.Content
 	}
@@ -999,11 +1006,9 @@ func (m *Manager) UpdateRelation(
 	}
 
 	if rel.Properties == nil && (len(opts.Properties) > 0 || len(opts.MetaUnset) > 0) {
-		rel.Properties = make(map[string]interface{})
+		rel.Properties = make(map[string]any)
 	}
-	for k, v := range opts.Properties {
-		rel.Properties[k] = v
-	}
+	maps.Copy(rel.Properties, opts.Properties)
 	for _, k := range opts.MetaUnset {
 		delete(rel.Properties, k)
 	}

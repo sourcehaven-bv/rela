@@ -54,7 +54,7 @@ func TestWrapDiscoverError(t *testing.T) {
 // Project field with no short alias (removed to avoid conflict with
 // --priority on create/update).
 func TestRootCmdProjectFlag(t *testing.T) {
-	rt := reflect.TypeOf(CLI{})
+	rt := reflect.TypeFor[CLI]()
 	f, ok := rt.FieldByName("Project")
 	if !ok {
 		t.Fatal("expected Project field on CLI struct")

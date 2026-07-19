@@ -86,6 +86,7 @@ function onChange(event: Event) {
     v-if="mode === 'display' && safeStringValue"
     :value="safeStringValue"
     :property="propertyName"
+    :entity-type="entityType"
   />
   <span v-else-if="mode === 'display'" class="display-value" />
   <div v-else class="select-widget">

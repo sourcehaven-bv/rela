@@ -119,7 +119,7 @@ func loadEntityTemplate(
 	}
 
 	relations := extractTemplateRelations(doc.Frontmatter)
-	properties := make(map[string]interface{})
+	properties := make(map[string]any)
 	for k, v := range doc.Frontmatter {
 		if k != templateRelationsKey {
 			properties[k] = v
@@ -136,18 +136,18 @@ func loadEntityTemplate(
 
 // extractTemplateRelations parses the template-relations frontmatter
 // field into a slice of Relation.
-func extractTemplateRelations(frontmatter map[string]interface{}) []Relation {
+func extractTemplateRelations(frontmatter map[string]any) []Relation {
 	raw, ok := frontmatter[templateRelationsKey]
 	if !ok {
 		return nil
 	}
-	list, ok := raw.([]interface{})
+	list, ok := raw.([]any)
 	if !ok {
 		return nil
 	}
 	var relations []Relation
 	for _, item := range list {
-		m, ok := item.(map[string]interface{})
+		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -202,7 +202,7 @@ func generateEntityTemplate(
 		}
 	}
 
-	frontmatter := make(map[string]interface{})
+	frontmatter := make(map[string]any)
 	propNames := make([]string, 0, len(entityDef.Properties))
 	for name := range entityDef.Properties {
 		propNames = append(propNames, name)
@@ -260,7 +260,7 @@ func generateRelationTemplate(
 	}
 	content := fmt.Sprintf("# Rationale\n\nExplain why this %s relation exists.\n", strings.ToLower(label))
 
-	output, err := markdown.FormatDocument(map[string]interface{}{}, content)
+	output, err := markdown.FormatDocument(map[string]any{}, content)
 	if err != nil {
 		return false, fmt.Errorf("failed to format template: %w", err)
 	}
@@ -277,7 +277,7 @@ func generateRelationTemplate(
 
 // propertyDefault returns the default value for a property based on
 // its type.
-func propertyDefault(prop metamodel.PropertyDef, meta *metamodel.Metamodel) interface{} {
+func propertyDefault(prop metamodel.PropertyDef, meta *metamodel.Metamodel) any {
 	if prop.Default != "" {
 		return prop.Default
 	}

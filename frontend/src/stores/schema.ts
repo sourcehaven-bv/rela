@@ -101,13 +101,27 @@ export const useSchemaStore = defineStore('schema', () => {
     property: string,
     entityType?: string | EntityType,
   ): Record<string, string> | undefined {
-    const fromDef = (def?: PropertyDef) => {
+    return scanPropertyDefs(property, entityType, (def) => {
       if (!def) return undefined
       if (def.labels) return def.labels
       // Property references a custom type → labels live on that custom type.
       const ct = def.type ? customTypes.value.get(def.type) : undefined
       return ct?.labels
-    }
+    })
+  }
+
+  // Shared resolution scaffold for the per-property lookups above/below:
+  // walk the property defs named `property` (given entityType first, then
+  // entity then relation types) and return the first def the extractor
+  // accepts. A def the extractor rejects does NOT stop the scan — first-wins
+  // is on "first def that yields a result", which is what makes the
+  // labelsForProperty tie-break documented above hold identically for every
+  // extractor sharing this walk.
+  function scanPropertyDefs<T>(
+    property: string,
+    entityType: string | EntityType | undefined,
+    fromDef: (def?: PropertyDef) => T | undefined,
+  ): T | undefined {
     if (entityType) {
       const et = typeof entityType === 'string' ? entityTypes.value.get(entityType) : entityType
       const hit = fromDef(et?.properties?.[property])
@@ -123,6 +137,36 @@ export const useSchemaStore = defineStore('schema', () => {
     }
     return undefined
   }
+
+  // Resolve the custom-type name a property refers to, or undefined when the
+  // property is an inline enum / built-in type.
+  function customTypeNameForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): string | undefined {
+    return scanPropertyDefs(property, entityType, (def) =>
+      def?.type && customTypes.value.has(def.type) ? def.type : undefined,
+    )
+  }
+
+  // Resolve the badge style map (value → badge class) for a property. The
+  // server keys `styles` by CUSTOM-TYPE name (buildStyleMap; validateStyles
+  // rejects other keys), so resolve the property to its custom type first.
+  // The direct-key fallback is load-bearing, not defensive: EntityDetail's
+  // view sections pass the property's TYPE name as `property` (sections.go
+  // populates PropType from the def), which is already the styles key and
+  // matches no property def — the fallback is the only path that resolves
+  // it. It also covers a property whose name coincides with its type.
+  const stylesForProperty = computed(
+    () =>
+      (
+        property: string,
+        entityType?: string | EntityType,
+      ): Record<string, string> | undefined => {
+        const typeName = customTypeNameForProperty(property, entityType)
+        return (typeName ? styles.value[typeName] : undefined) ?? styles.value[property]
+      },
+  )
 
   // Return the display label for an enum value, or undefined when no label is
   // configured (caller falls back to the raw value). Display-only: the value
@@ -277,6 +321,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getAction,
     getEnumLabel,
     resolveOptionLabels,
+    stylesForProperty,
     entityTypeList,
     relationTypeList,
 
