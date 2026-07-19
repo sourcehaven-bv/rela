@@ -785,7 +785,7 @@ filters:
 
 | Operator   | Type support              | Behavior                                              |
 | ---------- | ------------------------- | ----------------------------------------------------- |
-| `=`        | string, enum              | Exact match                                           |
+| `=` / `==` | string, enum              | Exact match                                           |
 | `!=`       | string, enum              | Not equal; supports comma-separated values (NOT IN)   |
 | `~`        | string                    | Substring match (case-insensitive)                    |
 | `<`, `<=`  | date, number              | Less than / less than or equal                        |
@@ -894,9 +894,11 @@ Rules:
   `in`, `lt`, `lte`, `gt`, `gte` — see the ["Static Filters"](#static-filters)
   section above and the `applyV1Filters` source in
   `internal/dataentry/api_v1.go` for semantics.
-- Unknown operators (typos like `[equals]`) are **skipped** with a server-side
-  warning rather than treated as a pass-all fallback. This is a deliberate
-  fail-closed behavior so a typo can't silently bypass a configured scope.
+- Unknown operators (typos like `[equals]`) and malformed filter keys
+  **reject the request with HTTP 400** (`invalid_filter`, naming the bad
+  operator). The earlier skip-with-a-warning behavior still returned the
+  unfiltered superset — silently bypassing the filter it claimed to
+  fail-closed on — and let a config typo hide for months.
 - Multi-value filters use the repeated array form (`filter[prop][in][]=a&…`).
   Only `in` and `ne` join all repeated values; other operators take
   last-write-wins if a key appears multiple times.
