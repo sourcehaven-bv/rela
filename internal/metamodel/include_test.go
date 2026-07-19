@@ -464,6 +464,39 @@ entities:
 	assertEqual(t, rootFieldErr.Field, "namespace")
 }
 
+// description is a deployment-wide, root-only field (TKT-0YBFT8) — like version
+// and namespace it must be rejected in an included partial, not silently dropped.
+func TestLoadWithIncludes_IncludeHasDescription(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	createFile(t, filepath.Join(tmpDir, "metamodel.yaml"), `
+version: "1.0"
+includes:
+  - bad.yaml
+`)
+
+	createFile(t, filepath.Join(tmpDir, "bad.yaml"), `
+description: A partial should not carry the deployment description.
+entities:
+  control:
+    label: Control
+    id_prefix: "CTL-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+`)
+
+	_, _, err := Load(filepath.Join(tmpDir, "metamodel.yaml"), testMetaFS)
+	assertError(t, err)
+
+	var rootFieldErr *IncludeHasRootFieldError
+	if !errors.As(err, &rootFieldErr) {
+		t.Fatalf("expected IncludeHasRootFieldError, got %T: %v", err, err)
+	}
+	assertEqual(t, rootFieldErr.Field, "description")
+}
+
 func TestLoadWithIncludes_EmptyIncludes(t *testing.T) {
 	tmpDir := t.TempDir()
 

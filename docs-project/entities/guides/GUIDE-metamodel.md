@@ -68,7 +68,8 @@ project root (where `metamodel.yaml` lives).
 
 Each included file is a partial metamodel. It can contain any combination of
 `types:`, `entities:`, `relations:`, and `validations:` — but **must not** contain
-`version:` or `namespace:` (these are only allowed in the root `metamodel.yaml`).
+`version:`, `namespace:`, or `description:` (these are deployment-wide, allowed
+only in the root `metamodel.yaml`).
 
 ```yaml
 # compliance/controls.yaml

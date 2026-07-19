@@ -58,6 +58,14 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 
 // toV1CustomType is the single serialization site for a metamodel custom type
 // onto the wire, so the _schema types map and any other consumer stay in sync.
+//
+// It intentionally projects only Values/Labels/Default. The documentation-only
+// fields — CustomType.Descriptions (per-value meaning), CustomType.Transitions,
+// and TransitionDef.Help (TKT-0YBFT8) — are NOT serialized: their consumer is the
+// offline `rela docs` generator (FEAT-G4VO53), not the SPA. Wiring any of them to
+// the wire is a deliberate frontend-contract change (see internal/dataentry/
+// CLAUDE.md), not a "helpful" one-liner here. TestToV1CustomType_OmitsDocFields
+// pins this boundary.
 func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
 	return v1.CustomType{
 		Values:  ct.Values,
