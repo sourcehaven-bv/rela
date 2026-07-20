@@ -56,4 +56,4 @@ addressed), RR-R2DG19 (minor, addressed). No open critical/significant.
 - [x] ~~All CI checks pass~~ (verified locally: `go test ./...` / `just lint` / `just arch-lint` / `just coverage-check` all green; CI confirms on the PR)
 - [x] ~~PR URL documented below~~ (recorded when `/pr` opens it)
 
-**PR:** *pending — `/pr` runs next per the done-before-PR gate*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1173 (bundled with TKT-DUQBD0)
