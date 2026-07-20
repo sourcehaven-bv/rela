@@ -1,14 +1,25 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useGitStore, useSchemaStore, useUIStore } from '@/stores'
 import { shortcutsModalOpen } from '@/composables/useKeyboardShortcuts'
+import { renderMarkdown } from '@/utils/markdown'
 
 const gitStore = useGitStore()
 const uiStore = useUIStore()
 const schemaStore = useSchemaStore()
 const route = useRoute()
 const router = useRouter()
+
+// Global "About" help: the deployment description (data-entry app.description,
+// falling back to the metamodel's top-level description on the server). The
+// button is shown only when there is a description to show (TKT-DUQBD0).
+const aboutOpen = ref(false)
+const appName = computed(() => schemaStore.app?.name || 'rela')
+const appDescription = computed(() => schemaStore.app?.description?.trim() || '')
+// The description is authored as markdown (in data-entry.yaml or the metamodel);
+// render it so *emphasis*, lists, etc. display. renderMarkdown sanitizes.
+const appDescriptionHtml = computed(() => renderMarkdown(appDescription.value))
 
 // Initial fetch - SSE handles subsequent updates
 onMounted(() => {
@@ -66,6 +77,14 @@ async function handleSync() {
         <span v-if="uiStore.isDark" class="theme-icon">☀️</span>
         <span v-else class="theme-icon">🌙</span>
       </button>
+      <button
+        v-if="appDescription"
+        class="status-item about-btn"
+        title="About this app"
+        @click="aboutOpen = true"
+      >
+        <span class="about-icon">ⓘ</span> <span class="about-text">About</span>
+      </button>
       <RouterLink
         to="/settings"
         class="status-item"
@@ -81,6 +100,21 @@ async function handleSync() {
         <kbd>?</kbd> <span class="shortcuts-text">Shortcuts</span>
       </button>
     </div>
+
+    <!-- About overlay: the deployment description. Teleported so it isn't
+         clipped by the fixed status bar. -->
+    <Teleport to="body">
+      <div v-if="aboutOpen" class="about-overlay" @click.self="aboutOpen = false">
+        <div class="about-modal">
+          <div class="about-header">
+            <h3>{{ appName }}</h3>
+            <button class="about-close" @click="aboutOpen = false">&times;</button>
+          </div>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div class="about-body" v-html="appDescriptionHtml"/>
+        </div>
+      </div>
+    </Teleport>
   </footer>
 </template>
 
@@ -189,6 +223,63 @@ async function handleSync() {
 .theme-icon {
   font-size: 14px;
   line-height: 1;
+}
+
+.about-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.about-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.about-modal {
+  background: var(--card-bg);
+  color: var(--text-color);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  max-width: 560px;
+  width: 90%;
+  max-height: 80vh;
+  overflow: auto;
+  padding: 0 0 20px;
+}
+
+.about-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+
+.about-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.about-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--muted-text);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.about-body {
+  padding: 16px 20px 0;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 768px) {

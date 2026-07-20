@@ -1893,6 +1893,22 @@ func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelat
 	return resolved
 }
 
+// appDescription is the description shown for the deployment as a whole
+// (surfaced by the SPA's global "About" help, TKT-DUQBD0). The data-entry.yaml
+// `app.description` wins when set (it is the UI-app-specific text); otherwise it
+// falls back to the metamodel's top-level `description` (the schema-level prose
+// added in TKT-0YBFT8). Empty when neither is set — the SPA hides the About
+// button.
+func appDescription(s *Schema) string {
+	if s.Cfg != nil && s.Cfg.App.Description != "" {
+		return s.Cfg.App.Description
+	}
+	if s.Meta != nil {
+		return s.Meta.Description
+	}
+	return ""
+}
+
 func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1919,7 +1935,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	config := v1.Config{
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
-			Description:       s.Cfg.App.Description,
+			Description:       appDescription(s),
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 		},
 		Styles:      s.StyleMap,
@@ -2709,7 +2725,7 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp := v1.SidebarResponse{
 		App: v1.AppConfig{
 			Name:        s.Cfg.App.Name,
-			Description: s.Cfg.App.Description,
+			Description: appDescription(s),
 		},
 		Navigation: navigation,
 	}
