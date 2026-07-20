@@ -995,6 +995,13 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errBadFilter):
+		// Server-side log stays alongside the 400 (RR-6RF60V's logging
+		// intent, CONTROL-8-15): the response informs the caller, the log
+		// informs operators — a broken config or a caller probing filter
+		// params is an anomalous event worth a trace even when no one
+		// watches the client.
+		slog.Warn("dataentry: rejected invalid filter parameter",
+			"err", err, "path", r.URL.Path, "method", r.Method)
 		// Client-caused: echo the detail — it only restates the caller's own
 		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
