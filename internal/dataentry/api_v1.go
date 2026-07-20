@@ -1893,13 +1893,17 @@ func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelat
 	return resolved
 }
 
-// appDescription is the description shown for the deployment as a whole
-// (surfaced by the SPA's global "About" help, TKT-DUQBD0). The data-entry.yaml
-// `app.description` wins when set (it is the UI-app-specific text); otherwise it
-// falls back to the metamodel's top-level `description` (the schema-level prose
-// added in TKT-0YBFT8). Empty when neither is set — the SPA hides the About
-// button.
-func appDescription(s *Schema) string {
+// aboutDescription is the deployment description shown by the SPA's global
+// "About" help (TKT-DUQBD0). The data-entry.yaml `app.description` wins when set
+// (it is the UI-app-specific text); otherwise it falls back to the metamodel's
+// top-level `description` (the schema-level prose added in TKT-0YBFT8). Empty
+// when neither is set — the SPA hides the About button.
+//
+// This is a SEPARATE field from AppConfig.Description on the wire: that field is
+// also rendered by SettingsView as a plain one-line value, and pushing the
+// (possibly multi-paragraph markdown) metamodel description into it would
+// regress that view. The About surface gets its own field, `about_description`.
+func aboutDescription(s *Schema) string {
 	if s.Cfg != nil && s.Cfg.App.Description != "" {
 		return s.Cfg.App.Description
 	}
@@ -1935,21 +1939,22 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	config := v1.Config{
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
-			Description:       appDescription(s),
+			Description:       s.Cfg.App.Description,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 		},
-		Styles:      s.StyleMap,
-		Forms:       forms,
-		Lists:       s.Cfg.Lists,
-		Views:       s.Cfg.Views,
-		EntityViews: s.Cfg.EntityViews,
-		Kanbans:     s.Cfg.Kanbans,
-		Dashboard:   s.Cfg.Dashboard,
-		Actions:     s.Cfg.Actions,
-		Navigation:  s.Cfg.Navigation,
-		Documents:   s.Cfg.Documents,
-		Apps:        appsToV1(a.scanAppsOrLog()),
-		Palette:     a.palette.Resolved(),
+		AboutDescription: aboutDescription(s),
+		Styles:           s.StyleMap,
+		Forms:            forms,
+		Lists:            s.Cfg.Lists,
+		Views:            s.Cfg.Views,
+		EntityViews:      s.Cfg.EntityViews,
+		Kanbans:          s.Cfg.Kanbans,
+		Dashboard:        s.Cfg.Dashboard,
+		Actions:          s.Cfg.Actions,
+		Navigation:       s.Cfg.Navigation,
+		Documents:        s.Cfg.Documents,
+		Apps:             appsToV1(a.scanAppsOrLog()),
+		Palette:          a.palette.Resolved(),
 	}
 
 	writeV1JSON(w, http.StatusOK, config)
@@ -2725,7 +2730,7 @@ func (a *App) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp := v1.SidebarResponse{
 		App: v1.AppConfig{
 			Name:        s.Cfg.App.Name,
-			Description: appDescription(s),
+			Description: s.Cfg.App.Description,
 		},
 		Navigation: navigation,
 	}

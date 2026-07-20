@@ -16,7 +16,7 @@ const router = useRouter()
 // button is shown only when there is a description to show (TKT-DUQBD0).
 const aboutOpen = ref(false)
 const appName = computed(() => schemaStore.app?.name || 'rela')
-const appDescription = computed(() => schemaStore.app?.description?.trim() || '')
+const appDescription = computed(() => schemaStore.aboutDescription?.trim() || '')
 // The description is authored as markdown (in data-entry.yaml or the metamodel);
 // render it so *emphasis*, lists, etc. display. renderMarkdown sanitizes.
 const appDescriptionHtml = computed(() => renderMarkdown(appDescription.value))
@@ -279,7 +279,14 @@ async function handleSync() {
   padding: 16px 20px 0;
   font-size: 14px;
   line-height: 1.6;
-  white-space: pre-wrap;
+}
+
+.about-body :deep(p) {
+  margin: 0 0 10px;
+}
+
+.about-body :deep(p:last-child) {
+  margin-bottom: 0;
 }
 
 @media (max-width: 768px) {

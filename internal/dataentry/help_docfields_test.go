@@ -105,8 +105,9 @@ func TestGatherEnumHelp(t *testing.T) {
 	}
 }
 
-// AC2: the mermaid diagram carries the entry arrow + one labeled edge per
-// transition.
+// AC2: the mermaid diagram aliases each state to a synthetic id (so raw enum
+// values can't corrupt the syntax) and carries the entry arrow + one labeled
+// edge per transition, with the label suppressed when move == to.
 func TestMermaidStateDiagram(t *testing.T) {
 	e := EnumHelp{
 		Initial: "todo",
@@ -119,9 +120,12 @@ func TestMermaidStateDiagram(t *testing.T) {
 
 	for _, want := range []string{
 		"stateDiagram-v2",
-		"[*] --> todo",
-		"todo --> doing: Start",
-		"doing --> done\n", // no ": done" label because move == to
+		`state "todo" as s0`, // aliased display text
+		`state "doing" as s1`,
+		`state "done" as s2`,
+		"[*] --> s0",       // entry to initial via id
+		"s0 --> s1: Start", // labeled edge via ids
+		"s1 --> s2\n",      // no ": done" label because move == to
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("diagram missing %q:\n%s", want, got)
@@ -129,9 +133,59 @@ func TestMermaidStateDiagram(t *testing.T) {
 	}
 }
 
-// AC5: appDescription prefers the data-entry app.description, falling back to the
+// The diagram is injection-safe: raw values with mermaid-breaking characters
+// (spaces, arrows) never appear in the syntax (they are aliased to synthetic
+// ids), and a newline in a move label cannot spill onto a new diagram line to
+// inject a spurious edge (RR from code review).
+func TestMermaidStateDiagram_InjectionSafe(t *testing.T) {
+	e := EnumHelp{
+		Initial: "to do", // space — invalid as a raw mermaid id
+		Transitions: []TransitionHelp{
+			// A move label carrying a newline + a fake edge.
+			{Move: "Go\n    evil --> pwned", From: "to do", To: "a --> b"},
+		},
+	}
+	got := mermaidStateDiagram(e)
+
+	// The raw space/arrow values are only inside quoted alias text, never as
+	// bare tokens forming edges.
+	if strings.Contains(got, "[*] --> to do") {
+		t.Errorf("raw spaced value leaked as an id:\n%s", got)
+	}
+	// The newline in the move label must be flattened onto a single line — the
+	// injected `evil --> pwned` may survive only as label TEXT (after the `: `),
+	// never as its own statement line. Check no LINE is a bare injected edge.
+	for line := range strings.SplitSeq(strings.TrimSpace(got), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "stateDiagram-v2" || strings.HasPrefix(line, `state "`) {
+			continue
+		}
+		// Every edge/entry line's source (left of the FIRST -->) must be [*] or a
+		// synthetic id — a leaked `evil` or `to do` token would fail here.
+		if strings.Contains(line, "-->") {
+			left := strings.TrimSpace(strings.SplitN(line, "-->", 2)[0])
+			if left != "[*]" && !isSyntheticID(left) {
+				t.Errorf("edge line has a non-synthetic source %q: %q", left, line)
+			}
+		}
+	}
+}
+
+func isSyntheticID(s string) bool {
+	if !strings.HasPrefix(s, "s") {
+		return false
+	}
+	for _, r := range s[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return len(s) > 1
+}
+
+// AC5: aboutDescription prefers the data-entry app.description, falling back to the
 // metamodel's top-level description, and is empty when neither is set.
-func TestAppDescription(t *testing.T) {
+func TestAboutDescription(t *testing.T) {
 	cases := []struct {
 		name    string
 		appDesc string
@@ -148,8 +202,8 @@ func TestAppDescription(t *testing.T) {
 				Cfg:  &Config{App: AppConfig{Description: tc.appDesc}},
 				Meta: &metamodel.Metamodel{Description: tc.metaDsc},
 			}
-			if got := appDescription(s); got != tc.want {
-				t.Errorf("appDescription = %q, want %q", got, tc.want)
+			if got := aboutDescription(s); got != tc.want {
+				t.Errorf("aboutDescription = %q, want %q", got, tc.want)
 			}
 		})
 	}

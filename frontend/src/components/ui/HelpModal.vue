@@ -20,19 +20,28 @@ const error = ref<string | null>(null)
 const helpContent = ref('')
 const contentBody = useTemplateRef<HTMLElement>('contentBody')
 
+// Monotonic request token: switching the help target (or a fast open→close→open)
+// starts a new loadHelp before the previous fetch resolves. Each run captures its
+// token and bails the moment a newer run has started, so a stale response never
+// overwrites content or renders its mermaid against the current entity's DOM.
+let loadToken = 0
+
 async function loadHelp() {
   if (!props.entityType) return
 
+  const myToken = ++loadToken
   loading.value = true
   error.value = null
 
   try {
     const response = await axios.get(`/api/help/${props.entityType}`)
+    if (myToken !== loadToken) return // superseded by a newer load
     // The server renders metamodel descriptions with goldmark in unsafe
     // mode (raw HTML passes through), so sanitize at the sink like every
     // other v-html consumer (utils/markdown.ts, DocumentView).
     helpContent.value = DOMPurify.sanitize(response.data)
   } catch (err) {
+    if (myToken !== loadToken) return // superseded
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
@@ -40,16 +49,17 @@ async function loadHelp() {
     error.value = 'Failed to load help content'
     helpContent.value = ''
   } finally {
-    loading.value = false
+    if (myToken === loadToken) loading.value = false
   }
 
   // Render the Lifecycle section's <pre class="mermaid"> state diagrams to SVG.
   // Must run AFTER loading is false so the v-else content div (contentBody) is
   // actually mounted — mermaid can't find blocks in an unrendered subtree.
-  // Mirrors DocumentView's post-paint render.
+  // Mirrors DocumentView's post-paint render. Re-check the token after nextTick
+  // so a superseded run never renders against the newer entity's DOM.
   if (!error.value) {
     await nextTick()
-    if (contentBody.value) {
+    if (myToken === loadToken && contentBody.value) {
       await renderMermaidDiagrams(contentBody.value)
     }
   }
