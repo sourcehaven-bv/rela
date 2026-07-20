@@ -5,7 +5,7 @@ title: Remove attachment CAS/dedup; add streaming I/O
 kind: refactor
 priority: high
 effort: m
-status: ready
+status: backlog
 ---
 
 > **Sweep note (2026-07-20): the core goal largely landed — `store.AttachmentManager` exists with the streaming `AttachFile(ctx, entityID, property, fileName, r io.Reader)` signature across fsstore/memstore/pgstore. The body's scope is stale: it calls for deleting `internal/attachment/`, but that package is alive with a different purpose (policy/MIME/scan: attachment.go, cmdrunner.go, mimecheck.go). Rescope to whatever CAS/dedup remnants actually remain, if any.**
