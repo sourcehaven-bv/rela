@@ -10,6 +10,8 @@ tags:
 status: ready
 ---
 
+> **Sweep note (2026-07-20): the core ask already landed via a different path — demos live in scripts/demo-*.sh and a CI "Demos" job runs them on every PR (ci.yml). Remaining scope is only: `just demo`/`just demos-test` targets and the CLAUDE.md "every feature ships a demo" convention. The demos/*/demo.sh layout in the body is dead.**
+
 ## Description
 
 The existing `demos/*/demo.sh` scripts (starting with

@@ -8,6 +8,8 @@ effort: m
 status: ready
 ---
 
+> **Sweep note (2026-07-20): the core goal largely landed — `store.AttachmentManager` exists with the streaming `AttachFile(ctx, entityID, property, fileName, r io.Reader)` signature across fsstore/memstore/pgstore. The body's scope is stale: it calls for deleting `internal/attachment/`, but that package is alive with a different purpose (policy/MIME/scan: attachment.go, cmdrunner.go, mimecheck.go). Rescope to whatever CAS/dedup remnants actually remain, if any.**
+
 ## Status: READY (2026-04-20, unblocked by encryption rollback)
 
 The encryption rollback (PR #508) has merged. The blocker on this ticket is

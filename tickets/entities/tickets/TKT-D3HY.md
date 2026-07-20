@@ -5,8 +5,10 @@ title: Add keyboard delete shortcut to lists and entity detail (with confirmatio
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — useListKeyboard.ts binds Delete AND Backspace, EntityList.vue and EntityDetail.vue both wire requestDelete with confirm modal + permission check, and KeyboardShortcutsModal documents the shortcut.
 
 ## Description
 

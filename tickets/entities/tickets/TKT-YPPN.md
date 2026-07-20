@@ -5,8 +5,10 @@ title: Adopt log/slog in place of stdlib log
 kind: refactor
 priority: medium
 effort: m
-status: backlog
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — zero stdlib `log` imports remain in internal/ and cmd/; depguard forbids `log` (allows log/slog) in .golangci.yml, sloglint is enabled, and --verbose/--quiet map to slog levels.
 
 ## Description
 

@@ -5,8 +5,10 @@ title: Relation content versioning in pgstore (first-class, triple-keyed history
 kind: enhancement
 priority: low
 effort: l
-status: backlog
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented as TKT-92JL8P — first-class relation versioning in pgstore: `relation_versions` table (migration 0005), RelationHistoryReader/RelationVersionWriter/RelationVersionPurger capabilities.
 
 Follow-up to TKT-9INY0Y / RES-4ILUJZ (option D, deferred).
 

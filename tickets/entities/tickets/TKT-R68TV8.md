@@ -8,6 +8,8 @@ effort: m
 status: backlog
 ---
 
+> **Sweep note (2026-07-20): M5.2 sub-tickets confirmed landed (sync_handler.go, command_handler.go, attachment_handler.go all exist). Epic remains open: App still has 132 receiver methods (goal <40), //plimsoll:max-methods=131 directive still present in app.go, and the M5.4 write nucleus is not carved (writeMu still a field on App, taken directly in api_v1.go write handlers).**
+
 **Epic / parent ticket** for the remainder of the `dataentry.App` decomposition.
 Each shippable step is its own sub-ticket (moved to `done` with its PR); this
 parent stays in `backlog` until the whole arc lands — App under the 40-method

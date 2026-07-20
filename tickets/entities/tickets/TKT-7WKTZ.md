@@ -8,6 +8,8 @@ effort: m
 status: ready
 ---
 
+> **Sweep note (2026-07-20): the described mechanism is gone — there is no Reload()/Sync() split or manual watch-file list; App.StartWatching delegates to the store-level watcher via the storeWatcher interface + startStoreEventBridge (SSE). If metamodel-vs-data reload granularity is still wanted, redesign against the store watcher/change-feed path.**
+
 ## Problem
 
 The file watcher calls `Reload()` on every file change, which re-reads the
