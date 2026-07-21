@@ -111,12 +111,18 @@ per ticket, instead of re-walking 50× from scratch.
 A small example that exercises every layer of the resolver:
 
 ```yaml
+description: >          # optional prose: what this deployment's access model is for
+  Access model for the ticket tracker. Editors own the backlog; readers and
+  the everyone role get scoped read access.
+
 roles:
   everyone:
     read: ["*"]
   reader:
+    description: Read-only observer of tickets and features.   # optional prose
     read: [ticket, feature]
   editor:
+    description: Backlog maintainer — full CRUD on tickets.     # optional prose
     read: [ticket, feature]
     create: [ticket]
     update: [ticket]
@@ -146,6 +152,12 @@ inherit_roles_through:
 #                                  # system. If you do, gate writes to it the
 #                                  # same way (see GUIDE-acl-security).
 ```
+
+The top-level `description:` and the per-role `description:` are optional
+documentation prose. They never affect an authorization decision — the resolver
+ignores them entirely — and exist so tooling (the `rela docs` generator) can
+narrate the role model in operator-facing documentation. Omitting them changes
+nothing.
 
 `membership_relation:` is optional. When omitted (or blank) the resolver walks
 `member-of`, so existing policies are unaffected. Only set it to a relation type

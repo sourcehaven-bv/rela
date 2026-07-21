@@ -1,0 +1,41 @@
+# Example access-control policy for the data-entry prototype project.
+#
+# This is a showcase policy: it exercises the two doc-oriented prose fields
+# added in rela-docs phase 1b (TKT-JO2SAD) — a top-level `description` and a
+# per-role `description` — so the `rela docs` generator has real content to
+# narrate in the operator/support section. The descriptions are documentation
+# only; they never affect an authorization decision.
+#
+# Roles are assigned to raw principals (the identity string the server stamps,
+# e.g. an email from X-Forwarded-User). The prototype metamodel has no user
+# entity type or membership relation, so this example does not use the
+# group-membership machinery — see docs/acl-overview.md for that.
+
+description: >
+  Access model for the demo ticket tracker. Two roles: editors maintain the
+  tickets and their supporting entities, while viewers get read-only access to
+  everything. There is no self-service sign-up — an operator assigns principals
+  to roles below.
+
+roles:
+  editor:
+    description: >
+      Full maintainer of the tracker. May create, update, and delete tickets
+      and every supporting entity (categories, labels, tags, decisions,
+      modules, specifications). Intended for the small team that owns the
+      backlog day to day.
+    read: ["*"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+
+  viewer:
+    description: >
+      Read-only observer. Can browse every entity type and follow relations,
+      but cannot create, change, or remove anything. Intended for stakeholders
+      and support staff who need visibility without edit rights.
+    read: ["*"]
+
+assignments:
+  alice@example.com: editor
+  bob@example.com: viewer
