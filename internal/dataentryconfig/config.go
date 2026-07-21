@@ -568,6 +568,24 @@ type CommandConfig struct {
 	Confirm     string            `yaml:"confirm,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty"`
 	AutoOpen    *bool             `yaml:"auto_open,omitempty"`
+
+	// Permission names the global ACL permission a principal must hold to
+	// execute this command (e.g. "command:nightly-export"), granted via a
+	// role's `permissions:` list in acl.yaml. It follows the
+	// [acl.PermHistoryRead] pattern: commands have no entity Subject, so
+	// they cannot be authorized through acl.ACL.AuthorizeWrite.
+	//
+	// The key is only consulted when an acl.yaml is configured. Per
+	// DEC-EIHQSU authorization is bimodal: with no policy every command
+	// runs (unchanged pre-ACL behavior); with a policy a command is denied
+	// unless its Permission is set and held. Under `--read-only` every
+	// command is denied regardless.
+	//
+	// NOT honored for `context: view` — view commands are denied outright
+	// under any configured policy because their payload is the whole view
+	// traversal closure rather than one entity (TKT-MJ02AO). Setting it on
+	// a view command is a config warning.
+	Permission string `yaml:"permission,omitempty"`
 }
 
 // CommandScope controls where a command button appears in the UI.

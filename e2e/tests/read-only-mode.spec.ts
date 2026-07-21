@@ -5,10 +5,19 @@
  * detail page and sees no Edit / Delete buttons; direct-URL form
  * navigation shows a "not editable" message.
  *
- * Deferred phase-2 sites (Lua command buttons, settings / theme /
- * git, relation add/remove inside form widgets, inline-edit buttons
- * in related-entity cards) remain visible and 403 at the server on
- * click. The assertions below intentionally exclude those.
+ * Deferred phase-2 sites (settings / theme / git, relation add/remove
+ * inside form widgets, inline-edit buttons in related-entity cards)
+ * remain visible and 403 at the server on click. The assertions below
+ * intentionally exclude those.
+ *
+ * Command buttons were listed here too, but that was wrong on both
+ * halves: command exec builds no acl.WriteRequest, so ReadOnlyACL
+ * never saw it and the click ran the script rather than 403ing
+ * (TKT-MJ02AO). Commands are now denied at the exec handler under
+ * read-only and filtered out of the resolution API, so their buttons
+ * do not render at all. Covered in Go — commands_test.go
+ * TestCommandExecReadOnlyDenied — per the API-only-assertions rule in
+ * AGENTS.md, not duplicated here.
  *
  * The test reuses the standard `testProject` fixture to get a fresh
  * project directory, then spawns its own `--read-only` server (the
