@@ -5,7 +5,7 @@ title: Render list and global/dashboard commands in the data-entry SPA (view con
 kind: enhancement
 priority: medium
 effort: m
-status: planning
+status: backlog
 ---
 
 ## Description

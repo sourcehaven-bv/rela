@@ -5,7 +5,7 @@ title: 'Per-command ACL guard: gate command execution and button visibility on a
 kind: enhancement
 priority: high
 effort: l
-status: review
+status: done
 ---
 
 ## Description
