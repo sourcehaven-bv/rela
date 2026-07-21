@@ -48,6 +48,9 @@ const fenceMarker = "```rela"
 // literal stream untouched — including any `rela …` spans inside it, so a code
 // sample showing the doc language renders literally.
 func parse(src string) ([]segment, error) {
+	// Normalize CRLF → LF so island bodies handed to Lua carry no stray \r and
+	// fence/marker matching is uniform. Output is LF (markdown is agnostic).
+	src = strings.ReplaceAll(src, "\r\n", "\n")
 	lines := strings.Split(src, "\n")
 	var segs []segment
 	var literal strings.Builder

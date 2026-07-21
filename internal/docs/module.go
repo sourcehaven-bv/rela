@@ -116,15 +116,15 @@ func (dr *docRuntime) luaLink(ls *lua.LState) int {
 }
 
 // mintID derives a stable id for a seeded entity: an explicit props.id if given,
-// else "<type>-<n>" by current count of that type. Fixture ids need only be
-// unique within the build.
+// else "<type>-<n>" from a per-type counter. Fixture ids need only be unique
+// within the build; the counter avoids an O(n²) full-store scan per create.
 func (dr *docRuntime) mintID(typ string, props map[string]any) string {
 	if v, ok := props["id"].(string); ok && v != "" {
 		return v
 	}
-	n := 1
-	for range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ}) {
-		n++
+	if dr.seedCounts == nil {
+		dr.seedCounts = map[string]int{}
 	}
-	return fmt.Sprintf("%s-%d", typ, n)
+	dr.seedCounts[typ]++
+	return fmt.Sprintf("%s-%d", typ, dr.seedCounts[typ])
 }
