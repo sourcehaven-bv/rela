@@ -77,7 +77,7 @@ func TestPrincipalMiddleware_WithOption(t *testing.T) {
 
 	_, _ = handler(context.Background(), mcpgo.CallToolRequest{})
 
-	if captured != want {
+	if !captured.Equal(want) {
 		t.Errorf("Principal = %+v, want %+v", captured, want)
 	}
 }
@@ -111,7 +111,7 @@ func TestPrincipalMiddleware_RegisteredOnEveryTool(t *testing.T) {
 		t.Fatal("nil result")
 	}
 
-	if captured != want {
+	if !captured.Equal(want) {
 		t.Errorf("Principal stamped on handler ctx = %+v, want %+v", captured, want)
 	}
 }

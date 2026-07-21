@@ -92,8 +92,9 @@ func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *readServices) error {
 }
 
 // writeWhoCanText renders a WhoCanResult as human-readable lines: the
-// global everyone grant first (when present), then one block per
-// principal listing every route by which the verb is granted.
+// global everyone grant first (when present), then any conditional
+// (asserted-claim) grants, then one block per principal listing every
+// route by which the verb is granted.
 func writeWhoCanText(r *aclmap.WhoCanResult) {
 	if r.Everyone.Granted {
 		note := ""
@@ -103,8 +104,26 @@ func writeWhoCanText(r *aclmap.WhoCanResult) {
 		out.WriteMessage("everyone — all principals, incl. unauthenticated%s", note)
 	}
 
+	// Rendered in their own block, and never counted as principals. Whoever
+	// presents the claim gets the role, and that population lives in the IdP —
+	// so the honest report names the claim and says we cannot enumerate it.
+	if len(r.Conditional) > 0 {
+		out.WriteMessage("%d conditional grant(s) via verified assertion claims "+
+			"(holders NOT enumerable from the graph — check your identity provider):",
+			len(r.Conditional))
+		for _, c := range r.Conditional {
+			note := ""
+			if c.Wildcard {
+				note = " (via \"*\" — every type)"
+			}
+			out.WriteMessage("  claim %q → role %s%s", c.Claim, c.Role, note)
+		}
+	}
+
 	if len(r.Principals) == 0 {
-		if !r.Everyone.Granted {
+		// "No principal can ..." would be a false all-clear when a claim or the
+		// everyone role grants the verb.
+		if !r.Everyone.Granted && len(r.Conditional) == 0 {
 			out.WriteMessage("No principal can %s %s (%s).", r.Verb, r.Entity, r.EntityType)
 		}
 		return
@@ -128,6 +147,8 @@ func writeWhoCanText(r *aclmap.WhoCanResult) {
 func formatRoute(rt aclmap.Route) string {
 	parts := []string{"role " + rt.Role}
 	switch {
+	case rt.Claim != "":
+		parts = append(parts, fmt.Sprintf("asserted claim %q", rt.Claim))
 	case rt.Group != "" && rt.Ancestor != "":
 		parts = append(parts, fmt.Sprintf("group %s → %s edge on ancestor %s", rt.Group, rt.Relation, rt.Ancestor))
 	case rt.Group != "" && rt.Relation != "":

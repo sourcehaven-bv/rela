@@ -182,7 +182,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 			// a Request built from a *resolved* principal while ctx still
 			// holds the raw one, this correctly 500s as a genuine mismatch.
 			ctxPrin := principal.From(ctx)
-			if existing.Principal() != ctxPrin {
+			if !existing.Principal().Equal(ctxPrin) {
 				slog.Warn("acl: attachACLRequest: existing Request principal mismatch",
 					"path", r.URL.Path,
 					"method", r.Method,
@@ -277,7 +277,12 @@ func resolvePrincipalEntity(ctx context.Context, d *acl.Declarative, r *http.Req
 	if id == "" || id == p.User {
 		return ctx
 	}
-	return principal.With(ctx, principal.Principal{User: id, Tool: p.Tool, RawUser: p.User})
+	// Rebuild via Verified so the assertion claims survive the substitution.
+	// A plain composite literal here would silently drop org and roles — the
+	// resolved principal would keep its identity but lose every asserted grant.
+	out := principal.Verified(id, p.Tool, p.OrgID(), p.OrgSlug(), p.Roles())
+	out.RawUser = p.User
+	return principal.With(ctx, out)
 }
 
 // PrincipalResolver maps an incoming HTTP request to the audit
@@ -355,12 +360,27 @@ func EnvPrincipalResolver() PrincipalResolver {
 	}
 }
 
-// subjectVerifier verifies a signed identity assertion and returns its subject
-// (the stable OIDC `sub`). Satisfied by *jwtauth.Verifier; kept local (and
-// unexported, per the other consumer interfaces here) so the dataentry package
-// doesn't import the concrete verifier and the resolver is testable with a stub.
-type subjectVerifier interface {
-	VerifySubject(ctx context.Context, raw string) (string, error)
+// AssertedIdentity is the verified-assertion payload this package consumes. It
+// is dataentry's OWN type, not the verifier's: the wiring site adapts whatever
+// the concrete verifier returns into this shape (see the adapter in
+// cmd/rela-server), so dataentry never imports the verifier package and the
+// verifier stays an arch-lint leaf.
+//
+// Subject is the only field callers may treat as required. The rest are absent
+// for any proxy that doesn't model orgs or roles, which is not an error.
+type AssertedIdentity struct {
+	Subject string
+	OrgID   string
+	OrgSlug string
+	Roles   []string
+}
+
+// assertionVerifier verifies a signed identity assertion and projects the
+// claims this package stamps onto a Principal. Satisfied by an adapter over
+// *jwtauth.Verifier; kept local (and unexported, per the other consumer
+// interfaces here) so the resolver is testable with a stub.
+type assertionVerifier interface {
+	VerifyAssertion(ctx context.Context, raw string) (AssertedIdentity, error)
 }
 
 // JWTPrincipalResolver reads a signed identity assertion from headerName,
@@ -376,12 +396,18 @@ type subjectVerifier interface {
 // Tool is [principal.ToolDataEntry]: the assertion changes WHO authenticated, not
 // the entry point (a verified user still arrives via the data-entry HTTP surface).
 //
+// It also carries the assertion's org and role claims onto the Principal via
+// [principal.Verified]. This is the ONLY resolver that may do so — the header
+// and env resolvers have no verified source for them, and a role reaching the
+// ACL from a spoofable header would be a complete authorization bypass. The
+// unexported fields on Principal make that structural rather than a convention.
+//
 // A missing header, an "Authorization: Bearer <jwt>" wrapper (the scheme is
 // stripped case-insensitively per RFC 6750), or any verification failure yields a
 // zero Principal so the chain falls through — a nil v also yields an inert
 // resolver. Empty headerName ⇒ inert (matches the disabled-flag shape of the
 // other resolvers).
-func JWTPrincipalResolver(v subjectVerifier, headerName string) PrincipalResolver {
+func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResolver {
 	if v == nil || headerName == "" {
 		return func(*http.Request) principal.Principal { return principal.Principal{} }
 	}
@@ -390,19 +416,32 @@ func JWTPrincipalResolver(v subjectVerifier, headerName string) PrincipalResolve
 		if raw == "" {
 			return principal.Principal{}
 		}
-		sub, err := v.VerifySubject(r.Context(), raw)
-		if err != nil || sub == "" {
+		id, err := v.VerifyAssertion(r.Context(), raw)
+		if err != nil || id.Subject == "" {
 			return principal.Principal{}
 		}
 		// The subject is a controlled id (opaque, from the IdP), but sanitize it
 		// the same way as header/env users for defense in depth (length cap,
 		// control-char strip). A control-only value sanitizes to "" and falls
 		// through.
-		user := sanitizeUser(sub)
+		user := sanitizeUser(id.Subject)
 		if user == "" {
 			return principal.Principal{}
 		}
-		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
+		// Org and roles get the same treatment. Roles are already bounded by the
+		// verifier's projection; sanitizing here covers control chars and any
+		// future verifier that forgets to. A role that sanitizes away is dropped
+		// rather than kept as "" — an empty role name can never match a policy
+		// mapping, so keeping it would only pad the attribution set.
+		roles := make([]string, 0, len(id.Roles))
+		for _, role := range id.Roles {
+			if s := sanitizeUser(role); s != "" {
+				roles = append(roles, s)
+			}
+		}
+		return principal.Verified(
+			user, principal.ToolDataEntry,
+			sanitizeUser(id.OrgID), sanitizeUser(id.OrgSlug), roles)
 	}
 }
 

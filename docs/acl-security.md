@@ -188,6 +188,69 @@ index.
   fail-closed. Don't assume one `acl.yaml` grants the same authority on
   every transport.
 
+## Roles from a verified assertion (`asserted_role_assignments`)
+
+`asserted_role_assignments` maps a `roles` claim from a signed identity
+assertion to a policy role (see GUIDE-acl-overview for the mechanics).
+Three properties are load-bearing.
+
+**The trust boundary is the signature, and it is enforced structurally.**
+`internal/acl` verifies nothing — it trusts the `Principal` absolutely.
+A role reaching it from an unverified source would therefore be a
+complete authorization bypass, not a degradation. The assertion claims
+live in *unexported* fields on `principal.Principal`, populated only by
+`principal.Verified`, which only the JWT resolver calls after signature
+verification. No composite literal anywhere in the tree can forge a
+role; the compiler enforces this rather than a reviewer remembering to.
+
+Consequence for operators: **never introduce a header that is trusted as
+a role source.** Trusting `X-Asserted-Roles` the way `X-Forwarded-User`
+is trusted under `--principal-header` would hand role selection to
+anyone who can reach the server. The header path deliberately cannot
+carry roles at all.
+
+**The claim → role indirection is the second control.** A claim value
+never becomes a role name; it only ever selects an entry the operator
+authored. An attacker who influences role names in the IdP still cannot
+name a rela role the operator has not mapped. Keep the mapping minimal
+and review it like any other grant — `rela acl audit` flags a claim that
+maps to a privileged role.
+
+**Revocation lags by one assertion lifetime.** rela re-checks nothing
+between requests: an assertion stays valid until its `exp`, so a role
+revoked in the IdP keeps working in rela until the token expires. With
+Pratique that window is **up to 9 minutes** (`AssertionTTL`). rela has
+no revocation channel — there is nothing to "push" a revocation to. If
+your incident response depends on cutting access faster than the token
+lifetime, you must restart or otherwise intervene at the proxy; do not
+assume revoking in the IdP takes effect immediately downstream.
+
+### `org_id` is recorded, not enforced
+
+A verified assertion's `org_id` / `org_slug` are stamped on the
+principal and appear in the audit log. **Nothing in `internal/acl`
+evaluates them.**
+
+Read that literally before designing around it: a principal in org A
+holding a role sees **every entity that role grants, in every org**.
+There is no tenant isolation. The org in your audit log records which
+tenant a request *came from*; it does not constrain what that request
+could reach.
+
+This is a deliberate scope decision, not an oversight — ACL evaluation
+is additive (any role granting the verb allows it, and no rule can
+subtract), so a cross-cutting "deny unless org matches" needs its own
+design rather than a field check bolted onto the resolver. A test
+(`TestAssertedRoles_OrgIsNotEvaluated`) pins the absence of enforcement
+so it cannot be mistaken for an omission, and fails the day a partial
+org check is added.
+
+If you need per-tenant separation today, model it in the graph:
+containment edges plus `inherit_roles_through` scope roles to a subtree
+positively, and read-filtering follows for free. That works only if no
+role grants a broad wildcard read — a global `read: ["*"]` defeats any
+org scoping, in this design or any other.
+
 ## Fail-loud on malformed `acl.yaml`
 
 A malformed `acl.yaml` fails boot. This is intentional: silently

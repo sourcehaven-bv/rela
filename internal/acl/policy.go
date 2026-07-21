@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -96,8 +97,37 @@ type Policy struct {
 	MembershipRelation  string                     `yaml:"membership_relation"`
 	Roles               map[string]RoleDef         `yaml:"roles"`
 	Assignments         map[string]string          `yaml:"assignments"`
+	AssertedRoles       map[string]RoleList        `yaml:"asserted_role_assignments"`
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
+}
+
+// RoleList is a list of role names that accepts either a bare scalar or a
+// sequence in YAML, so the common single-role case stays terse:
+//
+//	asserted_role_assignments:
+//	  admin: editor              # scalar
+//	  auditor: [reader, auditor] # sequence
+//
+// Mirrors metamodel.StringOrSlice; duplicated rather than imported because
+// internal/acl must not depend on internal/metamodel (see the MetamodelView
+// comment below for why that boundary exists).
+type RoleList []string
+
+// UnmarshalYAML accepts a scalar or a sequence. A scalar becomes a one-element
+// list; anything else is decoded as a sequence and surfaces its own error.
+func (r *RoleList) UnmarshalYAML(unmarshal func(any) error) error {
+	var single string
+	if err := unmarshal(&single); err == nil {
+		*r = RoleList{single}
+		return nil
+	}
+	var list []string
+	if err := unmarshal(&list); err != nil {
+		return err
+	}
+	*r = list
+	return nil
 }
 
 // principalPropertyLookupEnabled reports whether the policy asks the
@@ -315,14 +345,15 @@ type RoleRelationDef struct {
 // knownPolicyKeys is the allowlist used for unknown-key warnings.
 // Keep in sync with [Policy]'s yaml tags.
 var knownPolicyKeys = map[string]bool{
-	"description":           true,
-	"user_entity_type":      true,
-	"principal_property":    true,
-	"membership_relation":   true,
-	"roles":                 true,
-	"assignments":           true,
-	"role_relations":        true,
-	"inherit_roles_through": true,
+	"description":               true,
+	"user_entity_type":          true,
+	"principal_property":        true,
+	"membership_relation":       true,
+	"roles":                     true,
+	"assignments":               true,
+	"asserted_role_assignments": true,
+	"role_relations":            true,
+	"inherit_roles_through":     true,
 }
 
 // LoadPolicy reads and parses `acl.yaml` at the given path.
@@ -444,6 +475,24 @@ func (p *Policy) Validate() error {
 	for k := range p.RoleRelations {
 		if isBlank(k) {
 			return errors.New("role_relations: relation type key must not be empty or whitespace")
+		}
+	}
+	for claim, roles := range p.AssertedRoles {
+		// A blank claim key can never match a real claim value (matching is
+		// exact after TrimSpace), so the mapping is silently inert — the
+		// failure mode an operator is least likely to notice.
+		if isBlank(claim) {
+			return errors.New("asserted_role_assignments: claim key must not be empty or whitespace")
+		}
+		// EveryoneRole already enters every principal's set as
+		// Source{Kind: SourceGlobal}. Granting it again from a claim would add a
+		// SECOND attribution for the same role under a different Source,
+		// double-reporting it in `rela acl map` and in denial diagnostics — and
+		// buying nothing, since everyone already has it.
+		if slices.Contains(roles, EveryoneRole) {
+			return fmt.Errorf(
+				"asserted_role_assignments.%s: cannot grant the %q role — "+
+					"it already applies to every principal", claim, EveryoneRole)
 		}
 	}
 	for name, role := range p.Roles {

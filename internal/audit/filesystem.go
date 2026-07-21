@@ -201,8 +201,11 @@ func sanitize(rec Record) Record {
 	rec.Subject = sanitizeSubject(rec.Subject)
 	rec.Before = sanitizeSubject(rec.Before)
 	rec.After = sanitizeSubject(rec.After)
-	rec.Principal.User = clean(rec.Principal.User)
-	rec.Principal.Tool = clean(rec.Principal.Tool)
+	// Delegated so the verified-assertion claims (org, roles) are cleaned too —
+	// they live in unexported fields this package cannot reach. Also covers
+	// RawUser, which was previously left raw: safe by construction today (it is
+	// only ever set from an already-sanitized value) but an unpinned invariant.
+	rec.Principal = rec.Principal.Sanitized(clean)
 	rec.TriggeredBy = clean(rec.TriggeredBy)
 	rec.Summary = clean(rec.Summary)
 	return rec

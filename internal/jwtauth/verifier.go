@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -98,6 +99,60 @@ func (v *Verifier) VerifySubject(ctx context.Context, raw string) (string, error
 	return sub, nil
 }
 
+// AssertionClaims is the subset of a verified identity assertion the principal
+// resolver acts on. Like [WebhookClaims] it is a typed projection — the package
+// never leaks jwt.MapClaims across its boundary — so a caller can't accidentally
+// trust an unverified claim.
+//
+// Subject is the only field callers should treat as required; the rest come back
+// zero when absent. An assertion from an OIDC proxy that doesn't model orgs or
+// roles is still perfectly valid, so a missing claim is not an error.
+type AssertionClaims struct {
+	Subject string   // the "sub" claim — the stable identity anchor
+	Email   string   // the "email" claim, if present
+	OrgID   string   // the "org_id" claim — the tenant the session is scoped to
+	OrgSlug string   // the "org_slug" claim — human-readable tenant name
+	Roles   []string // the "roles" claim — bare role names, scoped to OrgID
+}
+
+// Claim-projection bounds. A verified signature proves the IdP asserted these
+// values, NOT that they are small: a buggy or compromised IdP, or a user with
+// pathological group membership, can mint an assertion with thousands of roles.
+// Every downstream consumer would then pay per-role costs on every request
+// (attribution slices, audit-log lines). Bounding here rather than at a call
+// site means each future consumer inherits the limit instead of re-deriving it.
+const (
+	maxRoles     = 32
+	maxRoleRunes = 256
+)
+
+// VerifyAssertion verifies a request assertion and projects the identity claims
+// the principal resolver needs. Any signature/issuer/audience/expiry failure, or
+// an empty subject, yields ErrInvalid — identical to [VerifySubject], which this
+// widens rather than replaces.
+//
+// Absent org/role claims are NOT an error (see [AssertionClaims]). Roles are
+// bounded per the constants above; a non-string element is skipped rather than
+// failing the request, matching stringClaim's treatment of a malformed claim as
+// an absent one.
+func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionClaims, error) {
+	claims := jwt.MapClaims{}
+	if _, err := jwt.NewParser(v.opts...).ParseWithClaims(raw, claims, v.kf.KeyfuncCtx(ctx)); err != nil {
+		return AssertionClaims{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	sub, err := claims.GetSubject()
+	if err != nil || sub == "" {
+		return AssertionClaims{}, ErrInvalid
+	}
+	return AssertionClaims{
+		Subject: sub,
+		Email:   stringClaim(claims, "email"),
+		OrgID:   stringClaim(claims, "org_id"),
+		OrgSlug: stringClaim(claims, "org_slug"),
+		Roles:   stringSliceClaim(claims, "roles"),
+	}, nil
+}
+
 // WebhookClaims is the subset of a verified webhook JWT the receiver acts on.
 // It is a typed projection — the package never leaks jwt.MapClaims across its
 // boundary — so a caller can't accidentally trust an unverified claim.
@@ -169,6 +224,55 @@ func stringClaim(claims jwt.MapClaims, key string) string {
 		return v
 	}
 	return ""
+}
+
+// stringSliceClaim reads a string-array claim, returning nil when absent, null,
+// or not an array. Non-string elements are skipped for the same reason
+// stringClaim treats a non-string as absent: a malformed element is
+// indistinguishable from one the IdP never sent, and dropping it is strictly
+// safer than failing a request that is otherwise correctly signed.
+//
+// The result is bounded by maxRoles/maxRoleRunes; excess is dropped with a
+// single warn rather than silently, so an operator can see truncation happened
+// without the log itself becoming the amplification.
+func stringSliceClaim(claims jwt.MapClaims, key string) []string {
+	raw, ok := claims[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, min(len(raw), maxRoles))
+	truncated := false
+	for _, elem := range raw {
+		s, ok := elem.(string)
+		if !ok {
+			continue
+		}
+		if len(out) >= maxRoles {
+			truncated = true
+			break
+		}
+		out = append(out, truncateRunes(s, maxRoleRunes))
+	}
+	if truncated {
+		slog.Warn("jwtauth: claim truncated",
+			"claim", key, "limit", maxRoles, "received", len(raw))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// truncateRunes caps s at n runes, never splitting a multi-byte character.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n { // len is bytes; runes <= bytes, so this is a safe fast path
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // requireHTTPS rejects a JWKS URL that isn't https — the JWKS is the root of

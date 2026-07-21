@@ -4,12 +4,14 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // computeGlobals walks the configured membership relation (default
 // `member-of`, see [Policy.MembershipRelation]) from the principal and
-// unions in Assignments[m] for every member m, plus the "everyone" role
-// if declared.
+// unions in Assignments[m] for every member m, plus any roles mapped from
+// the principal's verified assertion claims, plus the "everyone" role if
+// declared.
 //
 // Called once per Request via Globals(); the result is cached for the
 // lifetime of the Request.
@@ -40,6 +42,25 @@ func (r *Request) computeGlobals(ctx context.Context) GlobalRoles {
 			add(role, Source{Kind: SourceGlobal})
 		} else {
 			add(role, Source{Kind: SourceGroup, Group: m})
+		}
+	}
+	// Roles asserted by a verified identity assertion, mapped through the
+	// operator's allowlist. Like the everyone role below, these land without
+	// a graph walk — the principal need not exist as an entity at all, which
+	// is what makes an SSO-provisioned user's first request work.
+	//
+	// The claim value is NOT a role name: it only ever selects an entry the
+	// operator wrote in asserted_role_assignments, so an IdP cannot name a
+	// rela role the deployment did not choose to grant. Matching is exact
+	// after TrimSpace (Validate rejects blank keys); an undeclared target
+	// role is dropped silently, matching the Assignments guard above.
+	for _, claim := range r.principal.Roles() {
+		claim = strings.TrimSpace(claim)
+		for _, role := range policy.AssertedRoles[claim] {
+			if _, defined := policy.Roles[role]; !defined {
+				continue
+			}
+			add(role, Source{Kind: SourceAsserted, Claim: claim})
 		}
 	}
 	if _, ok := policy.Roles[EveryoneRole]; ok {

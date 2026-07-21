@@ -205,7 +205,29 @@ func buildJWTResolver(idv *jwtauth.Verifier, f *serverFlags) (resolver dataentry
 	if idv == nil {
 		return dataentry.JWTPrincipalResolver(nil, ""), ""
 	}
-	return dataentry.JWTPrincipalResolver(idv, f.jwtHeader), f.jwtHeader
+	return dataentry.JWTPrincipalResolver(assertionVerifierAdapter{idv}, f.jwtHeader), f.jwtHeader
+}
+
+// assertionVerifierAdapter bridges the concrete jwtauth.Verifier to the
+// dataentry resolver's expected shape, translating jwtauth.AssertionClaims into
+// dataentry.AssertedIdentity. Same rationale as webhookVerifierAdapter below:
+// the wiring layer is the one place allowed to import both packages, so
+// dataentry needn't depend on jwtauth and jwtauth stays an arch-lint leaf.
+type assertionVerifierAdapter struct{ v *jwtauth.Verifier }
+
+func (a assertionVerifierAdapter) VerifyAssertion(
+	ctx context.Context, raw string,
+) (dataentry.AssertedIdentity, error) {
+	c, err := a.v.VerifyAssertion(ctx, raw)
+	if err != nil {
+		return dataentry.AssertedIdentity{}, err
+	}
+	return dataentry.AssertedIdentity{
+		Subject: c.Subject,
+		OrgID:   c.OrgID,
+		OrgSlug: c.OrgSlug,
+		Roles:   c.Roles,
+	}, nil
 }
 
 // wireWebhookReceiver enables POST /webhooks/idp when -webhook-audience and

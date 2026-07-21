@@ -8,19 +8,27 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
-// stubVerifier is a SubjectVerifier that returns a fixed subject for a known
+// stubVerifier is an assertionVerifier that returns fixed claims for a known
 // token and an error otherwise — lets the resolver's behavior be tested without
 // real crypto (the crypto is covered in internal/jwtauth).
 type stubVerifier struct {
 	validToken string
 	subject    string
+	orgID      string
+	orgSlug    string
+	roles      []string
 }
 
-func (s stubVerifier) VerifySubject(_ context.Context, raw string) (string, error) {
-	if raw == s.validToken {
-		return s.subject, nil
+func (s stubVerifier) VerifyAssertion(_ context.Context, raw string) (AssertedIdentity, error) {
+	if raw != s.validToken {
+		return AssertedIdentity{}, errors.New("invalid")
 	}
-	return "", errors.New("invalid")
+	return AssertedIdentity{
+		Subject: s.subject,
+		OrgID:   s.orgID,
+		OrgSlug: s.orgSlug,
+		Roles:   s.roles,
+	}, nil
 }
 
 func TestJWTPrincipalResolver_VerifiedSubjectBecomesUser(t *testing.T) {

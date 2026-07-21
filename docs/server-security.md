@@ -221,6 +221,28 @@ attribution and any `acl.yaml` assignments survive an email change.
 The verification rejects non-ES256 algorithms (including `alg:none`),
 a wrong issuer or audience, and expired or unsigned tokens.
 
+**Other claims.** Beyond `sub`, rela projects `org_id`, `org_slug`, and
+`roles` from the verified assertion onto the principal. All are optional
+— an assertion carrying only a subject is perfectly valid, so a proxy
+that models neither orgs nor roles works unchanged.
+
+- **`roles`** (array of strings) can grant `acl.yaml` roles via
+  `asserted_role_assignments`, letting you maintain group membership in
+  the IdP instead of restating it per-user. See
+  [`docs/acl-overview.md`](acl-overview.md).
+- **`org_id` / `org_slug`** are recorded for audit attribution.
+  **Nothing evaluates them** — they do not provide tenant isolation.
+  See [`docs/acl-security.md`](acl-security.md).
+
+Claims are read only from a token that passed every verification step,
+and only this resolver can populate them — the `--principal-header` path
+carries no roles by construction. `roles` is bounded (32 entries, 256
+runes each) so a malformed or hostile IdP cannot amplify one request.
+
+Note that revocation lags: an issued assertion is honored until its
+`exp`, so a role revoked in the IdP survives in rela for up to one token
+lifetime. See [`docs/acl-security.md`](acl-security.md).
+
 **Chain order.** When several sources are configured, `$RELA_DATAENTRY_USER`
 (local-dev override) wins, then the verified JWT, then the plain
 `--principal-header`, then `unknown`. A verified JWT is preferred over
