@@ -239,16 +239,42 @@ func TestBuild_SeedRawStoreNoGate(t *testing.T) {
 	}
 }
 
-// AC9: unknown type fails loud with a manual line.
+// AC9: unknown type fails loud with a manual line. Also a regression guard that
+// a resolver's typed BuildError round-trips cleanly (kind=resolve, clean Msg,
+// correct line) rather than being stringified into a lua-kind error by
+// RaiseError.
 func TestBuild_FailLoudUnknownType(t *testing.T) {
 	t.Parallel()
+	// ```rela is line 2; the resolver call is on body line 3.
 	_, err := Build(context.Background(), "line1\n```rela\ntyperef{type=\"nope\"}\n```\n", Options{Meta: fixtureMeta(t)})
 	var be *BuildError
 	if !errors.As(err, &be) {
 		t.Fatalf("want *BuildError, got %T: %v", err, err)
 	}
-	if !strings.Contains(be.Msg, "nope") {
-		t.Errorf("error should name the unknown type: %v", be)
+	if be.Kind != "resolve" {
+		t.Errorf("kind = %q, want resolve (typed round-trip, not lua-stringified)", be.Kind)
+	}
+	if be.Line != 3 {
+		t.Errorf("manual line = %d, want 3", be.Line)
+	}
+	if be.Msg != `typeref: unknown entity type "nope"` {
+		t.Errorf("msg = %q, want the clean resolver message", be.Msg)
+	}
+}
+
+// AC9 (M1): a Lua error on the SECOND line of a multi-line island reports the
+// manual line of that line, not the island start.
+func TestBuild_FailLoudLuaLineOffset(t *testing.T) {
+	t.Parallel()
+	// ```rela is line 1; body line 1 = "h2(...)" (manual 2); body line 2 =
+	// "nosuchfunc()" (manual 3), which errors.
+	_, err := Build(context.Background(), "```rela\nh2(\"ok\")\nnosuchfunc()\n```\n", Options{Meta: fixtureMeta(t)})
+	var be *BuildError
+	if !errors.As(err, &be) {
+		t.Fatalf("want *BuildError, got %T: %v", err, err)
+	}
+	if be.Line != 3 {
+		t.Errorf("manual line = %d, want 3 (the erroring line, not the island start)", be.Line)
 	}
 }
 
