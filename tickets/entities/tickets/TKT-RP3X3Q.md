@@ -5,7 +5,7 @@ title: Surface org_id and roles from verified identity assertions
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Extract `org_id`, `org_slug` and `roles` from the verified ES256 identity
