@@ -5,7 +5,7 @@ title: 'rela-docs phase 2 (Tier A): markdown+Lua-island doc language + schema/gr
 kind: enhancement
 priority: medium
 effort: l
-status: review
+status: done
 ---
 
 Phase 2 of FEAT-G4VO53, reframed as a **doc language** (see RES-EK7LSA addendum
