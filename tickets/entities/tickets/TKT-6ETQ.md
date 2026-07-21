@@ -4,8 +4,10 @@ type: ticket
 title: Rename V1View{Add,Link}Info to V1SidePanel* now that view path no longer uses them
 kind: refactor
 priority: low
-status: backlog
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** target types no longer exist — `V1ViewAddInfo`/`V1ViewLinkInfo` (and the proposed `V1SidePanel*` names) have zero hits in internal/dataentry; the struct family was removed in the SPA migration.
 
 ## Problem
 

@@ -5,8 +5,10 @@ title: Move entitymanager engine/cascade construction into a helper to trim work
 kind: refactor
 priority: low
 effort: s
-status: backlog
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** target already gone — `workspace.newWorkspace` and `workspace.mayDependOn` no longer exist; engine/cascade construction now lives in `appbuild.go` (automation.NewEngineFromMetamodel).
 
 ## Summary
 

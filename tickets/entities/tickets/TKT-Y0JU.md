@@ -5,8 +5,10 @@ title: Narrow lua.WriteDeps.EntityManager to an EntityMutator interface
 kind: refactor
 priority: low
 effort: xs
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented as TKT-IF37 — internal/lua/deps.go defines the 5-method `Mutator` interface and WriteDeps.EntityManager is typed Mutator; lua no longer imports internal/entitymanager (landed name is Mutator, not EntityMutator).
 
 ## Summary
 

@@ -5,8 +5,10 @@ title: Tighten storeutil.ValidateID and add storetest.Capabilities
 kind: refactor
 priority: medium
 effort: xs
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — storeutil.ValidateID rejects path separators/NUL/control chars, storetest has CreateEntityRejectsInvalidIDs, and storetest.RunAll takes a Capabilities struct with Attachments gating.
 
 ## Description
 

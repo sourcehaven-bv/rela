@@ -3,8 +3,10 @@ id: TKT-VZB9O
 type: ticket
 title: Trim and split root CLAUDE.md into nested instruction files
 kind: enhancement
-status: backlog
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** substantively done — nested CLAUDE.mds exist (frontend/, internal/dataentry/, internal/entitymanager/), the consumer-side-interfaces essay moved to docs/architecture/, the @managed block was trimmed, and root CLAUDE.md dropped ~974 → 608 lines. The exact ~440-line target was aspirational; further trimming can ride future doc changes.
 
 ## Description
 

@@ -8,6 +8,8 @@ effort: s
 status: backlog
 ---
 
+> **Sweep note (2026-07-20): partially addressed — docs/lua-scripting.md now has a Markdown AST section covering parse/render/headers/first_paragraph/heading/paragraph/blockquote/code_block/table/link (+resolve_refs/entity_refs). Still undocumented: shift_headers, set_min_header_level, extract_section, concat, list, ref, entity_table, thematic_break, plus AST node shapes. The TKT-RTH3 "Task Lists subsection" preservation premise is stale — no such subsection exists.**
+
 # Document the Full `rela.md` Markdown AST API
 
 ## Context
