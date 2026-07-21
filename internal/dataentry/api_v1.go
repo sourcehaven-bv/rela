@@ -58,6 +58,14 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 
 // toV1CustomType is the single serialization site for a metamodel custom type
 // onto the wire, so the _schema types map and any other consumer stay in sync.
+//
+// It intentionally projects only Values/Labels/Default. The documentation-only
+// fields — CustomType.Descriptions (per-value meaning), CustomType.Transitions,
+// and TransitionDef.Help (TKT-0YBFT8) — are NOT serialized: their consumer is the
+// offline `rela docs` generator (FEAT-G4VO53), not the SPA. Wiring any of them to
+// the wire is a deliberate frontend-contract change (see internal/dataentry/
+// CLAUDE.md), not a "helpful" one-liner here. TestToV1CustomType_OmitsDocFields
+// pins this boundary.
 func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
 	return v1.CustomType{
 		Values:  ct.Values,
@@ -1912,6 +1920,26 @@ func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelat
 	return resolved
 }
 
+// aboutDescription is the deployment description shown by the SPA's global
+// "About" help (TKT-DUQBD0). The data-entry.yaml `app.description` wins when set
+// (it is the UI-app-specific text); otherwise it falls back to the metamodel's
+// top-level `description` (the schema-level prose added in TKT-0YBFT8). Empty
+// when neither is set — the SPA hides the About button.
+//
+// This is a SEPARATE field from AppConfig.Description on the wire: that field is
+// also rendered by SettingsView as a plain one-line value, and pushing the
+// (possibly multi-paragraph markdown) metamodel description into it would
+// regress that view. The About surface gets its own field, `about_description`.
+func aboutDescription(s *Schema) string {
+	if s.Cfg != nil && s.Cfg.App.Description != "" {
+		return s.Cfg.App.Description
+	}
+	if s.Meta != nil {
+		return s.Meta.Description
+	}
+	return ""
+}
+
 func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1941,18 +1969,19 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Description:       s.Cfg.App.Description,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 		},
-		Styles:      s.StyleMap,
-		Forms:       forms,
-		Lists:       s.Cfg.Lists,
-		Views:       s.Cfg.Views,
-		EntityViews: s.Cfg.EntityViews,
-		Kanbans:     s.Cfg.Kanbans,
-		Dashboard:   s.Cfg.Dashboard,
-		Actions:     s.Cfg.Actions,
-		Navigation:  s.Cfg.Navigation,
-		Documents:   s.Cfg.Documents,
-		Apps:        appsToV1(a.scanAppsOrLog()),
-		Palette:     a.palette.Resolved(),
+		AboutDescription: aboutDescription(s),
+		Styles:           s.StyleMap,
+		Forms:            forms,
+		Lists:            s.Cfg.Lists,
+		Views:            s.Cfg.Views,
+		EntityViews:      s.Cfg.EntityViews,
+		Kanbans:          s.Cfg.Kanbans,
+		Dashboard:        s.Cfg.Dashboard,
+		Actions:          s.Cfg.Actions,
+		Navigation:       s.Cfg.Navigation,
+		Documents:        s.Cfg.Documents,
+		Apps:             appsToV1(a.scanAppsOrLog()),
+		Palette:          a.palette.Resolved(),
 	}
 
 	writeV1JSON(w, http.StatusOK, config)

@@ -117,6 +117,56 @@ validations:
 		}
 	})
 
+	// TKT-0YBFT8 / RR#5: the rename path re-marshals via yaml.Node (AST), so the
+	// doc-only fields (top-level description, per-value descriptions, transition
+	// help) must survive a rename that doesn't touch them — a regression guard
+	// against a future rename-path change dropping unrecognized keys.
+	t.Run("preserves doc-fields through a rename", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "metamodel.yaml")
+
+		input := `version: "1.0"
+description: A demo deployment description that must survive rename.
+types:
+  ticket-status:
+    values: [open, done]
+    descriptions:
+      open: A newly filed ticket.
+    transitions:
+      - from: open
+        to: done
+        help: Close it when the work is finished.
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      status:
+        type: ticket-status
+relations: {}
+`
+		writeFile(t, path, input)
+
+		if err := RenameEntityType(path, "requirement", "feature", testMetaFS); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Re-parse and assert every doc-field survived the AST round-trip.
+		m, err := Parse([]byte(readFile(t, path)))
+		assertNoError(t, err)
+		if m.Description == "" {
+			t.Error("top-level description lost through rename")
+		}
+		ct := m.Types["ticket-status"]
+		assertEqual(t, ct.Descriptions["open"], "A newly filed ticket.")
+		assertEqual(t, ct.Transitions[0].Help, "Close it when the work is finished.")
+		// And the rename itself happened.
+		if _, ok := m.Entities["feature"]; !ok {
+			t.Error("rename did not produce the feature entity")
+		}
+	})
+
 	t.Run("error when type not found", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "metamodel.yaml")

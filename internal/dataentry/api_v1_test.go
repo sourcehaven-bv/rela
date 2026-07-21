@@ -10,6 +10,7 @@ import (
 	url2 "net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -5402,5 +5403,47 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	}
 	if strings.Contains(body, `"_relations"`) {
 		t.Errorf("collection response must NOT contain _relations; got: %s", body)
+	}
+}
+
+// TestToV1CustomType_OmitsDocFields pins the phase-1a boundary (TKT-0YBFT8 /
+// RR-R2DG19): the documentation-only metamodel fields — CustomType.Descriptions,
+// CustomType.Transitions, and TransitionDef.Help — are NOT serialized onto the
+// wire. Their consumer is the offline `rela docs` generator, not the SPA. If a
+// future change wires any of them to v1.CustomType, that is a deliberate
+// frontend-contract change and this test should be updated intentionally.
+func TestToV1CustomType_OmitsDocFields(t *testing.T) {
+	ct := metamodel.CustomType{
+		Values:       []string{"todo", "done"},
+		Labels:       map[string]string{"todo": "To do"},
+		Default:      "todo",
+		Descriptions: map[string]string{"todo": "not yet started"},
+		Transitions: []metamodel.TransitionDef{
+			{From: "todo", To: "done", Label: "Complete", Help: "when the work is finished"},
+		},
+	}
+
+	got := toV1CustomType(ct)
+
+	// The wire projection carries exactly Values/Labels/Default.
+	if !reflect.DeepEqual(got.Values, ct.Values) {
+		t.Errorf("Values = %v, want %v", got.Values, ct.Values)
+	}
+	if !reflect.DeepEqual(got.Labels, ct.Labels) {
+		t.Errorf("Labels = %v, want %v", got.Labels, ct.Labels)
+	}
+	if got.Default != "todo" {
+		t.Errorf("Default = %q, want todo", got.Default)
+	}
+	// The v1.CustomType wire type has no field for the doc-only data, so this is
+	// a structural guarantee — the marshaled JSON must not mention them.
+	blob, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, banned := range []string{"descriptions", "transitions", "help", "not yet started"} {
+		if strings.Contains(string(blob), banned) {
+			t.Errorf("wire CustomType must not carry doc-field %q; got: %s", banned, blob)
+		}
 	}
 }

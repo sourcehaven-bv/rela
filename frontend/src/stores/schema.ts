@@ -35,6 +35,10 @@ export const useSchemaStore = defineStore('schema', () => {
   const dashboard = ref<DashboardConfig | undefined>(undefined)
   const navigation = ref<NavigationEntry[]>([])
   const app = ref<AppConfig>({ name: 'rela' })
+  // The deployment description for the global "About" help (TKT-DUQBD0): the
+  // data-entry.yaml app.description, falling back to the metamodel description.
+  // Distinct from app.description so SettingsView's one-liner is unaffected.
+  const aboutDescription = ref('')
   const styles = ref<Record<string, Record<string, string>>>({})
   const paletteLight = ref<Record<string, string>>({})
   const paletteDark = ref<Record<string, string>>({})
@@ -245,6 +249,7 @@ export const useSchemaStore = defineStore('schema', () => {
 
       // Config
       app.value = configData.app || { name: 'rela' }
+      aboutDescription.value = configData.about_description || ''
       styles.value = configData.styles || {}
       forms.value = new Map(Object.entries(configData.forms || {}))
       lists.value = new Map(Object.entries(configData.lists || {}))
@@ -300,6 +305,7 @@ export const useSchemaStore = defineStore('schema', () => {
     dashboard,
     navigation,
     app,
+    aboutDescription,
     styles,
     paletteLight,
     paletteDark,

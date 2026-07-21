@@ -9,6 +9,8 @@ export interface ResolvedPalette {
 
 export interface Config {
   app: AppConfig
+  /** Deployment description for the global "About" help (TKT-DUQBD0). */
+  about_description?: string
   styles?: Record<string, Record<string, string>>
   palette?: ResolvedPalette
   forms: Record<string, FormConfig>
