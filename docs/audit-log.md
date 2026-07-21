@@ -152,7 +152,7 @@ earlier versions wrote.
 > Nothing in the ACL evaluates it — a principal in one org can reach
 > every entity its roles grant, in every org. The field records which
 > tenant a request came from, not what it was allowed to touch. See
-> [`docs/acl-security.md`](acl-security.md) for the full rationale.
+> GUIDE-acl-security for the full rationale.
 
 `roles` records the IdP's role names as asserted, before any policy
 mapping — so an investigator can see what the token claimed, separately

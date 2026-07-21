@@ -229,10 +229,10 @@ that models neither orgs nor roles works unchanged.
 - **`roles`** (array of strings) can grant `acl.yaml` roles via
   `asserted_role_assignments`, letting you maintain group membership in
   the IdP instead of restating it per-user. See
-  [`docs/acl-overview.md`](acl-overview.md).
+  GUIDE-acl-overview.
 - **`org_id` / `org_slug`** are recorded for audit attribution.
   **Nothing evaluates them** — they do not provide tenant isolation.
-  See [`docs/acl-security.md`](acl-security.md).
+  See GUIDE-acl-security.
 
 Claims are read only from a token that passed every verification step,
 and only this resolver can populate them — the `--principal-header` path
@@ -241,7 +241,7 @@ runes each) so a malformed or hostile IdP cannot amplify one request.
 
 Note that revocation lags: an issued assertion is honored until its
 `exp`, so a role revoked in the IdP survives in rela for up to one token
-lifetime. See [`docs/acl-security.md`](acl-security.md).
+lifetime. See GUIDE-acl-security.
 
 **Chain order.** When several sources are configured, `$RELA_DATAENTRY_USER`
 (local-dev override) wins, then the verified JWT, then the plain

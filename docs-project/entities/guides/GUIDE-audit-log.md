@@ -56,6 +56,9 @@ Every record is one line of JSON:
 | `before` / `after` | For `rename-entity` only — the identity diff                   |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
 | `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, or `desktop`             |
+| `principal.raw_user` | Optional. The pre-resolution identifier, when `principal_property` substituted a graph entity ID into `user` |
+| `principal.org_id` / `principal.org_slug` | Optional. The tenant from a verified identity assertion. **Attribution only — see the warning below** |
+| `principal.roles` | Optional. The `roles` claim from a verified identity assertion |
 | `triggered_by` | Optional. Engine-initiated writes carry `automation:<name>`, `schedule:<task-name>`, or `cascade:delete-entity:<id>` |
 | `summary`     | One-line human-readable summary; for updates names *which* properties changed but never their values (secret-leak defense) |
 
@@ -132,6 +135,34 @@ behind a reverse proxy that *strips the same header from inbound
 requests* and *sets it from an authenticated source*. A direct
 client can otherwise spoof the header at will. See
 [`docs/server-security.md`](server-security.md) for deployment guidance.
+
+### Verified-assertion fields (`org_id`, `org_slug`, `roles`)
+
+When rela verifies a signed identity assertion (the `--jwt-*` flags),
+the record additionally carries the assertion's tenant and role claims:
+
+```json
+{
+  "principal": {
+    "user": "usr_abc123", "tool": "data-entry",
+    "org_id": "org_acme", "org_slug": "acme", "roles": ["admin"]
+  }
+}
+```
+
+All three are omitted entirely for every other entry point, so records
+from a CLI, MCP, or header-mode deployment are byte-identical to what
+earlier versions wrote.
+
+> **`org_id` in this log does NOT mean rela enforced tenant isolation.**
+> Nothing in the ACL evaluates it — a principal in one org can reach
+> every entity its roles grant, in every org. The field records which
+> tenant a request came from, not what it was allowed to touch. See
+> GUIDE-acl-security for the full rationale.
+
+`roles` records the IdP's role names as asserted, before any policy
+mapping — so an investigator can see what the token claimed, separately
+from what `acl.yaml` chose to grant it.
 
 Header values are trimmed, length-capped at 256 runes, and have
 control characters replaced with a space — defense-in-depth against
