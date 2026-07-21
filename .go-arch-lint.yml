@@ -51,6 +51,7 @@ components:
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
   renametype:       { in: internal/renametype }
+  mermaid:          { in: internal/mermaid }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
@@ -285,6 +286,7 @@ deps:
       - git
       - htmlutil
       - lua
+      - mermaid
       - metamodel
       - migration
       - openapi

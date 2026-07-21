@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/mermaid"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -268,7 +269,7 @@ func renderEnumHelp(w http.ResponseWriter, e EnumHelp) {
 		// (the help modal runs renderMermaidDiagrams over the injected HTML). One
 		// diagram per state-machine field.
 		fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`,
-			htmltemplate.HTMLEscapeString(mermaidStateDiagram(e)))
+			htmltemplate.HTMLEscapeString(enumStateDiagram(e)))
 		fmt.Fprint(w, `<table class="help-table"><thead><tr><th>Move</th><th>From &rarr; To</th><th>When to use</th></tr></thead><tbody>`)
 		for _, tr := range e.Transitions {
 			fmt.Fprintf(w, `<tr><td>%s</td><td><code>%s</code> &rarr; <code>%s</code></td><td>%s</td></tr>`,
@@ -281,75 +282,16 @@ func renderEnumHelp(w http.ResponseWriter, e EnumHelp) {
 	}
 }
 
-// mermaidStateDiagram builds a stateDiagram-v2 source for one state-machine
-// field: an entry arrow to the initial state (when known) plus one edge per
-// transition, labeled with the move (verb).
-//
-// Raw enum values are NOT safe to splice directly into mermaid syntax — a value
-// with a space, an arrow, or a colon would break parsing, and a newline in a
-// move label could inject a spurious edge (the caller HTML-escapes the result,
-// but renderMermaidDiagrams reads textContent, which un-escapes it before
-// parsing, so the escape protects only the HTML transport). So every state value
-// is mapped to a synthetic id (`s0`, `s1`, …) and aliased with
-// `state "raw value" as sN` so the diagram DISPLAYS the real value while the
-// edges reference the safe id; move labels are flattened (newlines/carriage
-// returns → spaces) so a label can never spill onto a new diagram line.
-func mermaidStateDiagram(e EnumHelp) string {
-	ids := map[string]string{}
-	idFor := func(value string) string {
-		if id, ok := ids[value]; ok {
-			return id
-		}
-		id := fmt.Sprintf("s%d", len(ids))
-		ids[value] = id
-		return id
-	}
-
-	var b strings.Builder
-	b.WriteString("stateDiagram-v2\n")
-
-	// Collect the states in first-seen order so the alias declarations are
-	// deterministic; assign ids as we go.
-	order := []string{}
-	seen := map[string]bool{}
-	note := func(v string) {
-		if v != "" && !seen[v] {
-			seen[v] = true
-			order = append(order, v)
-			idFor(v)
-		}
-	}
-	note(e.Initial)
+// enumStateDiagram builds a stateDiagram-v2 source for one state-machine field
+// by mapping the EnumHelp DTO onto the shared injection-safe renderer in
+// internal/mermaid. The move label is EnumHelp.Transitions[].Move, which already
+// carries the Label→To fallback applied when the EnumHelp was built.
+func enumStateDiagram(e EnumHelp) string {
+	ts := make([]mermaid.Transition, 0, len(e.Transitions))
 	for _, tr := range e.Transitions {
-		note(tr.From)
-		note(tr.To)
+		ts = append(ts, mermaid.Transition{From: tr.From, To: tr.To, Label: tr.Move})
 	}
-	for _, v := range order {
-		fmt.Fprintf(&b, "    state %q as %s\n", v, ids[v])
-	}
-
-	if e.Initial != "" {
-		fmt.Fprintf(&b, "    [*] --> %s\n", ids[e.Initial])
-	}
-	for _, tr := range e.Transitions {
-		label := mermaidLabel(tr.Move)
-		if label != "" && tr.Move != tr.To {
-			fmt.Fprintf(&b, "    %s --> %s: %s\n", ids[tr.From], ids[tr.To], label)
-		} else {
-			fmt.Fprintf(&b, "    %s --> %s\n", ids[tr.From], ids[tr.To])
-		}
-	}
-	return b.String()
-}
-
-// mermaidLabel flattens a transition move label so it is safe as a mermaid edge
-// label: newlines/carriage returns collapse to spaces (a raw newline would end
-// the edge line and let the remainder inject a new statement).
-func mermaidLabel(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	return strings.TrimSpace(s)
+	return mermaid.StateDiagram(e.Initial, ts)
 }
 
 // gatherRelations collects relation documentation for an entity type.

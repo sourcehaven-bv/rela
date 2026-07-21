@@ -192,3 +192,156 @@ reads thin.
 per-value descriptions, TransitionDef help. Populate in-tree examples.
 - TKT (Phase 1b): ACL RoleDef description (+ optional policy description).
 - TKT (Phase 2): `rela docs --output-dir` generator (depends on 1a+1b).
+
+---
+
+## ADDENDUM (2026-07-21) — reframed: from static generator to a **doc language**
+
+Phase 1a/1b shipped (TKT-0YBFT8, TKT-DUQBD0, TKT-JO2SAD). Before ticketing phase
+2, a design session (prompted by studying **sourcehaven-bv/openvwr**'s
+Playwright screenshot system for its ISMS manual) reframed phase 2. The
+recommendation above still holds for *what content to emit*; what changed is the
+**authoring model**. Superseding decision: phase 2 is **not** a push-generator
+that emits a whole `.md`; it is a **doc language** — markdown authored by a
+human, with the mechanical fragments *pulled* from the schema/graph at build.
+
+### The inversion (push → pull)
+
+- **Old (B1):** `rela docs` walks the schema and emits one big Markdown. Prose
+is either absent (dry) or robotic. Fragments can't be placed where a writer
+wants them.
+- **New:** the writer authors a normal Markdown manual and **escapes into Lua
+islands** to summon fragments. Prose stays prose; reference fragments are live
+includes that can't drift. This is Diátaxis done right — *explanation/how-to* is
+authored, *reference* is resolved.
+
+### The language — markdown with Lua islands (PHP/JSX/MDX model)
+
+Markdown by default; two island forms (chosen syntax):
+- **Statement island** — a fenced ` ```rela ` block. Runs Lua for
+side-effects; doc-API calls append to an output buffer at that position (PHP
+`echo ` model). For multi-emit / loops.
+- **Echo island** — an inline `` `rela <expr>` `` span. Substitutes the string
+value mid-sentence (interpolation).
+
+Rationale for Lua-as-engine over a bespoke `{{directive}} ` grammar: rela
+**already has** a Lua runtime (`internal/lua `, `ReadDeps `/`WriteDeps `),
+the MCP `lua_* ` tools, and `just docs ` is already a Lua content pipeline.
+The high-level doc API **is** the DSL — a *library* of functions bound into a
+doc runtime, not a new language. The escape hatch (loops, conditionals) and the
+common case are the same language, so the power tier costs zero extra grammar.
+NOTE (validated in the prototype): the markdown host earns its keep because
+manuals are ~85% prose — NOT because `{{directive}} ` reads better than `fn{}
+` (it doesn't; that was an overclaim). The host format is the value, not the
+sugar.
+
+### The doc API (island functions) — validated against the ISMS corpus
+
+Hand-resolved a real ISMS "Risicobeheer" chapter against
+`sourcehaven-bv/isms-sourcehaven `'s `metamodel.yaml ` + live `RISK-001.md `
+(prototype artifact built this session). Surface:
+
+| Function | Kind | Reads | Emits |
+| --- | --- | --- | --- |
+| `typeref{type, fields} ` | resolver | metamodel | field/relation reference table |
+| `values{type, field} ` | resolver | metamodel | enum values + per-value meaning (phase-1a `descriptions `) |
+| `relations{type} ` | resolver | metamodel | flat relation list |
+| `graph{from, depth, exclude/only, direction} ` | resolver | **`tracer `** | **mermaid subgraph** (see below) |
+| `lifecycle{type, field} ` | resolver | metamodel | mermaid `stateDiagram-v2 ` (phase-1a `TransitionDef `) or flat-list fallback |
+| `entity{id, fields} ` | resolver | **live graph** | one entity's values (worked example) |
+| `count{type} ` | resolver | live graph | a number (echo) |
+| `roles_matrix{type} ` | resolver | acl | GitLab-style role×entity capability rows |
+| `description() ` | resolver | metamodel/acl | top-level deployment prose |
+| `create `/`update `/`link ` | **seed (write)** | — | writes the throwaway memstore (see two-graph) |
+| `screenshot{...} ` | **Tier B** | seed graph | captured, annotated PNG (see below) |
+| `h1/h2/h3/md(...) ` | emit | — | structural markdown from Lua |
+
+### Three design refinements from the session (each SIMPLIFIED the design)
+
+1. **`graph{} ` = tracer + mermaid, with `depth ` + `exclude `/`only `.** Thin
+renderer over the existing `tracer ` package (bounded walk + edge filters).
+`from ` as a **type** draws the schema neighbourhood (metamodel read); `from `
+as an **id** traverses the live graph (`tracer `). `exclude ` (prune plumbing
+edges like `spawnt `/`gaat_over `) is what makes the diagram *publishable* —
+turns a hairball into the domain story. `only ` is the allowlist inverse. Node
+labels get the phase-1a.5 injection-safe treatment (`mermaidLabel `/synthetic
+ids).
+
+2. **No `seed.* ` API — reuse the EXISTING rela Lua write bindings.** The seed
+for a screenshot is just `create `/`update `/`link ` (the same `WriteDeps `
+API a scheduler script uses), bound to the throwaway memstore instead of the
+real store. So the **two-graph model IS the CLAUDE.md `ReadDeps `/`WriteDeps `
+split**: read bundle → the documented (real) project, read-only; write bundle →
+a fresh ephemeral `memstore `, discarded post-build. Writes go through
+`entitymanager `, so fixtures are valid by construction. This is the sanctioned
+place the "no user Lua on the read path" rule does NOT bite (offline operator
+build; writes land in a throwaway). It also cleanly resolves the earlier "schema
+vs live-graph" fork: `entity{id="RISK-001"} ` reads real data;
+`screenshot{entity=r.id} ` reads fixture data — different bindings, visibly
+different graphs.
+
+3. **Screenshot annotations = arrows-with-text (openvwr's actual vocabulary).**
+`arrows = {{at, text, side}, ...} ` — the label rides the shaft (the common
+case). `at ` targets a **field** (`"score" ` → schema-checked `data-field `,
+fail-loud) OR a **control** (`"@button:opslaan" ` / `"@role:..." ` → ARIA).
+Keep openvwr's `box `/`badge `/`redact ` as secondary primitives. rela beats
+openvwr here: the data-entry form IS metamodel-generated, so anchors are schema
+fields the harness knows exist — no brittle `getByRole() ` CSS; a renamed field
+breaks the build instead of drifting.
+
+### The Tier A / Tier B split (drives the phase-2/phase-3 boundary)
+
+| | **Tier A — resolvers** | **Tier B — `screenshot{} `** |
+| --- | --- | --- |
+| Reads | metamodel + graph + tracer (`ReadDeps `) | drives the live data-entry SPA |
+| Needs | nothing — pure, offline | Playwright + seeded memstore + role auth |
+| Output | inline markdown / mermaid | PNG + `![]() ` reference |
+| Runs on | any laptop, CI, anywhere | CI (or opt-in dev) only |
+| Failure | **fail-loud** on bad schema ref | **degrade**: placeholder + warning, build still succeeds |
+
+**Tier B must degrade, never block:** a manual always builds without a browser
+(full text/tables/mermaid; screenshots become placeholders). The memstore seed
+itself is browser-free and always runs, so even a degraded placeholder is
+accurate about what it would show.
+
+### openvwr — what was studied and adopted
+
+openvwr builds its ISMS manual via **pandoc + Eisvogel → PDF** from hand-written
+markdown chapters; figures are auto-generated by a **Playwright** `FIGURES
+`-list harness (`tools/screenshots/ `), selectors anchored to ARIA roles not
+pixels, annotations (`arrow `/`box `/`badge `/`redact `) anchored to
+selectors and **fail-loud** if an element is missing. Adopted: the fail-loud
+discipline, the arrow-with-text annotation vocabulary, and the "generated
+reference + hand- written narrative, pandoc-able to PDF" two-track shape.
+Improved on: the figure list is not hand-maintained — it's inline islands; and
+anchors are schema fields, not CSS.
+
+### Open questions to settle in the phase-2 ticket (none structural)
+
+1. **Function vocabulary** — lock a tight, consistent naming set before it
+ossifies (`typeref `/`values `/`relations `/`graph `/`lifecycle `/`entity
+`/`count `/ `roles_matrix `/`description `/`create `/`link `/`screenshot
+`).
+2. **Empty-resolve strictness** — an island resolving to nothing (e.g.
+`description() ` when no top-level description exists): silent `"" ` vs warn
+vs fail. Needs a per-build strictness knob (openvwr fails loud).
+3. **Island marker** — ` ```rela `/`` `rela ` `` chosen (raw source renders as
+a fenced code block on GitHub rather than garbage; greppable). Preprocessor runs
+before any markdown renderer sees the file.
+4. **Live-graph reads in a manual** — `entity{} `/`count{} ` embed real instance
+data. Powerful (can't go stale) but may warrant an opt-in per build. Distinct
+from seed/screenshot data (memstore).
+
+### Revised phase split (supersedes the "Suggested ticket breakdown" above)
+
+- **Phase 1a / 1a.5 / 1b** — doc-fields. DONE (TKT-0YBFT8, TKT-DUQBD0,
+TKT-JO2SAD).
+- **Phase 2 = Tier A** — the doc language + all schema/graph resolvers +
+markdown-island preprocessor, read-only against the real project (+ the memstore
+seed *write* wiring, since `graph `/`entity ` share the runtime and the seed
+is the same write API). Emits markdown; pandoc-able to PDF. NO browser.
+- **Phase 3 = Tier B** — the `screenshot{} ` island: metamodel-driven Playwright
+harness against the seeded memstore, arrow annotations, degradation. Depends on
+phase 2 + needs the data-entry server to accept an in-memory project handle at
+build time (the `memorybackend ` build tag proves the server can run on
+memstore — plumbing, not new capability).

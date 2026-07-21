@@ -2,7 +2,7 @@
 id: FEAT-G4VO53
 type: feature
 title: Generated deployment documentation (rela docs)
-description: 'Generate per-deployment end-user + operator/support documentation from a rela project''s metamodel.yaml + acl.yaml as one Markdown file (mermaid state diagrams; PDF-convertible), replacing hand-maintained docs. Delivered in phases: 1a metamodel doc-fields, 1b ACL role descriptions, 2 the `rela docs --output-dir` generator. See RES-EK7LSA.'
+description: 'Generate per-deployment end-user + operator/support documentation for a rela project. REFRAMED 2026-07-21 (see RES-EK7LSA addendum): phase 2 is a doc LANGUAGE — markdown authored by a human with mechanical fragments pulled from the schema/graph via Lua islands (```rela blocks / `rela` inline echoes), NOT a static push-generator. Phases: 1a/1a.5/1b doc-fields (DONE); phase 2 = Tier A (language + resolvers: typeref/values/relations/graph/lifecycle/entity/count/roles_matrix + memstore seed, no browser); phase 3 = Tier B (screenshot island via Playwright).'
 status: proposed
 ---
 
