@@ -246,9 +246,12 @@ Rules and fallbacks:
 - **No match** grants nothing; an unmapped claim is simply ignored.
 - **Undeclared target role** is dropped silently at resolution, matching
   how `assignments` treats an unknown role name.
-- **Exact matching after trimming.** `admin` and `  admin  ` match;
-  `Admin` does not. A blank claim key is rejected at load, since it
-  could never match and would sit inert.
+- **Exact matching after trimming.** Surrounding whitespace is stripped
+  from both the policy key and the incoming claim, so a padded key like
+  `"  admin  "` still matches the claim `admin`. Matching is otherwise
+  exact — `Admin` does not match `admin`. A key that is blank after
+  trimming is rejected at load, since it could never match and would
+  sit inert.
 - **`everyone` is rejected as a target** — it already applies to every
   principal, so granting it from a claim would double-report the role
   with no effect.
