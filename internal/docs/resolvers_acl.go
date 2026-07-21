@@ -24,7 +24,7 @@ func (dr *docRuntime) luaRolesMatrix(ls *lua.LState) int {
 
 	types := dr.matrixTypes(typ)
 	if len(types) == 0 {
-		return dr.luaFail(ls, "resolve", "roles_matrix: unknown entity type %q", typ)
+		return dr.luaFail(ls, "roles_matrix: unknown entity type %q", typ)
 	}
 	roles := sortedRoleNames(dr.policy.Roles)
 	if len(roles) == 0 {
@@ -58,7 +58,7 @@ func (dr *docRuntime) luaRolesMatrix(ls *lua.LState) int {
 			fmt.Fprintf(&b, "| `%s` | %s |", t, v.name)
 			for _, rn := range roles {
 				role := dr.policy.Roles[rn]
-				granted := false
+				var granted bool
 				if v.name == "read" {
 					granted = grantsList(role.Read, t)
 				} else {

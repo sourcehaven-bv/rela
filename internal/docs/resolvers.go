@@ -2,25 +2,25 @@ package docs
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // entityDef looks up an entity type, raising a fail-loud resolve error naming
 // the type when unknown.
 func (dr *docRuntime) entityDef(ls *lua.LState, fn, typ string) (*metamodel.EntityDef, bool) {
 	if typ == "" {
-		dr.luaFail(ls, "resolve", "%s: `type` is required", fn)
+		dr.luaFail(ls, "%s: `type` is required", fn)
 		return nil, false
 	}
 	def, ok := dr.meta.GetEntityDef(typ)
 	if !ok {
-		dr.luaFail(ls, "resolve", "%s: unknown entity type %q", fn, typ)
+		dr.luaFail(ls, "%s: unknown entity type %q", fn, typ)
 		return nil, false
 	}
 	return def, true
@@ -74,6 +74,14 @@ func (dr *docRuntime) luaTyperef(ls *lua.LState) int {
 	return 0
 }
 
+// enumInfo is a property's resolved value set for the values resolver.
+type enumInfo struct {
+	values       []string
+	labels       map[string]string
+	descriptions map[string]string
+	def          string
+}
+
 // luaValues emits an enum field's allowed values, marking the default and
 // adding per-value meaning when CustomType.Descriptions is present.
 // values{type="risico", field="behandeling"}.
@@ -87,53 +95,64 @@ func (dr *docRuntime) luaValues(ls *lua.LState) int {
 	}
 	prop, ok := def.Properties[field]
 	if !ok {
-		return dr.luaFail(ls, "resolve", "values: %q has no field %q", typ, field)
+		return dr.luaFail(ls, "values: %q has no field %q", typ, field)
 	}
 
-	values, labels, descs, def2 := dr.resolveEnum(prop)
-	if len(values) == 0 {
-		return dr.luaFail(ls, "resolve", "values: field %q of %q is not an enum", field, typ)
+	e := dr.resolveEnum(prop)
+	if len(e.values) == 0 {
+		return dr.luaFail(ls, "values: field %q of %q is not an enum", field, typ)
 	}
 
-	var b strings.Builder
-	hasDesc := len(descs) > 0
-	if hasDesc {
-		b.WriteString("| Value | Meaning |\n|---|---|\n")
-		for _, v := range values {
-			shown := v
-			if l := labels[v]; l != "" {
-				shown = fmt.Sprintf("%s (`%s`)", l, v)
-			} else {
-				shown = fmt.Sprintf("`%s`", v)
-			}
-			if v == def2 {
-				shown += " _(default)_"
-			}
-			fmt.Fprintf(&b, "| %s | %s |\n", shown, mdCell(descs[v]))
-		}
+	if len(e.descriptions) > 0 {
+		dr.emit(e.renderTable())
 	} else {
-		for i, v := range values {
-			if i > 0 {
-				b.WriteString(" · ")
-			}
-			fmt.Fprintf(&b, "`%s`", v)
-			if v == def2 {
-				b.WriteString(" (default)")
-			}
+		dr.emit(e.renderList())
+	}
+	return 0
+}
+
+// renderTable renders enum values as a Value|Meaning table (used when the type
+// carries per-value descriptions).
+func (e enumInfo) renderTable() string {
+	var b strings.Builder
+	b.WriteString("| Value | Meaning |\n|---|---|\n")
+	for _, v := range e.values {
+		shown := fmt.Sprintf("`%s`", v)
+		if l := e.labels[v]; l != "" {
+			shown = fmt.Sprintf("%s (`%s`)", l, v)
+		}
+		if v == e.def {
+			shown += " _(default)_"
+		}
+		fmt.Fprintf(&b, "| %s | %s |\n", shown, mdCell(e.descriptions[v]))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// renderList renders enum values as a compact inline list (no descriptions).
+func (e enumInfo) renderList() string {
+	var b strings.Builder
+	for i, v := range e.values {
+		if i > 0 {
+			b.WriteString(" · ")
+		}
+		fmt.Fprintf(&b, "`%s`", v)
+		if v == e.def {
+			b.WriteString(" (default)")
 		}
 	}
 	b.WriteString("\n\n")
-	dr.emit(b.String())
-	return 0
+	return b.String()
 }
 
 // resolveEnum returns the value set for a property: a named custom type's
 // values/labels/descriptions/default, else an inline enum's values.
-func (dr *docRuntime) resolveEnum(prop metamodel.PropertyDef) (values []string, labels, descs map[string]string, def string) {
+func (dr *docRuntime) resolveEnum(prop metamodel.PropertyDef) enumInfo {
 	if ct, named := dr.meta.Types[prop.Type]; named {
-		return ct.Values, ct.Labels, ct.Descriptions, ct.Default
+		return enumInfo{ct.Values, ct.Labels, ct.Descriptions, ct.Default}
 	}
-	return prop.Values, prop.Labels, nil, prop.Default
+	return enumInfo{prop.Values, prop.Labels, nil, prop.Default}
 }
 
 // luaRelations emits an entity type's outgoing relations as a list.
@@ -154,7 +173,7 @@ func (dr *docRuntime) luaRelations(ls *lua.LState) int {
 	var b strings.Builder
 	for _, name := range names {
 		rel := dr.meta.Relations[name]
-		if !containsStr(rel.From, typ) {
+		if !slices.Contains(rel.From, typ) {
 			continue
 		}
 		fmt.Fprintf(&b, "- `%s` → %s", name, strings.Join(rel.To, ", "))
@@ -177,11 +196,11 @@ func (dr *docRuntime) luaEntity(ls *lua.LState) int {
 		id = argString(ls, "id")
 	}
 	if id == "" {
-		return dr.luaFail(ls, "resolve", "entity: `id` is required")
+		return dr.luaFail(ls, "entity: `id` is required")
 	}
 	e, err := dr.store.GetEntity(dr.ctx, id)
 	if err != nil {
-		return dr.luaFail(ls, "resolve", "entity: %q not found in the seeded graph (did you create() it?)", id)
+		return dr.luaFail(ls, "entity: %q not found in the seeded graph (did you create() it?)", id)
 	}
 	wanted := fieldStringSlice(ls, tbl, "fields")
 
@@ -220,15 +239,6 @@ func (dr *docRuntime) luaDescription(ls *lua.LState) int {
 
 // --- small text helpers ---
 
-func containsStr(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
 // oneLine collapses newlines so a description fits on a list line.
 func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
@@ -241,16 +251,4 @@ func oneLine(s string) string {
 func mdCell(s string) string {
 	s = oneLine(s)
 	return strings.ReplaceAll(s, "|", "\\|")
-}
-
-// countType is a small shared helper: number of seeded entities of a type.
-func (dr *docRuntime) countType(typ string) (int, error) {
-	n := 0
-	for _, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ}) {
-		if err != nil {
-			return 0, err
-		}
-		n++
-	}
-	return n, nil
 }
