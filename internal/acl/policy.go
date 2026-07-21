@@ -436,23 +436,46 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // check in [Policy.Validate], so it still fails loudly rather than normalizing
 // into something matchable. Two keys that differ only by padding collapse to
 // one entry; their role lists are unioned, so no grant is lost.
+//
+// Two details the merge depends on, both load-bearing:
+//
+//   - Lists are CLONED on store, never aliased. Go map iteration order is
+//     random, so which key is stored first and which merges into it varies per
+//     run; appending into a caller-owned slice with spare capacity would write
+//     past its length into the caller's backing array. Unreachable via
+//     [LoadPolicy] (the YAML unmarshaler hands over fresh slices), but this
+//     method exists precisely because policies also arrive hand-built — and
+//     [Policy.Validate] documents that as supported.
+//   - The merged list is SORTED. Otherwise the same policy text yields a
+//     different in-memory order on every load, which propagates into the
+//     resolver's attribution append order. Downstream reporting sorts anyway,
+//     so nothing observable breaks today; this keeps a future consumer from
+//     inheriting an ordering hazard that nothing in the type documents.
 func (p *Policy) normalizeAssertedRoles() {
 	if len(p.AssertedRoles) == 0 {
 		return
 	}
 	out := make(map[string]RoleList, len(p.AssertedRoles))
+	merged := map[string]bool{}
 	for claim, roles := range p.AssertedRoles {
 		key := strings.TrimSpace(claim)
-		if existing, dup := out[key]; dup {
-			for _, r := range roles {
-				if !slices.Contains(existing, r) {
-					existing = append(existing, r)
-				}
-			}
-			out[key] = existing
+		existing, dup := out[key]
+		if !dup {
+			out[key] = slices.Clone(roles)
 			continue
 		}
-		out[key] = roles
+		for _, r := range roles {
+			if !slices.Contains(existing, r) {
+				existing = append(existing, r)
+			}
+		}
+		out[key] = existing
+		merged[key] = true
+	}
+	// Sort only the merged lists: an unmerged list keeps the operator's
+	// authored order, which is what they see in `rela acl map` output.
+	for key := range merged {
+		slices.Sort(out[key])
 	}
 	p.AssertedRoles = out
 }
@@ -523,9 +546,14 @@ func (p *Policy) Validate() error {
 	for claim, roles := range p.AssertedRoles {
 		// A blank claim key can never match a real claim value, so the mapping
 		// is silently inert — the failure mode an operator is least likely to
-		// notice. (Surrounding whitespace is normalized away by
-		// normalizeAssertedRoles before this runs, so only an all-blank key
-		// reaches here.)
+		// notice.
+		//
+		// normalizeAssertedRoles has already run, so a key that TrimSpace
+		// considers blank arrives here as "". isBlank uses a narrower
+		// definition (ASCII space/tab/CR/LF) than TrimSpace (all Unicode
+		// space), and the difference is safe in this direction only: anything
+		// TrimSpace strips is already gone, so isBlank sees "" and rejects it.
+		// Widening isBlank would not break this; narrowing TrimSpace would.
 		if isBlank(claim) {
 			return errors.New("asserted_role_assignments: claim key must not be empty or whitespace")
 		}

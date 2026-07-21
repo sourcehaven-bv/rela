@@ -2,6 +2,7 @@ package acl_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -393,6 +394,73 @@ asserted_role_assignments:
 		if _, ok := roles[want]; !ok {
 			t.Errorf("role %q lost when padded keys merged: %v", want, roles)
 		}
+	}
+}
+
+func TestAssertedRoles_MergeIsDeterministic(t *testing.T) {
+	t.Parallel()
+	// Go randomizes map iteration, so which padded key is stored first and
+	// which merges into it varies per run. Without an explicit sort the same
+	// policy text yields a different in-memory role order on every load.
+	const policy = `
+roles:
+  editor: {read: [ticket]}
+  auditor: {read: [ticket]}
+  reviewer: {read: [ticket]}
+asserted_role_assignments:
+  "admin": editor
+  " admin ": auditor
+  "admin\t": reviewer
+`
+	var first []string
+	for i := range 50 {
+		p, err := acl.LoadPolicyBytes([]byte(policy))
+		if err != nil {
+			t.Fatalf("LoadPolicyBytes: %v", err)
+		}
+		got := []string(p.AssertedRoles["admin"])
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !slices.Equal(got, first) {
+			t.Fatalf("merge order varies between loads: run 0 = %v, run %d = %v",
+				first, i, got)
+		}
+	}
+	// Sanity: all three roles survived the merge.
+	if len(first) != 3 {
+		t.Errorf("merged list = %v, want 3 roles", first)
+	}
+}
+
+func TestAssertedRoles_MergeDoesNotAliasCallerSlices(t *testing.T) {
+	t.Parallel()
+	// Validate's godoc invites operators to call it on a hand-built policy, and
+	// normalizeAssertedRoles exists precisely because policies arrive by paths
+	// other than LoadPolicy. A hand-built RoleList can have spare capacity, so
+	// appending into it during a merge would write past its length into the
+	// caller's backing array.
+	backing := make(acl.RoleList, 1, 4)
+	backing[0] = "editor"
+	sibling := append(backing[:1:4], "SENTINEL") //nolint:gocritic // deliberate share
+
+	p := &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"editor":  {Read: []string{"ticket"}},
+			"auditor": {Read: []string{"ticket"}},
+		},
+		//nolint:gocritic // the padded key is the point: it forces the merge path
+		AssertedRoles: map[string]acl.RoleList{
+			"admin": backing, " admin": {"auditor"},
+		},
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	if sibling[1] != "SENTINEL" {
+		t.Errorf("merge clobbered a caller-owned slice: sibling = %v", sibling)
 	}
 }
 
