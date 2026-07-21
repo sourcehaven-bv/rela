@@ -65,7 +65,7 @@ func StateDiagram(initial string, transitions []Transition) string {
 	var b strings.Builder
 	b.WriteString("stateDiagram-v2\n")
 	for _, v := range order {
-		fmt.Fprintf(&b, "    state %q as %s\n", v, ids[v])
+		fmt.Fprintf(&b, "    state %s as %s\n", quoted(v), ids[v])
 	}
 	if initial != "" {
 		fmt.Fprintf(&b, "    [*] --> %s\n", ids[initial])
@@ -117,7 +117,7 @@ func Graph(nodes []Node, edges []Edge) string {
 		}
 		id := fmt.Sprintf("n%d", len(ids))
 		ids[n.Key] = id
-		fmt.Fprintf(&b, "    %s[%q]\n", id, Label(n.Text))
+		fmt.Fprintf(&b, "    %s[%s]\n", id, quoted(n.Text))
 	}
 
 	emitted := map[string]bool{}
@@ -133,7 +133,7 @@ func Graph(nodes []Node, edges []Edge) string {
 		}
 		emitted[dedupe] = true
 		if lbl := Label(e.Label); lbl != "" {
-			fmt.Fprintf(&b, "    %s -->|%q| %s\n", from, lbl, to)
+			fmt.Fprintf(&b, "    %s -->|%s| %s\n", from, quoted(e.Label), to)
 		} else {
 			fmt.Fprintf(&b, "    %s --> %s\n", from, to)
 		}
@@ -141,12 +141,22 @@ func Graph(nodes []Node, edges []Edge) string {
 	return b.String()
 }
 
-// Label flattens a string so it is safe as a mermaid edge/node label: newlines
-// and carriage returns collapse to spaces (a raw newline would end the current
-// diagram line and let the remainder inject a new statement).
+// Label makes a string safe as the text of a mermaid quoted label. It flattens
+// newlines (a raw newline ends the diagram line and lets the remainder inject a
+// statement) and replaces the characters that break out of a quoted label —
+// double quotes and angle brackets — with mermaid's HTML-entity forms. Mermaid
+// does NOT honor backslash escaping (so fmt %q is unsafe); it decodes numeric
+// and named entities inside quotes, so `#quot;` renders as a literal quote
+// without terminating the label.
 func Label(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, `"`, "#quot;")
+	s = strings.ReplaceAll(s, "<", "#lt;")
+	s = strings.ReplaceAll(s, ">", "#gt;")
 	return strings.TrimSpace(s)
 }
+
+// quoted wraps an already-escaped Label in mermaid's double-quote delimiters.
+func quoted(s string) string { return `"` + Label(s) + `"` }

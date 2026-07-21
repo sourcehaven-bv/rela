@@ -222,6 +222,27 @@ func TestBuild_RolesMatrix(t *testing.T) {
 	}
 }
 
+// The built-in "everyone" role must be folded into every named role's cell
+// (not shown as a column) so the matrix reflects EFFECTIVE access.
+func TestBuild_RolesMatrixEveryoneFolded(t *testing.T) {
+	t.Parallel()
+	policy := &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"everyone": {Read: []string{"*"}},   // everyone can read
+			"editor":   {Create: []string{"*"}}, // editor can create (but not declared read)
+		},
+	}
+	out := build(t, "```rela\nroles_matrix{type=\"risico\"}\n```\n", Options{Meta: fixtureMeta(t), Policy: policy})
+	// "everyone" is not a column.
+	if strings.Contains(out, "| Type | Verb | everyone") || strings.Contains(out, " everyone |") {
+		t.Errorf("everyone should not be a column:\n%s", out)
+	}
+	// The read row for editor must show ✓ (folded from everyone), and a footnote.
+	if !strings.Contains(out, "everyone` role") {
+		t.Errorf("expected the everyone footnote:\n%s", out)
+	}
+}
+
 func TestBuild_RolesMatrixNoPolicy(t *testing.T) {
 	t.Parallel()
 	out := build(t, "```rela\nroles_matrix{type=\"risico\"}\n```\n", Options{Meta: fixtureMeta(t)})

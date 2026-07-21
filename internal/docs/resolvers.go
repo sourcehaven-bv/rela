@@ -67,7 +67,7 @@ func (dr *docRuntime) luaTyperef(ls *lua.LState) int {
 		if p.Required {
 			req = "yes"
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", name, typeName, req)
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", mdCell(name), mdCell(typeName), req)
 	}
 	b.WriteString("\n")
 	dr.emit(b.String())
@@ -117,9 +117,9 @@ func (e enumInfo) renderTable() string {
 	var b strings.Builder
 	b.WriteString("| Value | Meaning |\n|---|---|\n")
 	for _, v := range e.values {
-		shown := fmt.Sprintf("`%s`", v)
+		shown := fmt.Sprintf("`%s`", mdCell(v))
 		if l := e.labels[v]; l != "" {
-			shown = fmt.Sprintf("%s (`%s`)", l, v)
+			shown = fmt.Sprintf("%s (`%s`)", mdCell(l), mdCell(v))
 		}
 		if v == e.def {
 			shown += " _(default)_"

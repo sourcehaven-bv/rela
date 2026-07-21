@@ -17,7 +17,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
 
-// buildTimeout bounds a single manual build. An island with an infinite loop
+// buildTimeout bounds a whole manual build (all islands together, via a child
+// context deadline in Build). An island with an infinite loop
 // (a flat `while true`, which the call-stack cap does not catch) is stopped
 // only by this context deadline, so it must always be wired.
 const buildTimeout = 30 * time.Second
@@ -58,6 +59,10 @@ type docRuntime struct {
 	// it through the Lua error channel (which would lose the type + line).
 	pending *BuildError
 
+	// seedCounts is a per-type auto-id counter for the seed's mintID, avoiding a
+	// full-store scan per create().
+	seedCounts map[string]int
+
 	// warnings accumulates non-fatal issues (empty resolves in non-strict mode).
 	warnings []string
 }
@@ -72,6 +77,13 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	// Bound the WHOLE build, not each island: the runtime's per-run applyTimeout
+	// resets a fresh deadline on every island, so without a build-wide deadline
+	// N islands give no effective ceiling. A child ctx deadline caps the total.
+	// If the caller already set an earlier deadline, that one wins.
+	ctx, cancel := context.WithTimeout(ctx, buildTimeout)
+	defer cancel()
 
 	st := memstore.New()
 	dr := &docRuntime{
@@ -195,14 +207,17 @@ func (dr *docRuntime) wrapLuaErr(seg segment, err error) error {
 		}
 	}
 	// A doc.* binding that failed stashed a typed BuildError (RaiseError only
-	// carries a string, so we can't recover it from err). Prefer it, stamping
-	// the manual line the parser tracked.
-	if dr.pending != nil {
-		be := dr.pending
-		dr.pending = nil
-		be.Line = seg.line
-		be.Snip = strings.TrimSpace(seg.body)
-		return be
+	// carries a string, so we can't recover it from err). Prefer it — but ONLY
+	// when the raised Lua message still contains the stashed message. If the
+	// island caught the resolver's error with pcall and then failed elsewhere,
+	// dr.pending is stale and err is the *real* failure: fall through so the
+	// author sees that one, not the swallowed one.
+	pending := dr.pending
+	dr.pending = nil
+	if pending != nil && strings.Contains(err.Error(), pending.Msg) {
+		pending.Line = line
+		pending.Snip = strings.TrimSpace(seg.body)
+		return pending
 	}
 	return &BuildError{Line: line, Kind: "lua", Msg: err.Error(), Snip: strings.TrimSpace(seg.body)}
 }

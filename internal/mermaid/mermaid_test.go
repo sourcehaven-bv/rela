@@ -172,3 +172,56 @@ func TestLabel_FlattensNewlines(t *testing.T) {
 		}
 	}
 }
+
+// Label must neutralize the characters that break OUT of a mermaid quoted
+// label — double quotes and angle brackets — using mermaid's entity forms
+// (NOT backslash, which mermaid does not honor).
+func TestLabel_EscapesQuotesAndBrackets(t *testing.T) {
+	t.Parallel()
+	got := mermaid.Label(`a"] --> x["b`)
+	if strings.Contains(got, `"`) {
+		t.Errorf("bare double-quote must be entity-escaped, got %q", got)
+	}
+	if !strings.Contains(got, "#quot;") {
+		t.Errorf("expected #quot; entity, got %q", got)
+	}
+	if strings.ContainsAny(mermaid.Label("a<b>c"), "<>") {
+		t.Errorf("angle brackets must be escaped, got %q", mermaid.Label("a<b>c"))
+	}
+}
+
+// A node whose text contains a double quote must not break out of the
+// bracketed quoted label (the regression the reviewer flagged: %q emits \",
+// which mermaid does not treat as an escape).
+func TestGraph_QuoteInNodeTextDoesNotBreakOut(t *testing.T) {
+	t.Parallel()
+	got := mermaid.Graph([]mermaid.Node{{Key: "k", Text: `evil"] --> hax["pwned`}}, nil)
+	// The safety property: the label text sits between exactly two delimiter
+	// quotes. Any internal quote is entity-escaped, so the `] --> [` sequence is
+	// inert label text, not structure — it cannot break out of the "…" label.
+	if strings.Count(got, `"`) != 2 {
+		t.Errorf("node label must contain exactly the 2 delimiter quotes, got:\n%s", got)
+	}
+	if strings.Contains(got, `"]`) && !strings.Contains(got, `#quot;]`) {
+		t.Errorf("a raw quote precedes a bracket — possible breakout:\n%s", got)
+	}
+}
+
+// Likewise a state value or transition label carrying a double quote.
+func TestStateDiagram_QuoteInValueDoesNotBreakOut(t *testing.T) {
+	t.Parallel()
+	got := mermaid.StateDiagram(`o"pen`, []mermaid.Transition{{From: `o"pen`, To: "closed", Label: `cl"ose`}})
+	for line := range strings.SplitSeq(got, "\n") {
+		// Each state alias line has exactly two delimiter quotes; no other line
+		// may contain a raw quote.
+		if strings.HasPrefix(strings.TrimSpace(line), "state ") {
+			if strings.Count(line, `"`) != 2 {
+				t.Errorf("state alias must have exactly 2 delimiter quotes: %q", line)
+			}
+			continue
+		}
+		if strings.Contains(line, `"`) {
+			t.Errorf("non-alias line leaked a raw quote: %q", line)
+		}
+	}
+}

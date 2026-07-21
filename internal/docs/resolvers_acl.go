@@ -26,14 +26,18 @@ func (dr *docRuntime) luaRolesMatrix(ls *lua.LState) int {
 	if len(types) == 0 {
 		return dr.luaFail(ls, "roles_matrix: unknown entity type %q", typ)
 	}
-	roles := sortedRoleNames(dr.policy.Roles)
-	if len(roles) == 0 {
+	// The built-in "everyone" role is not a column: acl appends it to EVERY
+	// principal's effective role set, so its grants must be folded into every
+	// named role's cell (else the table understates effective access — the whole
+	// point of the matrix). It is reported once, in a footnote.
+	everyone, hasEveryone := dr.policy.Roles[acl.EveryoneRole]
+	roles := namedRoleNames(dr.policy.Roles)
+	if len(roles) == 0 && !hasEveryone {
 		dr.emit("_No roles defined in the policy._\n\n")
 		return 0
 	}
 
 	var b strings.Builder
-	// Header: Type | Verb | role1 | role2 ...
 	b.WriteString("| Type | Verb |")
 	for _, r := range roles {
 		fmt.Fprintf(&b, " %s |", r)
@@ -44,27 +48,23 @@ func (dr *docRuntime) luaRolesMatrix(ls *lua.LState) int {
 	}
 	b.WriteString("\n")
 
-	verbs := []struct {
-		name string
-		op   acl.Op
-	}{
+	verbs := []verbSpec{
 		{"create", acl.OpCreate},
 		{"read", ""}, // read handled specially
 		{"update", acl.OpUpdate},
 		{"delete", acl.OpDelete},
 	}
+	everyoneGrantsAny := false
 	for _, t := range types {
 		for _, v := range verbs {
-			fmt.Fprintf(&b, "| `%s` | %s |", t, v.name)
+			fmt.Fprintf(&b, "| `%s` | %s |", mdCell(t), v.name)
+			everyoneGrant := hasEveryone && roleGrantsVerb(everyone, v, t)
+			if everyoneGrant {
+				everyoneGrantsAny = true
+			}
 			for _, rn := range roles {
-				role := dr.policy.Roles[rn]
-				var granted bool
-				if v.name == "read" {
-					granted = grantsList(role.Read, t)
-				} else {
-					granted = grantsVerb(role, v.op, t)
-				}
-				if granted {
+				// Effective grant = the role's own grant OR everyone's.
+				if roleGrantsVerb(dr.policy.Roles[rn], v, t) || everyoneGrant {
 					b.WriteString(" ✓ |")
 				} else {
 					b.WriteString("  |")
@@ -74,8 +74,28 @@ func (dr *docRuntime) luaRolesMatrix(ls *lua.LState) int {
 		}
 	}
 	b.WriteString("\n")
+	if everyoneGrantsAny {
+		b.WriteString("_✓ cells include grants from the built-in `everyone` role " +
+			"(applies to all principals, incl. unauthenticated)._\n\n")
+	}
 	dr.emit(b.String())
 	return 0
+}
+
+// verbSpec pairs a matrix column verb name with its acl.Op (read has none — it
+// is a separate grant list).
+type verbSpec struct {
+	name string
+	op   acl.Op
+}
+
+// roleGrantsVerb reports whether a role grants the given verb on a type,
+// dispatching read (a separate list) from the create/update/delete verbs.
+func roleGrantsVerb(role acl.RoleDef, v verbSpec, typ string) bool {
+	if v.name == "read" {
+		return grantsList(role.Read, typ)
+	}
+	return grantsVerb(role, v.op, typ)
 }
 
 // matrixTypes returns the requested type (validated) or all entity types.
@@ -114,9 +134,14 @@ func grantsList(list []string, target string) bool {
 	return false
 }
 
-func sortedRoleNames(roles map[string]acl.RoleDef) []string {
+// namedRoleNames returns the policy's role names sorted, EXCLUDING the built-in
+// "everyone" role (which is folded into every column rather than shown as one).
+func namedRoleNames(roles map[string]acl.RoleDef) []string {
 	names := make([]string, 0, len(roles))
 	for n := range roles {
+		if n == acl.EveryoneRole {
+			continue
+		}
 		names = append(names, n)
 	}
 	sort.Strings(names)
