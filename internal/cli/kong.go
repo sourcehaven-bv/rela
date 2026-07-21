@@ -86,6 +86,7 @@ type CLI struct {
 	Fmt       FmtCmd       `cmd:"" help:"Format entity and relation files."`
 	Normalize NormalizeCmd `cmd:"" help:"Normalize markdown headers in entity files."`
 	Schema    SchemaCmd    `cmd:"" help:"View the metamodel schema."`
+	Docs      DocsCmd      `cmd:"" help:"Build documentation from Markdown manuals with rela Lua islands."`
 	Template  TemplateCmd  `cmd:"" help:"Manage entity and relation templates."`
 	Analyze   AnalyzeCmd   `cmd:"" help:"Analyze the entity graph."`
 	ACL       ACLCmd       `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
@@ -215,7 +216,7 @@ func configureKongLogging(verbose, quiet bool) {
 // completion, migrate) or do their own discovery (mcp, flow, validate).
 func requiresProject(cmd string) bool {
 	switch firstKongToken(cmd) {
-	case "show", "list", "trace", "graph", "export", "fmt", "schema",
+	case "show", "list", "trace", "graph", "export", "fmt", "schema", "docs",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
