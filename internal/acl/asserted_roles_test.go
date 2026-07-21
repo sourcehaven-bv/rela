@@ -352,6 +352,50 @@ asserted_role_assignments:
 	}
 }
 
+func TestAssertedRoles_PaddedClaimKeyIsNormalized(t *testing.T) {
+	t.Parallel()
+	// Regression (found in code review): a padded key used to load clean and be
+	// PERMANENTLY INERT. The resolver trims the incoming claim before an exact
+	// map lookup, so nothing could ever match the untrimmed stored key — a
+	// mapping that looks configured and silently grants nothing.
+	d := assertedWorld(t, `
+roles:
+  editor:
+    read: [ticket]
+asserted_role_assignments:
+  "  admin  ": editor
+`)
+
+	roles := globalRoles(t, d, verified("usr_1", "admin"))
+
+	if _, ok := roles["editor"]; !ok {
+		t.Errorf("padded policy key did not match claim %q — the key was stored "+
+			"untrimmed and is unmatchable: %v", "admin", roles)
+	}
+}
+
+func TestAssertedRoles_PaddedKeysMergeRatherThanClobber(t *testing.T) {
+	t.Parallel()
+	// Two keys differing only by padding collapse to one entry. Their role
+	// lists must be unioned — dropping either would silently revoke a grant.
+	d := assertedWorld(t, `
+roles:
+  editor: {read: [ticket]}
+  auditor: {read: [ticket]}
+asserted_role_assignments:
+  "admin": editor
+  " admin ": auditor
+`)
+
+	roles := globalRoles(t, d, verified("usr_1", "admin"))
+
+	for _, want := range []string{"editor", "auditor"} {
+		if _, ok := roles[want]; !ok {
+			t.Errorf("role %q lost when padded keys merged: %v", want, roles)
+		}
+	}
+}
+
 func TestAssertedRoles_PolicyRejectsBlankClaimKey(t *testing.T) {
 	t.Parallel()
 	// A blank key can never match (matching is exact after trim), so the

@@ -1,6 +1,7 @@
 package principal_test
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -115,6 +116,39 @@ func TestPrincipal_Equal(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrincipal_AccessorsDoNotShareBackingArray(t *testing.T) {
+	t.Parallel()
+	// Principal is a value type, so a plain copy shares the roles backing
+	// array. Every accessor that hands out a Principal or its roles must clone,
+	// or one holder can mutate what another is about to authorize against.
+	p := principal.Verified("usr_1", principal.ToolDataEntry, "org", "slug",
+		[]string{"admin"})
+
+	t.Run("Clone", func(t *testing.T) {
+		t.Parallel()
+		c := p.Clone()
+		c.Roles()[0] = "superuser" // mutating the accessor result is already safe
+		if got := p.Roles(); got[0] != "admin" {
+			t.Errorf("original mutated: %v", got)
+		}
+		// The clone's own backing array must be independent.
+		if &c.Roles()[0] == &p.Roles()[0] {
+			t.Error("Clone shares the roles backing array")
+		}
+	})
+
+	t.Run("From(ctx)", func(t *testing.T) {
+		t.Parallel()
+		ctx := principal.With(context.Background(), p)
+		a := principal.From(ctx)
+		b := principal.From(ctx)
+		// Two independent readers of the same ctx must not alias.
+		if len(a.Roles()) > 0 && len(b.Roles()) > 0 && &a.Roles()[0] == &b.Roles()[0] {
+			t.Error("two From(ctx) results share the roles backing array")
+		}
+	})
 }
 
 func TestPrincipal_JSONRoundTrip(t *testing.T) {

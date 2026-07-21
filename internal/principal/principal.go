@@ -134,6 +134,22 @@ func (p Principal) IsZero() bool {
 	return p.User == "" && p.Tool == "" && p.RawUser == ""
 }
 
+// Clone returns a deep copy of p, safe to hand to code that might outlive or
+// mutate the original.
+//
+// Principal is a value type, so a plain assignment already copies the scalar
+// fields — but the roles slice header is shared, and a caller resliced onto
+// that backing array could mutate a role another holder is about to authorize
+// against. This is the one place the compiler stops enforcing the guarantee the
+// unexported fields exist to provide, so accessors that hand out a Principal by
+// value use this instead.
+func (p Principal) Clone() Principal {
+	if len(p.roles) > 0 {
+		p.roles = slices.Clone(p.roles)
+	}
+	return p
+}
+
 // Sanitized returns a copy of p with every string field passed through clean.
 // Used at a serialization boundary (the audit JSONL writer) to bound field
 // length and strip control characters.
@@ -263,7 +279,10 @@ func With(ctx context.Context, p Principal) context.Context {
 // instance), not silent.
 func From(ctx context.Context) Principal {
 	if v, ok := ctx.Value(principalKey{}).(Principal); ok {
-		return v
+		// Cloned: the ctx value is shared by every reader for the life of the
+		// request, so handing out the roles backing array would let one
+		// consumer mutate what another is about to authorize against.
+		return v.Clone()
 	}
 	return Principal{User: "unknown", Tool: "unknown"}
 }

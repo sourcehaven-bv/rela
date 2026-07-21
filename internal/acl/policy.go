@@ -420,9 +420,51 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 	return &p, nil
 }
 
+// normalizeAssertedRoles trims surrounding whitespace from every
+// asserted_role_assignments key so the stored form matches what the resolver
+// looks up.
+//
+// Without this, a padded key like `" admin": editor` loads clean and is
+// PERMANENTLY INERT: the resolver trims the incoming claim before an exact map
+// lookup, so no claim value can ever match the untrimmed key. That fails safe
+// (the grant silently doesn't happen) but it is precisely the
+// looks-configured-but-does-nothing trap [Policy.Validate]'s blank-key check
+// exists to prevent. [Policy.EffectiveMembershipRelation] trims its value for
+// the identical reason.
+//
+// A key that is entirely blank trims to "" and is then caught by the blank-key
+// check in [Policy.Validate], so it still fails loudly rather than normalizing
+// into something matchable. Two keys that differ only by padding collapse to
+// one entry; their role lists are unioned, so no grant is lost.
+func (p *Policy) normalizeAssertedRoles() {
+	if len(p.AssertedRoles) == 0 {
+		return
+	}
+	out := make(map[string]RoleList, len(p.AssertedRoles))
+	for claim, roles := range p.AssertedRoles {
+		key := strings.TrimSpace(claim)
+		if existing, dup := out[key]; dup {
+			for _, r := range roles {
+				if !slices.Contains(existing, r) {
+					existing = append(existing, r)
+				}
+			}
+			out[key] = existing
+			continue
+		}
+		out[key] = roles
+	}
+	p.AssertedRoles = out
+}
+
 // Validate enforces security-critical invariants on the parsed
 // policy. Run automatically by [LoadPolicy] / [LoadPolicyBytes].
 // Operators can also call it before persisting a generated policy.
+//
+// It also normalizes asserted_role_assignments keys in place (see
+// [Policy.normalizeAssertedRoles]) — the one mutation it performs, placed here
+// so it cannot be bypassed by a policy that reaches the resolver through a
+// path other than LoadPolicy.
 //
 // Current checks (RR-NIGK, RR-W2J6):
 //
@@ -467,6 +509,7 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // TKT-TS0J5K — which can rank findings by severity and cross-check the
 // metamodel, neither of which fits a boot gate.
 func (p *Policy) Validate() error {
+	p.normalizeAssertedRoles()
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
 			return fmt.Errorf("inherit_roles_through[%d]: relation type must not be empty or whitespace", i)
@@ -478,9 +521,11 @@ func (p *Policy) Validate() error {
 		}
 	}
 	for claim, roles := range p.AssertedRoles {
-		// A blank claim key can never match a real claim value (matching is
-		// exact after TrimSpace), so the mapping is silently inert — the
-		// failure mode an operator is least likely to notice.
+		// A blank claim key can never match a real claim value, so the mapping
+		// is silently inert — the failure mode an operator is least likely to
+		// notice. (Surrounding whitespace is normalized away by
+		// normalizeAssertedRoles before this runs, so only an all-blank key
+		// reaches here.)
 		if isBlank(claim) {
 			return errors.New("asserted_role_assignments: claim key must not be empty or whitespace")
 		}

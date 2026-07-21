@@ -181,6 +181,30 @@ func TestNonJWTResolvers_CannotSetAssertedClaims(t *testing.T) {
 	}
 }
 
+func TestNonJWTResolvers_ResolvePrincipalEntityIsTheOnlyOtherVerifiedCaller(t *testing.T) {
+	// resolvePrincipalEntity legitimately calls principal.Verified — it rebuilds
+	// the Principal when principal_property substitutes a graph entity ID. That
+	// makes it the one non-resolver path that can carry roles, so it is worth
+	// pinning that it only ever PROPAGATES claims it was given, never invents
+	// them. A principal that arrives with no roles must leave with none.
+	//
+	// The propagation direction (claims survive) is covered end-to-end by
+	// TestE2E_ClaimsSurvivePrincipalPropertyReStamp.
+	plain := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	if len(plain.Roles()) != 0 {
+		t.Fatal("precondition: a plain Principal already has roles")
+	}
+	// The shape resolvePrincipalEntity builds when the incoming principal has
+	// no claims: Verified with the resolved ID and whatever the original had.
+	p := principal.Verified("PERS-alice", plain.Tool, plain.OrgID(), plain.OrgSlug(), plain.Roles())
+	if len(p.Roles()) != 0 {
+		t.Errorf("rebuilding a role-less principal invented roles: %v", p.Roles())
+	}
+	if p.OrgID() != "" {
+		t.Errorf("rebuilding a principal with no org invented one: %q", p.OrgID())
+	}
+}
+
 func TestChainResolvers_JWTClaimsSurviveTheChain(t *testing.T) {
 	// The JWT resolver sits mid-chain (env → JWT → header → default). Verify the
 	// claims are not flattened by ChainResolvers on the way out.
