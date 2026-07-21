@@ -1742,7 +1742,7 @@ showed.
 > reads whatever its context assembles from the caller-supplied `entity_id` /
 > `list_id` — not from the page the button was on. See
 > [what a command permission confers](acl-security.md#what-a-command-permission-actually-confers).
-
+>
 > **Adding your first `acl.yaml` is a breaking change for commands.** Every
 > command needs a `permission:` and a matching grant, or it stops working. The
 > failure mode is deliberate: a denied command is safer than an ungoverned one.

@@ -623,6 +623,10 @@ API, so their buttons do not render. Treat that as a UI affordance only — the
 exec endpoint re-authorizes and 403s independently, and the 403 body never
 names the required permission or any policy content.
 
+A running command can be cancelled only by the principal that started it; a
+cancel request naming another principal's execution gets the same 404 as an
+unknown one, so cancellation cannot be used to probe what else is running.
+
 ### What a command permission actually confers
 
 **Command payloads are not read-gate scoped, in any context.** A command's
