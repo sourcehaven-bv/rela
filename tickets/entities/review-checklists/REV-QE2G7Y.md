@@ -71,4 +71,4 @@ minimal-group-policy footgun.
 - [x] ~~All CI checks pass~~ (verified locally: go test / just lint / arch-lint / lint-md / coverage-check all green; CI confirms on the PR)
 - [x] ~~PR URL documented below~~ (recorded when `/pr` opens it)
 
-**PR:** _pending — opened via `/pr` after done_
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1177
