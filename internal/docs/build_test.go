@@ -2,6 +2,7 @@ package docs
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// fixtureMeta builds a small ISMS-flavoured metamodel: a `risico` entity with a
+// fixtureMeta builds a small ISMS-flavored metamodel: a `risico` entity with a
 // required `kans`/`impact`, a `status` state machine (todo→doing→done) and a
 // flat `behandeling` enum with per-value descriptions, plus a `maatregel` and a
 // `wordt_gemitigeerd_door` relation.
@@ -242,8 +243,8 @@ func TestBuild_SeedRawStoreNoGate(t *testing.T) {
 func TestBuild_FailLoudUnknownType(t *testing.T) {
 	t.Parallel()
 	_, err := Build(context.Background(), "line1\n```rela\ntyperef{type=\"nope\"}\n```\n", Options{Meta: fixtureMeta(t)})
-	be, ok := err.(*BuildError)
-	if !ok {
+	var be *BuildError
+	if !errors.As(err, &be) {
 		t.Fatalf("want *BuildError, got %T: %v", err, err)
 	}
 	if !strings.Contains(be.Msg, "nope") {

@@ -2,6 +2,7 @@ package docs
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,11 +31,11 @@ func (dr *docRuntime) luaLifecycle(ls *lua.LState) int {
 	}
 	prop, ok := def.Properties[field]
 	if !ok {
-		return dr.luaFail(ls, "resolve", "lifecycle: %q has no field %q", typ, field)
+		return dr.luaFail(ls, "lifecycle: %q has no field %q", typ, field)
 	}
 	ct, named := dr.meta.Types[prop.Type]
 	if !named {
-		return dr.luaFail(ls, "resolve", "lifecycle: field %q of %q is not a named enum/state machine", field, typ)
+		return dr.luaFail(ls, "lifecycle: field %q of %q is not a named enum/state machine", field, typ)
 	}
 
 	if len(ct.Transitions) == 0 {
@@ -68,16 +69,16 @@ func (dr *docRuntime) luaLifecycle(ls *lua.LState) int {
 }
 
 // luaGraph emits a mermaid flow graph. Two grains by the `from` value:
-//   - an entity TYPE → the schema neighbourhood (which types connect to which),
+//   - an entity TYPE → the schema neighborhood (which types connect to which),
 //     read from the metamodel.
-//   - an entity ID → the seeded instance neighbourhood, traversed via tracer.
+//   - an entity ID → the seeded instance neighborhood, traversed via tracer.
 //
 // graph{from=..., depth=2, direction="out"|"in"|"both", exclude={...}, only={...}}.
 func (dr *docRuntime) luaGraph(ls *lua.LState) int {
 	tbl := argTable(ls)
 	from := fieldString(ls, tbl, "from")
 	if from == "" {
-		return dr.luaFail(ls, "resolve", "graph: `from` is required")
+		return dr.luaFail(ls, "graph: `from` is required")
 	}
 	depth := clampDepth(fieldInt(ls, tbl, "depth", graphDefaultDepth))
 	direction := fieldString(ls, tbl, "direction")
@@ -87,7 +88,7 @@ func (dr *docRuntime) luaGraph(ls *lua.LState) int {
 	exclude := fieldStringSlice(ls, tbl, "exclude")
 	only := fieldStringSlice(ls, tbl, "only")
 	if len(exclude) > 0 && len(only) > 0 {
-		return dr.luaFail(ls, "resolve", "graph: `exclude` and `only` are mutually exclusive")
+		return dr.luaFail(ls, "graph: `exclude` and `only` are mutually exclusive")
 	}
 	filter := relFilter{exclude: toSet(exclude), only: toSet(only)}
 
@@ -97,7 +98,7 @@ func (dr *docRuntime) luaGraph(ls *lua.LState) int {
 	}
 	// Otherwise treat `from` as an instance id.
 	if _, err := dr.store.GetEntity(dr.ctx, from); err != nil {
-		return dr.luaFail(ls, "resolve", "graph: %q is neither an entity type nor a seeded id", from)
+		return dr.luaFail(ls, "graph: %q is neither an entity type nor a seeded id", from)
 	}
 	dr.emit(dr.instanceGraph(from, depth, direction, filter))
 	return 0
@@ -149,7 +150,7 @@ func (dr *docRuntime) instanceGraph(id string, depth int, direction string, filt
 			// relation-type filter (exclude/only) is SEPARATE. When an edge is
 			// filtered out we still recurse into the child so a pruned edge
 			// doesn't sever the subgraph beyond it.
-			edgeKept := !(direction == "out" && c.Incoming) && filter.keep(c.Relation)
+			edgeKept := (direction != "out" || !c.Incoming) && filter.keep(c.Relation)
 			if edgeKept {
 				addNode(c.ID, nodeLabel(c.ID, c.Title))
 				fromKey, toKey := n.ID, c.ID
@@ -170,20 +171,11 @@ func (dr *docRuntime) instanceGraph(id string, depth int, direction string, filt
 	return renderGraph(nodeOrder, nodes, edges)
 }
 
-// schemaGraph renders the metamodel neighbourhood of an entity type: a BFS over
+// schemaGraph renders the metamodel neighborhood of an entity type: a BFS over
 // relation definitions to the given depth.
 func (dr *docRuntime) schemaGraph(root string, depth int, direction string, filter relFilter) string {
-	nodes := map[string]mermaid.Node{}
-	var nodeOrder []string
-	var edges []mermaid.Edge
-	seenEdge := map[string]bool{}
-	addNode := func(t string) {
-		if _, ok := nodes[t]; !ok {
-			nodes[t] = mermaid.Node{Key: t, Text: t}
-			nodeOrder = append(nodeOrder, t)
-		}
-	}
-	addNode(root)
+	sb := &schemaBuilder{nodes: map[string]mermaid.Node{}, seenEdge: map[string]bool{}}
+	sb.addNode(root)
 
 	frontier := []string{root}
 	visited := map[string]bool{root: true}
@@ -193,45 +185,68 @@ func (dr *docRuntime) schemaGraph(root string, depth int, direction string, filt
 		var next []string
 		for _, typ := range frontier {
 			for _, name := range relNames {
-				rel := dr.meta.Relations[name]
 				if !filter.keep(name) {
 					continue
 				}
-				// outgoing: typ in From → each To; incoming: typ in To → each From.
-				if direction != "in" && containsStr(rel.From, typ) {
-					for _, to := range rel.To {
-						addNode(to)
-						addSchemaEdge(&edges, seenEdge, typ, name, to)
-						if !visited[to] {
-							visited[to] = true
-							next = append(next, to)
-						}
-					}
-				}
-				if direction != "out" && containsStr(rel.To, typ) {
-					for _, fromT := range rel.From {
-						addNode(fromT)
-						addSchemaEdge(&edges, seenEdge, fromT, name, typ)
-						if !visited[fromT] {
-							visited[fromT] = true
-							next = append(next, fromT)
-						}
-					}
-				}
+				next = append(next, sb.expand(dr.meta.Relations[name], name, typ, direction, visited)...)
 			}
 		}
 		frontier = next
 	}
-	return renderGraph(nodeOrder, nodes, edges)
+	return renderGraph(sb.nodeOrder, sb.nodes, sb.edges)
 }
 
-func addSchemaEdge(edges *[]mermaid.Edge, seen map[string]bool, from, rel, to string) {
+// schemaBuilder accumulates the schema-graph nodes and edges during the BFS.
+type schemaBuilder struct {
+	nodes     map[string]mermaid.Node
+	nodeOrder []string
+	edges     []mermaid.Edge
+	seenEdge  map[string]bool
+}
+
+func (sb *schemaBuilder) addNode(t string) {
+	if _, ok := sb.nodes[t]; !ok {
+		sb.nodes[t] = mermaid.Node{Key: t, Text: t}
+		sb.nodeOrder = append(sb.nodeOrder, t)
+	}
+}
+
+func (sb *schemaBuilder) addEdge(from, rel, to string) {
 	ek := from + "\x00" + rel + "\x00" + to
-	if seen[ek] {
+	if sb.seenEdge[ek] {
 		return
 	}
-	seen[ek] = true
-	*edges = append(*edges, mermaid.Edge{FromKey: from, ToKey: to, Label: rel})
+	sb.seenEdge[ek] = true
+	sb.edges = append(sb.edges, mermaid.Edge{FromKey: from, ToKey: to, Label: rel})
+}
+
+// expand adds the edges from `typ` along relation `rel` (named `name`) in the
+// requested direction and returns the newly-discovered neighbor types to visit.
+func (sb *schemaBuilder) expand(
+	rel metamodel.RelationDef, name, typ, direction string, visited map[string]bool,
+) []string {
+	var next []string
+	discover := func(neighbor string) {
+		sb.addNode(neighbor)
+		if !visited[neighbor] {
+			visited[neighbor] = true
+			next = append(next, neighbor)
+		}
+	}
+	// outgoing: typ in From → each To; incoming: typ in To → each From.
+	if direction != "in" && slices.Contains(rel.From, typ) {
+		for _, to := range rel.To {
+			sb.addEdge(typ, name, to)
+			discover(to)
+		}
+	}
+	if direction != "out" && slices.Contains(rel.To, typ) {
+		for _, fromT := range rel.From {
+			sb.addEdge(fromT, name, typ)
+			discover(fromT)
+		}
+	}
+	return next
 }
 
 func renderGraph(order []string, nodes map[string]mermaid.Node, edges []mermaid.Edge) string {

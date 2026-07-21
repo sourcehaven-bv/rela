@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -44,8 +45,8 @@ func TestParse_StatementIsland(t *testing.T) {
 func TestParse_UnterminatedFence(t *testing.T) {
 	t.Parallel()
 	_, err := parse("```rela\nh1(\"x\")\n")
-	be, ok := err.(*BuildError)
-	if !ok {
+	var be *BuildError
+	if !errors.As(err, &be) {
 		t.Fatalf("want *BuildError, got %T: %v", err, err)
 	}
 	if be.Kind != "parse" {
@@ -68,6 +69,36 @@ func TestParse_EchoSpan(t *testing.T) {
 	}
 	if segs[1].body != `count{type="x"}` {
 		t.Errorf("echo expr = %q", segs[1].body)
+	}
+}
+
+func TestParse_RelaProseMentionNotEcho(t *testing.T) {
+	t.Parallel()
+	// Prose mentioning a `rela …` command (no call syntax) must stay literal.
+	for _, src := range []string{
+		"Run `rela docs build` to render.\n",
+		"Use `rela init` first.\n",
+	} {
+		segs, err := parse(src)
+		if err != nil {
+			t.Fatalf("parse(%q): %v", src, err)
+		}
+		for _, s := range segs {
+			if s.kind == segEcho {
+				t.Errorf("prose command mention became an echo in %q: %+v", src, segs)
+			}
+		}
+	}
+	// But a real resolver call (has () or {}) IS an echo.
+	segs, _ := parse("count is `rela count{type=\"x\"}` here\n")
+	found := false
+	for _, s := range segs {
+		if s.kind == segEcho {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("resolver call should be an echo: %+v", segs)
 	}
 }
 

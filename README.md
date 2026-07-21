@@ -93,6 +93,7 @@ go build -o rela ./cmd/rela
 | [Security model for rela-server](docs/server-security.md) | Threat model, HTTP defenses, audit attribution, and residual risks for the rela-server data-entry app; how its read-side ACL coverage stands today. |
 | [ACL: Authorization Overview](docs/acl-overview.md) | How rela's role-based authorization works end-to-end: from acl.yaml + the graph to a write decision and its audit attribution |
 | [ACL: Security Hardening](docs/acl-security.md) | Operator's hardening guide for rela's ACL system: group membership trust, fail-loud boot, audit-isolation invariants |
+| [Generated documentation: the rela docs language](docs/rela-docs.md) | Author a deployment manual in Markdown with embedded Lua islands that pull reference fragments (field tables, enum meanings, mermaid lifecycles, relation graphs, role matrices) straight from the schema. |
 
 ### Tutorials
 

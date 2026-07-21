@@ -2,7 +2,9 @@ package docs
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +47,10 @@ type docRuntime struct {
 
 	rt  *rlua.Runtime
 	out *strings.Builder // statement-island emit target
-	ctx context.Context
+	// ctx is stored because the doc.* bindings are gopher-lua callbacks
+	// (func(*lua.LState) int) that cannot take a context parameter; the runtime
+	// is short-lived and request-scoped, mirroring lua.Runtime.parentCtx.
+	ctx context.Context //nolint:containedctx // request-scoped Lua-binding callbacks
 
 	// warnings accumulates non-fatal issues (empty resolves in non-strict mode).
 	warnings []string
@@ -55,7 +60,7 @@ type docRuntime struct {
 // Markdown. It is the package entry point.
 func Build(ctx context.Context, src string, opts Options) (string, error) {
 	if opts.Meta == nil {
-		return "", fmt.Errorf("docs.Build: Meta is required")
+		return "", errors.New("docs.Build: Meta is required")
 	}
 	segs, err := parse(src)
 	if err != nil {
@@ -93,13 +98,13 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		case segLiteral:
 			b.WriteString(seg.body)
 		case segStatement:
-			out, err := dr.runStatement(seg)
+			out, err := dr.runStatement(seg) //nolint:contextcheck // runtime ctx bound at construction via WithContext
 			if err != nil {
 				return "", err
 			}
 			b.WriteString(out)
 		case segEcho:
-			out, err := dr.runEcho(seg)
+			out, err := dr.runEcho(seg) //nolint:contextcheck // runtime ctx bound at construction via WithContext
 			if err != nil {
 				return "", err
 			}
@@ -118,6 +123,7 @@ func (dr *docRuntime) Warnings() []string { return dr.warnings }
 // next one.
 func (dr *docRuntime) runStatement(seg segment) (string, error) {
 	dr.out.Reset()
+	// RunString honors the runtime's WithContext(ctx) deadline internally.
 	if err := dr.rt.RunString(seg.body); err != nil {
 		return "", dr.wrapLuaErr(seg, err)
 	}
@@ -128,6 +134,7 @@ func (dr *docRuntime) runStatement(seg segment) (string, error) {
 // The body is wrapped as `return <expr>` so the runtime yields a value.
 func (dr *docRuntime) runEcho(seg segment) (string, error) {
 	dr.out.Reset()
+	// RunActionString honors the runtime's WithContext(ctx) deadline internally.
 	val, err := dr.rt.RunActionString("return "+seg.body, "manual-echo")
 	if err != nil {
 		return "", dr.wrapLuaErr(seg, err)
@@ -155,17 +162,17 @@ func coerceEcho(v any) (string, error) {
 	case string:
 		return t, nil
 	case int64:
-		return fmt.Sprint(t), nil
+		return strconv.FormatInt(t, 10), nil
 	case float64:
 		// Whole floats print without a trailing ".0" for tidy counts.
 		if t == float64(int64(t)) {
-			return fmt.Sprint(int64(t)), nil
+			return strconv.FormatInt(int64(t), 10), nil
 		}
-		return fmt.Sprint(t), nil
+		return strconv.FormatFloat(t, 'g', -1, 64), nil
 	case bool:
-		return "", fmt.Errorf("echo island returned a boolean; inline spans need a string or number")
+		return "", errors.New("echo island returned a boolean; inline spans need a string or number")
 	default:
-		return "", fmt.Errorf("echo island returned %T; inline spans need a string or number (did you mean a ```rela block?)", v)
+		return "", fmt.Errorf("echo island returned %T; inline spans need a string or number (did you mean a fenced rela block?)", v)
 	}
 }
 
@@ -174,7 +181,8 @@ func coerceEcho(v any) (string, error) {
 // the manual line is the island's start line plus that offset minus one.
 func (dr *docRuntime) wrapLuaErr(seg segment, err error) error {
 	// A BuildError raised by a resolver already carries the right manual line.
-	if be, ok := err.(*BuildError); ok {
+	var be *BuildError
+	if errors.As(err, &be) {
 		return be
 	}
 	line := seg.line
@@ -186,10 +194,11 @@ func (dr *docRuntime) wrapLuaErr(seg segment, err error) error {
 	return &BuildError{Line: line, Kind: "lua", Msg: err.Error(), Snip: strings.TrimSpace(seg.body)}
 }
 
-// luaFail raises a BuildError from inside a doc.* binding, anchored to the
-// currently-executing island. gopher-lua unwinds via RaiseError; the message
-// is recovered by the runtime's error capture and surfaced through wrapLuaErr.
-func (dr *docRuntime) luaFail(ls *lua.LState, kind, format string, args ...any) int {
-	ls.RaiseError("%s", &BuildError{Kind: kind, Msg: fmt.Sprintf(format, args...)})
+// luaFail raises a resolve BuildError from inside a doc.* binding, anchored to
+// the currently-executing island. gopher-lua unwinds via RaiseError; the
+// message is recovered by the runtime's error capture and surfaced through
+// wrapLuaErr, which restamps it with the manual line.
+func (dr *docRuntime) luaFail(ls *lua.LState, format string, args ...any) int {
+	ls.RaiseError("%s", &BuildError{Kind: "resolve", Msg: fmt.Sprintf(format, args...)})
 	return 0
 }

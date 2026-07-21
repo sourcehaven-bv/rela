@@ -135,6 +135,15 @@ func isGenericFenceOpen(trimmed string) bool {
 
 const echoMarker = "`rela "
 
+// isEchoExpr reports whether an inline `rela …` span's content is meant as a
+// resolver call rather than prose that merely mentions the word "rela" (e.g.
+// `rela docs build`, `rela init`). An echo expression is a function call, so it
+// must contain a call marker — "(" or "{". This keeps literal command mentions
+// in prose from being mistaken for islands.
+func isEchoExpr(expr string) bool {
+	return strings.ContainsAny(expr, "({")
+}
+
 // splitEchoes scans a literal run for inline echo spans and returns the
 // resulting segments (literal + echo, interleaved). An echo span is a single
 // backtick-delimited code span whose content starts with "rela " — e.g.
@@ -169,14 +178,16 @@ func splitEchoes(run string, startLine int) []segment {
 			end := strings.IndexByte(run[i+1:], '`')
 			if end >= 0 {
 				spanContent := run[i+1 : i+1+end] // between the backticks
-				if !strings.ContainsRune(spanContent, '\n') {
-					expr := strings.TrimSpace(strings.TrimPrefix(spanContent, "rela"))
+				expr := strings.TrimSpace(strings.TrimPrefix(spanContent, "rela"))
+				if !strings.ContainsRune(spanContent, '\n') && isEchoExpr(expr) {
 					appendLiteral()
 					segs = append(segs, segment{kind: segEcho, body: expr, line: line})
 					i = i + 1 + end + 1 // past the closing backtick
 					litLine = line
 					continue
 				}
+				// Not a resolver call (e.g. prose mentioning `rela docs build`):
+				// leave the whole span as literal text.
 			}
 		}
 		if lit.Len() == 0 {

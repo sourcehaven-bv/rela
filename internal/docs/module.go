@@ -2,6 +2,7 @@ package docs
 
 import (
 	"fmt"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
@@ -53,10 +54,7 @@ func (dr *docRuntime) emit(s string) { dr.out.WriteString(s) }
 // emitHeading returns a binding that emits a Markdown ATX heading of the given
 // level followed by a blank line.
 func (dr *docRuntime) emitHeading(level int) lua.LGFunction {
-	prefix := ""
-	for i := 0; i < level; i++ {
-		prefix += "#"
-	}
+	prefix := strings.Repeat("#", level)
 	return func(ls *lua.LState) int {
 		text := ls.CheckString(1)
 		dr.emit(fmt.Sprintf("%s %s\n\n", prefix, text))
@@ -77,7 +75,7 @@ func (dr *docRuntime) luaCount(ls *lua.LState) int {
 	n := 0
 	for _, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ}) {
 		if err != nil {
-			return dr.luaFail(ls, "resolve", "count{type=%q}: %v", typ, err)
+			return dr.luaFail(ls, "count{type=%q}: %v", typ, err)
 		}
 		n++
 	}
@@ -99,7 +97,7 @@ func (dr *docRuntime) luaCreate(ls *lua.LState) int {
 	id := dr.mintID(typ, props)
 	e := &entity.Entity{ID: id, Type: typ, Properties: props, Content: content}
 	if err := dr.store.CreateEntity(dr.ctx, e); err != nil {
-		return dr.luaFail(ls, "resolve", "create(%q): %v", typ, err)
+		return dr.luaFail(ls, "create(%q): %v", typ, err)
 	}
 	ls.Push(rlua.EntityToTable(ls, e))
 	return 1
@@ -112,7 +110,7 @@ func (dr *docRuntime) luaLink(ls *lua.LState) int {
 	relType := ls.CheckString(2)
 	to := idArg(ls, 3)
 	if _, err := dr.store.CreateRelation(dr.ctx, from, relType, to, nil); err != nil {
-		return dr.luaFail(ls, "resolve", "link(%q,%q,%q): %v", from, relType, to, err)
+		return dr.luaFail(ls, "link(%q,%q,%q): %v", from, relType, to, err)
 	}
 	return 0
 }
