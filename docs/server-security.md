@@ -204,7 +204,7 @@ A third, **stronger** attribution source: a signed identity assertion
 Pomerium, Keycloak, and the like. Unlike `--principal-header`, this
 path does not *trust* that a proxy set a header; it **cryptographically
 verifies** the assertion, so a spoofed header without a valid signature
-simply fails verification and falls through (it does not authenticate).
+fails verification and the request is denied.
 
 Enable it by setting all three (env fallbacks `$RELA_JWT_ISSUER` /
 `_AUDIENCE` / `_JWKS_URL`):
