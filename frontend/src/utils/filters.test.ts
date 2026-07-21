@@ -63,9 +63,21 @@ describe('filters', () => {
       expect(toApiOperator(undefined)).toBe('eq')
     })
 
-    it('defaults to eq for unknown operators', () => {
-      expect(toApiOperator('unknown')).toBe('eq')
-      expect(toApiOperator('??')).toBe('eq')
+    it('maps in to in (was silently degraded to eq before)', () => {
+      expect(toApiOperator('in')).toBe('in')
+    })
+
+    it('passes unknown operators through unchanged so the server 400 names them', () => {
+      // The old `|| 'eq'` fallback silently rewrote a config typo (`=~`)
+      // into equality — the filter LOOKED applied but matched nothing.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        expect(toApiOperator('=~')).toBe('=~')
+        expect(toApiOperator('unknown')).toBe('unknown')
+        expect(warn).toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
     })
   })
 
