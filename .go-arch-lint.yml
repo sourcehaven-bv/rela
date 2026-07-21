@@ -31,6 +31,7 @@ components:
   dataentryconfig:  { in: internal/dataentryconfig }
   conditionlint:    { in: internal/conditionlint }
   desktop:          { in: internal/desktop }
+  docs:             { in: internal/docs }
 
   # Server protocols
   mcp:              { in: internal/mcp }
@@ -218,6 +219,7 @@ deps:
       - clisync
       - config
       - dataentryconfig
+      - docs
       - entitymanager
       - filter
       - importer
@@ -491,6 +493,18 @@ deps:
       - markdown
       - metamodel
       - project
+  docs:
+    mayDependOn:
+      - acl
+      - entity
+      - lua
+      - mermaid
+      - metamodel
+      - store
+      - memstore
+      - tracer
+    canUse:
+      - gopherlua
   entitymanager:
     mayDependOn:
       - acl
