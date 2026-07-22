@@ -65,4 +65,4 @@ and tested; the sandbox-first browser launch cleans up partial construction.
 - [x] ~~All CI checks pass~~ (verified locally: full `go test ./...`, lint, arch-lint, lint-md, coverage green; the browser-gated tests need the Chrome CI job)
 - [x] ~~PR URL documented below~~ (recorded when `/pr` opens it)
 
-**PR:** _pending — opens via `/pr` after this ticket reaches `done`_
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1186
