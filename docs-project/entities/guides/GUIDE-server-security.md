@@ -176,7 +176,8 @@ for human web users. Two opt-in sources can replace the placeholder:
   request and stamps its value as `principal.user`.
 - **`$RELA_DATAENTRY_USER`** env var, set on the `rela-server`
   process. Useful for local development where there's no proxy.
-  The env value wins over the header.
+  The env value wins over the header. It cannot be combined with
+  `--jwt-*` — see *Mutually exclusive* below.
 
 **Trust boundary**: the `--principal-header` flag is only safe
 behind a reverse proxy that
@@ -191,6 +192,13 @@ beyond loopback (`--bind` non-loopback) and `--principal-header`
 is set, audit attribution is only as trustworthy as the network
 path between the client and the proxy.
 
+**Prefer `--jwt-*`** for anything beyond local development. The
+header path fails *open* by design — an absent header yields
+`unknown`, not a denial — and its trustworthiness rests entirely
+on network topology. Verified JWT identity fails *closed* and
+proves authenticity cryptographically. The header path is
+unchanged and still supported; it is simply the weaker of the two.
+
 Header values are sanitized at the middleware (trim, 256-rune cap,
 control-char strip) as defense-in-depth against header-injection
 corrupting the JSONL stream.
@@ -202,7 +210,7 @@ A third, **stronger** attribution source: a signed identity assertion
 Pomerium, Keycloak, and the like. Unlike `--principal-header`, this
 path does not *trust* that a proxy set a header; it **cryptographically
 verifies** the assertion, so a spoofed header without a valid signature
-simply fails verification and falls through (it does not authenticate).
+fails verification and the request is denied.
 
 Enable it by setting all three (env fallbacks `$RELA_JWT_ISSUER` /
 `_AUDIENCE` / `_JWKS_URL`):
@@ -211,8 +219,11 @@ Enable it by setting all three (env fallbacks `$RELA_JWT_ISSUER` /
 - **`--jwt-audience`** — this server's id (the `aud` the proxy mints for
   it); enforced strictly as a confused-deputy guard.
 - **`--jwt-jwks-url`** — the proxy's JWKS endpoint; the ES256 signature
-  is verified against it (keys auto-refresh, so rotation needs no
-  restart). Must be `https` (the JWKS is the root of trust — cleartext
+  is verified against it. Keys auto-refresh, so routine rotation needs
+  no restart, and the cached set survives a failed refresh — but see
+  *Availability trade-off* below for the rotation-during-outage case,
+  which does deny requests. A refresh failure is logged at `ERROR`.
+  Must be `https` (the JWKS is the root of trust — cleartext
   would let an on-path attacker substitute a signing key; loopback URLs
   are exempted for local testing). An unreachable JWKS at startup is
   fatal — identity never silently no-ops.
@@ -227,11 +238,71 @@ attribution and any `acl.yaml` assignments survive an email change.
 The verification rejects non-ES256 algorithms (including `alg:none`),
 a wrong issuer or audience, and expired or unsigned tokens.
 
-**Chain order.** When several sources are configured, `$RELA_DATAENTRY_USER`
-(local-dev override) wins, then the verified JWT, then the plain
-`--principal-header`, then `unknown`. A verified JWT is preferred over
-the plain header because it proves authenticity rather than trusting
-the network path.
+**Mutually exclusive — JWT identity is the only identity source.**
+Setting `--jwt-*` together with `--principal-header`, or with
+`$RELA_DATAENTRY_USER` in the environment, is a **startup error**.
+`rela-server` refuses to boot rather than run with both.
+
+This is deliberate. These sources used to be layered in one resolver
+chain, verified-JWT ahead of plain-header. That meant a JWT
+verification failure fell **through** to the spoofable header:
+anyone able to disrupt JWKS reachability — network egress, DNS, an
+IdP outage — could convert rela from verified identity to
+trusted-header identity, and rela would keep serving as if nothing
+had changed. A startup warning was not an adequate mitigation,
+because the downgrade happens per-request, long after anyone is
+reading startup logs. Making it a hard error forces the choice at
+configuration time, when it is visible.
+
+**Fail-closed behavior.** With JWT identity enabled, every `/api/`
+request must carry an assertion that verifies. An assertion that is
+absent, malformed, expired, wrongly signed, or bearing the wrong
+`iss`/`aud` is answered **401** — never downgraded to a weaker
+identity. The 401 body deliberately carries no explanation (the
+assertion is attacker-controlled input, and saying why it failed
+would make the endpoint a verification oracle); the reason is
+logged server-side instead.
+
+The SPA shell (`/`) and static assets (`/static/`) are **not**
+gated, so the app still loads and can render a signed-out state.
+Those routes serve no entity data — every API call the SPA makes
+is gated — and keeping them reachable means a misconfiguration
+does not lock operators out of the surface they need to diagnose
+it. The inbound IdP webhook is likewise outside the gate: it
+authenticates itself by verifying a signed body against its own
+audience, and will never carry an identity assertion.
+
+**Availability trade-off.** Because identity now fails closed,
+JWKS reachability is load-bearing. Two failure modes, which differ
+in severity:
+
+- **A transient JWKS blip is invisible.** The key set is cached and
+  is replaced only after a refresh fully succeeds, so a failed
+  background refresh leaves the last-known-good keys in place and
+  verification continues unaffected. A failed refresh is logged at
+  `ERROR` with the JWKS URL — worth investigating, but not by
+  itself an outage.
+- **Key rotation *during* a JWKS outage is an outage.** A token
+  signed with a `kid` absent from the cached set triggers a
+  synchronous refresh bounded by the request deadline (and by a
+  5s rate-limit wait). If the JWKS is unreachable, those requests
+  are denied — after a stall of up to that bound.
+
+Operationally: alert on the JWKS-refresh `ERROR` line, and stage
+key rotations so a new signing key is published and picked up by a
+refresh *before* the old one is withdrawn. Denials caused by an
+unreachable JWKS are logged at `ERROR`, distinctly from denials
+caused by a bad assertion (`INFO`), so the two are separable when
+triaging. Both classes are independently rate-sampled with a
+suppressed count, so neither can flood the log during an outage,
+and the residual is reported on the first successful verification
+afterwards.
+
+Note that the two classes are told apart heuristically: a failure
+that cannot be positively identified as a key-retrieval problem is
+classified as a bad assertion. That biases toward a missed alert
+rather than a false page — both still deny — so treat the `ERROR`
+line as a strong signal and the `INFO` volume as a weak one.
 
 **Deployment.** As with any proxy-fronted setup, run `rela-server`
 bound to `0.0.0.0` behind the proxy (so it accepts the forwarded

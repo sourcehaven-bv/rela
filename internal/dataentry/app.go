@@ -79,7 +79,7 @@ const userPaletteFile = "palette.yaml"
 // commandHandler (154 → 143); the attachment cluster (12 methods) moved to
 // attachmentHandler / package functions (143 → 131).
 //
-//plimsoll:max-methods=131
+//plimsoll:max-methods=132
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -208,6 +208,13 @@ type App struct {
 	// here when --principal-header is set.
 	principalResolver PrincipalResolver
 
+	// jwtGate, when non-nil, enforces fail-closed verified-JWT identity on
+	// the data API: every /api/ request must carry a valid assertion or is
+	// denied 401. Set via SetJWTGate before NewRouter. Mutually exclusive
+	// with a header/env principal chain — cmd/rela-server refuses to start
+	// with both, so a JWT failure can never downgrade to a spoofable header.
+	jwtGate *JWTGateConfig
+
 	// principalHeader is the name of the HTTP header that carries the
 	// principal identity (the --principal-header flag value), or ""
 	// when no header is configured. Used by noCacheMiddleware to emit
@@ -321,6 +328,36 @@ func (a *App) SetPrincipalResolver(r PrincipalResolver) {
 // when wiring a [HeaderPrincipalResolver]; leave unset otherwise.
 func (a *App) SetPrincipalHeader(name string) {
 	a.principalHeader = name
+}
+
+// SetJWTGate enables fail-closed verified-JWT identity. Must be called before
+// [App.NewRouter]; subsequent changes have no effect on already-built routers.
+//
+// When set, every [isAPIPath] request must carry an assertion that verifies, or
+// it is denied 401 — see [requireVerifiedJWT]. This REPLACES the principal
+// resolver for API requests rather than layering over it: JWT identity is
+// exclusive, so there is no header or env source to fall back to. Callers must
+// not also install a header/env chain via [App.SetPrincipalResolver];
+// cmd/rela-server enforces that at startup.
+//
+// Returns an error when a required field is missing rather than accepting a
+// config that cannot work. An empty HeaderName is fatal in a quiet way — every
+// assertion would read as absent, so the server would boot clean and then 401
+// every API request.
+//
+// Note the interface-nil caveat: a TYPED nil (e.g. a (*jwtauth.Verifier)(nil)
+// stored in the interface) is not == nil and cannot be caught here without
+// reflection. Callers must not construct one; cmd/rela-server checks the
+// concrete pointer before it ever reaches this interface.
+func (a *App) SetJWTGate(cfg JWTGateConfig) error {
+	if cfg.Verifier == nil {
+		return errors.New("dataentry: jwt gate requires a non-nil Verifier")
+	}
+	if cfg.HeaderName == "" {
+		return errors.New("dataentry: jwt gate requires a non-empty HeaderName")
+	}
+	a.jwtGate = &cfg
+	return nil
 }
 
 // NewApp creates and initializes an App. Callers pass in the

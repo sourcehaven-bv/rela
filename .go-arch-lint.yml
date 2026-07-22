@@ -152,6 +152,12 @@ vendors:
     in:
       - github.com/golang-jwt/jwt/**
       - github.com/MicahParks/keyfunc/**
+      # keyfunc's JWKS layer. Referenced directly for its error sentinels, so a
+      # JWKS-unreachable failure can be told apart from a bad assertion. The
+      # package is imported at its module root, so it needs the bare path as
+      # well as the subpackage glob.
+      - github.com/MicahParks/jwkset
+      - github.com/MicahParks/jwkset/**
 
 # -- Common (importable by all) -------------------------------------------
 commonComponents:
