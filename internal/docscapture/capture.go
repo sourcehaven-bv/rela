@@ -135,31 +135,34 @@ func (c *Capturer) Close() error {
 	return nil
 }
 
-// captureAction returns the element-clip or bounded full-page screenshot action.
-// Both produce PNG (lossless) — chromedp.Screenshot and page.CaptureScreenshot
-// default to PNG; only FullScreenshot(_, quality) forces JPEG, which we avoid.
+// rect is a page-coordinate bounding box (CSS px).
+type rect struct{ X, Y, W, H float64 }
+
+// captureAction produces a PNG (lossless): the full page, or a clipped region
+// (an element / a keyword-computed region) expanded by pad and clamped to the
+// page. All paths go through page.CaptureScreenshot (PNG + CaptureBeyondViewport),
+// so a clip taller than the viewport still renders and padding is honored —
+// chromedp.Screenshot cannot pad.
 func captureAction(spec docs.CaptureSpec, out *[]byte) chromedp.Action {
-	if spec.Clip != "" {
-		return chromedp.Screenshot(spec.Clip, out, chromedp.ByQuery, chromedp.NodeVisible)
-	}
 	return chromedp.ActionFunc(func(ctx context.Context) error {
-		// Measure the full content; bound the height (DR-M2) — fail loud if too tall.
-		var dims struct{ W, H int64 }
-		if err := chromedp.Evaluate(
-			`({W: Math.ceil(document.documentElement.scrollWidth),
-			   H: Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight))})`,
-			&dims,
-		).Do(ctx); err != nil {
+		page0, err := pageSize(ctx)
+		if err != nil {
 			return err
 		}
-		if dims.H > maxFullHeight {
-			return fmt.Errorf("page is %dpx tall (> %dpx cap); use a clip= selector to bound the capture", dims.H, maxFullHeight)
+		clip := rect{X: 0, Y: 0, W: page0.W, H: page0.H}
+		if spec.Clip != "" {
+			region, rerr := resolveClip(ctx, spec.Clip, spec.Arrows)
+			if rerr != nil {
+				return rerr
+			}
+			clip = padAndClamp(region, float64(spec.Pad), page0)
+		}
+		if clip.H > maxFullHeight {
+			return fmt.Errorf("capture region is %.0fpx tall (> %dpx cap); use a tighter clip= selector or clip=\"focus\"", clip.H, maxFullHeight)
 		}
 		buf, err := page.CaptureScreenshot().
 			WithFormat(page.CaptureScreenshotFormatPng).
-			WithClip(&page.Viewport{X: 0, Y: 0, Width: float64(dims.W), Height: float64(dims.H), Scale: 1}).
-			// Without this, a clip taller than the emulated viewport renders the
-			// below-fold region blank — exactly the 1600<H≤4000 case the cap allows.
+			WithClip(&page.Viewport{X: clip.X, Y: clip.Y, Width: clip.W, Height: clip.H, Scale: 1}).
 			WithCaptureBeyondViewport(true).
 			Do(ctx)
 		if err != nil {

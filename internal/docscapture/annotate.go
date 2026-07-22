@@ -68,7 +68,7 @@ func annotateScript(arrows []docs.Annotation) (string, error) {
 	// Guard against the one sequence that closes a <script> context in HTML,
 	// belt-and-braces even though this runs via Runtime.evaluate not a <script>.
 	safe := strings.ReplaceAll(string(data), "</", `<\/`)
-	return strings.Replace(overlayJS, "__SPECS__", safe, 1), nil
+	return strings.ReplaceAll(overlayJS, "__SPECS__", safe), nil
 }
 
 //go:embed overlay.js

@@ -162,8 +162,26 @@ Arguments:
 | `form` | the `data-entry.yaml` form id (default `edit_<type>`) |
 | `as` | the ACL **role** to render as (a principal assigned that role); default picks a role that can edit |
 | `arrows` | `{{at, text, side}}` — `at` is a field property (→ that field), `@button:<label>`, or `@role:<sel>`; `text` rides the arrow; `side` is `left`/`right` |
-| `clip` | a CSS selector to capture just one element |
+| `clip` | bound the capture: omit for the **full page**; a **CSS selector** (`"#field-status"`, `".form-section"`) for that element; or the keyword **`"focus"`** for the bounding box of everything the `arrows` point at |
+| `pad` | padding in px around a `clip` region (default `24`; `pad=0` for a tight crop). Clamped to the page, so the crop never extends past the content |
 | `out`, `alt` | the image file (written next to the output) and its alt text |
+
+**Cropping.** By default `screenshot{}` captures the whole page. To zoom in
+on the subject of a figure, set `clip`:
+
+```markdown
+​```rela
+-- one element, with breathing room:
+screenshot{ ..., clip = "#field-status", pad = 32, out = "status.png" }
+
+-- crop to exactly what the arrows highlight (fields + their labels):
+screenshot{ ..., arrows = { {at="status", text="lifecycle state"} },
+            clip = "focus", out = "focus.png" }
+​```
+```
+
+`clip="focus"` unions the boxes of every annotated target **and** the drawn
+arrow labels, so the crop includes the annotations, not just the fields.
 
 **Prerequisites.** `screenshot{}` needs a **Chrome/Chromium browser** on
 the machine and the **data-entry SPA built** into the binary (`just
