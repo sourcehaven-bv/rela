@@ -58,19 +58,6 @@ func TestAnchorSelector(t *testing.T) {
 	}
 }
 
-func TestFieldOf(t *testing.T) {
-	t.Parallel()
-	if fieldOf("status") != "status" {
-		t.Error("bare property should be its own field")
-	}
-	if fieldOf("@button:Save") != "" {
-		t.Error("@button target is not a field anchor")
-	}
-	if fieldOf("") != "" {
-		t.Error("empty is not a field")
-	}
-}
-
 func TestFormURL(t *testing.T) {
 	t.Parallel()
 	base := "http://127.0.0.1:9999"
@@ -80,8 +67,6 @@ func TestFormURL(t *testing.T) {
 	}{
 		{docs.CaptureSpec{View: "form", Type: "ticket", Entity: "T-1"}, base + "/form/edit_ticket/T-1"},
 		{docs.CaptureSpec{View: "form", Type: "ticket", Entity: "T-1", Form: "custom"}, base + "/form/custom/T-1"},
-		{docs.CaptureSpec{View: "entity", Type: "ticket", Entity: "T-1"}, base + "/entity/ticket/T-1"},
-		{docs.CaptureSpec{View: "list", Type: "ticket"}, base + "/list/ticket"},
 	}
 	for _, c := range cases {
 		if got := formURL(base, c.spec); got != c.want {

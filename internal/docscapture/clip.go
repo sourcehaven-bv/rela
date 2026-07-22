@@ -89,8 +89,12 @@ func focusRect(ctx context.Context, annotations []docs.Annotation) (rect, error)
 }
 
 // padAndClamp expands a region by pad on all sides and clamps it to the page so
-// the crop never extends past the content (no white margin beyond the page).
+// the crop never extends past the content (no white margin beyond the page). A
+// negative pad is treated as 0 (it would invert the rect).
 func padAndClamp(r rect, pad float64, page rect) rect {
+	if pad < 0 {
+		pad = 0
+	}
 	x := r.X - pad
 	y := r.Y - pad
 	right := r.X + r.W + pad

@@ -9,7 +9,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/docs"
-	"github.com/Sourcehaven-BV/rela/internal/docscapture"
 )
 
 // DocsCmd is `rela docs` — the doc-language build tool.
@@ -62,10 +61,11 @@ func (c *DocsBuildCmd) Run(ctx context.Context, svc *readServices) error {
 		OutDir:     outputDir(c.Output),
 	}
 	// Wire a browser capturer for screenshot{} islands. If no browser is
-	// available, leave it nil but keep the specific reason — a manual WITHOUT
-	// screenshot{} still builds; one WITH it fails loud with the actionable
-	// message (e.g. "no Chrome found on PATH"). No graceful degradation.
-	if capturer, capErr := docscapture.New(); capErr == nil {
+	// available (or this build can't host the capture server — see the build-
+	// tagged newDocsCapturer), leave it nil but keep the specific reason: a
+	// manual WITHOUT screenshot{} still builds; one WITH it fails loud with the
+	// actionable message. No graceful degradation.
+	if capturer, capErr := newDocsCapturer(); capErr == nil {
 		opts.Capturer = capturer
 	} else {
 		opts.CapturerErr = capErr.Error()

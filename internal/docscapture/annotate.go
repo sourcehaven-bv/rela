@@ -58,7 +58,7 @@ func annotateScript(arrows []docs.Annotation) (string, error) {
 			Selector: sel,
 			Text:     a.Text,
 			Side:     a.Side,
-			Box:      a.Box,
+			Box:      a.Kind == docs.AnnotationBox,
 		})
 	}
 	data, err := json.Marshal(specs)
@@ -90,13 +90,4 @@ func anchorSelector(at string) (string, error) {
 	default:
 		return "#field-" + at, nil
 	}
-}
-
-// fieldOf returns the property name an annotation targets a field of, or "" for
-// non-field (@button/@role) targets — used to pick the renderability anchor.
-func fieldOf(at string) string {
-	if at == "" || strings.HasPrefix(at, "@") {
-		return ""
-	}
-	return at
 }

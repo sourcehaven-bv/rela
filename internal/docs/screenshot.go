@@ -63,14 +63,24 @@ type CaptureSpec struct {
 	OutPath string
 }
 
-// Annotation is one arrow/box drawn on the capture, anchored to a form field
+// Annotation kinds.
+const (
+	// AnnotationArrow draws an arrow (with optional Text label) into the target.
+	AnnotationArrow = "arrow"
+	// AnnotationBox draws an outline box around the target.
+	AnnotationBox = "box"
+)
+
+// Annotation is one mark drawn on the capture, anchored to a form field
 // (At="<property>" → #field-<property>) or an ARIA/control target
-// (At="@button:save" / "@role:..."). Text rides the arrow.
+// (At="@button:save" / "@role:..."). Kind selects the mark ("arrow" default,
+// "box"); Text rides an arrow. Kind is a string (not a bool) so new mark types
+// can be added without a breaking DTO change.
 type Annotation struct {
 	At   string
 	Text string
 	Side string // "left"|"right"|"top"|"bottom"; default right
-	Box  bool   // draw an outline box instead of an arrow
+	Kind string // "arrow" (default) | "box"
 }
 
 // luaScreenshot is the screenshot{} island resolver. It emits a Markdown image
@@ -104,6 +114,13 @@ func (dr *docRuntime) luaScreenshot(ls *lua.LState) int {
 		Clip:       fieldString(ls, tbl, "clip"),
 		Pad:        fieldInt(ls, tbl, "pad", defaultCropPad),
 		Arrows:     dr.readAnnotations(ls, tbl),
+	}
+	// Only the edit form is supported today: its readiness (and the load-error
+	// gate) is signaled by a stable form-state marker. The entity/list views
+	// have no equivalent readiness signal yet, so reject them loudly rather than
+	// hang until the capture timeout.
+	if spec.View != "form" {
+		return dr.luaFail(ls, "screenshot: view=%q is not supported yet — only view=\"form\" (the edit form)", spec.View)
 	}
 	if spec.Type == "" {
 		return dr.luaFail(ls, "screenshot: `type` is required")
@@ -142,11 +159,18 @@ func (dr *docRuntime) readAnnotations(ls *lua.LState, tbl *lua.LTable) []Annotat
 		if !ok {
 			return
 		}
+		kind := fieldString(ls, a, "kind")
+		if kind == "" && fieldBool(ls, a, "box") {
+			kind = AnnotationBox // back-compat: box=true still works
+		}
+		if kind == "" {
+			kind = AnnotationArrow
+		}
 		out = append(out, Annotation{
 			At:   fieldString(ls, a, "at"),
 			Text: fieldString(ls, a, "text"),
 			Side: fieldString(ls, a, "side"),
-			Box:  fieldBool(ls, a, "box"),
+			Kind: kind,
 		})
 	})
 	return out

@@ -145,14 +145,18 @@ func TestBuild_LifecycleDiagram(t *testing.T) {
 	}
 }
 
-func TestBuild_LifecycleFlatFallback(t *testing.T) {
+// A flat enum (no transitions) is not a lifecycle: lifecycle{} fails loud and
+// points at values{}, keeping the two resolvers' jobs distinct.
+func TestBuild_LifecycleFlatEnumFailsLoud(t *testing.T) {
 	t.Parallel()
-	out := build(t, "```rela\nlifecycle{type=\"risico\", field=\"behandeling\"}\n```\n", Options{})
-	if strings.Contains(out, "stateDiagram") {
-		t.Errorf("flat enum should not render a diagram:\n%s", out)
+	_, err := Build(context.Background(),
+		"```rela\nlifecycle{type=\"risico\", field=\"behandeling\"}\n```\n",
+		Options{Meta: fixtureMeta(t)})
+	if err == nil {
+		t.Fatal("lifecycle on a flat enum should fail loud")
 	}
-	if !strings.Contains(out, "`mitigeren`") {
-		t.Errorf("expected the flat value list:\n%s", out)
+	if !strings.Contains(err.Error(), "values{}") {
+		t.Errorf("error should point at values{}, got: %v", err)
 	}
 }
 

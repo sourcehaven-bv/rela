@@ -57,7 +57,7 @@ available without the `doc.` prefix.
 | `values{type, field}` | an enum's values, the default marked, plus per-value meaning when the custom type declares `descriptions:` |
 | `relations{type}` | the type's outgoing relations as a list |
 | `graph{from, depth, direction, exclude\|only}` | a mermaid flow graph (see below) |
-| `lifecycle{type, field}` | a mermaid `stateDiagram-v2` when the field's custom type declares `transitions:`, else a flat value list |
+| `lifecycle{type, field}` | a mermaid `stateDiagram-v2` for a state-machine field (fails loud on a flat enum — use `values{}` there) |
 | `entity{id, fields}` | one **seeded** entity's fields |
 | `count{type}` | the number of seeded entities of a type (echo-friendly) |
 | `roles_matrix{type}` | a role × verb capability table from `acl.yaml` (omit `type` for every type) |
@@ -163,11 +163,11 @@ Arguments:
 
 | Arg | Meaning |
 | --- | --- |
-| `view` | `"form"` (edit form, default), `"entity"` (detail), `"list"` |
+| `view` | `"form"` — the edit form (the only view supported today; the default) |
 | `type`, `entity` | the entity type and the id of a **seeded** entity to render |
 | `form` | the `data-entry.yaml` form id (default `edit_<type>`) |
 | `as` | the ACL **role** to render as (a principal assigned that role); default picks a role that can edit |
-| `arrows` | `{{at, text, side}}` — `at` is a field property (→ that field), `@button:<label>`, or `@role:<sel>`; `text` rides the arrow; `side` is `left`/`right` |
+| `arrows` | `{{at, text, side, kind}}` — `at` is a field property (→ that field), `@button:<label>`, or `@role:<sel>`; `text` rides the arrow; `side` is `left`/`right`; `kind` is `"arrow"` (default) or `"box"` (outline the target) |
 | `clip` | bound the capture: omit for the **full page**; a **CSS selector** (`"#field-status"`, `".form-section"`) for that element; or the keyword **`"focus"`** for the bounding box of everything the `arrows` point at |
 | `pad` | padding in px around a `clip` region (default `24`; `pad=0` for a tight crop). Clamped to the page, so the crop never extends past the content |
 | `out`, `alt` | the image file (written next to the output) and its alt text |

@@ -257,27 +257,14 @@ var chromePaths = []string{
 	"/Applications/Chromium.app/Contents/MacOS/Chromium",
 }
 
-// formURL builds the SPA route for a capture spec against the given base URL.
+// formURL builds the SPA edit-form route for a capture spec. Only view="form"
+// is supported (validated in the resolver); the form id defaults to edit_<type>.
 func formURL(base string, spec docs.CaptureSpec) string {
-	switch spec.View {
-	case "entity":
-		return fmt.Sprintf("%s/entity/%s/%s", base, spec.Type, spec.Entity)
-	case "list":
-		return fmt.Sprintf("%s/list/%s", base, firstNonEmpty(spec.Form, spec.Type))
-	default: // "form"
-		form := spec.Form
-		if form == "" {
-			form = "edit_" + spec.Type
-		}
-		return fmt.Sprintf("%s/form/%s/%s", base, form, spec.Entity)
+	form := spec.Form
+	if form == "" {
+		form = "edit_" + spec.Type
 	}
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
+	return fmt.Sprintf("%s/form/%s/%s", base, form, spec.Entity)
 }
 
 func trimSlash(s string) string { return strings.TrimRight(s, "/") }

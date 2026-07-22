@@ -23,6 +23,18 @@ func TestScreenshot_NoCapturer_FailsLoud(t *testing.T) {
 	}
 }
 
+// Only view="form" is supported; entity/list fail loud (no browser needed).
+func TestScreenshot_UnsupportedView_FailsLoud(t *testing.T) {
+	t.Parallel()
+	for _, view := range []string{"entity", "list", "kanban"} {
+		src := "```rela\nscreenshot{ view=\"" + view + "\", type=\"risico\", entity=\"r1\", out=\"f.png\" }\n```\n"
+		_, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t), Capturer: stubCapturer{}})
+		if err == nil || !strings.Contains(err.Error(), "not supported") {
+			t.Errorf("view=%q should fail loud, got: %v", view, err)
+		}
+	}
+}
+
 // Missing required args fail loud (also without a browser).
 func TestScreenshot_MissingArgs_FailLoud(t *testing.T) {
 	t.Parallel()

@@ -1,10 +1,8 @@
 package docs
 
 import (
-	"fmt"
 	"slices"
 	"sort"
-	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
@@ -18,8 +16,8 @@ const (
 	graphMaxDepth     = 5
 )
 
-// luaLifecycle emits a mermaid state diagram for a state-machine field, or a
-// flat value list when the field's custom type declares no transitions.
+// luaLifecycle emits a mermaid state diagram for a state-machine field. A flat
+// enum (no transitions) is not a lifecycle and fails loud, pointing at values{}.
 // lifecycle{type="risico", field="status"}.
 func (dr *docRuntime) luaLifecycle(ls *lua.LState) int {
 	tbl := argTable(ls)
@@ -39,17 +37,11 @@ func (dr *docRuntime) luaLifecycle(ls *lua.LState) int {
 	}
 
 	if len(ct.Transitions) == 0 {
-		// Flat enum: no state machine — fall back to a value list.
-		var b strings.Builder
-		for i, v := range ct.Values {
-			if i > 0 {
-				b.WriteString(" · ")
-			}
-			fmt.Fprintf(&b, "`%s`", v)
-		}
-		b.WriteString("\n\n")
-		dr.emit(b.String())
-		return 0
+		// A flat enum is not a lifecycle. Fail loud pointing at values{} rather
+		// than silently rendering a near-duplicate of it — keeps the two
+		// resolvers' jobs distinct (lifecycle = state machine, values = the
+		// allowed values).
+		return dr.luaFail(ls, "lifecycle: field %q of %q is a flat enum with no transitions — use values{} for its allowed values", field, typ)
 	}
 
 	initial := ct.Initial
