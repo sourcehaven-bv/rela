@@ -62,10 +62,13 @@ func (c *DocsBuildCmd) Run(ctx context.Context, svc *readServices) error {
 		OutDir:     outputDir(c.Output),
 	}
 	// Wire a browser capturer for screenshot{} islands. If no browser is
-	// available, leave it nil — a manual WITHOUT screenshot{} still builds; one
-	// WITH it fails loud ("no capturer configured"). No graceful degradation.
-	if cap, capErr := docscapture.New(); capErr == nil {
-		opts.Capturer = cap
+	// available, leave it nil but keep the specific reason — a manual WITHOUT
+	// screenshot{} still builds; one WITH it fails loud with the actionable
+	// message (e.g. "no Chrome found on PATH"). No graceful degradation.
+	if capturer, capErr := docscapture.New(); capErr == nil {
+		opts.Capturer = capturer
+	} else {
+		opts.CapturerErr = capErr.Error()
 	}
 
 	rendered, err := docs.Build(ctx, string(src), opts)

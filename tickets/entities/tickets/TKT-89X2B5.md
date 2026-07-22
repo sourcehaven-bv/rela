@@ -5,7 +5,7 @@ title: 'rela-docs phase 3 (Tier B): screenshot{} island — chromedp capture of 
 kind: enhancement
 priority: medium
 effort: l
-status: in-progress
+status: review
 ---
 
 Phase 3 of FEAT-G4VO53. Adds the **`screenshot{}` island** to the doc language

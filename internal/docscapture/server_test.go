@@ -106,7 +106,7 @@ func TestStandUp_ServesSeededEntity(t *testing.T) {
 	// The server serves the SPA config with the stamped role — exercises standUp
 	// + the per-request principal resolver without a browser. (An unstamped
 	// principal would be rejected by the real Declarative ACL.)
-	req, _ := http.NewRequest(http.MethodGet, p.server.URL+"/api/v1/_config", nil)
+	req, _ := http.NewRequest(http.MethodGet, p.server.URL+"/api/v1/_config", http.NoBody)
 	req.Header.Set("Origin", p.server.URL)
 	req.Header.Set(roleHeader, "editor")
 	resp, err := p.server.Client().Do(req)

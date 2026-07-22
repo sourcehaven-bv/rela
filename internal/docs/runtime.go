@@ -43,6 +43,9 @@ type Options struct {
 	// Capturer renders screenshot{} islands (Tier B). Injected by the CLI so the
 	// core docs package stays browser-free. nil ⇒ screenshot{} fails loud.
 	Capturer Capturer
+	// CapturerErr is the reason a Capturer could not be built (e.g. no Chrome);
+	// surfaced in the screenshot{} fail-loud message when Capturer is nil.
+	CapturerErr string
 	// ProjectDir is the documented project root; screenshot{} copies its schema/
 	// config into the temp project the SPA renders.
 	ProjectDir string
@@ -85,6 +88,9 @@ type docRuntime struct {
 	// Tier-B browser dependency is injected only by the CLI, keeping core docs
 	// browser-free). See screenshot.go.
 	capturer Capturer
+	// capturerErr is the reason the capturer could not be constructed (e.g. no
+	// Chrome), surfaced in the fail-loud message when a screenshot{} needs it.
+	capturerErr string
 
 	// projectDir is the documented project's root (schema/config copied into the
 	// screenshot temp project). Empty in a schema-only build.
@@ -129,16 +135,17 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 
 	st := memstore.New()
 	dr := &docRuntime{
-		meta:       opts.Meta,
-		policy:     opts.Policy,
-		store:      st,
-		tracer:     tracer.New(st),
-		strict:     opts.Strict,
-		out:        &strings.Builder{},
-		ctx:        ctx,
-		capturer:   opts.Capturer,
-		projectDir: opts.ProjectDir,
-		outDir:     opts.OutDir,
+		meta:        opts.Meta,
+		policy:      opts.Policy,
+		store:       st,
+		tracer:      tracer.New(st),
+		strict:      opts.Strict,
+		out:         &strings.Builder{},
+		ctx:         ctx,
+		capturer:    opts.Capturer,
+		capturerErr: opts.CapturerErr,
+		projectDir:  opts.ProjectDir,
+		outDir:      opts.OutDir,
 	}
 
 	// A reader runtime gives us the sandbox (no io/os) plus rela.* read bindings;
