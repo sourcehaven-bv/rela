@@ -95,7 +95,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 	assignee := buildRoleAssignee(dir)
 
 	app, err := dataentry.NewApp( //nolint:contextcheck // app construction is not request-scoped
-		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
+		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		dataentry.NopFieldVerdictResolver{},
 		svc.Audit(),
