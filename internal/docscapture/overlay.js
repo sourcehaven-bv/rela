@@ -36,7 +36,7 @@
         'position:absolute;left:' + (x - 4) + 'px;top:' + (y - 4) + 'px;' +
         'width:' + (r.width + 8) + 'px;height:' + (r.height + 8) + 'px;' +
         'border:3px solid ' + GOLD + ';border-radius:6px;';
-      layer.appendChild(box);
+      box.className='rela-anno';layer.appendChild(box);
     }
     if (s.text) {
       var side = s.side || 'right';
@@ -52,13 +52,13 @@
         'background:' + GOLD + ';color:#1b1b1b;' +
         'font:600 13px system-ui,sans-serif;padding:2px 8px;' +
         'border-radius:4px;white-space:nowrap;';
-      layer.appendChild(lab);
+      lab.className='rela-anno';layer.appendChild(lab);
       var arrow = document.createElement('div');
       var ax = side === 'left' ? x - 6 : x + r.width;
       arrow.style.cssText =
         'position:absolute;left:' + ax + 'px;top:' + (ly - 1) + 'px;' +
         'width:8px;height:3px;background:' + GOLD + ';';
-      layer.appendChild(arrow);
+      arrow.className='rela-anno';layer.appendChild(arrow);
     }
   });
   return missing;

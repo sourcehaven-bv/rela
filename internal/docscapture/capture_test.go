@@ -171,6 +171,73 @@ func TestCapture_UnrenderableEntity_FailsLoud(t *testing.T) {
 	}
 }
 
+// Cropping produces a smaller image than the full page: an element clip with
+// padding, and clip="focus" (the annotated region). clip="focus" with no arrows
+// fails loud.
+func TestCapture_Crop(t *testing.T) {
+	requireBrowser(t)
+	capr, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer capr.Close()
+
+	seed := []docs.SeedOp{{Kind: "create", Type: "ticket", ID: "TICKET-crop", Properties: map[string]any{
+		"title": "x", "status": "in-progress", "priority": "high", "reporter": "a@b.c",
+	}}}
+	base := docs.CaptureSpec{ProjectDir: protoDir(t), Seed: seed, View: "form", Type: "ticket", Entity: "TICKET-crop"}
+
+	full := base
+	full.OutPath = filepath.Join(t.TempDir(), "full.png")
+	if _, err := capr.Capture(context.Background(), full); err != nil {
+		t.Fatalf("full: %v", err)
+	}
+	fullSize := fileSize(t, full.OutPath)
+
+	// Element crop with padding → smaller than full page.
+	elem := base
+	elem.Clip = "#field-status"
+	elem.Pad = 32
+	elem.OutPath = filepath.Join(t.TempDir(), "elem.png")
+	if _, err := capr.Capture(context.Background(), elem); err != nil {
+		t.Fatalf("element crop: %v", err)
+	}
+	assertPNG(t, elem.OutPath)
+	if fileSize(t, elem.OutPath) >= fullSize {
+		t.Error("element crop should be smaller than the full page")
+	}
+
+	// Focus crop (bounding box of annotated targets) → also smaller.
+	focus := base
+	focus.Arrows = []docs.Annotation{{At: "status", Text: "state"}, {At: "priority", Text: "pri"}}
+	focus.Clip = "focus"
+	focus.OutPath = filepath.Join(t.TempDir(), "focus.png")
+	if _, err := capr.Capture(context.Background(), focus); err != nil {
+		t.Fatalf("focus crop: %v", err)
+	}
+	assertPNG(t, focus.OutPath)
+	if fileSize(t, focus.OutPath) >= fullSize {
+		t.Error("focus crop should be smaller than the full page")
+	}
+
+	// clip="focus" with no arrows → fail loud.
+	bad := base
+	bad.Clip = "focus"
+	bad.OutPath = filepath.Join(t.TempDir(), "bad.png")
+	if _, err := capr.Capture(context.Background(), bad); err == nil {
+		t.Error(`clip="focus" with no annotations should fail loud`)
+	}
+}
+
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Size()
+}
+
 func assertPNG(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

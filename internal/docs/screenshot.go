@@ -9,6 +9,10 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// defaultCropPad is the padding (CSS px) added around a clipped region when the
+// author does not specify pad=. Matches openvwr's figure convention.
+const defaultCropPad = 24
+
 // Capturer renders a screenshot{} island: it stands up the data-entry SPA over a
 // seeded temp project, drives a headless browser to the requested view, and
 // writes a PNG. It is a consumer-side interface (defined here, in the consumer)
@@ -44,8 +48,14 @@ type CaptureSpec struct {
 	// empty ⇒ the harness picks a default role that can read.
 	As string
 
-	// Clip is an optional CSS selector to clip the capture to one element.
+	// Clip bounds the capture. Empty ⇒ the full page. A CSS selector
+	// ("#field-status", ".form-section") ⇒ that element. A predefined keyword ⇒
+	// a computed region: "focus" ⇒ the bounding box of all annotated targets.
+	// The clipped region is expanded by Pad and clamped to the page.
 	Clip string
+	// Pad is the padding in CSS px added around a Clip region (default via the
+	// resolver). Ignored for a full-page capture.
+	Pad int
 	// Annotations to draw before capture.
 	Arrows []Annotation
 
@@ -92,6 +102,7 @@ func (dr *docRuntime) luaScreenshot(ls *lua.LState) int {
 		Form:       fieldString(ls, tbl, "form"),
 		As:         fieldString(ls, tbl, "as"),
 		Clip:       fieldString(ls, tbl, "clip"),
+		Pad:        fieldInt(ls, tbl, "pad", defaultCropPad),
 		Arrows:     dr.readAnnotations(ls, tbl),
 	}
 	if spec.Type == "" {
