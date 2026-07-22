@@ -23,12 +23,12 @@ type RelationHistoryCmd struct {
 
 // Run dispatches `rela relation-history <from> <type> <to> [--version N]`.
 func (c *RelationHistoryCmd) Run(ctx context.Context, svc *writeServices) error {
-	reader, ok := svc.Store.(store.RelationHistoryReader)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support relation version history " +
 			"(content versioning is a PostgreSQL-build feature; filesystem deployments use git).")
 		return nil
 	}
+	var reader store.RelationHistoryReader = svc.Versions
 	if c.Version > 0 {
 		return c.printSnapshot(ctx, reader)
 	}
@@ -103,12 +103,12 @@ type RelationRestoreCmd struct {
 
 // Run dispatches `rela relation-restore <from> <type> <to> <version>`.
 func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error {
-	reader, ok := svc.Store.(store.RelationHistoryReader)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support relation version history " +
 			"(restore is a PostgreSQL-build feature).")
 		return nil
 	}
+	var reader store.RelationHistoryReader = svc.Versions
 
 	snap, err := reader.GetRelationVersion(ctx, c.From, c.Type, c.To, c.Version)
 	if errors.Is(err, store.ErrNotFound) {

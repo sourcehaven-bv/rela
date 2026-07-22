@@ -36,3 +36,14 @@ func startVersionSweepIfSupported(st store.Store, meta *metamodel.Metamodel) {
 		s.StartVersionSweep(metaProjectionProvider{meta: meta}, pgstore.SweepConfig{})
 	}
 }
+
+// versionServiceFor returns the pgstore versioning service (history reads, version
+// writes, purge) sharing the store's pool. Returns a genuinely nil interface for a
+// non-pgstore store (should not happen in this build), so nil-checks downstream
+// behave correctly.
+func versionServiceFor(st store.Store) store.VersionService {
+	if s, ok := st.(*pgstore.Store); ok {
+		return s.VersionStore()
+	}
+	return nil
+}

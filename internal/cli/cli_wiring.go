@@ -27,7 +27,12 @@ import (
 // that only queries the graph takes *readServices in its Run signature;
 // kong injects the bound instance.
 type readServices struct {
-	Store     store.Store
+	Store store.Store
+	// Versions is the content-versioning service (history, restore, purge), a
+	// pgstore-only injected concern — nil on the fs/mem builds. History/purge
+	// commands bind the narrow sub-interface they need and print an "unsupported
+	// backend" message when it is nil, instead of type-asserting the store.
+	Versions  store.VersionService
 	Meta      *metamodel.Metamodel
 	Paths     *project.Context
 	Tracer    tracer.Tracer
@@ -105,6 +110,7 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	}
 	read := readServices{
 		Store:     svc.Store(),
+		Versions:  svc.Versions(),
 		Meta:      svc.Meta(),
 		Paths:     svc.Paths(),
 		Tracer:    svc.Tracer(),

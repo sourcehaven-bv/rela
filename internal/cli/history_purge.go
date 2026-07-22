@@ -39,12 +39,12 @@ type HistoryPurgeCmd struct {
 
 // Run dispatches `rela history-purge <id> ...`.
 func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
-	purger, ok := svc.Store.(store.VersionPurger)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version purge " +
 			"(a PostgreSQL-build compliance feature).")
 		return nil
 	}
+	var purger store.VersionPurger = svc.Versions
 	if err := validatePurgeFlags(c.Reason, c.Vseq, c.ContentHash, c.All); err != nil {
 		return err
 	}
@@ -103,12 +103,12 @@ type RelationHistoryPurgeCmd struct {
 
 // Run dispatches `rela relation-history-purge <from> <type> <to> ...`.
 func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
-	purger, ok := svc.Store.(store.RelationVersionPurger)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support relation version purge " +
 			"(a PostgreSQL-build compliance feature).")
 		return nil
 	}
+	var purger store.RelationVersionPurger = svc.Versions
 	if err := validatePurgeFlags(c.Reason, c.Vseq, c.ContentHash, c.All); err != nil {
 		return err
 	}

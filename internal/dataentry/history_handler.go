@@ -40,14 +40,14 @@ func handleV1History(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 	typeName, entityID := parts[0], parts[1]
 
-	reader, ok := a.store.(store.HistoryReader)
-	if !ok {
+	if a.versions == nil {
 		// Non-postgres backend: no version history capability. This is a
 		// capability gap, not an ACL decision, so it's safe to say so plainly.
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
 			"The active storage backend does not support version history", "")
 		return
 	}
+	var reader store.HistoryReader = a.versions
 
 	// POST .../{version}/restore is the one write on this route.
 	if len(parts) == 4 && parts[3] == "restore" {

@@ -13,11 +13,12 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// relHistoryStore wraps a store.Store with canned relation version history so
-// the RelationHistoryReader path is exercised without a pgstore. Keyed by the
-// composite "from|type|to".
+// relHistoryStore is a canned relation-version-history service so the
+// RelationHistoryReader path is exercised without a pgstore. Keyed by the
+// composite "from|type|to". Embeds stubVersionService to satisfy the whole
+// store.VersionService umbrella; assign it to App.versions.
 type relHistoryStore struct {
-	store.Store
+	stubVersionService
 	versions map[string][]store.RelationVersionSnapshot
 }
 
@@ -87,7 +88,6 @@ func newRelHistoryApp(t *testing.T) *App {
 
 	base := newAppFromParts(nil, testMeta(), f)
 	rel := relHistoryStore{
-		Store: base.store,
 		versions: map[string][]store.RelationVersionSnapshot{
 			relKey("DEC-1", "addresses", "REQ-1"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
@@ -97,7 +97,7 @@ func newRelHistoryApp(t *testing.T) *App {
 			}},
 		},
 	}
-	base.store = rel
+	base.versions = rel
 	return base
 }
 
@@ -153,7 +153,6 @@ func TestRelationHistory_DeletedRelationRequiresPermission(t *testing.T) {
 	// App with NO live endpoints, but canned history for a gone relation.
 	base := newAppFromParts(nil, testMeta(), &fixture{})
 	rel := relHistoryStore{
-		Store: base.store,
 		versions: map[string][]store.RelationVersionSnapshot{
 			relKey("GONE-A", "links", "GONE-B"): {{
 				RelationVersionMeta: store.RelationVersionMeta{
@@ -162,7 +161,7 @@ func TestRelationHistory_DeletedRelationRequiresPermission(t *testing.T) {
 			}},
 		},
 	}
-	base.store = rel
+	base.versions = rel
 
 	path := "/api/v1/_relation_history/decision/GONE-A/links/GONE-B"
 
