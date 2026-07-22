@@ -57,13 +57,13 @@ func TestRelationVersionWriteAndList(t *testing.T) {
 
 	c := newRelVersionInput(rid, "TKT-1", "blocks", "TKT-2", "first")
 	c.Op = store.VersionOpCreate
-	require.NoError(t, s.WriteRelationVersion(ctx, c))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c))
 
 	u := newRelVersionInput(rid, "TKT-1", "blocks", "TKT-2", "second")
 	u.Op = store.VersionOpUpdate
-	require.NoError(t, s.WriteRelationVersion(ctx, u))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, u))
 
-	metas, err := s.ListRelationVersions(ctx, "TKT-1", "blocks", "TKT-2")
+	metas, err := s.VersionStore().ListRelationVersions(ctx, "TKT-1", "blocks", "TKT-2")
 	require.NoError(t, err)
 	require.Len(t, metas, 2)
 	require.Equal(t, 1, metas[0].Version)
@@ -72,7 +72,7 @@ func TestRelationVersionWriteAndList(t *testing.T) {
 	require.Equal(t, store.VersionOpUpdate, metas[1].Op)
 	require.Equal(t, "alice", metas[1].PrincipalUser)
 
-	snap, err := s.GetRelationVersion(ctx, "TKT-1", "blocks", "TKT-2", 1)
+	snap, err := s.VersionStore().GetRelationVersion(ctx, "TKT-1", "blocks", "TKT-2", 1)
 	require.NoError(t, err)
 	require.Equal(t, "first", snap.Content)
 	require.Equal(t, "high", snap.Properties["weight"])
@@ -95,16 +95,16 @@ func TestRelationVersionDeletedKeyResolves(t *testing.T) {
 
 	c := newRelVersionInput(rid, "A", "links", "B", "x")
 	c.Op = store.VersionOpCreate
-	require.NoError(t, s.WriteRelationVersion(ctx, c))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c))
 
 	// Capture a delete version (as the sync path will), then remove the live row.
 	d := newRelVersionInput(rid, "A", "links", "B", "x")
 	d.Op = store.VersionOpDelete
-	require.NoError(t, s.WriteRelationVersion(ctx, d))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, d))
 	require.NoError(t, s.DeleteRelation(ctx, "A", "links", "B"))
 
 	// History must still be readable via the composite key (no live row now).
-	metas, err := s.ListRelationVersions(ctx, "A", "links", "B")
+	metas, err := s.VersionStore().ListRelationVersions(ctx, "A", "links", "B")
 	require.NoError(t, err)
 	require.Len(t, metas, 2)
 	require.Equal(t, store.VersionOpDelete, metas[1].Op)
@@ -124,7 +124,7 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 	rid1 := relRecordID(ctx, t, pool, "A", "links", "B")
 	c1 := newRelVersionInput(rid1, "A", "links", "B", "gen1")
 	c1.Op = store.VersionOpCreate
-	require.NoError(t, s.WriteRelationVersion(ctx, c1))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c1))
 	require.NoError(t, s.DeleteRelation(ctx, "A", "links", "B"))
 
 	// Recreate the same triple — the row gets a fresh rel_record_id.
@@ -135,14 +135,14 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 
 	c2 := newRelVersionInput(rid2, "A", "links", "B", "gen2")
 	c2.Op = store.VersionOpCreate
-	require.NoError(t, s.WriteRelationVersion(ctx, c2))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c2))
 
 	// ListRelationVersions resolves to the CURRENT (gen2) lineage only — the
 	// gen1 history is not merged in.
-	metas, err := s.ListRelationVersions(ctx, "A", "links", "B")
+	metas, err := s.VersionStore().ListRelationVersions(ctx, "A", "links", "B")
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "current lineage only; gen1 not merged")
-	snap, err := s.GetRelationVersion(ctx, "A", "links", "B", 1)
+	snap, err := s.VersionStore().GetRelationVersion(ctx, "A", "links", "B", 1)
 	require.NoError(t, err)
 	require.Equal(t, "gen2", snap.Content)
 }
@@ -186,7 +186,7 @@ func TestRelationVersionRenameAtomicPath(t *testing.T) {
 	rid := relRecordID(ctx, t, pool, "A", "links", "X")
 	c := newRelVersionInput(rid, "A", "links", "X", "v1")
 	c.Op = store.VersionOpCreate
-	require.NoError(t, s.WriteRelationVersion(ctx, c))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, c))
 
 	// Rename A->A2 through the REAL atomic store path.
 	_, err = s.RenameEntity(ctx, "A", "A2")
@@ -203,11 +203,11 @@ func TestRelationVersionRenameAtomicPath(t *testing.T) {
 	ren.Op = store.VersionOpRename
 	ren.PrevFrom = "A"
 	ren.PrevTo = "X"
-	require.NoError(t, s.WriteRelationVersion(ctx, ren))
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, ren))
 
 	// History via the new key is one continuous timeline on the surviving
 	// lineage: the pre-rename create + the rename row. No orphaned lineage.
-	metas, err := s.ListRelationVersions(ctx, "A2", "links", "X")
+	metas, err := s.VersionStore().ListRelationVersions(ctx, "A2", "links", "X")
 	require.NoError(t, err)
 	require.Len(t, metas, 2, "continuous timeline on the surviving rel_record_id")
 	require.Equal(t, store.VersionOpCreate, metas[0].Op)
@@ -291,17 +291,17 @@ func TestSweepCapturesSettledRelations(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.ListRelationVersions(ctx, "SET-A", "blocks", "SET-B")
+		metas, e := s.VersionStore().ListRelationVersions(ctx, "SET-A", "blocks", "SET-B")
 		return e == nil && len(metas) == 1 && metas[0].Op == store.VersionOpCreate
 	}, 3*time.Second, 25*time.Millisecond, "sweep should capture the settled relation once as create")
 
-	fresh, err := s.ListRelationVersions(ctx, "FRESH-A", "blocks", "FRESH-B")
+	fresh, err := s.VersionStore().ListRelationVersions(ctx, "FRESH-A", "blocks", "FRESH-B")
 	require.NoError(t, err)
 	require.Empty(t, fresh, "fresh relation should not be versioned yet")
 
 	// Dedup: unchanged content produces no further versions across ticks.
 	time.Sleep(200 * time.Millisecond)
-	metas, err := s.ListRelationVersions(ctx, "SET-A", "blocks", "SET-B")
+	metas, err := s.VersionStore().ListRelationVersions(ctx, "SET-A", "blocks", "SET-B")
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "unchanged relation content must not duplicate versions")
 }

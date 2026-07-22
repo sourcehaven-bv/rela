@@ -88,7 +88,12 @@ type App struct {
 	// Core services. Some are passed in (store, entityManager,
 	// searcher); the rest are constructed from primitives inside
 	// NewApp.
-	store         store.Store
+	store store.Store
+	// versions is the content-versioning service (entity + relation history
+	// reads), a pgstore-only injected concern — nil on fs/mem builds, where the
+	// history endpoints return 501. The history handlers bind the narrow
+	// sub-interface they need rather than type-asserting the store.
+	versions      store.VersionService
 	entityManager entitymanager.EntityManager
 	searcher      search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
@@ -378,6 +383,7 @@ func NewApp(
 	paths *project.Context,
 	meta *metamodel.Metamodel,
 	st store.Store,
+	versions store.VersionService,
 	em entitymanager.EntityManager,
 	searcher search.Searcher,
 	visibleSearcher search.VisibleSearcher,
@@ -500,6 +506,7 @@ func NewApp(
 		fs:              fs,
 		paths:           paths,
 		store:           st,
+		versions:        versions,
 		entityManager:   em,
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,

@@ -18,8 +18,8 @@ import (
 // entity_versions INSERT run in one transaction so the version row is
 // all-or-nothing (no orphaned schema_versions row, no half-write across a
 // crash). The content hash is computed here from the snapshot.
-func (s *Store) WriteVersion(ctx context.Context, in store.VersionInput) error {
-	tx, err := s.db.Begin(ctx)
+func (v *VersionStore) WriteVersion(ctx context.Context, in store.VersionInput) error {
+	tx, err := v.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -139,13 +139,13 @@ func lineageWhere() string {
 }
 
 // ListVersions implements store.HistoryReader.
-func (s *Store) ListVersions(ctx context.Context, id string) ([]store.VersionMeta, error) {
+func (v *VersionStore) ListVersions(ctx context.Context, id string) ([]store.VersionMeta, error) {
 	sel := lineageCTE + `
 		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.created_at
 		FROM entity_versions ev` + lineageWhere() + `
 		ORDER BY ev.vseq ASC`
-	rows, err := s.db.Query(ctx, sel, id)
+	rows, err := v.db.Query(ctx, sel, id)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (s *Store) ListVersions(ctx context.Context, id string) ([]store.VersionMet
 // relative to a ListVersions read taken at the same time — the lineage is
 // append-only, so an ordinal a caller already holds stays valid, but callers
 // should treat it as a cursor into a specific ListVersions result.
-func (s *Store) GetVersion(ctx context.Context, id string, version int) (*store.VersionSnapshot, error) {
+func (v *VersionStore) GetVersion(ctx context.Context, id string, version int) (*store.VersionSnapshot, error) {
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}
@@ -186,7 +186,7 @@ func (s *Store) GetVersion(ctx context.Context, id string, version int) (*store.
 		JOIN schema_versions sv ON sv.hash = ev.schema_hash
 		ORDER BY ev.vseq ASC
 		OFFSET $2 LIMIT 1`
-	row := s.db.QueryRow(ctx, sel, id, version-1)
+	row := v.db.QueryRow(ctx, sel, id, version-1)
 
 	var (
 		snap  store.VersionSnapshot
@@ -236,6 +236,3 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 	m.CreatedAt = created
 	return m, nil
 }
-
-// Static assertion that Store satisfies the optional capability.
-var _ store.HistoryReader = (*Store)(nil)

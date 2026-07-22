@@ -695,6 +695,29 @@ type RelationVersionPurger interface {
 	PurgeRelationVersions(ctx context.Context, req RelationVersionPurgeRequest) (*PurgeResult, error)
 }
 
+// VersionService is the umbrella for a backend's full content-versioning surface:
+// entity + relation history reads, synchronous version writes, and purge. It is a
+// SEPARATE concern from [Store] (a store just stores) that a backend supplies as
+// its own injected service — or leaves absent (nil) where versioning isn't
+// provided (the filesystem build uses git instead). pgstore's *VersionStore
+// implements it.
+//
+// This umbrella is a WIRING vehicle only: the composition root uses it as the
+// nil-able field type it threads through the service bundles. Consumers still
+// bind the NARROW sub-interface they actually use at the call site
+// (a history command takes [RelationHistoryReader]; a recorder takes
+// [RelationVersionWriter]) — the umbrella is never a parameter to a handler or
+// command. It groups one cohesive concern (all version I/O over one connection),
+// not a cross-subsystem service locator.
+type VersionService interface {
+	HistoryReader
+	VersionWriter
+	RelationHistoryReader
+	RelationVersionWriter
+	VersionPurger
+	RelationVersionPurger
+}
+
 // EntityObserver receives notifications when entities are created, updated,
 // deleted, or renamed. Stores call observers synchronously after each write.
 // Implementations must be safe for concurrent use.

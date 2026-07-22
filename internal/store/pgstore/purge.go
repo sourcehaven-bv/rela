@@ -35,8 +35,8 @@ import (
 // never learns the principal another way and never echoes purged content.
 
 // PurgeVersions implements store.VersionPurger.
-func (s *Store) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest) (*store.PurgeResult, error) {
-	pool, ok := s.db.(*pgxpool.Pool)
+func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest) (*store.PurgeResult, error) {
+	pool, ok := v.db.(*pgxpool.Pool)
 	if !ok {
 		return nil, errors.New("pgstore: PurgeVersions requires a *pgxpool.Pool (session-scoped advisory lock)")
 	}
@@ -56,11 +56,11 @@ func (s *Store) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
 	// Resolve the target lineage ids (fenced) and the current live content hash.
-	ids, err := s.entityLineageIDsForPurge(ctx, conn, req.EntityID)
+	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.EntityID)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := s.liveEntityHash(ctx, conn, req.EntityID)
+	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.EntityID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +101,10 @@ func (s *Store) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest
 }
 
 // PurgeRelationVersions implements store.RelationVersionPurger.
-func (s *Store) PurgeRelationVersions(
+func (v *VersionStore) PurgeRelationVersions(
 	ctx context.Context, req store.RelationVersionPurgeRequest,
 ) (*store.PurgeResult, error) {
-	pool, ok := s.db.(*pgxpool.Pool)
+	pool, ok := v.db.(*pgxpool.Pool)
 	if !ok {
 		return nil, errors.New("pgstore: PurgeRelationVersions requires a *pgxpool.Pool")
 	}
@@ -123,18 +123,18 @@ func (s *Store) PurgeRelationVersions(
 	}
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
-	id, err := s.recordIDForKey(ctx, req.From, req.Type, req.To)
+	id, err := v.recordIDForKey(ctx, req.From, req.Type, req.To)
 	if errors.Is(err, store.ErrNotFound) {
 		return &store.PurgeResult{}, nil // nothing to purge
 	}
 	if err != nil {
 		return nil, err
 	}
-	ids, err := s.relationLineageIDs(ctx, id)
+	ids, err := v.relationLineageIDs(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := s.liveRelationHash(ctx, conn, req.From, req.Type, req.To)
+	liveHash, liveExists, err := v.liveRelationHash(ctx, conn, req.From, req.Type, req.To)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func anyRename(targets []store.PurgeTarget) bool {
 // lineage as a slice usable in `entity_id = ANY($1)`. It reuses lineageCTE so
 // --all matches exactly what ListVersions shows and never spills into a reused
 // id's rows. Returns just the queried id if it has no rename ancestry.
-func (s *Store) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string) ([]string, error) {
+func (v *VersionStore) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string) ([]string, error) {
 	sel := lineageCTE + ` SELECT entity_id FROM lin`
 	rows, err := q.Query(ctx, sel, id)
 	if err != nil {
@@ -210,7 +210,7 @@ func (s *Store) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string)
 	return ids, nil
 }
 
-func (s *Store) liveEntityHash(ctx context.Context, q DBTX, id string) (hash string, exists bool, err error) {
+func (v *VersionStore) liveEntityHash(ctx context.Context, q DBTX, id string) (hash string, exists bool, err error) {
 	e, gErr := scanEntity(q.QueryRow(ctx,
 		`SELECT id, type, properties, content, updated_at FROM entities WHERE id = $1`, id))
 	if errors.Is(gErr, pgx.ErrNoRows) {
@@ -224,7 +224,7 @@ func (s *Store) liveEntityHash(ctx context.Context, q DBTX, id string) (hash str
 	}), true, nil
 }
 
-func (s *Store) liveRelationHash(
+func (v *VersionStore) liveRelationHash(
 	ctx context.Context, q DBTX, from, relType, to string,
 ) (hash string, exists bool, err error) {
 	r, gErr := scanRelation(q.QueryRow(ctx,
@@ -355,9 +355,3 @@ func writeRelationPurgeTombstone(
 const purgeSchemaHash = "purge-tombstone"
 
 var purgeSchemaProjection = []byte(`{"purge":true}`)
-
-// Static assertions that Store satisfies the optional purge capabilities.
-var (
-	_ store.VersionPurger         = (*Store)(nil)
-	_ store.RelationVersionPurger = (*Store)(nil)
-)

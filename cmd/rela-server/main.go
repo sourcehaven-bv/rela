@@ -348,7 +348,7 @@ func main() {
 	fieldResolver := buildFieldResolver(svc)
 
 	app, err := dataentry.NewApp(
-		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
+		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),

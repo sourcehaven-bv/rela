@@ -45,12 +45,12 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 	fromType, from, relType, to := parts[0], parts[1], parts[2], parts[3]
 
-	reader, ok := a.store.(store.RelationHistoryReader)
-	if !ok {
+	if a.versions == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
 			"The active storage backend does not support relation version history", "")
 		return
 	}
+	var reader store.RelationHistoryReader = a.versions
 
 	// POST .../{version}/restore is the one write on this route.
 	if len(parts) == 6 && parts[5] == "restore" {

@@ -23,17 +23,17 @@ import (
 // capture taken BEFORE a delete (the live row still carries the id) or during a
 // rename (resolved from the pre-rename key). Callers that capture after the row
 // is gone must supply a non-zero RecordID read earlier.
-func (s *Store) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
+func (v *VersionStore) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
 	if in.RecordID == 0 {
 		// Resolve from the (still-live, pre-delete) row or the most-recent lineage.
-		id, err := s.recordIDForKey(ctx, in.From, in.Type, in.To)
+		id, err := v.recordIDForKey(ctx, in.From, in.Type, in.To)
 		if err != nil {
 			return fmt.Errorf("pgstore: resolve rel_record_id for %s--%s--%s: %w",
 				in.From, in.Type, in.To, err)
 		}
 		in.RecordID = id
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := v.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func contentHashOfRelation(in store.RelationVersionInput) string {
 // the lineage whose latest row BEFORE the rename carried (prev_from, type,
 // prev_to). Cycles are impossible (each hop strictly decreases the rel_record_id
 // frontier's max vseq), but a visited-set guards regardless.
-func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, error) {
+func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]int64, error) {
 	ids := []int64{headID}
 	seen := map[int64]struct{}{headID: {}}
 	frontier := []int64{headID}
@@ -143,7 +143,7 @@ func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, 
 			  AND ren.op = 'rename'
 			  AND ren.prev_from IS NOT NULL
 			  AND ren.prev_to IS NOT NULL`
-		rows, err := s.db.Query(ctx, q, id)
+		rows, err := v.db.Query(ctx, q, id)
 		if err != nil {
 			return nil, err
 		}
@@ -178,12 +178,12 @@ func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, 
 // recent relation_versions lineage that ended at this key — i.e. the largest
 // rel_record_id whose latest row still carries this (from,type,to). Returns
 // (0, ErrNotFound) when the key has no live row and no history.
-func (s *Store) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
+func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
 	// Live row first.
 	const live = `SELECT rel_record_id FROM relations
 	              WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
 	var id int64
-	err := s.db.QueryRow(ctx, live, from, relType, to).Scan(&id)
+	err := v.db.QueryRow(ctx, live, from, relType, to).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -204,7 +204,7 @@ func (s *Store) recordIDForKey(ctx context.Context, from, relType, to string) (i
 		WHERE rv.from_id = $1 AND rv.rel_type = $2 AND rv.to_id = $3
 		ORDER BY rv.vseq DESC
 		LIMIT 1`
-	err = s.db.QueryRow(ctx, dead, from, relType, to).Scan(&id)
+	err = v.db.QueryRow(ctx, dead, from, relType, to).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, store.ErrNotFound
 	}
@@ -215,17 +215,17 @@ func (s *Store) recordIDForKey(ctx context.Context, from, relType, to string) (i
 }
 
 // ListRelationVersions implements store.RelationHistoryReader.
-func (s *Store) ListRelationVersions(
+func (v *VersionStore) ListRelationVersions(
 	ctx context.Context, from, relType, to string,
 ) ([]store.RelationVersionMeta, error) {
-	id, err := s.recordIDForKey(ctx, from, relType, to)
+	id, err := v.recordIDForKey(ctx, from, relType, to)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil // no history is an empty slice, not an error
 	}
 	if err != nil {
 		return nil, err
 	}
-	ids, err := s.relationLineageIDs(ctx, id)
+	ids, err := v.relationLineageIDs(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (s *Store) ListRelationVersions(
 		FROM relation_versions
 		WHERE rel_record_id = ANY($1)
 		ORDER BY vseq ASC`
-	rows, err := s.db.Query(ctx, sel, ids)
+	rows, err := v.db.Query(ctx, sel, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -262,17 +262,17 @@ func (s *Store) ListRelationVersions(
 
 // GetRelationVersion implements store.RelationHistoryReader. version is a 1-based
 // ordinal over the lineage ordered by vseq.
-func (s *Store) GetRelationVersion(
+func (v *VersionStore) GetRelationVersion(
 	ctx context.Context, from, relType, to string, version int,
 ) (*store.RelationVersionSnapshot, error) {
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}
-	id, err := s.recordIDForKey(ctx, from, relType, to)
+	id, err := v.recordIDForKey(ctx, from, relType, to)
 	if err != nil {
 		return nil, err // ErrNotFound propagates
 	}
-	ids, err := s.relationLineageIDs(ctx, id)
+	ids, err := v.relationLineageIDs(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func (s *Store) GetRelationVersion(
 		WHERE rv.rel_record_id = ANY($1)
 		ORDER BY rv.vseq ASC
 		OFFSET $2 LIMIT 1`
-	row := s.db.QueryRow(ctx, sel, ids, version-1)
+	row := v.db.QueryRow(ctx, sel, ids, version-1)
 
 	var (
 		snap     store.RelationVersionSnapshot
@@ -345,10 +345,3 @@ func scanRelationVersionMeta(row scanner) (store.RelationVersionMeta, error) {
 	m.CreatedAt = created
 	return m, nil
 }
-
-// Static assertions that Store satisfies the optional relation-version
-// capabilities.
-var (
-	_ store.RelationHistoryReader = (*Store)(nil)
-	_ store.RelationVersionWriter = (*Store)(nil)
-)
