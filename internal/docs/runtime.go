@@ -23,6 +23,11 @@ import (
 // only by this context deadline, so it must always be wired.
 const buildTimeout = 30 * time.Second
 
+// screenshotBuildTimeout is the wider ceiling for a build that captures
+// screenshots — browser launch + per-island navigate/capture need more than the
+// Tier-A 30s.
+const screenshotBuildTimeout = 5 * time.Minute
+
 // Options controls a manual build.
 type Options struct {
 	// Meta is the deployment's metamodel (loaded from the real project). It is
@@ -34,6 +39,15 @@ type Options struct {
 	// Strict promotes an empty resolve (a resolver / echo yielding nothing) from
 	// a warning to a build failure.
 	Strict bool
+
+	// Capturer renders screenshot{} islands (Tier B). Injected by the CLI so the
+	// core docs package stays browser-free. nil ⇒ screenshot{} fails loud.
+	Capturer Capturer
+	// ProjectDir is the documented project root; screenshot{} copies its schema/
+	// config into the temp project the SPA renders.
+	ProjectDir string
+	// OutDir is where screenshot{} writes PNGs (derived from --out).
+	OutDir string
 }
 
 // docRuntime owns the per-build state the doc.* bindings close over: the real
@@ -63,6 +77,23 @@ type docRuntime struct {
 	// full-store scan per create().
 	seedCounts map[string]int
 
+	// seedOps records every create/link so a screenshot{} island can replay them
+	// against a fresh fsstore temp project (DR-S2).
+	seedOps []SeedOp
+
+	// capturer renders screenshot{} islands. nil ⇒ screenshot{} fails loud (the
+	// Tier-B browser dependency is injected only by the CLI, keeping core docs
+	// browser-free). See screenshot.go.
+	capturer Capturer
+
+	// projectDir is the documented project's root (schema/config copied into the
+	// screenshot temp project). Empty in a schema-only build.
+	projectDir string
+
+	// outDir is where screenshot{} PNGs are written (derived from the build's
+	// --out); empty ⇒ PNGs written next to the cwd and referenced by basename.
+	outDir string
+
 	// warnings accumulates non-fatal issues (empty resolves in non-strict mode).
 	warnings []string
 }
@@ -81,19 +112,33 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// Bound the WHOLE build, not each island: the runtime's per-run applyTimeout
 	// resets a fresh deadline on every island, so without a build-wide deadline
 	// N islands give no effective ceiling. A child ctx deadline caps the total.
-	// If the caller already set an earlier deadline, that one wins.
-	ctx, cancel := context.WithTimeout(ctx, buildTimeout)
+	// If the caller already set an earlier deadline, that one wins. Screenshot
+	// builds get a longer ceiling (browser launch + navigate + capture).
+	deadline := buildTimeout
+	if opts.Capturer != nil {
+		deadline = screenshotBuildTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
+
+	// The Capturer owns the temp project + server + browser; tear it down
+	// unconditionally so a panic mid-build can't leak them (DR-M3).
+	if opts.Capturer != nil {
+		defer func() { _ = opts.Capturer.Close() }()
+	}
 
 	st := memstore.New()
 	dr := &docRuntime{
-		meta:   opts.Meta,
-		policy: opts.Policy,
-		store:  st,
-		tracer: tracer.New(st),
-		strict: opts.Strict,
-		out:    &strings.Builder{},
-		ctx:    ctx,
+		meta:       opts.Meta,
+		policy:     opts.Policy,
+		store:      st,
+		tracer:     tracer.New(st),
+		strict:     opts.Strict,
+		out:        &strings.Builder{},
+		ctx:        ctx,
+		capturer:   opts.Capturer,
+		projectDir: opts.ProjectDir,
+		outDir:     opts.OutDir,
 	}
 
 	// A reader runtime gives us the sandbox (no io/os) plus rela.* read bindings;

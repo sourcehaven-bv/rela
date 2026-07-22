@@ -32,6 +32,7 @@ components:
   conditionlint:    { in: internal/conditionlint }
   desktop:          { in: internal/desktop }
   docs:             { in: internal/docs }
+  docscapture:      { in: internal/docscapture }
 
   # Server protocols
   mcp:              { in: internal/mcp }
@@ -130,6 +131,7 @@ vendors:
       - github.com/mitchellh/go-wordwrap
   gogit:       { in: github.com/go-git/go-git/** }
   gopherlua:   { in: [github.com/yuin/gopher-lua, github.com/yuin/gopher-lua/**] }
+  chromedp:    { in: [github.com/chromedp/chromedp, github.com/chromedp/chromedp/**, github.com/chromedp/cdproto, github.com/chromedp/cdproto/**] }
   runewidth:   { in: github.com/mattn/go-runewidth }
   rrulego:     { in: github.com/teambition/rrule-go }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
@@ -220,6 +222,7 @@ deps:
       - config
       - dataentryconfig
       - docs
+      - docscapture
       - entitymanager
       - filter
       - importer
@@ -505,6 +508,17 @@ deps:
       - tracer
     canUse:
       - gopherlua
+  docscapture:
+    mayDependOn:
+      - acl
+      - appbuild
+      - dataentry
+      - docs
+      - principal
+      - script
+      - store
+    canUse:
+      - chromedp
   entitymanager:
     mayDependOn:
       - acl

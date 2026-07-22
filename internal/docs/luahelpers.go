@@ -38,6 +38,25 @@ func fieldString(ls *lua.LState, tbl *lua.LTable, key string) string {
 	return ""
 }
 
+// fieldStringDefault reads a string field, returning def when absent/empty.
+func fieldStringDefault(ls *lua.LState, tbl *lua.LTable, key, def string) string {
+	if s := fieldString(ls, tbl, key); s != "" {
+		return s
+	}
+	return def
+}
+
+// fieldBool reads a boolean field from a table, false when absent.
+func fieldBool(ls *lua.LState, tbl *lua.LTable, key string) bool {
+	if tbl == nil {
+		return false
+	}
+	if b, ok := ls.GetField(tbl, key).(lua.LBool); ok {
+		return bool(b)
+	}
+	return false
+}
+
 // fieldInt reads an integer field from a table, returning def when absent.
 func fieldInt(ls *lua.LState, tbl *lua.LTable, key string, def int) int {
 	if tbl == nil {
