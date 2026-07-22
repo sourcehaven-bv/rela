@@ -582,6 +582,8 @@ func NewApp(
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
 		executeView: app.executeView,
+		// Late-bound: tests reassign app.acl after construction.
+		aclImpl: func() acl.ACL { return app.acl },
 	}
 
 	// Build and publish the initial Schema snapshot. All reloadable
