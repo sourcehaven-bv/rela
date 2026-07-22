@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/docs"
+	"github.com/Sourcehaven-BV/rela/internal/docscapture"
 )
 
 // DocsCmd is `rela docs` — the doc-language build tool.
@@ -23,6 +24,15 @@ type DocsBuildCmd struct {
 	Manual string `arg:"" help:"Path to the manual (Markdown with rela Lua islands)."`
 	Output string `name:"out" help:"Write resolved Markdown here (default: stdout)."`
 	Strict bool   `help:"Fail the build if any island resolves to nothing."`
+}
+
+// outputDir is the directory screenshot{} PNGs are written into: the output
+// file's directory, or the current directory when writing to stdout.
+func outputDir(out string) string {
+	if out == "" {
+		return "."
+	}
+	return filepath.Dir(out)
 }
 
 // Run resolves the manual and writes the output.
@@ -44,11 +54,21 @@ func (c *DocsBuildCmd) Run(ctx context.Context, svc *readServices) error {
 		return fmt.Errorf("load acl.yaml: %w", perr)
 	}
 
-	rendered, err := docs.Build(ctx, string(src), docs.Options{
-		Meta:   svc.Meta,
-		Policy: policy,
-		Strict: c.Strict,
-	})
+	opts := docs.Options{
+		Meta:       svc.Meta,
+		Policy:     policy,
+		Strict:     c.Strict,
+		ProjectDir: svc.Paths.Root,
+		OutDir:     outputDir(c.Output),
+	}
+	// Wire a browser capturer for screenshot{} islands. If no browser is
+	// available, leave it nil — a manual WITHOUT screenshot{} still builds; one
+	// WITH it fails loud ("no capturer configured"). No graceful degradation.
+	if cap, capErr := docscapture.New(); capErr == nil {
+		opts.Capturer = cap
+	}
+
+	rendered, err := docs.Build(ctx, string(src), opts)
 	if err != nil {
 		return err
 	}

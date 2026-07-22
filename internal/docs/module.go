@@ -39,6 +39,8 @@ func (dr *docRuntime) registerModule() {
 		// Seed (raw store — no entitymanager, no validation).
 		"create": dr.luaCreate,
 		"link":   dr.luaLink,
+		// Tier B — browser capture (fails loud when no capturer is wired).
+		"screenshot": dr.luaScreenshot,
 	}
 	for name, fn := range fns {
 		nf := L.NewFunction(fn)
@@ -99,6 +101,10 @@ func (dr *docRuntime) luaCreate(ls *lua.LState) int {
 	if err := dr.store.CreateEntity(dr.ctx, e); err != nil {
 		return dr.luaFail(ls, "create(%q): %v", typ, err)
 	}
+	// Record for replay into the screenshot temp project (DR-S2).
+	dr.seedOps = append(dr.seedOps, SeedOp{
+		Kind: "create", Type: typ, ID: id, Properties: props, Content: content,
+	})
 	ls.Push(rlua.EntityToTable(ls, e))
 	return 1
 }
@@ -112,6 +118,7 @@ func (dr *docRuntime) luaLink(ls *lua.LState) int {
 	if _, err := dr.store.CreateRelation(dr.ctx, from, relType, to, nil); err != nil {
 		return dr.luaFail(ls, "link(%q,%q,%q): %v", from, relType, to, err)
 	}
+	dr.seedOps = append(dr.seedOps, SeedOp{Kind: "link", From: from, RelType: relType, To: to})
 	return 0
 }
 
