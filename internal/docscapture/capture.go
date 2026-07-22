@@ -24,6 +24,8 @@ const (
 	maxFullHeight = 4000
 	// settleDelay lets the SPA finish its post-mount render before capture.
 	settleDelay = 400 * time.Millisecond
+	// pollInterval is how often the renderability gate checks the form's load state.
+	pollInterval = 100 * time.Millisecond
 	// viewportW/H give the capture a stable, wide-enough viewport so form layout
 	// is deterministic across machines.
 	viewportW = 1280
@@ -63,7 +65,6 @@ func (c *Capturer) Capture(ctx context.Context, spec docs.CaptureSpec) (string, 
 	defer cancel()
 
 	url := formURL(trimSlash(c.proj.server.URL), spec)
-	anchor := "#field-" + firstFieldAnchor(spec)
 
 	var png []byte
 	actions := []chromedp.Action{
@@ -72,9 +73,11 @@ func (c *Capturer) Capture(ctx context.Context, spec docs.CaptureSpec) (string, 
 		// Thread the requested role to the per-request principal resolver.
 		network.SetExtraHTTPHeaders(network.Headers(map[string]any{roleHeader: spec.As})),
 		chromedp.Navigate(url),
-		// Renderability gate: the entity must actually render (a real field
-		// appears) AND the SPA's "failed to load" boundary must be absent (DR-S4).
-		chromedp.WaitVisible(anchor, chromedp.ByQuery),
+		// Renderability gate (DR-S4): wait until the form stamps a terminal
+		// load state, then fail loud if it was an error. This races load vs
+		// error in one poll — no dependency on which schema fields render or on
+		// a timing-sensitive toast, and a load failure short-circuits instead of
+		// eating the whole capture timeout.
 		renderabilityGate(),
 		chromedp.Sleep(settleDelay),
 	}
@@ -106,6 +109,10 @@ func (c *Capturer) ensure(ctx context.Context, spec docs.CaptureSpec) error {
 			return err
 		}
 		c.proj = p
+	} else if err := c.proj.syncSeed(ctx, spec.Seed); err != nil {
+		// A later island may have create()d entities after standUp; apply the new
+		// tail so this island's entity actually exists in the running server.
+		return err
 	}
 	if c.browser == nil {
 		b, err := newBrowser(ctx)
@@ -151,6 +158,9 @@ func captureAction(spec docs.CaptureSpec, out *[]byte) chromedp.Action {
 		buf, err := page.CaptureScreenshot().
 			WithFormat(page.CaptureScreenshotFormatPng).
 			WithClip(&page.Viewport{X: 0, Y: 0, Width: float64(dims.W), Height: float64(dims.H), Scale: 1}).
+			// Without this, a clip taller than the emulated viewport renders the
+			// below-fold region blank — exactly the 1600<H≤4000 case the cap allows.
+			WithCaptureBeyondViewport(true).
 			Do(ctx)
 		if err != nil {
 			return err
@@ -160,34 +170,27 @@ func captureAction(spec docs.CaptureSpec, out *[]byte) chromedp.Action {
 	})
 }
 
-// firstFieldAnchor picks a field to gate renderability on: the first arrow's
-// field target, else a conventional "title"/"name". The chosen anchor must be a
-// field the target form actually renders.
-func firstFieldAnchor(spec docs.CaptureSpec) string {
-	for _, a := range spec.Arrows {
-		if f := fieldOf(a.At); f != "" {
-			return f
-		}
-	}
-	return "title"
-}
-
-// renderabilityGate fails the capture if the SPA surfaced an error toast instead
-// of rendering the entity (DR-S4) — e.g. a bad entity id, a form field set the
-// entity doesn't satisfy, or the `as` role lacking read access. The error toast
-// carries a stable data-testid; its presence means we'd be capturing a broken
-// form. (The prior WaitVisible on a real #field-<prop> already confirms the form
-// mounted; this catches the load-error-after-mount case.)
+// renderabilityGate blocks until the form reaches a terminal load state and
+// fails loud if that state is an error (DR-S4). The form root stamps
+// data-testid="form-state-{pending|loaded|error}" off loadEntity's outcome, so
+// this is unambiguous: it distinguishes a form rendered WITH its entity's data
+// from an empty schema-only shell left after a failed load — the fail-OPEN hole
+// the spike hit. Polling races load vs error, so a failure short-circuits rather
+// than eating the capture timeout.
 func renderabilityGate() chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
-		var broken bool
-		if err := chromedp.Evaluate(
-			`!!document.querySelector('[data-testid="toast-error"]')`, &broken,
+		var state string
+		if err := chromedp.Poll(
+			`(function(){var e=document.querySelector('[data-testid^="form-state-"]');`+
+				`if(!e)return null;var s=e.getAttribute('data-testid').slice(11);`+
+				`return s==='pending'?null:s;})()`,
+			&state,
+			chromedp.WithPollingInterval(pollInterval),
 		).Do(ctx); err != nil {
-			return err
+			return fmt.Errorf("waiting for the form to load: %w", err)
 		}
-		if broken {
-			return errors.New("the entity failed to render (the SPA surfaced an error) — check the entity id, the form's field set, and the `as` role's read access")
+		if state == "error" {
+			return errors.New("the entity failed to load in the form — check the entity id, the form's field set, and the `as` role's read access")
 		}
 		return nil
 	})

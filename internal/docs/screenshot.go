@@ -76,7 +76,11 @@ func (dr *docRuntime) luaScreenshot(ls *lua.LState) int {
 		return dr.luaFail(ls, "screenshot: expects a table, e.g. screenshot{view=\"form\", type=..., entity=...}")
 	}
 	if dr.capturer == nil {
-		return dr.luaFail(ls, "screenshot: no browser capturer configured — screenshot{} needs a Chrome/Chromium browser and a built data-entry SPA")
+		reason := dr.capturerErr
+		if reason == "" {
+			reason = "screenshot{} needs a Chrome/Chromium browser and a built data-entry SPA"
+		}
+		return dr.luaFail(ls, "screenshot: no browser capturer available — %s", reason)
 	}
 
 	spec := CaptureSpec{

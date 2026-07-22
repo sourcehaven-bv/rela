@@ -38,6 +38,24 @@ type project struct {
 	svc      *appbuild.Services
 	server   *httptest.Server
 	assignee func(role string) principal.Principal
+	// seeded is how many seed ops have been applied to the store. The manual's
+	// seed grows as create()/link() islands run; each screenshot{} passes the
+	// FULL accumulated seed, so we apply only the new tail before capturing —
+	// otherwise an entity created after the server stood up would be missing.
+	seeded int
+}
+
+// syncSeed applies any seed ops beyond those already applied to the running
+// store, so a screenshot{} of an entity created after standUp still renders.
+func (p *project) syncSeed(ctx context.Context, seed []docs.SeedOp) error {
+	if p.seeded >= len(seed) {
+		return nil
+	}
+	if err := docs.ApplySeed(ctx, p.svc.Store(), seed[p.seeded:]); err != nil {
+		return err
+	}
+	p.seeded = len(seed)
+	return nil
 }
 
 // standUp copies the documented project's schema/config into a temp dir, seeds
@@ -92,7 +110,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp) (*proje
 		return assignee(r.Header.Get(roleHeader))
 	})
 
-	p := &project{dir: tmp, svc: svc, assignee: assignee}
+	p := &project{dir: tmp, svc: svc, assignee: assignee, seeded: len(seed)}
 	p.server = httptest.NewServer(app.NewRouter())
 	return p, nil
 }
