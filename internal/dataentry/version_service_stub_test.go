@@ -28,15 +28,21 @@ func (stubVersionService) WriteVersion(context.Context, store.VersionInput) erro
 }
 
 func (stubVersionService) ListRelationVersions(
-	context.Context, string, string, string,
+	context.Context, store.RelationHistoryQuery,
 ) ([]store.RelationVersionMeta, error) {
 	panic("stubVersionService.ListRelationVersions not implemented")
 }
 
 func (stubVersionService) GetRelationVersion(
-	context.Context, string, string, string, int,
+	context.Context, store.RelationHistoryQuery, int,
 ) (*store.RelationVersionSnapshot, error) {
 	panic("stubVersionService.GetRelationVersion not implemented")
+}
+
+func (stubVersionService) ListRelationLifetimes(
+	context.Context, string, string, string,
+) ([]store.RelationLifetime, error) {
+	panic("stubVersionService.ListRelationLifetimes not implemented")
 }
 
 func (stubVersionService) WriteRelationVersion(context.Context, store.RelationVersionInput) error {
