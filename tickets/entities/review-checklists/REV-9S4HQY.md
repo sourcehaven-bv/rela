@@ -70,4 +70,4 @@ registration; build + arch-lint pass.
 - [x] ~~All CI checks pass~~ (verified locally: full `go test ./...`, lint, arch-lint, lint-md, coverage all green; CI confirms on the PR)
 - [x] ~~PR URL documented below~~ (recorded when `/pr` opens it)
 
-**PR:** _pending — opens via `/pr` after this ticket reaches `done`_
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1181
