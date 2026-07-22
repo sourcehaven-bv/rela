@@ -4,7 +4,8 @@ type: ticket
 title: 'Deleted-relation history: disambiguate id-reuse across lifetimes (relation tombstone)'
 kind: enhancement
 priority: medium
-status: backlog
+effort: m
+status: done
 ---
 
 ## Problem
