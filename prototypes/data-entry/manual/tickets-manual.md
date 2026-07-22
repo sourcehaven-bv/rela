@@ -54,3 +54,23 @@ There is `rela count{ type = "ticket" }` seeded ticket in this example.
 ```rela
 roles_matrix{ type = "ticket" }
 ```
+
+## The edit form
+
+This is the ticket edit form as an editor sees it:
+
+```rela
+local demo = create("ticket", {
+  id = "DEMO-TICKET", title = "Login page 500s under load",
+  status = "in-progress", priority = "high", reporter = "demo@example.com",
+})
+screenshot{
+  view = "form", type = "ticket", entity = demo.id,
+  arrows = {
+    { at = "status",   text = "the lifecycle state" },
+    { at = "priority", text = "triage priority" },
+  },
+  out = "ticket-form.png",
+  alt = "The ticket edit form, with the status and priority fields highlighted",
+}
+```

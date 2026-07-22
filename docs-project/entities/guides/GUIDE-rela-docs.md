@@ -133,3 +133,53 @@ for _, t in ipairs({ "risico", "maatregel", "verwerking" }) do
 end
 ​```
 ```
+
+## Screenshots
+
+The `screenshot{}` island captures a **live screenshot of the data-entry
+form** for a seeded entity, annotated with arrows, and embeds it as a
+Markdown image. It stands up the data-entry app over a throwaway copy of
+your project (seeded with the manual's `create`/`link` entities) and
+drives a headless Chrome to render the real form.
+
+```markdown
+​```rela
+local t = create("ticket", { id = "DEMO-1", title = "Login page 500s",
+                             status = "in-progress", priority = "high",
+                             reporter = "demo@example.com" })
+screenshot{
+  view = "form", type = "ticket", entity = t.id,
+  arrows = {
+    { at = "status",   text = "the lifecycle state" },
+    { at = "priority", text = "triage priority" },
+  },
+  out = "ticket-form.png",
+  alt = "The ticket edit form",
+}
+​```
+```
+
+Arguments:
+
+| Arg | Meaning |
+| --- | --- |
+| `view` | `"form"` (edit form, default), `"entity"` (detail), `"list"` |
+| `type`, `entity` | the entity type and the id of a **seeded** entity to render |
+| `form` | the `data-entry.yaml` form id (default `edit_<type>`) |
+| `as` | the ACL **role** to render as (a principal assigned that role); default picks a role that can edit |
+| `arrows` | `{{at, text, side}}` — `at` is a field property (→ that field), `@button:<label>`, or `@role:<sel>`; `text` rides the arrow; `side` is `left`/`right` |
+| `clip` | a CSS selector to capture just one element |
+| `out`, `alt` | the image file (written next to the output) and its alt text |
+
+**Prerequisites.** `screenshot{}` needs a **Chrome/Chromium browser** on
+the machine and the **data-entry SPA built** into the binary (`just
+build-frontend`). There is **no graceful degradation**: if either is
+missing, the build fails loud — a manual either captures a real figure or
+it errors, never a placeholder.
+
+**Fail-loud specifics.** An unknown field anchor, an entity that fails to
+render for the chosen role (the form shows a load error), or a page taller
+than the height cap each stop the build with the offending manual line.
+
+Everything else in the build stays browser-free: a manual with **no**
+`screenshot{}` never launches a browser or touches the data-entry app.
