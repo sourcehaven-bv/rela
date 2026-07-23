@@ -103,16 +103,69 @@ only for an entity the caller is allowed to read — export resolves the entity
 through the ACL gate first, so a denied caller gets a 404 and the script never
 runs.
 
-## Security notes
+## Security
+
+### The threat
+
+Export feeds **attacker-influenceable content** — an entity body is free markdown
+writable by anyone with write access — into a **third-party document converter**
+running on your server. That is a real attack surface, not a theoretical one:
+
+- **SSRF (verified).** Converters fetch remote resources by design. A body
+  containing `![x](http://169.254.169.254/…)` makes the *server* issue that
+  request, from its own network position — cloud metadata, internal services.
+  Pandoc's own manual documents this for HTML input.
+- **Local file disclosure.** The same mechanism can pull local files into the
+  output document.
+- **Parser RCE.** Converters are large C/C++/TeX codebases with CVE history.
+  `wkhtmltopdf` is **unmaintained** and has a known unpatched file-read whose
+  `--disable-local-file-access` mitigation is bypassable — avoid it.
+- **Resource exhaustion.** A crafted document can drive a converter to consume
+  unbounded memory, fork endlessly, or fill the disk.
+
+This matters most for **network deployments**, where a remote user with write
+access can reach the server's network. For purely local CLI use the bar is
+lower — someone who can run `rela` can already run anything.
+
+### What rela does about it
+
+Commands run **confined**, and this is enforced in one shared place
+(`internal/cmdexec`) so attachment processing gets the identical guarantees:
+
+| Control | Mechanism |
+|---|---|
+| No network | Linux: bubblewrap (`--unshare-all`). macOS: `sandbox-exec` (`deny network*`) |
+| Filesystem | read-only system; only the run's temp dir writable |
+| Memory / processes / file size / CPU | `RLIMIT_AS` / `NPROC` / `FSIZE` / `CPU` (Linux) |
+| No orphaned helpers | the whole process group is killed at the deadline |
+| Concurrency | a bounded pool caps simultaneous conversions |
+| Wall clock + output size | per-command timeout and cap |
+
+**Fail closed.** Where no sandbox mechanism exists (Windows, BSD, or a Linux
+kernel without unprivileged user namespaces), commands **refuse to run** rather
+than run unconfined. This blocks command execution only — the server still starts
+and everything that doesn't shell out keeps working. An operator who provides
+isolation another way (a locked-down container, a no-egress network policy) can
+explicitly accept unconfined execution. The startup log states the posture.
+
+> **Converter flags are not a substitute.** `pandoc --sandbox` restricts pandoc's
+> own file access but explicitly **does not cover PDF production** — the PDF
+> engine is a separate process outside it. Verified: with `--sandbox`, a
+> markdown-to-PDF run still performed the outbound fetch. Use it as
+> defence-in-depth, not as the control.
+
+### Other notes
 
 - Transform commands come from project config (`metamodel.yaml`) — the same trust
   level as attachment scan/transform commands and schedules. A request may only
   choose a registered transform **name**; it can never supply a command, flag, or
   path.
 - Commands run as an **argv array with no shell** (`{in}`/`{out}` are rela-chosen
-  temp paths), under a timeout and an output-size cap.
+  temp paths).
 - Exported downloads are served defensively (forced download, `nosniff`, a
   sandboxing CSP, `no-store`) because the produced bytes embed user content.
+- Prefer `-f commonmark_x` over `-f markdown` for untrusted input: pandoc's
+  manual notes it is far less prone to pathological parsing performance.
 
 ## Not yet supported (v1 limits)
 

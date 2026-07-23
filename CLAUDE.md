@@ -182,6 +182,18 @@ security-reviewed exec pattern `internal/attachment` uses). Rules for new code:
 - **Export downloads are hardened** like attachment downloads (nosniff, sandbox
   CSP, `no-store`, sanitized `Content-Disposition`) — the produced bytes embed
   user content.
+- **External commands are CONFINED in `internal/cmdexec`, and it fails closed.**
+  Both export and attachment processing run third-party parsers over
+  attacker-influenceable bytes, so the shared runner adds: a no-network,
+  temp-dir-only sandbox (bubblewrap on Linux, `sandbox-exec` on macOS), rlimits
+  (memory/PIDs/file size/CPU, Linux), process-group kill so a converter's helper
+  cannot outlive the timeout, and a bounded pool capping concurrent runs. On a
+  host with no mechanism, commands REFUSE to run — only command execution is
+  blocked, never server startup. Do not add a "can I run?" predicate: call `Run`
+  and handle its error; `Describe()` exists solely for the startup log.
+- **The transform engine must be built ONCE and shared**, not per request — it
+  owns the bounded pool, so a per-request engine gives every request its own pool
+  and the concurrency cap bounds nothing.
 
 ### Storage backends & build tags
 

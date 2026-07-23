@@ -15,6 +15,11 @@ import (
 const (
 	defaultTimeout  = 30 * time.Second
 	defaultMaxBytes = 64 << 20 // 64 MiB — a generous cap for a single exported document
+	// defaultMaxConcurrent bounds simultaneous conversions. Each one is already
+	// memory- and CPU-capped, but without an aggregate bound N concurrent export
+	// requests multiply that N-fold — the cheapest way to exhaust the server.
+	// Exports past the bound queue rather than pile on.
+	defaultMaxConcurrent = 4
 )
 
 // Engine runs a registered transform over a [Renderer]'s markdown. Construct it
@@ -58,7 +63,7 @@ func NewEngine(registry Registry, opts ...EngineOption) (*Engine, error) {
 	for _, o := range opts {
 		o(&cfg)
 	}
-	var runOpts []cmdexec.Option
+	runOpts := []cmdexec.Option{cmdexec.WithMaxConcurrent(defaultMaxConcurrent)}
 	if cfg.tempDir != "" {
 		runOpts = append(runOpts, cmdexec.WithTempDir(cfg.tempDir))
 	}

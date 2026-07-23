@@ -19,9 +19,29 @@ binary; rela drives it safely and records the policy declaratively in your
 metamodel.
 
 > **Running a third-party parser on untrusted input is a real attack surface.**
-> Pin tool versions, keep them patched, and prefer sandboxing (containers,
-> seccomp, a dedicated user). ImageMagick in particular has a history of
-> parser CVEs — see the recipes below for `-limit` hardening.
+> Pin tool versions and keep them patched. ImageMagick in particular has a
+> history of parser CVEs — see the recipes below for `-limit` hardening.
+
+rela **confines** every scan/transform command it runs, rather than leaving
+isolation entirely to you. Each command gets:
+
+- **no network access** (bubblewrap on Linux, `sandbox-exec` on macOS), which
+  removes the server-side request forgery vector — a crafted upload cannot make
+  the server fetch internal services or cloud metadata;
+- a **read-only view of the system**, with only the command's own temp directory
+  writable;
+- **resource ceilings** on memory, processes, file size, and CPU (Linux), so a
+  malicious file cannot exhaust the host;
+- **process-group cleanup**, so a helper spawned by the tool cannot outlive the
+  timeout;
+- a **bounded pool**, so concurrent uploads cannot multiply resource use.
+
+Where no sandbox mechanism is available (Windows, BSD, or a Linux kernel without
+unprivileged user namespaces), commands **refuse to run** rather than run
+unconfined — the same fail-closed stance as a scanner that cannot start. Only
+command execution is blocked; the server still starts. The startup log states
+which mechanism is in use. Deployment-level isolation (a container, a dedicated
+user, a no-egress network policy) remains worthwhile defence in depth.
 
 ## Configuration
 

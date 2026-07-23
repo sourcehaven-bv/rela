@@ -7,6 +7,8 @@ import (
 	"mime"
 	"net/http"
 	"sort"
+	"strings"
+	"sync"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -28,6 +30,15 @@ type exportHandler struct {
 	scopedEntities  func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
 	getVisible      func(ctx context.Context, typeName, id string) (*entityPkg.Entity, bool, error)
 	findListForType func(entityType string) string
+
+	// engineMu guards the cached transform engine. The engine owns the bounded
+	// worker pool that caps concurrent converter processes, so it MUST be shared
+	// across requests — building one per request would give every request its own
+	// pool and bound nothing. It is rebuilt only when the registry changes
+	// (metamodel live-reload), keyed by engineKey.
+	engineMu  sync.Mutex
+	engine    *transform.Engine
+	engineKey string
 }
 
 // newExportHandler builds the export handler with closures over the App
@@ -147,7 +158,7 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return // exportRenderer already wrote the error/404
 	}
 
-	eng, err := transform.NewEngine(reg)
+	eng, err := h.transformEngine(reg)
 	if err != nil {
 		slog.Warn("dataentry: build transform engine failed", "err", err)
 		writeV1Error(w, r, http.StatusInternalServerError, "export_failed",
@@ -217,6 +228,58 @@ func (h *exportHandler) exportRenderer(
 		}
 		return []byte(md), nil
 	}), true
+}
+
+// transformEngine returns the SHARED transform engine for the current registry.
+//
+// Sharing is load-bearing, not an optimisation: the engine owns the bounded
+// worker pool that caps how many converter processes may run at once. A
+// per-request engine would give every request a private pool, so N concurrent
+// exports would spawn N×poolSize converters and the bound would be meaningless.
+//
+// The engine is rebuilt only when the registry actually changes, so a metamodel
+// live-reload is picked up without discarding the pool on every request.
+func (h *exportHandler) transformEngine(reg transform.Registry) (*transform.Engine, error) {
+	key := registryKey(reg)
+
+	h.engineMu.Lock()
+	defer h.engineMu.Unlock()
+	if h.engine != nil && h.engineKey == key {
+		return h.engine, nil
+	}
+	eng, err := transform.NewEngine(reg)
+	if err != nil {
+		return nil, err
+	}
+	h.engine, h.engineKey = eng, key
+	return eng, nil
+}
+
+// registryKey is a stable fingerprint of the transform registry, used to detect
+// a config reload that actually changed the transforms.
+func registryKey(reg transform.Registry) string {
+	names := make([]string, 0, len(reg))
+	for name := range reg {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	for _, name := range names {
+		def := reg[name]
+		b.WriteString(name)
+		b.WriteByte(0)
+		b.WriteString(def.From)
+		b.WriteByte(0)
+		b.WriteString(def.Produces)
+		b.WriteByte(0)
+		for _, a := range def.Command {
+			b.WriteString(a)
+			b.WriteByte(1)
+		}
+		b.WriteByte(2)
+	}
+	return b.String()
 }
 
 // exportRenderScriptFor returns the configured per-type export render override

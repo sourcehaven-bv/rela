@@ -616,6 +616,10 @@ func NewApp(
 	// failure) leaves uploads with native MIME validation only.
 	if runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes); rerr == nil {
 		app.attachmentRunner = runner
+		// Tell the operator the confinement posture at boot, so an unsandboxable
+		// host is discovered now rather than on the first upload that needs a
+		// scan/transform (which will fail closed).
+		slog.Info("external command confinement", "detail", runner.Describe())
 		probeAttachmentCommands(meta, runner)
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)

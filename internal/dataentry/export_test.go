@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/transform"
 )
 
 // newExportApp builds an app whose metamodel registers an identity transform
@@ -230,6 +231,53 @@ func exportEntity(ctx context.Context, app *App, typeName, id, transformName str
 	rec := httptest.NewRecorder()
 	app.export.handleV1ExportEntity(rec, req, typeName, id)
 	return rec
+}
+
+// TestExport_EngineIsSharedAcrossRequests pins that the transform engine — and
+// therefore its bounded worker pool — is reused rather than rebuilt per request.
+// A per-request engine gives every request a private pool, so N concurrent
+// exports spawn N×poolSize converter processes and the concurrency limit bounds
+// nothing. This was a real bug: the handlers originally called NewEngine inline.
+func TestExport_EngineIsSharedAcrossRequests(t *testing.T) {
+	app := newExportApp(t)
+	reg := transform.RegistryFromMetamodel(app.Meta())
+
+	first, err := app.export.transformEngine(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := app.export.transformEngine(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Error("transform engine must be shared across requests; a per-request " +
+			"engine gives each request its own pool and defeats the concurrency bound")
+	}
+}
+
+// TestExport_EngineRebuiltWhenRegistryChanges pins the other half: a metamodel
+// live-reload that changes the transforms must produce a fresh engine, so a
+// config change is actually picked up.
+func TestExport_EngineRebuiltWhenRegistryChanges(t *testing.T) {
+	app := newExportApp(t)
+	reg := transform.RegistryFromMetamodel(app.Meta())
+	first, err := app.export.transformEngine(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changed := transform.Registry{
+		"copy":  {From: "markdown", Command: []string{"cp", "{in}", "{out}"}, Produces: "text/plain"},
+		"extra": {From: "markdown", Command: []string{"cat"}, Produces: "text/plain"},
+	}
+	second, err := app.export.transformEngine(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Error("a changed registry must rebuild the engine")
+	}
 }
 
 func TestExport_Entity_RenderOverride(t *testing.T) {

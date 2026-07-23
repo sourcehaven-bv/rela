@@ -64,6 +64,11 @@ func NewCmdRunner(timeout time.Duration, maxBytes int64, opts ...CmdRunnerOption
 // missing tool surfaces as a warning rather than a per-upload failure.
 func (c *CmdRunner) Probe(cmd []string) error { return c.exec.Probe(cmd) }
 
+// Describe returns a one-line summary of how scan/transform commands are
+// confined, for the startup log. Diagnostic only — never branch on this string;
+// callers just run the command and handle the error.
+func (c *CmdRunner) Describe() string { return c.exec.Describe() }
+
 // Scan runs cmd over data as a virus/policy scan. A nil error means clean; a
 // non-zero exit is mapped to a rejection wrapping [ErrRejected]. The bytes are
 // offered via the {in} temp file when the command references it, else on stdin.

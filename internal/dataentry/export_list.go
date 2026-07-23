@@ -68,7 +68,7 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 
 	renderer := h.listTableRenderer(entities, columns, total, truncated)
 
-	eng, err := transform.NewEngine(reg)
+	eng, err := h.transformEngine(reg)
 	if err != nil {
 		slog.Warn("dataentry: build transform engine failed", "err", err)
 		writeV1Error(w, r, http.StatusInternalServerError, "export_failed", "Export failed", "check server logs")
