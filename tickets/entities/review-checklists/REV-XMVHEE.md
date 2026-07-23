@@ -40,7 +40,7 @@ addressed). go-architect: no blocking findings; endorsed the consumer-side
 ## Documentation (enhancements only)
 
 - [x] ~~Docs-checklist created~~ (N/A: internal refactor, not an enhancement) — but user-facing docs updated anyway:
-- [x] GUIDE-rela-docs.md updated (`rela docs build` → `rela-docs build`, build rationale); docs/rela-docs.md regenerated; example manual reference updated.
+- [x] GUIDE-rela-docs.md uses `rela-docs build` as the command from the outset (never framed as a migration — the feature is unreleased) + build rationale; docs/rela-docs.md regenerated; example manual reference updated.
 
 ## Final Checks
 

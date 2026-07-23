@@ -31,16 +31,19 @@ Move `docs build` out of `rela` **entirely** into a new `cmd/rela-docs` binary:
 - **Add a link-isolation assertion**: `rela` and `rela-server` must NOT link chromedp — mirroring the existing "no pgx / no bleve" greps in ci.yml so this can't regress.
 - Keep `internal/docs` browser-free (consumer-side interface already holds); `.go-arch-lint.yml` allows only the new rela-docs home → `docscapture`.
 
-## Breaking change
+## Not a breaking change
 
-`rela docs build m.md` → `rela-docs build m.md`. Update `GUIDE-rela-docs.md` and
-the example manual references.
+The docs feature (`rela docs build`) has never shipped — it lives only on the
+rela-docs generator arc branches, unreleased. So this is a pure intra-branch
+move: `docs build` is homed in `rela-docs` from its first release. No released
+CLI surface changes; no user migration. The guide and example manual simply use
+`rela-docs build` as the command from the outset.
 
 ## Acceptance criteria
 
 - `go list -deps ./cmd/rela | grep chromedp` is empty; same for `./cmd/rela-server`.
 - `go build ./cmd/rela` is back to ~47 MB.
-- `rela-docs build <manual>` produces identical output to the old `rela docs build`, including `screenshot{}`.
+- `rela-docs build <manual>` renders the manual (typeref/values/lifecycle/graph/roles_matrix/screenshot) — the doc-language behavior unchanged by the move.
 - CI asserts the chromedp isolation; all build-tag combinations compile.
 
 Part of the rela-docs generator arc (FEAT-G4VO53).

@@ -20,7 +20,9 @@ chromedp (pulled in by `screenshot{}` via `internal/docscapture`) is no longer
 linked into `rela`/`rela-server`. Extract the command + capturer seam into a new
 `internal/docscli` package behind a narrow consumer-side `Project` interface.
 Wire justfile/goreleaser/CI/arch-lint; add a CI link-isolation assertion; update
-docs. Breaking change: `rela docs build` → `rela-docs build`.
+docs. Not a breaking change: the docs feature has never shipped, so `docs build`
+is simply homed in `rela-docs` from its first release (no `rela docs build`
+migration for any user).
 
 OUT: Any change to the doc language itself, the resolvers, or the capture
 mechanics. No new screenshot features. No behavior change to the rendered
@@ -83,7 +85,7 @@ errors.go (shared WrapDiscoverError), deleted internal/cli/docs*.go, justfile,
 - [x] Security-sensitive operations identified
 - [x] Error handling doesn't leak sensitive information
 
-**Input Sources & Validation:** No new inputs vs. the old `rela docs build`. The
+**Input Sources & Validation:** No new inputs — same as the pre-move `docs build`. The
 manual path is operator-supplied (same trust boundary as `pandoc in.md`);
 acl.yaml is read from the project root. The postgres build refuses
 `screenshot{}` (would seed the live DB) — a fail-loud safety property, not a new
@@ -111,9 +113,9 @@ CI asserts the dependency isolation directly.
 - [x] Security risks assessed
 - [x] Effort estimated (m)
 
-**Risks:** Breaking CLI change (`rela docs` removed) — mitigated by docs update
-and the ticket noting it. Isolation regressing later — mitigated by the CI
-assertion (both directions + postgres). Cross-compile of the frontend-embedding
+**Risks:** None from CLI surface — the docs feature never shipped, so removing
+`rela docs` breaks no released command. Isolation regressing later — mitigated by
+the CI assertion (both directions + postgres). Cross-compile of the frontend-embedding
 binary — verified bare builds on linux/darwin/windows.
 
 ## Documentation Planning
