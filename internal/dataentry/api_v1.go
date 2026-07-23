@@ -108,6 +108,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 		func(w http.ResponseWriter, r *http.Request) { handleV1RelationHistory(a, w, r) })
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
+	mux.HandleFunc("/api/v1/_transforms", a.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
 	mux.HandleFunc("/api/v1/_action/", a.handleV1Action)
@@ -169,10 +170,13 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		// /{plural}/{id} - single entity
 		a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 	case 3:
-		// /{plural}/{id}/relations
-		if parts[2] == "relations" {
+		// /{plural}/{id}/relations or /{plural}/{id}/_export
+		switch parts[2] {
+		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
-		} else {
+		case "_export":
+			a.handleV1ExportEntity(w, r, typeName, parts[1])
+		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
 	case segmentsSubResource:

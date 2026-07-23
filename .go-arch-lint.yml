@@ -285,6 +285,7 @@ deps:
       - audit
       - calfeed
       - canonical
+      - cmdexec
       - config
       - conflict
       - dataentryconfig
@@ -308,6 +309,7 @@ deps:
       - sync
       - templating
       - tracer
+      - transform
       - validator
     canUse:
       - goldmark
