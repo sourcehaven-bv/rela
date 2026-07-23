@@ -86,8 +86,8 @@ function exportAs(t: TransformInfo) {
   margin: 0;
   padding: 0.25rem;
   list-style: none;
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, #d0d0d0);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
@@ -101,14 +101,13 @@ function exportAs(t: TransformInfo) {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: var(--color-text, inherit);
+  color: var(--text-color);
+  font-size: 0.9rem;
   text-transform: uppercase;
-  font-size: 0.85rem;
-  letter-spacing: 0.02em;
 }
 
 .export-menu-item:hover,
 .export-menu-item:focus {
-  background: var(--color-hover, #f0f0f0);
+  background: var(--hover-bg);
 }
 </style>
