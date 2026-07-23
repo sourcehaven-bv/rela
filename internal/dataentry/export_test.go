@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -59,16 +60,34 @@ func newExportApp(t *testing.T) *App {
 				},
 			},
 		},
-		Views:   make(map[string]dataentryconfig.ViewConfig),
-		Kanbans: make(map[string]dataentryconfig.Kanban),
-		Documents: map[string]dataentryconfig.DocumentConfig{
-			// A command-based render override: emits custom markdown for a ticket.
-			// (Command renders avoid needing a wired Lua engine in the test.)
-			"fancy": {EntityType: "ticket", Command: "echo '# Fancy {id}'"},
-		},
+		Views:      make(map[string]dataentryconfig.ViewConfig),
+		Kanbans:    make(map[string]dataentryconfig.Kanban),
 		Navigation: []dataentryconfig.NavigationEntry{{List: "tickets"}},
 	}
 	return newAppFromParts(cfg, meta, newFixture())
+}
+
+// withRenderOverride configures a per-type export_render override for typeName
+// and swaps app.documents for a fake-script-engine documentService that emits
+// `output` for the exported entry — so the override tests exercise the render
+// path without a real Lua runtime. Republishes the schema and rebuilds the
+// export handler so both pick up the change.
+func withRenderOverride(t *testing.T, app *App, typeName string, output func(entryID string) string) {
+	t.Helper()
+	s := app.State()
+	cfg := *s.Cfg
+	cfg.Views = map[string]dataentryconfig.ViewConfig{
+		typeName: {
+			Entry:        dataentryconfig.ViewEntry{Type: typeName},
+			ExportRender: "docs/fancy.lua",
+		},
+	}
+	app.schema.Publish(&Schema{Cfg: &cfg, Meta: s.Meta, StyleMap: s.StyleMap, StyledTypes: s.StyledTypes, OpenAPIGen: s.OpenAPIGen})
+
+	fake := &fakeScriptEngine{stdout: func(c fakeScriptCall) string { return output(c.entryID) }}
+	deps := func() lua.WriteDeps { return lua.WriteDeps{} }
+	app.documents = newDocumentService(app.store, app.kv, "/", fake, deps)
+	app.export = newExportHandler(app)
 }
 
 func requireCp(t *testing.T) {
@@ -103,7 +122,7 @@ func TestExport_Entity_VisibleReturnsBytesAndHeaders(t *testing.T) {
 	requireCp(t)
 	app := newExportApp(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
-		Properties: map[string]any{"title": "Do the thing", "status": "open"}})
+		Properties: map[string]any{"title": "Do the thing", "status": "open", "priority": "high"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
 		Properties: map[string]any{"title": "The Feature"}})
 	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
@@ -139,10 +158,13 @@ func TestExport_Entity_VisibleReturnsBytesAndHeaders(t *testing.T) {
 	}
 	// The identity transform returns the rendered markdown verbatim.
 	body := rec.Body.String()
-	for _, want := range []string{"# Do the thing", "| status | open |", "## implements", "- The Feature"} {
+	for _, want := range []string{"# Do the thing", "**priority:** high", "## implements", "- The Feature"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n---\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "**status:**") {
+		t.Error("status should be omitted from the rendered document")
 	}
 }
 
@@ -210,10 +232,13 @@ func exportEntity(ctx context.Context, app *App, typeName, id, transformName str
 	return rec
 }
 
-func TestExport_Entity_DocumentOverride(t *testing.T) {
+func TestExport_Entity_RenderOverride(t *testing.T) {
 	requireCp(t)
 	app := newExportApp(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Plain"}})
+	// Ticket type configures export_render — exporting a ticket must route through
+	// it, NOT the built-in property renderer.
+	withRenderOverride(t, app, "ticket", func(entryID string) string { return "# Fancy " + entryID + "\n" })
 
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
@@ -222,29 +247,56 @@ func TestExport_Entity_DocumentOverride(t *testing.T) {
 	app.acl = d
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
-	// With ?document=fancy the export routes through the configured render
-	// override (command doc emitting "# Fancy TKT-001") instead of the built-in
-	// entity renderer.
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/tickets/TKT-001/_export?transform=copy&document=fancy", http.NoBody)
-	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
-	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
-
+	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
 	}
-	if !strings.Contains(rec.Body.String(), "# Fancy TKT-001") {
-		t.Errorf("override output missing '# Fancy TKT-001':\n%s", rec.Body)
+	body := rec.Body.String()
+	if !strings.Contains(body, "# Fancy TKT-001") {
+		t.Errorf("override output missing '# Fancy TKT-001':\n%s", body)
+	}
+	// The built-in renderer would have emitted a "**...:**" property line; the
+	// override replaces it entirely.
+	if strings.Contains(body, "**") {
+		t.Errorf("built-in property lines leaked; override should fully replace them:\n%s", body)
 	}
 }
 
-func TestExport_Entity_DocumentOverride_DeniedIs404(t *testing.T) {
+func TestExport_Entity_NoOverrideUsesBuiltin(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
+		Properties: map[string]any{"title": "The Feature"}})
+	// Override configured for TICKET only; feature has none → built-in renderer.
+	withRenderOverride(t, app, "ticket", func(string) string { return "SHOULD NOT RUN" })
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"feature"}}},
+		Assignments: map[string]string{"alice": "admin"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	rec := exportEntity(ctx, app, "feature", "FEAT-001", "copy")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "# The Feature") {
+		t.Errorf("built-in renderer should produce the H1 title:\n%s", body)
+	}
+	if strings.Contains(body, "SHOULD NOT RUN") {
+		t.Error("feature has no override; the render script must not run")
+	}
+}
+
+func TestExport_Entity_RenderOverride_DeniedIs404(t *testing.T) {
 	requireCp(t)
 	app := newExportApp(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Secret"}})
+	withRenderOverride(t, app, "ticket", func(entryID string) string { return "# Fancy " + entryID + "\n" })
 
-	// alice cannot read tickets → the override render must never run; 404.
+	// alice cannot read tickets → override render must never run; 404.
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
@@ -252,37 +304,12 @@ func TestExport_Entity_DocumentOverride_DeniedIs404(t *testing.T) {
 	app.acl = d
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/tickets/TKT-001/_export?transform=copy&document=fancy", http.NoBody)
-	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
-	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
-
+	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for denied override export", rec.Code)
 	}
 	if strings.Contains(rec.Body.String(), "Fancy") {
 		t.Errorf("denied override leaked render output: %s", rec.Body)
-	}
-}
-
-func TestExport_Entity_UnknownDocument(t *testing.T) {
-	app := newExportApp(t)
-	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
-	d := mustNewACL(t, &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
-		Assignments: map[string]string{"alice": "admin"},
-	}, app.store)
-	app.acl = d
-	ctx := gateCtxFor(aliceCtx(), t, d)
-
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/tickets/TKT-001/_export?transform=copy&document=nope", http.NoBody)
-	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
-	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 for unknown document", rec.Code)
 	}
 }
 

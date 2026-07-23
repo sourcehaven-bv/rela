@@ -26,10 +26,8 @@ type exportHandler struct {
 	visibleReader   visibleReader
 	documents       *documentService
 	scopedEntities  func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
-	gateRead        func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
 	getVisible      func(ctx context.Context, typeName, id string) (*entityPkg.Entity, bool, error)
 	findListForType func(entityType string) string
-	toRenderConfig  func(configID string, cfg *DocumentConfig) documentRenderConfig
 }
 
 // newExportHandler builds the export handler with closures over the App
@@ -43,13 +41,11 @@ func newExportHandler(app *App) *exportHandler {
 		visibleReader:  app.visibleReader,
 		documents:      app.documents,
 		scopedEntities: app.scopedSortedEntities,
-		gateRead:       app.gateReadOrNotFound,
 		getVisible:     app.visibleReader.getVisible,
 		findListForType: func(entityType string) string {
 			s := app.State()
 			return app.findListByEntityType(s, s.Cfg.Navigation, entityType)
 		},
-		toRenderConfig: app.toDocumentRenderConfig,
 	}
 }
 
@@ -177,18 +173,23 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	writeExportResponse(w, res, exportFilename(entityID, res.Produces))
 }
 
-// exportRenderer selects the markdown renderer for an entity export. With no
-// ?document= param it returns the built-in [transform.EntityRenderer]. With a
-// ?document=<name> override it routes through the gated document render path
-// (RR-8C23IL): the document's entity_type is gated and type-matched exactly as
-// handleV1Documents does, so a Lua/command render override can never run for a
-// hidden entity or a mismatched type. On any failure it writes the response and
+// exportRenderer selects the markdown renderer for an entity export. When the
+// entity type configures an `export_render:` Lua script (in EntityViews), the
+// export routes through that script — the per-type render OVERRIDE — so
+// exporting an entity of that type automatically uses the operator's custom
+// document instead of the built-in property renderer. Otherwise the built-in
+// [transform.EntityRenderer] is used.
+//
+// The entity was already resolved through the ACL read gate (getVisible on
+// typeName) in the caller, so the override runs only for an entity the caller
+// may read; the script is a fixed config value (not request input) and receives
+// the already-validated entityID. On any failure it writes the response and
 // returns ok=false.
 func (h *exportHandler) exportRenderer(
 	w http.ResponseWriter, r *http.Request, typeName, entityID string, entity *entityPkg.Entity,
 ) (transform.Renderer, bool) {
-	docName := r.URL.Query().Get("document")
-	if docName == "" {
+	script := h.exportRenderScriptFor(typeName)
+	if script == "" {
 		return transform.EntityRenderer{
 			Entity:    entity,
 			Meta:      h.meta(),
@@ -196,33 +197,19 @@ func (h *exportHandler) exportRenderer(
 		}, true
 	}
 
-	// Validate BOTH segments before any render — the document render funnels
-	// entityID into the on-disk cache filename and (for command docs) into the
-	// {id} placeholder of an sh -c command. handleV1Documents guards both the
-	// same way; the export path must not be weaker (RR-1N142S).
-	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_document", "Invalid document or entity name", "")
-		return nil, false
-	}
-	docCfg, ok := h.cfg().Documents[docName]
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
+	// Defense-in-depth: the entityID reaches the document cache filename and (for
+	// a future command override) an sh -c {id}. It is already an existing entity
+	// id (getVisible matched it), but validate it the same way handleV1Documents
+	// does before any render.
+	if !isSafePathSegment(entityID) {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_entity", "Invalid entity id", "")
 		return nil, false
 	}
 
-	// Gate on the document's declared entity_type BEFORE the type-mismatch
-	// branch (uniform 404 for a denied principal) and BEFORE any render — the
-	// same order handleV1Documents enforces.
-	if !h.gateRead(w, r, docCfg.EntityType, entityID) {
-		return nil, false
-	}
-	if entity.Type != docCfg.EntityType || docCfg.EntityType != typeName {
-		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
-			"Document is not for this entity type", "")
-		return nil, false
-	}
-
-	renderCfg := h.toRenderConfig(docName, &docCfg)
+	// A render config for the type's override script. ConfigID is a synthetic,
+	// per-type identity ("export:<type>") so it never collides with a documents:
+	// entry in the singleflight/cache key.
+	renderCfg := documentRenderConfig{ConfigID: "export:" + typeName, Script: script}
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
 		md, err := h.documents.RenderMarkdown(ctx, entityID, renderCfg)
 		if err != nil {
@@ -230,6 +217,16 @@ func (h *exportHandler) exportRenderer(
 		}
 		return []byte(md), nil
 	}), true
+}
+
+// exportRenderScriptFor returns the configured per-type export render override
+// script (the entity type's view.ExportRender), or "" when the type uses the
+// built-in renderer.
+func (h *exportHandler) exportRenderScriptFor(typeName string) string {
+	if v, ok := findViewByEntityType(h.cfg().Views, typeName); ok {
+		return v.ExportRender
+	}
+	return ""
 }
 
 // writeExportResponse writes converted bytes as a hardened forced download.

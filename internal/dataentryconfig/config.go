@@ -522,6 +522,14 @@ type ViewConfig struct {
 	Entry    ViewEntry      `yaml:"entry" json:"entry"`
 	Traverse []ViewTraverse `yaml:"traverse" json:"traverse"`
 	Sections []ViewSection  `yaml:"sections" json:"sections"`
+	// ExportRender is an optional Lua script (relative path under scripts/, e.g.
+	// "docs/book_card.lua") that renders this entity type for EXPORT. When set,
+	// "Export as PDF/ODT" on an entity of this type routes through the script
+	// instead of the built-in property renderer, so an operator fully controls
+	// the exported document. The script runs in document mode (rela.document.*)
+	// through the same ACL-gated path as documents:, and its stdout is the
+	// markdown fed to the transform. Empty → built-in renderer.
+	ExportRender string `yaml:"export_render,omitempty" json:"export_render,omitempty"`
 }
 
 // ViewEntry specifies the entry entity type for a view.
