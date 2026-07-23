@@ -33,7 +33,8 @@ func setupRenderGraph(t *testing.T) *readServices {
 	seeder.addEntity(testutil.EntityFor(meta, "ticket").
 		ID("TKT-001").
 		With("title", "Do the thing").
-		With("status", "in-progress"))
+		With("status", "in-progress").
+		With("priority", "high"))
 	seeder.addEntity(testutil.EntityFor(meta, "feature").
 		ID("FEAT-001").
 		With("title", "The Feature"))
@@ -62,14 +63,17 @@ func TestRenderCmd_WritesRenderedFile(t *testing.T) {
 	}
 	s := string(data)
 	for _, want := range []string{
-		"# Do the thing", // title as H1
-		"| status | in-progress |",
-		"## implements", // relation group (uses relation label)
-		"- The Feature", // neighbor display title
+		"# Do the thing",     // title as H1
+		"**priority:** high", // bold-label definition list
+		"## implements",      // relation group (uses relation label)
+		"- The Feature",      // neighbor display title
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("rendered output missing %q\n---\n%s", want, s)
 		}
+	}
+	if strings.Contains(s, "**status:**") {
+		t.Error("status should be omitted from the rendered document")
 	}
 }
 

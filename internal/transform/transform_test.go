@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func skipOnWindows(t *testing.T) {
@@ -132,6 +133,7 @@ func TestEntityRenderer_Render(t *testing.T) {
 	e := entity.New("TKT-1", "ticket")
 	e.SetString("title", "Do the thing")
 	e.SetString("status", "in-progress")
+	e.SetString("priority", "high")
 	e.Properties["tags"] = []string{"a", "b"}
 	e.Content = "Body text here."
 
@@ -149,8 +151,8 @@ func TestEntityRenderer_Render(t *testing.T) {
 	s := string(out)
 	for _, want := range []string{
 		"# Do the thing",
-		"| status | in-progress |",
-		"| tags | a, b |",
+		"**priority:** high", // bold-label definition list, no header row
+		"**tags:** a, b",
 		"## implements",
 		"- Feature X",
 		"Body text here.",
@@ -159,11 +161,37 @@ func TestEntityRenderer_Render(t *testing.T) {
 			t.Errorf("output missing %q\n---\n%s", want, s)
 		}
 	}
+	if strings.Contains(s, "| Property | Value |") {
+		t.Error("should be a definition list, not a Property|Value table")
+	}
 	if strings.Contains(s, "## empty") {
 		t.Error("empty relation group should be omitted")
 	}
-	if strings.Contains(s, "| title |") {
-		t.Error("title should be the H1, not a property row")
+	if strings.Contains(s, "**title:**") {
+		t.Error("title should be the H1, not a property line")
+	}
+	if strings.Contains(s, "**status:**") {
+		t.Error("status is workflow machinery, not document content")
+	}
+}
+
+func TestEntityRenderer_EnumValueLabels(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Properties: map[string]metamodel.PropertyDef{
+					"priority": {Type: "enum", Labels: map[string]string{"high": "🔥 High"}},
+				},
+				PropertyOrder: []string{"priority"},
+			},
+		},
+	}
+	e := entity.New("TKT-1", "ticket")
+	e.SetString("priority", "high")
+	er := EntityRenderer{Entity: e, Meta: meta}
+	out, _ := er.Render(context.Background())
+	if !strings.Contains(string(out), "**priority:** 🔥 High") {
+		t.Errorf("enum value should use the metamodel display label:\n%s", out)
 	}
 }
 

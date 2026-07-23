@@ -43,12 +43,10 @@ func (er EntityRenderer) Render(_ context.Context) ([]byte, error) {
 	title := er.title()
 	fmt.Fprintf(&b, "# %s\n\n", escapeInline(title))
 
-	if props := er.propertyRows(); len(props) > 0 {
-		b.WriteString("| Property | Value |\n| --- | --- |\n")
-		for _, row := range props {
-			fmt.Fprintf(&b, "| %s | %s |\n", escapeCell(row[0]), escapeCell(row[1]))
-		}
-		b.WriteString("\n")
+	// Properties as a bold-label definition list ("**Label:** value") rather than
+	// a Property|Value table — reads like a written document, not a DB dump.
+	for _, row := range er.propertyRows() {
+		fmt.Fprintf(&b, "**%s:** %s\n\n", escapeInline(row[0]), escapeInline(row[1]))
 	}
 
 	for _, g := range er.Relations {
@@ -87,15 +85,28 @@ func (er EntityRenderer) title() string {
 	return er.Entity.ID
 }
 
-// propertyRows returns [name, value] pairs in metamodel order (falling back to
+// propertyRows returns [label, value] pairs in metamodel order (falling back to
 // the entity's own property map order for anything the metamodel doesn't list).
-// The title property is omitted — it is already the H1.
+//
+// The field label is the property key as-is — the metamodel carries no
+// field-name display label today (only enum value labels via PropertyDef.Labels,
+// which this DOES apply to values). A proper per-property display label is a
+// follow-up (see the entity-renderer / data-entry TODO). `title` is skipped (it
+// is already the H1) and `status` is skipped (workflow machinery, not document
+// content).
 func (er EntityRenderer) propertyRows() [][2]string {
 	seen := make(map[string]bool)
 	var rows [][2]string
 
+	var def *metamodel.EntityDef
+	if er.Meta != nil {
+		if d, ok := er.Meta.GetEntityDef(er.Entity.Type); ok {
+			def = d
+		}
+	}
+
 	add := func(name string) {
-		if name == "" || seen[name] || name == "title" {
+		if name == "" || seen[name] || name == "title" || name == "status" {
 			return
 		}
 		seen[name] = true
@@ -103,14 +114,12 @@ func (er EntityRenderer) propertyRows() [][2]string {
 		if !ok {
 			return
 		}
-		rows = append(rows, [2]string{name, formatValue(v)})
+		rows = append(rows, [2]string{name, er.formatPropertyValue(def, name, v)})
 	}
 
-	if er.Meta != nil {
-		if def, ok := er.Meta.GetEntityDef(er.Entity.Type); ok {
-			for _, name := range def.GetPropertyOrder() {
-				add(name)
-			}
+	if def != nil {
+		for _, name := range def.GetPropertyOrder() {
+			add(name)
 		}
 	}
 	// Any properties not covered by the metamodel order, appended stably.
@@ -118,6 +127,47 @@ func (er EntityRenderer) propertyRows() [][2]string {
 		add(name)
 	}
 	return rows
+}
+
+// formatPropertyValue renders a value as a single-line string, mapping enum
+// values through the metamodel's per-value display labels (PropertyDef.Labels)
+// when present. List values are comma-joined, each element mapped individually.
+func (er EntityRenderer) formatPropertyValue(def *metamodel.EntityDef, name string, v any) string {
+	var labels map[string]string
+	if def != nil {
+		if p, ok := def.Properties[name]; ok {
+			labels = p.Labels
+		}
+	}
+	label := func(s string) string {
+		if labels != nil {
+			if disp, ok := labels[s]; ok && disp != "" {
+				return disp
+			}
+		}
+		return s
+	}
+
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return label(t)
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, e := range t {
+			parts = append(parts, label(formatValue(e)))
+		}
+		return strings.Join(parts, ", ")
+	case []string:
+		parts := make([]string, 0, len(t))
+		for _, e := range t {
+			parts = append(parts, label(e))
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return formatValue(v)
+	}
 }
 
 // formatValue renders a property value as a single-line cell string. Lists are
@@ -151,7 +201,3 @@ func escapeInline(s string) string {
 	s = strings.ReplaceAll(s, "|", "\\|")
 	return s
 }
-
-// escapeCell is escapeInline for use inside a table cell (same rules; the pipe
-// escape is the load-bearing one so a value can't add columns).
-func escapeCell(s string) string { return escapeInline(s) }
