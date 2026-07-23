@@ -54,39 +54,34 @@ func writeManual(t *testing.T, dir, body string) string {
 	return p
 }
 
-// stubNoCapturer forces the "no browser" path deterministically, independent of
-// whether Chrome is installed on the host: newCapturer returns an error, so
-// docs.Options.CapturerErr is set and a screenshot{} manual fails loud.
-func stubNoCapturer(t *testing.T, reason string) {
-	t.Helper()
-	orig := newCapturer
-	newCapturer = func() (docs.Capturer, error) { return nil, errors.New(reason) }
-	t.Cleanup(func() { newCapturer = orig })
+// noBrowser is a capturer factory that forces the "no browser" path
+// deterministically, independent of whether Chrome is installed on the host: it
+// returns an error, so docs.Options.CapturerErr is set and a screenshot{} manual
+// fails loud. Assign it to BuildCmd.newCapturer (a per-command field, so tests
+// stay t.Parallel()-safe — no shared global).
+func noBrowser(reason string) func() (docs.Capturer, error) {
+	return func() (docs.Capturer, error) { return nil, errors.New(reason) }
 }
 
-// stubCapturer installs a no-op capturer so a screenshot-free manual never
-// touches a real browser regardless of the host.
+// stubCapturer is a no-op capturer so a screenshot-free manual never touches a
+// real browser regardless of the host.
 type stubCapturer struct{}
 
 func (stubCapturer) Capture(context.Context, docs.CaptureSpec) (string, error) { return "x.png", nil }
 func (stubCapturer) Close() error                                              { return nil }
 
-func stubOKCapturer(t *testing.T) {
-	t.Helper()
-	orig := newCapturer
-	newCapturer = func() (docs.Capturer, error) { return stubCapturer{}, nil }
-	t.Cleanup(func() { newCapturer = orig })
-}
+// okCapturer is a capturer factory that returns the no-op stub.
+func okCapturer() (docs.Capturer, error) { return stubCapturer{}, nil }
 
 // A screenshot-free manual resolves to Markdown on stdout without ever
 // constructing a browser capturer.
 func TestBuild_ToStdout(t *testing.T) {
-	stubOKCapturer(t)
+	t.Parallel()
 	proj := newFakeProject(t)
 	manual := writeManual(t, t.TempDir(),
 		"# Manual\n\n```rela\ntyperef{ type = \"risico\", fields = \"required\" }\n```\n")
 
-	cmd := &BuildCmd{Manual: manual}
+	cmd := &BuildCmd{Manual: manual, newCapturer: okCapturer}
 	if err := cmd.Run(context.Background(), proj); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -95,7 +90,7 @@ func TestBuild_ToStdout(t *testing.T) {
 // acl.yaml present and valid → the policy flows into docs.Options and
 // roles_matrix{} renders a role × verb table (not the "no policy" note).
 func TestBuild_ACLPresent_RolesMatrixRenders(t *testing.T) {
-	stubOKCapturer(t)
+	t.Parallel()
 	proj := newFakeProject(t)
 	acl := "roles:\n  editor:\n    read: [\"*\"]\n    create: [\"*\"]\n  viewer:\n    read: [\"*\"]\n"
 	if err := os.WriteFile(filepath.Join(proj.Paths().Root, "acl.yaml"), []byte(acl), 0o644); err != nil {
@@ -105,7 +100,7 @@ func TestBuild_ACLPresent_RolesMatrixRenders(t *testing.T) {
 	manual := writeManual(t, dir, "# Manual\n\n```rela\nroles_matrix{ type = \"risico\" }\n```\n")
 	out := filepath.Join(dir, "out.md")
 
-	cmd := &BuildCmd{Manual: manual, Output: out}
+	cmd := &BuildCmd{Manual: manual, Output: out, newCapturer: okCapturer}
 	if err := cmd.Run(context.Background(), proj); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -124,7 +119,7 @@ func TestBuild_ACLPresent_RolesMatrixRenders(t *testing.T) {
 // acl.yaml present but malformed → the build fails loud with a wrapped error,
 // never silently ignoring the policy.
 func TestBuild_ACLMalformed_FailsLoud(t *testing.T) {
-	stubOKCapturer(t)
+	t.Parallel()
 	proj := newFakeProject(t)
 	// Structurally broken YAML (a mapping value where a key is expected).
 	if err := os.WriteFile(filepath.Join(proj.Paths().Root, "acl.yaml"),
@@ -132,7 +127,7 @@ func TestBuild_ACLMalformed_FailsLoud(t *testing.T) {
 		t.Fatalf("write acl.yaml: %v", err)
 	}
 	manual := writeManual(t, t.TempDir(), "# Manual\n")
-	cmd := &BuildCmd{Manual: manual}
+	cmd := &BuildCmd{Manual: manual, newCapturer: okCapturer}
 	err := cmd.Run(context.Background(), proj)
 	if err == nil {
 		t.Fatal("expected a fail-loud error for malformed acl.yaml")
@@ -146,11 +141,11 @@ func TestBuild_ACLMalformed_FailsLoud(t *testing.T) {
 // actionable reason — the "no graceful degradation" contract. Deterministic:
 // the capturer seam forces the no-browser path regardless of the host.
 func TestBuild_ScreenshotNoBrowser_FailsLoud(t *testing.T) {
-	stubNoCapturer(t, "no Chrome/Chromium browser found on PATH")
+	t.Parallel()
 	proj := newFakeProject(t)
 	manual := writeManual(t, t.TempDir(),
 		"# Manual\n\n```rela\nscreenshot{ type = \"risico\", entity = \"r1\", out = \"f.png\" }\n```\n")
-	cmd := &BuildCmd{Manual: manual}
+	cmd := &BuildCmd{Manual: manual, newCapturer: noBrowser("no Chrome/Chromium browser found on PATH")}
 	err := cmd.Run(context.Background(), proj)
 	if err == nil {
 		t.Fatal("expected a fail-loud error for screenshot{} without a browser")
@@ -162,13 +157,13 @@ func TestBuild_ScreenshotNoBrowser_FailsLoud(t *testing.T) {
 
 // The --out path writes resolved Markdown to a file, creating parent dirs.
 func TestBuild_ToFile(t *testing.T) {
-	stubOKCapturer(t)
+	t.Parallel()
 	proj := newFakeProject(t)
 	dir := t.TempDir()
 	manual := writeManual(t, dir, "# Manual\n\n`rela description()`\n")
 	out := filepath.Join(dir, "nested", "out.md")
 
-	cmd := &BuildCmd{Manual: manual, Output: out}
+	cmd := &BuildCmd{Manual: manual, Output: out, newCapturer: okCapturer}
 	if err := cmd.Run(context.Background(), proj); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -191,15 +186,32 @@ func TestBuild_MissingManual(t *testing.T) {
 	}
 }
 
-// --out pointing at an existing directory is rejected.
+// --out pointing at an existing directory is rejected up front, BEFORE any
+// build work — so a screenshot{} manual never spins up a browser or drops stray
+// PNGs only to fail at the final write. The capturer factory fails the test if
+// invoked, proving Run returns before the build touches it.
 func TestBuild_OutputIsDir(t *testing.T) {
 	t.Parallel()
 	proj := newFakeProject(t)
 	dir := t.TempDir()
-	manual := writeManual(t, dir, "# Manual\n")
-	cmd := &BuildCmd{Manual: manual, Output: dir}
-	if err := cmd.Run(context.Background(), proj); err == nil {
+	manual := writeManual(t, dir,
+		"# Manual\n\n```rela\nscreenshot{ type = \"risico\", entity = \"r1\", out = \"f.png\" }\n```\n")
+	failIfBuilt := func() (docs.Capturer, error) {
+		t.Error("capturer resolved — Run reached the build before rejecting the --out directory")
+		return stubCapturer{}, nil
+	}
+	cmd := &BuildCmd{Manual: manual, Output: dir, newCapturer: failIfBuilt}
+	err := cmd.Run(context.Background(), proj)
+	if err == nil {
 		t.Fatal("expected an error when --out is a directory")
+	}
+	if !strings.Contains(err.Error(), "--out") || !strings.Contains(err.Error(), "directory") {
+		t.Errorf("expected an --out-is-a-directory error, got: %v", err)
+	}
+	// No stray PNG should have been written into the cwd (or anywhere).
+	if _, statErr := os.Stat("f.png"); statErr == nil {
+		t.Error("a screenshot PNG was written despite the up-front --out rejection")
+		_ = os.Remove("f.png")
 	}
 }
 

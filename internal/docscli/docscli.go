@@ -46,13 +46,23 @@ type BuildCmd struct {
 	Manual string `arg:"" help:"Path to the manual (Markdown with rela Lua islands)."`
 	Output string `name:"out" help:"Write resolved Markdown here (default: stdout)."`
 	Strict bool   `help:"Fail the build if any island resolves to nothing."`
+
+	// newCapturer resolves the browser capturer; nil means the build-tagged
+	// package NewCapturer (fsstore: a real capturer; postgres: fail-loud). It is
+	// a per-command field, not a package var, so tests inject a stub or force
+	// the "no browser" path deterministically without a shared global (and stay
+	// t.Parallel()-safe).
+	newCapturer func() (docs.Capturer, error)
 }
 
-// newCapturer resolves the browser capturer. It defaults to the build-tagged
-// NewCapturer (fsstore: a real capturer; postgres: fail-loud), and is a var so
-// tests can inject a stub or force the "no browser" path deterministically,
-// independent of whether Chrome is installed on the host.
-var newCapturer = NewCapturer
+// capturer returns the resolved capturer factory: the injected test seam if set,
+// otherwise the build-tagged package default.
+func (c *BuildCmd) capturer() func() (docs.Capturer, error) {
+	if c.newCapturer != nil {
+		return c.newCapturer
+	}
+	return NewCapturer
+}
 
 // outputDir is the directory screenshot{} PNGs are written into: the output
 // file's directory, or the current directory when writing to stdout.
@@ -71,6 +81,14 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 	src, err := os.ReadFile(c.Manual)
 	if err != nil {
 		return fmt.Errorf("read manual: %w", err)
+	}
+
+	// Reject an --out that points at a directory up front, before any
+	// (potentially expensive, browser-driven) build work — otherwise a manual
+	// with screenshot{} would spin up headless Chrome and drop stray PNGs only
+	// to fail at the final write.
+	if info, statErr := os.Stat(c.Output); c.Output != "" && statErr == nil && info.IsDir() {
+		return fmt.Errorf("--out %q is a directory", c.Output)
 	}
 
 	// acl.yaml is optional; roles_matrix degrades to a note when absent.
@@ -94,7 +112,7 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 	// tagged NewCapturer), leave it nil but keep the specific reason: a manual
 	// WITHOUT screenshot{} still builds; one WITH it fails loud with the
 	// actionable message. No graceful degradation.
-	if capturer, capErr := newCapturer(); capErr == nil {
+	if capturer, capErr := c.capturer()(); capErr == nil {
 		opts.Capturer = capturer
 	} else {
 		opts.CapturerErr = capErr.Error()
@@ -109,11 +127,9 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 		fmt.Print(rendered)
 		return nil
 	}
-	if info, statErr := os.Stat(c.Output); statErr == nil && info.IsDir() {
-		return fmt.Errorf("--output %q is a directory", c.Output)
-	}
-	// filepath.Dir never returns "" (a bare filename yields "."), so the
-	// MkdirAll is unconditional; on a bare name it no-ops on the cwd.
+	// The directory check ran up front (before the build). filepath.Dir never
+	// returns "" (a bare filename yields "."), so the MkdirAll is unconditional;
+	// on a bare name it no-ops on the cwd.
 	if mkErr := os.MkdirAll(filepath.Dir(c.Output), 0o755); mkErr != nil {
 		return fmt.Errorf("create output dir: %w", mkErr)
 	}
