@@ -20,11 +20,13 @@ components:
   # Entry points
   cmdCli:           { in: cmd/rela }
   cmdServer:        { in: cmd/rela-server }
+  cmdDocs:          { in: cmd/rela-docs }
   cmdDesktop:       { in: cmd/rela-desktop }
 
   # CLI layer
   cli:              { in: internal/cli }
   clisync:          { in: internal/cli/sync }
+  docscli:          { in: internal/docscli }
 
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
@@ -178,6 +180,14 @@ deps:
   cmdCli:
     mayDependOn:
       - cli
+  cmdDocs:
+    mayDependOn:
+      - appbuild
+      - docscli
+      - principal
+      - script
+    canUse:
+      - kong
   cmdServer:
     mayDependOn:
       - acl
@@ -227,8 +237,6 @@ deps:
       - clisync
       - config
       - dataentryconfig
-      - docs
-      - docscapture
       - entitymanager
       - filter
       - importer
@@ -525,6 +533,16 @@ deps:
       - store
     canUse:
       - chromedp
+  # docscli is the command layer for the rela-docs binary. It owns the
+  # docscapture edge (and thus chromedp) so internal/cli — and the rela /
+  # rela-server binaries — never link the browser. See internal/docscli.
+  docscli:
+    mayDependOn:
+      - acl
+      - docs
+      - docscapture
+      - metamodel
+      - project
   entitymanager:
     mayDependOn:
       - acl

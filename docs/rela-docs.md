@@ -2,7 +2,7 @@
 
 # Generated documentation: the rela docs language
 
-`rela docs build` renders a **manual** — ordinary Markdown you write by
+`rela-docs build` renders a **manual** — ordinary Markdown you write by
 hand — resolving embedded **Lua islands** that pull mechanical reference
 fragments from the deployment's schema (and a small in-memory graph the
 manual seeds). Prose stays prose; the field tables, enum meanings, state
@@ -104,10 +104,14 @@ self-contained; it never touches the project on disk.
 
 ## Building
 
+Manuals are built with the **`rela-docs`** binary — a separate tool from
+`rela`. It is split out because `screenshot{}` (below) drives a headless
+browser, whose dependency the everyday `rela` binary never needs to carry.
+
 ```bash
-rela docs build manual.md            # resolved Markdown to stdout
-rela docs build manual.md --out site/manual.md
-rela docs build manual.md --strict   # fail if any island resolves to nothing
+rela-docs build manual.md            # resolved Markdown to stdout
+rela-docs build manual.md --out site/manual.md
+rela-docs build manual.md --strict   # fail if any island resolves to nothing
 ```
 
 The metamodel and `acl.yaml` come from the project (`--project` or the
@@ -184,10 +188,13 @@ screenshot{ ..., arrows = { {at="status", text="lifecycle state"} },
 arrow labels, so the crop includes the annotations, not just the fields.
 
 **Prerequisites.** `screenshot{}` needs a **Chrome/Chromium browser** on
-the machine and the **data-entry SPA built** into the binary (`just
-build-frontend`). There is **no graceful degradation**: if either is
-missing, the build fails loud — a manual either captures a real figure or
-it errors, never a placeholder.
+the machine and the **data-entry SPA built** into the `rela-docs` binary
+(`just build-docs`, which runs `build-frontend` first). There is **no
+graceful degradation**: if either is missing, the build fails loud — a
+manual either captures a real figure or it errors, never a placeholder.
+
+Because this browser dependency lives only in `rela-docs`, the everyday
+`rela` and `rela-server` binaries stay lean and never link it.
 
 **Fail-loud specifics.** An unknown field anchor, an entity that fails to
 render for the chosen role (the form shows a load error), or a page taller

@@ -86,7 +86,6 @@ type CLI struct {
 	Fmt       FmtCmd       `cmd:"" help:"Format entity and relation files."`
 	Normalize NormalizeCmd `cmd:"" help:"Normalize markdown headers in entity files."`
 	Schema    SchemaCmd    `cmd:"" help:"View the metamodel schema."`
-	Docs      DocsCmd      `cmd:"" help:"Build documentation from Markdown manuals with rela Lua islands."`
 	Template  TemplateCmd  `cmd:"" help:"Manage entity and relation templates."`
 	Analyze   AnalyzeCmd   `cmd:"" help:"Analyze the entity graph."`
 	ACL       ACLCmd       `cmd:"" name:"acl" help:"Audit the ACL policy (acl.yaml)."`
@@ -161,7 +160,7 @@ func runKong() int {
 		// command line). The filesystem build ignores it.
 		svc, err = appbuild.Discover(projectPath, script.NewEngine())
 		if err != nil {
-			fmt.Fprintln(os.Stderr, wrapDiscoverError(err))
+			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(err))
 			return 1
 		}
 		defer svc.Close()
@@ -216,7 +215,7 @@ func configureKongLogging(verbose, quiet bool) {
 // completion, migrate) or do their own discovery (mcp, flow, validate).
 func requiresProject(cmd string) bool {
 	switch firstKongToken(cmd) {
-	case "show", "list", "trace", "graph", "export", "fmt", "schema", "docs",
+	case "show", "list", "trace", "graph", "export", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
@@ -237,16 +236,4 @@ func firstKongToken(s string) string {
 		}
 	}
 	return s
-}
-
-// wrapDiscoverError translates errors from appbuild.Discover into
-// user-facing messages. Only "no metamodel.yaml found"
-// (relaerrors.ErrNoProject) gets the "run 'rela init'" hint; all
-// other failures (parse errors, permission denied, corrupt cache,
-// pending migration, etc.) are surfaced verbatim.
-func wrapDiscoverError(err error) error {
-	if stderrors.Is(err, relaerrors.ErrNoProject) {
-		return stderrors.New("no project found: run 'rela init' to create one")
-	}
-	return err
 }

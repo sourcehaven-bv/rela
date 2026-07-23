@@ -3,7 +3,7 @@
 `rela description()`
 
 This manual is authored in Markdown; the tables and diagrams below are
-resolved from the schema by `rela docs build`, so they cannot drift from
+resolved from the schema by `rela-docs build`, so they cannot drift from
 `metamodel.yaml`.
 
 ## Tickets
