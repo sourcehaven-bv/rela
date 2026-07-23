@@ -21,6 +21,27 @@ type transformInfo struct {
 	Produces string `json:"produces"`
 }
 
+// probeTransformCommands checks, at startup, that every registered transform's
+// command binary is resolvable on PATH, warning (never failing) for any that are
+// missing — so an operator learns a typo or an uninstalled converter at boot
+// rather than on the first export. Mirrors probeAttachmentCommands.
+func probeTransformCommands(meta *metamodel.Metamodel) {
+	reg := transform.RegistryFromMetamodel(meta)
+	if len(reg) == 0 {
+		return
+	}
+	eng, err := transform.NewEngine(reg)
+	if err != nil {
+		slog.Warn("transforms: engine unavailable; export disabled", "err", err)
+		return
+	}
+	for name, perr := range eng.Probe() {
+		if perr != nil {
+			slog.Warn("transforms: configured command not found", "transform", name, "err", perr)
+		}
+	}
+}
+
 // handleV1Transforms serves GET /api/v1/_transforms — the list of registered
 // export formats. It is public metadata (which formats exist), carries no
 // entity data, and drives the SPA "Export as" menu.
@@ -135,8 +156,12 @@ func (a *App) exportRenderer(
 		}, true
 	}
 
-	if !isSafePathSegment(docName) {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_document", "Invalid document name", "")
+	// Validate BOTH segments before any render — the document render funnels
+	// entityID into the on-disk cache filename and (for command docs) into the
+	// {id} placeholder of an sh -c command. handleV1Documents guards both the
+	// same way; the export path must not be weaker (RR-1N142S).
+	if !isSafePathSegment(docName) || !isSafePathSegment(entityID) {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_document", "Invalid document or entity name", "")
 		return nil, false
 	}
 	docCfg, ok := a.State().Cfg.Documents[docName]

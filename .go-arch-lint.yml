@@ -453,15 +453,14 @@ deps:
       - entitymanager
       - metamodel
       - store
-  # transform: view-export engine. Depends on the safe-exec core (cmdexec), the
-  # schema (metamodel), and — for Lua render overrides — script. It must NEVER
-  # import dataentry: the ACL-coupled list renderer lives in dataentry and is
-  # supplied to transform as a Renderer implementation (see internal/transform).
+  # transform: view-export engine. Depends only on the safe-exec core (cmdexec)
+  # and the schema (metamodel). It must NEVER import dataentry: the ACL-coupled
+  # list renderer AND the Lua/command render override both live in dataentry and
+  # are supplied to transform as Renderer implementations (see internal/transform).
   transform:
     mayDependOn:
       - cmdexec
       - metamodel
-      - script
   acl:
     mayDependOn:
       - entity

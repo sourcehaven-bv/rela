@@ -120,6 +120,7 @@ func (a *App) listTableRenderer(
 ) transform.Renderer {
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
 		meta := a.Meta()
+		rels := a.resolveListRelations(ctx, meta, entities, columns)
 
 		var b strings.Builder
 
@@ -138,7 +139,7 @@ func (a *App) listTableRenderer(
 		for _, e := range entities {
 			b.WriteString("|")
 			for _, c := range columns {
-				fmt.Fprintf(&b, " %s |", escapeTableCell(a.columnCell(ctx, meta, e, c)))
+				fmt.Fprintf(&b, " %s |", escapeTableCell(columnCell(meta, e, c, rels)))
 			}
 			b.WriteString("\n")
 		}
@@ -150,14 +151,153 @@ func (a *App) listTableRenderer(
 	})
 }
 
+// listRelationTitles holds pre-resolved relation-column cell values for a list
+// export: relTitles[entityID][columnKey] -> visible neighbor titles. Resolving
+// them once up front (a single batched visibility gate + one load per distinct
+// neighbor) keeps list export off the per-cell store+ACL fan-out that the
+// relation-visibility batching contract forbids (RR-A9U1NQ).
+type listRelationTitles struct {
+	byRowCol map[string]map[string][]string
+}
+
+// relColKey identifies a relation column (type + direction) so two columns on
+// the same relation type but opposite directions don't collide.
+func relColKey(c dataentryconfig.ListColumn) string {
+	if c.Direction == dataentryconfig.DirectionIncoming {
+		return c.Relation + "\x00in"
+	}
+	return c.Relation + "\x00out"
+}
+
+// cellPeers is the ordered peer IDs for one (row, relation-column) pair.
+type cellPeers struct {
+	rowID, colKey string
+	peers         []string
+}
+
+// resolveListRelations resolves every relation column's neighbor titles for the
+// whole set of exported rows in one pass: it loads each row's edges once, gathers
+// ALL neighbor IDs across every row, runs a SINGLE batched visibility gate, loads
+// each visible neighbor once, then assembles per-row/per-column visible titles.
+func (a *App) resolveListRelations(
+	ctx context.Context, meta *metamodel.Metamodel, entities []*entityPkg.Entity, columns []dataentryconfig.ListColumn,
+) listRelationTitles {
+	out := listRelationTitles{byRowCol: map[string]map[string][]string{}}
+
+	relCols := make([]dataentryconfig.ListColumn, 0, len(columns))
+	for _, c := range columns {
+		if c.Relation != "" {
+			relCols = append(relCols, c)
+		}
+	}
+	if len(relCols) == 0 {
+		return out
+	}
+
+	perCell, allPeerIDs := a.gatherListPeers(ctx, entities, relCols)
+	if len(perCell) == 0 {
+		return out
+	}
+
+	// ONE batched visibility gate for the whole export, and one title load per
+	// distinct visible neighbor (memoized in titleFor).
+	visible := visibleRelationIDs(ctx, a.reader, a.visibleReader, allPeerIDs)
+	titleFor := a.memoNeighborTitle(ctx, meta, visible)
+
+	for _, pc := range perCell {
+		titles := make([]string, 0, len(pc.peers))
+		for _, id := range pc.peers {
+			if t, ok := titleFor(id); ok {
+				titles = append(titles, t)
+			}
+		}
+		if len(titles) == 0 {
+			continue
+		}
+		if out.byRowCol[pc.rowID] == nil {
+			out.byRowCol[pc.rowID] = map[string][]string{}
+		}
+		out.byRowCol[pc.rowID][pc.colKey] = titles
+	}
+	return out
+}
+
+// gatherListPeers loads each row's edges ONCE and returns, per (row, relation
+// column), the ordered peer IDs, plus the flat list of every peer ID (for the
+// single batched visibility gate).
+func (a *App) gatherListPeers(
+	ctx context.Context, entities []*entityPkg.Entity, relCols []dataentryconfig.ListColumn,
+) (perCell []cellPeers, allPeerIDs []string) {
+	for _, e := range entities {
+		outgoing := a.reader.outgoingRelations(ctx, e.ID)
+		incoming := a.reader.incomingRelations(ctx, e.ID)
+		for _, c := range relCols {
+			inbound := c.Direction == dataentryconfig.DirectionIncoming
+			src := outgoing
+			if inbound {
+				src = incoming
+			}
+			peers := relationPeers(src, c.Relation, inbound)
+			if len(peers) == 0 {
+				continue
+			}
+			perCell = append(perCell, cellPeers{rowID: e.ID, colKey: relColKey(c), peers: peers})
+			allPeerIDs = append(allPeerIDs, peers...)
+		}
+	}
+	return perCell, allPeerIDs
+}
+
+// relationPeers extracts the peer IDs of edges of relType from rels in the given
+// direction (inbound → sources, else targets).
+func relationPeers(rels []*entityPkg.Relation, relType string, inbound bool) []string {
+	var peers []string
+	for _, rel := range rels {
+		if rel.Type != relType {
+			continue
+		}
+		if inbound {
+			peers = append(peers, rel.From)
+		} else {
+			peers = append(peers, rel.To)
+		}
+	}
+	return peers
+}
+
+// memoNeighborTitle returns a function that resolves a neighbor id to its display
+// title, once per distinct id, returning ok=false for hidden (not in visible) or
+// unloadable neighbors.
+func (a *App) memoNeighborTitle(
+	ctx context.Context, meta *metamodel.Metamodel, visible map[string]bool,
+) func(id string) (string, bool) {
+	titleByID := map[string]string{}
+	return func(id string) (string, bool) {
+		if !visible[id] {
+			return "", false
+		}
+		if t, done := titleByID[id]; done {
+			return t, t != ""
+		}
+		t := ""
+		if node, ok := a.reader.getEntity(ctx, id); ok {
+			t = displayTitleOrTitle(meta, node)
+		}
+		titleByID[id] = t
+		return t, t != ""
+	}
+}
+
 // columnCell resolves one cell value for an entity: a property value, or the
-// comma-separated VISIBLE neighbor titles for a relation column (honoring the
-// column's direction).
-func (a *App) columnCell(
-	ctx context.Context, meta *metamodel.Metamodel, e *entityPkg.Entity, c dataentryconfig.ListColumn,
+// pre-resolved comma-separated VISIBLE neighbor titles for a relation column.
+func columnCell(
+	meta *metamodel.Metamodel, e *entityPkg.Entity, c dataentryconfig.ListColumn, rels listRelationTitles,
 ) string {
 	if c.Relation != "" {
-		return strings.Join(a.visibleNeighborTitles(ctx, meta, e, c.Relation, c.Direction == dataentryconfig.DirectionIncoming), ", ")
+		if byCol := rels.byRowCol[e.ID]; byCol != nil {
+			return strings.Join(byCol[relColKey(c)], ", ")
+		}
+		return ""
 	}
 	switch c.Property {
 	case "id":
@@ -167,46 +307,6 @@ func (a *App) columnCell(
 	default:
 		return formatCellValue(e.Properties[c.Property])
 	}
-}
-
-// visibleNeighborTitles returns the display titles of the entities related to e
-// by relType in the given direction, filtered to those visible to the caller.
-func (a *App) visibleNeighborTitles(
-	ctx context.Context, meta *metamodel.Metamodel, e *entityPkg.Entity, relType string, incoming bool,
-) []string {
-	var rels []*entityPkg.Relation
-	if incoming {
-		rels = a.reader.incomingRelations(ctx, e.ID)
-	} else {
-		rels = a.reader.outgoingRelations(ctx, e.ID)
-	}
-
-	var peerIDs []string
-	for _, rel := range rels {
-		if rel.Type != relType {
-			continue
-		}
-		if incoming {
-			peerIDs = append(peerIDs, rel.From)
-		} else {
-			peerIDs = append(peerIDs, rel.To)
-		}
-	}
-	if len(peerIDs) == 0 {
-		return nil
-	}
-
-	visible := visibleRelationIDs(ctx, a.reader, a.visibleReader, peerIDs)
-	titles := make([]string, 0, len(peerIDs))
-	for _, id := range peerIDs {
-		if !visible[id] {
-			continue
-		}
-		if node, ok := a.reader.getEntity(ctx, id); ok {
-			titles = append(titles, displayTitleOrTitle(meta, node))
-		}
-	}
-	return titles
 }
 
 // columnLabel returns a column's display label, defaulting to the property or

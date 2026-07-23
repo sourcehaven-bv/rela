@@ -618,6 +618,11 @@ func NewApp(
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}
 
+	// Probe the export transforms at startup so a missing converter (e.g.
+	// pandoc not installed) surfaces as a boot warning rather than a 500 on the
+	// first export.
+	probeTransformCommands(meta)
+
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/
 	// audit/field-resolver deps are closures because tests swap those fields

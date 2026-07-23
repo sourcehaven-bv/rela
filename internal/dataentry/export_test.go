@@ -335,6 +335,30 @@ func TestExport_List_WholeScopedSetAsTable(t *testing.T) {
 	}
 }
 
+func TestExport_List_SharedNeighborResolvedOnce(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	// Two tickets implement the SAME feature. Batched resolution must render the
+	// shared neighbor's title in both rows (memoized, one gate for the export).
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "T2"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "Shared Feature"}})
+	seedRelation(app, &entity.Relation{From: "TKT-1", Type: "implements", To: "FEAT-1"})
+	seedRelation(app, &entity.Relation{From: "TKT-2", Type: "implements", To: "FEAT-1"})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket", "feature"}}},
+		Assignments: map[string]string{"alice": "admin"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	body := exportList(ctx, app).Body.String()
+	if got := strings.Count(body, "Shared Feature"); got != 2 {
+		t.Errorf("shared neighbor should appear in both rows (2), got %d\n%s", got, body)
+	}
+}
+
 func TestExport_List_HiddenNeighborExcluded(t *testing.T) {
 	requireCp(t)
 	app := newExportApp(t)
