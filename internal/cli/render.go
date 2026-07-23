@@ -21,9 +21,10 @@ import (
 // `export` (a JSON/CSV/YAML data dump), `render` produces a presentation
 // document converted by an external tool.
 type RenderCmd struct {
-	ID        string `arg:"" help:"Entity ID to render."`
-	Transform string `short:"t" required:"" help:"Registered transform name (e.g. pdf, docx)."`
-	Out       string `short:"o" required:"" help:"Output file path."`
+	ID string `arg:"" help:"Entity ID to render."`
+	// No short flags: -o is the global --output and kong rejects the collision.
+	Transform string `required:"" help:"Registered transform name (e.g. pdf, docx)."`
+	Out       string `required:"" help:"Output file path."`
 }
 
 // Run dispatches `rela render <id> --transform <name> --out <file>`.
