@@ -174,10 +174,11 @@ security-reviewed exec pattern `internal/attachment` uses). Rules for new code:
   neighbor titles never leak into an export. `internal/transform` must NOT import
   `internal/dataentry`; the built-in single-entity renderer lives in `transform`,
   and `dataentry` supplies the list renderer as a `transform.Renderer`.
-- **A Lua/command render override routes through the gated `_documents` path**
-  (`documentService.RenderMarkdown` after `gateReadOrNotFound` + entity-type
-  match) — never call `script.ExecuteDocument` on a fresh unauthenticated
-  surface.
+- **The per-type render override (`views.<type>.export_render`) renders through
+  `documentService.RenderMarkdown`** — the same Lua document machinery, reached
+  only AFTER the export has resolved the entity through the ACL read gate. Never
+  call `script.ExecuteDocument` on a fresh unauthenticated surface, and keep the
+  entity id path-validated (`isSafePathSegment`) before it reaches a render.
 - **Export downloads are hardened** like attachment downloads (nosniff, sandbox
   CSP, `no-store`, sanitized `Content-Disposition`) — the produced bytes embed
   user content.

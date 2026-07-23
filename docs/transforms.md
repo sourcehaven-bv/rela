@@ -14,13 +14,19 @@ that converts markdown to an output format:
 transforms:
   pdf:
     from: markdown            # the only supported input format (v1)
-    command: ["pandoc", "-f", "markdown", "-o", "{out}", "{in}"]
+    command: ["pandoc", "-f", "markdown", "-t", "pdf", "-o", "{out}", "{in}"]
     produces: application/pdf
-  docx:
-    command: ["pandoc", "-f", "markdown", "-o", "{out}", "{in}"]
-    produces: >-
-      application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  odt:
+    command: ["pandoc", "-f", "markdown", "-t", "odt", "-o", "{out}", "{in}"]
+    produces: application/vnd.oasis.opendocument.text
 ```
+
+> **Pass the output format explicitly.** `{out}` is a temp file with no
+> extension, so a converter that infers its format from the filename (pandoc
+> does) needs `-t <format>` — otherwise pandoc warns "Could not deduce format
+> from file extension" and silently writes HTML. If your PDF content includes
+> characters the default LaTeX engine can't typeset (e.g. `★`), add
+> `--pdf-engine=wkhtmltopdf` or another Unicode-capable engine.
 
 Fields:
 
@@ -68,11 +74,34 @@ is permitted to see.
 
 ### Custom per-entity rendering
 
-An entity export can route through a configured **document** instead of the built-in
-renderer by passing `?document=<name>`, where `<name>` is a `documents:` entry (a
-Lua script or a command). The document's `entity_type` is gated and type-checked
-exactly like the `/_documents/` endpoint, so a render override never runs for an
-entity the caller cannot read.
+The built-in entity renderer emits the title as an H1, the properties as a
+`**name:** value` list, the resolved relations, then the body. To take full
+control, give the entity type's view an **`export_render`** script:
+
+```yaml
+views:
+  book:                       # keyed by entity type
+    entry:
+      type: book
+    export_render: docs/book_card.lua
+```
+
+Now "Export as PDF/ODT" on a **book** renders through `book_card.lua` instead of
+the built-in renderer — automatically, with nothing extra to pick. The script
+runs in document mode (`rela.document.entry_id`, `rela.get_entity`, `rela.md.*`,
+…) and its stdout is the markdown fed to the transform:
+
+```lua
+local book = rela.get_entity(rela.document.entry_id)
+print("# " .. book.properties.title)
+print()
+print("**Year:** " .. (book.properties.year or "—"))
+```
+
+A type with no `export_render` keeps the built-in renderer. The override runs
+only for an entity the caller is allowed to read — export resolves the entity
+through the ACL gate first, so a denied caller gets a 404 and the script never
+runs.
 
 ## Security notes
 
@@ -88,8 +117,8 @@ entity the caller cannot read.
 ## Not yet supported (v1 limits)
 
 - Format chaining (e.g. markdown → HTML → PDF) — each transform is a single step.
-- Built-in sectioned list export (one rendered entity per row) — use a Lua render
-  override for fancier list output.
+- A render override for LIST export — `export_render` applies to entity export
+  only; list export always emits the column table.
 - Asynchronous export for slow converters (LaTeX / LibreOffice) — exports run
   synchronously within the request.
 - A per-view configurable row cap for list export.
