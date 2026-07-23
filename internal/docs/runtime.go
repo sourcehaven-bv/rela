@@ -162,37 +162,85 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	dr.rt = rt
 	dr.registerModule()
 
-	var b strings.Builder
+	var sw seamWriter
 	for _, seg := range segs {
 		switch seg.kind {
 		case segLiteral:
-			// Verbatim — never touch the interior (a ```markdown sample may
-			// carry intentional blank lines).
-			b.WriteString(seg.body)
+			sw.write(seg.body)
 		case segStatement:
 			out, err := dr.runStatement(seg) //nolint:contextcheck // runtime ctx bound at construction via WithContext
 			if err != nil {
 				return "", err
 			}
-			// A resolver emits its block with a trailing blank line; the manual
-			// author normally leaves a blank line after the fence too, so the
-			// seam would carry a double blank (MD012). Trim the island's own
-			// trailing blanks to a single newline and let the surrounding
-			// literal blank lines do the spacing. This touches only
-			// island-emitted text, never literal (fenced) content.
-			b.WriteString(strings.TrimRight(out, "\n") + "\n")
+			sw.write(out)
 		case segEcho:
 			out, err := dr.runEcho(seg) //nolint:contextcheck // runtime ctx bound at construction via WithContext
 			if err != nil {
 				return "", err
 			}
-			b.WriteString(out)
+			sw.write(out)
 		}
 	}
-	// Trim any trailing blank run at EOF (the last island/literal may leave
-	// one) to a single final newline — a whole-string op that can't disturb
-	// interior fenced content.
-	return strings.TrimRight(b.String(), "\n") + "\n", nil
+	return sw.result(), nil
+}
+
+// seamWriter assembles the rendered segments while enforcing exactly one
+// invariant: at most one blank line at any *seam* between two segments. It caps
+// the blank run that straddles a boundary — the trailing blanks of what was
+// already written plus the leading blanks of the next segment — to a single
+// blank line, and trims trailing blanks at EOF to one final newline.
+//
+// Crucially it never touches a segment's *interior*: a resolver that emits a
+// trailing blank (h1/md/roles_matrix) and a manual author who leaves a blank
+// after a fence would otherwise combine into a double blank (MD012), yet a
+// ```markdown literal sample with intentional consecutive blank lines inside it
+// is preserved verbatim. Only the join between pieces is normalized.
+type seamWriter struct {
+	b       strings.Builder
+	started bool
+}
+
+// write appends s, collapsing the blank run at the seam (this segment's leading
+// blanks plus whatever the buffer already ended with) to a single blank line.
+func (w *seamWriter) write(s string) {
+	if s == "" {
+		return
+	}
+	if w.started {
+		// Trailing newlines already in the buffer + leading newlines of s form
+		// one run straddling the seam. Cap that combined run: 2+ newlines → one
+		// blank line ("\n\n"); exactly one → keep the line break; zero → join
+		// with nothing (a mid-line echo splices into the middle of a line and
+		// must NOT gain a newline). Only the seam newlines are touched; interior
+		// blank lines of either piece are preserved.
+		buf := w.b.String()
+		trimmedBuf := strings.TrimRight(buf, "\n")
+		bufNL := len(buf) - len(trimmedBuf)
+		trimmedS := strings.TrimLeft(s, "\n")
+		sNL := len(s) - len(trimmedS)
+
+		sep := ""
+		switch total := bufNL + sNL; {
+		case total >= 2:
+			sep = "\n\n"
+		case total == 1:
+			sep = "\n"
+		}
+		w.b.Reset()
+		w.b.WriteString(trimmedBuf)
+		w.b.WriteString(sep)
+		w.b.WriteString(trimmedS)
+		return
+	}
+	// First segment: strip its leading blanks so the doc can't open on a blank
+	// line, but keep its interior untouched.
+	w.b.WriteString(strings.TrimLeft(s, "\n"))
+	w.started = true
+}
+
+// result returns the assembled output with a single trailing newline.
+func (w *seamWriter) result() string {
+	return strings.TrimRight(w.b.String(), "\n") + "\n"
 }
 
 // Warnings returns the non-fatal issues accumulated during the last Build on

@@ -353,6 +353,55 @@ func TestBuild_NoDoubleBlankAtSeam(t *testing.T) {
 	}
 }
 
+// A double blank on the LITERAL side of a seam (the author wrote two blank
+// lines before a fence) is also capped to one — the seam contract covers both
+// sides, not just island-emitted trailing blanks.
+func TestBuild_LiteralDoubleBlankBeforeIsland(t *testing.T) {
+	t.Parallel()
+	src := "Prose.\n\n\n```rela\ntyperef{ type = \"risico\" }\n```\n"
+	out, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t)})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Contains(out, "\n\n\n") {
+		t.Errorf("literal-side double blank before an island was not capped:\n%q", out)
+	}
+	if !strings.Contains(out, "Prose.\n\n| Field") {
+		t.Errorf("want a single blank between prose and the table:\n%q", out)
+	}
+}
+
+// The island-trailing-blank trim is load-bearing for resolvers that DO emit a
+// trailing blank line (md/h1/roles_matrix). doc.md emits "body\n\n"; the manual
+// leaves a blank after the fence; without seam capping that is a double blank.
+func TestBuild_ResolverTrailingBlankAtSeam(t *testing.T) {
+	t.Parallel()
+	src := "```rela\nmd(\"body\")\n```\n\nAfter.\n"
+	out, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t)})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(out, "body\n\nAfter.") {
+		t.Errorf("want exactly one blank between the md() block and the next line:\n%q", out)
+	}
+}
+
+// A mid-line echo splices into the middle of a Markdown line and must NOT gain a
+// newline at the seam (the zero-newline join case).
+func TestBuild_MidLineEchoNoNewline(t *testing.T) {
+	t.Parallel()
+	meta := fixtureMeta(t)
+	meta.Description = "a tracker"
+	src := "The system is `rela description()` today.\n"
+	out, err := Build(context.Background(), src, Options{Meta: meta})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(out, "The system is a tracker today.") {
+		t.Errorf("mid-line echo did not splice inline:\n%q", out)
+	}
+}
+
 // Seam-trimming must NOT reach inside a literal (verbatim) segment: a
 // ```markdown sample with intentional consecutive blank lines is preserved,
 // even though the same blank run at an island seam would be collapsed.
