@@ -44,6 +44,8 @@ components:
   # Domain services
   analysis:         { in: internal/analysis }
   attachment:       { in: internal/attachment }
+  cmdexec:          { in: internal/cmdexec }
+  transform:        { in: internal/transform }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
@@ -246,6 +248,7 @@ deps:
       - store
       - templating
       - tracer
+      - transform
       - validator
     canUse:
       - kong
@@ -444,9 +447,19 @@ deps:
       - validation
   attachment:
     mayDependOn:
+      - cmdexec
       - entitymanager
       - metamodel
       - store
+  # transform: view-export engine. Depends on the safe-exec core (cmdexec), the
+  # schema (metamodel), and — for Lua render overrides — script. It must NEVER
+  # import dataentry: the ACL-coupled list renderer lives in dataentry and is
+  # supplied to transform as a Renderer implementation (see internal/transform).
+  transform:
+    mayDependOn:
+      - cmdexec
+      - metamodel
+      - script
   acl:
     mayDependOn:
       - entity

@@ -82,6 +82,7 @@ type CLI struct {
 	Trace     TraceCmd     `cmd:"" help:"Trace dependencies between entities."`
 	Graph     GraphCmd     `cmd:"" help:"Export graph to Graphviz DOT format."`
 	Export    ExportCmd    `cmd:"" help:"Export entities in JSON, CSV, or YAML format."`
+	Render    RenderCmd    `cmd:"" help:"Render an entity to a file via a registered transform (e.g. pdf)."`
 	Import    ImportCmd    `cmd:"" help:"Import entities and relations from JSON, YAML, or CSV."`
 	Fmt       FmtCmd       `cmd:"" help:"Format entity and relation files."`
 	Normalize NormalizeCmd `cmd:"" help:"Normalize markdown headers in entity files."`

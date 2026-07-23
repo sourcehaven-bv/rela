@@ -32,6 +32,14 @@ type Metamodel struct {
 	// scan policy) applied to every `file` property unless overridden.
 	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 
+	// Transforms is the view-export registry: named markdown -> format
+	// conversions run via an external command (e.g. pandoc). Registering a
+	// transform here makes it available to every markdown-producing surface
+	// (entity view, list view, Lua document) as an "Export as ..." format. Lives
+	// in the metamodel (not data-entry config) so the CLI can reach it too. See
+	// internal/transform.
+	Transforms map[string]TransformDef `yaml:"transforms,omitempty"`
+
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
@@ -319,6 +327,21 @@ type PropertyDef struct {
 // runner; see the attachment-security guide for vetted recipes.
 type TransformStep struct {
 	Cmd []string `yaml:"cmd"`
+}
+
+// TransformDef is one entry in the top-level `transforms:` view-export registry.
+// It converts From-format bytes (v1: always "markdown") to the Produces
+// content-type by running Command as an argv array. Command may reference the
+// {in}/{out} placeholders (temp paths owned by the runner); otherwise input is
+// on stdin and output on stdout. Commands come from project config (this file),
+// never from a request — a request may only name a registered transform.
+//
+// The mirror of this in internal/transform is transform.Def; the metamodel keeps
+// its own YAML-tagged type so internal/transform need not be imported here.
+type TransformDef struct {
+	From     string   `yaml:"from"`
+	Command  []string `yaml:"command"`
+	Produces string   `yaml:"produces"`
 }
 
 // FileMax returns the effective attachment cap for a file property:
