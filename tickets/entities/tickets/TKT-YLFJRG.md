@@ -5,7 +5,7 @@ title: Ship a generated operator handbook for the demo tracker (dogfood rela-doc
 kind: docs
 priority: medium
 effort: m
-status: ready
+status: planning
 ---
 
 ## Problem

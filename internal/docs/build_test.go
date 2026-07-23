@@ -339,26 +339,6 @@ func TestBuild_InfiniteLoopTimesOut(t *testing.T) {
 	}
 }
 
-func TestNormalizeBlankLines(t *testing.T) {
-	t.Parallel()
-	cases := map[string]struct{ in, want string }{
-		"double blank collapses":       {"a\n\n\nb\n", "a\n\nb\n"},
-		"triple blank collapses":       {"a\n\n\n\nb\n", "a\n\nb\n"},
-		"single blank preserved":       {"a\n\nb\n", "a\n\nb\n"},
-		"blank with trailing spaces":   {"a\n\n   \nb\n", "a\n\nb\n"},
-		"trailing blanks trimmed":      {"a\n\n\n", "a\n"},
-		"no trailing newline gets one": {"a", "a\n"},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if got := normalizeBlankLines(tc.in); got != tc.want {
-				t.Errorf("normalizeBlankLines(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 // A block resolver's trailing blank plus the manual's own blank after the fence
 // must not produce a double blank line in the output (MD012).
 func TestBuild_NoDoubleBlankAtSeam(t *testing.T) {
@@ -369,6 +349,57 @@ func TestBuild_NoDoubleBlankAtSeam(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	if strings.Contains(out, "\n\n\n") {
+		t.Errorf("output has a run of 2+ blank lines at the island seam:\n%q", out)
+	}
+}
+
+// Seam-trimming must NOT reach inside a literal (verbatim) segment: a
+// ```markdown sample with intentional consecutive blank lines is preserved,
+// even though the same blank run at an island seam would be collapsed.
+func TestBuild_PreservesBlanksInsideLiteralFence(t *testing.T) {
+	t.Parallel()
+	// A fenced code sample (no `rela` marker → literal) with two blank lines
+	// between its lines, plus a real island after it to exercise seam-trimming.
+	src := "Example:\n\n```markdown\nline1\n\n\nline2\n```\n\n```rela\ntyperef{ type = \"risico\" }\n```\n"
+	out, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t)})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	// The intentional double blank inside the fence survives verbatim.
+	if !strings.Contains(out, "line1\n\n\nline2") {
+		t.Errorf("blank lines inside the literal ```markdown fence were altered:\n%q", out)
+	}
+}
+
+// An echo island whose value carries a trailing newline (e.g. a YAML `|` block
+// scalar description) must not open a double blank against the manual's own
+// blank line after the span.
+func TestBuild_EchoTrailingNewlineTrimmed(t *testing.T) {
+	t.Parallel()
+	meta := fixtureMeta(t)
+	meta.Description = "A tracker.\n" // block-scalar style trailing newline
+	src := "# T\n\n`rela description()`\n\nAfter.\n"
+	out, err := Build(context.Background(), src, Options{Meta: meta})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !strings.Contains(out, "A tracker.\n\nAfter.") {
+		t.Errorf("echo trailing newline not trimmed (double blank at seam):\n%q", out)
+	}
+	if strings.Contains(out, "\n\n\n") {
 		t.Errorf("output has a run of 2+ blank lines:\n%q", out)
+	}
+}
+
+// The output never ends with a trailing blank run (single final newline).
+func TestBuild_SingleTrailingNewline(t *testing.T) {
+	t.Parallel()
+	src := "# Title\n\n```rela\ntyperef{ type = \"risico\" }\n```\n"
+	out, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t)})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.HasSuffix(out, "\n\n") || !strings.HasSuffix(out, "\n") {
+		t.Errorf("want exactly one trailing newline, got:\n%q", out[max(0, len(out)-8):])
 	}
 }
