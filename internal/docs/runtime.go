@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -181,7 +182,23 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 			b.WriteString(out)
 		}
 	}
-	return b.String(), nil
+	return normalizeBlankLines(b.String()), nil
+}
+
+// blankRun matches three or more consecutive newlines (optionally with trailing
+// spaces on the blank lines), i.e. two or more blank lines.
+var blankRun = regexp.MustCompile(`\n[ \t]*\n([ \t]*\n)+`)
+
+// normalizeBlankLines collapses any run of 2+ blank lines to a single blank
+// line and trims trailing blank lines to a single final newline. A resolver
+// emits its block with a trailing blank line, and the manual author typically
+// leaves a blank line after the fence too; without this the seam would carry a
+// double blank (MD012), and the last island leaves a trailing blank run at EOF.
+// Normalizing once on the assembled output is robust to whatever spacing each
+// island and literal run contributes.
+func normalizeBlankLines(s string) string {
+	s = blankRun.ReplaceAllString(s, "\n\n")
+	return strings.TrimRight(s, "\n") + "\n"
 }
 
 // Warnings returns the non-fatal issues accumulated during the last Build on

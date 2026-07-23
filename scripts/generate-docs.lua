@@ -157,6 +157,12 @@ go build -o rela ./cmd/rela
 
     readme = readme .. [[
 
+### Examples
+
+| Example | Description |
+| -------- | -------- |
+| [Ticket tracker — operator handbook](docs/examples/ticket-tracker-manual.md) | A generated operator handbook for the demo ticket tracker, built by `rela-docs` — field tables, a mermaid lifecycle, a role matrix, and an annotated screenshot, all derived from the project's schema so they can't drift. |
+
 ## Project Structure
 
 After running `rela init`:

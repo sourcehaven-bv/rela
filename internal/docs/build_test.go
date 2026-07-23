@@ -338,3 +338,37 @@ func TestBuild_InfiniteLoopTimesOut(t *testing.T) {
 		t.Fatal("infinite loop should abort via timeout")
 	}
 }
+
+func TestNormalizeBlankLines(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct{ in, want string }{
+		"double blank collapses":       {"a\n\n\nb\n", "a\n\nb\n"},
+		"triple blank collapses":       {"a\n\n\n\nb\n", "a\n\nb\n"},
+		"single blank preserved":       {"a\n\nb\n", "a\n\nb\n"},
+		"blank with trailing spaces":   {"a\n\n   \nb\n", "a\n\nb\n"},
+		"trailing blanks trimmed":      {"a\n\n\n", "a\n"},
+		"no trailing newline gets one": {"a", "a\n"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := normalizeBlankLines(tc.in); got != tc.want {
+				t.Errorf("normalizeBlankLines(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// A block resolver's trailing blank plus the manual's own blank after the fence
+// must not produce a double blank line in the output (MD012).
+func TestBuild_NoDoubleBlankAtSeam(t *testing.T) {
+	t.Parallel()
+	src := "# Title\n\n```rela\ntyperef{ type = \"risico\", fields = \"required\" }\n```\n\nAfter.\n"
+	out, err := Build(context.Background(), src, Options{Meta: fixtureMeta(t)})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Contains(out, "\n\n\n") {
+		t.Errorf("output has a run of 2+ blank lines:\n%q", out)
+	}
+}

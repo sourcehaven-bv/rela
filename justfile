@@ -250,6 +250,18 @@ docs: build-cli
     @echo "Generating documentation..."
     @./scripts/generate-docs.sh
 
+# Regenerate the example operator handbook (docs/examples/) from the demo
+# project by building its rela-docs manual. Kept OUT of `docs`/`docs-check`:
+# it needs the rela-docs binary (frontend + Chrome for the screenshot) and the
+# PNG is not byte-reproducible, so the committed output is the source of truth
+# and this is an opt-in, run-when-you-change-the-manual target.
+docs-example: build-docs
+    @echo "Building the example ticket-tracker handbook..."
+    ./bin/rela-docs build prototypes/data-entry/manual/tickets-manual.md \
+        --project prototypes/data-entry/project \
+        --out docs/examples/ticket-tracker-manual.md
+    @echo "✓ Wrote docs/examples/ticket-tracker-manual.md (+ ticket-form.png)"
+
 # Check that committed docs are up to date with entities
 docs-check: docs
     @echo "Checking docs are up to date..."

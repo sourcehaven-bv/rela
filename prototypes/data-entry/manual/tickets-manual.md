@@ -1,10 +1,12 @@
-# Ticket tracker — handleiding
+# Ticket tracker — operator handbook
 
 `rela description()`
 
-This manual is authored in Markdown; the tables and diagrams below are
-resolved from the schema by `rela-docs build`, so they cannot drift from
-`metamodel.yaml`.
+This handbook is authored in Markdown; the tables, diagrams, and screenshot
+below are resolved from the project's `metamodel.yaml` and `acl.yaml` by
+`rela-docs build`, so they can never drift from the schema. It doubles as a
+worked example of the rela-docs generator — see
+[the guide](../rela-docs.md).
 
 ## Tickets
 
@@ -51,13 +53,16 @@ There is `rela count{ type = "ticket" }` seeded ticket in this example.
 
 ## Who can do what
 
+The access model comes straight from `acl.yaml`:
+
 ```rela
 roles_matrix{ type = "ticket" }
 ```
 
 ## The edit form
 
-This is the ticket edit form as an editor sees it:
+This is the ticket edit form as an editor sees it, with the two lifecycle-driving
+fields highlighted:
 
 ```rela
 local demo = create("ticket", {
@@ -70,6 +75,7 @@ screenshot{
     { at = "status",   text = "the lifecycle state" },
     { at = "priority", text = "triage priority" },
   },
+  clip = "focus",
   out = "ticket-form.png",
   alt = "The ticket edit form, with the status and priority fields highlighted",
 }
