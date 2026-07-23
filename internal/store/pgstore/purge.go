@@ -35,8 +35,8 @@ import (
 // never learns the principal another way and never echoes purged content.
 
 // PurgeVersions implements store.VersionPurger.
-func (s *Store) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest) (*store.PurgeResult, error) {
-	pool, ok := s.db.(*pgxpool.Pool)
+func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest) (*store.PurgeResult, error) {
+	pool, ok := v.db.(*pgxpool.Pool)
 	if !ok {
 		return nil, errors.New("pgstore: PurgeVersions requires a *pgxpool.Pool (session-scoped advisory lock)")
 	}
@@ -56,11 +56,11 @@ func (s *Store) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
 	// Resolve the target lineage ids (fenced) and the current live content hash.
-	ids, err := s.entityLineageIDsForPurge(ctx, conn, req.EntityID)
+	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.EntityID)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := s.liveEntityHash(ctx, conn, req.EntityID)
+	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.EntityID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +101,10 @@ func (s *Store) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest
 }
 
 // PurgeRelationVersions implements store.RelationVersionPurger.
-func (s *Store) PurgeRelationVersions(
+func (v *VersionStore) PurgeRelationVersions(
 	ctx context.Context, req store.RelationVersionPurgeRequest,
 ) (*store.PurgeResult, error) {
-	pool, ok := s.db.(*pgxpool.Pool)
+	pool, ok := v.db.(*pgxpool.Pool)
 	if !ok {
 		return nil, errors.New("pgstore: PurgeRelationVersions requires a *pgxpool.Pool")
 	}
@@ -123,18 +123,23 @@ func (s *Store) PurgeRelationVersions(
 	}
 	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
 
-	id, err := s.recordIDForKey(ctx, req.From, req.Type, req.To)
-	if errors.Is(err, store.ErrNotFound) {
-		return &store.PurgeResult{}, nil // nothing to purge
-	}
+	// Resolve which lifetime(s) of the key to purge. A reused key has multiple
+	// lifetimes (each recreate mints a fresh rel_record_id); purging without a
+	// selector would silently erase only the newest and leave older lifetimes'
+	// content behind — a false erasure guarantee for a compliance op. So refuse a
+	// multi-lifetime key unless the caller named RecordID or AllLifetimes.
+	ids, refused, err := v.resolvePurgeLineage(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	ids, err := s.relationLineageIDs(ctx, id)
-	if err != nil {
-		return nil, err
+	if refused != nil {
+		return refused, nil // MultiLifetimeRefused, nothing purged
 	}
-	liveHash, liveExists, err := s.liveRelationHash(ctx, conn, req.From, req.Type, req.To)
+	if len(ids) == 0 {
+		return &store.PurgeResult{}, nil // nothing to purge (unknown key)
+	}
+
+	liveHash, liveExists, err := v.liveRelationHash(ctx, conn, req.From, req.Type, req.To)
 	if err != nil {
 		return nil, err
 	}
@@ -163,12 +168,97 @@ func (s *Store) PurgeRelationVersions(
 	res.Purged = n
 
 	if liveExists && req.ForceLive {
-		if err := writeRelationPurgeTombstone(ctx, conn, req.From, req.Type, req.To, id, liveHash); err != nil {
-			return nil, err
+		// The live row's lineage is the newest lifetime; tombstone it so the sweep
+		// doesn't re-capture the purged content. (AllLifetimes includes it.)
+		liveID, lerr := v.liveRecordID(ctx, req.From, req.Type, req.To)
+		if lerr != nil {
+			return nil, lerr
 		}
-		res.TombstoneWritten = true
+		if liveID != 0 {
+			if err := writeRelationPurgeTombstone(ctx, conn, req.From, req.Type, req.To, liveID, liveHash); err != nil {
+				return nil, err
+			}
+			res.TombstoneWritten = true
+		}
 	}
 	return res, nil
+}
+
+// resolvePurgeLineage resolves a relation purge request to the set of
+// rel_record_ids to purge, enforcing the multi-lifetime guardrail. Returns
+// (ids, nil, nil) to proceed; (nil, refusalResult, nil) when a multi-lifetime key
+// lacks a selector; (nil, nil, nil) for an unknown key. AllLifetimes spans every
+// head's fenced lineage; RecordID selects one validated head; the default (0)
+// selects the newest lifetime (unchanged single-lifetime behavior).
+func (v *VersionStore) resolvePurgeLineage(
+	ctx context.Context, req store.RelationVersionPurgeRequest,
+) (ids []int64, refused *store.PurgeResult, err error) {
+	// The store is the trust boundary — reject the contradictory selector here, not
+	// only in the CLI (the request struct is public API). AllLifetimes + a specific
+	// RecordID is ambiguous; refuse rather than silently letting one win.
+	if req.AllLifetimes && req.RecordID != 0 {
+		return nil, nil, errors.New("pgstore: RecordID and AllLifetimes are mutually exclusive")
+	}
+	lifetimes, err := v.ListRelationLifetimes(ctx, req.From, req.Type, req.To)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(lifetimes) == 0 {
+		return nil, nil, nil // unknown key
+	}
+
+	switch {
+	case req.AllLifetimes:
+		// ListRelationLifetimes emits heads with DISJOINT stitched id-sets (its
+		// claimed-set dedup guarantees it), so appending each head's lineage yields
+		// no duplicate today. Dedup defensively anyway — a future change to the
+		// claimed logic (or a rename topology sharing a predecessor) must not feed
+		// duplicate ids into the ANY($1) delete.
+		seen := make(map[int64]struct{})
+		for _, lt := range lifetimes {
+			lineage, lerr := v.relationLineageIDs(ctx, lt.RecordID)
+			if lerr != nil {
+				return nil, nil, lerr
+			}
+			for _, id := range lineage {
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+		return ids, nil, nil
+
+	case req.RecordID != 0:
+		ok, verr := v.recordIDIsHeadOfKey(ctx, req.RecordID, req.From, req.Type, req.To)
+		if verr != nil {
+			return nil, nil, verr
+		}
+		if !ok {
+			return nil, nil, store.ErrNotFound
+		}
+		lineage, lerr := v.relationLineageIDs(ctx, req.RecordID)
+		if lerr != nil {
+			return nil, nil, lerr
+		}
+		return lineage, nil, nil
+
+	case len(lifetimes) > 1:
+		// Multi-lifetime key, no selector: refuse rather than silently erase one.
+		return nil, &store.PurgeResult{
+			MultiLifetimeRefused: true,
+			LifetimeCount:        len(lifetimes),
+		}, nil
+
+	default:
+		// Single lifetime: purge it (newest == only).
+		lineage, lerr := v.relationLineageIDs(ctx, lifetimes[0].RecordID)
+		if lerr != nil {
+			return nil, nil, lerr
+		}
+		return lineage, nil, nil
+	}
 }
 
 // --- shared helpers ---
@@ -186,7 +276,7 @@ func anyRename(targets []store.PurgeTarget) bool {
 // lineage as a slice usable in `entity_id = ANY($1)`. It reuses lineageCTE so
 // --all matches exactly what ListVersions shows and never spills into a reused
 // id's rows. Returns just the queried id if it has no rename ancestry.
-func (s *Store) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string) ([]string, error) {
+func (v *VersionStore) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string) ([]string, error) {
 	sel := lineageCTE + ` SELECT entity_id FROM lin`
 	rows, err := q.Query(ctx, sel, id)
 	if err != nil {
@@ -210,7 +300,7 @@ func (s *Store) entityLineageIDsForPurge(ctx context.Context, q DBTX, id string)
 	return ids, nil
 }
 
-func (s *Store) liveEntityHash(ctx context.Context, q DBTX, id string) (hash string, exists bool, err error) {
+func (v *VersionStore) liveEntityHash(ctx context.Context, q DBTX, id string) (hash string, exists bool, err error) {
 	e, gErr := scanEntity(q.QueryRow(ctx,
 		`SELECT id, type, properties, content, updated_at FROM entities WHERE id = $1`, id))
 	if errors.Is(gErr, pgx.ErrNoRows) {
@@ -224,7 +314,7 @@ func (s *Store) liveEntityHash(ctx context.Context, q DBTX, id string) (hash str
 	}), true, nil
 }
 
-func (s *Store) liveRelationHash(
+func (v *VersionStore) liveRelationHash(
 	ctx context.Context, q DBTX, from, relType, to string,
 ) (hash string, exists bool, err error) {
 	r, gErr := scanRelation(q.QueryRow(ctx,
@@ -355,9 +445,3 @@ func writeRelationPurgeTombstone(
 const purgeSchemaHash = "purge-tombstone"
 
 var purgeSchemaProjection = []byte(`{"purge":true}`)
-
-// Static assertions that Store satisfies the optional purge capabilities.
-var (
-	_ store.VersionPurger         = (*Store)(nil)
-	_ store.RelationVersionPurger = (*Store)(nil)
-)

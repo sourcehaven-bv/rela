@@ -1703,6 +1703,65 @@ commands:
 | `confirm`      | string | Confirmation prompt before execution (optional)        |
 | `env`          | map    | Custom environment variables (optional)                |
 | `auto_open`    | bool   | Auto-open output files on completion (optional)        |
+| `permission`   | string | ACL permission required to run this command (optional) |
+
+### Authorization
+
+Commands run arbitrary shell, so who may execute them is governed by the ACL.
+Authorization is **bimodal** — it depends on whether the project has an
+`acl.yaml` at all:
+
+| Project state | Command with `permission:` | Command without `permission:` |
+| ------------- | -------------------------- | ----------------------------- |
+| No `acl.yaml` | runs | runs |
+| `acl.yaml` present | runs only if the principal holds it | **denied** |
+| `--read-only` | **denied** | **denied** |
+
+In other words: with no policy configured nothing changes, and once you write a
+policy every command must be granted explicitly. Grant via a role's
+`permissions:` list, exactly like `history:read`:
+
+```yaml
+# data-entry.yaml
+commands:
+  nightly-export:
+    label: "Nightly export"
+    context: global
+    script: "./scripts/export.sh"
+    permission: "command:nightly-export"
+```
+
+```yaml
+# acl.yaml
+roles:
+  operator:
+    permissions: [command:nightly-export]
+```
+
+Commands the current user may not run are omitted from the API response, so
+their buttons never render. That is a convenience, not the boundary — the
+server re-authorizes every execution and returns 403 regardless of what the UI
+showed.
+
+> **`available_on` is not an authorization boundary.** It controls where a
+> button *appears*; it is not checked at execution time, so a command scoped to
+> one list or entity type can still be invoked directly against any other. Use
+> `permission:` to control *who* may run a command, and note that a command
+> reads whatever its context assembles from the caller-supplied `entity_id` /
+> `list_id` — not from the page the button was on. See
+> [what a command permission confers](acl-security.md#what-a-command-permission-actually-confers).
+>
+> **Adding your first `acl.yaml` is a breaking change for commands.** Every
+> command needs a `permission:` and a matching grant, or it stops working. The
+> failure mode is deliberate: a denied command is safer than an ungoverned one.
+
+**`context: view` cannot be granted per-command yet.** View commands run
+unchanged when no `acl.yaml` is configured, but are denied outright once one
+is — setting `permission:` on them has no effect and produces a config warning.
+A view command's stdin payload is the entire view traversal (every entity the
+view reaches plus the relations between them), so a grant would confer read
+access far wider than the entry entity, in a way that is not evident from the
+config. Per-command view grants are deferred until that scoping is resolved.
 
 ### Context Scopes
 

@@ -3,6 +3,7 @@ module github.com/Sourcehaven-BV/rela
 go 1.26
 
 require (
+	github.com/MicahParks/jwkset v0.11.0
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/alecthomas/kong v1.16.0
 	github.com/blevesearch/bleve/v2 v2.6.0
@@ -33,7 +34,6 @@ require (
 require (
 	dario.cat/mergo v1.0.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/MicahParks/jwkset v0.11.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect

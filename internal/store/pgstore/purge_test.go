@@ -25,7 +25,7 @@ func seedEntityHistory(t *testing.T, s *pgstore.Store, id string, contents ...st
 		} else {
 			in.Op = store.VersionOpUpdate
 		}
-		require.NoError(t, s.WriteVersion(ctx, in))
+		require.NoError(t, s.VersionStore().WriteVersion(ctx, in))
 	}
 }
 
@@ -38,14 +38,14 @@ func TestPurgeRefusesWhenLiveRowExists(t *testing.T) {
 	ctx := context.Background()
 	seedEntityHistory(t, s, "TKT-1", "v1", "v2secret")
 
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{All: true}, Reason: "test",
 	})
 	require.NoError(t, err)
 	require.True(t, res.LiveRowExists)
 	require.Equal(t, 0, res.Purged, "must refuse to purge while live row exists")
 
-	metas, err := s.ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, metas, 2, "history untouched by refused purge")
 }
@@ -59,7 +59,7 @@ func TestPurgeForceLiveWritesTombstone(t *testing.T) {
 	ctx := context.Background()
 	seedEntityHistory(t, s, "TKT-1", "v1", "v2secret")
 
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{All: true},
 		Reason: "erase PII", ForceLive: true,
 	})
@@ -68,7 +68,7 @@ func TestPurgeForceLiveWritesTombstone(t *testing.T) {
 	require.True(t, res.TombstoneWritten)
 
 	// The 2 content versions are gone; only the tombstone remains.
-	metas, err := s.ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, metas, 1)
 	require.Equal(t, store.VersionOpPurge, metas[0].Op)
@@ -85,11 +85,11 @@ func TestPurgeDeletedEntityAll(t *testing.T) {
 	// Write a delete version + remove the live row.
 	del := newVersionInput("TKT-1", "v2", nil)
 	del.Op = store.VersionOpDelete
-	require.NoError(t, s.WriteVersion(ctx, del))
+	require.NoError(t, s.VersionStore().WriteVersion(ctx, del))
 	_, err = s.DeleteEntity(ctx, "TKT-1", false)
 	require.NoError(t, err)
 
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{All: true}, Reason: "erase deleted",
 	})
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestPurgeDeletedEntityAll(t *testing.T) {
 	require.False(t, res.TombstoneWritten)
 	require.Equal(t, 3, res.Purged) // create + update + delete
 
-	metas, err := s.ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Empty(t, metas, "all history purged")
 }
@@ -118,13 +118,13 @@ func TestPurgeByVseq(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT vseq FROM entity_versions WHERE entity_id='TKT-1' ORDER BY vseq ASC OFFSET 1 LIMIT 1`).Scan(&vseq))
 
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{Vseq: vseq}, Reason: "single",
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Purged)
 
-	metas, err := s.ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, metas, 2, "only the one vseq purged")
 }
@@ -153,7 +153,7 @@ func TestPurgeByContentHash(t *testing.T) {
 		} else {
 			in.Op = store.VersionOpUpdate
 		}
-		require.NoError(t, s.WriteVersion(ctx, in))
+		require.NoError(t, s.VersionStore().WriteVersion(ctx, in))
 	}
 	_, err = s.DeleteEntity(ctx, "TKT-1", false)
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestPurgeByContentHash(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT content_hash FROM entity_versions WHERE entity_id='TKT-1' AND content='dup' LIMIT 1`).Scan(&hash))
 
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{ContentHash: hash}, Reason: "erase value",
 	})
 	require.NoError(t, err)
@@ -186,10 +186,10 @@ func TestPurgeRefusesRenameRow(t *testing.T) {
 	ren := newVersionInput("B", "a2", nil)
 	ren.Op = store.VersionOpRename
 	ren.PrevID = "A"
-	require.NoError(t, s.WriteVersion(ctx, ren))
+	require.NoError(t, s.VersionStore().WriteVersion(ctx, ren))
 
 	// Purge --all of B's lineage includes the rename row → refuse.
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "B", Selector: store.PurgeSelector{All: true}, Reason: "test",
 	})
 	require.NoError(t, err)
@@ -207,14 +207,14 @@ func TestPurgeDryRun(t *testing.T) {
 	_, err = s.DeleteEntity(ctx, "TKT-1", false)
 	require.NoError(t, err)
 
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{All: true}, Reason: "preview", DryRun: true,
 	})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Purged, "dry-run deletes nothing")
 	require.Len(t, res.Targets, 2, "but resolves the targets")
 
-	metas, err := s.ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, metas, 2, "history intact after dry-run")
 }
@@ -237,7 +237,7 @@ func TestPurgeTombstoneSuppressesSweepRecapture(t *testing.T) {
 	require.NoError(t, err)
 
 	// Force-live purge all history; tombstone written.
-	res, err := s.PurgeVersions(ctx, store.VersionPurgeRequest{
+	res, err := s.VersionStore().PurgeVersions(ctx, store.VersionPurgeRequest{
 		EntityID: "TKT-1", Selector: store.PurgeSelector{All: true},
 		Reason: "erase", ForceLive: true,
 	})
@@ -250,7 +250,7 @@ func TestPurgeTombstoneSuppressesSweepRecapture(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 	time.Sleep(300 * time.Millisecond)
 
-	metas, err := s.ListVersions(ctx, "TKT-1")
+	metas, err := s.VersionStore().ListVersions(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "only the purge tombstone; sweep did NOT re-capture the live PII")
 	require.Equal(t, store.VersionOpPurge, metas[0].Op)

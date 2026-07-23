@@ -9,11 +9,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/MicahParks/jwkset"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -309,5 +311,78 @@ func jwksDoc(pub *ecdsa.PublicKey, kid string) map[string]any {
 			"x": base64.RawURLEncoding.EncodeToString(x),
 			"y": base64.RawURLEncoding.EncodeToString(y),
 		}},
+	}
+}
+
+// classify decides whether a parse failure is a client fault (ErrInvalid) or an
+// operator-actionable outage (ErrKeysUnavailable). Both deny the request; the
+// distinction drives log level and alerting, so a misclassification is a paging
+// bug rather than a security one — hence the deliberate bias toward ErrInvalid.
+func TestClassify(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{
+			name: "deadline exceeded → keys unavailable (unknown-kid refresh outlived the request)",
+			err:  context.DeadlineExceeded,
+			want: ErrKeysUnavailable,
+		},
+		{
+			name: "canceled → keys unavailable",
+			err:  context.Canceled,
+			want: ErrKeysUnavailable,
+		},
+		{
+			name: "wrapped deadline → keys unavailable (errors.Is unwraps)",
+			err:  fmt.Errorf("fetching jwks: %w", context.DeadlineExceeded),
+			want: ErrKeysUnavailable,
+		},
+		{
+			name: "key not found → keys unavailable (kid absent after refresh)",
+			err:  jwkset.ErrKeyNotFound,
+			want: ErrKeysUnavailable,
+		},
+		{
+			name: "expired token → invalid (client fault)",
+			err:  jwt.ErrTokenExpired,
+			want: ErrInvalid,
+		},
+		{
+			name: "bad signature → invalid",
+			err:  jwt.ErrSignatureInvalid,
+			want: ErrInvalid,
+		},
+		{
+			name: "wrong issuer → invalid",
+			err:  jwt.ErrTokenInvalidIssuer,
+			want: ErrInvalid,
+		},
+		{
+			name: "unrecognized error → invalid (bias to the quieter classification)",
+			err:  errors.New("something novel"),
+			want: ErrInvalid,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classify(tt.err)
+			if !errors.Is(got, tt.want) {
+				t.Errorf("classify(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// The two sentinels must stay distinguishable: a caller that alerts on
+// ErrKeysUnavailable must not be woken by every expired token.
+func TestSentinelsAreDistinct(t *testing.T) {
+	if errors.Is(ErrKeysUnavailable, ErrInvalid) {
+		t.Error("ErrKeysUnavailable must not wrap ErrInvalid — an outage would be indistinguishable from a bad token")
+	}
+	if errors.Is(ErrInvalid, ErrKeysUnavailable) {
+		t.Error("ErrInvalid must not wrap ErrKeysUnavailable")
 	}
 }

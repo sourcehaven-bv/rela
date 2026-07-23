@@ -56,11 +56,23 @@ import (
 // interfaces — `scheduler.WorkspaceProvider`, the data-entry app's
 // constructor inputs — through structural typing, without adapters
 // at the wiring site.
+//
+// Every exported method is a one-line accessor for a collaborator this facade
+// constructs; the count tracks the number of wired services, not an accreting
+// public API. Versions() (TKT-N0IKN9) took it to 21 — a documented facade
+// exception, not a ratchet target.
+//
+//plimsoll:max-exported-methods=21
 type Services struct {
-	fs       storage.FS
-	paths    *project.Context
-	meta     *metamodel.Metamodel
-	store    store.Store
+	fs    storage.FS
+	paths *project.Context
+	meta  *metamodel.Metamodel
+	store store.Store
+	// versions is the content-versioning service (history reads, version writes,
+	// purge), a separate concern injected by the backend recipe — nil on builds
+	// without versioning (fs/mem; fsstore uses git). Consumers bind the narrow
+	// sub-interface they need; the umbrella is the nil-able field type only.
+	versions store.VersionService
 	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// the generic search.NewVisible wrapper on the fs/memory builds,
@@ -96,6 +108,11 @@ func (s *Services) Meta() *metamodel.Metamodel { return s.meta }
 
 // Store returns the authoritative store.
 func (s *Services) Store() store.Store { return s.store }
+
+// Versions returns the content-versioning service, or nil on a build without
+// versioning (fs/mem). Consumers must nil-check and bind the narrow sub-interface
+// they use (history read, purge, …) rather than the umbrella.
+func (s *Services) Versions() store.VersionService { return s.versions }
 
 // Searcher returns the search service (a sentinel error-searcher when
 // the search backend failed to construct).
@@ -673,6 +690,11 @@ func assemble(
 		return nil, fmt.Errorf("compile transitions: %w", err)
 	}
 
+	// Content versioning is a separate injected service (pgstore only; nil
+	// elsewhere), NOT a store capability the manager type-asserts. Derived once
+	// here and threaded into the recorders and the Services bundle.
+	versions := versionServiceFor(st)
+
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store:                   st,
 		Meta:                    base.meta,
@@ -682,8 +704,8 @@ func assemble(
 		Automations:             autoEngine,
 		Cascade:                 cascadeRunner,
 		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
-		VersionRecorder:         versionRecorderFor(st),
-		RelationVersionRecorder: relationVersionRecorderFor(st),
+		VersionRecorder:         versionRecorderFor(versions),
+		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,
@@ -708,6 +730,7 @@ func assemble(
 		paths:           cfg.Paths,
 		meta:            base.meta,
 		store:           st,
+		versions:        versions,
 		searcher:        searcher,
 		visibleSearcher: visible,
 		entityManager:   mgr,
@@ -749,16 +772,17 @@ func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.Vers
 	})
 }
 
-// versionRecorderFor returns a synchronous version recorder when the store
-// supports version writes (pgstore), or nil when it does not (fsstore/memstore
-// — where the entitymanager's version hook then no-ops). Returning a typed nil
-// would defeat the manager's nil check, so an unsupported store yields an
-// untyped nil interface.
-func versionRecorderFor(st store.Store) entitymanager.VersionRecorder {
-	if w, ok := st.(store.VersionWriter); ok {
-		return versionRecorder{w: w}
+// versionRecorderFor returns a synchronous version recorder when a versioning
+// service is wired (pgstore), or nil when none is (fsstore/memstore — where the
+// entitymanager's version hook then no-ops). vs is the injected version service
+// (an untyped nil on non-versioning builds); a nil service yields a nil recorder
+// so the manager's nil check works. Takes the service rather than type-asserting
+// the store — versioning is a separate injected concern, not a store capability.
+func versionRecorderFor(vs store.VersionService) entitymanager.VersionRecorder {
+	if vs == nil {
+		return nil
 	}
-	return nil
+	return versionRecorder{w: vs}
 }
 
 // relationVersionRecorder adapts a store.RelationVersionWriter to the
@@ -790,11 +814,11 @@ func (r relationVersionRecorder) RecordRelationVersion(
 }
 
 // relationVersionRecorderFor mirrors versionRecorderFor for relation versions.
-func relationVersionRecorderFor(st store.Store) entitymanager.RelationVersionRecorder {
-	if w, ok := st.(store.RelationVersionWriter); ok {
-		return relationVersionRecorder{w: w}
+func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationVersionRecorder {
+	if vs == nil {
+		return nil
 	}
-	return nil
+	return relationVersionRecorder{w: vs}
 }
 
 // (startVersionSweepIfSupported is defined per build tag in

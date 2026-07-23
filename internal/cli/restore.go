@@ -29,12 +29,12 @@ type RestoreCmd struct {
 
 // Run dispatches `rela restore <id> <version>`.
 func (c *RestoreCmd) Run(ctx context.Context, svc *writeServices) error {
-	reader, ok := svc.Store.(store.HistoryReader)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version history " +
 			"(restore is a PostgreSQL-build feature).")
 		return nil
 	}
+	var reader store.HistoryReader = svc.Versions
 
 	snap, err := reader.GetVersion(ctx, c.ID, c.Version)
 	if errors.Is(err, store.ErrNotFound) {

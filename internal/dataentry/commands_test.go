@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // --- resolveCommands ---
@@ -64,7 +67,7 @@ func TestResolveCommands(t *testing.T) {
 	}
 
 	t.Run("entity page shows entity commands", func(t *testing.T) {
-		cmds := app.commands.resolveCommands("entity", "", "ticket")
+		cmds := app.commands.resolveCommands(context.Background(), "entity", "", "ticket")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "entity-cmd")
 		assertContains(t, ids, "unscoped-entity")
@@ -74,7 +77,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("entity page for non-matching type", func(t *testing.T) {
-		cmds := app.commands.resolveCommands("entity", "", "component")
+		cmds := app.commands.resolveCommands(context.Background(), "entity", "", "component")
 		ids := cmdIDs(cmds)
 		// unscoped entity command still shows (context matches)
 		assertContains(t, ids, "unscoped-entity")
@@ -83,7 +86,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("view page shows entity and view commands", func(t *testing.T) {
-		cmds := app.commands.resolveCommands("view", "ticket_detail", "ticket")
+		cmds := app.commands.resolveCommands(context.Background(), "view", "ticket_detail", "ticket")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "entity-cmd")
 		assertContains(t, ids, "view-cmd")
@@ -93,7 +96,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("list page shows list commands", func(t *testing.T) {
-		cmds := app.commands.resolveCommands("list", "tickets", "ticket")
+		cmds := app.commands.resolveCommands(context.Background(), "list", "tickets", "ticket")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "list-cmd")
 		assertNotContains(t, ids, "entity-cmd")
@@ -101,7 +104,7 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("dashboard shows global commands", func(t *testing.T) {
-		cmds := app.commands.resolveCommands("dashboard", "", "")
+		cmds := app.commands.resolveCommands(context.Background(), "dashboard", "", "")
 		ids := cmdIDs(cmds)
 		assertContains(t, ids, "global-cmd")
 		assertNotContains(t, ids, "entity-cmd")
@@ -109,7 +112,7 @@ func TestResolveCommands(t *testing.T) {
 
 	t.Run("empty commands returns nil", func(t *testing.T) {
 		app2, _ := testAppInstance()
-		cmds := app2.commands.resolveCommands("entity", "", "ticket")
+		cmds := app2.commands.resolveCommands(context.Background(), "entity", "", "ticket")
 		if cmds != nil {
 			t.Errorf("expected nil, got %v", cmds)
 		}
@@ -131,7 +134,7 @@ func TestResolveCommands(t *testing.T) {
 				Context: "entity",
 			},
 		}
-		cmds := app2.commands.resolveCommands("entity", "", "ticket")
+		cmds := app2.commands.resolveCommands(context.Background(), "entity", "", "ticket")
 		for _, c := range cmds {
 			if c.ID == "auto-cmd" {
 				if c.AutoOpen == nil || !*c.AutoOpen {
@@ -147,13 +150,13 @@ func TestResolveCommands(t *testing.T) {
 	})
 
 	t.Run("deterministic order", func(t *testing.T) {
-		cmds := app.commands.resolveCommands("view", "ticket_detail", "ticket")
+		cmds := app.commands.resolveCommands(context.Background(), "view", "ticket_detail", "ticket")
 		if len(cmds) < 2 {
 			t.Skip("need at least 2 commands")
 		}
 		// Run multiple times and check order is stable
 		for range 5 {
-			cmds2 := app.commands.resolveCommands("view", "ticket_detail", "ticket")
+			cmds2 := app.commands.resolveCommands(context.Background(), "view", "ticket_detail", "ticket")
 			for j := range cmds {
 				if cmds[j].ID != cmds2[j].ID {
 					t.Fatalf("order not deterministic: %v vs %v", cmdIDs(cmds), cmdIDs(cmds2))
@@ -1038,4 +1041,352 @@ func equalArgs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// --- Command authorization (TKT-MJ02AO, policy DEC-EIHQSU) ---
+
+// TestCommandExecReadOnlyDenied is the canary for RR-CWWJGW. Command exec
+// builds no acl.WriteRequest, so ReadOnlyACL's only method (AuthorizeWrite)
+// is never consulted; and readGateFromContext hands back nopReadGate under
+// BOTH NopACL and ReadOnlyACL, whose HoldsPermission returns true
+// unconditionally (readgate.go). A guard written against the read gate alone
+// therefore fails OPEN here. The permission is deliberately set AND would be
+// granted, so the only thing that can produce a 403 is the read-only check
+// itself.
+func TestCommandExecReadOnlyDenied(t *testing.T) {
+	for _, ctxName := range []string{"entity", "list", "view", "global"} {
+		t.Run(ctxName, func(t *testing.T) {
+			app := newHandlerTestApp(t)
+			bindRepo(app, t.TempDir())
+			app.acl = acl.ReadOnlyACL{}
+			app.Cfg().Commands = map[string]CommandConfig{
+				"cmd": {
+					Label:      "Cmd",
+					Script:     `echo '::rela::{"type":"message","text":"ran"}'`,
+					Context:    ctxName,
+					Permission: "command:cmd",
+				},
+			}
+
+			r := httptest.NewRequest(http.MethodPost,
+				"/api/command/cmd?entity_id=TKT-001&list_id=tickets&view_id=ticket_detail",
+				http.NoBody)
+			w := httptest.NewRecorder()
+			app.commands.handleCommandExec(w, r)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("read-only must deny command exec: expected 403, got %d: %s",
+					w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), "command:cmd") {
+				t.Errorf("403 body must not echo the permission name: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// TestCommandExecNopACLFailsOpen pins the fail-open half of DEC-EIHQSU: with
+// no policy configured, a command with no permission: runs exactly as before
+// this ticket, in all four contexts including the deferred view context.
+func TestCommandExecNopACLFailsOpen(t *testing.T) {
+	cases := []struct{ name, ctxName, query string }{
+		{"entity", "entity", "?entity_id=TKT-001"},
+		{"list", "list", "?list_id=tickets"},
+		{"view", "view", "?view_id=ticket_detail&entity_id=TKT-001"},
+		{"global", "global", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newHandlerTestApp(t)
+			bindRepo(app, t.TempDir())
+			app.acl = acl.NopACL{}
+			app.Cfg().Commands = map[string]CommandConfig{
+				"cmd": {
+					Label:   "Cmd",
+					Script:  `echo '::rela::{"type":"message","text":"ran"}'`,
+					Context: tc.ctxName,
+				},
+			}
+
+			r := httptest.NewRequest(http.MethodPost, "/api/command/cmd"+tc.query, http.NoBody)
+			w := httptest.NewRecorder()
+			app.commands.handleCommandExec(w, r)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("NopACL must fail open: expected 200, got %d: %s",
+					w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// commandPolicyACL grants alice "command:allowed" and gives bob no
+// permissions at all. Both hold a role, so a deny is attributable to the
+// missing permission rather than to an unknown principal.
+func commandPolicyACL(t *testing.T, app *App) *acl.Declarative {
+	t.Helper()
+	return mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"operator": {Read: []string{"ticket"}, Permissions: []string{"command:allowed"}},
+			"viewer":   {Read: []string{"ticket"}},
+		},
+		Assignments: map[string]string{"alice": "operator", "bob": "viewer"},
+	}, app.store)
+}
+
+// execCommandAs runs the exec handler with the ACL request + read gate
+// attached to ctx, mirroring what attachACLRequest does in production (test
+// handlers bypass the middleware).
+func execCommandAs(
+	ctx context.Context, t *testing.T, app *App, d *acl.Declarative, target string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, target, http.NoBody).
+		WithContext(gateCtxFor(ctx, t, d))
+	w := httptest.NewRecorder()
+	app.commands.handleCommandExec(w, r)
+	return w
+}
+
+// TestCommandExecDeclarativeFailsClosed pins the fail-closed half of
+// DEC-EIHQSU: once an acl.yaml is configured, a command runs only when its
+// permission: is set AND held.
+func TestCommandExecDeclarativeFailsClosed(t *testing.T) {
+	// user is "alice" (holds command:allowed) or "bob" (holds nothing); the
+	// principal ctx is built per-case rather than stored, since a struct field
+	// holding a context.Context is a lint error (containedctx).
+	cases := []struct {
+		name       string
+		ctxName    string
+		query      string
+		permission string
+		user       string
+		wantCode   int
+	}{
+		{"granted entity", "entity", "?entity_id=TKT-001", "command:allowed", "alice", http.StatusOK},
+		{"granted list", "list", "?list_id=tickets", "command:allowed", "alice", http.StatusOK},
+		{"granted global", "global", "", "command:allowed", "alice", http.StatusOK},
+
+		{"not held entity", "entity", "?entity_id=TKT-001", "command:allowed", "bob", http.StatusForbidden},
+		{"not held global", "global", "", "command:allowed", "bob", http.StatusForbidden},
+
+		// No permission: under a configured policy ⇒ ungoverned ⇒ denied.
+		{"no permission entity", "entity", "?entity_id=TKT-001", "", "alice", http.StatusForbidden},
+		{"no permission list", "list", "?list_id=tickets", "", "alice", http.StatusForbidden},
+		{"no permission global", "global", "", "", "alice", http.StatusForbidden},
+
+		// View has no fine-grained control yet: a SET AND GRANTED permission
+		// must still not open the gate (TKT-MJ02AO deferral).
+		{
+			"view denied despite granted permission", "view",
+			"?view_id=ticket_detail&entity_id=TKT-001",
+			"command:allowed", "alice", http.StatusForbidden,
+		},
+		{
+			"view denied without permission", "view",
+			"?view_id=ticket_detail&entity_id=TKT-001",
+			"", "alice", http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newHandlerTestApp(t)
+			bindRepo(app, t.TempDir())
+			d := commandPolicyACL(t, app)
+			app.acl = d
+			app.Cfg().Commands = map[string]CommandConfig{
+				"cmd": {
+					Label:      "Cmd",
+					Script:     `echo '::rela::{"type":"message","text":"ran"}'`,
+					Context:    tc.ctxName,
+					Permission: tc.permission,
+				},
+			}
+
+			w := execCommandAs(principalCtx(tc.user), t, app, d, "/api/command/cmd"+tc.query)
+
+			if w.Code != tc.wantCode {
+				t.Fatalf("expected %d, got %d: %s", tc.wantCode, w.Code, w.Body.String())
+			}
+			deniedWithPermission := tc.wantCode == http.StatusForbidden && tc.permission != ""
+			if deniedWithPermission && strings.Contains(w.Body.String(), tc.permission) {
+				t.Errorf("403 body must not echo the permission name: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// TestResolveCommandsFiltersUnauthorized pins that the button set the SPA
+// renders matches what exec will actually allow. resolveCommands is
+// presentation, but a mismatch means users see buttons that 403 on click.
+func TestResolveCommandsFiltersUnauthorized(t *testing.T) {
+	setup := func(t *testing.T) (*App, *acl.Declarative) {
+		t.Helper()
+		app := newHandlerTestApp(t)
+		bindRepo(app, t.TempDir())
+		d := commandPolicyACL(t, app)
+		app.acl = d
+		app.Cfg().Commands = map[string]CommandConfig{
+			"allowed":       {Label: "A", Script: "echo hi", Context: "entity", Permission: "command:allowed"},
+			"not-granted":   {Label: "B", Script: "echo hi", Context: "entity", Permission: "command:other"},
+			"no-permission": {Label: "C", Script: "echo hi", Context: "entity"},
+		}
+		return app, d
+	}
+
+	t.Run("declarative shows only held permissions", func(t *testing.T) {
+		app, d := setup(t)
+		ids := cmdIDs(app.commands.resolveCommands(
+			gateCtxFor(aliceCtx(), t, d), "entity", "", "ticket"))
+		assertContains(t, ids, "allowed")
+		assertNotContains(t, ids, "not-granted")
+		assertNotContains(t, ids, "no-permission")
+	})
+
+	t.Run("principal without the permission sees none", func(t *testing.T) {
+		app, d := setup(t)
+		ids := cmdIDs(app.commands.resolveCommands(
+			gateCtxFor(bobCtx(), t, d), "entity", "", "ticket"))
+		assertNotContains(t, ids, "allowed")
+		assertNotContains(t, ids, "not-granted")
+		assertNotContains(t, ids, "no-permission")
+	})
+
+	t.Run("read-only hides every command", func(t *testing.T) {
+		app, _ := setup(t)
+		app.acl = acl.ReadOnlyACL{}
+		cmds := app.commands.resolveCommands(context.Background(), "entity", "", "ticket")
+		if len(cmds) != 0 {
+			t.Errorf("read-only must hide all commands, got %v", cmdIDs(cmds))
+		}
+	})
+
+	t.Run("nop acl shows all", func(t *testing.T) {
+		app, _ := setup(t)
+		app.acl = acl.NopACL{}
+		ids := cmdIDs(app.commands.resolveCommands(context.Background(), "entity", "", "ticket"))
+		assertContains(t, ids, "allowed")
+		assertContains(t, ids, "not-granted")
+		assertContains(t, ids, "no-permission")
+	})
+}
+
+// TestAuthorizeCommandNilACLDenies pins that a wiring omission fails closed.
+// A guard that granted on a nil field would be worse than no guard, since it
+// would look present in review.
+func TestAuthorizeCommandNilACLDenies(t *testing.T) {
+	if authorizeCommand(context.Background(), nil, CommandConfig{Context: "global"}) {
+		t.Error("nil ACL must deny")
+	}
+	h := &commandHandler{} // no aclImpl closure
+	if h.currentACL() != nil {
+		t.Error("currentACL must return nil when unwired, not panic")
+	}
+}
+
+// TestAuthorizeCommandUnknownACLDenies pins the inverted default (RR-CAUBAZ).
+// The switch must be closed by construction: an acl.ACL implementation with no
+// explicit arm denies rather than granting shell execution.
+//
+// The pointer cases matter because ReadOnlyACL/NopACL declare AuthorizeWrite on
+// a VALUE receiver, so &acl.ReadOnlyACL{} satisfies acl.ACL while being a
+// distinct dynamic type. Matching only the value form put it in the default
+// arm — when that arm granted, `--read-only` was bypassable by one `&`.
+func TestAuthorizeCommandUnknownACLDenies(t *testing.T) {
+	cmd := CommandConfig{Context: "global", Permission: "command:x"}
+
+	t.Run("pointer ReadOnlyACL denies", func(t *testing.T) {
+		if authorizeCommand(context.Background(), &acl.ReadOnlyACL{}, cmd) {
+			t.Error("pointer ReadOnlyACL must deny — value-only match was a --read-only bypass")
+		}
+	})
+
+	t.Run("pointer NopACL still fails open", func(t *testing.T) {
+		if !authorizeCommand(context.Background(), &acl.NopACL{}, cmd) {
+			t.Error("pointer NopACL should behave like the value form")
+		}
+	})
+
+	t.Run("unrecognized implementation denies", func(t *testing.T) {
+		// *acl.Request implements acl.ACL and has no arm in the switch.
+		var unknown acl.ACL = (*acl.Request)(nil)
+		if authorizeCommand(context.Background(), unknown, cmd) {
+			t.Error("an ACL implementation with no explicit arm must deny")
+		}
+	})
+
+	t.Run("typed-nil Declarative denies", func(t *testing.T) {
+		var typedNil acl.ACL = (*acl.Declarative)(nil)
+		if authorizeCommand(context.Background(), typedNil, cmd) {
+			t.Error("typed-nil Declarative must deny")
+		}
+	})
+}
+
+// TestCommandCancelOwnerBound pins RR-YZV7SY: a command may be cancelled only
+// by the principal that started it. execID is client-supplied and the registry
+// is process-global, so an unbound cancel let any caller kill any run —
+// including a caller whose own exec attempts were being 403'd.
+func TestCommandCancelOwnerBound(t *testing.T) {
+	newApp := func(t *testing.T) *App {
+		t.Helper()
+		app := newHandlerTestApp(t)
+		bindRepo(app, t.TempDir())
+		return app
+	}
+
+	cancelAs := func(t *testing.T, app *App, ctx context.Context, execID string) int {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/api/command-cancel/"+execID, http.NoBody).
+			WithContext(ctx)
+		w := httptest.NewRecorder()
+		app.commands.handleCommandCancel(w, r)
+		return w.Code
+	}
+
+	t.Run("non-owner gets 404, identical to unknown id", func(t *testing.T) {
+		app := newApp(t)
+		proc := exec.Command("sleep", "30")
+		if err := proc.Start(); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		t.Cleanup(func() { _ = proc.Process.Kill() })
+
+		runningCommands.Store("owned-by-alice", &runningCommand{
+			cmd:   proc,
+			owner: principal.From(principalCtx("alice")),
+		})
+		t.Cleanup(func() { runningCommands.Delete("owned-by-alice") })
+
+		if code := cancelAs(t, app, principalCtx("bob"), "owned-by-alice"); code != http.StatusNotFound {
+			t.Errorf("bob canceling alice's command: expected 404, got %d", code)
+		}
+		// Indistinguishable from a genuinely unknown id — no running-command oracle.
+		if code := cancelAs(t, app, principalCtx("bob"), "no-such-id"); code != http.StatusNotFound {
+			t.Errorf("unknown id: expected 404, got %d", code)
+		}
+		if proc.ProcessState != nil {
+			t.Error("victim process must not have been signaled")
+		}
+	})
+
+	t.Run("owner can cancel", func(t *testing.T) {
+		app := newApp(t)
+		proc := exec.Command("sleep", "30")
+		if err := proc.Start(); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		t.Cleanup(func() { _ = proc.Process.Kill() })
+
+		runningCommands.Store("owned-by-alice-2", &runningCommand{
+			cmd:   proc,
+			owner: principal.From(principalCtx("alice")),
+		})
+		t.Cleanup(func() { runningCommands.Delete("owned-by-alice-2") })
+
+		if code := cancelAs(t, app, principalCtx("alice"), "owned-by-alice-2"); code != http.StatusOK {
+			t.Errorf("owner canceling own command: expected 200, got %d", code)
+		}
+	})
 }

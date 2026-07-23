@@ -168,7 +168,7 @@ func (d *Desktop) LoadProject(dir string) string {
 	}
 
 	app, err := dataentry.NewApp(
-		fs, projCtx, svc.Meta(), svc.Store(),
+		fs, projCtx, svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),

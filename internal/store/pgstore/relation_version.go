@@ -23,17 +23,17 @@ import (
 // capture taken BEFORE a delete (the live row still carries the id) or during a
 // rename (resolved from the pre-rename key). Callers that capture after the row
 // is gone must supply a non-zero RecordID read earlier.
-func (s *Store) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
+func (v *VersionStore) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
 	if in.RecordID == 0 {
 		// Resolve from the (still-live, pre-delete) row or the most-recent lineage.
-		id, err := s.recordIDForKey(ctx, in.From, in.Type, in.To)
+		id, err := v.recordIDForKey(ctx, in.From, in.Type, in.To)
 		if err != nil {
 			return fmt.Errorf("pgstore: resolve rel_record_id for %s--%s--%s: %w",
 				in.From, in.Type, in.To, err)
 		}
 		in.RecordID = id
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := v.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func contentHashOfRelation(in store.RelationVersionInput) string {
 // the lineage whose latest row BEFORE the rename carried (prev_from, type,
 // prev_to). Cycles are impossible (each hop strictly decreases the rel_record_id
 // frontier's max vseq), but a visited-set guards regardless.
-func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, error) {
+func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]int64, error) {
 	ids := []int64{headID}
 	seen := map[int64]struct{}{headID: {}}
 	frontier := []int64{headID}
@@ -143,7 +143,7 @@ func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, 
 			  AND ren.op = 'rename'
 			  AND ren.prev_from IS NOT NULL
 			  AND ren.prev_to IS NOT NULL`
-		rows, err := s.db.Query(ctx, q, id)
+		rows, err := v.db.Query(ctx, q, id)
 		if err != nil {
 			return nil, err
 		}
@@ -178,12 +178,12 @@ func (s *Store) relationLineageIDs(ctx context.Context, headID int64) ([]int64, 
 // recent relation_versions lineage that ended at this key — i.e. the largest
 // rel_record_id whose latest row still carries this (from,type,to). Returns
 // (0, ErrNotFound) when the key has no live row and no history.
-func (s *Store) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
+func (v *VersionStore) recordIDForKey(ctx context.Context, from, relType, to string) (int64, error) {
 	// Live row first.
 	const live = `SELECT rel_record_id FROM relations
 	              WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
 	var id int64
-	err := s.db.QueryRow(ctx, live, from, relType, to).Scan(&id)
+	err := v.db.QueryRow(ctx, live, from, relType, to).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -204,7 +204,7 @@ func (s *Store) recordIDForKey(ctx context.Context, from, relType, to string) (i
 		WHERE rv.from_id = $1 AND rv.rel_type = $2 AND rv.to_id = $3
 		ORDER BY rv.vseq DESC
 		LIMIT 1`
-	err = s.db.QueryRow(ctx, dead, from, relType, to).Scan(&id)
+	err = v.db.QueryRow(ctx, dead, from, relType, to).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, store.ErrNotFound
 	}
@@ -214,18 +214,74 @@ func (s *Store) recordIDForKey(ctx context.Context, from, relType, to string) (i
 	return id, nil
 }
 
-// ListRelationVersions implements store.RelationHistoryReader.
-func (s *Store) ListRelationVersions(
-	ctx context.Context, from, relType, to string,
-) ([]store.RelationVersionMeta, error) {
-	id, err := s.recordIDForKey(ctx, from, relType, to)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, nil // no history is an empty slice, not an error
+// resolveLineageIDs turns a history query into the set of rel_record_ids that
+// make up the selected lifetime's stitched history. With RecordID == 0 it
+// resolves the newest lifetime (recordIDForKey). With a non-zero RecordID it
+// REQUIRES that id to be a head of this key (a lineage whose final row still
+// carries this from/type/to) — else store.ErrNotFound — so the composite key
+// stays the authorization boundary and a caller cannot read an arbitrary lineage
+// by id. Returns store.ErrNotFound (propagated) when the key has no history.
+func (v *VersionStore) resolveLineageIDs(
+	ctx context.Context, q store.RelationHistoryQuery,
+) ([]int64, error) {
+	head := q.RecordID
+	if head == 0 {
+		id, err := v.recordIDForKey(ctx, q.From, q.Type, q.To)
+		if err != nil {
+			return nil, err // ErrNotFound propagates
+		}
+		head = id
+	} else {
+		ok, err := v.recordIDIsHeadOfKey(ctx, head, q.From, q.Type, q.To)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, store.ErrNotFound
+		}
 	}
-	if err != nil {
+	return v.relationLineageIDs(ctx, head)
+}
+
+// recordIDIsHeadOfKey reports whether recordID is a lineage whose FINAL version
+// row carries (from,type,to) — i.e. a valid lifetime handle for this key. This is
+// the membership check that keeps a caller-supplied RecordID bounded to the key.
+func (v *VersionStore) recordIDIsHeadOfKey(
+	ctx context.Context, recordID int64, from, relType, to string,
+) (bool, error) {
+	const q = `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM relation_versions rv
+		    JOIN (
+		        SELECT rel_record_id, max(vseq) AS vseq
+		        FROM relation_versions WHERE rel_record_id = $1 GROUP BY rel_record_id
+		    ) latest ON latest.rel_record_id = rv.rel_record_id AND latest.vseq = rv.vseq
+		    WHERE rv.rel_record_id = $1
+		      AND rv.from_id = $2 AND rv.rel_type = $3 AND rv.to_id = $4
+		)`
+	var ok bool
+	if err := v.db.QueryRow(ctx, q, recordID, from, relType, to).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// ListRelationVersions implements store.RelationHistoryReader.
+func (v *VersionStore) ListRelationVersions(
+	ctx context.Context, q store.RelationHistoryQuery,
+) ([]store.RelationVersionMeta, error) {
+	ids, err := v.resolveLineageIDs(ctx, q)
+	if errors.Is(err, store.ErrNotFound) {
+		// An unknown key (newest lifetime, RecordID 0) is empty-not-error — the
+		// established contract. A non-zero RecordID that is NOT a lifetime of this
+		// key is a misuse of the lifetime handle: surface it as ErrNotFound rather
+		// than silently returning an empty timeline that looks like "no history."
+		if q.RecordID == 0 {
+			return nil, nil
+		}
 		return nil, err
 	}
-	ids, err := s.relationLineageIDs(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +293,7 @@ func (s *Store) ListRelationVersions(
 		FROM relation_versions
 		WHERE rel_record_id = ANY($1)
 		ORDER BY vseq ASC`
-	rows, err := s.db.Query(ctx, sel, ids)
+	rows, err := v.db.Query(ctx, sel, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -261,20 +317,16 @@ func (s *Store) ListRelationVersions(
 }
 
 // GetRelationVersion implements store.RelationHistoryReader. version is a 1-based
-// ordinal over the lineage ordered by vseq.
-func (s *Store) GetRelationVersion(
-	ctx context.Context, from, relType, to string, version int,
+// ordinal over the selected lifetime ordered by vseq.
+func (v *VersionStore) GetRelationVersion(
+	ctx context.Context, q store.RelationHistoryQuery, version int,
 ) (*store.RelationVersionSnapshot, error) {
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}
-	id, err := s.recordIDForKey(ctx, from, relType, to)
+	ids, err := v.resolveLineageIDs(ctx, q)
 	if err != nil {
 		return nil, err // ErrNotFound propagates
-	}
-	ids, err := s.relationLineageIDs(ctx, id)
-	if err != nil {
-		return nil, err
 	}
 
 	const sel = `
@@ -286,7 +338,7 @@ func (s *Store) GetRelationVersion(
 		WHERE rv.rel_record_id = ANY($1)
 		ORDER BY rv.vseq ASC
 		OFFSET $2 LIMIT 1`
-	row := s.db.QueryRow(ctx, sel, ids, version-1)
+	row := v.db.QueryRow(ctx, sel, ids, version-1)
 
 	var (
 		snap     store.RelationVersionSnapshot
@@ -318,6 +370,128 @@ func (s *Store) GetRelationVersion(
 	return &snap, nil
 }
 
+// ListRelationLifetimes implements store.RelationHistoryReader. It enumerates
+// every past lifetime of a relation key, newest-first, so a caller can discover
+// that a reused (from,type,to) has older deleted lifetimes and obtain the
+// RecordID handle to read one.
+//
+// A "lifetime" is a STITCHED history head — a rel_record_id whose final version
+// row still carries this key — with its rename-predecessors folded in (a
+// pre-#1127 rename forks the id; relationLineageIDs stitches those). Heads are
+// walked newest-first (highest max_vseq first); each head's whole stitched id-set
+// is marked CLAIMED so a lineage already folded into a newer lifetime is not also
+// listed as its own (guards a rename that cycles a triple back onto an earlier
+// head). A lifetime is bounded by its id-set's count/min/max(created_at), NOT by
+// the presence of a create row — create/update rows come only from the async
+// sweep, so a short-lived relation's lineage may hold only a delete.
+func (v *VersionStore) ListRelationLifetimes(
+	ctx context.Context, from, relType, to string,
+) ([]store.RelationLifetime, error) {
+	// Heads: every rel_record_id whose FINAL row carries this key, newest-first.
+	// This is recordIDForKey's dead-query without LIMIT 1.
+	const headsQ = `
+		SELECT rv.rel_record_id, latest.vseq AS max_vseq
+		FROM relation_versions rv
+		JOIN (
+		    SELECT rel_record_id, max(vseq) AS vseq
+		    FROM relation_versions GROUP BY rel_record_id
+		) latest ON latest.rel_record_id = rv.rel_record_id AND latest.vseq = rv.vseq
+		WHERE rv.from_id = $1 AND rv.rel_type = $2 AND rv.to_id = $3
+		ORDER BY latest.vseq DESC`
+	rows, err := v.db.Query(ctx, headsQ, from, relType, to)
+	if err != nil {
+		return nil, err
+	}
+	heads := make([]int64, 0)
+	for rows.Next() {
+		var id, maxVseq int64
+		if scanErr := rows.Scan(&id, &maxVseq); scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		heads = append(heads, id)
+	}
+	rows.Close()
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+	if len(heads) == 0 {
+		return nil, nil
+	}
+
+	// The live relations-row id for this key (if any), to flag the live lifetime.
+	liveID, err := v.liveRecordID(ctx, from, relType, to)
+	if err != nil {
+		return nil, err
+	}
+
+	claimed := make(map[int64]struct{})
+	lifetimes := make([]store.RelationLifetime, 0, len(heads))
+	for _, head := range heads {
+		if _, dup := claimed[head]; dup {
+			continue // already folded into a newer lifetime's stitched set
+		}
+		ids, err := v.relationLineageIDs(ctx, head)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			claimed[id] = struct{}{}
+		}
+		lt, err := v.aggregateLifetime(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		lt.RecordID = head
+		lt.Live = liveID != 0 && liveID == head
+		lifetimes = append(lifetimes, lt)
+	}
+	for i := range lifetimes {
+		lifetimes[i].Lifetime = i + 1 // newest-first (heads were ordered DESC)
+	}
+	return lifetimes, nil
+}
+
+// liveRecordID returns the rel_record_id of the live relations row for this key,
+// or 0 if the relation is not currently live.
+func (v *VersionStore) liveRecordID(ctx context.Context, from, relType, to string) (int64, error) {
+	const q = `SELECT rel_record_id FROM relations
+	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3`
+	var id int64
+	err := v.db.QueryRow(ctx, q, from, relType, to).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// aggregateLifetime rolls up a stitched id-set into a RelationLifetime's
+// count/timestamps/final-op. FinalOp is the op of the newest row across the set.
+func (v *VersionStore) aggregateLifetime(ctx context.Context, ids []int64) (store.RelationLifetime, error) {
+	const q = `
+		SELECT count(*),
+		       min(created_at),
+		       max(created_at),
+		       (SELECT op FROM relation_versions
+		        WHERE rel_record_id = ANY($1) ORDER BY vseq DESC LIMIT 1)
+		FROM relation_versions
+		WHERE rel_record_id = ANY($1)`
+	var (
+		lt      store.RelationLifetime
+		finalOp string
+	)
+	if err := v.db.QueryRow(ctx, q, ids).Scan(
+		&lt.VersionCount, &lt.FirstSeen, &lt.LastSeen, &finalOp,
+	); err != nil {
+		return store.RelationLifetime{}, err
+	}
+	lt.FinalOp = store.VersionOp(finalOp)
+	return lt, nil
+}
+
 // scanRelationVersionMeta scans a relation-version-metadata row. The leading
 // column is vseq, scanned into a throwaway (the read-time Version ordinal
 // replaces it).
@@ -345,10 +519,3 @@ func scanRelationVersionMeta(row scanner) (store.RelationVersionMeta, error) {
 	m.CreatedAt = created
 	return m, nil
 }
-
-// Static assertions that Store satisfies the optional relation-version
-// capabilities.
-var (
-	_ store.RelationHistoryReader = (*Store)(nil)
-	_ store.RelationVersionWriter = (*Store)(nil)
-)

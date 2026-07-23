@@ -2135,3 +2135,48 @@ func TestCollectConfigWarnings_RelationPropertyNameCollision(t *testing.T) {
 		}
 	})
 }
+
+// TestViewCommandPermissionWarning pins that a `permission:` on a view command
+// is surfaced as a warning. The key is inert there (TKT-MJ02AO), and silently
+// ignoring it would let an author believe they had granted access.
+func TestViewCommandPermissionWarning(t *testing.T) {
+	meta := &metamodel.Metamodel{}
+
+	t.Run("view command with permission warns", func(t *testing.T) {
+		cfg := &Config{Commands: map[string]CommandConfig{
+			"v": {Label: "V", Script: "echo hi", Context: "view", Permission: "command:v"},
+		}}
+		warnings := CollectConfigWarnings(cfg, meta)
+		var found bool
+		for _, w := range warnings {
+			if strings.Contains(w, `command "v"`) && strings.Contains(w, "ignored for context: view") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected a view-permission warning, got %v", warnings)
+		}
+	})
+
+	t.Run("view command without permission is silent", func(t *testing.T) {
+		cfg := &Config{Commands: map[string]CommandConfig{
+			"v": {Label: "V", Script: "echo hi", Context: "view"},
+		}}
+		for _, w := range CollectConfigWarnings(cfg, meta) {
+			if strings.Contains(w, "ignored for context: view") {
+				t.Errorf("unexpected warning: %s", w)
+			}
+		}
+	})
+
+	t.Run("non-view command with permission is silent", func(t *testing.T) {
+		cfg := &Config{Commands: map[string]CommandConfig{
+			"g": {Label: "G", Script: "echo hi", Context: "global", Permission: "command:g"},
+		}}
+		for _, w := range CollectConfigWarnings(cfg, meta) {
+			if strings.Contains(w, "ignored for context: view") {
+				t.Errorf("unexpected warning: %s", w)
+			}
+		}
+	})
+}

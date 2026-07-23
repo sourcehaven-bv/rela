@@ -45,12 +45,12 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 	fromType, from, relType, to := parts[0], parts[1], parts[2], parts[3]
 
-	reader, ok := a.store.(store.RelationHistoryReader)
-	if !ok {
+	if a.versions == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
 			"The active storage backend does not support relation version history", "")
 		return
 	}
+	var reader store.RelationHistoryReader = a.versions
 
 	// POST .../{version}/restore is the one write on this route.
 	if len(parts) == 6 && parts[5] == "restore" {
@@ -81,11 +81,49 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) >= 5 && parts[4] != "" {
-		serveRelationHistoryVersion(w, r, reader, from, relType, to, parts[4])
+	// GET .../_lifetimes enumerates every past lifetime of a reused key. Same read
+	// gate as the timeline (just authorized above). The body carries only lifetime
+	// metadata (counts/timestamps/final-op), never relation content — but it DOES
+	// reveal that older deleted lifetimes exist, which is the feature's whole point
+	// and is what the gate authorizes.
+	if len(parts) >= 5 && parts[4] == "_lifetimes" {
+		serveRelationLifetimes(w, r, reader, from, relType, to)
 		return
 	}
-	serveRelationHistoryTimeline(w, r, reader, from, relType, to)
+
+	// Optional ?record_id=<n> selects a specific past lifetime (0/absent = newest).
+	// The store validates membership in the key's lifetimes, so a client-supplied
+	// record_id cannot escape the composite-key auth boundary. A non-empty but
+	// unparseable value is a 400 (never silently coerced to newest — that would
+	// serve a different lifetime than asked for, with no signal).
+	recordID, ok := parseRecordID(r)
+	if !ok {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_record_id",
+			"record_id must be a positive integer", "")
+		return
+	}
+	q := store.RelationHistoryQuery{From: from, Type: relType, To: to, RecordID: recordID}
+
+	if len(parts) >= 5 && parts[4] != "" {
+		serveRelationHistoryVersion(w, r, reader, q, parts[4])
+		return
+	}
+	serveRelationHistoryTimeline(w, r, reader, q)
+}
+
+// parseRecordID reads the optional ?record_id= lifetime selector. Absent → (0,
+// true) = newest. A non-empty value must parse to a positive integer; otherwise
+// (0, false) so the caller returns 400 rather than silently serving the newest.
+func parseRecordID(r *http.Request) (int64, bool) {
+	raw := r.URL.Query().Get("record_id")
+	if raw == "" {
+		return 0, true
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 // authorizeRelationHistoryRead returns true if the caller may read this
@@ -136,12 +174,47 @@ func authorizeRelationHistoryRead(a *App, w http.ResponseWriter, r *http.Request
 	return true
 }
 
-// serveRelationHistoryTimeline writes the relation's version metadata list.
-func serveRelationHistoryTimeline(
+// serveRelationLifetimes writes the list of a key's past lifetimes (newest-first),
+// so a UI can offer a lifetime picker for a deleted-and-recreated relation.
+func serveRelationLifetimes(
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
 	from, relType, to string,
 ) {
-	metas, err := reader.ListRelationVersions(r.Context(), from, relType, to)
+	lifetimes, err := reader.ListRelationLifetimes(r.Context(), from, relType, to)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
+	rows := make([]map[string]any, 0, len(lifetimes))
+	for _, lt := range lifetimes {
+		rows = append(rows, map[string]any{
+			"lifetime":      lt.Lifetime,
+			"record_id":     lt.RecordID,
+			"version_count": lt.VersionCount,
+			"first_seen":    lt.FirstSeen,
+			"last_seen":     lt.LastSeen,
+			"live":          lt.Live,
+			"final_op":      lt.FinalOp,
+		})
+	}
+	writeV1JSON(w, http.StatusOK, map[string]any{
+		"from": from, "type": relType, "to": to, "lifetimes": rows,
+	})
+}
+
+// serveRelationHistoryTimeline writes the version metadata list for the lifetime
+// the query selects.
+func serveRelationHistoryTimeline(
+	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
+	q store.RelationHistoryQuery,
+) {
+	metas, err := reader.ListRelationVersions(r.Context(), q)
+	if errors.Is(err, store.ErrNotFound) {
+		// A record_id that is not a lifetime of this key: same indistinguishable
+		// 404 as a nonexistent relation (never confirm the id belongs elsewhere).
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -167,14 +240,15 @@ func serveRelationHistoryTimeline(
 		versions = append(versions, row)
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from": from, "type": relType, "to": to, "versions": versions,
+		"from": q.From, "type": q.Type, "to": q.To, "versions": versions,
 	})
 }
 
-// serveRelationHistoryVersion writes one relation version's full snapshot.
+// serveRelationHistoryVersion writes one relation version's full snapshot for the
+// lifetime the query selects.
 func serveRelationHistoryVersion(
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	from, relType, to, versionStr string,
+	q store.RelationHistoryQuery, versionStr string,
 ) {
 	version, convErr := strconv.Atoi(versionStr)
 	if convErr != nil || version < 1 {
@@ -182,7 +256,7 @@ func serveRelationHistoryVersion(
 			"Version must be a positive integer", "")
 		return
 	}
-	snap, err := reader.GetRelationVersion(r.Context(), from, relType, to, version)
+	snap, err := reader.GetRelationVersion(r.Context(), q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -196,9 +270,9 @@ func serveRelationHistoryVersion(
 		"content": snap.Content, "meta": snap.Properties,
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from":       from,
-		"type":       relType,
-		"to":         to,
+		"from":       q.From,
+		"type":       q.Type,
+		"to":         q.To,
 		"version":    snap.Version,
 		"op":         snap.Op,
 		"created_at": snap.CreatedAt,
@@ -228,7 +302,10 @@ func restoreRelationHistoryVersion(a *App,
 	}
 
 	ctx := r.Context()
-	snap, err := reader.GetRelationVersion(ctx, from, relType, to, version)
+	// Restore reads from the newest lifetime (RecordID 0); the HTTP restore route
+	// does not expose an older-lifetime selector (the CLI does via --lifetime).
+	q := store.RelationHistoryQuery{From: from, Type: relType, To: to}
+	snap, err := reader.GetRelationVersion(ctx, q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

@@ -11,11 +11,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// historyStore wraps a store.Store with a canned version history, so the
-// handler's HistoryReader path can be exercised without a pgstore. Keyed by
-// entity id; each snapshot carries a type so cross-type checks can be tested.
+// historyStore is a canned version-history service, so the handler's
+// HistoryReader path can be exercised without a pgstore. Keyed by entity id; each
+// snapshot carries a type so cross-type checks can be tested. It embeds
+// stubVersionService to satisfy the whole store.VersionService umbrella and
+// overrides only the two reader methods these tests exercise; assign it to
+// App.versions.
 type historyStore struct {
-	store.Store
+	stubVersionService
 	versions map[string][]store.VersionSnapshot
 }
 
@@ -124,8 +127,7 @@ func TestHandleV1History_CrossTypeIs404(t *testing.T) {
 	tkt.Properties = map[string]any{"title": "secret ticket"}
 	f.AddNode(tkt)
 	app := newAppFromParts(nil, testMeta(), f)
-	app.store = historyStore{
-		Store: app.store,
+	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
 			"TKT-SECRET": {snapshot(1, "ticket", "body", map[string]any{"title": "secret ticket"})},
 		},

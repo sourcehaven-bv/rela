@@ -15,13 +15,31 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MicahParks/jwkset"
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// ErrInvalid is returned when an assertion fails any verification step. The
-// specific reason is intentionally not surfaced to request-path callers.
+// ErrInvalid is returned when an assertion was successfully EVALUATED and
+// rejected — a bad signature, a wrong iss/aud, an expired or malformed token.
+// The specific reason is never surfaced in an HTTP response (the input is
+// attacker-controlled), but callers may classify it for server-side logging.
 var ErrInvalid = errors.New("jwtauth: assertion failed verification")
+
+// ErrKeysUnavailable reports that verification could not be COMPLETED because
+// the JWKS — the root of trust — was unreachable, as distinct from [ErrInvalid],
+// which reports an assertion that WAS evaluated and rejected.
+//
+// Both deny the request; they differ in who must act. ErrInvalid is a client
+// fault and is expected in normal operation (a session's token expires).
+// ErrKeysUnavailable is an operator fault: rela cannot reach its IdP, and no
+// assertion can be verified until that is fixed. Under a fail-closed identity
+// policy that is an outage, so it warrants an operational alert rather than
+// per-request auth noise.
+//
+// It deliberately does NOT wrap ErrInvalid: the conditions are genuinely
+// different, and a caller that means "deny" should test err != nil.
+var ErrKeysUnavailable = errors.New("jwtauth: signing keys unavailable")
 
 // jwksRefreshInterval bounds how long a signing key the IdP has REMOVED (e.g.
 // after a compromise) stays accepted: at most one refresh interval. Shorter than
@@ -47,8 +65,10 @@ type Verifier struct {
 // New constructs a Verifier, validating the mandatory pins and fetching the JWKS
 // up front. A missing pin, a non-https JWKS URL, or an UNREACHABLE JWKS all fail
 // here — so a misconfigured or IdP-down server fails loudly at startup rather
-// than booting a verifier that silently rejects every token (which would degrade
-// every request to the chain's fall-through identity).
+// than booting a verifier that rejects every token. Under the fail-closed
+// identity policy that would deny every API request, so catching it at startup
+// is the difference between a server that won't boot and one that boots and
+// serves nothing.
 func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	if cfg.Issuer == "" || cfg.Audience == "" || cfg.JWKSURL == "" {
 		return nil, errors.New("jwtauth: issuer, audience and jwks url are all required")
@@ -68,6 +88,7 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 		RefreshInterval:           jwksRefreshInterval,
 		HTTPTimeout:               10 * time.Second,
 		RateLimitWaitMax:          5 * time.Second,
+		RefreshErrorHandlerFunc:   refreshErrorHandler,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("jwtauth: load jwks %q: %w", cfg.JWKSURL, err)
@@ -83,17 +104,43 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	return &Verifier{cfg: cfg, kf: kf, opts: opts}, nil
 }
 
+// refreshErrorHandler reports a failed background JWKS refresh. keyfunc calls it
+// with the JWKS URL and expects the per-URL handler back.
+//
+// A failed refresh is NOT itself an outage: jwkset replaces the cached key set
+// only after a fetch, status check and decode all succeed, so a failure leaves
+// the last-known-good keys in place and verification carries on unaffected. It
+// becomes an outage only if the IdP rotates its signing key while the JWKS stays
+// unreachable — then the new `kid` is absent from the cached set, the
+// synchronous refresh also fails, and requests are denied.
+//
+// The message says so explicitly so an operator can judge urgency from the log
+// line alone rather than paging on a transient blip. It fires at most once per
+// jwksRefreshInterval, so it needs no extra rate limiting.
+func refreshErrorHandler(u string) func(ctx context.Context, err error) {
+	return func(ctx context.Context, err error) {
+		slog.ErrorContext(ctx, "jwtauth: JWKS background refresh failed; "+
+			"verification continues against the cached key set. This becomes an "+
+			"outage only if the IdP rotates its signing key before the JWKS is "+
+			"reachable again.",
+			"jwks_url", u, "error", err)
+	}
+}
+
 // VerifySubject verifies a request assertion and returns its subject (the stable
-// OIDC `sub` — the identity anchor). Any failure, or an empty subject, yields
-// ErrInvalid. ctx bounds the JWKS refresh a rare unknown-kid may trigger, so a
-// slow IdP can't outlast the request's deadline.
+// OIDC `sub` — the identity anchor). Any failure, or an empty subject, yields an
+// error wrapping either [ErrInvalid] or [ErrKeysUnavailable] — see classify.
+// ctx bounds the JWKS refresh a rare unknown-kid may trigger, so a slow IdP can't
+// outlast the request's deadline.
 func (v *Verifier) VerifySubject(ctx context.Context, raw string) (string, error) {
 	claims := jwt.MapClaims{}
 	if _, err := jwt.NewParser(v.opts...).ParseWithClaims(raw, claims, v.kf.KeyfuncCtx(ctx)); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrInvalid, err)
+		return "", fmt.Errorf("%w: %w", classify(err), err)
 	}
 	sub, err := claims.GetSubject()
 	if err != nil || sub == "" {
+		// A well-formed, correctly-signed token whose subject is missing or
+		// empty: definitively a client-side fault, never a key problem.
 		return "", ErrInvalid
 	}
 	return sub, nil
@@ -128,8 +175,9 @@ const (
 
 // VerifyAssertion verifies a request assertion and projects the identity claims
 // the principal resolver needs. Any signature/issuer/audience/expiry failure, or
-// an empty subject, yields ErrInvalid — identical to [VerifySubject], which this
-// widens rather than replaces.
+// an empty subject, yields an error wrapping either [ErrInvalid] or
+// [ErrKeysUnavailable] — identical to [VerifySubject], which this widens rather
+// than replaces. See classify for why the distinction matters.
 //
 // Absent org/role claims are NOT an error (see [AssertionClaims]). Roles are
 // bounded per the constants above; a non-string element is skipped rather than
@@ -138,10 +186,12 @@ const (
 func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionClaims, error) {
 	claims := jwt.MapClaims{}
 	if _, err := jwt.NewParser(v.opts...).ParseWithClaims(raw, claims, v.kf.KeyfuncCtx(ctx)); err != nil {
-		return AssertionClaims{}, fmt.Errorf("%w: %w", ErrInvalid, err)
+		return AssertionClaims{}, fmt.Errorf("%w: %w", classify(err), err)
 	}
 	sub, err := claims.GetSubject()
 	if err != nil || sub == "" {
+		// A well-formed, correctly-signed token whose subject is missing or
+		// empty: definitively a client-side fault, never a key problem.
 		return AssertionClaims{}, ErrInvalid
 	}
 	return AssertionClaims{
@@ -151,6 +201,32 @@ func (v *Verifier) VerifyAssertion(ctx context.Context, raw string) (AssertionCl
 		OrgSlug: stringClaim(claims, "org_slug"),
 		Roles:   stringSliceClaim(claims, "roles"),
 	}, nil
+}
+
+// classify decides whether a parse failure means "this assertion is bad"
+// ([ErrInvalid]) or "I could not reach my root of trust" ([ErrKeysUnavailable]).
+//
+// The distinction exists because an unknown `kid` — what a key rotation looks
+// like — makes jwkset perform a SYNCHRONOUS JWKS refresh bounded by the request
+// context (and by RateLimitWaitMax). When the JWKS is unreachable that surfaces
+// as a context or key-retrieval error, not as a signature failure, and it is an
+// operator-actionable outage rather than an auth event.
+//
+// The default is deliberately ErrInvalid: misclassifying an outage as invalid
+// costs a missed alert, while misclassifying a bad signature as an outage costs
+// a false page. Both still deny, so neither direction is a security hole — bias
+// toward the quieter one.
+func classify(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		// The unknown-kid refresh outlived the request deadline.
+		return ErrKeysUnavailable
+	case errors.Is(err, jwkset.ErrKeyNotFound):
+		// The kid is absent from the cached set and a refresh did not supply it.
+		return ErrKeysUnavailable
+	default:
+		return ErrInvalid
+	}
 }
 
 // WebhookClaims is the subset of a verified webhook JWT the receiver acts on.

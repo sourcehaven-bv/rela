@@ -13,11 +13,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
-// envDataEntryUser is the local-dev escape hatch: if this env var is
+// EnvDataEntryUserVar is the local-dev escape hatch: if this env var is
 // set, EnvPrincipalResolver returns its value as the principal user.
 // Documented in docs/server-security.md alongside the --principal-header
 // flag.
-const envDataEntryUser = "RELA_DATAENTRY_USER"
+//
+// Exported so cmd/rela-server can reject it alongside --jwt-* without
+// duplicating the literal: under verified-JWT identity an env var that
+// overrides a cryptographically proven subject is the same downgrade the
+// header fall-through was.
+const EnvDataEntryUserVar = "RELA_DATAENTRY_USER"
+
+// envDataEntryUser is the internal alias kept so existing call sites read
+// naturally; it is the same variable name.
+const envDataEntryUser = EnvDataEntryUserVar
 
 // principalUserMaxLen caps the principal.User value at 256 UTF-8
 // chars. Mirrors the cap audit.Filesystem applies to record fields —
@@ -125,8 +134,38 @@ func (a *App) NewRouter() http.Handler {
 	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
 		handler = attachACLRequest(handler, d)
 	}
+	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
+	// request time it runs after the stamper and before ACL. This ordering is
+	// load-bearing and the obvious alternative is wrong:
+	//
+	//   - Outermost (after stampAuditPrincipal) would let the stamper run LAST
+	//     and OVERWRITE the verified subject with the resolver's `unknown`,
+	//     silently discarding the identity we just proved. Same failure class as
+	//     CRIT-1 above, in the opposite direction.
+	//   - Innermost (inside attachACLRequest) would let ACL open a Request for
+	//     the unverified principal before the gate got a chance to deny.
+	//
+	// In the order below, stampAuditPrincipal stamps every request (so `/` and
+	// `/static/` still get a principal), the gate then replaces it with the
+	// verified subject on API paths or denies 401, and ACL reads the corrected
+	// principal.
+	if a.jwtGate != nil {
+		handler = requireVerifiedJWT(handler, *a.jwtGate)
+	}
 	handler = stampAuditPrincipal(handler, resolver)
 	return handler
+}
+
+// isAPIPath reports whether p addresses the data API — the surface that carries
+// entity data and therefore the one both [attachACLRequest] and
+// [requireVerifiedJWT] gate. Everything else (the SPA shell at `/`, static
+// assets, the self-authenticating IdP webhook) is deliberately outside.
+//
+// RR-P2M7: the bare `/api` is included explicitly. Go's ServeMux would not match
+// it under the `/api/` pattern, so an endpoint mounted there would silently
+// bypass the gates. Both callers share this predicate so they cannot drift.
+func isAPIPath(p string) bool {
+	return strings.HasPrefix(p, "/api/") || p == "/api"
 }
 
 // attachACLRequest opens an acl.Request for the principal stamped on
@@ -156,9 +195,7 @@ func (a *App) NewRouter() http.Handler {
 // makes the test composition story safer.
 func attachACLRequest(next http.Handler, d *acl.Declarative) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// RR-P2M7: include the bare `/api` path explicitly so a future
-		// endpoint mounted there doesn't silently bypass ACL.
-		if !strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api" {
+		if !isAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -375,14 +412,28 @@ type AssertedIdentity struct {
 	Roles   []string
 }
 
-// assertionVerifier verifies a signed identity assertion and projects the
-// claims this package stamps onto a Principal. Satisfied by an adapter over
-// *jwtauth.Verifier; kept local (and unexported, per the other consumer
-// interfaces here) so the resolver is testable with a stub.
+// subjectVerifier verifies a signed assertion and returns only its subject.
+// [requireVerifiedJWT] gates on authenticity alone — it decides 401-or-proceed
+// and stamps the user — so it asks for nothing more, and a caller wiring only
+// the gate needn't implement the claims projection.
+type subjectVerifier interface {
+	VerifySubject(ctx context.Context, raw string) (string, error)
+}
+
+// assertionVerifier additionally projects the org/role claims this package
+// stamps onto a Principal. Satisfied by an adapter over *jwtauth.Verifier;
+// kept local (and unexported, per the other consumer interfaces here) so the
+// resolver is testable with a stub.
 type assertionVerifier interface {
 	VerifyAssertion(ctx context.Context, raw string) (AssertedIdentity, error)
 }
 
+// Deprecated: production wiring uses [requireVerifiedJWT] via [App.SetJWTGate],
+// which fails CLOSED. This resolver returns a zero Principal on a verification
+// failure so a chain falls through to the next source — under a header chain
+// that is an auth downgrade, which is why cmd/rela-server no longer wires it.
+// Retained for callers embedding dataentry with their own chain semantics.
+//
 // JWTPrincipalResolver reads a signed identity assertion from headerName,
 // verifies it (ES256 against the proxy's JWKS, via v), and stamps the verified
 // STABLE subject as Principal.User. This is provider-agnostic — any OIDC proxy

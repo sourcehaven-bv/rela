@@ -39,12 +39,12 @@ type HistoryPurgeCmd struct {
 
 // Run dispatches `rela history-purge <id> ...`.
 func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
-	purger, ok := svc.Store.(store.VersionPurger)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version purge " +
 			"(a PostgreSQL-build compliance feature).")
 		return nil
 	}
+	var purger store.VersionPurger = svc.Versions
 	if err := validatePurgeFlags(c.Reason, c.Vseq, c.ContentHash, c.All); err != nil {
 		return err
 	}
@@ -89,34 +89,46 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 
 // RelationHistoryPurgeCmd is the relation analog.
 type RelationHistoryPurgeCmd struct {
-	From        string `arg:"" help:"Source entity ID (the relation's 'from')."`
-	Type        string `arg:"" help:"Relation type."`
-	To          string `arg:"" help:"Target entity ID (the relation's 'to')."`
-	Vseq        int64  `help:"Purge the single version row with this vseq." default:"0"`
-	ContentHash string `help:"Purge every version row in the lineage with this content hash." default:""`
-	All         bool   `help:"Purge the relation's entire (fenced) version history."`
-	Reason      string `help:"Required: operator justification (logged cleartext — not the secret)." default:""`
-	Commit      bool   `help:"Actually delete. Without this, a dry-run showing what WOULD be purged."`
-	Yes         bool   `help:"Skip the confirmation (scripts). Requires --commit."`
-	ForceLive   bool   `help:"Purge even though the live relation still holds the content (writes a tombstone)."`
+	From         string `arg:"" help:"Source entity ID (the relation's 'from')."`
+	Type         string `arg:"" help:"Relation type."`
+	To           string `arg:"" help:"Target entity ID (the relation's 'to')."`
+	Vseq         int64  `help:"Purge the single version row with this vseq." default:"0"`
+	ContentHash  string `help:"Purge every version row in the lineage with this content hash." default:""`
+	All          bool   `help:"Purge the relation's entire (fenced) version history."`
+	Lifetime     int    `help:"Select which lifetime of a deleted-and-recreated key to purge (1 = newest; see 'relation-history --list-lifetimes')." default:"0"`
+	AllLifetimes bool   `help:"Purge EVERY lifetime of a reused key (complete erasure). Mutually exclusive with --lifetime."`
+	Reason       string `help:"Required: operator justification (logged cleartext — not the secret)." default:""`
+	Commit       bool   `help:"Actually delete. Without this, a dry-run showing what WOULD be purged."`
+	Yes          bool   `help:"Skip the confirmation (scripts). Requires --commit."`
+	ForceLive    bool   `help:"Purge even though the live relation still holds the content (writes a tombstone)."`
 }
 
 // Run dispatches `rela relation-history-purge <from> <type> <to> ...`.
 func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
-	purger, ok := svc.Store.(store.RelationVersionPurger)
-	if !ok {
+	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support relation version purge " +
 			"(a PostgreSQL-build compliance feature).")
 		return nil
 	}
+	var purger store.RelationVersionPurger = svc.Versions
 	if err := validatePurgeFlags(c.Reason, c.Vseq, c.ContentHash, c.All); err != nil {
 		return err
 	}
+	if c.Lifetime != 0 && c.AllLifetimes {
+		return errors.New("--lifetime and --all-lifetimes are mutually exclusive")
+	}
 	p := principal.From(ctx)
 	key := fmt.Sprintf("%s--%s--%s", c.From, c.Type, c.To)
+
+	recordID, err := resolveLifetimeRecordID(ctx, svc.Versions, c.From, c.Type, c.To, c.Lifetime)
+	if err != nil {
+		return err
+	}
 	req := store.RelationVersionPurgeRequest{
 		From: c.From, Type: c.Type, To: c.To,
 		Selector:      store.PurgeSelector{Vseq: c.Vseq, ContentHash: c.ContentHash, All: c.All},
+		RecordID:      recordID,
+		AllLifetimes:  c.AllLifetimes,
 		Reason:        c.Reason,
 		ForceLive:     c.ForceLive,
 		PrincipalUser: p.User,
@@ -128,6 +140,14 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 	res, err := purger.PurgeRelationVersions(ctx, preview)
 	if err != nil {
 		return fmt.Errorf("purge relation history for %s: %w", key, err)
+	}
+	if res.MultiLifetimeRefused {
+		out.WriteMessage("Refused: %s has %d lifetimes (a deleted-and-recreated key). "+
+			"Purging without a selector would erase only the newest and leave older lifetimes' "+
+			"content behind. Choose one with --lifetime K (see 'relation-history %s %s %s "+
+			"--list-lifetimes'), or --all-lifetimes to erase every lifetime.",
+			key, res.LifetimeCount, c.From, c.Type, c.To)
+		return nil
 	}
 	if refused := reportPurgePreview(res, key, !c.Commit); refused || !c.Commit {
 		return nil
