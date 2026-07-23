@@ -5,7 +5,7 @@ title: Split docs build into a separate rela-docs binary (unlink chromedp from r
 kind: refactor
 priority: medium
 effort: m
-status: planning
+status: done
 ---
 
 ## Problem
