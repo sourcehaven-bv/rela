@@ -18,3 +18,14 @@ func TestCLIStructBuilds(t *testing.T) {
 		t.Fatalf("CLI grammar is invalid: %v", err)
 	}
 }
+
+// TestRenderRequiresProject pins that `render` is registered in requiresProject.
+// A command whose Run binds *readServices but is missing here never gets the
+// binding wired, so kong fails at invocation with "couldn't find binding of type
+// *cli.readServices" — a runtime-only failure that Run-level unit tests (which
+// pass svc directly) can't catch.
+func TestRenderRequiresProject(t *testing.T) {
+	if !requiresProject("render <id>") {
+		t.Error("render must require a project (it binds *readServices); add it to requiresProject")
+	}
+}

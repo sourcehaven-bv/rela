@@ -216,7 +216,7 @@ func configureKongLogging(verbose, quiet bool) {
 // completion, migrate) or do their own discovery (mcp, flow, validate).
 func requiresProject(cmd string) bool {
 	switch firstKongToken(cmd) {
-	case "show", "list", "trace", "graph", "export", "fmt", "schema",
+	case "show", "list", "trace", "graph", "export", "render", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
