@@ -183,6 +183,21 @@ func (s *documentService) Render(
 	return docResult, nil
 }
 
+// RenderMarkdown renders a document to its raw markdown (the pre-HTML step),
+// dispatching on Script vs. Command exactly like doRender. Used by view export,
+// which feeds the markdown to a format transform rather than converting it to
+// HTML. It does NOT cache (export output is per-request) and does NOT convert to
+// HTML. Callers MUST gate the read before invoking this (see handleV1ExportEntity
+// / handleV1Documents) — RenderMarkdown performs no ACL decision of its own.
+func (s *documentService) RenderMarkdown(
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+) (string, error) {
+	if cfg.Script != "" {
+		return s.renderScript(entryID, cfg)
+	}
+	return s.renderCommand(ctx, entryID, cfg)
+}
+
 // doRender performs the actual rendering work. Dispatches on Script vs.
 // Command — these are mutually exclusive at config load (see
 // dataentryconfig.validateDocuments) so exactly one branch fires.

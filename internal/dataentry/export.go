@@ -80,10 +80,14 @@ func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	renderer := transform.EntityRenderer{
-		Entity:    entity,
-		Meta:      a.Meta(),
-		Relations: a.entityRelationGroups(ctx, entity),
+	// A ?document=<name> override renders via a configured document (Lua/command)
+	// instead of the built-in entity renderer. It routes through the SAME gated
+	// document path handleV1Documents uses (gate on the doc's entity_type +
+	// type-match) so it can never become an unauthorized Lua-on-read surface
+	// (RR-8C23IL). Absent → built-in renderer.
+	renderer, ok := a.exportRenderer(w, r, typeName, entityID, entity)
+	if !ok {
+		return // exportRenderer already wrote the error/404
 	}
 
 	eng, err := transform.NewEngine(reg)
@@ -110,6 +114,57 @@ func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeN
 	}
 
 	writeExportResponse(w, res, exportFilename(entityID, res.Produces))
+}
+
+// exportRenderer selects the markdown renderer for an entity export. With no
+// ?document= param it returns the built-in [transform.EntityRenderer]. With a
+// ?document=<name> override it routes through the gated document render path
+// (RR-8C23IL): the document's entity_type is gated and type-matched exactly as
+// handleV1Documents does, so a Lua/command render override can never run for a
+// hidden entity or a mismatched type. On any failure it writes the response and
+// returns ok=false.
+func (a *App) exportRenderer(
+	w http.ResponseWriter, r *http.Request, typeName, entityID string, entity *entityPkg.Entity,
+) (transform.Renderer, bool) {
+	docName := r.URL.Query().Get("document")
+	if docName == "" {
+		return transform.EntityRenderer{
+			Entity:    entity,
+			Meta:      a.Meta(),
+			Relations: a.entityRelationGroups(r.Context(), entity),
+		}, true
+	}
+
+	if !isSafePathSegment(docName) {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_document", "Invalid document name", "")
+		return nil, false
+	}
+	docCfg, ok := a.State().Cfg.Documents[docName]
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
+		return nil, false
+	}
+
+	// Gate on the document's declared entity_type BEFORE the type-mismatch
+	// branch (uniform 404 for a denied principal) and BEFORE any render — the
+	// same order handleV1Documents enforces.
+	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+		return nil, false
+	}
+	if entity.Type != docCfg.EntityType || docCfg.EntityType != typeName {
+		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
+			"Document is not for this entity type", "")
+		return nil, false
+	}
+
+	renderCfg := a.toDocumentRenderConfig(docName, &docCfg)
+	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
+		md, err := a.documents.RenderMarkdown(ctx, entityID, renderCfg)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(md), nil
+	}), true
 }
 
 // writeExportResponse writes converted bytes as a hardened forced download.

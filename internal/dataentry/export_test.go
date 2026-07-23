@@ -59,8 +59,13 @@ func newExportApp(t *testing.T) *App {
 				},
 			},
 		},
-		Views:      make(map[string]dataentryconfig.ViewConfig),
-		Kanbans:    make(map[string]dataentryconfig.Kanban),
+		Views:   make(map[string]dataentryconfig.ViewConfig),
+		Kanbans: make(map[string]dataentryconfig.Kanban),
+		Documents: map[string]dataentryconfig.DocumentConfig{
+			// A command-based render override: emits custom markdown for a ticket.
+			// (Command renders avoid needing a wired Lua engine in the test.)
+			"fancy": {EntityType: "ticket", Command: "echo '# Fancy {id}'"},
+		},
 		Navigation: []dataentryconfig.NavigationEntry{{List: "tickets"}},
 	}
 	return newAppFromParts(cfg, meta, newFixture())
@@ -203,6 +208,82 @@ func exportEntity(ctx context.Context, app *App, typeName, id, transformName str
 	rec := httptest.NewRecorder()
 	app.handleV1ExportEntity(rec, req, typeName, id)
 	return rec
+}
+
+func TestExport_Entity_DocumentOverride(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Plain"}})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "admin"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	// With ?document=fancy the export routes through the configured render
+	// override (command doc emitting "# Fancy TKT-001") instead of the built-in
+	// entity renderer.
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tickets/TKT-001/_export?transform=copy&document=fancy", http.NoBody)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "# Fancy TKT-001") {
+		t.Errorf("override output missing '# Fancy TKT-001':\n%s", rec.Body)
+	}
+}
+
+func TestExport_Entity_DocumentOverride_DeniedIs404(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Secret"}})
+
+	// alice cannot read tickets → the override render must never run; 404.
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tickets/TKT-001/_export?transform=copy&document=fancy", http.NoBody)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for denied override export", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "Fancy") {
+		t.Errorf("denied override leaked render output: %s", rec.Body)
+	}
+}
+
+func TestExport_Entity_UnknownDocument(t *testing.T) {
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "admin"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/tickets/TKT-001/_export?transform=copy&document=nope", http.NoBody)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for unknown document", rec.Code)
+	}
 }
 
 func exportList(ctx context.Context, app *App) *httptest.ResponseRecorder {

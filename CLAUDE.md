@@ -152,8 +152,35 @@ Subsystems (see each package's doc comment for details):
 | `internal/autocascade`| Cascade orchestration (runs automation side-effects)           |
 | `internal/ai`         | OpenAI-compatible LLM provider (used from Lua)                 |
 | `internal/migration`  | Schema migrations for project YAML files                       |
+| `internal/cmdexec`    | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
+| `internal/transform`  | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry) |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
+
+### View export & transforms (`internal/transform`)
+
+The `transforms:` map in the metamodel registers named `markdown → format`
+external commands (see `docs/transforms.md`). A `transform.Renderer` produces
+markdown; the engine runs it through a transform via `internal/cmdexec` (argv
+array, no shell, temp-file `{in}`/`{out}`, timeout, output cap — the same
+security-reviewed exec pattern `internal/attachment` uses). Rules for new code:
+
+- **Export is downstream of an already-authorized view, never a new capability.**
+  Entity/list export in `internal/dataentry` routes through the SAME ACL read
+  path as the view (`visibleReader.getVisible` / `scopedSortedEntities`); a
+  request may only choose a registered transform *name*, never a command/flag/path.
+- **The list-table renderer lives in `internal/dataentry`, not `internal/transform`** —
+  it needs the ACL neighbor-visibility gate (`visibleRelationIDs`) so hidden
+  neighbor titles never leak into an export. `internal/transform` must NOT import
+  `internal/dataentry`; the built-in single-entity renderer lives in `transform`,
+  and `dataentry` supplies the list renderer as a `transform.Renderer`.
+- **A Lua/command render override routes through the gated `_documents` path**
+  (`documentService.RenderMarkdown` after `gateReadOrNotFound` + entity-type
+  match) — never call `script.ExecuteDocument` on a fresh unauthenticated
+  surface.
+- **Export downloads are hardened** like attachment downloads (nosniff, sandbox
+  CSP, `no-store`, sanitized `Content-Disposition`) — the produced bytes embed
+  user content.
 
 ### Storage backends & build tags
 
