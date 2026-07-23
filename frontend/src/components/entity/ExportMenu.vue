@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { getTransforms, entityExportUrl, type TransformInfo } from '@/api/transforms'
+import { getTransforms, type TransformInfo } from '@/api/transforms'
 
 const props = defineProps<{
-  /** Entity type (plural is resolved from the schema plural registry). */
-  entityType: string
-  /** Entity id to export. */
-  entityId: string
+  /**
+   * Given a transform name, return the export URL to navigate to. The parent
+   * builds it (entity vs. list, plus any current list filter/sort params) so
+   * the menu stays agnostic about the export target.
+   */
+  urlFor: (transform: string) => string
 }>()
 
 const transforms = ref<TransformInfo[]>([])
@@ -43,9 +45,9 @@ function toggle() {
 
 function exportAs(t: TransformInfo) {
   open.value = false
-  // Navigate to the hardened forced-download endpoint. Using a real link/nav
-  // (not fetch) lets the browser's download machinery handle Content-Disposition.
-  window.location.href = entityExportUrl(props.entityType, props.entityId, t.name)
+  // Navigate to the hardened forced-download endpoint. Using a real nav (not
+  // fetch) lets the browser's download machinery handle Content-Disposition.
+  window.location.href = props.urlFor(t.name)
 }
 </script>
 

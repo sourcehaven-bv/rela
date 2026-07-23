@@ -33,9 +33,9 @@ status: in-progress
 
 Staged implementation. Progress:
 
-- **Stage 1 DONE** (commit 38b2b58): `internal/cmdexec` (extracted safe-exec core; attachment.CmdRunner wraps it, attachment suite green), `internal/transform` (Registry, Engine, Renderer, built-in EntityRenderer), metamodel `transforms:` map + `validateTransforms` (from/command/produces-MIME, RR-VYTL35), `rela render` CLI command. arch-lint + golangci-lint clean on all touched pkgs; full `internal/...` suite green. Covers AC1 (loader table test incl. CRLF), AC7 (missing-binary via Probe), and the entity-renderer half of AC3/AC8.
-- **Stage 2 TODO**: data-entry `GET /api/transforms` + entity export endpoint (getVisible, 404 on deny) + download hardening (nosniff/sandbox CSP/no-store/sanitized filename, RR-C3M3BR); frontend "Export as ▾". Covers AC2, AC3, AC4.
-- **Stage 3 TODO**: list export (dataentry list renderer, ACL neighbor gate, RR-T3PDHN) + cap/truncation (RR-6ZDPTQ). Covers AC5, AC6.
+- **Stage 1 DONE** (commit 38b2b58): `internal/cmdexec` (extracted safe-exec core; attachment.CmdRunner wraps it, attachment suite green), `internal/transform` (Registry, Engine, Renderer, built-in EntityRenderer), metamodel `transforms:` map + `validateTransforms` (from/command/produces-MIME, RR-VYTL35), `rela render` CLI. Covers AC1 (loader table incl. CRLF), AC7 (missing-binary Probe), entity-renderer half of AC3.
+- **Stage 2 DONE** (commit 2e7b6f1): `GET /api/v1/_transforms`; `GET /{plural}/{id}/_export?transform=` — ACL-gated via getVisible (404 on deny), hardened download (nosniff/sandbox-CSP/no-store/sanitized filename, RR-C3M3BR), visible neighbor titles via the relation visibility gate. Frontend transforms api-client + ExportMenu in entity detail. Go export_test.go covers AC2, AC3, AC4 (+ unknown-transform, missing-param) with a `cp {in} {out}` fake transform; frontend transforms.test.ts. golangci-lint + arch-lint + full dataentry suite + frontend typecheck/lint/build all green.
+- **Stage 3 TODO**: list export (dataentry list renderer, ACL neighbor gate, RR-T3PDHN) + cap/truncation notice (RR-6ZDPTQ). Covers AC5, AC6.
 - **Stage 4 TODO**: Lua render override via the gated `_documents` path (RR-8C23IL). Covers AC8 Lua-override half.
 - Docs + CLAUDE.md notes: pending final stage.
 

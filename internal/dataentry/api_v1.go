@@ -167,8 +167,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		// /{plural} - collection
 		a.handleV1EntityCollection(w, r, typeName, plural)
 	case 2:
-		// /{plural}/{id} - single entity
-		a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
+		// /{plural}/_export (collection export) or /{plural}/{id} (single entity).
+		// _export is a reserved segment; no entity id may collide (ids never
+		// start with the reserved underscore).
+		if parts[1] == "_export" {
+			a.handleV1ExportList(w, r, typeName)
+		} else {
+			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
+		}
 	case 3:
 		// /{plural}/{id}/relations or /{plural}/{id}/_export
 		switch parts[2] {

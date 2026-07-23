@@ -47,12 +47,21 @@ func newExportApp(t *testing.T) *App {
 		},
 	}
 	cfg := &dataentryconfig.Config{
-		App:        dataentryconfig.AppConfig{Name: "Export Test"},
-		Forms:      make(map[string]dataentryconfig.Form),
-		Lists:      make(map[string]dataentryconfig.List),
+		App:   dataentryconfig.AppConfig{Name: "Export Test"},
+		Forms: make(map[string]dataentryconfig.Form),
+		Lists: map[string]dataentryconfig.List{
+			"tickets": {
+				EntityType: "ticket",
+				Columns: []dataentryconfig.ListColumn{
+					{Property: "title", Label: "Title"},
+					{Property: "status", Label: "Status"},
+					{Relation: "implements", Label: "Implements"},
+				},
+			},
+		},
 		Views:      make(map[string]dataentryconfig.ViewConfig),
 		Kanbans:    make(map[string]dataentryconfig.Kanban),
-		Navigation: []dataentryconfig.NavigationEntry{},
+		Navigation: []dataentryconfig.NavigationEntry{{List: "tickets"}},
 	}
 	return newAppFromParts(cfg, meta, newFixture())
 }
@@ -194,4 +203,119 @@ func exportEntity(ctx context.Context, app *App, typeName, id, transformName str
 	rec := httptest.NewRecorder()
 	app.handleV1ExportEntity(rec, req, typeName, id)
 	return rec
+}
+
+func exportList(ctx context.Context, app *App) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/_export?transform=copy&list=tickets", http.NoBody)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	app.handleV1ExportList(rec, req, "ticket")
+	return rec
+}
+
+func TestExport_List_WholeScopedSetAsTable(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	// Seed more tickets than a page (default per_page) to prove the export
+	// covers the whole filtered set, not just a page.
+	for i := range 30 {
+		id := "TKT-" + string(rune('A'+i%26)) + string(rune('0'+i/26))
+		seedEntity(app, &entity.Entity{ID: id, Type: "ticket",
+			Properties: map[string]any{"title": "T" + id, "status": "open"}})
+	}
+	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "Feat One"}})
+	seedRelation(app, &entity.Relation{From: "TKT-A0", Type: "implements", To: "FEAT-1"})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket", "feature"}}},
+		Assignments: map[string]string{"alice": "admin"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	rec := exportList(ctx, app)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	// Header from the configured columns.
+	if !strings.Contains(body, "| Title | Status | Implements |") {
+		t.Errorf("missing configured header row:\n%s", firstLines(body, 3))
+	}
+	// One body row per seeded ticket (30) plus the header + separator = 32 lines
+	// minimum; assert a couple of specific rows present.
+	if !strings.Contains(body, "Feat One") {
+		t.Errorf("relation column should show visible neighbor title 'Feat One':\n%s", body)
+	}
+	// Count table body rows (lines starting with "| T" for title cells).
+	rows := strings.Count(body, "\n| TTKT-")
+	if rows != 30 {
+		t.Errorf("want 30 body rows, got %d\n%s", rows, body)
+	}
+}
+
+func TestExport_List_HiddenNeighborExcluded(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "T1", "status": "open"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-HIDDEN", Type: "feature", Properties: map[string]any{"title": "Secret Feature"}})
+	seedRelation(app, &entity.Relation{From: "TKT-1", Type: "implements", To: "FEAT-HIDDEN"})
+
+	// alice may read tickets but NOT features → the relation cell must be empty,
+	// never leaking the hidden feature's title.
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	rec := exportList(ctx, app)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "Secret Feature") {
+		t.Errorf("hidden neighbor title leaked into list export:\n%s", rec.Body)
+	}
+}
+
+func TestExport_List_TruncationNotice(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "admin"},
+	}, app.store)
+	app.acl = d
+	ctx := gateCtxFor(aliceCtx(), t, d)
+
+	for i := range 3 {
+		id := "TKT-" + string(rune('0'+i))
+		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": id}})
+	}
+
+	// Exactly at the cap → no notice.
+	orig := listExportCap
+	t.Cleanup(func() { listExportCap = orig })
+
+	listExportCap = 3
+	if rec := exportList(ctx, app); strings.Contains(rec.Body.String(), "truncated") {
+		t.Errorf("set == cap should not truncate:\n%s", rec.Body)
+	}
+
+	// One over the cap → truncated + visible notice showing N of M.
+	listExportCap = 2
+	rec := exportList(ctx, app)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Showing 2 of 3 rows (truncated).") {
+		t.Errorf("want truncation notice 'Showing 2 of 3 rows (truncated).':\n%s", body)
+	}
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
 }

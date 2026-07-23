@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { getTransforms, entityExportUrl } from './transforms'
+import { getTransforms, entityExportUrl, listExportUrl } from './transforms'
 import { registerEntityPlurals } from './entities'
 import { api } from './client'
 
@@ -26,5 +26,16 @@ describe('transforms api', () => {
     registerEntityPlurals(new Map([['ticket', 'tickets']]))
     const url = entityExportUrl('ticket', 'TKT 1&x', 'pdf')
     expect(url).toContain('TKT%201%26x')
+  })
+
+  it('listExportUrl includes transform, list id, and forwarded params', () => {
+    registerEntityPlurals(new Map([['ticket', 'tickets']]))
+    const extra = new URLSearchParams({ 'filter[status]': 'open', q: 'foo' })
+    const url = listExportUrl('ticket', 'tickets', 'pdf', extra)
+    expect(url.startsWith('/api/v1/tickets/_export?')).toBe(true)
+    expect(url).toContain('transform=pdf')
+    expect(url).toContain('list=tickets')
+    expect(url).toContain('filter%5Bstatus%5D=open')
+    expect(url).toContain('q=foo')
   })
 })

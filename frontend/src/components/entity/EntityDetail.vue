@@ -37,6 +37,7 @@ import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import { entityExportUrl } from '@/api/transforms'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import {
@@ -731,7 +732,7 @@ watch(
             Edit <kbd>E</kbd>
           </button>
           <button class="btn btn-secondary" @click="openHistory">History</button>
-          <ExportMenu :entity-type="entityType" :entity-id="entityId" />
+          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, entityId, t)" />
           <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
             Delete <kbd>Del</kbd>
           </button>
