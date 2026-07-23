@@ -13,6 +13,46 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 )
 
+// exportHandler owns the view-export routes (transform list, entity export, list
+// export) and their markdown-rendering helpers. Extracted from App (keeps App
+// under its plimsoll method cap); constructed once in NewApp with closures over
+// the App collaborators it needs. The ACL-coupled reads flow through the same
+// seams the rest of dataentry uses (reader / visibleReader / gateReadOrNotFound /
+// scopedSortedEntities), so export can never widen past an authorized view.
+type exportHandler struct {
+	meta            func() *metamodel.Metamodel
+	cfg             func() *Config
+	reader          entityReader
+	visibleReader   visibleReader
+	documents       *documentService
+	scopedEntities  func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
+	gateRead        func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
+	getVisible      func(ctx context.Context, typeName, id string) (*entityPkg.Entity, bool, error)
+	findListForType func(entityType string) string
+	toRenderConfig  func(configID string, cfg *DocumentConfig) documentRenderConfig
+}
+
+// newExportHandler builds the export handler with closures over the App
+// collaborators it needs. Called from both NewApp and the test app builder so
+// the wiring lives in one place.
+func newExportHandler(app *App) *exportHandler {
+	return &exportHandler{
+		meta:           app.Meta,
+		cfg:            func() *Config { return app.State().Cfg },
+		reader:         app.reader,
+		visibleReader:  app.visibleReader,
+		documents:      app.documents,
+		scopedEntities: app.scopedSortedEntities,
+		gateRead:       app.gateReadOrNotFound,
+		getVisible:     app.visibleReader.getVisible,
+		findListForType: func(entityType string) string {
+			s := app.State()
+			return app.findListByEntityType(s, s.Cfg.Navigation, entityType)
+		},
+		toRenderConfig: app.toDocumentRenderConfig,
+	}
+}
+
 // transformInfo is the wire shape for GET /api/v1/_transforms: the export
 // formats a client can offer, derived from the metamodel `transforms:` registry
 // (markdown-input transforms only).
@@ -45,12 +85,12 @@ func probeTransformCommands(meta *metamodel.Metamodel) {
 // handleV1Transforms serves GET /api/v1/_transforms — the list of registered
 // export formats. It is public metadata (which formats exist), carries no
 // entity data, and drives the SPA "Export as" menu.
-func (a *App) handleV1Transforms(w http.ResponseWriter, r *http.Request) {
+func (h *exportHandler) handleV1Transforms(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	reg := transform.RegistryFromMetamodel(a.Meta())
+	reg := transform.RegistryFromMetamodel(h.meta())
 	list := make([]transformInfo, 0, len(reg))
 	for _, nd := range reg.FromMarkdown() {
 		list = append(list, transformInfo{Name: nd.Name, Produces: nd.Def.Produces})
@@ -68,7 +108,7 @@ func (a *App) handleV1Transforms(w http.ResponseWriter, r *http.Request) {
 // download (nosniff + sandbox CSP + no-store + sanitized filename) because a
 // transform emits attacker-influenceable bytes (a PDF/DOCX built from user
 // content).
-func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
+func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
@@ -82,7 +122,7 @@ func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	reg := transform.RegistryFromMetamodel(a.Meta())
+	reg := transform.RegistryFromMetamodel(h.meta())
 	if _, ok := reg[name]; !ok {
 		writeV1Error(w, r, http.StatusNotFound, "unknown_transform",
 			"Unknown transform", "no such export format is configured")
@@ -91,7 +131,7 @@ func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeN
 
 	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
 	// indistinguishable 404, and the render never runs for a hidden entity.
-	entity, found, err := a.visibleReader.getVisible(ctx, typeName, entityID)
+	entity, found, err := h.getVisible(ctx, typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -106,7 +146,7 @@ func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeN
 	// document path handleV1Documents uses (gate on the doc's entity_type +
 	// type-match) so it can never become an unauthorized Lua-on-read surface
 	// (RR-8C23IL). Absent → built-in renderer.
-	renderer, ok := a.exportRenderer(w, r, typeName, entityID, entity)
+	renderer, ok := h.exportRenderer(w, r, typeName, entityID, entity)
 	if !ok {
 		return // exportRenderer already wrote the error/404
 	}
@@ -144,15 +184,15 @@ func (a *App) handleV1ExportEntity(w http.ResponseWriter, r *http.Request, typeN
 // handleV1Documents does, so a Lua/command render override can never run for a
 // hidden entity or a mismatched type. On any failure it writes the response and
 // returns ok=false.
-func (a *App) exportRenderer(
+func (h *exportHandler) exportRenderer(
 	w http.ResponseWriter, r *http.Request, typeName, entityID string, entity *entityPkg.Entity,
 ) (transform.Renderer, bool) {
 	docName := r.URL.Query().Get("document")
 	if docName == "" {
 		return transform.EntityRenderer{
 			Entity:    entity,
-			Meta:      a.Meta(),
-			Relations: a.entityRelationGroups(r.Context(), entity),
+			Meta:      h.meta(),
+			Relations: h.entityRelationGroups(r.Context(), entity),
 		}, true
 	}
 
@@ -164,7 +204,7 @@ func (a *App) exportRenderer(
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_document", "Invalid document or entity name", "")
 		return nil, false
 	}
-	docCfg, ok := a.State().Cfg.Documents[docName]
+	docCfg, ok := h.cfg().Documents[docName]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
 		return nil, false
@@ -173,7 +213,7 @@ func (a *App) exportRenderer(
 	// Gate on the document's declared entity_type BEFORE the type-mismatch
 	// branch (uniform 404 for a denied principal) and BEFORE any render — the
 	// same order handleV1Documents enforces.
-	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+	if !h.gateRead(w, r, docCfg.EntityType, entityID) {
 		return nil, false
 	}
 	if entity.Type != docCfg.EntityType || docCfg.EntityType != typeName {
@@ -182,9 +222,9 @@ func (a *App) exportRenderer(
 		return nil, false
 	}
 
-	renderCfg := a.toDocumentRenderConfig(docName, &docCfg)
+	renderCfg := h.toRenderConfig(docName, &docCfg)
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
-		md, err := a.documents.RenderMarkdown(ctx, entityID, renderCfg)
+		md, err := h.documents.RenderMarkdown(ctx, entityID, renderCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -223,13 +263,13 @@ func exportFilename(entityID, produces string) string {
 // renderer. Neighbor visibility is gated through visibleRelationIDs so a hidden
 // neighbor's title never leaks into the export (the same gate the list/serializer
 // paths apply). Grouped by relation display label, in label order.
-func (a *App) entityRelationGroups(ctx context.Context, e *entityPkg.Entity) []transform.RelationGroup {
-	meta := a.Meta()
-	outgoing := a.reader.outgoingRelations(ctx, e.ID)
-	incoming := a.reader.incomingRelations(ctx, e.ID)
+func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.Entity) []transform.RelationGroup {
+	meta := h.meta()
+	outgoing := h.reader.outgoingRelations(ctx, e.ID)
+	incoming := h.reader.incomingRelations(ctx, e.ID)
 
 	neighborIDs := neighborIDsOf(outgoing, incoming)
-	visible := visibleRelationIDs(ctx, a.reader, a.visibleReader, neighborIDs)
+	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, neighborIDs)
 
 	// label -> ordered neighbor titles.
 	byLabel := map[string][]string{}
@@ -238,7 +278,7 @@ func (a *App) entityRelationGroups(ctx context.Context, e *entityPkg.Entity) []t
 			return
 		}
 		title := neighborID
-		if node, ok := a.reader.getEntity(ctx, neighborID); ok {
+		if node, ok := h.reader.getEntity(ctx, neighborID); ok {
 			title = displayTitleOrTitle(meta, node)
 		}
 		byLabel[label] = append(byLabel[label], title)

@@ -195,6 +195,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
 	}
+
+	// Export handler over the app's current services (mirrors NewApp).
+	app.export = newExportHandler(app)
 }
 
 // rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.

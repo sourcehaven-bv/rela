@@ -156,10 +156,13 @@ type App struct {
 	// Extracted from App (TKT-R68TV8); closures over the swappable acl/audit/
 	// field-resolver collaborators, a pointer to writeMu for the write paths.
 	attachments *attachmentHandler
-	templater   templating.Templater
-	cfgLoader   config.Loader
-	kv          state.KV
-	acl         acl.ACL
+	// export owns the view-export routes (transform list, entity/list export).
+	// Extracted from App (TKT-JF5JI8) to keep App under its plimsoll method cap.
+	export    *exportHandler
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
 
 	// attachmentRunner drives external scan/transform commands for uploads.
 	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
@@ -622,6 +625,10 @@ func NewApp(
 	// pandoc not installed) surfaces as a boot warning rather than a 500 on the
 	// first export.
 	probeTransformCommands(meta)
+
+	// exportHandler owns the view-export routes (transform list, entity/list
+	// export). Extracted from App to keep App under its method cap.
+	app.export = newExportHandler(app)
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/

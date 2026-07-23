@@ -29,7 +29,7 @@ var listExportCap = 5000
 // visibility gate the on-screen list applies — so a hidden neighbor never leaks
 // into the export (RR-T3PDHN). The set is capped at [listExportCap]; past the
 // cap the table is truncated with a visible notice.
-func (a *App) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeName string) {
+func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeName string) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
@@ -43,18 +43,18 @@ func (a *App) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeNam
 			"A transform is required", "pass ?transform=<name>")
 		return
 	}
-	reg := transform.RegistryFromMetamodel(a.Meta())
+	reg := transform.RegistryFromMetamodel(h.meta())
 	if _, ok := reg[name]; !ok {
 		writeV1Error(w, r, http.StatusNotFound, "unknown_transform",
 			"Unknown transform", "no such export format is configured")
 		return
 	}
 
-	columns := a.exportListColumns(query.Get("list"), typeName)
+	columns := h.exportListColumns(query.Get("list"), typeName)
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
 	// exact read path the list view uses, so export can't widen past the view.
-	entities, err := a.scopedSortedEntities(ctx, typeName, query)
+	entities, err := h.scopedEntities(ctx, typeName, query)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -66,7 +66,7 @@ func (a *App) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeNam
 		truncated = true
 	}
 
-	renderer := a.listTableRenderer(entities, columns, total, truncated)
+	renderer := h.listTableRenderer(entities, columns, total, truncated)
 
 	eng, err := transform.NewEngine(reg)
 	if err != nil {
@@ -93,15 +93,15 @@ func (a *App) handleV1ExportList(w http.ResponseWriter, r *http.Request, typeNam
 // list's columns, falls back to the type's default list, and finally to a
 // minimal [id, title] pair so an export always produces a sensible table even
 // when no list is configured.
-func (a *App) exportListColumns(listID, typeName string) []dataentryconfig.ListColumn {
-	s := a.State()
+func (h *exportHandler) exportListColumns(listID, typeName string) []dataentryconfig.ListColumn {
+	cfg := h.cfg()
 	if listID != "" {
-		if l, ok := s.Cfg.Lists[listID]; ok && l.EntityType == typeName && len(l.Columns) > 0 {
+		if l, ok := cfg.Lists[listID]; ok && l.EntityType == typeName && len(l.Columns) > 0 {
 			return l.Columns
 		}
 	}
-	if def := a.findListByEntityType(s, s.Cfg.Navigation, typeName); def != "" {
-		if l, ok := s.Cfg.Lists[def]; ok && len(l.Columns) > 0 {
+	if def := h.findListForType(typeName); def != "" {
+		if l, ok := cfg.Lists[def]; ok && len(l.Columns) > 0 {
 			return l.Columns
 		}
 	}
@@ -115,12 +115,12 @@ func (a *App) exportListColumns(listID, typeName string) []dataentryconfig.ListC
 // the given rows over the given columns, appending a truncation notice when the
 // full set exceeded the cap. Neighbor titles for relation columns are gated
 // through the visibility gate (hidden neighbors excluded).
-func (a *App) listTableRenderer(
+func (h *exportHandler) listTableRenderer(
 	entities []*entityPkg.Entity, columns []dataentryconfig.ListColumn, total int, truncated bool,
 ) transform.Renderer {
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
-		meta := a.Meta()
-		rels := a.resolveListRelations(ctx, meta, entities, columns)
+		meta := h.meta()
+		rels := h.resolveListRelations(ctx, meta, entities, columns)
 
 		var b strings.Builder
 
@@ -179,7 +179,7 @@ type cellPeers struct {
 // whole set of exported rows in one pass: it loads each row's edges once, gathers
 // ALL neighbor IDs across every row, runs a SINGLE batched visibility gate, loads
 // each visible neighbor once, then assembles per-row/per-column visible titles.
-func (a *App) resolveListRelations(
+func (h *exportHandler) resolveListRelations(
 	ctx context.Context, meta *metamodel.Metamodel, entities []*entityPkg.Entity, columns []dataentryconfig.ListColumn,
 ) listRelationTitles {
 	out := listRelationTitles{byRowCol: map[string]map[string][]string{}}
@@ -194,15 +194,15 @@ func (a *App) resolveListRelations(
 		return out
 	}
 
-	perCell, allPeerIDs := a.gatherListPeers(ctx, entities, relCols)
+	perCell, allPeerIDs := h.gatherListPeers(ctx, entities, relCols)
 	if len(perCell) == 0 {
 		return out
 	}
 
 	// ONE batched visibility gate for the whole export, and one title load per
 	// distinct visible neighbor (memoized in titleFor).
-	visible := visibleRelationIDs(ctx, a.reader, a.visibleReader, allPeerIDs)
-	titleFor := a.memoNeighborTitle(ctx, meta, visible)
+	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, allPeerIDs)
+	titleFor := h.memoNeighborTitle(ctx, meta, visible)
 
 	for _, pc := range perCell {
 		titles := make([]string, 0, len(pc.peers))
@@ -225,12 +225,12 @@ func (a *App) resolveListRelations(
 // gatherListPeers loads each row's edges ONCE and returns, per (row, relation
 // column), the ordered peer IDs, plus the flat list of every peer ID (for the
 // single batched visibility gate).
-func (a *App) gatherListPeers(
+func (h *exportHandler) gatherListPeers(
 	ctx context.Context, entities []*entityPkg.Entity, relCols []dataentryconfig.ListColumn,
 ) (perCell []cellPeers, allPeerIDs []string) {
 	for _, e := range entities {
-		outgoing := a.reader.outgoingRelations(ctx, e.ID)
-		incoming := a.reader.incomingRelations(ctx, e.ID)
+		outgoing := h.reader.outgoingRelations(ctx, e.ID)
+		incoming := h.reader.incomingRelations(ctx, e.ID)
 		for _, c := range relCols {
 			inbound := c.Direction == dataentryconfig.DirectionIncoming
 			src := outgoing
@@ -268,7 +268,7 @@ func relationPeers(rels []*entityPkg.Relation, relType string, inbound bool) []s
 // memoNeighborTitle returns a function that resolves a neighbor id to its display
 // title, once per distinct id, returning ok=false for hidden (not in visible) or
 // unloadable neighbors.
-func (a *App) memoNeighborTitle(
+func (h *exportHandler) memoNeighborTitle(
 	ctx context.Context, meta *metamodel.Metamodel, visible map[string]bool,
 ) func(id string) (string, bool) {
 	titleByID := map[string]string{}
@@ -280,7 +280,7 @@ func (a *App) memoNeighborTitle(
 			return t, t != ""
 		}
 		t := ""
-		if node, ok := a.reader.getEntity(ctx, id); ok {
+		if node, ok := h.reader.getEntity(ctx, id); ok {
 			t = displayTitleOrTitle(meta, node)
 		}
 		titleByID[id] = t

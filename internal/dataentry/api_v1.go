@@ -108,7 +108,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 		func(w http.ResponseWriter, r *http.Request) { handleV1RelationHistory(a, w, r) })
 	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
-	mux.HandleFunc("/api/v1/_transforms", a.handleV1Transforms)
+	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
 	mux.HandleFunc("/api/v1/_action/", a.handleV1Action)
@@ -171,7 +171,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		// _export is a reserved segment; no entity id may collide (ids never
 		// start with the reserved underscore).
 		if parts[1] == "_export" {
-			a.handleV1ExportList(w, r, typeName)
+			a.export.handleV1ExportList(w, r, typeName)
 		} else {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
@@ -181,7 +181,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
 		case "_export":
-			a.handleV1ExportEntity(w, r, typeName, parts[1])
+			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}

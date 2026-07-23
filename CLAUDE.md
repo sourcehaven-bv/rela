@@ -191,7 +191,7 @@ and the matching `internal/cli/mcp_wiring_{fs,memory,postgres}.go`:
 
 | Build tag        | Store      | Search                | Binaries                          |
 | ---------------- | ---------- | --------------------- | --------------------------------- |
-| _(none, default)_| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
+| *(none, default)*| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
 | `memorybackend`  | `memstore` | `LinearSearch`        | (tests / experiments; no bleve)   |
 | `postgres`       | `pgstore`  | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
 
@@ -275,7 +275,7 @@ Rules when touching this:
   synchronous hook misses — acceptable because a miss loses only the rename
   marker, never lineage continuity. Read/restore is gated on **both** endpoints
   (FROM ∧ TO) — the FROM
-  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
+  entity only *owns* the UI placement, it is not the auth boundary (a TO-side
   oracle otherwise). Relations have NO field-level redaction today; relation
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
@@ -353,7 +353,7 @@ god-object (`App`, `Runtime`, `FSStore` got there because nothing stopped them):
 - **`max-exported-methods` (20)** — exported methods only. The sharper signal,
   since the public API is the coupling surface consumers bind to. Note these
   often diverge wildly from the total: `App` is 226 methods but only 13
-  exported; the genuinely-wide _public_ APIs are the store implementations and
+  exported; the genuinely-wide *public* APIs are the store implementations and
   schema value types (`FSStore`, `MemStore`, `Metamodel`).
 - **`max-fields` (20)** — exported struct fields.
 

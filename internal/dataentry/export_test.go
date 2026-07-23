@@ -85,7 +85,7 @@ func TestExport_TransformsList(t *testing.T) {
 	app := newExportApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_transforms", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Transforms(rec, req)
+	app.export.handleV1Transforms(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
@@ -195,7 +195,7 @@ func TestExport_Entity_MissingTransformParam(t *testing.T) {
 		Properties: map[string]any{"title": "T"}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001/_export", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 for missing transform", rec.Code)
 	}
@@ -206,7 +206,7 @@ func exportEntity(ctx context.Context, app *App, typeName, id, transformName str
 		"/api/v1/"+typeName+"s/"+id+"/_export?transform="+transformName, http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ExportEntity(rec, req, typeName, id)
+	app.export.handleV1ExportEntity(rec, req, typeName, id)
 	return rec
 }
 
@@ -229,7 +229,7 @@ func TestExport_Entity_DocumentOverride(t *testing.T) {
 		"/api/v1/tickets/TKT-001/_export?transform=copy&document=fancy", http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
@@ -256,7 +256,7 @@ func TestExport_Entity_DocumentOverride_DeniedIs404(t *testing.T) {
 		"/api/v1/tickets/TKT-001/_export?transform=copy&document=fancy", http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for denied override export", rec.Code)
@@ -280,7 +280,7 @@ func TestExport_Entity_UnknownDocument(t *testing.T) {
 		"/api/v1/tickets/TKT-001/_export?transform=copy&document=nope", http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
+	app.export.handleV1ExportEntity(rec, req, "ticket", "TKT-001")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for unknown document", rec.Code)
 	}
@@ -290,7 +290,7 @@ func exportList(ctx context.Context, app *App) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/_export?transform=copy&list=tickets", http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1ExportList(rec, req, "ticket")
+	app.export.handleV1ExportList(rec, req, "ticket")
 	return rec
 }
 

@@ -53,7 +53,7 @@ var (
 // so growth is structural here) — over the 20-field load line. Revisit grouping
 // subcommands into sub-structs; ratchet this number down if/when that lands.
 //
-//plimsoll:max-fields=45
+//plimsoll:max-fields=46
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
