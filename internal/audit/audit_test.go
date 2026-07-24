@@ -65,7 +65,7 @@ func TestRecord_JSONRoundtrip(t *testing.T) {
 			if back.Op != tt.rec.Op {
 				t.Errorf("Op round-trip: got %q want %q", back.Op, tt.rec.Op)
 			}
-			if back.Principal != tt.rec.Principal {
+			if !back.Principal.Equal(tt.rec.Principal) {
 				t.Errorf("Principal round-trip: got %+v want %+v", back.Principal, tt.rec.Principal)
 			}
 		})

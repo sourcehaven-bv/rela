@@ -12,6 +12,19 @@ const (
 	SourceLocalViaGroup
 	SourceLocalViaAncestor
 	SourceLocalViaGroupAndAncestor
+	// SourceAsserted: the role came from a claim in a verified identity
+	// assertion, mapped through asserted_role_assignments. Distinct from
+	// SourceGlobal because the provenance question after an incident —
+	// "was this granted by our policy, or by a claim in a token?" — has
+	// materially different answers and remediations.
+	SourceAsserted
+
+	// numSourceKinds is the count of declared kinds. It MUST be last in the
+	// const block: it is what lets TestSourceKinds_Exhaustive detect a kind
+	// added here and not registered in sourceKindPriority, both String()
+	// methods, and lessSource — none of which the compiler checks, since
+	// every switch over SourceKind has a default.
+	numSourceKinds
 )
 
 // priority defines the sort precedence used to pick the primary
@@ -32,12 +45,17 @@ func (k SourceKind) priority() int {
 }
 
 var sourceKindPriority = map[SourceKind]int{
-	SourceGlobal:                   0,
-	SourceGroup:                    1,
-	SourceLocal:                    2,
-	SourceLocalViaGroup:            3,
-	SourceLocalViaAncestor:         4,
-	SourceLocalViaGroupAndAncestor: 5,
+	SourceGlobal: 0,
+	// Asserted sorts immediately after global: like global it is a
+	// principal-wide fact rather than an entity-local one, but a policy
+	// assignment is the more specific statement about THIS deployment,
+	// so it keeps precedence when both apply.
+	SourceAsserted:                 1,
+	SourceGroup:                    2,
+	SourceLocal:                    3,
+	SourceLocalViaGroup:            4,
+	SourceLocalViaAncestor:         5,
+	SourceLocalViaGroupAndAncestor: 6,
 }
 
 // String returns the wire/log form of a SourceKind.
@@ -55,8 +73,13 @@ func (k SourceKind) String() string {
 		return "local-via-ancestor"
 	case SourceLocalViaGroupAndAncestor:
 		return "local-via-group-and-ancestor"
+	case SourceAsserted:
+		return "asserted"
+	default:
+		// Includes numSourceKinds (a count, not a kind) and any value from a
+		// future const-block addition that was never registered here.
+		return "unknown"
 	}
-	return "unknown"
 }
 
 // Source describes how a role landed in a principal's effective set.
@@ -91,6 +114,10 @@ type Source struct {
 	Group    string
 	Ancestor string
 	Relation string
+	// Claim is the asserted claim value that granted the role, populated
+	// only for SourceAsserted. Keeping it a plain string preserves Source's
+	// comparability, which attrKey and aclmap.Route both depend on.
+	Claim string
 }
 
 // String renders the human/log form of a Source. Audit and 403-body
@@ -111,8 +138,11 @@ func (s Source) String() string {
 		return "local-via-ancestor:" + s.Ancestor + ":" + s.Relation
 	case SourceLocalViaGroupAndAncestor:
 		return "local-via-group-and-ancestor:" + s.Group + ":" + s.Ancestor + ":" + s.Relation
+	case SourceAsserted:
+		return "asserted:" + s.Claim
+	default:
+		return s.Kind.String()
 	}
-	return s.Kind.String()
 }
 
 // RoleAttribution is a (role, source) pair. The same role can land
@@ -159,5 +189,10 @@ func lessSource(a, b Source) bool {
 	if a.Ancestor != b.Ancestor {
 		return a.Ancestor < b.Ancestor
 	}
-	return a.Relation < b.Relation
+	if a.Relation != b.Relation {
+		return a.Relation < b.Relation
+	}
+	// Without this, two asserted attributions differing only by claim
+	// compare equal and PrimarySource picks non-deterministically.
+	return a.Claim < b.Claim
 }

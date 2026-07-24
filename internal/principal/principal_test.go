@@ -10,7 +10,7 @@ import (
 func TestPrincipalFrom_DefaultsToUnknown(t *testing.T) {
 	got := principal.From(context.Background())
 	want := principal.Principal{User: "unknown", Tool: "unknown"}
-	if got != want {
+	if !got.Equal(want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
@@ -18,7 +18,7 @@ func TestPrincipalFrom_DefaultsToUnknown(t *testing.T) {
 func TestWithPrincipal_RoundTrip(t *testing.T) {
 	p := principal.Principal{User: "alice", Tool: principal.ToolCLI}
 	ctx := principal.With(context.Background(), p)
-	if got := principal.From(ctx); got != p {
+	if got := principal.From(ctx); !got.Equal(p) {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, p)
 	}
 }

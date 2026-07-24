@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -96,8 +97,37 @@ type Policy struct {
 	MembershipRelation  string                     `yaml:"membership_relation"`
 	Roles               map[string]RoleDef         `yaml:"roles"`
 	Assignments         map[string]string          `yaml:"assignments"`
+	AssertedRoles       map[string]RoleList        `yaml:"asserted_role_assignments"`
 	RoleRelations       map[string]RoleRelationDef `yaml:"role_relations"`
 	InheritRolesThrough []string                   `yaml:"inherit_roles_through"`
+}
+
+// RoleList is a list of role names that accepts either a bare scalar or a
+// sequence in YAML, so the common single-role case stays terse:
+//
+//	asserted_role_assignments:
+//	  admin: editor              # scalar
+//	  auditor: [reader, auditor] # sequence
+//
+// Mirrors metamodel.StringOrSlice; duplicated rather than imported because
+// internal/acl must not depend on internal/metamodel (see the MetamodelView
+// comment below for why that boundary exists).
+type RoleList []string
+
+// UnmarshalYAML accepts a scalar or a sequence. A scalar becomes a one-element
+// list; anything else is decoded as a sequence and surfaces its own error.
+func (r *RoleList) UnmarshalYAML(unmarshal func(any) error) error {
+	var single string
+	if err := unmarshal(&single); err == nil {
+		*r = RoleList{single}
+		return nil
+	}
+	var list []string
+	if err := unmarshal(&list); err != nil {
+		return err
+	}
+	*r = list
+	return nil
 }
 
 // principalPropertyLookupEnabled reports whether the policy asks the
@@ -315,14 +345,15 @@ type RoleRelationDef struct {
 // knownPolicyKeys is the allowlist used for unknown-key warnings.
 // Keep in sync with [Policy]'s yaml tags.
 var knownPolicyKeys = map[string]bool{
-	"description":           true,
-	"user_entity_type":      true,
-	"principal_property":    true,
-	"membership_relation":   true,
-	"roles":                 true,
-	"assignments":           true,
-	"role_relations":        true,
-	"inherit_roles_through": true,
+	"description":               true,
+	"user_entity_type":          true,
+	"principal_property":        true,
+	"membership_relation":       true,
+	"roles":                     true,
+	"assignments":               true,
+	"asserted_role_assignments": true,
+	"role_relations":            true,
+	"inherit_roles_through":     true,
 }
 
 // LoadPolicy reads and parses `acl.yaml` at the given path.
@@ -389,9 +420,74 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 	return &p, nil
 }
 
+// normalizeAssertedRoles trims surrounding whitespace from every
+// asserted_role_assignments key so the stored form matches what the resolver
+// looks up.
+//
+// Without this, a padded key like `" admin": editor` loads clean and is
+// PERMANENTLY INERT: the resolver trims the incoming claim before an exact map
+// lookup, so no claim value can ever match the untrimmed key. That fails safe
+// (the grant silently doesn't happen) but it is precisely the
+// looks-configured-but-does-nothing trap [Policy.Validate]'s blank-key check
+// exists to prevent. [Policy.EffectiveMembershipRelation] trims its value for
+// the identical reason.
+//
+// A key that is entirely blank trims to "" and is then caught by the blank-key
+// check in [Policy.Validate], so it still fails loudly rather than normalizing
+// into something matchable. Two keys that differ only by padding collapse to
+// one entry; their role lists are unioned, so no grant is lost.
+//
+// Two details the merge depends on, both load-bearing:
+//
+//   - Lists are CLONED on store, never aliased. Go map iteration order is
+//     random, so which key is stored first and which merges into it varies per
+//     run; appending into a caller-owned slice with spare capacity would write
+//     past its length into the caller's backing array. Unreachable via
+//     [LoadPolicy] (the YAML unmarshaler hands over fresh slices), but this
+//     method exists precisely because policies also arrive hand-built — and
+//     [Policy.Validate] documents that as supported.
+//   - The merged list is SORTED. Otherwise the same policy text yields a
+//     different in-memory order on every load, which propagates into the
+//     resolver's attribution append order. Downstream reporting sorts anyway,
+//     so nothing observable breaks today; this keeps a future consumer from
+//     inheriting an ordering hazard that nothing in the type documents.
+func (p *Policy) normalizeAssertedRoles() {
+	if len(p.AssertedRoles) == 0 {
+		return
+	}
+	out := make(map[string]RoleList, len(p.AssertedRoles))
+	merged := map[string]bool{}
+	for claim, roles := range p.AssertedRoles {
+		key := strings.TrimSpace(claim)
+		existing, dup := out[key]
+		if !dup {
+			out[key] = slices.Clone(roles)
+			continue
+		}
+		for _, r := range roles {
+			if !slices.Contains(existing, r) {
+				existing = append(existing, r)
+			}
+		}
+		out[key] = existing
+		merged[key] = true
+	}
+	// Sort only the merged lists: an unmerged list keeps the operator's
+	// authored order, which is what they see in `rela acl map` output.
+	for key := range merged {
+		slices.Sort(out[key])
+	}
+	p.AssertedRoles = out
+}
+
 // Validate enforces security-critical invariants on the parsed
 // policy. Run automatically by [LoadPolicy] / [LoadPolicyBytes].
 // Operators can also call it before persisting a generated policy.
+//
+// It also normalizes asserted_role_assignments keys in place (see
+// [Policy.normalizeAssertedRoles]) — the one mutation it performs, placed here
+// so it cannot be bypassed by a policy that reaches the resolver through a
+// path other than LoadPolicy.
 //
 // Current checks (RR-NIGK, RR-W2J6):
 //
@@ -436,6 +532,7 @@ func LoadPolicyBytes(data []byte) (*Policy, error) {
 // TKT-TS0J5K — which can rank findings by severity and cross-check the
 // metamodel, neither of which fits a boot gate.
 func (p *Policy) Validate() error {
+	p.normalizeAssertedRoles()
 	for i, t := range p.InheritRolesThrough {
 		if isBlank(t) {
 			return fmt.Errorf("inherit_roles_through[%d]: relation type must not be empty or whitespace", i)
@@ -444,6 +541,31 @@ func (p *Policy) Validate() error {
 	for k := range p.RoleRelations {
 		if isBlank(k) {
 			return errors.New("role_relations: relation type key must not be empty or whitespace")
+		}
+	}
+	for claim, roles := range p.AssertedRoles {
+		// A blank claim key can never match a real claim value, so the mapping
+		// is silently inert — the failure mode an operator is least likely to
+		// notice.
+		//
+		// normalizeAssertedRoles has already run, so a key that TrimSpace
+		// considers blank arrives here as "". isBlank uses a narrower
+		// definition (ASCII space/tab/CR/LF) than TrimSpace (all Unicode
+		// space), and the difference is safe in this direction only: anything
+		// TrimSpace strips is already gone, so isBlank sees "" and rejects it.
+		// Widening isBlank would not break this; narrowing TrimSpace would.
+		if isBlank(claim) {
+			return errors.New("asserted_role_assignments: claim key must not be empty or whitespace")
+		}
+		// EveryoneRole already enters every principal's set as
+		// Source{Kind: SourceGlobal}. Granting it again from a claim would add a
+		// SECOND attribution for the same role under a different Source,
+		// double-reporting it in `rela acl map` and in denial diagnostics — and
+		// buying nothing, since everyone already has it.
+		if slices.Contains(roles, EveryoneRole) {
+			return fmt.Errorf(
+				"asserted_role_assignments.%s: cannot grant the %q role — "+
+					"it already applies to every principal", claim, EveryoneRole)
 		}
 	}
 	for name, role := range p.Roles {

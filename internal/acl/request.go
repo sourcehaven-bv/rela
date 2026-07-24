@@ -148,7 +148,10 @@ func (r *Request) PermitsReadMany(ctx context.Context, entityType string, ids []
 // Principal returns the principal bound at construction. Helper for
 // audit attribution; callers that already have the principal in their
 // own ctx don't need this.
-func (r *Request) Principal() principal.Principal { return r.principal }
+//
+// Cloned so a caller cannot reach the roles backing array this Request is
+// still authorizing against.
+func (r *Request) Principal() principal.Principal { return r.principal.Clone() }
 
 // ctxKey is the unexported type for context.WithValue. Required by
 // the std-lib contract that context keys are not bare strings.

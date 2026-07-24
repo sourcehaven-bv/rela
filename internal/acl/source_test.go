@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,11 +25,62 @@ func TestSourceKindString_AllKindsRender(t *testing.T) {
 		{SourceLocalViaGroup, "local-via-group"},
 		{SourceLocalViaAncestor, "local-via-ancestor"},
 		{SourceLocalViaGroupAndAncestor, "local-via-group-and-ancestor"},
+		{SourceAsserted, "asserted"},
 	}
 	for _, c := range cases {
 		got := c.kind.String()
 		if got != c.want {
 			t.Errorf("SourceKind(%d).String() = %q, want %q", c.kind, got, c.want)
+		}
+	}
+	if len(cases) != len(allSourceKinds) {
+		t.Errorf("table covers %d kinds but %d are declared — add the new kind here",
+			len(cases), len(allSourceKinds))
+	}
+}
+
+// allSourceKinds is the single list every enum test iterates. Adding a kind to
+// the const block without adding it here fails TestSourceKinds_Exhaustive
+// below, which is the guard that makes the omission LOUD: without it, a new
+// kind silently renders "unknown" at priority 999 and every hand-maintained
+// table in this file keeps passing.
+var allSourceKinds = []SourceKind{
+	SourceGlobal,
+	SourceAsserted,
+	SourceGroup,
+	SourceLocal,
+	SourceLocalViaGroup,
+	SourceLocalViaAncestor,
+	SourceLocalViaGroupAndAncestor,
+}
+
+func TestSourceKinds_Exhaustive(t *testing.T) {
+	t.Parallel()
+	// numSourceKinds comes from the const block itself, so this walks every
+	// declared kind whether or not anyone remembered to list it in
+	// allSourceKinds. That is the whole point: the compiler checks none of
+	// this (every switch over SourceKind has a default), so a kind added to
+	// the const block and forgotten everywhere else would otherwise render
+	// "unknown" at priority 999 with every hand-maintained table still green.
+	if len(allSourceKinds) != int(numSourceKinds) {
+		t.Fatalf("allSourceKinds has %d entries but %d kinds are declared — "+
+			"add the new kind to allSourceKinds", len(allSourceKinds), numSourceKinds)
+	}
+	for i := range int(numSourceKinds) {
+		k := SourceKind(i)
+		if k.String() == "unknown" {
+			t.Errorf("SourceKind(%d) has no SourceKind.String() case", k)
+		}
+		if k.priority() == sourceKindUnknownPriority {
+			t.Errorf("SourceKind(%d) (%s) is missing from sourceKindPriority", k, k)
+		}
+		if !slices.Contains(allSourceKinds, k) {
+			t.Errorf("SourceKind(%d) (%s) is missing from allSourceKinds", k, k)
+		}
+		// Source.String() must special-case the kind too; falling through to
+		// SourceKind.String() means the kind's payload fields never render.
+		if got := (Source{Kind: k}).String(); got == "" {
+			t.Errorf("SourceKind(%d) (%s) renders empty via Source.String()", k, k)
 		}
 	}
 }
@@ -46,13 +98,11 @@ func TestSourceKindString_UnknownKind(t *testing.T) {
 
 func TestSourceKindPriority_DeclaredKinds(t *testing.T) {
 	t.Parallel()
-	// Each declared kind has a priority distinct from every other,
-	// matching the documented sort order (Global < Group < Local <
-	// LocalViaGroup < LocalViaAncestor < LocalViaGroupAndAncestor).
-	declared := []SourceKind{
-		SourceGlobal, SourceGroup, SourceLocal,
-		SourceLocalViaGroup, SourceLocalViaAncestor, SourceLocalViaGroupAndAncestor,
-	}
+	// Each declared kind has a priority distinct from every other, matching the
+	// documented sort order (Global < Asserted < Group < Local < LocalViaGroup
+	// < LocalViaAncestor < LocalViaGroupAndAncestor). allSourceKinds is written
+	// in that order, so this also pins the order itself.
+	declared := allSourceKinds
 	seen := map[int]SourceKind{}
 	for _, k := range declared {
 		p := k.priority()
@@ -111,6 +161,7 @@ func TestSourceString_PerKind(t *testing.T) {
 			},
 			"local-via-group-and-ancestor:engineering:F-eng:editor-of",
 		},
+		{"asserted", Source{Kind: SourceAsserted, Claim: "admin"}, "asserted:admin"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -120,6 +171,38 @@ func TestSourceString_PerKind(t *testing.T) {
 				t.Errorf("Source.String() = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestPrimarySource_AssertedClaimTiebreak(t *testing.T) {
+	t.Parallel()
+	// Two asserted attributions differing ONLY by claim must order
+	// deterministically. Without Claim in the lessSource chain they compare
+	// equal, and PrimarySource — plus every aclmap artifact downstream —
+	// becomes input-order dependent, which surfaces as a flaky golden test
+	// rather than an obvious bug.
+	a := Source{Kind: SourceAsserted, Claim: "admin"}
+	b := Source{Kind: SourceAsserted, Claim: "billing"}
+
+	if got := PrimarySource([]Source{a, b}); got != a {
+		t.Errorf("PrimarySource([a b]) = %+v, want %+v", got, a)
+	}
+	if got := PrimarySource([]Source{b, a}); got != a {
+		t.Errorf("PrimarySource([b a]) = %+v, want %+v — order-dependent result "+
+			"means Claim is missing from the lessSource tiebreak", got, a)
+	}
+}
+
+func TestPrimarySource_PolicyAssignmentBeatsAssertedClaim(t *testing.T) {
+	t.Parallel()
+	// A global policy assignment is the more specific statement about THIS
+	// deployment than a claim minted by the IdP, so it wins as primary when
+	// both grant the same role.
+	global := Source{Kind: SourceGlobal}
+	asserted := Source{Kind: SourceAsserted, Claim: "admin"}
+
+	if got := PrimarySource([]Source{asserted, global}); got != global {
+		t.Errorf("PrimarySource = %+v, want %+v (global outranks asserted)", got, global)
 	}
 }
 

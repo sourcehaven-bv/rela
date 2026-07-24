@@ -31,7 +31,7 @@ func TestPrincipalAndTriggeredBy_Orthogonal(t *testing.T) {
 	ctx := principal.With(context.Background(), original)
 	cascade := audit.WithTriggeredBy(ctx, "automation:on-create")
 
-	if got := principal.From(cascade); got != original {
+	if got := principal.From(cascade); !got.Equal(original) {
 		t.Errorf("Principal was overwritten by triggered-by wrap: got %+v, want %+v", got, original)
 	}
 	if got := audit.TriggeredByFrom(cascade); got != "automation:on-create" {
