@@ -84,8 +84,13 @@ type Reader interface {
 	// Get returns the entity when the ctx principal may read it AND its
 	// stored type matches entityType. Denied, missing, and type-mismatched
 	// are indistinguishable: (nil, false, nil). Only a gate failure is an
-	// error. The returned entity is redacted (hidden properties absent)
-	// and safe to hand to any render/serialize path.
+	// error — a store-load fault is deliberately swallowed into the same
+	// clean miss (the oracle-free contract requires it), so a backend
+	// outage reads as 404s; operators debugging phantom misses should
+	// check store health, not the gate. The returned entity's PROPERTIES
+	// are redacted (hidden names absent). Body redaction is out of scope:
+	// the `visible:` policy universe is metamodel-declared properties, so
+	// Content is not policy-hideable today and passes through verbatim.
 	Get(ctx context.Context, entityType, id string) (*entity.Entity, bool, error)
 
 	// Filter drops candidates the ctx principal may not read and redacts

@@ -69,13 +69,16 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 	}
 	byType := make(map[string][]string)
 	for _, c := range candidates {
+		if c == nil {
+			continue // fail-closed: a nil candidate must not panic the filter
+		}
 		byType[c.Type] = append(byType[c.Type], c.ID)
 	}
 	allowed := r.permittedIDs(ctx, byType)
 
 	out := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if allowed[c.ID] {
+		if c != nil && allowed[c.ID] {
 			out = append(out, r.redacted(ctx, c))
 		}
 	}
@@ -93,6 +96,9 @@ func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relat
 	byType := make(map[string][]string)
 	seen := make(map[string]bool)
 	for _, rel := range rels {
+		if rel == nil {
+			continue // fail-closed: a nil relation must not panic the filter
+		}
 		for _, id := range [2]string{rel.From, rel.To} {
 			if seen[id] {
 				continue
@@ -109,7 +115,7 @@ func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relat
 
 	out := make([]*entity.Relation, 0, len(rels))
 	for _, rel := range rels {
-		if allowed[rel.From] && allowed[rel.To] {
+		if rel != nil && allowed[rel.From] && allowed[rel.To] {
 			out = append(out, rel)
 		}
 	}
@@ -152,6 +158,14 @@ func (r *PolicyReader) permittedIDs(ctx context.Context, byType map[string][]str
 // entity.Entity carries no secondary title channel — DisplayTitle
 // derivations recompute from Properties and fall back to the ID once a
 // hidden display property is stripped.
+//
+// TODO(body-redaction): Content and Inaccessible pass through verbatim.
+// Today that is correct — the `visible:` policy universe is
+// metamodel-declared properties, so a body can't be policy-hidden — but
+// if body-level redaction ever becomes policy-expressible
+// (entity.InaccessibleFieldContent exists as the reserved marker), this
+// is the spot that must learn about it, or the seam silently leaks
+// bodies (RR-J6022V).
 func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.Entity {
 	hidden := r.redact.HiddenProperties(ctx, e)
 	if len(hidden) == 0 {

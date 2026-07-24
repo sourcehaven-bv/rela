@@ -489,13 +489,14 @@ deps:
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
   # the ungated pure readers. tracer is needed for the decorator's
   # interface/result types; no cycle (tracer depends only on store).
+  # Deliberately NO store: the package takes store.Store structurally
+  # through its one-method EntityGetter (RR-RT5YV8).
   visibility:
     mayDependOn:
       - acl
       - affordances
       - entity
       - principal
-      - store
       - tracer
   audit:
     mayDependOn:

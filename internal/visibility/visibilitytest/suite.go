@@ -224,6 +224,8 @@ func RunReaderTests(t *testing.T, mk ReaderMaker) {
 	t.Run("FilterMixedVisibility", func(t *testing.T) { testFilterMixed(t, mk) })
 	t.Run("FilterGateErrorDropsTypeFailClosed", func(t *testing.T) { testFilterGateError(t, mk) })
 	t.Run("FilterRelationsBothEndpointsRule", func(t *testing.T) { testFilterRelations(t, mk) })
+	t.Run("NilElementsDroppedNotPanicked", func(t *testing.T) { testNilElementsDropped(t, mk) })
+	t.Run("BindScopesOperation", func(t *testing.T) { testBindScopesOperation(t, mk) })
 	t.Run("UnstampedPrincipalFailsClosed", func(t *testing.T) { testUnstampedPrincipal(t, mk) })
 	t.Run("HideEverythingRedactor", func(t *testing.T) { testHideEverythingRedactor(t, mk) })
 	t.Run("NopPolicyParity", func(t *testing.T) { testReaderNopParity(t, mk) })
@@ -376,6 +378,53 @@ func testFilterRelations(t *testing.T, mk ReaderMaker) {
 	}
 	if got := r.FilterRelations(ctxFor("bob"), nil); got != nil {
 		t.Fatalf("FilterRelations(nil) = %v, want nil", got)
+	}
+}
+
+func testNilElementsDropped(t *testing.T, mk ReaderMaker) {
+	t.Helper()
+	w := newWorld(t)
+	r := mk(t, w.gate, w.redact, w.store)
+	ctx := ctxFor("bob")
+
+	// A nil element is a caller bug, but a fail-closed filter must drop
+	// it, never panic (a recover() upstream could skip filtering).
+	out := r.Filter(ctx, []*entity.Entity{nil, mustGet(t, w.store, "PRJ-1"), nil})
+	if len(out) != 1 || out[0].ID != "PRJ-1" {
+		t.Fatalf("Filter with nil elements = %v, want [PRJ-1]", out)
+	}
+	rels := r.FilterRelations(ctx, []*entity.Relation{nil, {From: "PRJ-1", Type: "relates", To: "P-1"}})
+	if len(rels) != 1 || rels[0].To != "P-1" {
+		t.Fatalf("FilterRelations with nil element = %v, want the PRJ-1→P-1 edge", rels)
+	}
+}
+
+func testBindScopesOperation(t *testing.T, mk ReaderMaker) {
+	t.Helper()
+	w := newWorld(t)
+	r := mk(t, w.gate, w.redact, w.store)
+
+	// Bind opens one acl.Request for the operation; reads through the
+	// bound ctx behave identically to unbound ones.
+	bound, err := w.gate.Bind(ctxFor("bob"))
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	e, ok, err := r.Get(bound, "person", "P-1")
+	if err != nil || !ok {
+		t.Fatalf("Get through bound ctx = (ok=%v, err=%v)", ok, err)
+	}
+	if _, leaked := e.Properties["salary"]; leaked {
+		t.Fatalf("bound-ctx read lost redaction: %v", e.Properties)
+	}
+	// Re-binding an already-bound ctx keeps the existing scope.
+	again, err := w.gate.Bind(bound)
+	if err != nil || again != bound {
+		t.Fatalf("Bind(bound) = (%v, %v), want the same ctx back", again, err)
+	}
+	// An unstamped principal cannot bind — deny, never open.
+	if _, err := w.gate.Bind(context.Background()); err == nil {
+		t.Fatal("Bind(unstamped) succeeded, want error")
 	}
 }
 

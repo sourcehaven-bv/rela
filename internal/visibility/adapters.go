@@ -16,8 +16,33 @@ import (
 // fresh one is opened for the ctx principal. An unstamped principal makes
 // ForPrincipal fail, which surfaces as a gate error → callers fail
 // closed (deny), never open.
+//
+// WIRING REQUIREMENT (RR-MXKD2O): open ONE Request per logical operation
+// and attach it with [Bind] (or acl.WithRequest) before calling into the
+// wrappers. Without it, every gate probe AND every field-verdict
+// resolution opens its own Request — the Globals member-of walk re-runs
+// per collaborator (the cost RR-JJYW amortizes away), and the row-gate
+// and redactor may evaluate against different ACL snapshots if a write
+// lands mid-operation. Fail-closed still holds per decision either way;
+// binding makes the operation a single consistent, amortized scope.
 type DeclarativeGate struct {
 	d *acl.Declarative
+}
+
+// Bind opens one acl.Request for the ctx principal and attaches it to
+// the returned ctx, making every downstream gate probe and field-verdict
+// resolution reuse the same per-operation scope. Call it once at the top
+// of each logical operation (request handler, script run, job tick).
+// Fails for an unstamped principal — callers deny, never fall open.
+func (g DeclarativeGate) Bind(ctx context.Context) (context.Context, error) {
+	if r := acl.FromContext(ctx); r != nil {
+		return ctx, nil // already bound upstream; keep the existing scope
+	}
+	r, err := g.d.ForPrincipal(principal.From(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return acl.WithRequest(ctx, r), nil
 }
 
 // NewDeclarativeGate wraps d (required).
