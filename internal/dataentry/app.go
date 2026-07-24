@@ -156,10 +156,14 @@ type App struct {
 	// Extracted from App (TKT-R68TV8); closures over the swappable acl/audit/
 	// field-resolver collaborators, a pointer to writeMu for the write paths.
 	attachments *attachmentHandler
-	templater   templating.Templater
-	cfgLoader   config.Loader
-	kv          state.KV
-	acl         acl.ACL
+
+	// write owns the entity/relation CRUD + clone + conflict-resolve write
+	// nucleus (TKT-R68TV8 M5.4); shares writeMu by pointer.
+	write     *writeHandler
+	templater templating.Templater
+	cfgLoader config.Loader
+	kv        state.KV
+	acl       acl.ACL
 
 	// attachmentRunner drives external scan/transform commands for uploads.
 	// nil out-of-box → uploads get native MIME validation only (Phase 2 wires
@@ -636,6 +640,29 @@ func NewApp(
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
+	}
+
+	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
+	// nucleus. Same collaborator rationale as attachmentHandler above: fixed
+	// services by value, test-swappable deps as closures over App, and the
+	// shared read/write helpers (gateRead/denyAfford/computeETag) as closures
+	// so both paths stay behaviorally identical. writeMu is shared by pointer
+	// so these writes serialize with every other mutation handler.
+	app.write = &writeHandler{
+		schema:             app.State,
+		store:              st,
+		manager:            app.entityManager,
+		reader:             app.reader,
+		serializer:         app.serializer,
+		affordances:        app.affordances,
+		acl:                func() acl.ACL { return app.acl },
+		audit:              func() audit.Audit { return app.auditSink },
+		gateRead:           app.gateReadOrNotFound,
+		denyAfford:         app.denyAffordance,
+		computeETag:        app.computeEntityETag,
+		currentEdgesByPeer: app.currentEdgesByPeer,
+		paths:              paths,
+		writeMu:            &app.writeMu,
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the

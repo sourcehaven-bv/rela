@@ -49,7 +49,7 @@ func patchRecipe(t *testing.T, app *App, body string) *httptest.ResponseRecorder
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/recipes/REC-001", bytes.NewReader([]byte(body)))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "recipe", "recipes", "REC-001")
+	app.write.handleV1UpdateEntity(rec, req, "recipe", "recipes", "REC-001")
 	return rec
 }
 

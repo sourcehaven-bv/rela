@@ -3083,7 +3083,7 @@ func TestV1DeleteEntityNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tickets/NONEXISTENT", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1DeleteEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
+	app.write.handleV1DeleteEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -3100,7 +3100,7 @@ func TestV1UpdateEntityNotFound(t *testing.T) {
 	body := strings.NewReader(`{"properties":{"title":"Updated"}}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/NONEXISTENT", body)
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "NONEXISTENT")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
 	}
@@ -3121,7 +3121,7 @@ func TestV1UpdateEntityInvalidJSON(t *testing.T) {
 	body := strings.NewReader(`{invalid json`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001", body)
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", rec.Code)
 	}
@@ -3168,7 +3168,7 @@ func TestV1CreateEntity_SavesRelations(t *testing.T) {
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1CreateEntity(rec, req, "ticket", "tickets")
+	app.write.handleV1CreateEntity(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3223,7 +3223,7 @@ func TestV1UpdateEntity_SavesRelations(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001", strings.NewReader(body))
 		rec := httptest.NewRecorder()
-		app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+		app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 		}
@@ -3289,7 +3289,7 @@ func TestV1UpdateEntity_Relations_ScopedToTypesInPayload(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3326,7 +3326,7 @@ func TestV1UpdateEntity_Relations_MultiType(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]},"blocks":{"data":[{"type":"ticket","id":"TKT-002"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3353,7 +3353,7 @@ func TestV1UpdateEntity_Relations_UnknownType(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"bogus":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3382,7 +3382,7 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-999"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 (dangling peer), got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3413,7 +3413,7 @@ func TestV1UpdateEntity_Relations_SourceTypeMismatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-002"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-001")
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (soft condition), got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3442,7 +3442,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"implements":{"data":[{"type":"feature","id":"FEAT-001"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -3819,7 +3819,7 @@ func postCreate(t *testing.T, app *App, plural, body string) *httptest.ResponseR
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	typeName := strings.TrimSuffix(plural, "s")
-	app.handleV1CreateEntity(rec, req, typeName, plural)
+	app.write.handleV1CreateEntity(rec, req, typeName, plural)
 	return rec
 }
 
@@ -4479,7 +4479,7 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"properties":{"status":"in-progress"}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
@@ -4697,7 +4697,7 @@ func TestV1Affordance_AffordanceDenial_EmitsAudit(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"properties":{"status":"closed"}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("PATCH: got %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -4793,7 +4793,7 @@ func createTicketRaw(t *testing.T, app *App, body string) (code int, respBody st
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1CreateEntity(rec, req, "ticket", "tickets")
+	app.write.handleV1CreateEntity(rec, req, "ticket", "tickets")
 	return rec.Code, rec.Body.String()
 }
 

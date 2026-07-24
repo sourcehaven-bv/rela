@@ -31,7 +31,7 @@ func patchTicketJSON(t *testing.T, app *App, body string) (int, updateResponse) 
 	const entityID = "TKT-001"
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+entityID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", entityID)
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", entityID)
 	var resp updateResponse
 	if rec.Body.Len() > 0 {
 		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
@@ -47,7 +47,7 @@ func patchTicketRaw(t *testing.T, app *App, body string) (code int, respBody str
 	const entityID = "TKT-001"
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+entityID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", entityID)
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", entityID)
 	return rec.Code, rec.Body.String()
 }
 

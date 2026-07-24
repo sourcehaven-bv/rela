@@ -49,7 +49,7 @@ func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBod
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", id)
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", id)
 	return rec.Code, rec.Body.String()
 }
 
