@@ -155,12 +155,11 @@ recorded editor (pre-existing rows from before the columns existed, or writes
 that carried no principal) fall back to the `version-sweep` system principal
 rather than guessing; they self-heal on their next attributed edit. A rename
 only re-keys incident relations, so those keep their last *content* editor. One
-v1 limit: if two different people edit the same entity within one debounce
-window, the single collapsed version is attributed to the last of them
-(TKT-0IGI4V tracks segmenting versions at author boundaries). This all inherits
-the same trust model as the [audit log](audit-log.md) — attribution is only as
-strong as your deployment's identity front door, so use a verifying (JWT)
-principal source where version attribution matters for accountability.
+limit today: if two different people edit the same entity within one debounce
+window, the single collapsed version is attributed to the last of them. This all
+inherits the same trust model as the [audit log](audit-log.md) — attribution is
+only as strong as your deployment's identity front door, so use a verifying
+(JWT) principal source where version attribution matters for accountability.
 
 Storage: two tables — `entity_versions` (one full snapshot per version, keyed by
 a versioning-internal record id so history survives id rename/reuse) and

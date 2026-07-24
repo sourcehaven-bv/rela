@@ -5,7 +5,7 @@ title: 'Author-aware version capture: last_edited_by column + flush-on-author-ch
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 Follow-up to TKT-9INY0Y (pgstore content versioning). User idea, 2026-07-08.

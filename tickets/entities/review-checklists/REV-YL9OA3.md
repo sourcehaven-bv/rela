@@ -2,50 +2,66 @@
 id: REV-YL9OA3
 type: review-checklist
 title: 'Review: Author-aware version capture: last_edited_by column + flush-on-author-change (precise per-version attribution)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test` — default build; plus DB-gated `just test-postgres` equivalent against local PostgreSQL, full pgstore suite green with -race)
+- [x] Lint clean (`just lint` — 0 issues)
+- [x] Coverage maintained (`just coverage-check` — PASS, 76.0% total)
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:**
+
+Design review (pre-implementation): RR-U964M0, RR-2VWA0Q (critical — addressed
+in plan+code), RR-K781MZ (addressed — scope split to TKT-0IGI4V), RR-VG4BPJ,
+RR-4OJAC1, RR-MMDQ3N, RR-MZ4PPG, RR-MORL7M, RR-12HJ4K (deferred → pinned as
+requirements in TKT-0IGI4V), RR-U1RGSE (addressed).
+
+Code review (cranky-code-reviewer): zero critical/significant/minor findings.
+One nit RR-5JIN8U (doc wording overstated the literal-'unknown' prohibition) —
+addressed: migration comment + store.Attribution godoc reworded. Reviewer
+verified SQL parameter ordering (8-col entity / 10-col relation candidate
+scans), all six boundary entry points plus cascade/renumber/restore/Tx
+inheritance, migration lock safety, and test isolation.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+- AC1 swept update attribution: PASS (`TestSweepAttributesRealEditor`)
+- AC2 swept create attribution: PASS (same test, op=create asserted)
+- AC3 same-author debounce preserved: PASS (`TestSweepAttributesLastEditorOfBurst` — one version)
+- AC4 fallback, no "unknown" literals: PASS (`TestAttributionColumnsStamped` NULL assertions + WHO-2 fallback + `TestWithStoreAttribution` unit cases)
+- AC5 relation attribution: PASS (relation leg of `TestSweepAttributesRealEditor`)
+- AC6 rename re-key neutrality: PASS (SQL inspection — re-key statements never touch the columns)
+- AC7 no regressions: PASS (full DB-gated pgstore suite + default-build store/entitymanager suites green with -race; arch-lint, plimsoll, build-check-tags clean)
 
 ## Documentation (enhancements only)
 
-Skip this section for bugs and internal refactors.
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
-
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-LUGRRB
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what (a8bfe151)
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
@@ -53,4 +69,4 @@ Skip this section for bugs and internal refactors.
 - [ ] All CI checks pass
 - [ ] PR URL documented below
 
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+**PR:** (in flight — filled in once opened)
