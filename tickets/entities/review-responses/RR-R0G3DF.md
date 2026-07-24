@@ -1,0 +1,10 @@
+---
+id: RR-R0G3DF
+type: review-response
+title: Make ungated wiring explicit and greppable (visibility.Unrestricted)
+finding: 'Root cause of the wiring-untested and fail-open findings: lua.EntityReader is satisfied STRUCTURALLY by store.Store, so the gate is optional and a reviewer cannot tell a gated wiring from an ungated one by reading the struct literal — only by reading the RHS expression. Suggest a named capability wrapper mirroring visibility.AllowAllReader: `func Unrestricted(st store.Store) lua.EntityReader`. CLI/docs/validator pass visibility.Unrestricted(st); the appbuild/dataentry fallbacks return it too. The type system still allows both, but auditing every ungated read path becomes one grep instead of six branch reads, and each fallback is forced to NAME what it does — the same trick already used for WritePrepStore, one level up.'
+severity: minor
+resolution: Deferred to TKT-1WV50C. The suggestion is right — a named visibility.Unrestricted(st) wrapper would make every ungated read path a one-line grep instead of six branch reads, and force each fallback to NAME what it does. But it is a cross-cutting rename touching all wiring sites plus their new tests, and the concrete risk it mitigates (unnoticed ungated wiring) is now covered by the black-box wiring tests added for RR-QS4WQV, which fail if any site reverts to the raw store. Doing it as its own change keeps this already-large security PR reviewable rather than mixing an ergonomic refactor into it.
+reason: 'Deferred to TKT-1WV50C (backlog, effort s). WHEN: as its own change, any time after this PR merges — nothing depends on it. WHY: it is a cross-cutting rename touching every Lua wiring site plus the wiring tests just added, and mixing an ergonomic refactor into an already-large security PR would obscure the security diff under mechanical churn. The concrete risk it mitigates — an ungated wiring going unnoticed — is now covered by the black-box wiring tests added for RR-QS4WQV, which fail if any site reverts to the raw store. So this buys legibility (one grep instead of six branch reads), not safety, and can wait.'
+status: deferred
+---
