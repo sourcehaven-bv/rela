@@ -59,7 +59,7 @@ fails when it is removed.
 
 ## Documentation (enhancements only)
 
-- [x] Docs-checklist created and linked via `has-docs`
+- [x] Docs-checklist created and linked via `has-docs` (DOCS-Z5S2DL)
 - [x] User-facing documentation updated
 - [x] Docs-checklist marked as done
 
@@ -71,8 +71,8 @@ fails when it is removed.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — monitored on push; any failure fixed on the branch before merge
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1197
