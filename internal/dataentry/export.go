@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -52,14 +53,11 @@ type exportHandler struct {
 // newExportHandler builds the export handler with closures over the App
 // collaborators it needs. Called from both NewApp and the test app builder so
 // the wiring lives in one place.
-func newExportHandler(app *App) *exportHandler {
+func newExportHandler(app *App) (*exportHandler, error) {
 	redactor := affRedactor{aff: func() affordanceService { return app.affordances }}
-	// Constructor error is impossible here: all three collaborators are
-	// non-nil by construction (ctxRowGate/affRedactor are values, store is
-	// validated by NewApp). Guarded anyway per constructors-reject-nil.
 	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store)
 	if err != nil {
-		panic("dataentry: newExportHandler: " + err.Error())
+		return nil, fmt.Errorf("dataentry: newExportHandler: %w", err)
 	}
 	return &exportHandler{
 		meta:           app.Meta,
@@ -75,7 +73,7 @@ func newExportHandler(app *App) *exportHandler {
 			return app.findListByEntityType(s, s.Cfg.Navigation, entityType)
 		},
 		engine: transform.NewEngine(),
-	}
+	}, nil
 }
 
 // transformInfo is the wire shape for GET /api/v1/_transforms: the export
@@ -151,11 +149,12 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// A ?document=<name> override renders via a configured document (Lua/command)
-	// instead of the built-in entity renderer. It routes through the SAME gated
-	// document path handleV1Documents uses (gate on the doc's entity_type +
-	// type-match) so it can never become an unauthorized Lua-on-read surface
-	// (RR-8C23IL). Absent → built-in renderer.
+	// A per-type `export_render:` view config (RR-BM0KIJ: config-selected,
+	// never request-selected — no query param chooses the script) renders via
+	// the operator's Lua document instead of the built-in entity renderer. It
+	// routes through the SAME document machinery handleV1Documents uses, so it
+	// can never become an unauthorized Lua-on-read surface (RR-8C23IL).
+	// No override configured → built-in renderer.
 	renderer, ok := h.exportRenderer(w, r, typeName, entityID, entity)
 	if !ok {
 		return // exportRenderer already wrote the error/404

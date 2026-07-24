@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -170,8 +171,15 @@ func (s *documentService) Render(
 
 	// Singleflight key must include ConfigID: if two documents (different
 	// configs) target the same entry, they are distinct renders and must
-	// not collapse onto one another's HTML (RR-4QSBN).
-	sfKey := entryID + "|" + cfg.ConfigID
+	// not collapse onto one another's HTML (RR-4QSBN). It must ALSO include
+	// the principal (RR-2QSGLU): renders run under the caller's identity
+	// since TKT-L9Q669 (rela.principal, ctx cancellation), so collapsing two
+	// principals' renders would hand one caller output produced under the
+	// other's identity — and once script reads are principal-scoped
+	// (TKT-ZF2DTV) it would be a cross-principal data leak, not just an
+	// attribution bug.
+	p := principal.From(ctx)
+	sfKey := entryID + "|" + cfg.ConfigID + "|" + p.User + "|" + p.Tool
 	result, err, _ := s.group.Do(sfKey, func() (any, error) {
 		return s.doRender(ctx, entryID, cfg, entities, contentHash, cacheFile)
 	})

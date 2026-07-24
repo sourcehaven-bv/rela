@@ -640,7 +640,11 @@ func NewApp(
 	// export). Extracted from App to keep App under its method cap. Probe the
 	// transforms at startup so a missing converter (e.g. pandoc not installed)
 	// surfaces as a boot warning rather than a 500 on the first export.
-	app.export = newExportHandler(app)
+	export, exportErr := newExportHandler(app)
+	if exportErr != nil {
+		return nil, exportErr
+	}
+	app.export = export
 	app.export.probeTransforms()
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
