@@ -54,6 +54,36 @@ func fileMetaCmd(globalCmd, propCmd []string, propScan ScanPolicy, hasFileProp b
 	return m
 }
 
+func TestScanSockets(t *testing.T) {
+	// Unset: no attachments block, then a block without scan_sockets.
+	if got := NewAttachmentPolicy(&Metamodel{}).ScanSockets(); got != nil {
+		t.Errorf("no attachments block: got %v, want nil", got)
+	}
+	m := &Metamodel{}
+	if err := yaml.Unmarshal([]byte(`attachments:
+  scan_cmd: [clamdscan, "{in}"]
+`), m); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewAttachmentPolicy(m).ScanSockets(); got != nil {
+		t.Errorf("scan_sockets omitted: got %v, want nil", got)
+	}
+
+	// Set: parses into ScanSockets.
+	m2 := &Metamodel{}
+	if err := yaml.Unmarshal([]byte(`attachments:
+  scan_cmd: [clamdscan, "{in}"]
+  scan_sockets: [/opt/clamav/run/clamd.sock, /srv/clamd.sock]
+`), m2); err != nil {
+		t.Fatal(err)
+	}
+	got := NewAttachmentPolicy(m2).ScanSockets()
+	want := []string{"/opt/clamav/run/clamd.sock", "/srv/clamd.sock"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 func TestScanCommandFor(t *testing.T) {
 	global := []string{"clamdscan", "{in}"}
 	propLevel := []string{"myscan", "{in}"}

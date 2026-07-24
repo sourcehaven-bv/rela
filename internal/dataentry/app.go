@@ -158,6 +158,9 @@ type App struct {
 	// Extracted from App (TKT-R68TV8); closures over the swappable acl/audit/
 	// field-resolver collaborators, a pointer to writeMu for the write paths.
 	attachments *attachmentHandler
+	// export owns the view-export routes (transform list, entity/list export).
+	// Extracted from App (TKT-JF5JI8) to keep App under its plimsoll method cap.
+	export *exportHandler
 
 	// write owns the entity/relation CRUD + clone + conflict-resolve write
 	// nucleus (TKT-R68TV8 M5.4); shares writeMu by pointer.
@@ -617,12 +620,32 @@ func NewApp(
 	// always available; the PolicyProcessor only invokes it when a property's
 	// scan/transform config references a command. A nil runner (constructor
 	// failure) leaves uploads with native MIME validation only.
-	if runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes); rerr == nil {
+	var runnerOpts []attachment.CmdRunnerOption
+	if socks := metamodel.NewAttachmentPolicy(meta).ScanSockets(); len(socks) > 0 {
+		runnerOpts = append(runnerOpts, attachment.WithScannerSockets(socks...))
+	}
+	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes, runnerOpts...)
+	if rerr == nil {
 		app.attachmentRunner = runner
+		// Tell the operator the confinement posture at boot, so an unsandboxable
+		// host is discovered now rather than on the first upload that needs a
+		// scan/transform (which will fail closed).
+		slog.Info("external command confinement", "detail", runner.Describe())
 		probeAttachmentCommands(meta, runner)
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}
+
+	// exportHandler owns the view-export routes (transform list, entity/list
+	// export). Extracted from App to keep App under its method cap. Probe the
+	// transforms at startup so a missing converter (e.g. pandoc not installed)
+	// surfaces as a boot warning rather than a 500 on the first export.
+	export, exportErr := newExportHandler(app)
+	if exportErr != nil {
+		return nil, exportErr
+	}
+	app.export = export
+	app.export.probeTransforms()
 
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/

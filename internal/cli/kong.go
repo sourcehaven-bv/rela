@@ -22,6 +22,7 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -82,6 +83,7 @@ type CLI struct {
 	Trace     TraceCmd     `cmd:"" help:"Trace dependencies between entities."`
 	Graph     GraphCmd     `cmd:"" help:"Export graph to Graphviz DOT format."`
 	Export    ExportCmd    `cmd:"" help:"Export entities in JSON, CSV, or YAML format."`
+	Render    RenderCmd    `cmd:"" help:"Render an entity to a file via a registered transform (e.g. pdf)."`
 	Import    ImportCmd    `cmd:"" help:"Import entities and relations from JSON, YAML, or CSV."`
 	Fmt       FmtCmd       `cmd:"" help:"Format entity and relation files."`
 	Normalize NormalizeCmd `cmd:"" help:"Normalize markdown headers in entity files."`
@@ -140,6 +142,13 @@ func runKong() int {
 	quiet = cli.Quiet
 	outputFormat = cli.Output
 	projectPath = cli.Project
+
+	// Host-level command-confinement opt-out, from the same env var the server
+	// honors. `rela render` shells out to a converter; on a host that cannot
+	// sandbox it fails closed unless this is set. (A local CLI user can already
+	// run anything, so this is convenience more than a security boundary — but
+	// keeping one knob avoids surprising divergence from the server.)
+	cmdexec.SetUnconfinedByDefault(os.Getenv("RELA_UNCONFINED_COMMANDS") == "1")
 
 	configureKongLogging(verbose, quiet)
 	out = output.New(output.Format(outputFormat))
@@ -215,7 +224,7 @@ func configureKongLogging(verbose, quiet bool) {
 // completion, migrate) or do their own discovery (mcp, flow, validate).
 func requiresProject(cmd string) bool {
 	switch firstKongToken(cmd) {
-	case "show", "list", "trace", "graph", "export", "fmt", "schema",
+	case "show", "list", "trace", "graph", "export", "render", "fmt", "schema",
 		"template", "create", "update", "delete", "link", "unlink",
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",

@@ -49,7 +49,7 @@ type fakeScriptCall struct {
 	timeout    time.Duration
 }
 
-func (f *fakeScriptEngine) ExecuteDocument(path string, _ lua.WriteDeps, stdout io.Writer,
+func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, _ lua.WriteDeps, stdout io.Writer,
 	documentID, entryID string, timeout time.Duration) error {
 	call := fakeScriptCall{path: path, documentID: documentID, entryID: entryID, timeout: timeout}
 	f.mu.Lock()

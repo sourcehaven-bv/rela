@@ -195,6 +195,15 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		gateRead:   app.gateReadOrNotFound,
 		writeMu:    &app.writeMu,
 	}
+
+	// Export handler over the app's current services (mirrors NewApp).
+	// Constructor error is impossible with the non-nil test collaborators;
+	// panic keeps the helper's no-error signature honest if that changes.
+	var exportErr error
+	if app.export, exportErr = newExportHandler(app); exportErr != nil {
+		panic(exportErr)
+	}
+
 	// writeHandler mirrors production wiring (see NewApp): closures for the
 	// swappable acl/audit collaborators, values for the fixed service handles,
 	// and App's shared read/write helpers so both paths stay identical.

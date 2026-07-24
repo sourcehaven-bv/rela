@@ -25,9 +25,29 @@ binary; rela drives it safely and records the policy declaratively in your
 metamodel.
 
 > **Running a third-party parser on untrusted input is a real attack surface.**
-> Pin tool versions, keep them patched, and prefer sandboxing (containers,
-> seccomp, a dedicated user). ImageMagick in particular has a history of
-> parser CVEs — see the recipes below for `-limit` hardening.
+> Pin tool versions and keep them patched. ImageMagick in particular has a
+> history of parser CVEs — see the recipes below for `-limit` hardening.
+
+rela **confines** every scan/transform command it runs, rather than leaving
+isolation entirely to you. Each command gets:
+
+- **no network access** (bubblewrap on Linux, `sandbox-exec` on macOS), which
+  removes the server-side request forgery vector — a crafted upload cannot make
+  the server fetch internal services or cloud metadata;
+- a **read-only view of the system**, with only the command's own temp directory
+  writable;
+- **resource ceilings** on memory, processes, file size, and CPU (Linux), so a
+  malicious file cannot exhaust the host;
+- **process-group cleanup**, so a helper spawned by the tool cannot outlive the
+  timeout;
+- a **bounded pool**, so concurrent uploads cannot multiply resource use.
+
+Where no sandbox mechanism is available (Windows, BSD, or a Linux kernel without
+unprivileged user namespaces), commands **refuse to run** rather than run
+unconfined — the same fail-closed stance as a scanner that cannot start. Only
+command execution is blocked; the server still starts. The startup log states
+which mechanism is in use. Deployment-level isolation (a container, a dedicated
+user, a no-egress network policy) remains worthwhile defence in depth.
 
 ## Configuration
 
@@ -151,6 +171,38 @@ runs on another host.
 On Windows, point `scan_cmd` at your AV's CLI scanner (e.g. a Microsoft
 Defender `MpCmdRun.exe -Scan -ScanType 3 -File {in}` invocation that exits
 non-zero on detection).
+
+#### Reaching `clamd` from inside the sandbox
+
+`clamdscan` talks to the daemon over a **unix socket**, but the sandbox gives
+each command its own mount namespace — the socket's path is not visible unless
+rela binds it in. rela already binds the well-known locations read-only:
+
+```text
+/var/run/clamav/clamd.ctl
+/run/clamav/clamd.sock
+/var/run/clamav/clamd.sock
+/tmp/clamd.socket
+```
+
+so a stock ClamAV install (Debian/Ubuntu `clamav-daemon`, Homebrew `clamav`)
+works with no extra configuration. Binding the socket does **not** re-open
+network egress — a unix socket is a filesystem object, and the network namespace
+stays isolated, so `--fdpass`/`LocalSocket` scanning works while an outbound
+fetch still cannot.
+
+If your `clamd.conf` uses a `LocalSocket` outside those paths, bind it explicitly:
+
+```yaml
+attachments:
+  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
+  scan_sockets: [/opt/clamav/run/clamd.sock]   # extra read-only binds
+```
+
+The **`--stream` / TCP** transport needs no socket bind, but it does need
+network egress, which the sandbox denies — prefer the local socket. Scan over
+TCP only when `clamd` runs on another host, and provide egress at the
+deployment layer (the sandbox has no per-command egress opt-in).
 
 ### Strip image metadata (EXIF/GPS) — exiftool
 

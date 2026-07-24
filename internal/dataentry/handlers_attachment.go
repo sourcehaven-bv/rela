@@ -125,16 +125,7 @@ func (h *attachmentHandler) handleV1GetAttachment(
 	}
 	defer rc.Close()
 
-	// Serve user-supplied bytes defensively: force a download rather than
-	// inline rendering (Content-Disposition: attachment), never let the
-	// browser sniff a different (e.g. text/html) type, and sandbox any active
-	// content — so an SVG/HTML payload can't execute as stored XSS in the
-	// app's origin even if it slipped the upload allowlist.
-	hdr := w.Header()
-	hdr.Set("Content-Type", contentTypeForFilename(fileName))
-	hdr.Set("X-Content-Type-Options", "nosniff")
-	hdr.Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	hdr.Set("Content-Disposition", `attachment; filename="`+safeAttachmentFilename(fileName)+`"`)
+	setHardenedDownloadHeaders(w.Header(), contentTypeForFilename(fileName), fileName)
 
 	if _, err := io.Copy(w, rc); err != nil {
 		// Headers (and likely some bytes) are already written; we can't
@@ -483,6 +474,19 @@ func contentTypeForFilename(name string) string {
 		return mt
 	}
 	return "application/octet-stream"
+}
+
+// setHardenedDownloadHeaders is the shared hardening for endpoints that serve
+// user-influenced bytes as a download (attachments, view exports): force a
+// download rather than inline rendering (Content-Disposition: attachment),
+// never let the browser sniff a different (e.g. text/html) type, and sandbox
+// any active content — so an SVG/HTML payload can't execute as stored XSS in
+// the app's origin. The filename is sanitized with [safeAttachmentFilename].
+func setHardenedDownloadHeaders(hdr http.Header, contentType, filename string) {
+	hdr.Set("Content-Type", contentType)
+	hdr.Set("X-Content-Type-Options", "nosniff")
+	hdr.Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	hdr.Set("Content-Disposition", `attachment; filename="`+safeAttachmentFilename(filename)+`"`)
 }
 
 // safeAttachmentFilename strips characters that could break out of the

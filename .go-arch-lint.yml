@@ -49,6 +49,8 @@ components:
   # Domain services
   analysis:         { in: internal/analysis }
   attachment:       { in: internal/attachment }
+  cmdexec:          { in: internal/cmdexec }
+  transform:        { in: internal/transform }
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
@@ -124,6 +126,10 @@ components:
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
   kong:        { in: github.com/alecthomas/kong }
+  # x/sys/unix: prlimit(2) for the per-command resource ceilings in cmdexec.
+  # Go's syscall.SysProcAttr exposes no Rlimits field on Linux, so this is the
+  # only way to bound a child's memory/PIDs/file size without a re-exec.
+  xsys:        { in: golang.org/x/sys/** }
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
@@ -195,6 +201,7 @@ deps:
       - acl
       - appbuild
       - audit
+      - cmdexec
       - dataentry
       - jwtauth
       - principal
@@ -237,6 +244,7 @@ deps:
       - automation
       - bleveindex
       - clisync
+      - cmdexec
       - config
       - dataentryconfig
       - entitymanager
@@ -262,6 +270,7 @@ deps:
       - store
       - templating
       - tracer
+      - transform
       - validator
     canUse:
       - kong
@@ -298,6 +307,7 @@ deps:
       - audit
       - calfeed
       - canonical
+      - cmdexec
       - config
       - conflict
       - dataentryconfig
@@ -322,7 +332,9 @@ deps:
       - sync
       - templating
       - tracer
+      - transform
       - validator
+      - visibility
     canUse:
       - goldmark
       - gogit
@@ -459,11 +471,23 @@ deps:
       - store
       - tracer
       - validation
+  cmdexec:
+    canUse:
+      - xsys
   attachment:
     mayDependOn:
+      - cmdexec
       - entitymanager
       - metamodel
       - store
+  # transform: view-export engine. Depends only on the safe-exec core (cmdexec)
+  # and the schema (metamodel). It must NEVER import dataentry: the ACL-coupled
+  # list renderer AND the Lua/command render override both live in dataentry and
+  # are supplied to transform as Renderer implementations (see internal/transform).
+  transform:
+    mayDependOn:
+      - cmdexec
+      - metamodel
   acl:
     mayDependOn:
       - entity

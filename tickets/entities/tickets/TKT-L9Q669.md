@@ -5,7 +5,7 @@ title: 'export: route entity/list export + export_render through visibility.Read
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: done
 ---
 
 ## Summary

@@ -166,8 +166,48 @@ Subsystems (see each package's doc comment for details):
 | `internal/autocascade`| Cascade orchestration (runs automation side-effects)           |
 | `internal/ai`         | OpenAI-compatible LLM provider (used from Lua)                 |
 | `internal/migration`  | Schema migrations for project YAML files                       |
+| `internal/cmdexec`    | Safe external-command core (argv, no shell, `{in}`/`{out}`, timeout, cap) shared by attachment + transform |
+| `internal/transform`  | View-export engine: markdown `Renderer` → external-tool format conversion (the `transforms:` registry) |
 
 Other packages under `internal/` are self-descriptive — ls the tree.
+
+### View export & transforms (`internal/transform`)
+
+The `transforms:` map in the metamodel registers named `markdown → format`
+external commands (see `docs/transforms.md`). A `transform.Renderer` produces
+markdown; the engine runs it through a transform via `internal/cmdexec` (argv
+array, no shell, temp-file `{in}`/`{out}`, timeout, output cap — the same
+security-reviewed exec pattern `internal/attachment` uses). Rules for new code:
+
+- **Export is downstream of an already-authorized view, never a new capability.**
+  Entity/list export in `internal/dataentry` routes through the SAME ACL read
+  path as the view (`visibleReader.getVisible` / `scopedSortedEntities`); a
+  request may only choose a registered transform *name*, never a command/flag/path.
+- **The list-table renderer lives in `internal/dataentry`, not `internal/transform`** —
+  it needs the ACL neighbor-visibility gate (`visibleRelationIDs`) so hidden
+  neighbor titles never leak into an export. `internal/transform` must NOT import
+  `internal/dataentry`; the built-in single-entity renderer lives in `transform`,
+  and `dataentry` supplies the list renderer as a `transform.Renderer`.
+- **The per-type render override (`views.<type>.export_render`) renders through
+  `documentService.RenderMarkdown`** — the same Lua document machinery, reached
+  only AFTER the export has resolved the entity through the ACL read gate. Never
+  call `script.ExecuteDocument` on a fresh unauthenticated surface, and keep the
+  entity id path-validated (`isSafePathSegment`) before it reaches a render.
+- **Export downloads are hardened** like attachment downloads (nosniff, sandbox
+  CSP, `no-store`, sanitized `Content-Disposition`) — the produced bytes embed
+  user content.
+- **External commands are CONFINED in `internal/cmdexec`, and it fails closed.**
+  Both export and attachment processing run third-party parsers over
+  attacker-influenceable bytes, so the shared runner adds: a no-network,
+  temp-dir-only sandbox (bubblewrap on Linux, `sandbox-exec` on macOS), rlimits
+  (memory/PIDs/file size/CPU, Linux), process-group kill so a converter's helper
+  cannot outlive the timeout, and a bounded pool capping concurrent runs. On a
+  host with no mechanism, commands REFUSE to run — only command execution is
+  blocked, never server startup. Do not add a "can I run?" predicate: call `Run`
+  and handle its error; `Describe()` exists solely for the startup log.
+- **The transform engine must be built ONCE and shared**, not per request — it
+  owns the bounded pool, so a per-request engine gives every request its own pool
+  and the concurrency cap bounds nothing.
 
 ### Storage backends & build tags
 
@@ -178,7 +218,7 @@ and the matching `internal/cli/mcp_wiring_{fs,memory,postgres}.go`:
 
 | Build tag        | Store      | Search                | Binaries                          |
 | ---------------- | ---------- | --------------------- | --------------------------------- |
-| _(none, default)_| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
+| *(none, default)*| `fsstore`  | in-memory bleve       | `rela`, `rela-server`             |
 | `memorybackend`  | `memstore` | `LinearSearch`        | (tests / experiments; no bleve)   |
 | `postgres`       | `pgstore`  | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
 
@@ -262,7 +302,7 @@ Rules when touching this:
   synchronous hook misses — acceptable because a miss loses only the rename
   marker, never lineage continuity. Read/restore is gated on **both** endpoints
   (FROM ∧ TO) — the FROM
-  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
+  entity only *owns* the UI placement, it is not the auth boundary (a TO-side
   oracle otherwise). Relations have NO field-level redaction today; relation
   history exposes exactly what a live relation GET does. `RelationHistoryReader`/
   `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
@@ -340,7 +380,7 @@ god-object (`App`, `Runtime`, `FSStore` got there because nothing stopped them):
 - **`max-exported-methods` (20)** — exported methods only. The sharper signal,
   since the public API is the coupling surface consumers bind to. Note these
   often diverge wildly from the total: `App` is 226 methods but only 13
-  exported; the genuinely-wide _public_ APIs are the store implementations and
+  exported; the genuinely-wide *public* APIs are the store implementations and
   schema value types (`FSStore`, `MemStore`, `Metamodel`).
 - **`max-fields` (20)** — exported struct fields.
 

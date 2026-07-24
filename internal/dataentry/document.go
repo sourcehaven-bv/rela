@@ -26,6 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -51,7 +52,7 @@ func isFormRoute(path string) bool {
 // side (per CLAUDE.md) so tests can substitute a fake and the engine
 // stays decoupled from the data-entry package.
 type documentScriptEngine interface {
-	ExecuteDocument(path string, deps lua.WriteDeps, stdout io.Writer,
+	ExecuteDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
 		documentID, entryID string, timeout time.Duration) error
 }
 
@@ -170,8 +171,15 @@ func (s *documentService) Render(
 
 	// Singleflight key must include ConfigID: if two documents (different
 	// configs) target the same entry, they are distinct renders and must
-	// not collapse onto one another's HTML (RR-4QSBN).
-	sfKey := entryID + "|" + cfg.ConfigID
+	// not collapse onto one another's HTML (RR-4QSBN). It must ALSO include
+	// the principal (RR-2QSGLU): renders run under the caller's identity
+	// since TKT-L9Q669 (rela.principal, ctx cancellation), so collapsing two
+	// principals' renders would hand one caller output produced under the
+	// other's identity — and once script reads are principal-scoped
+	// (TKT-ZF2DTV) it would be a cross-principal data leak, not just an
+	// attribution bug.
+	p := principal.From(ctx)
+	sfKey := entryID + "|" + cfg.ConfigID + "|" + p.User + "|" + p.Tool
 	result, err, _ := s.group.Do(sfKey, func() (any, error) {
 		return s.doRender(ctx, entryID, cfg, entities, contentHash, cacheFile)
 	})
@@ -181,6 +189,21 @@ func (s *documentService) Render(
 
 	docResult, _ := result.(*DocumentResult)
 	return docResult, nil
+}
+
+// RenderMarkdown renders a document to its raw markdown (the pre-HTML step),
+// dispatching on Script vs. Command exactly like doRender. Used by view export,
+// which feeds the markdown to a format transform rather than converting it to
+// HTML. It does NOT cache (export output is per-request) and does NOT convert to
+// HTML. Callers MUST gate the read before invoking this (see handleV1ExportEntity
+// / handleV1Documents) — RenderMarkdown performs no ACL decision of its own.
+func (s *documentService) RenderMarkdown(
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+) (string, error) {
+	if cfg.Script != "" {
+		return s.renderScript(ctx, entryID, cfg)
+	}
+	return s.renderCommand(ctx, entryID, cfg)
 }
 
 // doRender performs the actual rendering work. Dispatches on Script vs.
@@ -193,7 +216,7 @@ func (s *documentService) doRender(
 	var markdown string
 	var err error
 	if cfg.Script != "" {
-		markdown, err = s.renderScript(entryID, cfg)
+		markdown, err = s.renderScript(ctx, entryID, cfg)
 	} else {
 		markdown, err = s.renderCommand(ctx, entryID, cfg)
 	}
@@ -235,12 +258,14 @@ func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg
 
 // renderScript executes a Lua document script and returns its captured
 // stdout as markdown.
-func (s *documentService) renderScript(entryID string, cfg documentRenderConfig) (string, error) {
+func (s *documentService) renderScript(
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+) (string, error) {
 	if s.scriptEngine == nil || s.luaDeps == nil {
 		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 	var buf bytes.Buffer
-	if err := s.scriptEngine.ExecuteDocument(cfg.Script, s.luaDeps(), &buf,
+	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.luaDeps(), &buf,
 		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
 		// On a Lua failure the engine returns *lua.ScriptError; attach
 		// the print() output we captured before it threw, then bubble

@@ -12,7 +12,12 @@ permissions:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # 26.04, not ubuntu-latest: the command sandbox needs unprivileged user
+    # namespaces, which 24.04 restricts via AppArmor
+    # (apparmor_restrict_unprivileged_userns=1, seen as bwrap "Failed
+    # RTM_NEWADDR: Operation not permitted"). 26.04 does not ship that
+    # restriction, so bwrap works without any sysctl override.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -23,6 +28,20 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      # External commands (attachment scan/transform, view export) run confined
+      # and FAIL CLOSED when no sandbox is available, so the runner needs
+      # bubblewrap or every command-running test fails. Installing it also means
+      # CI exercises the real sandbox — including the negative tests that assert
+      # egress and out-of-allowlist reads are actually blocked, which otherwise
+      # skip and would let a broken profile ship unnoticed.
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Verify the sandbox actually works on this runner
+        # A hard failure here is better than every sandbox test silently
+        # skipping: it means the confinement CI thinks it is testing is absent.
+        run: bwrap --unshare-all --ro-bind / / /bin/true
 
       - name: Run tests
         # -shuffle=on randomizes test order to surface inter-test ordering

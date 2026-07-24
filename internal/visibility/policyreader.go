@@ -167,7 +167,25 @@ func (r *PolicyReader) permittedIDs(ctx context.Context, byType map[string][]str
 // is the spot that must learn about it, or the seam silently leaks
 // bodies (RR-J6022V).
 func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.Entity {
-	hidden := r.redact.HiddenProperties(ctx, e)
+	return Redact(ctx, r.redact, e)
+}
+
+// Redact returns e with the properties hidden from the ctx principal
+// stripped, per red. When nothing is hidden the ORIGINAL pointer is
+// returned (read-only contract); otherwise a shallow struct copy with a
+// fresh filtered Properties map (the redacted() contract above — see its
+// godoc for the copy semantics and the body-redaction TODO).
+//
+// Exported for consumers that hold an already-ROW-GATED, already-loaded
+// entity where a type-claimed [Reader.Get] doesn't fit — e.g. redacting a
+// visible neighbor before deriving its display title (the RR-5N4K35
+// title-leak class). Redact performs NO row-gate of its own: callers own
+// that decision.
+func Redact(ctx context.Context, red FieldRedactor, e *entity.Entity) *entity.Entity {
+	if e == nil {
+		return nil
+	}
+	hidden := red.HiddenProperties(ctx, e)
 	if len(hidden) == 0 {
 		return e
 	}

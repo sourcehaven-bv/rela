@@ -24,6 +24,8 @@ import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
+import ExportMenu from '@/components/entity/ExportMenu.vue'
+import { listExportUrl } from '@/api/transforms'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -250,6 +252,21 @@ const entityType = computed(() => {
   if (!listConfig.value) return undefined
   return schemaStore.getEntityType(listConfig.value.entity)
 })
+
+// listExportUrlFor builds the export URL for the current list view + chosen
+// transform, forwarding the active filter[...] and q params from the URL so the
+// export matches what the user is looking at (the backend re-applies the same
+// ACL + filter pipeline).
+function listExportUrlFor(transform: string): string {
+  const cfg = listConfig.value
+  if (!cfg) return '#'
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(route.query)) {
+    if (!key.startsWith('filter[') && key !== 'q') continue
+    if (typeof value === 'string') params.set(key, value)
+  }
+  return listExportUrl(cfg.entity, props.listId, transform, params)
+}
 
 // Admin-authored info regions (markdown from data-entry.yaml, sanitized by
 // renderMarkdown). `header` is canonical; `description` (previously unused) is a
@@ -664,13 +681,16 @@ watch(searchQuery, () => {
         <BackButton v-if="backTarget" :target="backTarget" />
         <h1>{{ listConfig.title || listConfig.entity }}</h1>
       </div>
-      <router-link
-        v-if="listConfig.create_form && canCreate()"
-        :to="`/form/${listConfig.create_form}`"
-        class="btn btn-primary"
-      >
-        + New <kbd>N</kbd>
-      </router-link>
+      <div class="header-actions">
+        <ExportMenu :url-for="listExportUrlFor" />
+        <router-link
+          v-if="listConfig.create_form && canCreate()"
+          :to="`/form/${listConfig.create_form}`"
+          class="btn btn-primary"
+        >
+          + New <kbd>N</kbd>
+        </router-link>
+      </div>
     </header>
 
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
@@ -1016,6 +1036,12 @@ watch(searchQuery, () => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .btn {

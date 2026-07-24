@@ -21,6 +21,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
@@ -37,15 +38,16 @@ func (s *stringSliceFlag) Set(v string) error { *s = append(*s, v); return nil }
 // Extracting this lets main() stay under the funlen budget while
 // keeping flag definitions in one readable block.
 type serverFlags struct {
-	projectDir      string
-	port            string
-	bind            string
-	allowedOrigins  stringSliceFlag
-	verbose         bool
-	quiet           bool
-	debugPprof      string
-	principalHeader string
-	readOnly        bool
+	projectDir        string
+	port              string
+	bind              string
+	allowedOrigins    stringSliceFlag
+	verbose           bool
+	quiet             bool
+	debugPprof        string
+	principalHeader   string
+	readOnly          bool
+	unconfinedCommand bool
 	// JWT identity: verify a signed-JWT assertion from an OIDC proxy against its
 	// JWKS and stamp the verified subject as the principal. Provider-agnostic
 	// (Pratique, oauth2-proxy, Pomerium, ...). All three of issuer/audience/jwks
@@ -86,6 +88,14 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
+	flag.BoolVar(&f.unconfinedCommand, "unconfined-commands", os.Getenv("RELA_UNCONFINED_COMMANDS") == "1",
+		"Run external scan/transform/export commands UNCONFINED (no sandbox). "+
+			"Only for hosts that cannot sandbox (no bubblewrap / a kernel without "+
+			"unprivileged user namespaces / a locked-down container) or that isolate "+
+			"at another layer. Without this, such a host refuses to run those "+
+			"commands. Accepts running third-party parsers on untrusted input "+
+			"unconfined — see docs/transforms.md. Also enabled by "+
+			"RELA_UNCONFINED_COMMANDS=1.")
 	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
 	// is safer than --principal-header (which merely trusts the proxy set a header).
 	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
@@ -126,6 +136,37 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
 	}
 	return opts
+}
+
+// discoverProject resolves the project dir and builds the services, exiting on
+// any failure (a daemon has nothing to fall back to). It warns when read-only.
+func discoverProject(f *serverFlags) *appbuild.Services {
+	absDir, err := filepath.Abs(f.projectDir)
+	if err != nil {
+		slog.Error("invalid project dir", "error", err)
+		os.Exit(1)
+	}
+	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOptions(f)...)
+	if err != nil {
+		slog.Error("failed to initialize project services", "error", err)
+		os.Exit(1)
+	}
+	if f.readOnly {
+		slog.Warn("rela-server is read-only; every write request will be refused")
+	}
+	return svc
+}
+
+// applyCommandConfinement records the host-level command-confinement decision
+// before any runner is built, warning once (like a disabled attachment scan)
+// when commands will run unconfined.
+func applyCommandConfinement(unconfined bool) {
+	if cmdexec.SetUnconfinedByDefault(unconfined) {
+		slog.Warn("external commands run UNCONFINED (--unconfined-commands / " +
+			"RELA_UNCONFINED_COMMANDS=1): scan/transform/export run third-party " +
+			"parsers on untrusted input with no sandbox. Ensure isolation is " +
+			"provided at another layer.")
+	}
 }
 
 // envOr returns $key, or def when unset/empty.
@@ -325,25 +366,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	absDir, err := filepath.Abs(f.projectDir)
-	if err != nil {
-		slog.Error("invalid project dir", "error", err)
-		os.Exit(1)
-	}
-	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOptions(f)...)
-	if err != nil {
-		slog.Error("failed to initialize project services", "error", err)
-		os.Exit(1)
-	}
-	if f.readOnly {
-		slog.Warn("rela-server is read-only; every write request will be refused")
-	}
-	// No defer svc.Close(): rela-server is a daemon — it runs until
-	// the process exits, at which point the OS reclaims file
-	// descriptors and goroutines. A defer would be reached only via
-	// early os.Exit paths, where defers don't run anyway. Per-project
-	// Close() *is* required in long-running hosts that switch
-	// projects (see rela-desktop); this is the daemon-lifetime case.
+	// Record the command-confinement decision BEFORE building any services: the
+	// choice is read by every cmdexec.Runner at construction, and appbuild.Discover
+	// may build one. Applying it after discovery would confine (or fail closed on)
+	// a host the operator explicitly opted out of. Keep this above discoverProject.
+	applyCommandConfinement(f.unconfinedCommand)
+
+	// No svc.Close(): rela-server is a daemon — it runs until the process exits,
+	// at which point the OS reclaims file descriptors and goroutines. Per-project
+	// Close() *is* required in long-running hosts that switch projects (see
+	// rela-desktop); this is the daemon-lifetime case.
+	svc := discoverProject(f)
 
 	fieldResolver := buildFieldResolver(svc)
 
