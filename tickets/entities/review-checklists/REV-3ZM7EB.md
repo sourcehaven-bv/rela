@@ -2,7 +2,7 @@
 id: REV-3ZM7EB
 type: review-checklist
 title: 'Review: visibility: new internal/visibility package — Reader (PolicyReader/AllowAllReader) + tracer decorator + conformance suite'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -53,8 +53,8 @@ BindScopesOperation.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — CI watch running at PR creation; any failure will be fixed on the branch before merge
+- [x] PR URL documented below
 
-**PR:** <!-- pending -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1194

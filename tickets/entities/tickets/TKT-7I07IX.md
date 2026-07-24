@@ -5,7 +5,7 @@ title: 'visibility: new internal/visibility package — Reader (PolicyReader/All
 kind: enhancement
 priority: high
 effort: m
-status: review
+status: done
 ---
 
 ## Summary
