@@ -74,6 +74,51 @@ tasks:
     every: 30m
 ```
 
+### Identity and what a task can read (`run_as`)
+
+A scheduled task runs under an **identity**, and that identity decides what
+its script may read. By default every task runs as the scheduler's system
+user. `run_as` gives a task its own identity instead:
+
+```yaml
+tasks:
+  - name: weekly-digest
+    script: reports/digest.lua
+    every: monday
+    run_as: system:digest      # an identity, not a permission
+```
+
+**`run_as` grants nothing by itself.** Privileges come from `acl.yaml`, the
+same place every other principal's do:
+
+```yaml
+# acl.yaml
+roles:
+  reporting:
+    read: [ticket, project]
+assignments:
+  system:digest: reporting
+```
+
+With that pairing, `rela.get_entity` / `list_entities` / `search` /
+`get_relations` and the trace bindings inside `digest.lua` return only what
+the `reporting` role may see. Anything else is invisible to the script —
+which is what bounds the data an AI-assisted or outbound-reporting job can
+possibly include.
+
+Notes:
+
+- **An identity with no assignment reads nothing.** If `run_as` names a
+  principal that `acl.yaml` never assigns a role, the task's reads come back
+  empty. A typo produces a silently empty job, so check the identity against
+  your assignments when a task stops finding data.
+- **Field-level redaction does not apply to scheduled tasks yet.** Row-level
+  access is enforced (an entity your identity cannot read stays invisible),
+  but `visible:` field policy is *not* applied on this path — a task that may
+  read an entity type receives all of its properties. Do not rely on field
+  policy to hide values from a scheduled script.
+- Writes are unaffected: they go through the normal ACL, exactly as before.
+
 ### Schedule Values
 
 | Value        | Meaning                                                    |
