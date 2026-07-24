@@ -2,6 +2,8 @@ package errors
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -75,4 +77,35 @@ func TestExitErrorZero(t *testing.T) {
 	if err.Error() != "exit status 0" {
 		t.Errorf("unexpected error message: %s", err.Error())
 	}
+}
+
+func TestWrapDiscoverError(t *testing.T) {
+	t.Run("no project returns init hint", func(t *testing.T) {
+		wrapped := fmt.Errorf("discover: %w", ErrNoProject)
+		got := WrapDiscoverError(wrapped)
+		if got == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if msg := got.Error(); !strings.Contains(msg, "run 'rela init'") {
+			t.Errorf("expected init hint, got: %q", msg)
+		}
+	})
+
+	t.Run("other errors are surfaced verbatim", func(t *testing.T) {
+		underlying := errors.New("load metamodel: yaml: line 3: mapping values are not allowed in this context")
+		got := WrapDiscoverError(underlying)
+		if got == nil {
+			t.Fatal("expected error, got nil")
+		}
+		msg := got.Error()
+		if strings.Contains(msg, "run 'rela init'") {
+			t.Errorf("should not suggest init for load failures, got: %q", msg)
+		}
+		if !strings.Contains(msg, "yaml: line 3") {
+			t.Errorf("expected underlying error to be surfaced, got: %q", msg)
+		}
+		if !errors.Is(got, underlying) {
+			t.Errorf("expected underlying error preserved, got: %v", got)
+		}
+	})
 }

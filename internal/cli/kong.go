@@ -53,7 +53,7 @@ var (
 // so growth is structural here) — over the 20-field load line. Revisit grouping
 // subcommands into sub-structs; ratchet this number down if/when that lands.
 //
-//plimsoll:max-fields=45
+//plimsoll:max-fields=46
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -160,7 +160,7 @@ func runKong() int {
 		// command line). The filesystem build ignores it.
 		svc, err = appbuild.Discover(projectPath, script.NewEngine())
 		if err != nil {
-			fmt.Fprintln(os.Stderr, wrapDiscoverError(err))
+			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(err))
 			return 1
 		}
 		defer svc.Close()
@@ -236,16 +236,4 @@ func firstKongToken(s string) string {
 		}
 	}
 	return s
-}
-
-// wrapDiscoverError translates errors from appbuild.Discover into
-// user-facing messages. Only "no metamodel.yaml found"
-// (relaerrors.ErrNoProject) gets the "run 'rela init'" hint; all
-// other failures (parse errors, permission denied, corrupt cache,
-// pending migration, etc.) are surfaced verbatim.
-func wrapDiscoverError(err error) error {
-	if stderrors.Is(err, relaerrors.ErrNoProject) {
-		return stderrors.New("no project found: run 'rela init' to create one")
-	}
-	return err
 }

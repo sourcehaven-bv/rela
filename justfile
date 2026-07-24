@@ -55,8 +55,16 @@ build-server-postgres: build-frontend
     @mkdir -p {{build_dir}}
     CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-server-postgres ./cmd/rela-server
 
+# Build the docs CLI (rela-docs). Embeds the Vue frontend: screenshot{}
+# islands drive the data-entry SPA in a headless browser. This is the only
+# binary that links chromedp — kept out of rela / rela-server on purpose.
+build-docs: build-frontend
+    @echo "Building rela-docs..."
+    @mkdir -p {{build_dir}}
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-docs ./cmd/rela-docs
+
 # Build all binaries
-build: build-cli build-server build-desktop
+build: build-cli build-server build-docs build-desktop
 
 # Build the postgres-tagged binaries (FS binaries unaffected)
 build-postgres: build-cli-postgres build-server-postgres
@@ -241,6 +249,18 @@ check: lint arch-lint plimsoll lint-md test
 docs: build-cli
     @echo "Generating documentation..."
     @./scripts/generate-docs.sh
+
+# Regenerate the example operator handbook (docs/examples/) from the demo
+# project by building its rela-docs manual. Kept OUT of `docs`/`docs-check`:
+# it needs the rela-docs binary (frontend + Chrome for the screenshot) and the
+# PNG is not byte-reproducible, so the committed output is the source of truth
+# and this is an opt-in, run-when-you-change-the-manual target.
+docs-example: build-docs
+    @echo "Building the example ticket-tracker handbook..."
+    ./bin/rela-docs build prototypes/data-entry/manual/tickets-manual.md \
+        --project prototypes/data-entry/project \
+        --out docs/examples/ticket-tracker-manual.md
+    @echo "✓ Wrote docs/examples/ticket-tracker-manual.md (+ ticket-form.png)"
 
 # Check that committed docs are up to date with entities
 docs-check: docs

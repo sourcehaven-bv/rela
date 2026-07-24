@@ -43,6 +43,30 @@ builds:
     flags:
       - -trimpath
 
+  # rela-docs: renders Markdown manuals with rela Lua islands (incl. live
+  # screenshot{} captures). Kept a separate binary because screenshot{} links
+  # chromedp (~15 MB) via internal/docscapture — weight the default rela /
+  # rela-server binaries never carry. Default (filesystem) build only:
+  # screenshot{} fails loud on the postgres build (it would seed the live DB),
+  # so there is no rela-docs-postgres variant.
+  - id: rela-docs
+    main: ./cmd/rela-docs
+    binary: rela-docs
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+    flags:
+      - -trimpath
+
   # PostgreSQL-backed variants. Selected by the `postgres` build tag: the
   # store and search index live in PostgreSQL (no bleve, no on-disk markdown
   # store). Shipped under -postgres binary + archive names so they never
@@ -92,6 +116,7 @@ archives:
     ids:
       - rela
       - rela-server
+      - rela-docs
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:

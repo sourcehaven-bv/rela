@@ -93,6 +93,7 @@ go build -o rela ./cmd/rela
 | [Security model for rela-server](docs/server-security.md) | Threat model, HTTP defenses, audit attribution, and residual risks for the rela-server data-entry app; how its read-side ACL coverage stands today. |
 | [ACL: Authorization Overview](docs/acl-overview.md) | How rela's role-based authorization works end-to-end: from acl.yaml + the graph to a write decision and its audit attribution |
 | [ACL: Security Hardening](docs/acl-security.md) | Operator's hardening guide for rela's ACL system: group membership trust, fail-loud boot, audit-isolation invariants |
+| [Generated documentation: the rela docs language](docs/rela-docs.md) | Author a deployment manual in Markdown with embedded Lua islands that pull reference fragments (field tables, enum meanings, mermaid lifecycles, relation graphs, role matrices) straight from the schema. |
 
 ### Tutorials
 
@@ -108,6 +109,12 @@ go build -o rela ./cmd/rela
 | [Scenario: DevOps/SRE Runbooks & Infrastructure Operations](docs/scenarios/devops-runbooks.md) | DevOps/SRE runbooks and infrastructure operations |
 | [Scenario: ISO 27001 Information Security Management System](docs/scenarios/iso27001-isms.md) | ISO 27001 Information Security Management System |
 | [Scenario: Hybrid Project Management](docs/scenarios/project-management.md) | Hybrid project management documentation |
+
+### Examples
+
+| Example | Description |
+| -------- | -------- |
+| [Ticket tracker — operator handbook](docs/examples/ticket-tracker-manual.md) | A generated operator handbook for the demo ticket tracker, built by `rela-docs` — field tables, a mermaid lifecycle, a role matrix, and an annotated screenshot, all derived from the project's schema so they can't drift. |
 
 ## Project Structure
 

@@ -79,3 +79,16 @@ func (e *ExitError) Error() string {
 func NewExitError(code int) *ExitError {
 	return &ExitError{Code: code}
 }
+
+// WrapDiscoverError translates errors from appbuild.Discover into user-facing
+// messages for a CLI entry point. Only the "no project" case (ErrNoProject)
+// gets the actionable "run 'rela init'" hint; every other failure (parse
+// errors, permission denied, corrupt cache, pending migration, etc.) is
+// surfaced verbatim. Shared by every binary that calls Discover (rela,
+// rela-docs) so the hint policy can't drift between them.
+func WrapDiscoverError(err error) error {
+	if errors.Is(err, ErrNoProject) {
+		return errors.New("no project found: run 'rela init' to create one")
+	}
+	return err
+}
