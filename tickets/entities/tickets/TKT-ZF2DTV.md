@@ -5,7 +5,7 @@ title: 'lua: ReadDeps reads through visibility.Reader + visible tracer; schedule
 kind: enhancement
 priority: high
 effort: l
-status: ready
+status: backlog
 ---
 
 ## Summary
