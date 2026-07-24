@@ -119,6 +119,10 @@ components:
 vendors:
   bleve:       { in: github.com/blevesearch/bleve/** }
   kong:        { in: github.com/alecthomas/kong }
+  # x/sys/unix: prlimit(2) for the per-command resource ceilings in cmdexec.
+  # Go's syscall.SysProcAttr exposes no Rlimits field on Linux, so this is the
+  # only way to bound a child's memory/PIDs/file size without a re-exec.
+  xsys:        { in: golang.org/x/sys/** }
   glamour:     { in: github.com/charmbracelet/glamour }
   huh:         { in: github.com/charmbracelet/huh }
   yaml:        { in: gopkg.in/yaml.v3 }
@@ -447,6 +451,9 @@ deps:
       - store
       - tracer
       - validation
+  cmdexec:
+    canUse:
+      - xsys
   attachment:
     mayDependOn:
       - cmdexec
