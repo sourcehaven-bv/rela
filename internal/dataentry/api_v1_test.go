@@ -5170,7 +5170,7 @@ func TestV1Affordance_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/TKT-001/relations/implements",
 		strings.NewReader(`{"id":"FEAT-001"}`))
 	rec := httptest.NewRecorder()
-	app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+	app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5195,7 +5195,7 @@ func TestV1Affordance_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/tickets/TKT-001/relations/implements/FEAT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1DeleteRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
+	app.write.handleV1DeleteRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5214,7 +5214,7 @@ func TestV1Affordance_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/TKT-001/relations/implements",
 		strings.NewReader(`{"id":"FEAT-001"}`))
 	rec := httptest.NewRecorder()
-	app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+	app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("got %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5258,7 +5258,7 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 		"/api/v1/concepts/CONC-001/relations/affects",
 		strings.NewReader(`{"id":"TKT-001","direction":"incoming"}`))
 	rec := httptest.NewRecorder()
-	app.handleV1CreateRelation(rec, req, "concept", "CONC-001", "affects")
+	app.write.handleV1CreateRelation(rec, req, "concept", "CONC-001", "affects")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403 (incoming-direction must resolve verdict against source); body=%s", rec.Code, rec.Body.String())
 	}
@@ -5324,7 +5324,7 @@ func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 			"/api/v1/tickets/TKT-001/relations/implements",
 			strings.NewReader(`{"id":"FEAT-001","meta":{"note":"hi"}}`))
 		rec := httptest.NewRecorder()
-		app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 		}
@@ -5340,7 +5340,7 @@ func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 			"/api/v1/tickets/TKT-001/relations/implements/FEAT-001",
 			strings.NewReader(`{"meta":{"note":"hi"}}`))
 		rec := httptest.NewRecorder()
-		app.handleV1UpdateRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
+		app.write.handleV1UpdateRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 		}
@@ -5368,7 +5368,7 @@ func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 			"/api/v1/tickets/TKT-001/relations/implements",
 			strings.NewReader(`{"id":"FEAT-001","meta":{"role":"primary"}}`))
 		rec := httptest.NewRecorder()
-		app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("got %d, want 201; body=%s", rec.Code, rec.Body.String())
 		}

@@ -962,7 +962,7 @@ func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request,
 	case http.MethodGet:
 		a.handleV1GetRelationType(w, r, typeName, entityID, relType)
 	case http.MethodPost:
-		a.handleV1CreateRelation(w, r, typeName, entityID, relType)
+		a.write.handleV1CreateRelation(w, r, typeName, entityID, relType)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1055,207 +1055,17 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	writeV1JSON(w, http.StatusOK, relations)
 }
 
-func (a *App) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	// Need write lock
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	// ACL gate (TKT-VQGN CRIT-2): runs BEFORE body parse (RR-FGUZ
-	// applied to relation writes) and BEFORE the affordance check —
-	// otherwise a 400/403 confirms the entity exists.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
-		return
-	}
-
-	entity, found := a.reader.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	var req struct {
-		ID        string         `json:"id"`
-		Meta      map[string]any `json:"meta,omitempty"`
-		Direction string         `json:"direction,omitempty"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
-		return
-	}
-
-	if req.ID == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "missing_id", "Target ID is required", "")
-		return
-	}
-
-	// Affordance gates: creatable + meta-writable, evaluated against
-	// the SOURCE of the new edge (not necessarily the path entity —
-	// for incoming-direction creates the path entity is the target).
-	source := a.affordances.relationSourceEntity(r.Context(), entity, req.ID, req.Direction)
-	// Audit subject is the source of the new edge, matching the
-	// entity whose policy gated the write.
-	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpCreate); denial != nil {
-		a.denyAffordance(r.Context(), w, source, *denial)
-		return
-	}
-	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
-		a.denyAffordance(r.Context(), w, source, *denial)
-		return
-	}
-
-	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
-
-	_, err := a.entityManager.CreateRelation(
-		r.Context(), from, relType, to, entityPkg.RelationOptions{Properties: req.Meta},
-	)
-	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-}
-
 func (a *App) handleV1RelationTarget(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
 	switch r.Method {
 	case http.MethodPatch:
-		a.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
+		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
 	case http.MethodDelete:
-		a.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
+		a.write.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
-}
-
-func (a *App) handleV1UpdateRelation(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
-) {
-	// Need write lock
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
-		return
-	}
-
-	entity, found := a.reader.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	var req struct {
-		Meta      map[string]any `json:"meta"`
-		Direction string         `json:"direction,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
-		return
-	}
-
-	// Affordance gate: meta-writable, evaluated against the SOURCE of
-	// the edge (the path entity for outgoing; the peer for incoming).
-	// The edge already exists (PATCH is meta-only), so the create /
-	// remove gates don't apply.
-	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, req.Direction)
-	if denial := a.affordances.validateRelationMetaWrite(r.Context(), source, relType, req.Meta, nil); denial != nil {
-		a.denyAffordance(r.Context(), w, source, *denial)
-		return
-	}
-
-	// Managed order properties must be finite numbers when present. Fast
-	// 400 here so wire-format errors don't surface as 422-from-manager.
-	if relDef, ok := a.State().Meta.Relations[relType]; ok {
-		for _, prop := range []string{metamodel.OrderPropertyOut, metamodel.OrderPropertyIn} {
-			if (prop == metamodel.OrderPropertyOut && relDef.OutgoingOrderProperty() == "") ||
-				(prop == metamodel.OrderPropertyIn && relDef.IncomingOrderProperty() == "") {
-
-				continue
-			}
-			v, present := req.Meta[prop]
-			if !present {
-				continue
-			}
-			if _, ok := entitymanager.FiniteOrder(v); !ok {
-				writeV1Error(w, r, http.StatusBadRequest, "order_value_invalid",
-					"managed order property must be a finite number", prop)
-				return
-			}
-		}
-	}
-
-	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
-
-	rel, err := a.entityManager.UpdateRelation(r.Context(), from, relType, to, entityPkg.RelationOptions{
-		Properties: req.Meta,
-	})
-	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
-		return
-	}
-
-	result := map[string]any{
-		"from": rel.From,
-		"type": rel.Type,
-		"to":   rel.To,
-	}
-	if len(rel.Properties) > 0 {
-		result["meta"] = rel.Properties
-	}
-
-	writeV1JSON(w, http.StatusOK, result)
-}
-
-func (a *App) handleV1DeleteRelation(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
-) {
-	// Need write lock
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1CreateRelation.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
-		return
-	}
-
-	entity, found := a.reader.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	// Affordance gate: removable check, evaluated against the SOURCE
-	// of the edge (the path entity for outgoing; the peer for
-	// incoming). Per-relation-type uniform — a removable=false
-	// verdict applies to every link of this type.
-	direction := r.URL.Query().Get("direction")
-	source := a.affordances.relationSourceEntity(r.Context(), entity, targetID, direction)
-	if denial := a.affordances.validateRelationOp(r.Context(), source, relType, RelationOpRemove); denial != nil {
-		a.denyAffordance(r.Context(), w, source, *denial)
-		return
-	}
-
-	from, to := resolveRelationEndpoints(entity.ID, targetID, direction)
-
-	if err := a.entityManager.DeleteRelation(r.Context(), from, relType, to); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", err.Error())
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Action Handlers ---
