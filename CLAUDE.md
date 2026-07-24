@@ -61,6 +61,14 @@
   never inferred from identity. Write-prep reads (entitymanager
   diffing) keep raw store access: a redacted read-modify-write would
   clobber hidden fields.
+- **Never redact a read that feeds a write.** Read-out and write-prep are
+  different handles on purpose (`lua.ReadDeps.VisibleReader` vs
+  `WritePrepStore`). A read-modify-write that loads a *redacted* entity
+  drops the caller's hidden properties from the clone and **erases them on
+  save** — silent data destruction. If you find yourself "tidying" two
+  store handles into one, that is the bug: `luaUpdateEntity` and anything
+  like it must keep the raw handle. Pinned by
+  `TestScriptReads_UpdatePreservesHiddenProperties`.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 

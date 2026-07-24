@@ -176,12 +176,19 @@ untrusted content through the Linux tier.
   hidden from the caller by a `visible:` policy appears in no exported cell,
   heading, or filename — a hidden display property falls back to the entity
   ID, including for visible neighbors whose titles are hidden.
-- **`export_render:` override scripts** now run under the **caller's
-  principal** (`rela.principal` reflects the requesting user, and the render
-  is attributable/cancellable). One residual until the Lua read seam lands
-  (TKT-ZF2DTV): the script's *own* `rela.get_entity`/`rela.search` reads are
-  not yet field-redacted — treat override scripts as operator-trusted content
-  until then, exactly like `documents:` scripts.
+- **`export_render:` override scripts** run under the **caller's principal**
+  (`rela.principal` reflects the requesting user, and the render is
+  attributable/cancellable), and since TKT-ZF2DTV their *own* reads are
+  ACL-bound too: `rela.get_entity`, `rela.list_entities`, `rela.search`,
+  `rela.get_relations` and the trace bindings all return the caller's view —
+  hidden entities absent, hidden properties redacted. An override script
+  therefore cannot widen an export past what the requester may see.
+  - `rela.get_relations` is **peer-gated**: a relation appears only when
+    *both* endpoints are visible, so an empty result means "none you may
+    see", not "no such edges".
+  - `rela.update_entity`'s read-before-write is deliberately **not**
+    redacted — reading a redacted copy there would erase the caller's hidden
+    properties on save. Writes remain gated by the ACL as before.
 
 ### Other notes
 
