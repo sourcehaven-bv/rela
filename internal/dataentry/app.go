@@ -340,7 +340,7 @@ func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 		slog.Warn("dataentry: policy reader unavailable; script reads stay unrestricted", "err", err)
 		return a.store
 	}
-	sr, err := visibility.NewScriptReader(reader, a.store)
+	sr, err := visibility.NewScriptReader(reader, a.store, gate)
 	if err != nil {
 		slog.Warn("dataentry: script reader unavailable; script reads stay unrestricted", "err", err)
 		return a.store

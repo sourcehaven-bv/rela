@@ -3,7 +3,6 @@
 package lua
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -2366,7 +2365,11 @@ func (r *Runtime) luaMdEntityRefs(ls *lua.LState) int {
 		return 0
 	}
 	out := r.L.NewTable()
-	ctx := context.Background()
+	// callerCtx, NOT context.Background(): the reader resolves the acting
+	// identity from ctx, so a background ctx has no principal and the gate
+	// fails closed on EVERY type — the binding would silently return an
+	// empty map for every user (RR-ZA452J).
+	ctx := r.callerCtx()
 	for _, t := range typeNames {
 		for e, listErr := range rd.ListEntities(ctx, store.EntityQuery{Type: t}) {
 			if listErr != nil {

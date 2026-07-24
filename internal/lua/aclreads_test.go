@@ -2,6 +2,7 @@ package lua_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -102,7 +103,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	if err != nil {
 		t.Fatalf("NewPolicyReader: %v", err)
 	}
-	scriptReader, err := visibility.NewScriptReader(reader, st)
+	scriptReader, err := visibility.NewScriptReader(reader, st, gate)
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
@@ -238,45 +239,64 @@ rela.output("nodes=" .. table.concat(walk(rela.trace_from("TKT-1", 2), {}), ",")
 // ticket.
 //
 // rela.update_entity does GetEntity → Clone → merge → save. If that read
-// ever went through the REDACTING reader, the clone would lack the
-// caller's hidden properties and the save would ERASE them. The write-prep
-// handle is raw precisely to prevent that; this test fails loudly if
-// anyone "tidies" the two ReadDeps fields together.
+// went through the REDACTING reader, the clone would lack the caller's
+// hidden properties and the save would ERASE them. The write-prep handle
+// is raw precisely to prevent that.
+//
+// This test runs the REAL binding end-to-end and asserts on the PERSISTED
+// entity, so it fails if anyone points luaUpdateEntity at VisibleReader —
+// which an earlier version of this test, asserting only on the deps
+// handles, did not (RR-KYWIMZ).
 func TestScriptReads_UpdatePreservesHiddenProperties(t *testing.T) {
 	st, deps := newACLWorld(t)
-	// A real manager would be needed to persist; assert instead on what the
-	// runtime READS back for the update, which is the value that would be
-	// written. Reading via the raw store proves the write-prep path is
-	// un-redacted.
-	e, err := deps.WritePrepStore.GetEntity(context.Background(), "P-1")
-	if err != nil {
-		t.Fatalf("write-prep read: %v", err)
-	}
-	if e.Properties["salary"] != "100000" {
-		t.Fatalf("write-prep read is redacted — update_entity would erase hidden properties on save; "+
-			"got properties=%v", e.Properties)
-	}
+	deps.EntityManager = &storeMutator{st: st}
 
-	// And the read-out path for the SAME entity must be redacted, proving
-	// the two handles genuinely differ.
-	redacted, err := deps.VisibleReader.GetEntity(
-		principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolScheduler}),
-		"P-1")
-	if err != nil {
-		t.Fatalf("read-out read: %v", err)
-	}
-	if _, leaked := redacted.Properties["salary"]; leaked {
-		t.Errorf("read-out path is NOT redacted: %v", redacted.Properties)
-	}
+	// alice may read `person` but not its `salary`. She updates `name`;
+	// `salary` must survive untouched in the store.
+	runAsAlice(t, deps, `rela.update_entity("P-1", {name = "Ann Updated"})`)
 
-	// The store itself is untouched by either read.
 	after, err := st.GetEntity(context.Background(), "P-1")
 	if err != nil {
-		t.Fatalf("store read: %v", err)
+		t.Fatalf("load after update: %v", err)
 	}
-	if after.Properties["salary"] != "100000" {
-		t.Errorf("store mutated by reads: %v", after.Properties)
+	if got := after.Properties["salary"]; got != "100000" {
+		t.Fatalf("update_entity ERASED the hidden property — the write-prep read is redacted; "+
+			"salary=%v, full properties=%v", got, after.Properties)
 	}
+	if got := after.Properties["name"]; got != "Ann Updated" {
+		t.Errorf("update did not apply: name=%v", got)
+	}
+}
+
+// storeMutator is the minimal Mutator that actually persists, so the AC6
+// test can assert on stored state rather than on a fixture's wiring.
+type storeMutator struct{ st store.Store }
+
+func (m *storeMutator) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
+	if err := m.st.UpdateEntity(ctx, e); err != nil {
+		return nil, err
+	}
+	return &entity.UpdateResult{Entity: e}, nil
+}
+
+func (m *storeMutator) CreateEntity(
+	context.Context, *entity.Entity, entity.CreateOptions,
+) (*entity.CreateResult, error) {
+	return nil, errors.New("not used by this test")
+}
+
+func (m *storeMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
+	return nil, errors.New("not used by this test")
+}
+
+func (m *storeMutator) CreateRelation(
+	context.Context, string, string, string, entity.RelationOptions,
+) (*entity.Relation, error) {
+	return nil, errors.New("not used by this test")
+}
+
+func (m *storeMutator) DeleteRelation(context.Context, string, string, string) error {
+	return errors.New("not used by this test")
 }
 
 // TestScriptReads_NilReaderDenies (AC9, RR-X9NVHI): a runtime wired

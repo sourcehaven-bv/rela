@@ -241,11 +241,13 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 // the raw store (the NopACL path — byte-identical to pre-ACL behavior, not
 // a bypass).
 //
-// Construction failure degrades to the raw store WITH A WARNING rather than
-// denying: a wiring fault that silently broke every automation and schedule
-// would be a worse outage than the ACL is worth here, and it is logged
-// loudly. A DENIED read is still a deny; this only covers "the gate itself
-// could not be built".
+// When a policy IS configured but the gate cannot be built, this REFUSES
+// (returns [visibility.DenyReader]) rather than degrading to the raw store
+// (RR-GKCZO5). These deps back unattended paths — automation cascades and
+// scheduled tasks — where quietly reverting to full-graph reads means an
+// unbounded, silent disclosure into whatever the job sends onward. An
+// operator who configured a policy has stated intent; honoring it by
+// failing loudly beats ignoring it by failing open.
 func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
 ) lua.EntityReader {
@@ -257,18 +259,18 @@ func scriptEntityReader(
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
-		slog.Warn("appbuild: ACL gate unavailable; script reads stay unrestricted", "err", err)
-		return st
+		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
 	reader, err := visibility.NewPolicyReader(gate, redactor, st)
 	if err != nil {
-		slog.Warn("appbuild: policy reader unavailable; script reads stay unrestricted", "err", err)
-		return st
+		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
-	sr, err := visibility.NewScriptReader(reader, st)
+	sr, err := visibility.NewScriptReader(reader, st, gate)
 	if err != nil {
-		slog.Warn("appbuild: script reader unavailable; script reads stay unrestricted", "err", err)
-		return st
+		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
 	return sr
 }
@@ -289,13 +291,13 @@ func scriptTracer(
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
-		slog.Warn("appbuild: ACL gate unavailable; traversal stays unrestricted", "err", err)
-		return tr
+		slog.Error("appbuild: ACL gate unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
 	}
 	vt, err := visibility.NewVisibleTracer(tr, gate, redactor, st)
 	if err != nil {
-		slog.Warn("appbuild: visible tracer unavailable; traversal stays unrestricted", "err", err)
-		return tr
+		slog.Error("appbuild: visible tracer unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
 	}
 	return vt
 }
@@ -329,10 +331,15 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // privileges coming from acl.yaml — a job sees what its identity may see,
 // nothing more (DEC-O59WM4).
 //
-// No field redactor here: appbuild has no affordance resolver, so scheduled
-// jobs get ROW gating without field-level redaction. That is the weaker
-// half of the guarantee but never the wrong one — whole entities the job's
-// identity cannot read stay out, which is what bounds a prompt.
+// KNOWN LIMITATION (RR-7408F5): appbuild has no affordance resolver, so
+// scheduled jobs get ROW gating only — **field-level `visible:` redaction
+// does NOT apply here**. A job whose identity may read `person` receives
+// every property of it, including ones a human with the same role would
+// have redacted in the UI. Row gating still bounds WHICH entities reach a
+// prompt, which is the larger half, but do not assume field policy is
+// enforced on this path. Documented for operators in
+// docs/scheduled-tasks.md next to `run_as`; closing it means wiring an
+// affordance resolver into appbuild.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 	return s.luaWriteDepsFor(nil)
 }

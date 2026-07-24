@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"math"
 	"os"
@@ -1430,6 +1431,15 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 		// the residual (TKT-GGQ0JT class).
 		e, err := rd.GetEntity(ctx, hit.ID)
 		if err != nil {
+			// A denied hit arrives as ErrNotFound and is skipped silently —
+			// that is the gate working. Anything else is a real fault, and
+			// since redaction makes short results EXPECTED it would
+			// otherwise be indistinguishable from normal policy behavior
+			// (RR-QSP6X2).
+			if !errors.Is(err, store.ErrNotFound) {
+				slog.Warn("lua: rela.search: hit hydration failed",
+					"id", hit.ID, "err", err)
+			}
 			continue
 		}
 		result.RawSetInt(i, EntityToTable(ls, e))
