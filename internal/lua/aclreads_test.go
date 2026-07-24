@@ -299,6 +299,39 @@ func (m *storeMutator) DeleteRelation(context.Context, string, string, string) e
 	return errors.New("not used by this test")
 }
 
+// TestScriptReads_EntityRefsGated closes the gap the IB review flagged
+// (rela#1199): the RR-ZA452J fix — `rela.md.entity_refs` used
+// context.Background(), so with a policy configured it resolved no
+// principal and returned an EMPTY map for every user — shipped without a
+// test exercising it under a real policy.
+//
+// Two things have to hold, and only asserting the second would let the
+// original bug back in disguised as a pass:
+//
+//  1. entities the principal MAY read are present (the ctx carries a
+//     usable identity — this is what the original defect broke), and
+//  2. entities the principal may NOT read are absent (the gate applies).
+func TestScriptReads_EntityRefsGated(t *testing.T) {
+	_, deps := newACLWorld(t)
+
+	out := runAsAlice(t, deps, `
+local refs = rela.md.entity_refs()
+local ids = {}
+for id in pairs(refs) do ids[#ids+1] = id end
+table.sort(ids)
+rela.output("refs=" .. table.concat(ids, ","))
+`)
+
+	// alice may read ticket + person, not secret.
+	if !strings.Contains(out, "TKT-1") || !strings.Contains(out, "P-1") {
+		t.Errorf("readable entities missing from entity_refs — the binding resolved no "+
+			"principal and fell closed for everyone (the RR-ZA452J regression): %q", out)
+	}
+	if strings.Contains(out, "SEC-1") {
+		t.Errorf("entity_refs is NOT gated — a hidden entity leaked into the ref map: %q", out)
+	}
+}
+
 // TestScriptReads_NilReaderDenies (AC9, RR-X9NVHI): a runtime wired
 // without a reader DENIES. It must never fall back to the raw write-prep
 // store — a forgotten wiring must not become an ACL bypass.
