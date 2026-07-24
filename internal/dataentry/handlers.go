@@ -28,6 +28,36 @@ type RelationHelp struct {
 	Description htmltemplate.HTML
 }
 
+// EnumHelp documents an enum/state-machine property's allowed values and (when
+// it is a state machine) its lifecycle. Property is the property name, TypeName
+// the custom-type name (empty for an inline enum). Values / Transitions are only
+// populated when present; both may be empty for a plain field, in which case the
+// property contributes no help sections (TKT-DUQBD0).
+type EnumHelp struct {
+	Property    string
+	TypeName    string
+	Initial     string // entry state for the diagram; "" when unknown
+	Values      []ValueHelp
+	Transitions []TransitionHelp
+}
+
+// ValueHelp documents one allowed value of an enum: the raw value, its optional
+// display Label, and its optional prose Description (CustomType.Descriptions).
+type ValueHelp struct {
+	Value       string
+	Label       string
+	Description htmltemplate.HTML
+}
+
+// TransitionHelp documents one lifecycle move: the target label (the verb), the
+// From→To states, and the optional Help prose (why/when to make the move).
+type TransitionHelp struct {
+	Move string // the move label, falling back to the To value
+	From string
+	To   string
+	Help htmltemplate.HTML
+}
+
 // handleEntityHelp returns HTML fragment with documentation for an entity type.
 // GET /api/help/{entityType}
 func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +94,9 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 	outgoingRels := a.gatherRelations(s.Meta, entityType, true)
 	incomingRels := a.gatherRelations(s.Meta, entityType, false)
 
+	// Gather enum value + lifecycle help for enum/state-machine properties.
+	enums := gatherEnumHelp(s.Meta, entDef)
+
 	// Render entity description
 	var entityDesc htmltemplate.HTML
 	if entDef.Description != "" {
@@ -72,13 +105,79 @@ func (a *App) handleEntityHelp(w http.ResponseWriter, r *http.Request) {
 
 	// Generate inline HTML
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	a.renderHelpContent(w, entityDesc, props, outgoingRels, incomingRels)
+	a.renderHelpContent(w, entityDesc, props, outgoingRels, incomingRels, enums)
+}
+
+// gatherEnumHelp collects per-value descriptions and lifecycle transitions for
+// every enum / state-machine property of entDef, in property-name order
+// (TKT-DUQBD0). A property contributes an [EnumHelp] only when its type has
+// declared values (a named custom type with Values, or an inline enum); the
+// Values / Transitions slices are populated from the resolved CustomType. Plain
+// (non-enum) properties are skipped entirely, so they add no help sections.
+func gatherEnumHelp(meta *metamodel.Metamodel, entDef *metamodel.EntityDef) []EnumHelp {
+	var out []EnumHelp
+	names := make([]string, 0, len(entDef.Properties))
+	for name := range entDef.Properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		prop := entDef.Properties[name]
+		// Resolve the value set: a named custom type, else an inline enum.
+		ct, named := meta.Types[prop.Type]
+		values := ct.Values
+		labels := ct.Labels
+		descriptions := ct.Descriptions
+		transitions := ct.Transitions
+		if !named {
+			// Inline enum: values live on the property; no custom-type-level
+			// descriptions or transitions exist for inline enums.
+			values = prop.Values
+			labels = prop.Labels
+			descriptions = nil
+			transitions = nil
+		}
+		if len(values) == 0 {
+			continue // not an enum — no help to add
+		}
+
+		eh := EnumHelp{Property: name}
+		if named {
+			eh.TypeName = prop.Type
+			// Entry state for the diagram: Initial, else Default.
+			eh.Initial = ct.Initial
+			if eh.Initial == "" {
+				eh.Initial = ct.Default
+			}
+		}
+		for _, v := range values {
+			vh := ValueHelp{Value: v, Label: labels[v]}
+			if d := descriptions[v]; d != "" {
+				vh.Description = simpleMarkdownToHTML(d)
+			}
+			eh.Values = append(eh.Values, vh)
+		}
+		for _, tr := range transitions {
+			move := tr.Label
+			if move == "" {
+				move = tr.To
+			}
+			th := TransitionHelp{Move: move, From: tr.From, To: tr.To}
+			if tr.Help != "" {
+				th.Help = simpleMarkdownToHTML(tr.Help)
+			}
+			eh.Transitions = append(eh.Transitions, th)
+		}
+		out = append(out, eh)
+	}
+	return out
 }
 
 // renderHelpContent generates HTML for entity help content.
 func (a *App) renderHelpContent(
 	w http.ResponseWriter, entityDesc htmltemplate.HTML, props []PropertyHelp,
-	outgoingRels, incomingRels []RelationHelp,
+	outgoingRels, incomingRels []RelationHelp, enums []EnumHelp,
 ) {
 	fmt.Fprint(w, `<div class="help-content">`)
 	if entityDesc != "" {
@@ -135,7 +234,122 @@ func (a *App) renderHelpContent(
 		}
 		fmt.Fprint(w, `</tbody></table>`)
 	}
+
+	// Values + Lifecycle sections per enum / state-machine property (TKT-DUQBD0).
+	for _, e := range enums {
+		renderEnumHelp(w, e)
+	}
+
 	fmt.Fprint(w, `</div>`)
+}
+
+// renderEnumHelp emits the Values table (and, for a state machine, the Lifecycle
+// table) for one enum property. Sections with no rows are skipped, so a plain
+// enum shows only Values and a value with no description shows just its
+// value/label.
+func renderEnumHelp(w http.ResponseWriter, e EnumHelp) {
+	if len(e.Values) > 0 {
+		fmt.Fprintf(w, `<h4>Values: <code>%s</code></h4>`, htmltemplate.HTMLEscapeString(e.Property))
+		fmt.Fprint(w, `<table class="help-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody>`)
+		for _, v := range e.Values {
+			shown := v.Value
+			if v.Label != "" {
+				shown = v.Label + " (" + v.Value + ")"
+			}
+			fmt.Fprintf(w, `<tr><td><code>%s</code></td><td>%s</td></tr>`,
+				htmltemplate.HTMLEscapeString(shown), v.Description)
+		}
+		fmt.Fprint(w, `</tbody></table>`)
+	}
+
+	if len(e.Transitions) > 0 {
+		fmt.Fprintf(w, `<h4>Lifecycle: <code>%s</code></h4>`, htmltemplate.HTMLEscapeString(e.Property))
+		// A mermaid state diagram of this field's machine, rendered client-side
+		// (the help modal runs renderMermaidDiagrams over the injected HTML). One
+		// diagram per state-machine field.
+		fmt.Fprintf(w, `<pre class="mermaid">%s</pre>`,
+			htmltemplate.HTMLEscapeString(mermaidStateDiagram(e)))
+		fmt.Fprint(w, `<table class="help-table"><thead><tr><th>Move</th><th>From &rarr; To</th><th>When to use</th></tr></thead><tbody>`)
+		for _, tr := range e.Transitions {
+			fmt.Fprintf(w, `<tr><td>%s</td><td><code>%s</code> &rarr; <code>%s</code></td><td>%s</td></tr>`,
+				htmltemplate.HTMLEscapeString(tr.Move),
+				htmltemplate.HTMLEscapeString(tr.From),
+				htmltemplate.HTMLEscapeString(tr.To),
+				tr.Help)
+		}
+		fmt.Fprint(w, `</tbody></table>`)
+	}
+}
+
+// mermaidStateDiagram builds a stateDiagram-v2 source for one state-machine
+// field: an entry arrow to the initial state (when known) plus one edge per
+// transition, labeled with the move (verb).
+//
+// Raw enum values are NOT safe to splice directly into mermaid syntax — a value
+// with a space, an arrow, or a colon would break parsing, and a newline in a
+// move label could inject a spurious edge (the caller HTML-escapes the result,
+// but renderMermaidDiagrams reads textContent, which un-escapes it before
+// parsing, so the escape protects only the HTML transport). So every state value
+// is mapped to a synthetic id (`s0`, `s1`, …) and aliased with
+// `state "raw value" as sN` so the diagram DISPLAYS the real value while the
+// edges reference the safe id; move labels are flattened (newlines/carriage
+// returns → spaces) so a label can never spill onto a new diagram line.
+func mermaidStateDiagram(e EnumHelp) string {
+	ids := map[string]string{}
+	idFor := func(value string) string {
+		if id, ok := ids[value]; ok {
+			return id
+		}
+		id := fmt.Sprintf("s%d", len(ids))
+		ids[value] = id
+		return id
+	}
+
+	var b strings.Builder
+	b.WriteString("stateDiagram-v2\n")
+
+	// Collect the states in first-seen order so the alias declarations are
+	// deterministic; assign ids as we go.
+	order := []string{}
+	seen := map[string]bool{}
+	note := func(v string) {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			order = append(order, v)
+			idFor(v)
+		}
+	}
+	note(e.Initial)
+	for _, tr := range e.Transitions {
+		note(tr.From)
+		note(tr.To)
+	}
+	for _, v := range order {
+		fmt.Fprintf(&b, "    state %q as %s\n", v, ids[v])
+	}
+
+	if e.Initial != "" {
+		fmt.Fprintf(&b, "    [*] --> %s\n", ids[e.Initial])
+	}
+	for _, tr := range e.Transitions {
+		label := mermaidLabel(tr.Move)
+		if label != "" && tr.Move != tr.To {
+			fmt.Fprintf(&b, "    %s --> %s: %s\n", ids[tr.From], ids[tr.To], label)
+		} else {
+			fmt.Fprintf(&b, "    %s --> %s\n", ids[tr.From], ids[tr.To])
+		}
+	}
+	return b.String()
+}
+
+// mermaidLabel flattens a transition move label so it is safe as a mermaid edge
+// label: newlines/carriage returns collapse to spaces (a raw newline would end
+// the edge line and let the remainder inject a new statement).
+func mermaidLabel(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.TrimSpace(s)
 }
 
 // gatherRelations collects relation documentation for an entity type.

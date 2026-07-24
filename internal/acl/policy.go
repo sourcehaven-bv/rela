@@ -85,6 +85,12 @@ const PermHistoryRead = "history:read"
 // reserved for unparseable YAML, undecodable values within a known
 // key, and security-critical invariants — see [Policy.Validate].
 type Policy struct {
+	// Description is optional operator-facing prose describing what this
+	// deployment's access model is for. It is never consulted by the
+	// authorization path — it exists solely so the `rela docs` generator
+	// can narrate the role model (rela-docs phase 1b, TKT-JO2SAD).
+	Description string `yaml:"description,omitempty"`
+
 	UserEntityType      string                     `yaml:"user_entity_type"`
 	PrincipalProperty   string                     `yaml:"principal_property"`
 	MembershipRelation  string                     `yaml:"membership_relation"`
@@ -164,6 +170,13 @@ func (p *Policy) EffectiveMembershipRelation() string {
 // A present-but-empty list (`fields: {ticket: []}`) is closed-world
 // deny-all for that type, distinct from an absent or null value.
 type RoleDef struct {
+	// Description is optional operator-facing prose describing what this
+	// role is for, in plain language. Like [Policy.Description] it is
+	// documentation only — never read by the write/read/affordance paths —
+	// and feeds the `rela docs` generator's role narration (rela-docs
+	// phase 1b, TKT-JO2SAD).
+	Description string `yaml:"description,omitempty"`
+
 	Create      []string `yaml:"create"`
 	Update      []string `yaml:"update"`
 	Delete      []string `yaml:"delete"`
@@ -302,6 +315,7 @@ type RoleRelationDef struct {
 // knownPolicyKeys is the allowlist used for unknown-key warnings.
 // Keep in sync with [Policy]'s yaml tags.
 var knownPolicyKeys = map[string]bool{
+	"description":           true,
 	"user_entity_type":      true,
 	"principal_property":    true,
 	"membership_relation":   true,

@@ -20,8 +20,9 @@ type partialMetamodel struct {
 	Includes    []string               `yaml:"includes"`
 
 	// Fields that are not allowed in included files
-	Version   string `yaml:"version"`
-	Namespace string `yaml:"namespace"`
+	Version     string `yaml:"version"`
+	Namespace   string `yaml:"namespace"`
+	Description string `yaml:"description"`
 }
 
 // includeState tracks file processing state during recursive include resolution.
@@ -132,6 +133,9 @@ func resolveIncludes(
 	}
 	if partial.Namespace != "" {
 		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "namespace"}
+	}
+	if partial.Description != "" {
+		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "description"}
 	}
 
 	// Push onto stack for circular detection

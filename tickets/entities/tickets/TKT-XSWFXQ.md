@@ -5,8 +5,10 @@ title: Decompose dataentry.App AppState into self-synchronized services + schema
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — all four stacked PRs landed: logoStore, paletteService, settingsService, and schemaProvider are separate self-synchronized services on App; AppState/mutateState are gone.
 
 Continuation of the [[TKT-N26KLB]] `dataentry.App` decomposition arc (that
 ticket is done; this is the next coherent unit — state, not handlers).

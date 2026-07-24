@@ -48,15 +48,23 @@ var knownTypos = map[string]string{
 	"navaigation": "navigation",
 }
 
-// Valid filter operators
+// Valid filter operators for list/kanban static filters. This is the UI
+// operator set the SPA can translate to a wire operator the API evaluates
+// (utils/filters.ts OPERATOR_MAP → eq/ne/contains/in/lt/lte/gt/gte) — the
+// docs table in docs/data-entry.md "Static Filters" is the same set. `=~`
+// (regex, from search/calfeed/CLI filter syntax) was wrongly allowed here
+// for months while no layer below could evaluate it: the SPA degraded it
+// to `eq` and the config's list silently showed zero rows.
 var validFilterOperators = map[string]bool{
 	"=":  true,
+	"==": true, // alias for "="
 	"!=": true,
+	"~":  true, // substring, case-insensitive
 	"<":  true,
 	"<=": true,
 	">":  true,
 	">=": true,
-	"=~": true,
+	"in": true, // comma-separated list, matches any
 }
 
 // Valid sort directions
@@ -574,6 +582,32 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	}
 	warnings = append(warnings, conflictingRelationDirectionWarnings(cfg)...)
 	warnings = append(warnings, relationPropertyNameCollisionWarnings(cfg, meta)...)
+	warnings = append(warnings, viewCommandPermissionWarnings(cfg)...)
+	return warnings
+}
+
+// viewCommandPermissionWarnings flags `permission:` on a `context: view`
+// command. The key is not honored for view commands — they are denied outright
+// under any configured acl.yaml (TKT-MJ02AO) — so an author who sets it would
+// otherwise believe they had granted access that silently does not apply.
+// Warn rather than error: the config is not wrong, it is inert, and erroring
+// would break projects that pre-emptively annotate their view commands.
+func viewCommandPermissionWarnings(cfg *Config) []string {
+	var warnings []string
+	ids := make([]string, 0, len(cfg.Commands))
+	for id := range cfg.Commands {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		cmd := cfg.Commands[id]
+		if cmd.Context == "view" && cmd.Permission != "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"command %q: permission %q is ignored for context: view — view commands are denied "+
+					"under any configured acl.yaml and cannot yet be granted per-command",
+				id, cmd.Permission))
+		}
+	}
 	return warnings
 }
 

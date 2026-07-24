@@ -7,8 +7,10 @@ priority: medium
 effort: s
 tags:
     - regression
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already fixed — handleV1ListEntities computes incomingByRow and serializes incoming edges keyed by inverse name (api_v1.go, entityserializer.go); EntityList.vue is direction-aware via relationCellKey.
 
 ## Problem
 

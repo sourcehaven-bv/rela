@@ -550,6 +550,38 @@ type RelationVersionSnapshot struct {
 	Projection []byte // the schema_versions.projection JSON for SchemaHash
 }
 
+// RelationLifetime summarizes one past lifetime of a relation's composite key —
+// one stitched-history lineage whose FINAL version row still carries this
+// (from,type,to). A key that was deleted-and-recreated has multiple lifetimes
+// (each recreate mints a fresh rel_record_id); a key with a single live-or-
+// deleted history has one. Lifetime is a 1-based ordinal, 1 = NEWEST, assigned
+// within one [RelationHistoryReader.ListRelationLifetimes] response (response-
+// local — a concurrent delete can shift ordinals between calls, so the durable
+// handle for addressing a specific lifetime is RecordID, not Lifetime).
+type RelationLifetime struct {
+	Lifetime     int       // 1-based ordinal, 1 = newest
+	RecordID     int64     // durable opaque handle (the stitched-head rel_record_id)
+	VersionCount int       // number of version rows across the stitched lineage
+	FirstSeen    time.Time // min(created_at) across the lineage
+	LastSeen     time.Time // max(created_at) across the lineage
+	Live         bool      // this lineage is the current live relations-row id
+	FinalOp      VersionOp // op of the newest row (delete = ended; else still live/renamed)
+}
+
+// RelationHistoryQuery addresses a relation's history by composite key, optionally
+// selecting a specific past lifetime. RecordID == 0 selects the NEWEST lifetime
+// (byte-for-byte the pre-lifetime-selection behavior); a non-zero RecordID
+// selects that specific lineage and MUST be one of the key's lifetimes (see
+// [RelationHistoryReader.ListRelationLifetimes]) — the store returns ErrNotFound
+// otherwise, so the composite key remains the authorization boundary and RecordID
+// only disambiguates within it.
+type RelationHistoryQuery struct {
+	From     string
+	Type     string
+	To       string
+	RecordID int64 // 0 = newest lifetime
+}
+
 // RelationVersionInput is one relation version to persist via
 // [RelationVersionWriter]. RecordID is the surrogate lineage id read off the
 // live relations row (0 is invalid — the caller must supply the row's
@@ -590,18 +622,27 @@ type RelationVersionWriter interface {
 // deleted relation) composite key; the reader resolves that to a surrogate
 // rel_record_id lineage internally.
 type RelationHistoryReader interface {
-	// ListRelationVersions returns the version timeline for a relation's
-	// composite key, oldest first. Returns an empty slice (not an error) when
-	// the key has no history. The key may name a live or an already-deleted
-	// relation. Because a re-created (from,type,to) after delete gets a fresh
-	// rel_record_id, this returns only the CURRENT (or most recent) lineage for
-	// that key, not merged across a delete boundary.
-	ListRelationVersions(ctx context.Context, from, relType, to string) ([]RelationVersionMeta, error)
+	// ListRelationVersions returns the version timeline for the lifetime the query
+	// selects, oldest first. Returns an empty slice (not an error) when the key has
+	// no history. The key may name a live or an already-deleted relation. With
+	// RecordID == 0 it returns the CURRENT (or most recent) lifetime for the key,
+	// not merged across a delete boundary — a re-created (from,type,to) gets a
+	// fresh rel_record_id. A non-zero RecordID selects a specific past lifetime
+	// (see ListRelationLifetimes) and yields ErrNotFound if it is not a lifetime of
+	// this key.
+	ListRelationVersions(ctx context.Context, q RelationHistoryQuery) ([]RelationVersionMeta, error)
 
-	// GetRelationVersion returns the full snapshot for a 1-based version ordinal
-	// in the relation's lineage. Returns ErrNotFound if the key has no such
-	// version.
-	GetRelationVersion(ctx context.Context, from, relType, to string, version int) (*RelationVersionSnapshot, error)
+	// GetRelationVersion returns the full snapshot for a 1-based version ordinal in
+	// the lifetime the query selects. Returns ErrNotFound if the key/lifetime has
+	// no such version (or the RecordID is not a lifetime of the key).
+	GetRelationVersion(ctx context.Context, q RelationHistoryQuery, version int) (*RelationVersionSnapshot, error)
+
+	// ListRelationLifetimes enumerates every past lifetime of a relation's
+	// composite key, newest-first (Lifetime 1 = newest). Multiple entries mean the
+	// key was deleted-and-recreated: this is how a caller discovers that older
+	// deleted lifetimes exist and obtains the RecordID handle to read one. Returns
+	// an empty slice for an unknown key.
+	ListRelationLifetimes(ctx context.Context, from, relType, to string) ([]RelationLifetime, error)
 }
 
 // --- Version purge (TKT-BW6UUL) ---
@@ -649,11 +690,20 @@ type VersionPurgeRequest struct {
 type RelationVersionPurgeRequest struct {
 	From, Type, To string
 	Selector       PurgeSelector
-	Reason         string
-	ForceLive      bool
-	DryRun         bool
-	PrincipalUser  string
-	PrincipalTool  string
+	// RecordID selects which lifetime of a reused key to purge (0 = newest). A
+	// key that was deleted-and-recreated has multiple lifetimes; purging without a
+	// selector would silently erase only the newest and leave older lifetimes'
+	// content behind — a false compliance guarantee. So a multi-lifetime key with
+	// RecordID == 0 and AllLifetimes == false is REFUSED (see PurgeResult).
+	RecordID int64
+	// AllLifetimes purges every lifetime of the key (each fenced lineage), for a
+	// complete erasure of a reused key. Mutually exclusive with RecordID.
+	AllLifetimes  bool
+	Reason        string
+	ForceLive     bool
+	DryRun        bool
+	PrincipalUser string
+	PrincipalTool string
 }
 
 // PurgeTarget is one version row a purge would delete (or, in DryRun, would
@@ -677,6 +727,12 @@ type PurgeResult struct {
 	LiveRowExists    bool
 	RenameInTargets  bool
 	TombstoneWritten bool
+	// MultiLifetimeRefused is set (with Purged == 0) when a relation purge names a
+	// key that has more than one lifetime but no lifetime selector (RecordID /
+	// AllLifetimes) — the caller must choose, so nothing is erased. LifetimeCount
+	// carries how many exist, for the operator message.
+	MultiLifetimeRefused bool
+	LifetimeCount        int
 }
 
 // VersionPurger hard-deletes entity version snapshot rows. Optional,
@@ -693,6 +749,29 @@ type VersionPurger interface {
 // RelationVersionPurger is the relation analog.
 type RelationVersionPurger interface {
 	PurgeRelationVersions(ctx context.Context, req RelationVersionPurgeRequest) (*PurgeResult, error)
+}
+
+// VersionService is the umbrella for a backend's full content-versioning surface:
+// entity + relation history reads, synchronous version writes, and purge. It is a
+// SEPARATE concern from [Store] (a store just stores) that a backend supplies as
+// its own injected service — or leaves absent (nil) where versioning isn't
+// provided (the filesystem build uses git instead). pgstore's *VersionStore
+// implements it.
+//
+// This umbrella is a WIRING vehicle only: the composition root uses it as the
+// nil-able field type it threads through the service bundles. Consumers still
+// bind the NARROW sub-interface they actually use at the call site
+// (a history command takes [RelationHistoryReader]; a recorder takes
+// [RelationVersionWriter]) — the umbrella is never a parameter to a handler or
+// command. It groups one cohesive concern (all version I/O over one connection),
+// not a cross-subsystem service locator.
+type VersionService interface {
+	HistoryReader
+	VersionWriter
+	RelationHistoryReader
+	RelationVersionWriter
+	VersionPurger
+	RelationVersionPurger
 }
 
 // EntityObserver receives notifications when entities are created, updated,

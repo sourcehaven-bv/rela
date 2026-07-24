@@ -5,8 +5,10 @@ title: Expose a markdown editor to custom apps via a <rela-editor> custom elemen
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — `<rela-editor>` custom element shipped: frontend/src/app-editor/relaEditor.ts, reserved appEditorEntry constants in dataentry/apps.go, served via apps_handler.go/apps_editor.go, documented in internal/dataentry/CLAUDE.md.
 
 Custom apps currently have to build their own `<textarea>` for editing markdown
 (the "Today" app's notes box is a plain textarea). There's no way to give a

@@ -8,6 +8,8 @@ effort: m
 status: backlog
 ---
 
+> **Sweep note (2026-07-20): goal still valid (seal/unseal at the fsstore I/O boundary, depends on TKT-7XEFM), but the body's wiring site is dead — `internal/workspace/workspace.go` no longer exists; crypto wiring belongs in `appbuild`. The `repo` semantics referenced are also gone. Retarget before planning.**
+
 Wire the rewritten `internal/encryption` package into `internal/store/fsstore` so that every entity, relation, attachment, and derived cache file is sealed as an age blob. Depends on TKT-7XEFM.
 
 ## Interface contract

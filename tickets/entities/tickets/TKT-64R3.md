@@ -5,8 +5,10 @@ title: Delete internal/workspace once all consumers have migrated
 kind: refactor
 priority: low
 effort: s
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** target already gone — `internal/workspace` is deleted, zero grep hits remain, and the appbuild migration this ticket gated on landed; there is nothing left to delete.
 
 Final step of the workspace-decomposition arc: delete `internal/workspace`
 entirely.

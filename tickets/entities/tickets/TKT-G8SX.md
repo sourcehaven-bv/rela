@@ -5,8 +5,10 @@ title: Move project-setup utilities out of workspace into projectsetup
 kind: refactor
 priority: high
 effort: s
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — the utilities live in `internal/projectsetup/{validate,migrate,init}.go` and the CLI callers use `projectsetup.*` (cli/init.go, migrate.go, validate.go); arch-lint has the projectsetup component.
 
 Lift the four free utility functions out of `internal/workspace` into a new
 `internal/projectsetup` package:

@@ -1,11 +1,47 @@
 version: "1.0"
+description: |
+  A lightweight ticket tracker: capture work as tickets, group them into
+  categories, tag and cross-link them, and move each ticket through a simple
+  lifecycle from open to closed. This description, the per-status explanations,
+  and the transition help below are surfaced by the generated documentation
+  (`rela docs`).
 types:
   ticket_status:
     values: [open, in-progress, resolved, closed]
     default: open
+    initial: open
+    labels:
+      in-progress: In progress
+    descriptions:
+      open: A newly filed ticket that no one has started yet.
+      in-progress: Someone is actively working on the ticket.
+      resolved: The work is done and awaiting confirmation before it is closed.
+      closed: The ticket is finished; no further work is expected.
+    transitions:
+      - from: open
+        to: in-progress
+        label: Start work
+        help: Move a ticket here once someone picks it up and begins working on it.
+      - from: in-progress
+        to: resolved
+        label: Mark resolved
+        help: Use this when the work is complete and ready for the reporter to verify.
+      - from: resolved
+        to: closed
+        label: Close
+        help: Close the ticket once the reporter has confirmed the resolution.
+      - from: resolved
+        to: in-progress
+        label: Reopen
+        help: Send it back to in-progress if verification finds the work is not done.
   priority:
     values: [critical, high, medium, low]
     default: medium
+    descriptions:
+      critical: Needs immediate attention; blocks other work or users.
+      high: Important; should be handled soon.
+      medium: Normal priority.
+      low: Nice to have; handle when there is spare capacity.
 entities:
   ticket:
     label: Ticket

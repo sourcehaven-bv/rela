@@ -58,6 +58,9 @@ function seedSchema(fields: Array<Record<string, unknown>>) {
     properties: {
       title: { type: 'string', values: null },
       status: { type: 'enum', values: ['todo'] },
+      // Enum property most tickets leave unset — used by the
+      // unset-field-suppression test below.
+      effort: { type: 'enum', values: ['s', 'm', 'l'] },
     },
   } as never)
   // Relation with a declared inverse: incoming edges land under `handled_by`.
@@ -295,6 +298,35 @@ describe('KanbanView column header enum labels', () => {
     await flushPromises()
 
     expect(wrapper.find('.column-title').text()).toBe('Backlog')
+    wrapper.unmount()
+  })
+})
+
+// Card fields whose value is unset must not render at all: an enum field
+// with an empty value produced a dangling "effort:" label plus an empty
+// gray Badge pill on every card that hadn't set the property.
+describe('KanbanView card fields with unset values', () => {
+  it('drops rows for unset fields instead of rendering an empty badge', async () => {
+    const ticket = makeTicket('T-9') // status set, effort absent
+    const wrapper = await mountBoard([{ property: 'status' }, { property: 'effort' }], [ticket])
+
+    const card = wrapper.find('.kanban-card')
+    expect(card.exists()).toBe(true)
+    const labels = card.findAll('.field-label').map((n) => n.text())
+    expect(labels).toContain('status:')
+    expect(labels).not.toContain('effort:')
+    wrapper.unmount()
+  })
+
+  it('renders the row normally once the field has a value', async () => {
+    const ticket = makeTicket('T-10')
+    ticket.properties.effort = 'm'
+    const wrapper = await mountBoard([{ property: 'effort' }], [ticket])
+
+    const card = wrapper.find('.kanban-card')
+    const labels = card.findAll('.field-label').map((n) => n.text())
+    expect(labels).toContain('effort:')
+    expect(card.text()).toContain('m')
     wrapper.unmount()
   })
 })

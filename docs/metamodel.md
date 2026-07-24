@@ -10,6 +10,9 @@ It's stored in `metamodel.yaml` at your project root.
 ```yaml
 version: "1.0"
 namespace: "https://example.org/ontology/architecture#"
+description: |
+  Optional end-user prose describing what this deployment is for. Documentation
+  only — surfaced by generated docs; ignored by validation and the write path.
 
 types:
   # Custom enum types
@@ -59,7 +62,8 @@ project root (where `metamodel.yaml` lives).
 
 Each included file is a partial metamodel. It can contain any combination of
 `types:`, `entities:`, `relations:`, and `validations:` — but **must not** contain
-`version:` or `namespace:` (these are only allowed in the root `metamodel.yaml`).
+`version:`, `namespace:`, or `description:` (these are deployment-wide, allowed
+only in the root `metamodel.yaml`).
 
 ```yaml
 # compliance/controls.yaml
@@ -205,6 +209,29 @@ Notes:
   type**; an inline `labels` map on such a property is ignored (mirroring how an
   inline `values` list is ignored there).
 
+#### Value Descriptions
+
+Where `labels:` gives a value its short display text, `descriptions:` gives the
+**longer prose meaning** of a value — what it signifies. It is documentation
+only (surfaced by generated docs), keyed by value like `labels:`:
+
+```yaml
+types:
+  ticket-status:
+    values: [open, in_progress, closed]
+    labels:
+      in_progress: In progress
+    descriptions:
+      open: A newly filed ticket that no one has started yet.
+      in_progress: Someone is actively working on the ticket.
+      closed: The ticket is finished; no further work is expected.
+```
+
+- `descriptions` is optional and independent of `labels`: a value may have
+  either, both, or neither. It never affects storage, validation, or forms.
+- Distinct from the type-level `description:` scalar (which documents the type as
+  a whole); `descriptions:` documents each individual value.
+
 ### State Machines (transitions)
 
 An enum custom type becomes a **state machine** when it declares `transitions:` —
@@ -222,6 +249,7 @@ types:
       - from: todo
         to: doing
         label: Start progress # optional: names the MOVE (an action verb)
+        help: Move here once someone picks up the ticket. # optional: why/when
       - from: doing
         to: review
         label: Send to review
@@ -241,6 +269,7 @@ types:
 | `guard` | An ACL permission the acting principal must hold for the move. Enforced on served paths; inert on a direct CLI write with no policy. |
 | `when` | A predicate (same language as validations, evaluated against the entity + graph) that must hold for the move. |
 | `label` | **Optional** display text for the move (the *action*, e.g. "Start progress"), used by the data-entry status control. Display-only — the stored value is still `to`. Absent → the UI falls back to the target value's display label, then the raw value. |
+| `help` | **Optional** longer prose explaining *why or when* a user would make this move, beyond the short `label`. Documentation only — surfaced by generated docs, ignored by enforcement. |
 
 The data-entry UI reads these to render a **status control** that offers only the
 moves the current user can perform right now (see the `_transitions` affordance in

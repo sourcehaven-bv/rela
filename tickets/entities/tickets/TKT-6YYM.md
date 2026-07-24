@@ -5,8 +5,10 @@ title: 'Audit log: append-only JSONL of entity write operations'
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — `internal/audit` exists with the `Audit` interface and Nop/Memory/Filesystem backends, wired as a required collaborator through appbuild and consumed by entitymanager.
 
 ## Summary
 

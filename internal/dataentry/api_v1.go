@@ -58,6 +58,14 @@ func (a *App) toV1PropertyDef(meta *metamodel.Metamodel, propDef metamodel.Prope
 
 // toV1CustomType is the single serialization site for a metamodel custom type
 // onto the wire, so the _schema types map and any other consumer stay in sync.
+//
+// It intentionally projects only Values/Labels/Default. The documentation-only
+// fields — CustomType.Descriptions (per-value meaning), CustomType.Transitions,
+// and TransitionDef.Help (TKT-0YBFT8) — are NOT serialized: their consumer is the
+// offline `rela docs` generator (FEAT-G4VO53), not the SPA. Wiring any of them to
+// the wire is a deliberate frontend-contract change (see internal/dataentry/
+// CLAUDE.md), not a "helpful" one-liner here. TestToV1CustomType_OmitsDocFields
+// pins this boundary.
 func toV1CustomType(ct metamodel.CustomType) v1.CustomType {
 	return v1.CustomType{
 		Values:  ct.Values,
@@ -226,6 +234,15 @@ func (a *App) handleV1EntityCollection(w http.ResponseWriter, r *http.Request, t
 // it as a free-text search failure.
 var errACLListQuery = errors.New("acl list query failed")
 
+// errBadFilter marks a filter[...] query param the pipeline refuses to
+// evaluate: malformed key shape or an operator outside the supported set.
+// Mapped to HTTP 400 by writeListPipelineError. A rejected request beats
+// the old behavior of dropping the clause with only a server-side log —
+// that silently returned the UNFILTERED superset, which let a config typo
+// (`=~`, BUG: active_tickets) masquerade as an empty/wrong result set for
+// months. Malformed wire format is a hard 400 per DEC-HWZHA.
+var errBadFilter = errors.New("invalid filter parameter")
+
 // errListLoad wraps a store iterator failure while loading the
 // unfiltered (AllowAll) list. Surfaced as 500 list_load_failed at the
 // call sites: before TKT-VMD8 a mid-stream error silently truncated
@@ -315,8 +332,14 @@ func (a *App) scopedSortedEntities(
 	// GetRelationDef is only a fallback and only ever routes AWAY from
 	// properties, never toward relations without a control.
 	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
-	entities = applyV1Filters(entities, query, typeName, isRelationKey)
-	entities = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
+	entities, err = applyV1Filters(entities, query, typeName, isRelationKey)
+	if err != nil {
+		return nil, err
+	}
+	entities, err = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
+	if err != nil {
+		return nil, err
+	}
 	entities = applyV1Sorting(entities, query)
 	return entities, nil
 }
@@ -380,10 +403,11 @@ func relationFilterClassifier(
 // title equals the requested value.
 //
 // Operators: only `eq` (the bare `filter[<rel>]` form) and `ne`
-// (`filter[<rel>][ne]`) are supported. Any other operator segment fails CLOSED
-// — the whole result set is dropped to zero rows with an slog.Warn — matching
-// the fail-closed contract applyV1Filters enforces for unknown property
-// operators (RR-6RF60V). Never fail open.
+// (`filter[<rel>][ne]`) are supported. Any other operator segment is rejected
+// with errBadFilter → HTTP 400, matching applyV1Filters. This supersedes the
+// RR-6RF60V drop-to-zero-rows behavior: both were fail-closed, but zero rows
+// reads as "no data" while a 400 names the broken operator to the caller.
+// Never fail open.
 //
 // ACL (RR-HK1XNO): neighbor titles are resolved through the read gate, so a
 // filter value matching a neighbor the caller cannot read does NOT include the
@@ -407,7 +431,7 @@ func relationFilterClassifier(
 func (a *App) applyRelationFilters(
 	ctx context.Context, entities []*entityPkg.Entity, query map[string][]string, typeName string,
 	isRelationKey func(string) bool,
-) []*entityPkg.Entity {
+) ([]*entityPkg.Entity, error) {
 	cfg := a.Cfg()
 	for key, values := range query {
 		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
@@ -422,16 +446,15 @@ func (a *App) applyRelationFilters(
 			continue // empty control value = no constraint
 		}
 
-		// Fail CLOSED on any operator we don't support for relations. Never
-		// fall through and leave the set unfiltered (that would be the
-		// fail-open bug RR-6RF60V).
+		// Reject any operator we don't support for relations. Never fall
+		// through and leave the set unfiltered (that would be the fail-open
+		// bug RR-6RF60V); see the doc comment on the 400-over-zero-rows choice.
 		switch operator {
 		case "eq", "ne":
 			// supported below
 		default:
-			slog.Warn("relation filter uses unsupported operator; dropping all rows",
-				"key", key, "operator", operator)
-			return entities[:0]
+			return nil, fmt.Errorf("%w: unknown operator %q in relation filter key %q (supported: eq, ne)",
+				errBadFilter, operator, key)
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
@@ -444,7 +467,7 @@ func (a *App) applyRelationFilters(
 		}
 		entities = filtered
 	}
-	return entities
+	return entities, nil
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -979,6 +1002,18 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 // backend error string can name tables, columns, or index paths.
 func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, errBadFilter):
+		// Server-side log stays alongside the 400 (RR-6RF60V's logging
+		// intent, CONTROL-8-15): the response informs the caller, the log
+		// informs operators — a broken config or a caller probing filter
+		// params is an anomalous event worth a trace even when no one
+		// watches the client.
+		slog.Warn("dataentry: rejected invalid filter parameter",
+			"err", err, "path", r.URL.Path, "method", r.Method)
+		// Client-caused: echo the detail — it only restates the caller's own
+		// filter key/operator, never store internals.
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
+			"Invalid filter parameter", err.Error())
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, errListLoad):
@@ -1885,6 +1920,26 @@ func (a *App) resolveRelationWidgets(s *Schema, rels []dataentryconfig.FormRelat
 	return resolved
 }
 
+// aboutDescription is the deployment description shown by the SPA's global
+// "About" help (TKT-DUQBD0). The data-entry.yaml `app.description` wins when set
+// (it is the UI-app-specific text); otherwise it falls back to the metamodel's
+// top-level `description` (the schema-level prose added in TKT-0YBFT8). Empty
+// when neither is set — the SPA hides the About button.
+//
+// This is a SEPARATE field from AppConfig.Description on the wire: that field is
+// also rendered by SettingsView as a plain one-line value, and pushing the
+// (possibly multi-paragraph markdown) metamodel description into it would
+// regress that view. The About surface gets its own field, `about_description`.
+func aboutDescription(s *Schema) string {
+	if s.Cfg != nil && s.Cfg.App.Description != "" {
+		return s.Cfg.App.Description
+	}
+	if s.Meta != nil {
+		return s.Meta.Description
+	}
+	return ""
+}
+
 func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -1914,18 +1969,19 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Description:       s.Cfg.App.Description,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
 		},
-		Styles:      s.StyleMap,
-		Forms:       forms,
-		Lists:       s.Cfg.Lists,
-		Views:       s.Cfg.Views,
-		EntityViews: s.Cfg.EntityViews,
-		Kanbans:     s.Cfg.Kanbans,
-		Dashboard:   s.Cfg.Dashboard,
-		Actions:     s.Cfg.Actions,
-		Navigation:  s.Cfg.Navigation,
-		Documents:   s.Cfg.Documents,
-		Apps:        appsToV1(a.scanAppsOrLog()),
-		Palette:     a.palette.Resolved(),
+		AboutDescription: aboutDescription(s),
+		Styles:           s.StyleMap,
+		Forms:            forms,
+		Lists:            s.Cfg.Lists,
+		Views:            s.Cfg.Views,
+		EntityViews:      s.Cfg.EntityViews,
+		Kanbans:          s.Cfg.Kanbans,
+		Dashboard:        s.Cfg.Dashboard,
+		Actions:          s.Cfg.Actions,
+		Navigation:       s.Cfg.Navigation,
+		Documents:        s.Cfg.Documents,
+		Apps:             appsToV1(a.scanAppsOrLog()),
+		Palette:          a.palette.Resolved(),
 	}
 
 	writeV1JSON(w, http.StatusOK, config)
@@ -2190,6 +2246,9 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure
 // data transform — a free function, not App behavior (TKT-N26KLB M5.5).
+// A malformed key or unsupported operator returns errBadFilter (HTTP 400)
+// instead of silently dropping the clause, which returned the unfiltered
+// superset and hid config/caller typos.
 //
 // isRelationKey identifies filter keys that target a metamodel relation rather
 // than an entity property; those are skipped here and handled by the relation
@@ -2201,7 +2260,7 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 //nolint:gocognit,funlen // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
 func applyV1Filters(
 	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
-) []*entityPkg.Entity {
+) ([]*entityPkg.Entity, error) {
 	filtered := entities
 
 	for key, values := range query {
@@ -2219,18 +2278,15 @@ func applyV1Filters(
 
 		// Validate parsed shape. A malformed key like `filter[prop][][weird]`
 		// produces parts=["prop", "", "weird"] — more than 2 parts or an
-		// empty property/operator means the URL is bogus. Fail CLOSED by
-		// skipping the filter entirely (logging so users notice) rather
-		// than silently including every entity via the switch's default
-		// case, which would be a fail-open scope bypass.
+		// empty property/operator means the URL is bogus. Reject the request:
+		// the old skip-with-a-log "fail closed" still returned the unfiltered
+		// superset, which is fail-open at the result level.
 		if len(parts) > 2 {
-			slog.Warn("filter key has too many segments", "key", key)
-			continue
+			return nil, fmt.Errorf("%w: key %q has too many segments", errBadFilter, key)
 		}
 		property := parts[0]
 		if property == "" {
-			slog.Warn("filter key has empty property", "key", key)
-			continue
+			return nil, fmt.Errorf("%w: key %q has an empty property", errBadFilter, key)
 		}
 
 		// Relation filter keys are handled by the direction-aware relation
@@ -2243,22 +2299,22 @@ func applyV1Filters(
 		operator := "eq"
 		if len(parts) == 2 {
 			if parts[1] == "" {
-				slog.Warn("filter key has empty operator segment", "key", key)
-				continue
+				return nil, fmt.Errorf("%w: key %q has an empty operator segment", errBadFilter, key)
 			}
 			operator = parts[1]
 		}
 
 		// Reject unknown operators BEFORE the per-entity loop. A typo like
-		// `filter[status][equals]=done` used to fall through to the switch's
-		// default case and include every entity, silently bypassing the
-		// configured scope. Fail closed instead.
+		// `filter[status][equals]=done` used to be skipped with only a log —
+		// which returned every entity, the very silent inclusion the skip
+		// claimed to prevent. A 400 makes the typo visible to the caller
+		// (and to a config author whose list filter reached the wire).
 		switch operator {
 		case "eq", "ne", "contains", "in", "lt", "lte", "gt", "gte":
 			// known
 		default:
-			slog.Warn("filter uses unknown operator", "key", key, "operator", operator)
-			continue
+			return nil, fmt.Errorf("%w: unknown operator %q in key %q (supported: eq, ne, contains, in, lt, lte, gt, gte)",
+				errBadFilter, operator, key)
 		}
 
 		// Multi-value support: `in`/`ne` collect ALL repeated values from the
@@ -2331,7 +2387,7 @@ func applyV1Filters(
 		filtered = newFiltered
 	}
 
-	return filtered
+	return filtered, nil
 }
 
 // applyV1Sorting applies `sort=` query params to the entity slice. Pure data
@@ -3254,7 +3310,7 @@ func (a *App) handleV1Commands(w http.ResponseWriter, r *http.Request) {
 	qualifier := query.Get("qualifier")
 	entityType := query.Get("entity_type")
 
-	resolved := a.commands.resolveCommands(pageType, qualifier, entityType)
+	resolved := a.commands.resolveCommands(r.Context(), pageType, qualifier, entityType)
 
 	commands := make([]v1.Command, 0, len(resolved))
 	for _, cmd := range resolved {

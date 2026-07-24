@@ -219,19 +219,26 @@ type CustomType struct {
 
 // Config is the JSON representation of the UI config.
 type Config struct {
-	App         AppConfig                                   `json:"app"`
-	Styles      map[string]map[string]string                `json:"styles"`
-	Forms       map[string]dataentryconfig.Form             `json:"forms"`
-	Lists       map[string]dataentryconfig.List             `json:"lists"`
-	Views       map[string]dataentryconfig.ViewConfig       `json:"views"`
-	EntityViews map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
-	Kanbans     map[string]dataentryconfig.Kanban           `json:"kanbans"`
-	Dashboard   *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
-	Actions     map[string]dataentryconfig.Action           `json:"actions,omitempty"`
-	Navigation  []dataentryconfig.NavigationEntry           `json:"navigation"`
-	Documents   map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
-	Apps        map[string]App                              `json:"apps,omitempty"`
-	Palette     *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
+	App AppConfig `json:"app"`
+	// AboutDescription is the deployment description shown by the SPA's global
+	// "About" help (TKT-DUQBD0): the data-entry.yaml `app.description`, falling
+	// back to the metamodel's top-level `description`. Distinct from
+	// AppConfig.Description (which SettingsView renders as a plain one-liner) so
+	// a multi-paragraph markdown metamodel description doesn't leak into that
+	// view. Empty → the About button is hidden.
+	AboutDescription string                                      `json:"about_description,omitempty"`
+	Styles           map[string]map[string]string                `json:"styles"`
+	Forms            map[string]dataentryconfig.Form             `json:"forms"`
+	Lists            map[string]dataentryconfig.List             `json:"lists"`
+	Views            map[string]dataentryconfig.ViewConfig       `json:"views"`
+	EntityViews      map[string]dataentryconfig.EntityViewConfig `json:"entity_views,omitempty"`
+	Kanbans          map[string]dataentryconfig.Kanban           `json:"kanbans"`
+	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
+	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
+	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
+	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
+	Apps             map[string]App                              `json:"apps,omitempty"`
+	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the

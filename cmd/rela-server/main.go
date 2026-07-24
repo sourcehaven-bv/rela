@@ -136,39 +136,114 @@ func envOr(key, def string) string {
 	return def
 }
 
-// wirePrincipalResolvers installs the principal-resolver chain on the app.
+// identityMode is the identity source the server runs with. The two modes are
+// mutually exclusive by construction — see [validateIdentityFlags].
+type identityMode int
+
+const (
+	// identityHeader is the legacy chain: $RELA_DATAENTRY_USER, then the
+	// proxy-trusted --principal-header, then "unknown". Fails OPEN by design
+	// (an absent header yields "unknown", not a denial) and is unchanged.
+	identityHeader identityMode = iota
+	// identityJWT is fail-closed verified-JWT identity. Every API request must
+	// carry an assertion that verifies, or it is denied.
+	identityJWT
+)
+
+// validateIdentityFlags classifies the configured identity sources, returning an
+// error when they conflict.
 //
-// Chain order: $RELA_DATAENTRY_USER (local-dev escape hatch) wins over any
-// identity source; then the cryptographically-VERIFIED JWT assertion; then the
-// plain (proxy-trusted) header; then "unknown". A verified JWT is preferred over
-// the plain header because it proves authenticity.
+// **Why JWT identity is exclusive.** Layering a verified JWT over a plain header
+// in one resolver chain means a JWT verification failure falls THROUGH to the
+// spoofable header. Anyone able to disrupt JWKS reachability — network egress,
+// DNS, an IdP outage — thereby converts the server from verified identity to
+// trusted-header identity, and it keeps serving as if nothing changed. That is an
+// attacker-triggerable auth downgrade, so the combination is refused at startup
+// rather than warned about: the downgrade happens per-request, long after anyone
+// is reading startup logs. The same reasoning applies to $RELA_DATAENTRY_USER,
+// which would override a cryptographically proven subject with an env var.
 //
-// coverage-ignore: startup wiring.
-func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
-	jwtResolver, jwtHeader := buildJWTResolver(idv, f)
-	if jwtHeader != "" && f.principalHeader != "" {
-		// Both a verified JWT and a plain trusted header are enabled. Because the
-		// JWT sits ahead of the plain header in the chain, a JWT verification
-		// failure falls THROUGH to the spoofable plain header — a downgrade path an
-		// attacker could exploit by, e.g., briefly disrupting the JWKS. Warn loudly.
-		slog.Warn("both --jwt-* and --principal-header are enabled: a JWT failure "+
-			"downgrades to the plain (spoofable) header. Prefer one identity source. "+
-			"See docs/server-security.md.",
-			"jwt_header", jwtHeader, "principal_header", f.principalHeader)
+// envUser is passed in rather than read from the environment so this stays a pure
+// function — the caller owns both the lookup and the exit.
+func validateIdentityFlags(f *serverFlags, envUser string) (identityMode, error) {
+	set := 0
+	for _, v := range []string{f.jwtIssuer, f.jwtAudience, f.jwtJWKSURL} {
+		if v != "" {
+			set++
+		}
 	}
+	switch set {
+	case 0:
+		return identityHeader, nil
+	case 3: // fully configured — checked against the other sources below
+	default:
+		// A partially-configured JWT used to silently disable identity, leaving a
+		// server the operator believes is authenticating when it is not.
+		return identityHeader, errors.New("jwt identity requires all of " +
+			"-jwt-issuer, -jwt-audience and -jwt-jwks-url (or none)")
+	}
+
+	if f.principalHeader != "" {
+		return identityHeader, errors.New("-jwt-* and -principal-header are mutually " +
+			"exclusive: a JWT verification failure would fall through to the " +
+			"spoofable header, downgrading verified identity. Choose one. " +
+			"See docs/server-security.md")
+	}
+	if envUser != "" {
+		return identityHeader, fmt.Errorf("$%s cannot be set with -jwt-*: it would "+
+			"override the cryptographically verified subject. Unset it, or run "+
+			"without JWT identity. See docs/server-security.md",
+			dataentry.EnvDataEntryUserVar)
+	}
+	if f.jwtHeader == "" {
+		// An empty header name reads every assertion as absent, so the server
+		// would boot clean and then deny every API request. Fail-closed, but
+		// silently — catch it here where the cause is obvious.
+		return identityHeader, errors.New("-jwt-header must not be empty when jwt identity is enabled")
+	}
+	return identityJWT, nil
+}
+
+// wirePrincipalResolvers installs the identity source on the app, per mode.
+//
+// identityHeader keeps the legacy chain: $RELA_DATAENTRY_USER, then the plain
+// header, then "unknown". identityJWT installs the fail-closed gate INSTEAD of a
+// resolver chain — the JWT resolver is deliberately not chained, because with a
+// single exclusive source there is nothing to fall through to.
+//
+// coverage-ignore: startup wiring — the decision it acts on is validateIdentityFlags.
+func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier, mode identityMode) {
+	if mode == identityJWT {
+		if idv == nil {
+			// Unreachable: identityJWT implies all three JWT flags are set, so
+			// buildIdentityVerifier either returned a verifier or exited. Checked
+			// anyway because the alternative — storing a nil verifier behind a
+			// non-nil interface — panics on the first request instead of here.
+			slog.Error("jwt identity selected but no verifier was built")
+			os.Exit(1)
+		}
+		if err := app.SetJWTGate(dataentry.JWTGateConfig{
+			Verifier:   idv,
+			HeaderName: f.jwtHeader,
+			// Injected as a predicate so dataentry needn't import jwtauth.
+			KeysUnavailable: func(err error) bool {
+				return errors.Is(err, jwtauth.ErrKeysUnavailable)
+			},
+		}); err != nil {
+			slog.Error("failed to enable jwt identity", "error", err)
+			os.Exit(1)
+		}
+		// Vary on the assertion header: under ACL, API responses are
+		// per-principal (TKT-VMD8), and the assertion determines the principal.
+		app.SetPrincipalHeader(f.jwtHeader)
+		return
+	}
+
 	app.SetPrincipalResolver(dataentry.ChainResolvers(
 		dataentry.EnvPrincipalResolver(),
-		jwtResolver,
 		dataentry.HeaderPrincipalResolver(f.principalHeader),
 	))
-	// Vary on the active identity header: under ACL, API responses are
-	// per-principal (TKT-VMD8). When JWT identity is enabled its header determines
-	// the principal, so vary on that; else the plain header.
-	varyHeader := f.principalHeader
-	if jwtHeader != "" {
-		varyHeader = jwtHeader
-	}
-	app.SetPrincipalHeader(varyHeader)
+	app.SetPrincipalHeader(f.principalHeader)
 }
 
 // buildIdentityVerifier builds the shared signed-JWT verifier from the flags, or
@@ -194,18 +269,6 @@ func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifie
 	}
 	slog.Info("jwt identity enabled", "issuer", f.jwtIssuer, "header", f.jwtHeader)
 	return v
-}
-
-// buildJWTResolver wraps the shared verifier into a principal resolver, returning
-// it plus the header name it reads. A nil verifier (JWT identity disabled) yields
-// an inert resolver + "" header.
-//
-// coverage-ignore: startup wiring — exercised via the resolver's own tests.
-func buildJWTResolver(idv *jwtauth.Verifier, f *serverFlags) (resolver dataentry.PrincipalResolver, header string) {
-	if idv == nil {
-		return dataentry.JWTPrincipalResolver(nil, ""), ""
-	}
-	return dataentry.JWTPrincipalResolver(idv, f.jwtHeader), f.jwtHeader
 }
 
 // wireWebhookReceiver enables POST /webhooks/idp when -webhook-audience and
@@ -285,7 +348,7 @@ func main() {
 	fieldResolver := buildFieldResolver(svc)
 
 	app, err := dataentry.NewApp(
-		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(),
+		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
@@ -320,11 +383,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Identity sources are mutually exclusive — validate BEFORE building anything,
+	// so a conflicting config never reaches a running server.
+	mode, modeErr := validateIdentityFlags(f, os.Getenv(dataentry.EnvDataEntryUserVar))
+	if modeErr != nil {
+		slog.Error("invalid identity configuration", "error", modeErr)
+		os.Exit(1)
+	}
+
 	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
-	// share it between the principal resolver and the webhook receiver so the JWKS
+	// share it between the identity gate and the webhook receiver so the JWKS
 	// is fetched a single time.
 	idv := buildIdentityVerifier(context.Background(), f)
-	wirePrincipalResolvers(app, f, idv)
+	wirePrincipalResolvers(app, f, idv, mode)
 	wireWebhookReceiver(app, f, idv)
 
 	srv := newHTTPServer(addr, app.NewRouter())

@@ -14,8 +14,13 @@ import (
 //
 //plimsoll:max-exported-methods=31
 type Metamodel struct {
-	Version     string                 `yaml:"version"`
-	Namespace   string                 `yaml:"namespace"`
+	Version   string `yaml:"version"`
+	Namespace string `yaml:"namespace"`
+	// Description is optional end-user prose describing what this deployment /
+	// application is for. Display-only, surfaced by the generated documentation
+	// (the `rela docs` generator — FEAT-G4VO53). Empty by default; the metamodel
+	// does not otherwise consult it.
+	Description string                 `yaml:"description,omitempty"`
 	Includes    []string               `yaml:"includes,omitempty"`
 	Types       map[string]CustomType  `yaml:"types"`
 	Entities    map[string]EntityDef   `yaml:"entities"`
@@ -129,11 +134,18 @@ func (tv *TypeValidation) SetCompiled(re *regexp.Regexp) {
 
 // CustomType defines a reusable type with optional enum values and/or regex validations.
 type CustomType struct {
-	Values      []string          `yaml:"values,omitempty"`      // Allowed values (makes this an enum type)
-	Labels      map[string]string `yaml:"labels,omitempty"`      // Optional display labels keyed by value (display-only; value stays the identity)
-	Default     string            `yaml:"default,omitempty"`     // Default value
-	Description string            `yaml:"description,omitempty"` // Documentation for the type
-	Validations []TypeValidation  `yaml:"validations,omitempty"` // Regex validations with error messages
+	Values []string          `yaml:"values,omitempty"` // Allowed values (makes this an enum type)
+	Labels map[string]string `yaml:"labels,omitempty"` // Optional display labels keyed by value (display-only; value stays the identity)
+	// Descriptions is optional per-value prose keyed by value: what each value
+	// MEANS, as opposed to Labels (the short display text). Display-only,
+	// surfaced by the generated documentation (FEAT-G4VO53) so a reader
+	// understands e.g. what "blocked" or "in-review" signifies. A value with no
+	// entry simply has no description. Distinct from the type-level Description
+	// scalar below (which documents the type as a whole).
+	Descriptions map[string]string `yaml:"descriptions,omitempty"`
+	Default      string            `yaml:"default,omitempty"`     // Default value
+	Description  string            `yaml:"description,omitempty"` // Documentation for the type
+	Validations  []TypeValidation  `yaml:"validations,omitempty"` // Regex validations with error messages
 
 	// Transitions declares the legal value→value moves for this enum,
 	// making it a state machine (TKT-E4LW2). This is declarative source
@@ -166,6 +178,12 @@ type TransitionDef struct {
 	// label (CustomType.Labels[To]) and then the raw To value. Display-only; the
 	// executable machine ignores it for enforcement.
 	Label string `yaml:"label,omitempty"`
+
+	// Help is optional longer prose explaining WHY or WHEN a user would make
+	// this move, beyond the short verb Label — e.g. "Send for review once the
+	// implementation is complete and tests pass." Display-only, surfaced by the
+	// generated documentation (FEAT-G4VO53); the executable machine ignores it.
+	Help string `yaml:"help,omitempty"`
 
 	// Guard names an ACL permission the acting principal must hold for this
 	// transition. Enforced only on served paths (a principal exists); inert

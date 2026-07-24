@@ -538,6 +538,15 @@ function relationCellKey(relation: string, direction?: 'outgoing' | 'incoming'):
   return relation
 }
 
+// Mobile cards: drop columns whose cell is empty for this entity — a
+// dangling label with a blank value wastes card space. ACL-locked cells
+// stay visible: the 🔒 marker is information, not emptiness.
+function visibleMobileColumns(entity: Entity) {
+  return (listConfig.value?.columns.slice(1) ?? []).filter(
+    (column) => isCellInaccessible(entity, column) || getFormattedCellValue(entity, column) !== ''
+  )
+}
+
 function getFormattedCellValue(
   entity: Entity,
   column: { property?: string; relation?: string; direction?: 'outgoing' | 'incoming' },
@@ -777,9 +786,9 @@ watch(searchQuery, () => {
               </svg>
             </button>
           </div>
-          <div v-if="listConfig.columns.length > 1" class="mobile-card-fields">
+          <div v-if="visibleMobileColumns(entity).length" class="mobile-card-fields">
             <div
-              v-for="column in listConfig.columns.slice(1)"
+              v-for="column in visibleMobileColumns(entity)"
               :key="column.property || column.relation"
               class="mobile-card-field"
             >

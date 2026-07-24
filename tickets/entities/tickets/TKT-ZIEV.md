@@ -5,8 +5,10 @@ title: Enable HTTP/2 (h2c) on rela-server for tail-latency improvements
 kind: enhancement
 priority: low
 effort: xs
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — rela-server enables h2c via the Go 1.24+ http.Protocols idiom (SetUnencryptedHTTP2(true) + SetHTTP1(true)) in cmd/rela-server/main.go; same outcome as the proposed h2c.NewHandler.
 
 ## Update — original hypothesis disproved by experiment
 

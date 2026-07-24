@@ -5,8 +5,10 @@ title: Add Markdown AST API to Lua scripting
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: wont-fix
 ---
+
+> **Closed by backlog sweep (2026-07-20):** already implemented — internal/lua/markdown.go provides the full rela.md module (parse, render, shift_headers, headers with min/max_level, plus inline builders), registered in runtime.go with tests.
 
 # Add Markdown AST API to Lua Scripting
 

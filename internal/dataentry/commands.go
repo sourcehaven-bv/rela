@@ -19,8 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -40,11 +42,94 @@ type ResolvedCommand struct {
 	AutoOpen *bool
 }
 
+// commandDenyReason explains why a command may not run. It is deliberately
+// coarse: the wire 403 must not echo the required permission name or any
+// policy data, mirroring [acl.Decision.Reason] ("never contains raw policy
+// data so 403 bodies don't leak the full effective-role set").
+const commandDenyReason = "not permitted to run this command"
+
+// authorizeCommand reports whether the principal on ctx may execute cmd.
+//
+// It is the SINGLE decision point, called by both the exec handler and
+// resolveCommands so the rendered button set and the enforced boundary cannot
+// drift. The 403 is the boundary; the resolve filter is a UX affordance.
+//
+// Policy (DEC-EIHQSU), keyed on the configured ACL implementation:
+//
+//   - [acl.ReadOnlyACL] → deny everything, every context. Checked FIRST and
+//     independently of the read gate: command exec builds no acl.WriteRequest,
+//     so ReadOnlyACL.AuthorizeWrite is never consulted, and readGateFromContext
+//     hands back nopReadGate (HoldsPermission ⇒ true) under read-only exactly
+//     as it does under NopACL. A guard written against the read gate alone
+//     therefore fails OPEN here — that was the live bug (RR-CWWJGW) this
+//     function exists to close. TestCommandExecReadOnlyDenied is its canary.
+//   - [*acl.Declarative] → fail closed. `context: view` is denied outright
+//     (its payload is the whole traversal closure, not one entity — see
+//     TKT-MJ02AO); otherwise Permission must be set AND held.
+//   - [acl.NopACL] → fail open, preserving pre-ACL behavior. This is the ONLY
+//     arm that grants by default.
+//   - anything else → DENY.
+//
+// The switch is closed by construction (RR-CAUBAZ): the default arm denies, so
+// an ACL implementation nobody taught this function about cannot silently grant
+// shell execution. Both value and pointer forms of the nop/read-only types are
+// matched explicitly, because their AuthorizeWrite has a VALUE receiver — a
+// `&acl.ReadOnlyACL{}` therefore satisfies acl.ACL, and matching only the value
+// form would drop it into the default arm. When that arm granted, that was a
+// silent `--read-only` bypass reachable by one `&`.
+//
+// Adding a new acl.ACL implementation? It denies commands until you add an arm.
+// That is deliberate: the failure mode of forgetting is a denied command, not
+// an ungoverned shell.
+func authorizeCommand(ctx context.Context, aclImpl acl.ACL, cmd CommandConfig) bool {
+	// A nil ACL means the handler was wired without one. Deny: an
+	// authorization guard must fail closed on a wiring bug, never grant
+	// because a field was left unset. (Catches an untyped nil; a typed-nil
+	// interface falls to the arms below, which also deny.)
+	if aclImpl == nil {
+		return false
+	}
+
+	switch a := aclImpl.(type) {
+	case acl.NopACL, *acl.NopACL:
+		// No policy configured ⇒ commands behave exactly as they did before
+		// this gating existed.
+		return true
+
+	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
+		return false
+
+	case *acl.Declarative:
+		if a == nil {
+			return false // misconfigured policy must not fail open
+		}
+		// View commands have no fine-grained control yet: `permission:` is
+		// not honored for them, so a granted permission must NOT open the
+		// gate. Deferred deliberately, not overlooked.
+		if cmd.Context == "view" {
+			return false
+		}
+		if cmd.Permission == "" {
+			return false // fail closed: a policy is configured, this command is ungoverned
+		}
+		return readGateFromContext(ctx).HoldsPermission(ctx, cmd.Permission)
+
+	default:
+		return false
+	}
+}
+
 // resolveCommands returns commands available for a given page context.
 // pageType is "entity", "list", "view", or "dashboard".
 // qualifier is the specific list ID or view ID.
 // entityType is the entity type shown on the page (empty for dashboard).
-func (h *commandHandler) resolveCommands(pageType, qualifier, entityType string) []ResolvedCommand {
+//
+// Commands the principal may not execute are omitted, so the SPA never renders
+// a button that would 403 on click. This is presentation only — authorizeCommand
+// is re-consulted at exec time, which is the actual boundary.
+func (h *commandHandler) resolveCommands(
+	ctx context.Context, pageType, qualifier, entityType string,
+) []ResolvedCommand {
 	s := h.schema()
 	if len(s.Cfg.Commands) == 0 {
 		return nil
@@ -57,10 +142,14 @@ func (h *commandHandler) resolveCommands(pageType, qualifier, entityType string)
 	}
 	natsort.Strings(ids)
 
+	aclImpl := h.currentACL()
 	var result []ResolvedCommand
 	for _, id := range ids {
 		cmd := s.Cfg.Commands[id]
-		if matchesPage(cmd, pageType, qualifier, entityType) {
+		if !matchesPage(cmd, pageType, qualifier, entityType) {
+			continue
+		}
+		if authorizeCommand(ctx, aclImpl, cmd) {
 			result = append(result, ResolvedCommand{
 				ID:       id,
 				Label:    cmd.Label,
@@ -263,6 +352,14 @@ func parseCommandOutput(line string) CommandMessage {
 
 type runningCommand struct {
 	cmd *exec.Cmd
+
+	// owner is the principal that started this command. runningCommands is a
+	// package-level map keyed only by execID, and execID is client-supplied
+	// (see handleCommandExec), so without an owner recorded here any caller
+	// who guesses or reuses an id could cancel someone else's run — a
+	// cross-principal kill that the exec-side permission check does not cover
+	// (RR-YZV7SY). handleCommandCancel compares against this.
+	owner principal.Principal
 }
 
 var (
@@ -289,6 +386,15 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	cmd, ok := s.Cfg.Commands[commandID]
 	if !ok {
 		http.Error(w, "Unknown command: "+commandID, http.StatusNotFound)
+		return
+	}
+
+	// Authorization boundary (TKT-MJ02AO). resolveCommands already hides
+	// unauthorized commands from the UI, but that is presentation: this is the
+	// check that actually holds. 403 rather than 404 — the command's existence
+	// is already public via config, so there is no oracle to protect.
+	if !authorizeCommand(r.Context(), h.currentACL(), cmd) {
+		http.Error(w, commandDenyReason, http.StatusForbidden)
 		return
 	}
 
@@ -384,8 +490,12 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Register for cancellation.
-	runningCommands.Store(execID, &runningCommand{cmd: proc})
+	// Register for cancellation, bound to the starting principal so only they
+	// can cancel it (RR-YZV7SY).
+	runningCommands.Store(execID, &runningCommand{
+		cmd:   proc,
+		owner: principal.From(r.Context()),
+	})
 	defer runningCommands.Delete(execID)
 
 	// Capture stderr in background.
@@ -443,6 +553,17 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 	rc, castOK := val.(*runningCommand)
 	if !castOK {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Only the principal that started the command may cancel it (RR-YZV7SY).
+	// execID is client-supplied and the registry is process-global, so without
+	// this a caller who guessed an id could kill another user's run — including
+	// a caller whose own exec attempts are being 403'd. Answer 404, identical
+	// to an unknown id, so cancel cannot be used to probe which commands are
+	// currently running under other principals.
+	if rc.owner != principal.From(r.Context()) {
+		http.Error(w, "No running command: "+execID, http.StatusNotFound)
 		return
 	}
 

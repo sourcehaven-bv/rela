@@ -62,21 +62,24 @@ type DBTX interface {
 
 // Store is a PostgreSQL-backed store.Store.
 //
-// TODO(TKT-N0IKN9): the exported surface is the mandated store.Store interface
-// (29 methods) PLUS the optional versioning capabilities pgstore also provides
-// — store.HistoryReader (ListVersions/GetVersion), store.VersionWriter
-// (WriteVersion), StartVersionSweep, the RELATION versioning capabilities
-// store.RelationHistoryReader (ListRelationVersions/GetRelationVersion) +
-// store.RelationVersionWriter (WriteRelationVersion), and the version-PURGE
-// capabilities store.VersionPurger (PurgeVersions) + store.RelationVersionPurger
-// (PurgeRelationVersions) — which consumers type-assert. All are
-// interface-mandated methods, not accreted public API; Required-interface
-// exception, tracks the interface size.
+// The exported surface is the mandated store.Store interface (a Required-interface
+// exception, so its count tracks the interface size) plus two version seams that
+// own or hand out lifecycle state and so stay here: StartVersionSweep (the store's
+// own reconciliation goroutine, owning s.mu/s.sweep) and VersionStore (a one-line
+// accessor handing out the versioning service over this store's shared pool).
+// Content VERSIONING itself (entity + relation history reads, version writes,
+// purge) is NOT here: it lives in [VersionStore], a separate service injected by
+// the composition root, because a store "just stores" and versioning is a distinct
+// concern that merely shares the same database (TKT-N0IKN9). That extraction
+// dropped this struct from 40→33 exported / 53→41 total.
 //
-// (39 → 40 exported / 52 → 53 total: store.Store gained Tx, TKT-GXHI8.)
+// Do NOT add version/history/purge methods back to *Store: they belong on
+// [VersionStore], and re-adding one here would resurrect the type-assert-off-the-
+// store pattern this refactor removed. Consumers reach versioning through the
+// injected store.VersionService, never by asserting a capability on the store.
 //
-//plimsoll:max-exported-methods=40
-//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=33
+//plimsoll:max-methods=41
 type Store struct {
 	db        DBTX
 	observers []store.EntityObserver // notified synchronously after committed entity writes

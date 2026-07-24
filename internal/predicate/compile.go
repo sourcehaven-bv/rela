@@ -1,6 +1,7 @@
 package predicate
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -300,11 +301,18 @@ func (w *walker) walkExpr(e ast.Expr) (node, error) {
 }
 
 // parseLuaNumber accepts Lua number lexical forms (`1`, `1.0`, `0xFF`,
-// `1e10`, `1.5e-3`). All forms produce a float64 in the IR.
+// `1e10`, `1.5e-3`). All forms produce a float64 in the IR. Hex
+// literals are capped at 53 bits: beyond that a float64 IR would
+// silently round the value — the same mis-coercion RR-O0LM1 rejects
+// for decimal int literals — and the cap makes the value provably in
+// range for the float→int64 coercion in coerceIntLiteral.
 func parseLuaNumber(s string) (float64, error) {
 	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-		u, err := strconv.ParseUint(s[2:], 16, 64)
+		u, err := strconv.ParseUint(s[2:], 16, 53)
 		if err != nil {
+			if errors.Is(err, strconv.ErrRange) {
+				return 0, fmt.Errorf("hex number literal %q exceeds 2^53 and cannot be represented exactly", s)
+			}
 			return 0, fmt.Errorf("invalid hex number literal %q", s)
 		}
 		return float64(u), nil

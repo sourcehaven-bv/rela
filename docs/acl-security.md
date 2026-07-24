@@ -576,6 +576,84 @@ is read-gated on the same principles as everything else:
   requesting a deleted entity's history gets the same 404 as a nonexistent id,
   so the permission boundary does not itself leak which deleted entities exist.
 
+## Command execution gating (`command:*`)
+
+Data-entry [commands](data-entry.md#commands) execute arbitrary shell via
+`sh -c`. They have no entity subject to evaluate — a `context: global` command
+acts on the project, not a row — so like `history:read` they are gated on
+**global named permissions**, declared per command and granted via a role's
+`permissions:` list:
+
+```yaml
+# data-entry.yaml
+commands:
+  nightly-export:
+    context: global
+    script: "./scripts/export.sh"
+    permission: "command:nightly-export"
+```
+
+```yaml
+# acl.yaml
+roles:
+  operator:
+    permissions: [command:nightly-export]
+```
+
+The permission name is arbitrary; `command:<id>` is a readable convention, not
+a requirement.
+
+**Authorization is bimodal, by design:**
+
+- **No `acl.yaml` configured** → every command runs. A project that has not
+  opted into access control behaves exactly as it did before this gating
+  existed.
+- **`acl.yaml` present** → a command runs only if its `permission:` is set and
+  the principal holds it. A command with no `permission:` is **denied**: under a
+  configured policy, an ungoverned shell-exec surface is treated as a
+  misconfiguration, not as an implicit grant.
+- **`--read-only`** → every command is denied, whatever the policy says.
+  Command execution is not an `acl.WriteRequest`, so `ReadOnlyACL` cannot deny
+  it through `AuthorizeWrite`; the command handler checks read-only mode
+  directly. Without that check, `--read-only` would not stop a command from
+  mutating the project.
+
+Commands the principal cannot execute are filtered out of the command-resolution
+API, so their buttons do not render. Treat that as a UI affordance only — the
+exec endpoint re-authorizes and 403s independently, and the 403 body never
+names the required permission or any policy content.
+
+A running command can be cancelled only by the principal that started it; a
+cancel request naming another principal's execution gets the same 404 as an
+unknown one, so cancellation cannot be used to probe what else is running.
+
+### What a command permission actually confers
+
+**Command payloads are not read-gate scoped, in any context.** A command's
+stdin JSON is assembled directly from the store, without the per-entity
+`PermitsRead` verdicts that gate an ordinary API read. Granting
+`command:<something>` therefore confers **read access to whatever that
+command's context assembles**, not merely the right to run a script:
+
+| context | what the script receives | scoped by |
+| ------- | ------------------------ | --------- |
+| `entity` | the entity at the caller-supplied `entity_id`, plus **every** incident relation | nothing — any id in the store |
+| `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list |
+| `global` | project paths only | n/a |
+| `view` | the entry entity plus the entire traversal closure | *not grantable — see below* |
+
+Note the `entity_id` and `list_id` come from the request, not from whatever
+page the user was on: `available_on` restricts where a **button appears**, not
+what a command may be pointed at. Treat a command grant as "may read every
+entity of this shape", and scope grants accordingly.
+
+**`context: view` cannot be granted per-command at all.** View commands are
+denied outright under any configured `acl.yaml`; `permission:` on a view
+command is inert and warns at config load. The difference from the contexts
+above is degree, not kind: a view's traversal closure is unbounded by the
+config an operator can read, so the blast radius of the grant is not knowable
+in advance. Deferred until the traversal is read-gate scoped.
+
 Restore (`POST /api/v1/_history/<type>/<id>/<version>/restore`) is a **write**,
 not a read: it is authorized as an ordinary update (or create, if the entity was
 deleted), runs the per-field write gate on exactly the fields that change (so it
