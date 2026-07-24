@@ -29,7 +29,9 @@ type CmdRunner struct {
 
 // cmdRunnerConfig accumulates option settings before the cmdexec runner is built.
 type cmdRunnerConfig struct {
-	tempDir string
+	tempDir       string
+	sandboxOptOut bool
+	extraReadOnly []string
 }
 
 // CmdRunnerOption configures a [CmdRunner].
@@ -38,6 +40,23 @@ type CmdRunnerOption func(*cmdRunnerConfig)
 // WithTempDir sets the directory for {in}/{out} temp files.
 func WithTempDir(dir string) CmdRunnerOption {
 	return func(c *cmdRunnerConfig) { c.tempDir = dir }
+}
+
+// WithSandboxDisabled runs scan/transform commands UNCONFINED — the operator's
+// explicit acceptance of the risk on a host that cannot sandbox. Without it,
+// such a host refuses to run any command, which fails uploads that require a
+// scan or transform. The composition root must surface this in a startup
+// warning.
+func WithSandboxDisabled(disabled bool) CmdRunnerOption {
+	return func(c *cmdRunnerConfig) { c.sandboxOptOut = disabled }
+}
+
+// WithScannerSockets binds extra host paths (a clamd socket in a non-standard
+// location) read-only into the scan command's sandbox, on top of the well-known
+// defaults ([cmdexec.DefaultScannerSockets]). A unix socket bound this way is
+// reachable without opening network egress.
+func WithScannerSockets(paths ...string) CmdRunnerOption {
+	return func(c *cmdRunnerConfig) { c.extraReadOnly = append(c.extraReadOnly, paths...) }
 }
 
 // NewCmdRunner builds a runner. timeout bounds each command; maxBytes bounds
@@ -51,6 +70,14 @@ func NewCmdRunner(timeout time.Duration, maxBytes int64, opts ...CmdRunnerOption
 	if cfg.tempDir != "" {
 		execOpts = append(execOpts, cmdexec.WithTempDir(cfg.tempDir))
 	}
+	if cfg.sandboxOptOut {
+		execOpts = append(execOpts, cmdexec.WithSandboxDisabled())
+	}
+	// A scan command talks to clamd over a unix socket that lives outside the
+	// sandbox's mount view; bind the well-known locations (+ any override) so the
+	// scanner is reachable without granting network access.
+	socketBinds := append(append([]string{}, cmdexec.DefaultScannerSockets...), cfg.extraReadOnly...)
+	execOpts = append(execOpts, cmdexec.WithExtraReadOnly(socketBinds...))
 	r, err := cmdexec.New(timeout, maxBytes, execOpts...)
 	if err != nil {
 		// Preserve the historical "attachment: ..." error namespace.

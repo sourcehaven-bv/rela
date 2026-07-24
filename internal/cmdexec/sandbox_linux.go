@@ -116,14 +116,21 @@ func (l linuxSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 	wrapped = append(wrapped,
 		"--proc", "/proc",
 		"--dev", "/dev",
-		// NOTE: --tmpfs /tmp must come BEFORE the writable bind below. The temp
-		// dir usually lives under /tmp, and bwrap applies operations in argv
-		// order — mounting the tmpfs afterwards would hide it. Order is
-		// load-bearing; TestSandboxWritableDirUnderTmp pins it.
+		// --tmpfs /tmp must come BEFORE the binds below. The temp dir (and a
+		// caller's extra binds) may live under /tmp, and bwrap applies operations
+		// in argv order — mounting the tmpfs afterwards would hide them. Order is
+		// load-bearing; TestSandboxWritableDirUnderTmp + the socket-bind test pin it.
 		"--tmpfs", "/tmp",
 		"--bind", spec.WritableDir, spec.WritableDir,
 		"--chdir", spec.WritableDir,
 	)
+	// Caller-supplied extra binds (e.g. a clamd socket), AFTER --tmpfs so a path
+	// under /tmp is not shadowed. Read-only, -try so a missing path is skipped. A
+	// unix socket bound here is reachable without any network access — the network
+	// namespace stays isolated.
+	for _, p := range spec.ExtraReadOnly {
+		wrapped = append(wrapped, "--ro-bind-try", p, p)
+	}
 	if spec.Network {
 		// Explicit opt-in; --share-net re-joins the host network namespace.
 		wrapped = append(wrapped, "--share-net")

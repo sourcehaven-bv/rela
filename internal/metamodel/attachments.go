@@ -73,6 +73,13 @@ type AttachmentsConfig struct {
 	// enables scanning for every `file` property that does not opt out with
 	// `scan: off`.
 	ScanCmd []string `yaml:"scan_cmd,omitempty"`
+
+	// ScanSockets are extra host paths bound read-only into the scan command's
+	// sandbox, on top of the well-known clamd socket locations that are always
+	// bound. The motivating case is a `clamd.conf` whose `LocalSocket` lives
+	// outside the defaults. A unix socket bound this way is reachable without
+	// opening network egress. Empty on the common path (stock ClamAV install).
+	ScanSockets []string `yaml:"scan_sockets,omitempty"`
 }
 
 // AttachmentPolicy is a focused read-view over a metamodel's attachment-scan
@@ -104,6 +111,16 @@ func (p AttachmentPolicy) ScanCommandFor(prop PropertyDef) []string {
 		return p.m.Attachments.ScanCmd
 	}
 	return nil
+}
+
+// ScanSockets returns the operator-configured extra socket paths to bind
+// read-only into the scan command's sandbox (`attachments.scan_sockets`), on
+// top of the always-bound well-known clamd locations. Nil when unset.
+func (p AttachmentPolicy) ScanSockets() []string {
+	if p.m.Attachments == nil {
+		return nil
+	}
+	return p.m.Attachments.ScanSockets
 }
 
 // HasUnconfiguredScan reports whether the metamodel declares at least one

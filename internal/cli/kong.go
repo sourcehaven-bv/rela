@@ -22,6 +22,7 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -141,6 +142,13 @@ func runKong() int {
 	quiet = cli.Quiet
 	outputFormat = cli.Output
 	projectPath = cli.Project
+
+	// Host-level command-confinement opt-out, from the same env var the server
+	// honors. `rela render` shells out to a converter; on a host that cannot
+	// sandbox it fails closed unless this is set. (A local CLI user can already
+	// run anything, so this is convenience more than a security boundary — but
+	// keeping one knob avoids surprising divergence from the server.)
+	cmdexec.SetUnconfinedByDefault(os.Getenv("RELA_UNCONFINED_COMMANDS") == "1")
 
 	configureKongLogging(verbose, quiet)
 	out = output.New(output.Format(outputFormat))

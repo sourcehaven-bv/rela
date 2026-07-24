@@ -72,6 +72,11 @@ type Runner struct {
 	// multiply that N-fold, which is the cheapest way to exhaust the host. nil
 	// means unbounded.
 	slots chan struct{}
+
+	// extraReadOnly are host paths bound read-only into every command's sandbox,
+	// on top of the standard binary/library allowlist — the case being a scanner
+	// daemon's unix socket (clamd), which a scan command must reach.
+	extraReadOnly []string
 }
 
 // Option configures a [Runner].
@@ -94,18 +99,6 @@ func WithMaxConcurrent(n int) Option {
 	}
 }
 
-// WithSandboxDisabled turns confinement off. This is the operator's explicit
-// "I accept running third-party parsers on untrusted input unconfined" escape
-// hatch — for hosts where no mechanism exists (Windows/BSD, a kernel without
-// unprivileged user namespaces) or where isolation is provided at a different
-// layer (a locked-down container, a no-egress network policy).
-//
-// Callers that expose this MUST log a one-time startup warning naming the risk,
-// matching how a disabled attachment scan is surfaced.
-func WithSandboxDisabled() Option {
-	return func(r *Runner) { r.sandboxOptOut = true }
-}
-
 // New builds a runner. timeout bounds each command; maxBytes bounds output.
 // Both must be positive.
 //
@@ -121,7 +114,12 @@ func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error)
 	if maxBytes <= 0 {
 		return nil, errors.New("cmdexec: maxBytes must be positive")
 	}
-	r := &Runner{timeout: timeout, maxBytes: maxBytes, limits: DefaultLimits()}
+	r := &Runner{
+		timeout:       timeout,
+		maxBytes:      maxBytes,
+		limits:        DefaultLimits(),
+		sandboxOptOut: unconfinedDefault(), // host-level knob; an explicit option below overrides
+	}
 	for _, o := range opts {
 		o(r)
 	}
@@ -143,31 +141,6 @@ func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error)
 		r.sandbox, r.sandboxErr = platform, nil
 	}
 	return r, nil
-}
-
-// Describe returns a one-line summary of how commands are confined, for the
-// startup log so an operator learns the posture before anything fails.
-//
-// This is the ONLY confinement accessor. There is deliberately no "can I run?"
-// predicate: callers just call [Runner.Run] and handle its error, which reads
-// the same whether the cause is a missing sandbox, a missing binary, or a
-// crashing converter. A separate pre-check would be a second code path to keep
-// in sync and a window for the state to change between check and use.
-//
-// Diagnostic only — never branch on this string.
-func (r *Runner) Describe() string {
-	switch {
-	case r.sandboxOptOut:
-		return "sandbox DISABLED by operator (commands run unconfined)"
-	case r.sandboxErr != nil:
-		return "sandbox unavailable (commands will refuse to run): " + r.sandboxErr.Error()
-	default:
-		limits := "no resource limits (non-Linux)"
-		if rlimitsSupported() {
-			limits = "memory/PID/file-size/CPU limits"
-		}
-		return "sandbox " + r.sandbox.Name() + " (no network, temp-dir-only writes) + " + limits
-	}
 }
 
 // Probe reports whether the command's binary is resolvable on PATH. Callers
@@ -340,7 +313,7 @@ func (r *Runner) confine(args []string, dir string) ([]string, error) {
 	// Unconditional: the implementation chosen in New already encodes the policy.
 	// A working backend wraps; disabledSandbox passes through (operator opted
 	// out); unavailableSandbox errors, which is the fail-closed path.
-	wrapped, err := r.sandbox.Wrap(args, Spec{WritableDir: dir})
+	wrapped, err := r.sandbox.Wrap(args, Spec{WritableDir: dir, ExtraReadOnly: r.extraReadOnly})
 	if err != nil {
 		if errors.Is(err, ErrSandboxUnavailable) {
 			return nil, fmt.Errorf("cmdexec: refusing to run %q unconfined: %w", args[0], err)

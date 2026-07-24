@@ -614,7 +614,12 @@ func NewApp(
 	// always available; the PolicyProcessor only invokes it when a property's
 	// scan/transform config references a command. A nil runner (constructor
 	// failure) leaves uploads with native MIME validation only.
-	if runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes); rerr == nil {
+	var runnerOpts []attachment.CmdRunnerOption
+	if socks := metamodel.NewAttachmentPolicy(meta).ScanSockets(); len(socks) > 0 {
+		runnerOpts = append(runnerOpts, attachment.WithScannerSockets(socks...))
+	}
+	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes, runnerOpts...)
+	if rerr == nil {
 		app.attachmentRunner = runner
 		// Tell the operator the confinement posture at boot, so an unsandboxable
 		// host is discovered now rather than on the first upload that needs a

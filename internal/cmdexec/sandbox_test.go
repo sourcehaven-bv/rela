@@ -3,6 +3,7 @@ package cmdexec
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,6 +162,73 @@ func TestSandboxBlocksReadOutsideAllowlist(t *testing.T) {
 	if strings.Contains(out, canary) {
 		t.Errorf("SANDBOX DID NOT BLOCK READ — a crafted document could exfiltrate "+
 			"server-readable files into an export. output=%q", out)
+	}
+}
+
+// TestSandboxExtraReadOnlyReachesBoundSocket pins the ClamAV case: a scanner
+// daemon's unix socket lives outside the sandbox's default mount view, so a scan
+// command cannot reach it — unless its path is bound via WithExtraReadOnly. The
+// bind grants reachability WITHOUT network egress (a socket is a filesystem
+// object). Verified by connecting to a listener over a bound socket path.
+func TestSandboxExtraReadOnlyReachesBoundSocket(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap mount-namespace behavior")
+	}
+	python := pythonPath(t)
+
+	// A unix socket in a dir that is NOT in the default allowlist.
+	sockDir := filepath.Join(t.TempDir(), "sock")
+	if err := os.MkdirAll(sockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "clamd.ctl")
+
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Skipf("cannot listen on unix socket: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			_, _ = c.Write([]byte("PONG"))
+			c.Close()
+		}
+	}()
+
+	connect := "import socket\n" +
+		"s=socket.socket(socket.AF_UNIX)\n" +
+		"try:\n" +
+		"    s.connect(" + pyStr(sockPath) + ")\n" +
+		"    print('CONNECTED')\n" +
+		"except Exception as e:\n" +
+		"    print('UNREACHABLE', type(e).__name__)\n"
+
+	// Without the bind: unreachable (the socket path is not in the mount view).
+	r, err := New(20*time.Second, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.sandbox.Available(); err != nil {
+		t.Skipf("no working sandbox: %v", err)
+	}
+	out, _, _ := r.Run(context.Background(), []string{python, "-c", connect}, nil, true)
+	if strings.Contains(string(out), "CONNECTED") {
+		t.Fatalf("socket should be UNREACHABLE without a bind (test is vacuous otherwise): %q", out)
+	}
+
+	// With the bind: reachable, and still no network (unix socket, not egress).
+	rb, berr := New(20*time.Second, 1<<20, WithExtraReadOnly(sockDir))
+	if berr != nil {
+		t.Fatal(berr)
+	}
+	outb, _, _ := rb.Run(context.Background(), []string{python, "-c", connect}, nil, true)
+	if !strings.Contains(string(outb), "CONNECTED") {
+		t.Errorf("bound socket should be reachable (this is how clamd works under "+
+			"the sandbox): %q", outb)
 	}
 }
 
@@ -357,6 +425,40 @@ func TestRunProceedsWhenSandboxExplicitlyDisabled(t *testing.T) {
 	}
 	if !strings.Contains(r.Describe(), "DISABLED") {
 		t.Errorf("Describe must make an operator opt-out obvious in the log, got %q", r.Describe())
+	}
+}
+
+// TestUnconfinedByDefault pins the host-level knob the composition roots set:
+// once enabled, every new runner opts out of confinement without each call site
+// passing WithSandboxDisabled — so the CLI and server agree from one source.
+func TestUnconfinedByDefault(t *testing.T) {
+	skipOnWindows(t)
+	t.Cleanup(func() { SetUnconfinedByDefault(false) })
+
+	// Default: a runner built with no options is confined (disabledSandbox only
+	// when the host can't sandbox; here we assert it is NOT the disabled one when
+	// the mechanism works).
+	SetUnconfinedByDefault(false)
+	r, err := New(5*time.Second, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.sandbox.(disabledSandbox); ok {
+		t.Error("without the host knob, a runner must not be unconfined by default")
+	}
+
+	// With the knob set, a runner built with no options is unconfined.
+	SetUnconfinedByDefault(true)
+	r2, err := New(5*time.Second, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r2.sandbox.(disabledSandbox); !ok {
+		t.Errorf("host knob set → runner should be unconfined, got %T", r2.sandbox)
+	}
+	// And a command actually runs (would refuse on an unsandboxable host otherwise).
+	if _, _, runErr := r2.Run(context.Background(), []string{"echo", "ok"}, nil, false); runErr != nil {
+		t.Errorf("unconfined runner should execute: %v", runErr)
 	}
 }
 

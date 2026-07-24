@@ -32,6 +32,14 @@ type Spec struct {
 	WritableDir string
 	// Network allows egress when true. Default false — the whole point.
 	Network bool
+	// ExtraReadOnly are additional host paths bound read-only into the sandbox,
+	// beyond the standard binary/library allowlist. The motivating case is a
+	// scanner daemon's unix socket (clamd): the socket lives outside the default
+	// mount view, so a scan command cannot reach it unless its path is bound.
+	// Binding a socket does NOT grant network egress — a unix socket is a
+	// filesystem object, and the network namespace stays isolated. A path that
+	// does not exist on the host is skipped, not an error.
+	ExtraReadOnly []string
 }
 
 // Sandbox confines an external command. Implementations rewrite an argv into a

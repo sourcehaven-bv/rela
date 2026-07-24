@@ -33,9 +33,11 @@ type Engine struct {
 type EngineOption func(*engineConfig)
 
 type engineConfig struct {
-	timeout  time.Duration
-	maxBytes int64
-	tempDir  string
+	timeout          time.Duration
+	maxBytes         int64
+	tempDir          string
+	sandboxOptOut    bool
+	sandboxOptOutSet bool
 }
 
 // WithTimeout overrides the per-command timeout.
@@ -53,6 +55,16 @@ func WithTempDir(dir string) EngineOption {
 	return func(c *engineConfig) { c.tempDir = dir }
 }
 
+// WithSandboxDisabled runs converters UNCONFINED — the operator's explicit
+// acceptance of the risk, for hosts where no sandbox mechanism is available
+// (Windows/BSD, a kernel without unprivileged user namespaces, a container that
+// blocks them) or where isolation is provided at another layer. Without it, a
+// host that cannot sandbox refuses to run any transform. The composition root
+// must surface this in a startup warning.
+func WithSandboxDisabled(disabled bool) EngineOption {
+	return func(c *engineConfig) { c.sandboxOptOut, c.sandboxOptOutSet = disabled, true }
+}
+
 // NewEngine builds an engine over the given registry. It returns an error if the
 // runner cannot be constructed (non-positive bounds).
 func NewEngine(registry Registry, opts ...EngineOption) (*Engine, error) {
@@ -66,6 +78,9 @@ func NewEngine(registry Registry, opts ...EngineOption) (*Engine, error) {
 	runOpts := []cmdexec.Option{cmdexec.WithMaxConcurrent(defaultMaxConcurrent)}
 	if cfg.tempDir != "" {
 		runOpts = append(runOpts, cmdexec.WithTempDir(cfg.tempDir))
+	}
+	if cfg.sandboxOptOut {
+		runOpts = append(runOpts, cmdexec.WithSandboxDisabled())
 	}
 	runner, err := cmdexec.New(cfg.timeout, cfg.maxBytes, runOpts...)
 	if err != nil {

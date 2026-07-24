@@ -185,6 +185,7 @@ deps:
       - acl
       - appbuild
       - audit
+      - cmdexec
       - dataentry
       - jwtauth
       - principal
@@ -227,6 +228,7 @@ deps:
       - automation
       - bleveindex
       - clisync
+      - cmdexec
       - config
       - dataentryconfig
       - entitymanager

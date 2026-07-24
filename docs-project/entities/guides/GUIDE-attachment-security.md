@@ -172,6 +172,38 @@ On Windows, point `scan_cmd` at your AV's CLI scanner (e.g. a Microsoft
 Defender `MpCmdRun.exe -Scan -ScanType 3 -File {in}` invocation that exits
 non-zero on detection).
 
+#### Reaching `clamd` from inside the sandbox
+
+`clamdscan` talks to the daemon over a **unix socket**, but the sandbox gives
+each command its own mount namespace — the socket's path is not visible unless
+rela binds it in. rela already binds the well-known locations read-only:
+
+```text
+/var/run/clamav/clamd.ctl
+/run/clamav/clamd.sock
+/var/run/clamav/clamd.sock
+/tmp/clamd.socket
+```
+
+so a stock ClamAV install (Debian/Ubuntu `clamav-daemon`, Homebrew `clamav`)
+works with no extra configuration. Binding the socket does **not** re-open
+network egress — a unix socket is a filesystem object, and the network namespace
+stays isolated, so `--fdpass`/`LocalSocket` scanning works while an outbound
+fetch still cannot.
+
+If your `clamd.conf` uses a `LocalSocket` outside those paths, bind it explicitly:
+
+```yaml
+attachments:
+  scan_cmd: [clamdscan, --no-summary, --fdpass, "{in}"]
+  scan_sockets: [/opt/clamav/run/clamd.sock]   # extra read-only binds
+```
+
+The **`--stream` / TCP** transport needs no socket bind, but it does need
+network egress, which the sandbox denies — prefer the local socket. Scan over
+TCP only when `clamd` runs on another host, and provide egress at the
+deployment layer (the sandbox has no per-command egress opt-in).
+
 ### Strip image metadata (EXIF/GPS) — exiftool
 
 ```yaml
