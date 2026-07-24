@@ -12,7 +12,12 @@ permissions:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # 26.04, not ubuntu-latest: the command sandbox needs unprivileged user
+    # namespaces, which 24.04 restricts via AppArmor
+    # (apparmor_restrict_unprivileged_userns=1, seen as bwrap "Failed
+    # RTM_NEWADDR: Operation not permitted"). 26.04 does not ship that
+    # restriction, so bwrap works without any sysctl override.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -31,14 +36,7 @@ jobs:
       # egress and out-of-allowlist reads are actually blocked, which otherwise
       # skip and would let a broken profile ship unnoticed.
       - name: Install bubblewrap (command sandbox)
-        run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap
-          # Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor,
-          # which bwrap needs ("Failed RTM_NEWADDR: Operation not permitted").
-          # The runner is ephemeral and unprivileged-userns is the mechanism
-          # under test, so relax it here. Operators on such a distro hit the
-          # same wall — hence the documented unconfined-commands escape hatch.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - name: Verify the sandbox actually works on this runner
         # A hard failure here is better than every sandbox test silently
