@@ -70,7 +70,7 @@ func writeProjectFile(t *testing.T, root, rel, content string) string {
 func postConflictResolve(app *App, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_conflicts/resolve", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1ConflictResolve(rec, req)
+	app.write.handleV1ConflictResolve(rec, req)
 	return rec
 }
 

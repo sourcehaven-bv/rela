@@ -15,9 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
@@ -27,7 +25,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -1078,59 +1075,10 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 
 	switch action {
 	case "clone":
-		a.handleV1CloneEntity(w, r, typeName, entityID)
+		a.write.handleV1CloneEntity(w, r, typeName, entityID)
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "unknown_action", "Unknown action", "")
 	}
-}
-
-func (a *App) handleV1CloneEntity(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
-	// Need write lock
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	s := a.State()
-
-	// ACL gate (TKT-VQGN): runs BEFORE getEntity (RR-NGMI timing) so
-	// a clone from a hidden source 404s with the same shape and
-	// timing as a clone from a nonexistent source.
-	if !a.gateReadOrNotFound(w, r, typeName, entityID) {
-		return
-	}
-
-	entity, found := a.reader.getEntity(r.Context(), entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
-
-	// Clone properties
-	props := make(map[string]any)
-	maps.Copy(props, entity.Properties)
-
-	cloneResult, err := a.entityManager.CreateEntity(r.Context(),
-		&entityPkg.Entity{
-			Type:       typeName,
-			Properties: props,
-			Content:    entity.Content,
-		},
-		entityPkg.CreateOptions{},
-	)
-	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		writeV1Error(w, r, http.StatusInternalServerError, "clone_failed", "Failed to clone entity", err.Error())
-		return
-	}
-	newEntity := cloneResult.Entity
-
-	entityDef := s.Meta.Entities[typeName]
-	plural := entityDef.GetPlural(typeName)
-	result := a.serializer.forWire(r.Context(), newEntity, nil, a.Meta(), plural)
-
-	w.Header().Set("Location", fmt.Sprintf("/api/v1/%s/%s", plural, newEntity.ID))
-	writeV1JSON(w, http.StatusCreated, result)
 }
 
 // --- System Handlers ---
@@ -2290,7 +2238,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_conflicts/")
 
 	if path == "resolve" && r.Method == http.MethodPost {
-		a.handleV1ConflictResolve(w, r)
+		a.write.handleV1ConflictResolve(w, r)
 		return
 	}
 
@@ -2301,7 +2249,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 
 	// Get conflict details. The path is caller-supplied — contain it to
 	// the project root before any filesystem access.
-	absPath, ok := a.resolveConflictPath(w, r, path)
+	absPath, ok := resolveConflictPath(a.paths, w, r, path)
 	if !ok {
 		return
 	}
@@ -2337,97 +2285,12 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 	writeV1JSON(w, http.StatusOK, detail)
 }
 
-// handleV1ConflictResolve applies a conflict resolution.
-func (a *App) handleV1ConflictResolve(w http.ResponseWriter, r *http.Request) {
-	var req v1.ConflictResolveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", err.Error())
-		return
-	}
-
-	if req.Path == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "missing_path", "Path is required", "")
-		return
-	}
-
-	// The path is caller-supplied — contain it to the project root
-	// before any filesystem access.
-	absPath, ok := a.resolveConflictPath(w, r, req.Path)
-	if !ok {
-		return
-	}
-
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-
-	st := a.State()
-
-	cf, err := conflict.ParseConflictedFile(absPath, st.Meta)
-	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
-		return
-	}
-
-	resolution := &conflict.Resolution{
-		PropertyChoices: make(map[string]conflict.Side),
-	}
-
-	// Map property choices
-	for prop, choice := range req.PropertyChoices {
-		if choice == "theirs" {
-			resolution.PropertyChoices[prop] = conflict.SideTheirs
-		} else {
-			resolution.PropertyChoices[prop] = conflict.SideOurs
-		}
-	}
-
-	// Map content choice
-	switch req.ContentChoice {
-	case "theirs":
-		resolution.ContentChoice = conflict.SideTheirs
-	case "manual":
-		resolution.ManualContent = req.ManualContent
-	default:
-		resolution.ContentChoice = conflict.SideOurs
-	}
-
-	// Resolve first so the ACL gate evaluates the actual write target
-	// (entity vs relation, post-choice identity), then authorize, then
-	// write. The write is file-level marker removal and cannot route
-	// through entitymanager — the store can't parse a file that still
-	// contains conflict markers — so this handler re-authorizes and
-	// audits explicitly. The store's file watcher picks the change up
-	// as an external edit, keeping index/SSE consumers in sync.
-	resolvedEntity, resolvedRelation, err := conflict.Resolve(cf, resolution)
-	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
-		return
-	}
-	if !a.authorizeConflictResolve(r.Context(), w, resolvedEntity, resolvedRelation) {
-		return
-	}
-	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
-		return
-	}
-	if err := conflict.WriteResolved(absPath, resolvedEntity, resolvedRelation); err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
-		return
-	}
-	a.recordConflictResolveAudit(r.Context(), req.Path, resolvedEntity, resolvedRelation)
-
-	writeV1JSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"path":    req.Path,
-	})
-}
-
 // resolveConflictPath contains the caller-supplied conflict-file path
 // to the project root. On failure it writes the error response (404
 // when the path is inside the project but missing, 403 when it escapes
 // the root) and returns ok=false.
-func (a *App) resolveConflictPath(w http.ResponseWriter, r *http.Request, p string) (string, bool) {
-	resolved, err := containedProjectPath(a.paths.Root, p)
+func resolveConflictPath(paths *project.Context, w http.ResponseWriter, r *http.Request, p string) (string, bool) {
+	resolved, err := containedProjectPath(paths.Root, p)
 	switch {
 	case errors.Is(err, errPathNotFound):
 		writeV1Error(w, r, http.StatusNotFound, "conflict_not_found", "Conflicted file not found", "")
@@ -2452,65 +2315,6 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 		}
 	}
 	return &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID}
-}
-
-// authorizeConflictResolve re-authorizes the write a conflict
-// resolution performs. Conflict resolution bypasses entitymanager, so
-// the gate the manager would normally apply lives here: entity files
-// gate like an entity update; relation files gate like a relation
-// update (source-entity type, mirroring entitymanager.UpdateRelation —
-// type left empty when the source entity can't be loaded, the same
-// fallback the manager uses). A deny records a `denied-write` audit
-// row and writes the standard 403 body; returns true when the write
-// may proceed.
-func (a *App) authorizeConflictResolve(
-	ctx context.Context, w http.ResponseWriter, e *entityPkg.Entity, rel *entityPkg.Relation,
-) bool {
-	var aclReq acl.WriteRequest
-	if rel != nil {
-		var fromType string
-		if fromEntity, ok := a.reader.getEntity(ctx, rel.From); ok {
-			fromType = fromEntity.Type
-		}
-		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
-	} else {
-		aclReq = translateVerb("update", e.Type, e.ID)
-	}
-	decision := a.acl.AuthorizeWrite(ctx, aclReq)
-	if decision.Allow {
-		return true
-	}
-	a.auditSink.Record(audit.Record{
-		Time:        time.Now().UTC(),
-		Op:          audit.OpDeniedWrite,
-		Subject:     conflictAuditSubject(e, rel),
-		Principal:   principal.From(ctx),
-		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary: fmt.Sprintf("denied: %s (rule_kind=%s rule_id=%s op=conflict-resolve)",
-			decision.Reason, decision.RuleKind, decision.RuleID),
-	})
-	writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
-	return false
-}
-
-// recordConflictResolveAudit emits the audit row for a successful
-// conflict resolution — the direct-file-write counterpart of the
-// records entitymanager emits for manager-routed writes.
-func (a *App) recordConflictResolveAudit(
-	ctx context.Context, relPath string, e *entityPkg.Entity, rel *entityPkg.Relation,
-) {
-	op := audit.OpUpdateEntity
-	if rel != nil {
-		op = audit.OpUpdateRelation
-	}
-	a.auditSink.Record(audit.Record{
-		Time:        time.Now().UTC(),
-		Op:          op,
-		Subject:     conflictAuditSubject(e, rel),
-		Principal:   principal.From(ctx),
-		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary:     "resolved git conflict in " + relPath,
-	})
 }
 
 // --- Documents API ---
