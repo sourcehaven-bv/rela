@@ -8,6 +8,7 @@ exclude:
   - internal/testutil
   - internal/store/storetest
   - internal/entitymanager/entitymanagertest
+  - internal/visibility/visibilitytest
   - frontend
   - e2e
   - .claude
@@ -20,17 +21,21 @@ components:
   # Entry points
   cmdCli:           { in: cmd/rela }
   cmdServer:        { in: cmd/rela-server }
+  cmdDocs:          { in: cmd/rela-docs }
   cmdDesktop:       { in: cmd/rela-desktop }
 
   # CLI layer
   cli:              { in: internal/cli }
   clisync:          { in: internal/cli/sync }
+  docscli:          { in: internal/docscli }
 
   # Web / UI layer
   dataentry:        { in: internal/dataentry }
   dataentryconfig:  { in: internal/dataentryconfig }
   conditionlint:    { in: internal/conditionlint }
   desktop:          { in: internal/desktop }
+  docs:             { in: internal/docs }
+  docscapture:      { in: internal/docscapture }
 
   # Server protocols
   mcp:              { in: internal/mcp }
@@ -53,6 +58,7 @@ components:
   entitymanager:    { in: internal/entitymanager }
   importer:         { in: internal/importer }
   renametype:       { in: internal/renametype }
+  mermaid:          { in: internal/mermaid }
   schema:           { in: internal/schema }
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
@@ -97,6 +103,7 @@ components:
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
+  visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
@@ -134,6 +141,7 @@ vendors:
       - github.com/mitchellh/go-wordwrap
   gogit:       { in: github.com/go-git/go-git/** }
   gopherlua:   { in: [github.com/yuin/gopher-lua, github.com/yuin/gopher-lua/**] }
+  chromedp:    { in: [github.com/chromedp/chromedp, github.com/chromedp/chromedp/**, github.com/chromedp/cdproto, github.com/chromedp/cdproto/**] }
   runewidth:   { in: github.com/mattn/go-runewidth }
   rrulego:     { in: github.com/teambition/rrule-go }
   mcpgo:       { in: github.com/mark3labs/mcp-go/** }
@@ -180,6 +188,14 @@ deps:
   cmdCli:
     mayDependOn:
       - cli
+  cmdDocs:
+    mayDependOn:
+      - appbuild
+      - docscli
+      - principal
+      - script
+    canUse:
+      - kong
   cmdServer:
     mayDependOn:
       - acl
@@ -301,6 +317,7 @@ deps:
       - git
       - htmlutil
       - lua
+      - mermaid
       - metamodel
       - migration
       - openapi
@@ -492,6 +509,18 @@ deps:
       - predicate
       - principal
       - statemachine
+  # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
+  # the ungated pure readers. tracer is needed for the decorator's
+  # interface/result types; no cycle (tracer depends only on store).
+  # Deliberately NO store: the package takes store.Store structurally
+  # through its one-method EntityGetter (RR-RT5YV8).
+  visibility:
+    mayDependOn:
+      - acl
+      - affordances
+      - entity
+      - principal
+      - tracer
   audit:
     mayDependOn:
       - principal
@@ -516,6 +545,39 @@ deps:
   conflict:
     mayDependOn:
       - markdown
+      - metamodel
+      - project
+  docs:
+    mayDependOn:
+      - acl
+      - entity
+      - lua
+      - mermaid
+      - metamodel
+      - store
+      - memstore
+      - tracer
+    canUse:
+      - gopherlua
+  docscapture:
+    mayDependOn:
+      - acl
+      - appbuild
+      - dataentry
+      - docs
+      - principal
+      - script
+      - store
+    canUse:
+      - chromedp
+  # docscli is the command layer for the rela-docs binary. It owns the
+  # docscapture edge (and thus chromedp) so internal/cli — and the rela /
+  # rela-server binaries — never link the browser. See internal/docscli.
+  docscli:
+    mayDependOn:
+      - acl
+      - docs
+      - docscapture
       - metamodel
       - project
   entitymanager:

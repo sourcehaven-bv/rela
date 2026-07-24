@@ -216,6 +216,65 @@ authenticated and what it resolved to without a graph round-trip.
 For large user-entity sets, push the property equality into a backend
 index — see GUIDE-acl-security.
 
+## Roles from a verified identity assertion
+
+When rela runs behind an OIDC identity proxy that signs an identity
+assertion (see GUIDE-server-security for the `--jwt-*` flags), the
+assertion's `roles` claim can grant policy roles directly — so an
+operator maintains group membership in the IdP rather than restating it
+per-user in `assignments`.
+
+```yaml
+asserted_role_assignments:
+  admin: editor                # a claim value → one role
+  compliance: [editor, auditor] # …or several
+```
+
+A claim value never names a rela role directly: it selects an entry the
+operator wrote here. An IdP therefore cannot grant a role the deployment
+did not choose to expose, however its own role names change.
+
+Rules and fallbacks:
+
+- **Verified assertions only.** Roles are populated exclusively by the
+  JWT resolver, after signature verification. The `--principal-header`
+  path and direct-loopback requests never carry roles, and no header is
+  read as a role source. This is enforced by the type system, not by
+  convention — see the `internal/principal` package doc.
+- **Absent key ⇒ no-op.** A policy without `asserted_role_assignments`
+  behaves byte-for-byte as before.
+- **No match** grants nothing; an unmapped claim is simply ignored.
+- **Undeclared target role** is dropped silently at resolution, matching
+  how `assignments` treats an unknown role name.
+- **Exact matching after trimming.** Surrounding whitespace is stripped
+  from both the policy key and the incoming claim, so a padded key like
+  `"  admin  "` still matches the claim `admin`. Matching is otherwise
+  exact — `Admin` does not match `admin`. A key that is blank after
+  trimming is rejected at load, since it could never match and would
+  sit inert.
+- **`everyone` is rejected as a target** — it already applies to every
+  principal, so granting it from a claim would double-report the role
+  with no effect.
+- **Multiple claims accumulate.** A principal holding `["admin",
+  "compliance"]` gets the union of both mappings, deduplicated.
+- **No user entity required.** A verified principal whose subject
+  resolves to no `user_entity_type` entity still receives its asserted
+  roles — this is an SSO-provisioned user's first request. It does not
+  receive anything keyed on a graph entity (local roles, ancestry).
+
+Asserted roles are attributed with source kind `asserted`, carrying the
+claim that granted them, so `rela acl who-can` and the audit log
+distinguish "granted by our policy" from "granted by a claim in a token".
+
+`rela acl who-can` reports these in a **separate** section from the
+`everyone` grant, and deliberately does not enumerate holders: whoever
+presents the claim gets the role, and that population lives in the IdP,
+not the graph. Listing them as principals — or folding them into the
+`everyone` line — would tell an operator the grant reaches everybody.
+
+The assertion's `org_id` / `org_slug` are recorded on the principal for
+audit attribution. **Nothing evaluates them** — see GUIDE-acl-security.
+
 Given the graph:
 
 ```text

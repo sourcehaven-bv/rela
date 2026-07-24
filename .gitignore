@@ -2,6 +2,7 @@
 bin/
 /rela
 /rela-server
+/rela-docs
 /rela-desktop
 coverage.out
 fuzz-failures.txt

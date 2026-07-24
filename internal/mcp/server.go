@@ -163,7 +163,7 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	for _, opt := range opts {
 		opt(s)
 	}
-	if s.principal == (principal.Principal{}) {
+	if s.principal.IsZero() {
 		return nil, errors.New("mcp.NewServer: Principal is required (use WithPrincipal)")
 	}
 	if err := deps.validate(); err != nil {

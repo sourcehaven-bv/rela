@@ -48,6 +48,19 @@
   Never substitute a no-op or sentinel implementation silently — that
   defers the failure to a downstream symptom that is much harder to
   diagnose.
+- **Read-out paths go through visibility wrappers, base readers stay
+  ungated.** Read-side ACL (entity row-gating + field-level `visible:`
+  redaction) is enforced by `internal/visibility` decorators
+  (`Reader`, the tracer decorator) injected at the wiring site — never
+  by per-consumer redaction calls, and never inside `store`/`tracer`/
+  `search` themselves (DEC-ZBI39P; the `search.VisibleSearcher`
+  pattern generalized). Hidden = nonexistent (pruned subtrees,
+  withheld paths, indistinguishable 404s). A system job that may read
+  everything gets an `AllowAllReader` capability at wiring while
+  keeping its genuine `system:*` principal for audit — allow-all is
+  never inferred from identity. Write-prep reads (entitymanager
+  diffing) keep raw store access: a redacted read-modify-write would
+  clobber hidden fields.
 - **Boundaries are enforced.** `just arch-lint` checks package import
   rules; run it before PR.
 
@@ -130,6 +143,7 @@ Domain and storage:
 | `internal/tracer`        | Pure-reader graph traversal (trace, path, orphans, cycles)|
 | `internal/calfeed`       | Pure calendar-feed model + iCalendar/JSON serializers (event-granular; no store/vendor) |
 | `internal/search`        | Full-text + structured search (bleve + linear)            |
+| `internal/visibility`    | Read-side ACL wrappers: row-gate + field-redact readers, tracer decorator (DEC-ZBI39P) |
 | `internal/entitymanager` | Write path: automations, validation, audit, policy        |
 | `internal/audit`         | Append-only JSONL audit log of every successful write     |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx     |

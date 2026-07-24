@@ -105,6 +105,12 @@ const userTouched = ref<Set<string>>(new Set())
 const pickerTypes = ref<Record<string, Map<string, string>>>({})
 const content = ref('')
 const loading = ref(true)
+// loadState is a stable, test-visible signal of whether the edit entity
+// actually loaded: 'pending' until the fetch settles, then 'loaded' or
+// 'error'. Stamped as data-testid on the form root so an out-of-process
+// consumer (the rela-docs screenshot harness) can unambiguously tell a
+// rendered-with-data form from an empty schema-only shell after a failed load.
+const loadState = ref<'pending' | 'loaded' | 'error'>('pending')
 // Set to true in edit mode when the loaded entity's `_actions.update`
 // is explicitly false. The template renders an inline "not editable"
 // message instead of the form. The EntityDetail Edit button already
@@ -354,10 +360,12 @@ async function loadEntity(force = false) {
       relations: relations.value,
       content: content.value,
     })
+    loadState.value = 'loaded'
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
+    loadState.value = 'error'
     uiStore.error('Failed to load entity')
     console.error(err)
   }
@@ -1174,6 +1182,7 @@ onMounted(async () => {
   } else {
     initializeDefaults()
     await loadTemplates()
+    loadState.value = 'loaded' // create mode: no entity to fetch
   }
   loading.value = false
 
@@ -1313,7 +1322,12 @@ onBeforeRouteLeave(async () => {
 </script>
 
 <template>
-  <div v-if="formConfig" class="form-layout" :class="{ 'with-sidepanel': isEdit }">
+  <div
+    v-if="formConfig"
+    class="form-layout"
+    :class="{ 'with-sidepanel': isEdit }"
+    :data-testid="`form-state-${loadState}`"
+  >
     <div class="dynamic-form">
       <header class="form-header">
         <h1>{{ title }}</h1>

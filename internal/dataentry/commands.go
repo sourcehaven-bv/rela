@@ -562,7 +562,7 @@ func (h *commandHandler) handleCommandCancel(w http.ResponseWriter, r *http.Requ
 	// a caller whose own exec attempts are being 403'd. Answer 404, identical
 	// to an unknown id, so cancel cannot be used to probe which commands are
 	// currently running under other principals.
-	if rc.owner != principal.From(r.Context()) {
+	if !rc.owner.Equal(principal.From(r.Context())) {
 		http.Error(w, "No running command: "+execID, http.StatusNotFound)
 		return
 	}

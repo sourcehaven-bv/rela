@@ -27,6 +27,7 @@ function getIcon(type: string): string {
         :key="toast.id"
         class="toast"
         :class="toast.type"
+        :data-testid="`toast-${toast.type}`"
       >
         <span class="toast-icon">{{ getIcon(toast.type) }}</span>
         <span class="toast-message">{{ toast.message }}</span>

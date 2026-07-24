@@ -31,13 +31,13 @@ type Warning = entity.Warning
 // This split lets handleV1UpdateEntity validate relations BEFORE the
 // entity is updated, so a structural relation problem doesn't leave
 // the entity half-written.
-func (a *App) validateRelationsModern(
+func (h *writeHandler) validateRelationsModern(
 	ctx context.Context, entityID string, pathEntityType string, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
 	if len(desired) == 0 {
 		return nil, nil
 	}
-	meta := a.State().Meta
+	meta := h.schema().Meta
 	var warnings []Warning
 
 	// Self-loop shape_conflict detection: a body that references the
@@ -109,7 +109,7 @@ func (a *App) validateRelationsModern(
 
 			// Soft conditions surfaced as warnings. The peer is whichever
 			// side the path entity is NOT on.
-			ws := a.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
+			ws := h.collectEdgeWarnings(ctx, canonical, &relDef, ref, edgePath, incoming)
 			warnings = append(warnings, ws...)
 		}
 	}
@@ -142,15 +142,15 @@ func sideLabel(incoming, pathSide bool) string {
 // the `ref` is the SOURCE side of the canonical edge (the path entity
 // is the target). Warning codes stay the same so client de-dup by
 // code keeps working; the `Direction` field disambiguates.
-func (a *App) collectEdgeWarnings(
+func (h *writeHandler) collectEdgeWarnings(
 	ctx context.Context, relType string, relDef *metamodel.RelationDef,
 	ref v1.ResourceIdentifier, edgePath string, incoming bool,
 ) []Warning {
 	var warnings []Warning
-	meta := a.State().Meta
+	meta := h.schema().Meta
 	direction := directionLabel(incoming)
 
-	peer, err := a.store.GetEntity(ctx, ref.ID)
+	peer, err := h.store.GetEntity(ctx, ref.ID)
 	if err != nil {
 		warnings = append(warnings, Warning{
 			Code:      "target_not_found",
@@ -260,14 +260,14 @@ func (a *App) collectEdgeWarnings(
 // documented atomicity gap.
 //
 //nolint:gocognit // diffs desired vs. existing relation sets and issues add/remove ops per peer; the branches are the set-reconciliation cases, not shared logic to extract.
-func (a *App) applyRelationsModern(
+func (h *writeHandler) applyRelationsModern(
 	ctx context.Context, entityID string, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
 	if len(desired) == 0 {
 		return nil, nil
 	}
-	meta := a.State().Meta
-	em := a.entityManager
+	meta := h.schema().Meta
+	em := h.manager
 	var warnings []Warning
 
 	for bodyKey, upd := range desired {
@@ -296,7 +296,7 @@ func (a *App) applyRelationsModern(
 			desiredByID[ref.ID] = ref
 		}
 
-		current := a.currentEdgesByPeer(ctx, entityID, canonical, incoming)
+		current := h.currentEdgesByPeer(ctx, entityID, canonical, incoming)
 
 		// Adds and upserts.
 		for _, id := range desiredOrder {
@@ -314,11 +314,11 @@ func (a *App) applyRelationsModern(
 				if isEdgeNoOp(existing, finalProps, finalContent, contentSet, ref) {
 					continue // value-based no-op suppression
 				}
-				if err := a.writeUpdateRelation(ctx, from, to, canonical, ref); err != nil {
+				if err := h.writeUpdateRelation(ctx, from, to, canonical, ref); err != nil {
 					return warnings, err
 				}
 			} else {
-				if err := a.writeCreateRelation(ctx, from, to, canonical, ref, finalProps, finalContent); err != nil {
+				if err := h.writeCreateRelation(ctx, from, to, canonical, ref, finalProps, finalContent); err != nil {
 					return warnings, err
 				}
 			}
@@ -365,7 +365,7 @@ func (a *App) applyRelationsModern(
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints —
 // this function does not consult direction. `ref.ID` is the peer ID
 // (which is `to` for outgoing edges and `from` for incoming).
-func (a *App) writeCreateRelation(
+func (h *writeHandler) writeCreateRelation(
 	ctx context.Context, from, to, relType string, ref v1.ResourceIdentifier,
 	finalProps map[string]any, finalContent string,
 ) error {
@@ -373,7 +373,7 @@ func (a *App) writeCreateRelation(
 		Properties: finalProps,
 		Content:    ref.Content,
 	}
-	_, err := a.entityManager.CreateRelation(ctx, from, relType, to, opts)
+	_, err := h.manager.CreateRelation(ctx, from, relType, to, opts)
 	if err == nil {
 		return nil
 	}
@@ -390,7 +390,7 @@ func (a *App) writeCreateRelation(
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := a.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
+	if _, sErr := h.store.CreateRelation(ctx, from, relType, to, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: sErr,
@@ -404,7 +404,7 @@ func (a *App) writeCreateRelation(
 // conditions, mirroring writeCreateRelation.
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints.
-func (a *App) writeUpdateRelation(
+func (h *writeHandler) writeUpdateRelation(
 	ctx context.Context, from, to, relType string, ref v1.ResourceIdentifier,
 ) error {
 	opts := entity.RelationOptions{
@@ -412,7 +412,7 @@ func (a *App) writeUpdateRelation(
 		MetaUnset:  ref.MetaUnset,
 		Content:    ref.Content,
 	}
-	_, err := a.entityManager.UpdateRelation(ctx, from, relType, to, opts)
+	_, err := h.manager.UpdateRelation(ctx, from, relType, to, opts)
 	if err == nil {
 		return nil
 	}
@@ -428,10 +428,10 @@ func (a *App) writeUpdateRelation(
 		}
 	}
 	// Soft condition: rebuild the post-merge state and write directly.
-	current, _ := a.store.GetRelation(ctx, from, relType, to)
+	current, _ := h.store.GetRelation(ctx, from, relType, to)
 	finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 	data := store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := a.store.UpdateRelation(ctx, from, relType, to, data); sErr != nil {
+	if _, sErr := h.store.UpdateRelation(ctx, from, relType, to, data); sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "update",
 			Reason: "update_failed", Err: sErr,

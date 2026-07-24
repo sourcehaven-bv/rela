@@ -23,6 +23,10 @@ import (
 //
 //   - Records the everyone grant once, globally, when policy grants the
 //     verb to everyone (directly or via "*").
+//   - Records any asserted-claim grants in their own Conditional section.
+//     These are NOT enumerable as principals (the holders live in the IdP,
+//     not the graph) and are deliberately not folded into the everyone
+//     grant — see [ConditionalGrant].
 //   - Enumerates the principal universe (resolvable user entities ∪
 //     assignment keys ∪ membership-relation sources ∪ role-relation
 //     sources) and, for each, asks the resolver for the routes granting
@@ -52,6 +56,15 @@ func (e *Engine) WhoCan(ctx context.Context, verb acl.Verb, entityID string) (*W
 
 	eg := e.resolver.EveryoneGrants(verb, entityType)
 	result.Everyone = Everyone{Granted: eg.Granted, Wildcard: eg.Wildcard}
+
+	// Reported in their own section, never merged into Everyone: the holders
+	// of a claim are not enumerable from the graph, so claiming they are
+	// "everyone" would be a false — and dangerously reassuring — statement.
+	for _, ag := range e.resolver.AssertedGrants(verb, entityType) {
+		result.Conditional = append(result.Conditional, ConditionalGrant{
+			Claim: ag.Claim, Role: ag.Role, Wildcard: ag.Wildcard,
+		})
+	}
 
 	candidates, err := e.enumeratePrincipals(ctx)
 	if err != nil {
@@ -168,6 +181,7 @@ func routesFromAttributions(attrs []acl.RoleAttribution) []Route {
 			Group:    a.Source.Group,
 			Ancestor: a.Source.Ancestor,
 			Relation: a.Source.Relation,
+			Claim:    a.Source.Claim,
 		})
 	}
 	sort.Slice(routes, func(i, j int) bool { return lessRoute(routes[i], routes[j]) })
@@ -187,5 +201,11 @@ func lessRoute(a, b Route) bool {
 	if a.Ancestor != b.Ancestor {
 		return a.Ancestor < b.Ancestor
 	}
-	return a.Relation < b.Relation
+	if a.Relation != b.Relation {
+		return a.Relation < b.Relation
+	}
+	// Mirrors the Claim tiebreak in acl.lessSource — without it two asserted
+	// routes differing only by claim compare equal and the artifact ordering
+	// becomes input-dependent.
+	return a.Claim < b.Claim
 }

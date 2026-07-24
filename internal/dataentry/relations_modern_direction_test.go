@@ -89,7 +89,7 @@ func TestApplyRelationsModern_IncomingBodyKey_BothEndpoints(t *testing.T) {
 	body := `{"relations":{"blockedBy":{"data":[{"type":"feature","id":"` + sourceID + `","meta":{"reason":"updated reason"}}]}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/"+targetID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -130,7 +130,7 @@ func TestApplyRelationsModern_IncomingDelete(t *testing.T) {
 	body := `{"relations":{"blockedBy":{"data":[]}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/"+targetID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -154,7 +154,7 @@ func TestApplyRelationsModern_IncomingNoOp(t *testing.T) {
 	body := `{"relations":{"blockedBy":{"data":[{"type":"feature","id":"` + sourceID + `","meta":{"reason":"test block"}}]}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/"+targetID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -178,7 +178,7 @@ func TestApplyRelationsModern_IncomingWarnings_DirectionField(t *testing.T) {
 	body := `{"relations":{"blockedBy":{"data":[{"type":"feature","id":"FEAT-A","meta":{"severity":"high"}}]}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/"+targetID, strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", targetID)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -223,7 +223,7 @@ func TestApplyRelationsModern_MixedCanonicalAndInverse(t *testing.T) {
 	}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-A", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-A")
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-A")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -253,7 +253,7 @@ func TestApplyRelationsModern_SelfLoopShapeConflict(t *testing.T) {
 	}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-A", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-A")
+	app.write.handleV1UpdateEntity(rec, req, "feature", "features", "FEAT-A")
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 shape_conflict, got %d: %s", rec.Code, rec.Body.String())

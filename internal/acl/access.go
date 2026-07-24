@@ -3,6 +3,7 @@ package acl
 import (
 	"context"
 	"fmt"
+	"sort"
 )
 
 // Verb is a read-or-write access verb the who-can query asks about. It
@@ -77,6 +78,51 @@ func (d *Declarative) EveryoneGrants(verb Verb, entityType string) EveryoneGrant
 		return EveryoneGrant{}
 	}
 	return grantForRole(role, verb, entityType)
+}
+
+// AssertedGrant is one (claim → role) mapping that grants a verb, for reporting
+// grants whose holders are NOT enumerable from the graph: the population that
+// presents a given claim lives in the IdP.
+//
+// This is deliberately NOT folded into [EveryoneGrant]. An everyone grant
+// applies to every principal — reporting it globally is a true statement. An
+// asserted grant applies to an unknown subset, so reporting it the same way
+// would tell an operator that everyone holds the role.
+type AssertedGrant struct {
+	Claim    string
+	Role     string
+	Wildcard bool
+}
+
+// AssertedGrants reports every asserted_role_assignments mapping that grants
+// verb on entityType. Uses the same grantForRole helper as [EveryoneGrants] and
+// Request.AccessRoutes, so a reported grant can never disagree with an actual
+// authorization decision.
+//
+// Undeclared target roles are skipped, matching what the resolver does at
+// attribution time. Results are sorted by (claim, role) for a stable artifact.
+func (d *Declarative) AssertedGrants(verb Verb, entityType string) []AssertedGrant {
+	var out []AssertedGrant
+	for claim, roles := range d.policy.AssertedRoles {
+		for _, name := range roles {
+			role, declared := d.policy.Roles[name]
+			if !declared {
+				continue
+			}
+			if g := grantForRole(role, verb, entityType); g.Granted {
+				out = append(out, AssertedGrant{
+					Claim: claim, Role: name, Wildcard: g.Wildcard,
+				})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Claim != out[j].Claim {
+			return out[i].Claim < out[j].Claim
+		}
+		return out[i].Role < out[j].Role
+	})
+	return out
 }
 
 // grantForRole reports whether one role grants verb on entityType and

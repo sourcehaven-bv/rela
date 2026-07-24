@@ -21,6 +21,11 @@ threshold:
 # Per-package minimum thresholds.
 # Set ~5pp below current measured coverage to give refactor headroom.
 override:
+  # Security-critical: the read-side ACL seam must not silently lose its
+  # tests — pinned well above the default floor (RR-L3UQL4).
+  - path: ^internal/visibility$
+    threshold: 85
+
   # Below the default floor — explicit lower floors so the gap is
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$
@@ -29,6 +34,8 @@ override:
     threshold: 30
   - path: ^internal/search$
     threshold: 20 # the Searcher facade; most logic lives in search/bleveindex and the backends
+  - path: ^internal/docscapture$
+    threshold: 25 # the browser-capture harness: its core (capture.go/browser.go chromedp orchestration + standUp) only runs under tests that need BOTH a Chrome binary AND a built SPA — both absent in the standard CI matrix, so those tests skip. The non-browser units (annotate/anchor/roleAssignee/copyProjectSchema/padAndClamp/formURL) cover ~26% there; the browser-gated job (Chrome + built SPA) exercises the rest.
   # Close to the default floor — explicit so proximity is documented,
   # not discovered by a surprise CI failure (currently ~56%).
   - path: ^internal/mcp$
@@ -64,6 +71,7 @@ exclude:
     - ^cmd/rela                # main entry point
     - ^internal/testutil       # test helpers
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
+    - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/store/pgstore  # covered by the dedicated postgres CI job (needs a live DB; skipped without RELA_TEST_DATABASE_URL)
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers
     - ^internal/store/graphquerynaive # exercised through every backend's graphquery tests; cross-package coverage isn't attributed without -coverpkg, so its own number reads 0

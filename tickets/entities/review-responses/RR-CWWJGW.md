@@ -13,9 +13,12 @@ finding: |-
 
     FAILURE SCENARIO: operator runs `rela-server --read-only` to hand stakeholders a safe browsing link, reasonably believing read-only means read-only. A context:global command is configured. A stakeholder clicks the new dashboard button; mutating writes execute. The operator's mental model of --read-only is silently wrong, and the dashboard is the first page they land on.
 severity: critical
-resolution: 'Scoped to TKT-MJ02AO: blanket deny of command execution under ReadOnlyACL regardless of the permission: key, plus permission-filtered resolveCommands so buttons do not render. That ticket also corrects the inaccurate ''remain visible and 403 at the server on click'' comment at e2e/tests/read-only-mode.spec.ts:8, which is false for command exec today.'
+resolution: |-
+    Scoped to TKT-MJ02AO: blanket deny of command execution under ReadOnlyACL regardless of the permission: key, plus permission-filtered resolveCommands so buttons do not render. That ticket also corrects the inaccurate 'remain visible and 403 at the server on click' comment at e2e/tests/read-only-mode.spec.ts:8, which is false for command exec today.
+
+    RESOLVED (2026-07-24): TKT-MJ02AO merged as PR #1180 (develop commit 69034972). authorizeCommand denies every command under acl.ReadOnlyACL (all four contexts), pinned by TestCommandExecReadOnlyDenied — which failed before the fix, reproducing this exact finding, and passes after. The read-only-mode.spec.ts comment was corrected in the same PR.
 reason: 'Deferred to TKT-MJ02AO, which resolves PLAN-CNDJ78 blocking decision A as option 1 (gate exec on ACL) rather than option 3 (document as operator-trust). Justification for deferring rather than fixing in place: closing this correctly requires the same permission machinery as RR-65KG68 plus a blanket ReadOnlyACL deny, and there is currently no frontend read-only state to gate buttons on — the SPA hides write controls only because the server omits affordances. Both belong in the backend prep PR. The risk is contained meanwhile: TKT-72SCPR depends-on TKT-MJ02AO, and its read-only acceptance criterion (''no command buttons render under --read-only'') cannot pass until this lands, so the dashboard button cannot ship ahead of the gate.'
-status: deferred
+status: addressed
 ---
 
 ## Evidence

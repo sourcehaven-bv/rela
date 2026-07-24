@@ -47,6 +47,7 @@ type Resolver interface {
 	ForPrincipal(p principal.Principal) (*acl.Request, error)
 	ResolvePrincipal(ctx context.Context, rawUser string) (string, error)
 	EveryoneGrants(verb acl.Verb, entityType string) acl.EveryoneGrant
+	AssertedGrants(verb acl.Verb, entityType string) []acl.AssertedGrant
 	Policy() *acl.Policy
 }
 
@@ -81,6 +82,7 @@ type Route struct {
 	Group    string `json:"group,omitempty"`
 	Ancestor string `json:"ancestor,omitempty"`
 	Relation string `json:"relation,omitempty"`
+	Claim    string `json:"claim,omitempty"`
 }
 
 // PrincipalAccess is one principal's grant of the verb on the entity,
@@ -101,18 +103,45 @@ type Everyone struct {
 	Wildcard bool `json:"wildcard"`
 }
 
+// ConditionalGrant is a grant that reaches whichever principals present a
+// given claim in a verified identity assertion (asserted_role_assignments).
+//
+// It is reported SEPARATELY from [Everyone] on purpose, and the distinction is
+// load-bearing. An everyone grant is a statement of fact — the role genuinely
+// applies to every principal, so reporting it globally is accurate. An asserted
+// grant applies to an unknowable SUBSET: the holders live in the IdP, not the
+// graph, so enumeratePrincipals cannot see them. Folding these into the
+// everyone slot would tell an operator that everybody holds the role, which is
+// the worst possible answer to the question this report exists to answer —
+// "who could have done this?" — asked in the worst possible moment.
+//
+// Holders is therefore deliberately absent. The honest answer is the claim
+// name plus "ask your IdP who holds it".
+type ConditionalGrant struct {
+	// Claim is the asserted claim value that triggers the grant.
+	Claim string `json:"claim"`
+	// Role is the policy role the claim maps to.
+	Role string `json:"role"`
+	// Wildcard reports whether the role's grant came from a "*" entry.
+	Wildcard bool `json:"wildcard"`
+}
+
 // WhoCanResult is the answer to "who can <verb> <entity>". SchemaVersion
 // is bumped on any breaking change to this shape so snapshot/diff
 // consumers can detect format changes. Everyone is the global everyone
 // grant; Principals is every enumerated principal with a non-everyone
 // route, sorted by principal ID.
 type WhoCanResult struct {
-	SchemaVersion int               `json:"schema_version"`
-	Verb          string            `json:"verb"`
-	Entity        string            `json:"entity"`
-	EntityType    string            `json:"entity_type"`
-	Everyone      Everyone          `json:"everyone"`
-	Principals    []PrincipalAccess `json:"principals"`
+	SchemaVersion int      `json:"schema_version"`
+	Verb          string   `json:"verb"`
+	Entity        string   `json:"entity"`
+	EntityType    string   `json:"entity_type"`
+	Everyone      Everyone `json:"everyone"`
+	// Conditional lists grants reachable via a verified assertion claim, whose
+	// holders are NOT enumerable from the graph. Sorted by (claim, role).
+	// See [ConditionalGrant] for why these are not merged into Everyone.
+	Conditional []ConditionalGrant `json:"conditional,omitempty"`
+	Principals  []PrincipalAccess  `json:"principals"`
 }
 
 // schemaVersion is the WhoCanResult wire version. Bump on breaking

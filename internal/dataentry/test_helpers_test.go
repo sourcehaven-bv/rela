@@ -198,6 +198,26 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 
 	// Export handler over the app's current services (mirrors NewApp).
 	app.export = newExportHandler(app)
+
+	// writeHandler mirrors production wiring (see NewApp): closures for the
+	// swappable acl/audit collaborators, values for the fixed service handles,
+	// and App's shared read/write helpers so both paths stay identical.
+	app.write = &writeHandler{
+		schema:             app.State,
+		store:              svc.Store(),
+		manager:            svc.EntityManager(),
+		reader:             app.reader,
+		serializer:         app.serializer,
+		affordances:        app.affordances,
+		acl:                func() acl.ACL { return app.acl },
+		audit:              func() audit.Audit { return app.auditSink },
+		gateRead:           app.gateReadOrNotFound,
+		denyAfford:         app.denyAffordance,
+		computeETag:        app.computeEntityETag,
+		currentEdgesByPeer: app.currentEdgesByPeer,
+		paths:              paths,
+		writeMu:            &app.writeMu,
+	}
 }
 
 // rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.

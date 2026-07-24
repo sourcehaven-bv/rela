@@ -357,7 +357,13 @@ jobs:
           echo "postgres build must not link bleve:"
           ! go list -deps -tags postgres ./cmd/rela-server | grep -q 'blevesearch/bleve'
           ! go list -deps -tags postgres ./cmd/rela        | grep -q 'blevesearch/bleve'
-          echo "OK: backends are isolated by build tag."
+          echo "only the default rela-docs links chromedp (screenshot{} browser capture):"
+          ! go list -deps ./cmd/rela        | grep -q 'chromedp/chromedp'
+          ! go list -deps ./cmd/rela-server | grep -q 'chromedp/chromedp'
+          go list -deps ./cmd/rela-docs     | grep -q 'chromedp/chromedp'
+          echo "the postgres rela-docs must NOT link chromedp (screenshot{} is disabled there):"
+          ! go list -deps -tags postgres ./cmd/rela-docs | grep -q 'chromedp/chromedp'
+          echo "OK: backends and the browser dependency are isolated."
 
       - name: Compile all backend build-tag combinations
         run: |
@@ -392,7 +398,7 @@ jobs:
 
       # CGO off matches the GoReleaser builds for rela / rela-server; this is a
       # pure cross-compile, so no per-OS C toolchain is needed.
-      - name: Build rela + rela-server
+      - name: Build rela + rela-server + rela-docs
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: amd64
@@ -403,7 +409,7 @@ jobs:
           flags=""
           [ -n "$BUILD_TAGS" ] && flags="-tags $BUILD_TAGS"
           echo "Building GOOS=$GOOS ${flags:-(default)}"
-          go build $flags ./cmd/rela ./cmd/rela-server
+          go build $flags ./cmd/rela ./cmd/rela-server ./cmd/rela-docs
 
   build:
     name: Build

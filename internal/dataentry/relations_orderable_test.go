@@ -49,7 +49,7 @@ func patchRecipe(t *testing.T, app *App, body string) *httptest.ResponseRecorder
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/recipes/REC-001", bytes.NewReader([]byte(body)))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "recipe", "recipes", "REC-001")
+	app.write.handleV1UpdateEntity(rec, req, "recipe", "recipes", "REC-001")
 	return rec
 }
 
@@ -132,7 +132,7 @@ func patchEdge(t *testing.T, app *App, relType, targetID, body string) *httptest
 	url := "/api/v1/recipes/REC-001/relations/" + relType + "/" + targetID
 	req := httptest.NewRequest(http.MethodPatch, url, bytes.NewReader([]byte(body)))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateRelation(rec, req, "recipe", "REC-001", relType, targetID)
+	app.write.handleV1UpdateRelation(rec, req, "recipe", "REC-001", relType, targetID)
 	return rec
 }
 

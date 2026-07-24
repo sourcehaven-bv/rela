@@ -116,7 +116,7 @@ func TestMermaidStateDiagram(t *testing.T) {
 			{Move: "done", From: "doing", To: "done"}, // move == to → no label
 		},
 	}
-	got := mermaidStateDiagram(e)
+	got := enumStateDiagram(e)
 
 	for _, want := range []string{
 		"stateDiagram-v2",
@@ -145,7 +145,7 @@ func TestMermaidStateDiagram_InjectionSafe(t *testing.T) {
 			{Move: "Go\n    evil --> pwned", From: "to do", To: "a --> b"},
 		},
 	}
-	got := mermaidStateDiagram(e)
+	got := enumStateDiagram(e)
 
 	// The raw space/arrow values are only inside quoted alias text, never as
 	// bare tokens forming edges.

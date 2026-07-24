@@ -121,6 +121,6 @@ func tryDelete(t *testing.T, app *App, typeName, plural, id string) int {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/"+plural+"/"+id, http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1DeleteEntity(rec, req, typeName, plural, id)
+	app.write.handleV1DeleteEntity(rec, req, typeName, plural, id)
 	return rec.Code
 }

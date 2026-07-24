@@ -520,7 +520,7 @@ commands:
       echo "::rela::{\"type\":\"message\",\"text\":\"View: $RELA_VIEW_ID\"}"
     context: view
     available_on:
-      views: [ticket_report]
+      views: [ticket]
   generate-pdf:
     label: "Generate PDF"
     script: |
