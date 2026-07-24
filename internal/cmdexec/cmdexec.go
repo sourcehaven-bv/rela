@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -100,14 +101,22 @@ func WithMaxConcurrent(n int) Option {
 	}
 }
 
+// hostSandboxAvailable caches the platform availability probe process-wide.
+// The probe is a real subprocess ([Sandbox.Available] execs bwrap/sandbox-exec
+// with a 10s budget) and the host's posture cannot change within the process,
+// so every Runner after the first reuses the result instead of re-forking.
+var hostSandboxAvailable = sync.OnceValue(func() error {
+	return NewSandbox().Available()
+})
+
 // New builds a runner. timeout bounds each command; maxBytes bounds output.
 // Both must be positive.
 //
-// The sandbox is probed once here. When it is unavailable, New still SUCCEEDS —
-// a missing sandbox must not stop a server from booting and serving everything
-// that does not shell out. The failure surfaces two ways: [Runner.Describe] for
-// the startup log, and an error from every [Runner.Run], which is what actually
-// blocks execution.
+// The sandbox availability is probed once per process (first New). When it is
+// unavailable, New still SUCCEEDS — a missing sandbox must not stop a server
+// from booting and serving everything that does not shell out. The failure
+// surfaces two ways: [Runner.Describe] for the startup log, and an error from
+// every [Runner.Run], which is what actually blocks execution.
 func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error) {
 	if timeout <= 0 {
 		return nil, errors.New("cmdexec: timeout must be positive")
@@ -129,7 +138,7 @@ func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error)
 	// sandbox.Wrap unconditionally — there is no per-invocation branch that could
 	// be edited into silently skipping confinement.
 	platform := NewSandbox()
-	switch avail := platform.Available(); {
+	switch avail := hostSandboxAvailable(); {
 	case r.sandboxOptOut:
 		// Operator explicitly accepted unconfined execution. Record why the
 		// platform sandbox was (or wasn't) usable so diagnostics stay honest.

@@ -3,7 +3,7 @@ package cmdexec
 import (
 	"log/slog"
 	"path/filepath"
-	"sync"
+	"sync/atomic"
 )
 
 // This file holds sandbox POLICY — the operator-facing knobs and diagnostics
@@ -67,29 +67,20 @@ func WithSandboxDisabled() Option {
 // confinement unless a WithSandboxDisabled option says otherwise. It is the
 // single host-level knob the composition roots (server and CLI) set from the
 // RELA_UNCONFINED_COMMANDS env var, so the CLI and server agree without each
-// call site threading a bool. Guarded because it is read in New and written once
+// call site threading a bool. Atomic because it is read in New and written once
 // at startup.
-var (
-	unconfinedMu        sync.RWMutex
-	unconfinedByDefault bool
-)
+var unconfinedByDefault atomic.Bool
 
 // SetUnconfinedByDefault records the host-level opt-out. Call it once at startup,
 // before constructing any runner. When true, commands run UNCONFINED — the
 // operator has accepted the risk (typically because the host cannot sandbox).
 // Returns the value it set so the caller can log it.
 func SetUnconfinedByDefault(v bool) bool {
-	unconfinedMu.Lock()
-	defer unconfinedMu.Unlock()
-	unconfinedByDefault = v
+	unconfinedByDefault.Store(v)
 	return v
 }
 
-func unconfinedDefault() bool {
-	unconfinedMu.RLock()
-	defer unconfinedMu.RUnlock()
-	return unconfinedByDefault
-}
+func unconfinedDefault() bool { return unconfinedByDefault.Load() }
 
 // Describe returns a one-line summary of how commands are confined, for the
 // startup log so an operator learns the posture before anything fails.

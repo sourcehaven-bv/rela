@@ -10,10 +10,14 @@ vi.mock('./client', () => ({
 describe('transforms api', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('getTransforms hits /_transforms', async () => {
+  it('getTransforms hits /_transforms once and caches for the session', async () => {
     const got = await getTransforms()
     expect(vi.mocked(api.get).mock.calls[0][0]).toBe('/_transforms')
     expect(got).toEqual([{ name: 'pdf', produces: 'application/pdf' }])
+    // The registry is static per server config; a second mount must reuse the
+    // cached fetch rather than re-request it on every navigation.
+    await getTransforms()
+    expect(vi.mocked(api.get)).toHaveBeenCalledTimes(1)
   })
 
   it('entityExportUrl resolves plural and encodes the transform', () => {

@@ -42,21 +42,21 @@ func (er EntityRenderer) Render(_ context.Context) ([]byte, error) {
 	var b strings.Builder
 
 	title := er.title()
-	fmt.Fprintf(&b, "# %s\n\n", escapeInline(title))
+	fmt.Fprintf(&b, "# %s\n\n", EscapeInline(title))
 
 	// Properties as a bold-label definition list ("**Label:** value") rather than
 	// a Property|Value table — reads like a written document, not a DB dump.
 	for _, row := range er.propertyRows() {
-		fmt.Fprintf(&b, "**%s:** %s\n\n", escapeInline(row[0]), escapeInline(row[1]))
+		fmt.Fprintf(&b, "**%s:** %s\n\n", EscapeInline(row[0]), EscapeInline(row[1]))
 	}
 
 	for _, g := range er.Relations {
 		if len(g.Neighbors) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "## %s\n\n", escapeInline(g.Label))
+		fmt.Fprintf(&b, "## %s\n\n", EscapeInline(g.Label))
 		for _, n := range g.Neighbors {
-			fmt.Fprintf(&b, "- %s\n", escapeInline(n))
+			fmt.Fprintf(&b, "- %s\n", EscapeInline(n))
 		}
 		b.WriteString("\n")
 	}
@@ -69,21 +69,28 @@ func (er EntityRenderer) Render(_ context.Context) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-// title returns the entity's display title, preferring the metamodel's
-// DisplayTitle (which honors display_property). DisplayTitle returns the ID as
+// title returns the entity's display title via [DisplayTitle].
+func (er EntityRenderer) title() string {
+	return DisplayTitle(er.Meta, er.Entity)
+}
+
+// DisplayTitle resolves an entity's human title, preferring the metamodel's
+// DisplayTitle (which honors display_property). That method returns the ID as
 // its fallback sentinel; when that happens we still try the entity's own `title`
 // property before settling on the ID, so an entity whose type doesn't declare a
-// required title property (but carries one) still renders a human title.
-func (er EntityRenderer) title() string {
-	if er.Meta != nil {
-		if t := er.Meta.DisplayTitle(er.Entity.ID, er.Entity.Type, er.Entity.Properties); t != "" && t != er.Entity.ID {
+// required title property (but carries one) still renders a human title. meta
+// may be nil. Shared by every export surface (CLI render, data-entry export) so
+// the precedence lives in exactly one place.
+func DisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
+	if meta != nil {
+		if t := meta.DisplayTitle(e.ID, e.Type, e.Properties); t != "" && t != e.ID {
 			return t
 		}
 	}
-	if t := er.Entity.Title(); t != "" {
+	if t := e.Title(); t != "" {
 		return t
 	}
-	return er.Entity.ID
+	return e.ID
 }
 
 // propertyRows returns [label, value] pairs in metamodel order (falling back to
@@ -165,7 +172,7 @@ func (er EntityRenderer) formatPropertyValue(def *metamodel.EntityDef, name stri
 	case []any:
 		parts := make([]string, 0, len(t))
 		for _, e := range t {
-			parts = append(parts, label(formatValue(e)))
+			parts = append(parts, label(FormatValue(e)))
 		}
 		return strings.Join(parts, ", ")
 	case []string:
@@ -175,13 +182,14 @@ func (er EntityRenderer) formatPropertyValue(def *metamodel.EntityDef, name stri
 		}
 		return strings.Join(parts, ", ")
 	default:
-		return formatValue(v)
+		return FormatValue(v)
 	}
 }
 
-// formatValue renders a property value as a single-line cell string. Lists are
-// comma-joined; other scalars use their default Go formatting.
-func formatValue(v any) string {
+// FormatValue renders a property value as a single-line cell string. Lists are
+// comma-joined; other scalars use their default Go formatting. Shared by the
+// built-in entity renderer and the data-entry list-table renderer.
+func FormatValue(v any) string {
 	switch t := v.(type) {
 	case nil:
 		return ""
@@ -190,7 +198,7 @@ func formatValue(v any) string {
 	case []any:
 		parts := make([]string, 0, len(t))
 		for _, e := range t {
-			parts = append(parts, formatValue(e))
+			parts = append(parts, FormatValue(e))
 		}
 		return strings.Join(parts, ", ")
 	case []string:
@@ -200,13 +208,18 @@ func formatValue(v any) string {
 	}
 }
 
-// escapeInline neutralizes characters that would break inline markdown or inject
-// structure (newlines collapse to spaces; pipe/backslash escaped).
-func escapeInline(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "|", "\\|")
-	return s
+// inlineEscaper neutralizes characters that would break inline markdown or a
+// table cell (newlines collapse to spaces; pipe/backslash escaped). A Replacer
+// is longest-match and single-pass, so "\r\n" wins over "\n" and replacements
+// are never re-scanned.
+var inlineEscaper = strings.NewReplacer(
+	"\r\n", " ", "\n", " ", "\r", " ",
+	`\`, `\\`, "|", `\|`,
+)
+
+// EscapeInline neutralizes characters that would break inline markdown or
+// inject table structure. This is injection-relevant escaping — every export
+// surface must use this one implementation so a hardening lands everywhere.
+func EscapeInline(s string) string {
+	return inlineEscaper.Replace(s)
 }

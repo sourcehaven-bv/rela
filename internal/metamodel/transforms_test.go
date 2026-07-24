@@ -139,3 +139,21 @@ transforms:
 		t.Errorf("command = %v", def.Command)
 	}
 }
+
+// TestParse_Transforms_CanonicalizesFrom pins that an omitted `from` is written
+// back as "markdown" at load, so downstream consumers (the transform registry
+// projection, the engine) read the resolved value and never re-default it.
+func TestParse_Transforms_CanonicalizesFrom(t *testing.T) {
+	m, err := Parse([]byte(transformsBaseEntities + `
+transforms:
+  pdf:
+    command: ["pandoc"]
+    produces: application/pdf
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Transforms["pdf"].From; got != transformFormatMarkdown {
+		t.Errorf("From = %q, want canonicalized to %q", got, transformFormatMarkdown)
+	}
+}

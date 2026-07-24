@@ -19,6 +19,10 @@ const transformFormatMarkdown = "markdown"
 // export response Content-Type, so a malformed or CRLF-bearing value would be a
 // header-injection vector). A bad entry fails the whole metamodel load so a
 // broken registry can never half-work at request time.
+//
+// It also CANONICALIZES: an empty `from` is written back as "markdown", so
+// downstream consumers (the transform registry projection, the engine) read the
+// resolved value and never re-default it.
 func validateTransforms(m *Metamodel) []string {
 	var errs []string
 
@@ -36,13 +40,13 @@ func validateTransforms(m *Metamodel) []string {
 			continue
 		}
 
-		from := def.From
-		if from == "" {
-			from = transformFormatMarkdown // default; markdown is the only value today
+		if def.From == "" {
+			def.From = transformFormatMarkdown // canonicalize; markdown is the only value today
+			m.Transforms[name] = def
 		}
-		if from != transformFormatMarkdown {
+		if def.From != transformFormatMarkdown {
 			errs = append(errs, fmt.Sprintf(
-				"transform %q: unsupported from: %q (only %q is supported)", name, from, transformFormatMarkdown))
+				"transform %q: unsupported from: %q (only %q is supported)", name, def.From, transformFormatMarkdown))
 		}
 
 		if len(def.Command) == 0 {

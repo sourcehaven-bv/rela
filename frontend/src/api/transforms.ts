@@ -7,9 +7,21 @@ export interface TransformInfo {
   produces: string
 }
 
+// The registry is static per server config (it changes only on a metamodel
+// reload), so one fetch per SPA session is enough — ExportMenu mounts on every
+// entity/list navigation and must not re-request it each time. A failed fetch
+// clears the cache so the next mount retries.
+let transformsCache: Promise<TransformInfo[]> | null = null
+
 /** Fetch the export formats a client may offer (drives the "Export as" menu). */
 export async function getTransforms(signal?: AbortSignal): Promise<TransformInfo[]> {
-  return api.get<TransformInfo[]>('/_transforms', undefined, signal)
+  if (!transformsCache) {
+    transformsCache = api.get<TransformInfo[]>('/_transforms', undefined, signal).catch((err) => {
+      transformsCache = null
+      throw err
+    })
+  }
+  return transformsCache
 }
 
 /**
@@ -33,7 +45,7 @@ export function listExportUrl(
   entityType: string,
   listId: string,
   transform: string,
-  extraParams?: URLSearchParams,
+  extraParams?: URLSearchParams
 ): string {
   const q = new URLSearchParams(extraParams)
   q.set('transform', transform)

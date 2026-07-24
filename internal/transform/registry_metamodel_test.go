@@ -7,10 +7,13 @@ import (
 )
 
 func TestRegistryFromMetamodel(t *testing.T) {
+	// The metamodel loader canonicalizes `from` (an omitted value is written
+	// back as markdown at load), so the projection is a pure shape conversion
+	// of already-resolved values.
 	m := &metamodel.Metamodel{
 		Transforms: map[string]metamodel.TransformDef{
 			"pdf":  {From: "markdown", Command: []string{"pandoc", "{in}", "{out}"}, Produces: "application/pdf"},
-			"bare": {Command: []string{"x"}, Produces: "text/plain"}, // from omitted -> markdown
+			"docx": {From: "markdown", Command: []string{"x"}, Produces: "text/plain"},
 		},
 	}
 	reg := RegistryFromMetamodel(m)
@@ -20,12 +23,9 @@ func TestRegistryFromMetamodel(t *testing.T) {
 	if reg["pdf"].Produces != "application/pdf" || reg["pdf"].From != FormatMarkdown {
 		t.Errorf("pdf = %+v", reg["pdf"])
 	}
-	if reg["bare"].From != FormatMarkdown {
-		t.Errorf("bare.From = %q, want defaulted to markdown", reg["bare"].From)
-	}
 	// FromMarkdown surfaces both, sorted.
 	fm := reg.FromMarkdown()
-	if len(fm) != 2 || fm[0].Name != "bare" || fm[1].Name != "pdf" {
+	if len(fm) != 2 || fm[0].Name != "docx" || fm[1].Name != "pdf" {
 		t.Errorf("FromMarkdown = %+v", fm)
 	}
 }

@@ -2,14 +2,11 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
@@ -46,16 +43,8 @@ func (c *RenderCmd) Run(ctx context.Context, svc *readServices) error {
 		Relations: c.relationGroups(ctx, svc, e.ID),
 	}
 
-	eng, err := transform.NewEngine(reg)
+	res, err := transform.NewEngine().Run(ctx, reg, c.Transform, renderer)
 	if err != nil {
-		return err
-	}
-	res, err := eng.Run(ctx, c.Transform, renderer)
-	if err != nil {
-		var unknown transform.UnknownTransformError
-		if errors.As(err, &unknown) {
-			return err // already a clear message
-		}
 		return fmt.Errorf("render %q as %q: %w", c.ID, c.Transform, err)
 	}
 
@@ -70,17 +59,24 @@ func (c *RenderCmd) Run(ctx context.Context, svc *readServices) error {
 
 // relationGroups resolves the entity's outgoing relations into display groups
 // (relation label + neighbor display titles) for the entity renderer. The CLI
-// runs as the operator (no ACL scoping), so it shows all neighbors.
+// runs as the operator (no ACL scoping), so it shows all neighbors. Neighbor
+// titles are memoized so a neighbor referenced by several relation types loads
+// once.
 func (c *RenderCmd) relationGroups(ctx context.Context, svc *readServices, id string) []transform.RelationGroup {
 	byType := map[string][]string{}
+	titleByID := map[string]string{}
 	q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
 	for rel, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}
-		title := rel.To
-		if node, gerr := svc.Store.GetEntity(ctx, rel.To); gerr == nil {
-			title = displayTitleOrTitle(svc.Meta, node)
+		title, ok := titleByID[rel.To]
+		if !ok {
+			title = rel.To
+			if node, gerr := svc.Store.GetEntity(ctx, rel.To); gerr == nil {
+				title = transform.DisplayTitle(svc.Meta, node)
+			}
+			titleByID[rel.To] = title
 		}
 		byType[rel.Type] = append(byType[rel.Type], title)
 	}
@@ -102,19 +98,6 @@ func (c *RenderCmd) relationGroups(ctx context.Context, svc *readServices, id st
 		groups = append(groups, transform.RelationGroup{Label: label, Neighbors: neighbors})
 	}
 	return groups
-}
-
-// displayTitleOrTitle resolves an entity's human title, falling back from the
-// metamodel DisplayTitle (whose fallback is the ID) to the raw title property
-// before the ID — matching the entity renderer's title precedence.
-func displayTitleOrTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
-	if t := meta.DisplayTitle(e.ID, e.Type, e.Properties); t != "" && t != e.ID {
-		return t
-	}
-	if t := e.Title(); t != "" {
-		return t
-	}
-	return e.ID
 }
 
 func transformNames(reg transform.Registry) string {

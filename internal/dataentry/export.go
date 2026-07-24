@@ -2,13 +2,10 @@ package dataentry
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"mime"
 	"net/http"
 	"sort"
-	"strings"
-	"sync"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -28,17 +25,15 @@ type exportHandler struct {
 	visibleReader   visibleReader
 	documents       *documentService
 	scopedEntities  func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
-	getVisible      func(ctx context.Context, typeName, id string) (*entityPkg.Entity, bool, error)
 	findListForType func(entityType string) string
 
-	// engineMu guards the cached transform engine. The engine owns the bounded
-	// worker pool that caps concurrent converter processes, so it MUST be shared
-	// across requests — building one per request would give every request its own
-	// pool and bound nothing. It is rebuilt only when the registry changes
-	// (metamodel live-reload), keyed by engineKey.
-	engineMu  sync.Mutex
-	engine    *transform.Engine
-	engineKey string
+	// engine is the SHARED transform engine. Sharing is load-bearing, not an
+	// optimisation: the engine owns the bounded worker pool that caps concurrent
+	// converter processes, so a per-request engine would give every request its
+	// own pool and bound nothing. The engine holds no registry — each request
+	// passes the current one to Run — so a metamodel live-reload needs no
+	// rebuild.
+	engine *transform.Engine
 }
 
 // newExportHandler builds the export handler with closures over the App
@@ -52,11 +47,11 @@ func newExportHandler(app *App) *exportHandler {
 		visibleReader:  app.visibleReader,
 		documents:      app.documents,
 		scopedEntities: app.scopedSortedEntities,
-		getVisible:     app.visibleReader.getVisible,
 		findListForType: func(entityType string) string {
 			s := app.State()
 			return app.findListByEntityType(s, s.Cfg.Navigation, entityType)
 		},
+		engine: transform.NewEngine(),
 	}
 }
 
@@ -68,21 +63,12 @@ type transformInfo struct {
 	Produces string `json:"produces"`
 }
 
-// probeTransformCommands checks, at startup, that every registered transform's
-// command binary is resolvable on PATH, warning (never failing) for any that are
+// probeTransforms checks, at startup, that every registered transform's command
+// binary is resolvable on PATH, warning (never failing) for any that are
 // missing — so an operator learns a typo or an uninstalled converter at boot
 // rather than on the first export. Mirrors probeAttachmentCommands.
-func probeTransformCommands(meta *metamodel.Metamodel) {
-	reg := transform.RegistryFromMetamodel(meta)
-	if len(reg) == 0 {
-		return
-	}
-	eng, err := transform.NewEngine(reg)
-	if err != nil {
-		slog.Warn("transforms: engine unavailable; export disabled", "err", err)
-		return
-	}
-	for name, perr := range eng.Probe() {
+func (h *exportHandler) probeTransforms() {
+	for name, perr := range h.engine.Probe(transform.RegistryFromMetamodel(h.meta())) {
 		if perr != nil {
 			slog.Warn("transforms: configured command not found", "transform", name, "err", perr)
 		}
@@ -122,23 +108,14 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 	}
 	ctx := r.Context()
 
-	name := r.URL.Query().Get("transform")
-	if name == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "missing_transform",
-			"A transform is required", "pass ?transform=<name>")
-		return
-	}
-
-	reg := transform.RegistryFromMetamodel(h.meta())
-	if _, ok := reg[name]; !ok {
-		writeV1Error(w, r, http.StatusNotFound, "unknown_transform",
-			"Unknown transform", "no such export format is configured")
+	name, reg, ok := h.resolveTransform(w, r)
+	if !ok {
 		return
 	}
 
 	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
 	// indistinguishable 404, and the render never runs for a hidden entity.
-	entity, found, err := h.getVisible(ctx, typeName, entityID)
+	entity, found, err := h.visibleReader.getVisible(ctx, typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -158,30 +135,50 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return // exportRenderer already wrote the error/404
 	}
 
-	eng, err := h.transformEngine(reg)
-	if err != nil {
-		slog.Warn("dataentry: build transform engine failed", "err", err)
-		writeV1Error(w, r, http.StatusInternalServerError, "export_failed",
-			"Export failed", "check server logs")
-		return
-	}
-	res, err := eng.Run(ctx, name, renderer)
-	if err != nil {
-		var unknown transform.UnknownTransformError
-		if errors.As(err, &unknown) {
-			writeV1Error(w, r, http.StatusNotFound, "unknown_transform", "Unknown transform", "")
-			return
-		}
-		// A transform failure (missing binary, non-zero exit, timeout) is a
-		// server/config problem, not caller input. Don't leak the command line.
-		slog.Warn("dataentry: transform export failed",
-			"err", err, "entity", entityID, "transform", name)
-		writeV1Error(w, r, http.StatusInternalServerError, "export_failed",
-			"Export failed", "check server logs")
-		return
-	}
+	h.convertAndWrite(w, r, reg, name, renderer, entityID, "entity", entityID)
+}
 
-	writeExportResponse(w, res, exportFilename(entityID, res.Produces))
+// resolveTransform parses ?transform=<name> and validates it against the
+// current registry, writing the 400/404 response itself on failure. The
+// returned registry is the one the name was validated against; pass it to the
+// engine so validation and execution cannot see different registries.
+func (h *exportHandler) resolveTransform(
+	w http.ResponseWriter, r *http.Request,
+) (name string, reg transform.Registry, ok bool) {
+	name = r.URL.Query().Get("transform")
+	if name == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "missing_transform",
+			"A transform is required", "pass ?transform=<name>")
+		return "", nil, false
+	}
+	reg = transform.RegistryFromMetamodel(h.meta())
+	if _, exists := reg[name]; !exists {
+		writeV1Error(w, r, http.StatusNotFound, "unknown_transform",
+			"Unknown transform", "no such export format is configured")
+		return "", nil, false
+	}
+	return name, reg, true
+}
+
+// convertAndWrite runs renderer through the shared engine and writes the
+// hardened download response. Any failure maps to a logged 500: a transform
+// failure (missing binary, non-zero exit, timeout) is a server/config problem,
+// not caller input — don't leak the command line. logAttrs adds handler-specific
+// log context ("entity", id / "type", name).
+func (h *exportHandler) convertAndWrite(
+	w http.ResponseWriter, r *http.Request,
+	reg transform.Registry, name string, renderer transform.Renderer, baseName string,
+	logAttrs ...any,
+) {
+	res, err := h.engine.Run(r.Context(), reg, name, renderer)
+	if err != nil {
+		slog.Warn("dataentry: transform export failed",
+			append([]any{"err", err, "transform", name}, logAttrs...)...)
+		writeV1Error(w, r, http.StatusInternalServerError, "export_failed",
+			"Export failed", "check server logs")
+		return
+	}
+	writeExportResponse(w, res, exportFilename(baseName, res.Produces))
 }
 
 // exportRenderer selects the markdown renderer for an entity export. When the
@@ -230,58 +227,6 @@ func (h *exportHandler) exportRenderer(
 	}), true
 }
 
-// transformEngine returns the SHARED transform engine for the current registry.
-//
-// Sharing is load-bearing, not an optimisation: the engine owns the bounded
-// worker pool that caps how many converter processes may run at once. A
-// per-request engine would give every request a private pool, so N concurrent
-// exports would spawn N×poolSize converters and the bound would be meaningless.
-//
-// The engine is rebuilt only when the registry actually changes, so a metamodel
-// live-reload is picked up without discarding the pool on every request.
-func (h *exportHandler) transformEngine(reg transform.Registry) (*transform.Engine, error) {
-	key := registryKey(reg)
-
-	h.engineMu.Lock()
-	defer h.engineMu.Unlock()
-	if h.engine != nil && h.engineKey == key {
-		return h.engine, nil
-	}
-	eng, err := transform.NewEngine(reg)
-	if err != nil {
-		return nil, err
-	}
-	h.engine, h.engineKey = eng, key
-	return eng, nil
-}
-
-// registryKey is a stable fingerprint of the transform registry, used to detect
-// a config reload that actually changed the transforms.
-func registryKey(reg transform.Registry) string {
-	names := make([]string, 0, len(reg))
-	for name := range reg {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	var b strings.Builder
-	for _, name := range names {
-		def := reg[name]
-		b.WriteString(name)
-		b.WriteByte(0)
-		b.WriteString(def.From)
-		b.WriteByte(0)
-		b.WriteString(def.Produces)
-		b.WriteByte(0)
-		for _, a := range def.Command {
-			b.WriteString(a)
-			b.WriteByte(1)
-		}
-		b.WriteByte(2)
-	}
-	return b.String()
-}
-
 // exportRenderScriptFor returns the configured per-type export render override
 // script (the entity type's view.ExportRender), or "" when the type uses the
 // built-in renderer.
@@ -292,16 +237,12 @@ func (h *exportHandler) exportRenderScriptFor(typeName string) string {
 	return ""
 }
 
-// writeExportResponse writes converted bytes as a hardened forced download.
-// Mirrors handleV1GetAttachment: force download, block sniffing, sandbox active
-// content, and never cache (the bytes are per-request and may embed user data).
+// writeExportResponse writes converted bytes as a hardened forced download
+// (the shared header block attachment downloads use), plus no-store because the
+// bytes are per-request and may embed user data.
 func writeExportResponse(w http.ResponseWriter, res transform.Result, filename string) {
-	hdr := w.Header()
-	hdr.Set("Content-Type", res.Produces)
-	hdr.Set("X-Content-Type-Options", "nosniff")
-	hdr.Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	hdr.Set("Cache-Control", "no-store")
-	hdr.Set("Content-Disposition", `attachment; filename="`+safeAttachmentFilename(filename)+`"`)
+	setHardenedDownloadHeaders(w.Header(), res.Produces, filename)
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(res.Data); err != nil {
 		slog.Warn("dataentry: streaming export failed", "err", err)
@@ -339,7 +280,7 @@ func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.E
 		}
 		title := neighborID
 		if node, ok := h.reader.getEntity(ctx, neighborID); ok {
-			title = displayTitleOrTitle(meta, node)
+			title = transform.DisplayTitle(meta, node)
 		}
 		byLabel[label] = append(byLabel[label], title)
 	}
@@ -382,16 +323,4 @@ func relationDisplayLabel(meta *metamodel.Metamodel, relType string, incoming bo
 		return def.Label
 	}
 	return relType
-}
-
-// displayTitleOrTitle resolves an entity's human title: metamodel DisplayTitle
-// (whose fallback is the id), then the raw title property, then the id.
-func displayTitleOrTitle(meta *metamodel.Metamodel, e *entityPkg.Entity) string {
-	if t := meta.DisplayTitle(e.ID, e.Type, e.Properties); t != "" && t != e.ID {
-		return t
-	}
-	if t := e.Title(); t != "" {
-		return t
-	}
-	return e.ID
 }

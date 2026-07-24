@@ -2,7 +2,6 @@ package transform
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -22,71 +21,28 @@ const (
 	defaultMaxConcurrent = 4
 )
 
-// Engine runs a registered transform over a [Renderer]'s markdown. Construct it
-// with [NewEngine]; the zero value is not usable.
+// Engine converts a [Renderer]'s markdown via registered transforms. It owns
+// the bounded worker pool that caps concurrent converter processes, so it MUST
+// be built once and shared — a per-request engine would give every request its
+// own pool and the concurrency cap would bound nothing.
+//
+// The engine holds no registry: [Engine.Run] takes one per call, so a config
+// live-reload needs no engine rebuild (and cannot discard in-flight pool
+// slots). Construct with [NewEngine]; the zero value is not usable.
 type Engine struct {
-	registry Registry
-	runner   *cmdexec.Runner
+	runner *cmdexec.Runner
 }
 
-// EngineOption configures an [Engine].
-type EngineOption func(*engineConfig)
-
-type engineConfig struct {
-	timeout          time.Duration
-	maxBytes         int64
-	tempDir          string
-	sandboxOptOut    bool
-	sandboxOptOutSet bool
-}
-
-// WithTimeout overrides the per-command timeout.
-func WithTimeout(d time.Duration) EngineOption {
-	return func(c *engineConfig) { c.timeout = d }
-}
-
-// WithMaxBytes overrides the output-size cap.
-func WithMaxBytes(n int64) EngineOption {
-	return func(c *engineConfig) { c.maxBytes = n }
-}
-
-// WithTempDir sets the directory for the runner's {in}/{out} temp files.
-func WithTempDir(dir string) EngineOption {
-	return func(c *engineConfig) { c.tempDir = dir }
-}
-
-// WithSandboxDisabled runs converters UNCONFINED — the operator's explicit
-// acceptance of the risk, for hosts where no sandbox mechanism is available
-// (Windows/BSD, a kernel without unprivileged user namespaces, a container that
-// blocks them) or where isolation is provided at another layer. Without it, a
-// host that cannot sandbox refuses to run any transform. The composition root
-// must surface this in a startup warning.
-func WithSandboxDisabled(disabled bool) EngineOption {
-	return func(c *engineConfig) { c.sandboxOptOut, c.sandboxOptOutSet = disabled, true }
-}
-
-// NewEngine builds an engine over the given registry. It returns an error if the
-// runner cannot be constructed (non-positive bounds).
-func NewEngine(registry Registry, opts ...EngineOption) (*Engine, error) {
-	if registry == nil {
-		return nil, errors.New("transform: nil registry")
-	}
-	cfg := engineConfig{timeout: defaultTimeout, maxBytes: defaultMaxBytes}
-	for _, o := range opts {
-		o(&cfg)
-	}
-	runOpts := []cmdexec.Option{cmdexec.WithMaxConcurrent(defaultMaxConcurrent)}
-	if cfg.tempDir != "" {
-		runOpts = append(runOpts, cmdexec.WithTempDir(cfg.tempDir))
-	}
-	if cfg.sandboxOptOut {
-		runOpts = append(runOpts, cmdexec.WithSandboxDisabled())
-	}
-	runner, err := cmdexec.New(cfg.timeout, cfg.maxBytes, runOpts...)
+// NewEngine builds an engine with the package's execution bounds.
+func NewEngine() *Engine {
+	runner, err := cmdexec.New(defaultTimeout, defaultMaxBytes,
+		cmdexec.WithMaxConcurrent(defaultMaxConcurrent))
 	if err != nil {
-		return nil, fmt.Errorf("transform: %w", err)
+		// Unreachable: cmdexec.New fails only on non-positive bounds, and the
+		// bounds are package constants.
+		panic("transform: " + err.Error())
 	}
-	return &Engine{registry: registry, runner: runner}, nil
+	return &Engine{runner: runner}
 }
 
 // Result is the output of a successful transform.
@@ -95,22 +51,23 @@ type Result struct {
 	Produces string // the transform's content-type
 }
 
-// Run renders markdown via r, then converts it with the named transform.
+// Run renders markdown via r, then converts it with the named transform from
+// reg.
 //
 // Errors:
 //   - [UnknownTransformError] if name is not registered (map to 4xx — caller input).
 //   - a wrapped render error if the [Renderer] fails.
 //   - a wrapped exec error (missing binary, non-zero exit, timeout, over-cap) if
 //     the transform command fails.
-func (e *Engine) Run(ctx context.Context, name string, r Renderer) (Result, error) {
-	def, ok := e.registry[name]
+func (e *Engine) Run(ctx context.Context, reg Registry, name string, r Renderer) (Result, error) {
+	def, ok := reg[name]
 	if !ok {
 		return Result{}, UnknownTransformError{Name: name}
 	}
 	if def.From != FormatMarkdown {
-		// Defensive: the metamodel validator rejects non-markdown From at load,
-		// so this should be unreachable, but a stale/hand-built registry must not
-		// silently feed markdown to a non-markdown command.
+		// Defensive: the metamodel validator canonicalizes and rejects non-markdown
+		// From at load, so this should be unreachable, but a stale/hand-built
+		// registry must not silently feed markdown to a non-markdown command.
 		return Result{}, fmt.Errorf("transform: %q expects input format %q, only %q is supported",
 			name, def.From, FormatMarkdown)
 	}
@@ -127,13 +84,13 @@ func (e *Engine) Run(ctx context.Context, name string, r Renderer) (Result, erro
 	return Result{Data: out, Produces: def.Produces}, nil
 }
 
-// Probe reports, per registered transform, whether its command binary resolves
-// on PATH. The composition root calls this at startup so a missing converter
+// Probe reports, per transform in reg, whether its command binary resolves on
+// PATH. The composition root calls this at startup so a missing converter
 // surfaces as a warning rather than a per-export failure. The returned map is
 // keyed by transform name; a nil value means the binary was found.
-func (e *Engine) Probe() map[string]error {
-	out := make(map[string]error, len(e.registry))
-	for name, def := range e.registry {
+func (e *Engine) Probe(reg Registry) map[string]error {
+	out := make(map[string]error, len(reg))
+	for name, def := range reg {
 		out[name] = e.runner.Probe(def.Command)
 	}
 	return out

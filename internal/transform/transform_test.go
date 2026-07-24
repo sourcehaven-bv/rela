@@ -37,13 +37,10 @@ func TestRegistry_FromMarkdown(t *testing.T) {
 
 func TestEngine_Run_Identity(t *testing.T) {
 	skipOnWindows(t)
-	eng, err := NewEngine(Registry{
+	reg := Registry{
 		"cat": {From: FormatMarkdown, Command: []string{"cat"}, Produces: "text/plain"},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	res, err := eng.Run(context.Background(), "cat", RendererFunc(func(context.Context) ([]byte, error) {
+	res, err := NewEngine().Run(context.Background(), reg, "cat", RendererFunc(func(context.Context) ([]byte, error) {
 		return []byte("# Hi\n"), nil
 	}))
 	if err != nil {
@@ -62,13 +59,10 @@ func TestEngine_Run_InOutFiles(t *testing.T) {
 	if _, err := exec.LookPath("cp"); err != nil {
 		t.Skip("cp not available")
 	}
-	eng, err := NewEngine(Registry{
+	reg := Registry{
 		"cp": {From: FormatMarkdown, Command: []string{"cp", "{in}", "{out}"}, Produces: "application/octet-stream"},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	res, err := eng.Run(context.Background(), "cp", RendererFunc(func(context.Context) ([]byte, error) {
+	res, err := NewEngine().Run(context.Background(), reg, "cp", RendererFunc(func(context.Context) ([]byte, error) {
 		return []byte("payload"), nil
 	}))
 	if err != nil {
@@ -80,11 +74,7 @@ func TestEngine_Run_InOutFiles(t *testing.T) {
 }
 
 func TestEngine_Run_UnknownTransform(t *testing.T) {
-	eng, err := NewEngine(Registry{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = eng.Run(context.Background(), "nope", RendererFunc(func(context.Context) ([]byte, error) {
+	_, err := NewEngine().Run(context.Background(), Registry{}, "nope", RendererFunc(func(context.Context) ([]byte, error) {
 		return nil, nil
 	}))
 	var unk UnknownTransformError
@@ -98,14 +88,11 @@ func TestEngine_Run_UnknownTransform(t *testing.T) {
 
 func TestEngine_Run_RenderError(t *testing.T) {
 	skipOnWindows(t)
-	eng, err := NewEngine(Registry{
+	reg := Registry{
 		"cat": {From: FormatMarkdown, Command: []string{"cat"}, Produces: "text/plain"},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	boom := errors.New("boom")
-	_, err = eng.Run(context.Background(), "cat", RendererFunc(func(context.Context) ([]byte, error) {
+	_, err := NewEngine().Run(context.Background(), reg, "cat", RendererFunc(func(context.Context) ([]byte, error) {
 		return nil, boom
 	}))
 	if !errors.Is(err, boom) {
@@ -114,13 +101,9 @@ func TestEngine_Run_RenderError(t *testing.T) {
 }
 
 func TestEngine_Probe_MissingBinary(t *testing.T) {
-	eng, err := NewEngine(Registry{
+	probes := NewEngine().Probe(Registry{
 		"ghost": {From: FormatMarkdown, Command: []string{"definitely-not-a-real-binary-xyz"}, Produces: "application/pdf"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	probes := eng.Probe()
 	if probes["ghost"] == nil {
 		t.Error("missing binary should produce a probe error")
 	}

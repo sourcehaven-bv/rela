@@ -2,9 +2,7 @@ package dataentry
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -37,16 +35,8 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 	ctx := r.Context()
 	query := r.URL.Query()
 
-	name := query.Get("transform")
-	if name == "" {
-		writeV1Error(w, r, http.StatusBadRequest, "missing_transform",
-			"A transform is required", "pass ?transform=<name>")
-		return
-	}
-	reg := transform.RegistryFromMetamodel(h.meta())
-	if _, ok := reg[name]; !ok {
-		writeV1Error(w, r, http.StatusNotFound, "unknown_transform",
-			"Unknown transform", "no such export format is configured")
+	name, reg, ok := h.resolveTransform(w, r)
+	if !ok {
 		return
 	}
 
@@ -67,26 +57,7 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 	}
 
 	renderer := h.listTableRenderer(entities, columns, total, truncated)
-
-	eng, err := h.transformEngine(reg)
-	if err != nil {
-		slog.Warn("dataentry: build transform engine failed", "err", err)
-		writeV1Error(w, r, http.StatusInternalServerError, "export_failed", "Export failed", "check server logs")
-		return
-	}
-	res, err := eng.Run(ctx, name, renderer)
-	if err != nil {
-		var unknown transform.UnknownTransformError
-		if errors.As(err, &unknown) {
-			writeV1Error(w, r, http.StatusNotFound, "unknown_transform", "Unknown transform", "")
-			return
-		}
-		slog.Warn("dataentry: transform list export failed", "err", err, "type", typeName, "transform", name)
-		writeV1Error(w, r, http.StatusInternalServerError, "export_failed", "Export failed", "check server logs")
-		return
-	}
-
-	writeExportResponse(w, res, exportFilename(typeName+"-list", res.Produces))
+	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
 }
 
 // exportListColumns returns the columns for the export. It prefers the named
@@ -127,7 +98,7 @@ func (h *exportHandler) listTableRenderer(
 		// Header row.
 		b.WriteString("|")
 		for _, c := range columns {
-			fmt.Fprintf(&b, " %s |", escapeTableCell(columnLabel(c)))
+			fmt.Fprintf(&b, " %s |", transform.EscapeInline(columnLabel(c)))
 		}
 		b.WriteString("\n|")
 		for range columns {
@@ -139,7 +110,7 @@ func (h *exportHandler) listTableRenderer(
 		for _, e := range entities {
 			b.WriteString("|")
 			for _, c := range columns {
-				fmt.Fprintf(&b, " %s |", escapeTableCell(columnCell(meta, e, c, rels)))
+				fmt.Fprintf(&b, " %s |", transform.EscapeInline(columnCell(meta, e, c, rels)))
 			}
 			b.WriteString("\n")
 		}
@@ -152,13 +123,11 @@ func (h *exportHandler) listTableRenderer(
 }
 
 // listRelationTitles holds pre-resolved relation-column cell values for a list
-// export: relTitles[entityID][columnKey] -> visible neighbor titles. Resolving
-// them once up front (a single batched visibility gate + one load per distinct
-// neighbor) keeps list export off the per-cell store+ACL fan-out that the
+// export: [entityID][columnKey] -> visible neighbor titles. Resolving them once
+// up front (a single batched visibility gate + one load per distinct neighbor)
+// keeps list export off the per-cell store+ACL fan-out that the
 // relation-visibility batching contract forbids (RR-A9U1NQ).
-type listRelationTitles struct {
-	byRowCol map[string]map[string][]string
-}
+type listRelationTitles map[string]map[string][]string
 
 // relColKey identifies a relation column (type + direction) so two columns on
 // the same relation type but opposite directions don't collide.
@@ -182,7 +151,7 @@ type cellPeers struct {
 func (h *exportHandler) resolveListRelations(
 	ctx context.Context, meta *metamodel.Metamodel, entities []*entityPkg.Entity, columns []dataentryconfig.ListColumn,
 ) listRelationTitles {
-	out := listRelationTitles{byRowCol: map[string]map[string][]string{}}
+	out := listRelationTitles{}
 
 	relCols := make([]dataentryconfig.ListColumn, 0, len(columns))
 	for _, c := range columns {
@@ -214,23 +183,38 @@ func (h *exportHandler) resolveListRelations(
 		if len(titles) == 0 {
 			continue
 		}
-		if out.byRowCol[pc.rowID] == nil {
-			out.byRowCol[pc.rowID] = map[string][]string{}
+		if out[pc.rowID] == nil {
+			out[pc.rowID] = map[string][]string{}
 		}
-		out.byRowCol[pc.rowID][pc.colKey] = titles
+		out[pc.rowID][pc.colKey] = titles
 	}
 	return out
 }
 
 // gatherListPeers loads each row's edges ONCE and returns, per (row, relation
 // column), the ordered peer IDs, plus the flat list of every peer ID (for the
-// single batched visibility gate).
+// single batched visibility gate). Only the directions some column actually
+// uses are fetched — an all-outgoing column set skips the incoming lookup for
+// every row.
 func (h *exportHandler) gatherListPeers(
 	ctx context.Context, entities []*entityPkg.Entity, relCols []dataentryconfig.ListColumn,
 ) (perCell []cellPeers, allPeerIDs []string) {
+	needIn, needOut := false, false
+	for _, c := range relCols {
+		if c.Direction == dataentryconfig.DirectionIncoming {
+			needIn = true
+		} else {
+			needOut = true
+		}
+	}
 	for _, e := range entities {
-		outgoing := h.reader.outgoingRelations(ctx, e.ID)
-		incoming := h.reader.incomingRelations(ctx, e.ID)
+		var outgoing, incoming []*entityPkg.Relation
+		if needOut {
+			outgoing = h.reader.outgoingRelations(ctx, e.ID)
+		}
+		if needIn {
+			incoming = h.reader.incomingRelations(ctx, e.ID)
+		}
 		for _, c := range relCols {
 			inbound := c.Direction == dataentryconfig.DirectionIncoming
 			src := outgoing
@@ -281,7 +265,7 @@ func (h *exportHandler) memoNeighborTitle(
 		}
 		t := ""
 		if node, ok := h.reader.getEntity(ctx, id); ok {
-			t = displayTitleOrTitle(meta, node)
+			t = transform.DisplayTitle(meta, node)
 		}
 		titleByID[id] = t
 		return t, t != ""
@@ -294,7 +278,7 @@ func columnCell(
 	meta *metamodel.Metamodel, e *entityPkg.Entity, c dataentryconfig.ListColumn, rels listRelationTitles,
 ) string {
 	if c.Relation != "" {
-		if byCol := rels.byRowCol[e.ID]; byCol != nil {
+		if byCol := rels[e.ID]; byCol != nil {
 			return strings.Join(byCol[relColKey(c)], ", ")
 		}
 		return ""
@@ -303,9 +287,9 @@ func columnCell(
 	case "id":
 		return e.ID
 	case "title":
-		return displayTitleOrTitle(meta, e)
+		return transform.DisplayTitle(meta, e)
 	default:
-		return formatCellValue(e.Properties[c.Property])
+		return transform.FormatValue(e.Properties[c.Property])
 	}
 }
 
@@ -319,35 +303,4 @@ func columnLabel(c dataentryconfig.ListColumn) string {
 		return c.Relation
 	}
 	return c.Property
-}
-
-// formatCellValue renders a property value as a single-line cell string.
-func formatCellValue(v any) string {
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case []any:
-		parts := make([]string, 0, len(t))
-		for _, e := range t {
-			parts = append(parts, formatCellValue(e))
-		}
-		return strings.Join(parts, ", ")
-	case []string:
-		return strings.Join(t, ", ")
-	default:
-		return fmt.Sprintf("%v", t)
-	}
-}
-
-// escapeTableCell collapses newlines and escapes pipe/backslash so a cell value
-// can't break out of its column or inject table structure.
-func escapeTableCell(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "|", "\\|")
-	return s
 }

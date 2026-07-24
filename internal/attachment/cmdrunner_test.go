@@ -7,6 +7,14 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
+)
+
+// templateIn / templateOut mirror the cmdexec placeholders for test commands.
+const (
+	templateIn  = cmdexec.TemplateIn
+	templateOut = cmdexec.TemplateOut
 )
 
 func newRunner(t *testing.T) *CmdRunner {
