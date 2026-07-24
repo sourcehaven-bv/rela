@@ -4,6 +4,8 @@ import { analyze } from '@/api'
 import type { AnalyzeResult, AnalyzeIssue } from '@/types'
 import { useBackTarget } from '@/composables/useBackTarget'
 import BackButton from '@/components/common/BackButton.vue'
+import PageLayout from '@/components/common/PageLayout.vue'
+import PageTitle from '@/components/common/PageTitle.vue'
 import IssuesTable from '@/components/common/IssuesTable.vue'
 
 const backTarget = useBackTarget()
@@ -117,22 +119,23 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="analyze-view">
-    <header class="page-header">
-      <div class="header-left">
-        <BackButton v-if="backTarget" :target="backTarget" />
-        <div>
-          <h1>Analysis</h1>
-          <p class="subtitle">Validation checks across all entities and relations</p>
-        </div>
-      </div>
+  <PageLayout class="analyze-view">
+    <template v-if="backTarget" #scope-nav>
+      <BackButton :target="backTarget" />
+    </template>
+
+    <template #topbar>
+      <PageTitle title="Analysis" subtitle="Validation checks across all entities and relations" />
+    </template>
+
+    <template #actions>
       <button class="btn btn-secondary" :disabled="loading" @click="loadAnalysis">
         {{ loading ? 'Refreshing...' : 'Refresh' }}
       </button>
-    </header>
+    </template>
 
     <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
+      <div class="spinner" />
       <span>Running analysis...</span>
     </div>
 
@@ -149,11 +152,7 @@ onMounted(() => {
 
       <!-- Check type cards -->
       <div class="check-cards">
-        <div
-          v-for="checkType in CHECK_TYPES"
-          :key="checkType.key"
-          class="check-card"
-        >
+        <div v-for="checkType in CHECK_TYPES" :key="checkType.key" class="check-card">
           <div class="check-header">
             <h3 class="check-title">
               {{ checkType.label }}
@@ -171,42 +170,22 @@ onMounted(() => {
 
           <template v-else>
             <IssuesTable
-              v-if="shouldShowIssues(checkType.key) && getFilteredIssuesForCheck(checkType.key).length > 0"
+              v-if="
+                shouldShowIssues(checkType.key) &&
+                getFilteredIssuesForCheck(checkType.key).length > 0
+              "
               :issues="getFilteredIssuesForCheck(checkType.key)"
             />
           </template>
         </div>
       </div>
     </template>
-  </div>
+  </PageLayout>
 </template>
 
 <style scoped>
 .analyze-view {
   max-width: 1000px;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
-}
-
-.page-header h1 {
-  margin: 0 0 4px;
-}
-
-.header-left {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.subtitle {
-  margin: 0;
-  font-size: 14px;
-  color: var(--muted-text);
 }
 
 .btn {

@@ -451,7 +451,9 @@ describe('AnalyzeView missing-header detail', () => {
       }),
     ])
 
-    const toggles = wrapper.findAll('.message-toggle')
+    // Scope to the table layout: IssuesTable also renders a mobile card
+    // list (hidden via CSS on desktop) that duplicates the toggles.
+    const toggles = wrapper.findAll('.issues-table .message-toggle')
     expect(toggles).toHaveLength(2)
 
     // Expanding the first must not expand the second.

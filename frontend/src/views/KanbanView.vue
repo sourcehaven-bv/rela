@@ -507,7 +507,7 @@ function createNew() {
             @click="openCard(entity)"
           >
             <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title">{{ getCardTitle(entity) }}</div>
+            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
             <div v-if="visibleCardFields(entity).length" class="card-fields">
               <div
                 v-for="(field, fieldIndex) in visibleCardFields(entity)"
@@ -573,7 +573,7 @@ function createNew() {
             @click="openCard(entity)"
           >
             <div class="card-id">{{ entity.id }}</div>
-            <div class="card-title">{{ getCardTitle(entity) }}</div>
+            <div class="card-title text-wrap-anywhere">{{ getCardTitle(entity) }}</div>
             <div v-if="visibleCardFields(entity).length" class="card-fields">
               <div
                 v-for="(field, fieldIndex) in visibleCardFields(entity)"

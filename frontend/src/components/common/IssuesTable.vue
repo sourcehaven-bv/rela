@@ -157,6 +157,69 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
       </tbody>
     </table>
   </div>
+
+  <!-- Mobile: stacked cards. The 4-column table is too cramped on iPhone
+       widths; cards surface the same fields laid out vertically. Click
+       targets stay split like the table (TKT-IL499B): the entity title
+       navigates, the message reveals detail / the script-error dialog. -->
+  <ul class="issues-card-list">
+    <template v-for="row in rowsFor(props.issues)" :key="`card-${row.key}`">
+      <li class="issue-card">
+        <div class="issue-card-row issue-card-head">
+          <span
+            v-if="row.issue.entityId"
+            class="entity-title"
+            :class="{ clickable: canNavigate(row.issue) }"
+            :role="canNavigate(row.issue) ? 'button' : undefined"
+            :tabindex="canNavigate(row.issue) ? 0 : undefined"
+            @click="onEntityClick(row.issue)"
+            @keydown.enter="onEntityClick(row.issue)"
+            @keydown.space.prevent="onEntityClick(row.issue)"
+            >{{ getEntityTitle(row.issue) }}</span
+          >
+          <span v-else class="entity-empty">&mdash;</span>
+          <span class="severity-badge" :class="row.issue.severity">
+            {{ row.issue.severity.toUpperCase() }}
+          </span>
+        </div>
+        <div class="issue-card-row issue-card-meta">
+          <span v-if="row.issue.entityType" class="type-badge">{{
+            getEntityTypeLabel(row.issue.entityType)
+          }}</span>
+          <span v-else class="entity-empty">&mdash;</span>
+          <span v-if="row.issue.entityId" class="entity-id">{{ row.issue.entityId }}</span>
+        </div>
+        <div class="issue-card-message">
+          <span
+            v-if="hasDetailReveal(row.issue)"
+            class="message-toggle"
+            role="button"
+            tabindex="0"
+            :aria-expanded="row.issue.detail?.length ? isExpanded(row.key) : undefined"
+            @click="onMessageClick(row.key, row.issue, $event)"
+            @keydown.enter="onMessageClick(row.key, row.issue, $event)"
+            @keydown.space.prevent="onMessageClick(row.key, row.issue, $event)"
+          >
+            <span
+              v-if="row.issue.detail?.length"
+              class="disclosure"
+              :class="{ open: isExpanded(row.key) }"
+              aria-hidden="true"
+              >&#9656;</span
+            >
+            {{ row.issue.message }}
+          </span>
+          <span v-else>{{ row.issue.message }}</span>
+        </div>
+        <div v-if="row.issue.detail?.length && isExpanded(row.key)" class="issue-card-detail">
+          <div class="detail-label">Missing required headers:</div>
+          <ul class="detail-list">
+            <li v-for="(d, i) in row.issue.detail" :key="i">{{ d }}</li>
+          </ul>
+        </div>
+      </li>
+    </template>
+  </ul>
 </template>
 
 <style scoped>
@@ -316,11 +379,68 @@ function onMessageClick(key: string, issue: AnalyzeIssue, ev: Event) {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Mobile-only stacked card list. Hidden on desktop; the table is the
+   primary UI there. */
+.issues-card-list {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.issue-card {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  transition: background 0.15s;
+}
+
+.issue-card:last-child {
+  border-bottom: none;
+}
+
+.issue-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.issue-card-head {
+  margin-bottom: 6px;
+}
+
+.issue-card-head .entity-title {
+  font-size: 14px;
+  color: var(--accent-color, #6366f1);
+}
+
+.issue-card-meta {
+  margin-bottom: 8px;
+}
+
+.issue-card-message {
+  font-size: 13px;
+  color: var(--text-color);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.issue-card-detail {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--hover-bg);
+  border-radius: 4px;
+}
+
 @media (max-width: 768px) {
-  .issues-table th,
-  .issues-table td {
-    padding: 8px 10px;
-    font-size: 12px;
+  /* Replace the cramped 4-column table with stacked cards on mobile. */
+  .issues-table-wrapper {
+    display: none;
+  }
+
+  .issues-card-list {
+    display: block;
   }
 }
 </style>

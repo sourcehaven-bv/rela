@@ -139,7 +139,11 @@ function isLong(prop: PropertyItem): boolean {
 
 .property-item.property-long dd {
   white-space: pre-wrap;
-  word-break: break-word;
+  /* Force-wrap unbreakable strings (URLs, no-space identifiers).
+     overflow-wrap: anywhere is in src/styles/text-utilities.css as
+     .text-wrap-anywhere — we keep it inline here because dd is rendered
+     via v-for and we don't want to thread a class through PropertyItem. */
+  overflow-wrap: anywhere;
 }
 
 .property-inaccessible {
