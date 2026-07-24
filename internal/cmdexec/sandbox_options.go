@@ -22,6 +22,10 @@ var DefaultScannerSockets = []string{
 	"/run/clamav/clamd.ctl",
 	"/var/run/clamav/clamd.sock",
 	"/run/clamav/clamd.sock",
+	// A socket under /tmp is bound best-effort: the Linux backend mounts a fresh
+	// tmpfs at /tmp and binds this single path on top, so only the socket inode
+	// (not sibling lock/pid files) is visible, and a clamd restart that re-creates
+	// the socket needs a fresh runner. Prefer a non-/tmp LocalSocket in production.
 	"/tmp/clamd.socket", // some source builds / RHEL
 }
 
