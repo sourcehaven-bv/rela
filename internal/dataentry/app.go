@@ -77,9 +77,11 @@ const userPaletteFile = "palette.yaml"
 // HTTP route by the router's design). The sync route cluster (16 methods) moved
 // to syncHandler (170 → 154); the command cluster (11 methods) moved to
 // commandHandler (154 → 143); the attachment cluster (12 methods) moved to
-// attachmentHandler / package functions (143 → 131).
+// attachmentHandler / package functions (143 → 131); the write nucleus —
+// entity/relation CRUD, clone, conflict-resolve, and the modern relations
+// reconciler (18 methods) — moved to writeHandler (131 → 114).
 //
-//plimsoll:max-methods=132
+//plimsoll:max-methods=115
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS

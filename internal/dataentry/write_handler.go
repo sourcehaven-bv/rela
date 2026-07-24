@@ -55,8 +55,10 @@ type writeHandler struct {
 	audit       func() audit.Audit
 
 	// Shared App helpers (also used by the read path — stay on App).
-	gateRead           func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
-	denyAfford         func(ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError)
+	gateRead   func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
+	denyAfford func(
+		ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
+	)
 	computeETag        func(ctx context.Context, e *entityPkg.Entity) string
 	currentEdgesByPeer func(
 		ctx context.Context, entityID, canonical string, incoming bool,
@@ -531,7 +533,9 @@ func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.R
 		reconcileDetail(err))
 }
 
-func (h *writeHandler) handleV1CreateRelation(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
+func (h *writeHandler) handleV1CreateRelation(
+	w http.ResponseWriter, r *http.Request, typeName, entityID, relType string,
+) {
 	// Need write lock
 	h.writeMu.Lock()
 	defer h.writeMu.Unlock()
