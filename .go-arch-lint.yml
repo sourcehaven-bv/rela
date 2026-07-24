@@ -8,6 +8,7 @@ exclude:
   - internal/testutil
   - internal/store/storetest
   - internal/entitymanager/entitymanagertest
+  - internal/visibility/visibilitytest
   - frontend
   - e2e
   - .claude
@@ -100,6 +101,7 @@ components:
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
+  visibility:       { in: internal/visibility }
   ai:               { in: internal/ai }
   audit:            { in: internal/audit }
   jwtauth:          { in: internal/jwtauth }
@@ -484,6 +486,17 @@ deps:
       - predicate
       - principal
       - statemachine
+  # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
+  # the ungated pure readers. tracer is needed for the decorator's
+  # interface/result types; no cycle (tracer depends only on store).
+  visibility:
+    mayDependOn:
+      - acl
+      - affordances
+      - entity
+      - principal
+      - store
+      - tracer
   audit:
     mayDependOn:
       - principal
