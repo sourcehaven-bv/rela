@@ -216,10 +216,18 @@ Rules when touching this:
   runs its **entire tick on ONE acquired pool connection** under
   `pg_try_advisory_lock` — the lock is session-scoped, so issuing the inserts via
   the pool (other sessions) would silently void the single-writer guarantee.
-  Attribution comes from ctx only (the store never learns the Principal by
-  another route — it arrives inside `store.VersionInput` populated at the
-  boundary); swept create/update rows use a `version-sweep` system principal and
-  the editing principal is recoverable from the audit log. Lineage across a
+  Attribution comes from ctx only, via exactly two boundary-populated inputs —
+  the store never learns the Principal by another route: sync captures carry it
+  inside `store.VersionInput`, and create/update writes carry a
+  `store.Attribution` on ctx (`store.WithAttribution`, set ONLY at the
+  entitymanager boundary and ONLY for a real principal — never translate a
+  zero/unknown principal, RR-U964M0) which pgstore stamps into
+  `entities/relations.last_edited_by_user/_tool` (TKT-ZIRMGM). The sweep copies
+  those columns onto swept versions; NULL columns (legacy rows, unattributed
+  writes) fall back to the `version-sweep` system principal — never a guessed
+  or literal-"unknown" identity. Author-boundary segmentation (flush-on-author-
+  change) is TKT-0IGI4V, not built: two authors in one debounce window merge
+  into one version attributed to the last of them. Lineage across a
   rename/id-reuse is fenced by `[lo,hi)` vseq ranges in a recursive-CTE walk (an
   unbounded `entity_id = ANY(...)` read would merge two entities' histories — see
   the version.go doc). `HistoryReader`/`VersionWriter` are optional store

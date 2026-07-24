@@ -398,6 +398,7 @@ func formatDeniedSummary(d acl.Decision, op acl.Op) string {
 func (m *Manager) CreateEntity(
 	ctx context.Context, e *entity.Entity, opts entity.CreateOptions,
 ) (*entity.CreateResult, error) {
+	ctx = withStoreAttribution(ctx)
 	if e == nil {
 		return nil, errors.New("entitymanager: CreateEntity: entity is nil")
 	}
@@ -551,6 +552,7 @@ func (m *Manager) ValidateCreate(
 // [ErrEntityNotFound] and never runs the engine. (Preserves
 // pre-refactor workspace behavior.)
 func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
+	ctx = withStoreAttribution(ctx)
 	if e == nil {
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
@@ -878,6 +880,7 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 func (m *Manager) CreateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
+	ctx = withStoreAttribution(ctx)
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
 	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
@@ -966,6 +969,7 @@ func (m *Manager) CreateRelation(
 func (m *Manager) UpdateRelation(
 	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
+	ctx = withStoreAttribution(ctx)
 	// Authorize BEFORE the relation-existence lookup (BUG-K6FEVB): a
 	// missing relation must not let a denied caller skip the ACL and get
 	// a soft not-found. The source type feeds the type-level grant check;

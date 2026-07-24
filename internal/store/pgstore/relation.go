@@ -146,12 +146,15 @@ func (s *Store) CreateRelation(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
+	editorUser, editorTool := attributionValues(ctx)
 	const q = `
-		INSERT INTO relations (from_id, rel_type, to_id, properties, content, updated_at)
-		VALUES ($1, $2, $3, $4, $5, now())
+		INSERT INTO relations (from_id, rel_type, to_id, properties, content, updated_at,
+		                       last_edited_by_user, last_edited_by_tool)
+		VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
 		ON CONFLICT (from_id, rel_type, to_id) DO NOTHING
 		RETURNING from_id, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, content))
+	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, content,
+		editorUser, editorTool))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrConflict
 	}
@@ -184,12 +187,15 @@ func (s *Store) UpdateRelation(
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
+	editorUser, editorTool := attributionValues(ctx)
 	const q = `
 		UPDATE relations
-		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq')
+		SET properties = $4, content = $5, updated_at = now(), seq = nextval('rela_seq'),
+		    last_edited_by_user = $6, last_edited_by_tool = $7
 		WHERE from_id = $1 AND rel_type = $2 AND to_id = $3
 		RETURNING from_id, rel_type, to_id, properties, content, updated_at`
-	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, data.Content))
+	r, err := scanRelation(tx.QueryRow(ctx, q, from, relType, to, rawProps, data.Content,
+		editorUser, editorTool))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

@@ -147,10 +147,20 @@ How capture works:
   to the latest).
 
 Attribution: the version's principal (user + tool) and any `triggered_by`
-(automation / schedule / cascade) are recorded. This inherits the same trust
-model as the [audit log](audit-log.md) — attribution is only as strong as your
-deployment's identity front door, so use a verifying (JWT) principal source
-where version attribution matters for accountability.
+(automation / schedule / cascade) are recorded. Every create/update write stamps
+the editing principal onto the live row (`last_edited_by_user` /
+`last_edited_by_tool`), and the sweep copies it onto the debounced snapshot — so
+a swept version names the real editor, not a system account. Rows with no
+recorded editor (pre-existing rows from before the columns existed, or writes
+that carried no principal) fall back to the `version-sweep` system principal
+rather than guessing; they self-heal on their next attributed edit. A rename
+only re-keys incident relations, so those keep their last *content* editor. One
+v1 limit: if two different people edit the same entity within one debounce
+window, the single collapsed version is attributed to the last of them
+(TKT-0IGI4V tracks segmenting versions at author boundaries). This all inherits
+the same trust model as the [audit log](audit-log.md) — attribution is only as
+strong as your deployment's identity front door, so use a verifying (JWT)
+principal source where version attribution matters for accountability.
 
 Storage: two tables — `entity_versions` (one full snapshot per version, keyed by
 a versioning-internal record id so history survives id rename/reuse) and

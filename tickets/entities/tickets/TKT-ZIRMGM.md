@@ -3,12 +3,22 @@ id: TKT-ZIRMGM
 type: ticket
 title: 'Author-aware version capture: last_edited_by column + flush-on-author-change (precise per-version attribution)'
 kind: enhancement
-priority: medium
+priority: high
 effort: m
-status: backlog
+status: review
 ---
 
 Follow-up to TKT-9INY0Y (pgstore content versioning). User idea, 2026-07-08.
+
+## Field report (2026-07-24)
+
+Confirmed broken-feeling in practice on an oauth2proxy-gated rela data-entry
+deployment: the version-history UI for an entity (beleid · POLICY-016) shows
+every version — including plain user edits — as `unknown · version-sweep`. The
+proxy forwards a real authenticated user, so the write path HAS the principal;
+it just never reaches the version rows because create/update capture happens in
+the sweep. In practice this makes the history's "who" column useless for the
+primary use case (who changed this policy?).
 
 ## Problem
 

@@ -33,8 +33,8 @@ func TestStatusFreshSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, current, "un-migrated schema is version 0")
 	// target is the highest embedded migration version — bump this when a new
-	// migration is added (0005_relation_versions.sql took it from 4 to 5).
-	require.Equal(t, 5, target, "binary embeds migrations through 0005")
+	// migration is added (0006_last_edited_by.sql took it from 5 to 6).
+	require.Equal(t, 6, target, "binary embeds migrations through 0006")
 }
 
 // TestStatusAfterMigrate verifies Status reports current==target once Migrate
