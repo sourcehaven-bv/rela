@@ -131,7 +131,7 @@ func patchEntityAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarati
 	}
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, typeName, plural, entityID)
+	app.write.handleV1UpdateEntity(rec, req, typeName, plural, entityID)
 	return rec
 }
 
@@ -143,6 +143,6 @@ func deleteEntityAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarat
 		"/api/v1/"+plural+"/"+entityID, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1DeleteEntity(rec, req, typeName, plural, entityID)
+	app.write.handleV1DeleteEntity(rec, req, typeName, plural, entityID)
 	return rec
 }

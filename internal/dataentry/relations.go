@@ -8,7 +8,7 @@ import (
 // relationError surfaces a per-edge failure with the relation type and
 // target id attached so the handler layer can produce a problem-details
 // response the UI can attribute to the specific chip that caused it.
-// Returned by [App.applyRelationsModern] (the only relation reconciler
+// Returned by [writeHandler.applyRelationsModern] (the only relation reconciler
 // after the legacy IDs-only shape was dropped).
 type relationError struct {
 	RelType string

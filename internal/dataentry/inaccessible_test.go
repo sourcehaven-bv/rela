@@ -82,7 +82,7 @@ func TestV1UpdateEntity_RejectsInaccessible(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-LOCKED")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-LOCKED")
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())

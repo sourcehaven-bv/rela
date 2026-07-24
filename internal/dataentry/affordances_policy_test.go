@@ -49,7 +49,7 @@ func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBod
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", id)
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", id)
 	return rec.Code, rec.Body.String()
 }
 
@@ -205,7 +205,7 @@ assignments:
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	rec := httptest.NewRecorder()
-	app.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "depends_on")
+	app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "depends_on")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("create POST: got %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}

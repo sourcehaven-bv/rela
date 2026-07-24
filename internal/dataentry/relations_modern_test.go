@@ -124,7 +124,7 @@ func patch(t *testing.T, app *App, plural, id, body string, headers ...string) *
 		req.Header.Set(headers[i], headers[i+1])
 	}
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", plural, id)
+	app.write.handleV1UpdateEntity(rec, req, "ticket", plural, id)
 	return rec
 }
 

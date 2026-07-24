@@ -579,7 +579,7 @@ func (svc affordanceService) validateRelationOp(
 // inspects per-edge meta against [RelationVerdict.Fields].
 //
 // Called from the unified PATCH handler before
-// [App.applyRelationsModern]. Returns nil when every relation
+// [writeHandler.applyRelationsModern]. Returns nil when every relation
 // operation is permitted.
 //
 //nolint:gocognit // walks every relation op against per-op ACL affordances; each branch is an independent verb check, not shared logic to extract.

@@ -202,7 +202,7 @@ func TestTransitionsWire_CreateLockSkipsHiddenField(t *testing.T) {
 	body := `{"properties":{"title":"new ticket"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1DryRunCreate(rec, req, "ticket", "tickets")
+	app.write.handleV1DryRunCreate(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry-run create: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -234,7 +234,7 @@ func TestTransitionsWire_CreateLocksMachineField(t *testing.T) {
 	body := `{"properties":{"title":"new ticket","status":"doing"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets?dry_run=true", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	app.handleV1DryRunCreate(rec, req, "ticket", "tickets")
+	app.write.handleV1DryRunCreate(rec, req, "ticket", "tickets")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry-run create: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}

@@ -35,7 +35,7 @@ func TestReadOnlyACL_DanglingPeerRelationWrite_Refused(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"belongs_to":{"data":[{"type":"component","id":"CMP-999"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 
 	// Must NOT be a 200. Under ReadOnlyACL every write is denied, so authz
 	// (which now runs before the existence check) produces a 403.
@@ -83,7 +83,7 @@ func TestReadOnlyACL_ExistingPeerRelationWrite_Forbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"belongs_to":{"data":[{"type":"component","id":"CMP-001"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
@@ -107,7 +107,7 @@ func TestDanglingPeerRelationWrite_AllowedACL_422(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
 		strings.NewReader(`{"relations":{"belongs_to":{"data":[{"type":"component","id":"CMP-999"}]}}}`))
 	rec := httptest.NewRecorder()
-	app.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 (dangling peer, ACL allows), got %d: %s", rec.Code, rec.Body.String())
