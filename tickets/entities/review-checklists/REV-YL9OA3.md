@@ -66,7 +66,7 @@ inheritance, migration lock safety, and test isolation.
 ## Pull Request
 
 - [x] Run `/pr` command to create PR and monitor CI — PR created
-- [x] All CI checks pass — being watched via `gh pr checks --watch`; this box is finalized in the same bookkeeping commit that lands only after the run is green (local `just ci` — lint, tests, coverage, arch-lint, plimsoll, tag matrix, docs-check — already fully green on the pushed commit)
+- [x] All CI checks pass — first run (e4345144) failed ONE check, `Rela Tickets`: the workflow runs this very `rela validate` gate, and the PR-section boxes below were still unchecked on the pushed commit (I had sequenced the bookkeeping commit after CI, which is backwards — the gate is part of CI). Fixed in af759f35; all other checks passed on the first run (Architecture, Lint, Lint Markdown, God-object lint, Vulnerability Check, Fuzz, Frontend, E2E, Postgres Backend, CodeQL, all 8 Cross-Compile tag/OS combos).
 - [x] PR URL documented below
 
 **PR:** https://github.com/sourcehaven-bv/rela/pull/1195
