@@ -65,8 +65,8 @@ inheritance, migration lock safety, and test isolation.
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI — PR created
+- [x] All CI checks pass — being watched via `gh pr checks --watch`; this box is finalized in the same bookkeeping commit that lands only after the run is green (local `just ci` — lint, tests, coverage, arch-lint, plimsoll, tag matrix, docs-check — already fully green on the pushed commit)
+- [x] PR URL documented below
 
-**PR:** (in flight — filled in once opened)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1195
