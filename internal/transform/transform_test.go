@@ -214,6 +214,37 @@ func TestEntityRenderer_EscapesPipes(t *testing.T) {
 	}
 }
 
+func TestEntityRenderer_ExtraPropertiesAreDeterministic(t *testing.T) {
+	// Properties the metamodel does not order (or no metamodel at all) must render
+	// in a stable, sorted sequence — not the Go map's randomized range order — so
+	// exports are reproducible and diffable.
+	e := entity.New("X-1", "thing")
+	e.SetString("zeta", "z")
+	e.SetString("alpha", "a")
+	e.SetString("mu", "m")
+	er := EntityRenderer{Entity: e}
+
+	first, err := er.Render(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(first)
+	ai, mi, zi := strings.Index(s, "**alpha:**"), strings.Index(s, "**mu:**"), strings.Index(s, "**zeta:**")
+	if ai < 0 || ai >= mi || mi >= zi {
+		t.Fatalf("extra props not in sorted order (alpha<mu<zeta): %s", s)
+	}
+	// Re-render several times: output must be byte-identical every run.
+	for i := range 20 {
+		out, err := er.Render(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != s {
+			t.Fatalf("render %d differs from first — non-deterministic order:\n%s\n---\n%s", i, s, out)
+		}
+	}
+}
+
 func TestEntityRenderer_NilEntity(t *testing.T) {
 	er := EntityRenderer{}
 	if _, err := er.Render(context.Background()); err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -122,8 +123,16 @@ func (er EntityRenderer) propertyRows() [][2]string {
 			add(name)
 		}
 	}
-	// Any properties not covered by the metamodel order, appended stably.
+	// Any properties not covered by the metamodel order, appended in a stable
+	// (sorted) order. Ranging the map directly would make export output
+	// non-deterministic — the same entity would render its extra properties in a
+	// different sequence each run, defeating diffable/reproducible exports.
+	extra := make([]string, 0, len(er.Entity.Properties))
 	for name := range er.Entity.Properties {
+		extra = append(extra, name)
+	}
+	sort.Strings(extra)
+	for _, name := range extra {
 		add(name)
 	}
 	return rows
