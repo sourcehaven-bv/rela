@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,6 +291,18 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	runErr := ec.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("cmdexec: command timed out after %s", r.timeout)
+	}
+	// WaitDelay fires when the child itself exited but a detached descendant kept
+	// an output pipe open past waitDelay (a pandoc PDF-engine grandchild is the
+	// canonical case). Wait then closes the pipes and returns ErrWaitDelay. This
+	// is NOT a command failure: the child completed and, when it writes to {out},
+	// the result is already on disk. Distinguish it from a real non-zero exit
+	// (which surfaces as *exec.ExitError, not ErrWaitDelay) and treat it as
+	// success — Wait has already joined the copier goroutine, so stdout is stable.
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		slog.Warn("cmdexec: command left a lingering child past wait delay; "+
+			"output taken as-is", "cmd", args[0], "wait_delay", waitDelay)
+		return &stdout, nil
 	}
 	if runErr != nil {
 		msg := strings.TrimSpace(stderr.String())

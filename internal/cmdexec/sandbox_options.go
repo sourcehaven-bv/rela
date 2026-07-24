@@ -1,6 +1,10 @@
 package cmdexec
 
-import "sync"
+import (
+	"log/slog"
+	"path/filepath"
+	"sync"
+)
 
 // This file holds sandbox POLICY — the operator-facing knobs and diagnostics
 // that decide HOW a command is confined. The mechanism (the Sandbox interface
@@ -25,8 +29,22 @@ var DefaultScannerSockets = []string{
 // sandbox, on top of the standard allowlist. The motivating case is a scanner
 // daemon's unix socket — a socket is a filesystem object, so binding it grants
 // reachability WITHOUT opening network egress. Missing paths are skipped.
+//
+// Only ABSOLUTE paths are honored: a bind mount has no meaningful cwd-relative
+// form, and an empty or relative entry (a typo'd `scan_sockets:` value) would be
+// silently dropped by the backend's -try, leaving the operator to wonder why the
+// socket is still unreachable. Such entries are warned about and skipped here so
+// the misconfiguration is visible in the log rather than an invisible no-op.
 func WithExtraReadOnly(paths ...string) Option {
-	return func(r *Runner) { r.extraReadOnly = append(r.extraReadOnly, paths...) }
+	return func(r *Runner) {
+		for _, p := range paths {
+			if !filepath.IsAbs(p) {
+				slog.Warn("cmdexec: ignoring non-absolute extra read-only bind path", "path", p)
+				continue
+			}
+			r.extraReadOnly = append(r.extraReadOnly, p)
+		}
+	}
 }
 
 // WithSandboxDisabled turns confinement off. This is the operator's explicit

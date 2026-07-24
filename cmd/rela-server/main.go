@@ -366,13 +366,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Record the command-confinement decision BEFORE building any services: the
+	// choice is read by every cmdexec.Runner at construction, and appbuild.Discover
+	// may build one. Applying it after discovery would confine (or fail closed on)
+	// a host the operator explicitly opted out of. Keep this above discoverProject.
+	applyCommandConfinement(f.unconfinedCommand)
+
 	// No svc.Close(): rela-server is a daemon — it runs until the process exits,
 	// at which point the OS reclaims file descriptors and goroutines. Per-project
 	// Close() *is* required in long-running hosts that switch projects (see
 	// rela-desktop); this is the daemon-lifetime case.
 	svc := discoverProject(f)
-
-	applyCommandConfinement(f.unconfinedCommand)
 
 	fieldResolver := buildFieldResolver(svc)
 

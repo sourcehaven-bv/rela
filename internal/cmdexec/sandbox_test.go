@@ -232,6 +232,27 @@ func TestSandboxExtraReadOnlyReachesBoundSocket(t *testing.T) {
 	}
 }
 
+// TestWithExtraReadOnlySkipsNonAbsolute pins that a typo'd (empty or relative)
+// bind path is dropped rather than silently becoming a useless -try no-op, so a
+// misconfigured scan_sockets entry is visible in the log, not invisible.
+func TestWithExtraReadOnlySkipsNonAbsolute(t *testing.T) {
+	r, err := New(time.Second, 1<<20,
+		WithSandboxDisabled(), // no platform sandbox needed to inspect the option effect
+		WithExtraReadOnly("/abs/ok.sock", "", "relative/path.sock", "/another/ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/abs/ok.sock", "/another/ok"}
+	if len(r.extraReadOnly) != len(want) {
+		t.Fatalf("got %v, want only absolute paths %v", r.extraReadOnly, want)
+	}
+	for i, p := range want {
+		if r.extraReadOnly[i] != p {
+			t.Errorf("index %d: got %q, want %q", i, r.extraReadOnly[i], p)
+		}
+	}
+}
+
 // TestSandboxWritableDirUnderTmp pins an argv-ordering dependency in the Linux
 // backend: --tmpfs /tmp must precede the --bind of the writable dir. The run's
 // temp dir usually lives under /tmp, and bwrap applies operations in order — a
@@ -376,6 +397,42 @@ func TestRunTimeoutLeavesNoOrphans(t *testing.T) {
 	if _, statErr := os.Stat(marker); statErr == nil {
 		t.Error("ORPHAN SURVIVED the timeout: a descendant outlived the deadline " +
 			"and kept running — the process-group kill is not working")
+	}
+}
+
+// TestWaitDelayLingeringChildIsSuccessOnOutFile pins that a command which
+// completes and writes {out}, but leaves a detached child holding an output pipe
+// open past waitDelay, is treated as SUCCESS rather than a spurious ErrWaitDelay
+// failure. This is the canonical pandoc→PDF case: the engine grandchild lingers,
+// yet the PDF is already on disk. Verified to fail (returns an error) before the
+// ErrWaitDelay carve-out in execute().
+func TestWaitDelayLingeringChildIsSuccessOnOutFile(t *testing.T) {
+	skipOnWindows(t)
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh unavailable")
+	}
+	// Timeout well above waitDelay (2s) so the DeadlineExceeded path does NOT fire
+	// — we specifically want the WaitDelay path with ctx.Err()==nil.
+	r, err := New(30*time.Second, 1<<20, WithSandboxDisabled())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write {out}, then background a child that inherits stdout and sleeps past
+	// waitDelay before the parent exits 0. The child keeps the stdout pipe open,
+	// forcing Wait to return ErrWaitDelay ~2s after the parent reaps.
+	// {out} must be its OWN argv element to be substituted (it maps to $1 here),
+	// matching the transform contract — it is not textually expanded inside a word.
+	script := `echo done > "$1"; sleep 5 & exit 0`
+	out, usedOut, runErr := r.Run(context.Background(),
+		[]string{"sh", "-c", script, "sh", "{out}"}, nil, true)
+	if runErr != nil {
+		t.Fatalf("lingering child on the {out} path must be success, got: %v", runErr)
+	}
+	if !usedOut {
+		t.Fatal("expected the {out} temp-file path")
+	}
+	if strings.TrimSpace(string(out)) != "done" {
+		t.Errorf("out-file content = %q, want \"done\"", out)
 	}
 }
 
