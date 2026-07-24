@@ -197,6 +197,22 @@ func (s *Store) PropertyValues(ctx context.Context, property string, limit int) 
 
 // --- EntityWriter ---
 
+// attributionValues returns the last_edited_by_user / last_edited_by_tool SQL
+// values for the boundary-populated store.Attribution on ctx. Absent (or
+// empty-component) attribution maps to NULL, never to an empty or placeholder
+// string — NULL is the "unknown editor" encoding the version sweep's
+// system-principal fallback keys on (TKT-ZIRMGM, RR-U964M0).
+func attributionValues(ctx context.Context) (user, tool *string) {
+	a := store.AttributionFrom(ctx)
+	if a.User != "" {
+		user = &a.User
+	}
+	if a.Tool != "" {
+		tool = &a.Tool
+	}
+	return user, tool
+}
+
 // CreateEntity inserts a new entity. Returns store.ErrConflict if the ID
 // exists. The created entity (with server-assigned updated_at) is delivered
 // to observers and an EventEntityCreated is emitted after commit.
@@ -216,13 +232,16 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
+	editorUser, editorTool := attributionValues(ctx)
 	const q = `
-		INSERT INTO entities (id, type, properties, content, search_text, updated_at)
-		VALUES ($1, $2, $3, $4, $5, now())
+		INSERT INTO entities (id, type, properties, content, search_text, updated_at,
+		                      last_edited_by_user, last_edited_by_tool)
+		VALUES ($1, $2, $3, $4, $5, now(), $6, $7)
 		ON CONFLICT (id) DO NOTHING
 		RETURNING updated_at`
 	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e)).Scan(&updatedAt)
+	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e),
+		editorUser, editorTool).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
@@ -257,14 +276,17 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
+	editorUser, editorTool := attributionValues(ctx)
 	const q = `
 		UPDATE entities
 		SET type = $2, properties = $3, content = $4, search_text = $5,
-		    updated_at = now(), seq = nextval('rela_seq')
+		    updated_at = now(), seq = nextval('rela_seq'),
+		    last_edited_by_user = $6, last_edited_by_tool = $7
 		WHERE id = $1
 		RETURNING updated_at`
 	var updatedAt time.Time
-	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e)).Scan(&updatedAt)
+	err = tx.QueryRow(ctx, q, e.ID, e.Type, props, e.Content, entitySearchText(e),
+		editorUser, editorTool).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrNotFound
 	}

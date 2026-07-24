@@ -76,6 +76,7 @@ func resolveUpsertOp(getErr error, createAudit, updateAudit string) (upsertOp, e
 // The audited op (create vs. update) is chosen from whether the entity already
 // exists; a flaky existence probe fails closed (see [resolveUpsertOp]).
 func (m *Manager) ApplyEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
+	ctx = withStoreAttribution(ctx)
 	if e == nil {
 		return nil, errors.New("entitymanager: ApplyEntity: entity is nil")
 	}
@@ -216,6 +217,7 @@ func (m *Manager) persistApplyEntity(ctx context.Context, op acl.Op, e *entity.E
 // well-formed order values from a peer that produced them through the normal
 // write path.
 func (m *Manager) ApplyRelation(ctx context.Context, r *entity.Relation) (*entity.Relation, error) {
+	ctx = withStoreAttribution(ctx)
 	if r == nil {
 		return nil, errors.New("entitymanager: ApplyRelation: relation is nil")
 	}

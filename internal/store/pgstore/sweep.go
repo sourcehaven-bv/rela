@@ -208,7 +208,9 @@ func (s *sweep) tick(ctx context.Context) error {
 
 // sweepCandidate is one entity the sweep may snapshot: its current state plus
 // the content hash of its latest existing version (empty if none), so
-// captureOne can dedup without a second query.
+// captureOne can dedup without a second query. editorUser/editorTool carry the
+// row's last_edited_by_* columns (nil = no recorded editor) so the captured
+// version is attributed to the real author (TKT-ZIRMGM).
 type sweepCandidate struct {
 	id         string
 	typ        string
@@ -216,6 +218,8 @@ type sweepCandidate struct {
 	props      []byte
 	latestHash string
 	hasVersion bool
+	editorUser *string
+	editorTool *string
 }
 
 // selectCandidates returns up to Batch entities that have settled (updated_at
@@ -242,6 +246,7 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	//     ending in `delete` while it is live.
 	const q = `
 		SELECT e.id, e.type, e.content, e.properties,
+		       e.last_edited_by_user, e.last_edited_by_tool,
 		       lvc.content_hash,
 		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage
 		FROM entities e
@@ -277,7 +282,8 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 			c          sweepCandidate
 			latestHash *string // NULL when there is no version in the current lifecycle
 		)
-		if err := rows.Scan(&c.id, &c.typ, &c.content, &c.props, &latestHash, &c.hasVersion); err != nil {
+		if err := rows.Scan(&c.id, &c.typ, &c.content, &c.props,
+			&c.editorUser, &c.editorTool, &latestHash, &c.hasVersion); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -300,6 +306,7 @@ func (s *sweep) captureOne(
 	if err != nil {
 		return err
 	}
+	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
 	in := store.VersionInput{
 		EntityID:      c.id,
 		Type:          c.typ,
@@ -307,7 +314,8 @@ func (s *sweep) captureOne(
 		Properties:    props,
 		SchemaHash:    schemaHash,
 		Projection:    projJSON,
-		PrincipalTool: "version-sweep",
+		PrincipalUser: principalUser,
+		PrincipalTool: principalTool,
 	}
 	contentHash := contentHashOf(in)
 	// Dedup only within the current lifecycle: latestHash is empty when there is
@@ -323,9 +331,28 @@ func (s *sweep) captureOne(
 	return insertVersion(ctx, conn, in, contentHash)
 }
 
+// sweepAttribution returns the principal to stamp on a swept create/update
+// version: the row's recorded last_edited_by_* editor when present, else the
+// version-sweep system principal. NULL columns (legacy rows, writes that
+// carried no store.Attribution) keep the pre-TKT-ZIRMGM fallback — the sweep
+// never guesses an author.
+func sweepAttribution(editorUser, editorTool *string) (user, tool string) {
+	if editorUser == nil && editorTool == nil {
+		return "", "version-sweep"
+	}
+	if editorUser != nil {
+		user = *editorUser
+	}
+	if editorTool != nil {
+		tool = *editorTool
+	}
+	return user, tool
+}
+
 // relationSweepCandidate is one relation the sweep may snapshot: its current
 // state plus the surrogate rel_record_id off the live row and the content hash
-// of its latest existing version in that lineage (empty if none).
+// of its latest existing version in that lineage (empty if none). editorUser/
+// editorTool mirror sweepCandidate's attribution columns.
 type relationSweepCandidate struct {
 	recordID   int64
 	from       string
@@ -335,6 +362,8 @@ type relationSweepCandidate struct {
 	props      []byte
 	latestHash string
 	hasVersion bool
+	editorUser *string
+	editorTool *string
 }
 
 // selectRelationCandidates returns up to Batch relations that have settled (or
@@ -352,6 +381,7 @@ func (s *sweep) selectRelationCandidates(
 ) ([]relationSweepCandidate, error) {
 	const q = `
 		SELECT r.rel_record_id, r.from_id, r.rel_type, r.to_id, r.content, r.properties,
+		       r.last_edited_by_user, r.last_edited_by_tool,
 		       lv.content_hash,
 		       (lv.vseq IS NOT NULL) AS has_version
 		FROM relations r
@@ -377,7 +407,8 @@ func (s *sweep) selectRelationCandidates(
 			latestHash *string // NULL when the lineage has no version yet
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.relType, &c.to,
-			&c.content, &c.props, &latestHash, &c.hasVersion); err != nil {
+			&c.content, &c.props, &c.editorUser, &c.editorTool,
+			&latestHash, &c.hasVersion); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -398,6 +429,7 @@ func (s *sweep) captureRelation(
 	if err != nil {
 		return err
 	}
+	principalUser, principalTool := sweepAttribution(c.editorUser, c.editorTool)
 	in := store.RelationVersionInput{
 		RecordID:      c.recordID,
 		From:          c.from,
@@ -407,7 +439,8 @@ func (s *sweep) captureRelation(
 		Properties:    props,
 		SchemaHash:    schemaHash,
 		Projection:    projJSON,
-		PrincipalTool: "version-sweep",
+		PrincipalUser: principalUser,
+		PrincipalTool: principalTool,
 	}
 	contentHash := contentHashOfRelation(in)
 	if c.latestHash != "" && contentHash == c.latestHash {
