@@ -25,6 +25,21 @@ type TaskConfig struct {
 	Name   string   `yaml:"name"`
 	Script string   `yaml:"script"`
 	Every  Schedule `yaml:"every"`
+
+	// RunAs is the IDENTITY this task runs as — not a capability
+	// (DEC-O59WM4). What the task may read is decided entirely by
+	// acl.yaml: assignments map this principal to roles, exactly like a
+	// human user. Naming a principal here grants nothing by itself.
+	//
+	// Empty (the default) means [principal.SystemUser], i.e. every task
+	// shares the scheduler's identity. Set it to give a job its own
+	// identity — which both narrows what it can read (via a scoped role)
+	// and makes the audit log name the specific job rather than a generic
+	// scheduler.
+	//
+	// A task whose principal has no read grants reads nothing: privileges
+	// are granted in acl.yaml, never inferred from task config.
+	RunAs string `yaml:"run_as"`
 }
 
 // Schedule represents a recurring schedule interval.

@@ -67,10 +67,14 @@ func stripShebang(code string) string {
 // of entities and relations) registered at all; calling those from Lua raises
 // a "attempt to call a nil value" error from the VM itself.
 //
-// TODO(TKT-N0IKN9): Runtime is a god-object (119 methods). Decompose toward the
+// TODO(TKT-N0IKN9): Runtime is a god-object (120 methods). Decompose toward the
 // 40-method load line; ratchet this number down as bindings move out.
 //
-//plimsoll:max-methods=119
+// 119 → 120 (TKT-ZF2DTV): reader(), the single choke point every read binding
+// resolves its ACL-bound handle through. One method that makes six call sites
+// unable to skip the gate is a good trade against this line.
+//
+//plimsoll:max-methods=120
 type Runtime struct {
 	L             *lua.LState
 	deps          WriteDeps // EntityManager is nil on a reader runtime.
@@ -829,6 +833,20 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	}
 }
 
+// reader returns the read-out handle, raising when it is absent.
+//
+// Absent means DENY, never "fall back to the raw store" (RR-X9NVHI): a
+// wiring site that forgets to supply a reader must fail loudly rather than
+// silently hand a script ungated access to the graph. Every read binding
+// funnels through here so the check cannot be forgotten at one of them.
+func (r *Runtime) reader(ls *lua.LState, binding string) (EntityReader, bool) {
+	if r.deps.VisibleReader == nil {
+		ls.RaiseError("%s: no reader is configured for this runtime", binding)
+		return nil, false
+	}
+	return r.deps.VisibleReader, true
+}
+
 // luaGetEntity implements rela.get_entity(id) -> table|nil
 func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
@@ -836,8 +854,12 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		ls.RaiseError("entity ID cannot be empty")
 		return 0
 	}
+	rd, ok := r.reader(ls, "rela.get_entity")
+	if !ok {
+		return 0
+	}
 
-	e, err := r.deps.Store.GetEntity(r.callerCtx(), id)
+	e, err := rd.GetEntity(r.callerCtx(), id)
 	if err != nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -855,9 +877,13 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		return 0
 	}
 	filterExpr := ls.OptString(2, "")
+	rd, ok := r.reader(ls, "rela.list_entities")
+	if !ok {
+		return 0
+	}
 
 	entities := make([]*entity.Entity, 0)
-	for e, err := range r.deps.Store.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
+	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
 		if err != nil {
 			break
 		}
@@ -921,10 +947,19 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 		}
 	}
 
+	rd, ok := r.reader(ls, "rela.get_relations")
+	if !ok {
+		return 0
+	}
+
+	// Peer-gated (RR-7GDT1Y): the reader drops relations whose FROM or TO
+	// the caller cannot see, so an explicit opts.from can legitimately
+	// return fewer rows than the graph holds. An empty result means "no
+	// edges you may see", not "no edges".
 	q := store.RelationQuery{From: fromFilter, Type: typeFilter, To: toFilter}
 	result := ls.NewTable()
 	idx := 1
-	for rel, err := range r.deps.Store.ListRelations(r.callerCtx(), q) {
+	for rel, err := range rd.ListRelations(r.callerCtx(), q) {
 		if err != nil {
 			break
 		}
@@ -1376,6 +1411,10 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 		ls.RaiseError("search not available")
 		return 0
 	}
+	rd, ok := r.reader(ls, "rela.search")
+	if !ok {
+		return 0
+	}
 	result := ls.NewTable()
 	i := 1
 	ctx := r.callerCtx()
@@ -1385,7 +1424,11 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 			return 0
 		}
 		// Fetch the full entity for the lua table (search hits are minimal).
-		e, err := r.deps.Store.GetEntity(ctx, hit.ID)
+		// This hydration is ALSO the gate: hits the caller may not read fail
+		// here and are skipped, so no hidden entity or property reaches the
+		// script. The hit LIST itself is un-gated — see ReadDeps.Searcher for
+		// the residual (TKT-GGQ0JT class).
+		e, err := rd.GetEntity(ctx, hit.ID)
 		if err != nil {
 			continue
 		}
@@ -1456,7 +1499,15 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	}
 
 	ctx := r.callerCtx()
-	existing, err := r.deps.Store.GetEntity(ctx, id)
+	if r.deps.WritePrepStore == nil {
+		ls.RaiseError("rela.update_entity: no write-prep store is configured for this runtime")
+		return 0
+	}
+	// WritePrepStore, NOT VisibleReader — deliberately raw. The clone below
+	// becomes the SAVED entity, so reading a redacted copy here would drop
+	// the caller's hidden properties and erase them on save. See the field's
+	// godoc in deps.go; the guard test pins this.
+	existing, err := r.deps.WritePrepStore.GetEntity(ctx, id)
 	if err != nil {
 		ls.RaiseError("entity not found: %s", id)
 		return 0

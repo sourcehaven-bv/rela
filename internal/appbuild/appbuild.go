@@ -46,6 +46,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Services exposes the focused collaborators a project entry point
@@ -60,9 +61,12 @@ import (
 // Every exported method is a one-line accessor for a collaborator this facade
 // constructs; the count tracks the number of wired services, not an accreting
 // public API. Versions() (TKT-N0IKN9) took it to 21 — a documented facade
-// exception, not a ratchet target.
+// exception, not a ratchet target. ScheduledLuaWriteDeps() (TKT-ZF2DTV) takes
+// it to 22: it is a scheduler.WorkspaceProvider interface method, so it must be
+// exported; the two redactor-parameterized variants behind it are unexported
+// precisely to keep this surface from growing by three.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=22
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -178,24 +182,126 @@ func (s *Services) Config() config.Loader { return s.cfgLoader }
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
 
-// LuaReadDeps materializes the read-only Lua capability bundle.
-// Cheap to call; rebuild per-runtime so future metamodel reloads
-// propagate.
+// LuaReadDeps materializes the read-only Lua capability bundle with
+// UNRESTRICTED reads — the operator-trust-boundary wiring used by the CLI
+// and the docs runtime, where whoever runs the binary already has the
+// project files (RR-17DMC).
+//
+// Request-scoped and scheduled callers must use [Services.luaReadDepsFor]
+// instead, which binds reads to an identity (DEC-O59WM4).
+//
+// Cheap to call; rebuild per-runtime so future metamodel reloads propagate.
 func (s *Services) LuaReadDeps() lua.ReadDeps {
 	root := ""
 	if s.paths != nil {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		Store:       s.store,
-		Tracer:      s.tracer,
-		Searcher:    s.searcher,
-		Meta:        s.meta,
-		ProjectRoot: root,
+		VisibleReader:  s.store,
+		WritePrepStore: s.store,
+		Tracer:         s.tracer,
+		Searcher:       s.searcher,
+		Meta:           s.meta,
+		ProjectRoot:    root,
 	}
 }
 
-// LuaWriteDeps materializes the read-write Lua capability bundle.
+// LuaReadDepsFor materializes a read bundle whose reads are ACL-bound to
+// whatever principal is on the ctx AT CALL TIME (DEC-O59WM4). Use it for
+// every identity-bearing path: data-entry requests, automations/cascades
+// (which run on the triggering user's ctx), and scheduled tasks (which run
+// on their `system:*` principal).
+//
+// redactor supplies field-level verdicts. Callers that have an affordance
+// resolver (data-entry) pass one; callers that do not may pass
+// [visibility.NopRedactor], which yields row-gating without field
+// redaction — weaker, but never wrong, and the row gate is the part that
+// keeps whole entities out of a prompt.
+//
+// Identity is deliberately NOT captured here: the scheduler stamps its
+// principal on the per-task ctx while the deps bundle is built separately,
+// so binding an identity at construction would make that principal
+// invisible. The wrapped reader resolves it per call.
+//
+// Falls back to unrestricted reads when no Declarative ACL is configured —
+// that is the NopACL path, byte-identical to pre-ACL behavior, not a
+// bypass. A construction failure is also unrestricted-with-a-warning
+// rather than silent denial: failing every script closed on a wiring error
+// would be a louder outage than the ACL is worth here, and it is logged.
+func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
+	deps := s.LuaReadDeps()
+	// WritePrepStore stays RAW on purpose — see lua.ReadDeps.WritePrepStore.
+	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor)
+	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor)
+	return deps
+}
+
+// scriptEntityReader returns the read-out handle for a script runtime: ACL
+// bound to the ctx principal when a Declarative policy exists, otherwise
+// the raw store (the NopACL path — byte-identical to pre-ACL behavior, not
+// a bypass).
+//
+// Construction failure degrades to the raw store WITH A WARNING rather than
+// denying: a wiring fault that silently broke every automation and schedule
+// would be a worse outage than the ACL is worth here, and it is logged
+// loudly. A DENIED read is still a deny; this only covers "the gate itself
+// could not be built".
+func scriptEntityReader(
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+) lua.EntityReader {
+	if d == nil {
+		return st
+	}
+	if redactor == nil {
+		redactor = visibility.NopRedactor{}
+	}
+	gate, err := visibility.NewDeclarativeGate(d)
+	if err != nil {
+		slog.Warn("appbuild: ACL gate unavailable; script reads stay unrestricted", "err", err)
+		return st
+	}
+	reader, err := visibility.NewPolicyReader(gate, redactor, st)
+	if err != nil {
+		slog.Warn("appbuild: policy reader unavailable; script reads stay unrestricted", "err", err)
+		return st
+	}
+	sr, err := visibility.NewScriptReader(reader, st)
+	if err != nil {
+		slog.Warn("appbuild: script reader unavailable; script reads stay unrestricted", "err", err)
+		return st
+	}
+	return sr
+}
+
+// scriptTracer returns the traversal handle for a script runtime, wrapped
+// in the visibility decorator when a Declarative policy exists. The trace
+// bindings are identical either way — gating is entirely inside the
+// decorator (hidden nodes pruned with their subtrees, paths through hidden
+// intermediates withheld, titles falling back to IDs).
+func scriptTracer(
+	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+) tracer.Tracer {
+	if d == nil {
+		return tr
+	}
+	if redactor == nil {
+		redactor = visibility.NopRedactor{}
+	}
+	gate, err := visibility.NewDeclarativeGate(d)
+	if err != nil {
+		slog.Warn("appbuild: ACL gate unavailable; traversal stays unrestricted", "err", err)
+		return tr
+	}
+	vt, err := visibility.NewVisibleTracer(tr, gate, redactor, st)
+	if err != nil {
+		slog.Warn("appbuild: visible tracer unavailable; traversal stays unrestricted", "err", err)
+		return tr
+	}
+	return vt
+}
+
+// LuaWriteDeps materializes the read-write Lua capability bundle with
+// UNRESTRICTED reads (see [Services.LuaReadDeps] for when that is right).
 // EntityManager goes in as the wide entitymanager.EntityManager; the
 // lua.WriteDeps.EntityManager field is narrower (lua.Mutator) and
 // accepts any structural match.
@@ -204,6 +310,31 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		ReadDeps:      s.LuaReadDeps(),
 		EntityManager: s.entityManager,
 	}
+}
+
+// LuaWriteDepsFor is [Services.LuaWriteDeps] with ACL-bound reads — the
+// scheduler's wiring (its per-task principal governs what the script can
+// see; privilege comes from acl.yaml assignments, never from task config).
+// Writes are unaffected: they continue through entitymanager's own ACL,
+// with rela.bypass_acl as the sole escalation.
+func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteDeps {
+	return lua.WriteDeps{
+		ReadDeps:      s.luaReadDepsFor(redactor),
+		EntityManager: s.entityManager,
+	}
+}
+
+// ScheduledLuaWriteDeps satisfies scheduler.WorkspaceProvider. Reads are
+// ACL-bound to the task's principal (stamped on the per-task ctx), with
+// privileges coming from acl.yaml — a job sees what its identity may see,
+// nothing more (DEC-O59WM4).
+//
+// No field redactor here: appbuild has no affordance resolver, so scheduled
+// jobs get ROW gating without field-level redaction. That is the weaker
+// half of the guarantee but never the wrong one — whole entities the job's
+// identity cannot read stay out, which is what bounds a prompt.
+func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
+	return s.luaWriteDepsFor(nil)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
@@ -674,15 +805,23 @@ func assemble(
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
 	cfgLoader := config.NewFSLoader(cfg.FS, cfg.Paths.Root)
 
-	// Build the static lua read deps once — the ScriptRunner is
-	// constructed with these, and LuaReadDeps re-derives the same
-	// shape on demand.
+	// Build the static lua read deps once — the ScriptRunner (automation
+	// cascades) is constructed with these.
+	//
+	// Cascade reads are ACL-BOUND to the ACTING USER (DEC-O59WM4,
+	// RR-XC0URX): an automation fires in response to someone's write and
+	// runs on that person's ctx, so it reads their view — symmetric with
+	// its write path, which already gates through entitymanager and needs
+	// an explicit allow_acl_bypass to elevate. Escalating reads is
+	// deliberately NOT a config default; it is TKT-ACSBSA (an admin-handle
+	// extension), so a cascade that needs more must ask for it in the open.
 	readDeps := lua.ReadDeps{
-		Store:       st,
-		Tracer:      tr,
-		Searcher:    searcher,
-		Meta:        base.meta,
-		ProjectRoot: cfg.Paths.Root,
+		VisibleReader:  scriptEntityReader(st, aclDeclarative, nil),
+		WritePrepStore: st,
+		Tracer:         scriptTracer(tr, st, aclDeclarative, nil),
+		Searcher:       searcher,
+		Meta:           base.meta,
+		ProjectRoot:    cfg.Paths.Root,
 	}
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)

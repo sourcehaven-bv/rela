@@ -107,7 +107,7 @@ func TestDiscover_LuaDepsDerivable(t *testing.T) {
 	defer svc.Close()
 
 	read := svc.LuaReadDeps()
-	if read.Store == nil || read.Tracer == nil || read.Meta == nil {
+	if read.VisibleReader == nil || read.WritePrepStore == nil || read.Tracer == nil || read.Meta == nil {
 		t.Errorf("LuaReadDeps incomplete: %+v", read)
 	}
 	if read.ProjectRoot == "" {

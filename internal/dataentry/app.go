@@ -34,6 +34,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
@@ -298,17 +299,74 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // metamodel. Called per action-script invocation so that metamodel reloads
 // propagate to scripts without requiring app reconstruction. All other
 // fields are immutable for the App's lifetime.
+// Reads are ACL-BOUND to the request principal (DEC-O59WM4): an action
+// script, an export_render override, or an MCP-invoked script sees exactly
+// the caller's view — hidden entities absent, hidden properties redacted.
+// Identity resolves per call from the ctx, so one bundle serves every
+// request. WritePrepStore stays RAW so update_entity's read-before-write
+// cannot erase hidden properties (see lua.ReadDeps.WritePrepStore).
 func (a *App) luaWriteDeps() lua.WriteDeps {
+	redactor := affRedactor{aff: func() affordanceService { return a.affordances }}
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			Store:       a.store,
-			Tracer:      a.tracer,
-			Searcher:    a.searcher,
-			Meta:        a.Meta(),
-			ProjectRoot: a.paths.Root,
+			VisibleReader:  a.scriptReader(redactor),
+			WritePrepStore: a.store,
+			Tracer:         a.scriptTracer(redactor),
+			Searcher:       a.searcher,
+			Meta:           a.Meta(),
+			ProjectRoot:    a.paths.Root,
 		},
 		EntityManager: a.entityManager,
 	}
+}
+
+// scriptReader returns the ACL-bound read-out handle for script runtimes,
+// or the raw store when no Declarative policy is configured (the NopACL
+// path — byte-identical to pre-ACL behavior). A construction fault
+// degrades to the raw store with a warning rather than breaking every
+// script; a genuine DENY is still a deny.
+func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
+	d, ok := a.acl.(*acl.Declarative)
+	if !ok || d == nil {
+		return a.store
+	}
+	gate, err := visibility.NewDeclarativeGate(d)
+	if err != nil {
+		slog.Warn("dataentry: ACL gate unavailable; script reads stay unrestricted", "err", err)
+		return a.store
+	}
+	reader, err := visibility.NewPolicyReader(gate, redactor, a.store)
+	if err != nil {
+		slog.Warn("dataentry: policy reader unavailable; script reads stay unrestricted", "err", err)
+		return a.store
+	}
+	sr, err := visibility.NewScriptReader(reader, a.store)
+	if err != nil {
+		slog.Warn("dataentry: script reader unavailable; script reads stay unrestricted", "err", err)
+		return a.store
+	}
+	return sr
+}
+
+// scriptTracer wraps the tracer in the visibility decorator when a
+// Declarative policy is configured. Trace bindings are unchanged either
+// way — pruning happens inside the decorator.
+func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
+	d, ok := a.acl.(*acl.Declarative)
+	if !ok || d == nil {
+		return a.tracer
+	}
+	gate, err := visibility.NewDeclarativeGate(d)
+	if err != nil {
+		slog.Warn("dataentry: ACL gate unavailable; traversal stays unrestricted", "err", err)
+		return a.tracer
+	}
+	vt, err := visibility.NewVisibleTracer(a.tracer, gate, redactor, a.store)
+	if err != nil {
+		slog.Warn("dataentry: visible tracer unavailable; traversal stays unrestricted", "err", err)
+		return a.tracer
+	}
+	return vt
 }
 
 // SetSecurityConfig configures the HTTP security middlewares applied by
@@ -438,12 +496,23 @@ func NewApp(
 	kv := state.NewFSKV(kvRoot)
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
+	// VALIDATOR: unrestricted reads, deliberately (DEC-O59WM4).
+	//
+	// The entity being validated does NOT come through this bundle — the
+	// validator loads it itself and passes it in as the `entity` global, so
+	// redacting here would not protect it anyway. What this bundle serves
+	// is a rule body's incidental cross-entity lookups, and redacting THOSE
+	// manufactures false violations: a rule asserting "every ticket links
+	// to a project" would fire on tickets whose project the current
+	// principal cannot see. Same reasoning the validator already applies to
+	// locked/unreadable entities, which it skips rather than mis-validates.
 	readDeps := lua.ReadDeps{
-		Store:       st,
-		Tracer:      trc,
-		Searcher:    searcher,
-		Meta:        meta,
-		ProjectRoot: paths.Root,
+		VisibleReader:  st,
+		WritePrepStore: st,
+		Tracer:         trc,
+		Searcher:       searcher,
+		Meta:           meta,
+		ProjectRoot:    paths.Root,
 	}
 	val := validator.New(st, meta, readDeps)
 
