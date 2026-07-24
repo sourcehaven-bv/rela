@@ -14,9 +14,28 @@ import (
 // but still ships and still works; there is no supported replacement for
 // confining a headless child process — App Sandbox needs code-signed
 // entitlements. Treat macOS as a best-effort/development tier: it genuinely
-// blocks egress and writes (verified by TestSandboxDarwinBlocksEgress), but the
-// SBPL profile language is undocumented and unversioned, so Linux is the tier to
-// rely on in production.
+// blocks egress and writes, but the SBPL profile language is undocumented and
+// unversioned, so Linux is the tier to rely on in production.
+//
+// # KNOWN LIMITATION: reads are not restricted on macOS
+//
+// Linux confines READS to an allowlist (see readOnlyPaths), which is what stops
+// a converter being coerced into disclosing a file. A markdown body carrying a
+// raw LaTeX block — “```{=latex} \input{/etc/passwd} ```” — makes the TeX engine
+// embed that file's contents into the exported PDF. Verified: a canary file was
+// read and appeared in the output. `pandoc --sandbox` does NOT prevent it (its
+// manual exempts PDF production).
+//
+// Restricting reads here was attempted and abandoned. `(deny file-read*)` aborts
+// the process before main (dyld cannot map the shared cache), and the narrower
+// `(deny file-read-data)` with an allowlist produced inconsistent results across
+// runs of the same profile — SBPL is undocumented, and it rejects the `(with
+// report)` modifier that would say what was actually denied. Shipping a profile
+// whose behavior could not be explained would be worse than shipping none.
+//
+// Consequence: on macOS a malicious entity body can exfiltrate server-readable
+// files into an exported document. Do not run untrusted content through export
+// on a macOS host that holds secrets; use the Linux tier for that.
 func newPlatformSandbox() Sandbox { return darwinSandbox{} }
 
 type darwinSandbox struct{}
@@ -72,6 +91,7 @@ func (d darwinSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 	if !spec.Network {
 		b.WriteString("(deny network*)\n")
 	}
+
 	b.WriteString("(deny file-write*)\n") // (2) broad deny first…
 	fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", sbplString(writable))
 	// Converters legitimately write to the standard sinks; denying these breaks
@@ -79,8 +99,16 @@ func (d darwinSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 	b.WriteString(`(allow file-write-data (literal "/dev/null") ` +
 		`(literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper"))` + "\n")
 
-	wrapped := make([]string, 0, len(argv)+3)
-	wrapped = append(wrapped, "sandbox-exec", "-p", b.String())
+	// NOTE: reads are deliberately NOT restricted here. See the KNOWN LIMITATION
+	// on darwinSandbox — read confinement is a Linux-only guarantee.
+
+	wrapped := make([]string, 0, len(argv)+5)
+	wrapped = append(wrapped, "sandbox-exec", "-p", b.String()) //nolint:gocritic // each append documents a distinct role
+	// Keep the command's scratch files inside the sandbox: tools like pandoc
+	// create working directories in $TMPDIR, which would otherwise be the system
+	// temp dir and denied by the write rules above. Pointing TMPDIR at the run's
+	// own directory is better than widening the profile to all of /tmp.
+	wrapped = append(wrapped, "/usr/bin/env", "TMPDIR="+writable)
 	wrapped = append(wrapped, argv...)
 	return wrapped, nil
 }

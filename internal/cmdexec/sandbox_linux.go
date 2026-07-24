@@ -20,6 +20,37 @@ type linuxSandbox struct{}
 
 func (linuxSandbox) Name() string { return "bubblewrap" }
 
+// readOnlyPaths is what a document converter is allowed to READ: its own
+// binaries, shared libraries, and font/TeX data. Everything else — the project
+// directory, /root, /home, .rela secrets, /etc/passwd — simply is not present
+// inside the mount namespace.
+//
+// No TLS trust store: --unshare-all leaves the command with no network, so CA
+// certificates would be read surface bought for nothing.
+//
+// Deliberately excludes /etc wholesale, keeping only the few subpaths converters
+// genuinely consult.
+var readOnlyPaths = []string{
+	"/usr",          // binaries, libraries, fonts, TeX trees
+	"/bin", "/sbin", // usr-merge symlink targets on older layouts
+	"/lib", "/lib64", "/lib32",
+	"/etc/fonts",        // fontconfig
+	"/etc/alternatives", // Debian binary indirection
+	"/var/lib/texmf",    // TeX Live generated config
+	"/var/lib/fontconfig",
+}
+
+// Deliberately NOT in the list:
+//
+//   - /opt — unmanaged, arbitrary-vendor territory. Whatever an admin unpacked
+//     there (license files, credentials, application data) would become readable
+//     by a converter, for the speculative benefit of a tool that might live
+//     there. An operator who really does install a converter under /opt should
+//     extend this list knowingly rather than get it by default.
+//   - /etc (wholesale) — passwd, shadow, and rela's own config live there.
+//   - CA certificates — there is no network inside the sandbox, so a trust store
+//     is read surface bought for nothing.
+
 // usernsFailure matches the stderr signatures of a host where bwrap exists but
 // unprivileged user namespaces are unavailable — the common cases being
 // kernel.unprivileged_userns_clone=0 and the Ubuntu 23.10+ AppArmor restriction
@@ -69,13 +100,30 @@ func (l linuxSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 		"--unshare-all",     // includes --unshare-net → no egress
 		"--die-with-parent", // composes with the caller's context timeout
 		"--new-session",     // no controlling tty → blocks TIOCSTI injection
-		"--ro-bind", "/", "/",
+	}
+	// READ allowlist. Binding "/" read-only would still expose every readable
+	// file on the host, and a converter can be made to read one: a markdown body
+	// carrying a raw LaTeX block (\input{/etc/passwd}) makes the TeX engine
+	// embed that file's contents INTO the exported document — verified. Reads
+	// are therefore restricted to what a converter genuinely needs, so a path
+	// outside the list does not merely fail permission-wise, it does not exist.
+	//
+	// -try variants: these paths differ across distros (no /lib64 on some, no
+	// /etc/ssl in a minimal image); a missing one must not break the sandbox.
+	for _, p := range readOnlyPaths {
+		wrapped = append(wrapped, "--ro-bind-try", p, p)
+	}
+	wrapped = append(wrapped,
 		"--proc", "/proc",
 		"--dev", "/dev",
+		// NOTE: --tmpfs /tmp must come BEFORE the writable bind below. The temp
+		// dir usually lives under /tmp, and bwrap applies operations in argv
+		// order — mounting the tmpfs afterwards would hide it. Order is
+		// load-bearing; TestSandboxWritableDirUnderTmp pins it.
 		"--tmpfs", "/tmp",
 		"--bind", spec.WritableDir, spec.WritableDir,
 		"--chdir", spec.WritableDir,
-	}
+	)
 	if spec.Network {
 		// Explicit opt-in; --share-net re-joins the host network namespace.
 		wrapped = append(wrapped, "--share-net")

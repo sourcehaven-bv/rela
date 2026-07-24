@@ -109,11 +109,11 @@ func WithSandboxDisabled() Option {
 // New builds a runner. timeout bounds each command; maxBytes bounds output.
 // Both must be positive.
 //
-// The sandbox is probed once here. When it is unavailable and required (the
-// default), New still succeeds — the failure surfaces on Run, and via
-// [Runner.SandboxError] so the composition root can warn at startup — because a
-// missing sandbox should not prevent a server from booting and serving
-// everything that does not shell out.
+// The sandbox is probed once here. When it is unavailable, New still SUCCEEDS —
+// a missing sandbox must not stop a server from booting and serving everything
+// that does not shell out. The failure surfaces two ways: [Runner.Describe] for
+// the startup log, and an error from every [Runner.Run], which is what actually
+// blocks execution.
 func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error) {
 	if timeout <= 0 {
 		return nil, errors.New("cmdexec: timeout must be positive")
@@ -285,16 +285,28 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	ec.Stdout = &cappedWriter{w: &stdout, remaining: r.maxBytes + 1}
 	ec.Stderr = &stderr
 
-	// Put the child in its own process group so the timeout can take down the
-	// WHOLE tree. exec.CommandContext signals only the direct child, which a
-	// detached grandchild (pandoc → PDF engine) outlives.
+	// Put the child in its own process group so a timeout can take down the WHOLE
+	// tree: exec's default kill signals only the direct child, which a detached
+	// grandchild (pandoc → PDF engine) outlives.
 	applyLimits(ec, r.limits)
+
+	// Tear the group down via Cmd.Cancel rather than a hand-rolled watchdog. The
+	// runtime calls Cancel only between Start and Wait and never after Wait has
+	// reaped, which is what makes this safe: signaling a raw pgid after the
+	// leader is reaped could hit an UNRELATED group once the kernel recycles the
+	// pid. WaitDelay then guarantees Wait returns even if a descendant holds the
+	// output pipes open.
+	ec.Cancel = func() error {
+		killProcessGroup(ec)
+		return os.ErrProcessDone // suppress the redundant single-process kill
+	}
+	ec.WaitDelay = waitDelay
 
 	if startErr := ec.Start(); startErr != nil {
 		return nil, fmt.Errorf("cmdexec: start %q: %w", args[0], startErr)
 	}
 	// Resource ceilings, applied as soon as the child has a pid. Failing to set
-	// them is fatal: an unbounded converter can exhaust the host, so we kill the
+	// them is fatal: an unbounded converter can exhaust the host, so kill the
 	// process rather than let it run without limits.
 	if limErr := applyRlimits(ec.Process.Pid, r.limits); limErr != nil {
 		killProcessGroup(ec)
@@ -302,23 +314,8 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 		return nil, fmt.Errorf("cmdexec: apply resource limits: %w", limErr)
 	}
 
-	// Watchdog: kill the whole process GROUP when the deadline passes. This must
-	// run concurrently with Wait — Setpgid puts the child in its own group, so
-	// exec.CommandContext's own kill reaches only the direct child and Wait would
-	// otherwise block until a detached grandchild finished on its own.
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			killProcessGroup(ec)
-		case <-done:
-		}
-	}()
-
 	runErr := ec.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
-		killProcessGroup(ec) // reap descendants that outlived the group signal
 		return nil, fmt.Errorf("cmdexec: command timed out after %s", r.timeout)
 	}
 	if runErr != nil {

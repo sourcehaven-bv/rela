@@ -115,8 +115,11 @@ running on your server. That is a real attack surface, not a theoretical one:
   containing `![x](http://169.254.169.254/…)` makes the *server* issue that
   request, from its own network position — cloud metadata, internal services.
   Pandoc's own manual documents this for HTML input.
-- **Local file disclosure.** The same mechanism can pull local files into the
-  output document.
+- **Local file disclosure (verified).** A body carrying a raw LaTeX block —
+  ` ```{=latex} \input{/etc/passwd} ``` ` — makes the TeX engine read that file
+  and **embed its contents into the exported PDF**, which then lands with
+  whoever downloaded it. No network required. `pandoc --sandbox` does not stop
+  it; its manual exempts PDF production.
 - **Parser RCE.** Converters are large C/C++/TeX codebases with CVE history.
   `wkhtmltopdf` is **unmaintained** and has a known unpatched file-read whose
   `--disable-local-file-access` mitigation is bypassable — avoid it.
@@ -135,7 +138,8 @@ Commands run **confined**, and this is enforced in one shared place
 | Control | Mechanism |
 |---|---|
 | No network | Linux: bubblewrap (`--unshare-all`). macOS: `sandbox-exec` (`deny network*`) |
-| Filesystem | read-only system; only the run's temp dir writable |
+| Writes | only the run's own temp dir |
+| Reads (**Linux only**) | an allowlist of binaries/libraries/fonts — the project directory, `/etc`, `/home` and `/root` are simply not present |
 | Memory / processes / file size / CPU | `RLIMIT_AS` / `NPROC` / `FSIZE` / `CPU` (Linux) |
 | No orphaned helpers | the whole process group is killed at the deadline |
 | Concurrency | a bounded pool caps simultaneous conversions |
@@ -151,8 +155,15 @@ explicitly accept unconfined execution. The startup log states the posture.
 > **Converter flags are not a substitute.** `pandoc --sandbox` restricts pandoc's
 > own file access but explicitly **does not cover PDF production** — the PDF
 > engine is a separate process outside it. Verified: with `--sandbox`, a
-> markdown-to-PDF run still performed the outbound fetch. Use it as
-> defence-in-depth, not as the control.
+> markdown-to-PDF run still performed the outbound fetch *and* still read a local
+> file via `\input`. Use it as defence-in-depth, not as the control.
+
+**macOS does not confine reads.** Write and network restrictions work there, but
+the read allowlist is Linux-only: `sandbox-exec`'s profile language is
+undocumented and deprecated, and a read-restricting profile could not be made to
+behave consistently. On macOS a crafted document can therefore still disclose
+server-readable files into an export. Treat macOS as a development tier and run
+untrusted content through the Linux tier.
 
 ### Other notes
 

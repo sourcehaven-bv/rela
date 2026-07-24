@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -118,6 +119,78 @@ func TestSandboxBlocksWriteOutsideWritableDir(t *testing.T) {
 	}
 	if _, statErr := os.Stat(outside); statErr == nil {
 		t.Errorf("file was created outside the sandbox at %s", outside)
+	}
+}
+
+// TestSandboxBlocksReadOutsideAllowlist pins the file-disclosure control. It is
+// the counterpart to the egress test: a converter can be coerced into READING a
+// file and embedding it in the output — a markdown body with a raw LaTeX block
+// (\input{/etc/passwd}) makes the TeX engine do exactly that, and pandoc's own
+// --sandbox does not prevent it.
+//
+// Linux confines reads to an allowlist so the file is not even present. macOS
+// does NOT (see the KNOWN LIMITATION on darwinSandbox), so this skips there
+// rather than asserting a guarantee that platform does not provide.
+func TestSandboxBlocksReadOutsideAllowlist(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("read confinement is a Linux-only guarantee; see darwinSandbox docs")
+	}
+	sb := requireWorkingSandbox(t)
+
+	// A secret outside the writable dir and outside every allowlisted path.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	secret := filepath.Join(home, ".rela-sandbox-read-canary")
+	const canary = "SANDBOX-READ-CANARY"
+	if writeErr := os.WriteFile(secret, []byte(canary), 0o600); writeErr != nil {
+		t.Skipf("cannot create canary: %v", writeErr)
+	}
+	defer os.Remove(secret)
+
+	// Control: unsandboxed the read succeeds, so a "blocked" result is meaningful.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ctrl, ctrlErr := exec.CommandContext(ctx, "cat", secret).CombinedOutput()
+	if ctrlErr != nil || !strings.Contains(string(ctrl), canary) {
+		t.Fatalf("control read failed; test would be vacuous: err=%v out=%q", ctrlErr, ctrl)
+	}
+
+	out, _ := runWrapped(t, sb, t.TempDir(), "cat", secret)
+	if strings.Contains(out, canary) {
+		t.Errorf("SANDBOX DID NOT BLOCK READ — a crafted document could exfiltrate "+
+			"server-readable files into an export. output=%q", out)
+	}
+}
+
+// TestSandboxWritableDirUnderTmp pins an argv-ordering dependency in the Linux
+// backend: --tmpfs /tmp must precede the --bind of the writable dir. The run's
+// temp dir usually lives under /tmp, and bwrap applies operations in order — a
+// tmpfs mounted afterwards would hide it and every {out}-using transform would
+// silently produce nothing. t.TempDir() does not necessarily sit under /tmp, so
+// this exercises the case explicitly.
+func TestSandboxWritableDirUnderTmp(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap-specific ordering")
+	}
+	sb := requireWorkingSandbox(t)
+
+	// t.TempDir() is NOT necessarily under /tmp, which is the whole point here.
+	dir, err := os.MkdirTemp("/tmp", "rela-sandbox-order-") //nolint:usetesting // must be under /tmp
+	if err != nil {
+		t.Skipf("cannot create a dir under /tmp: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	target := filepath.Join(dir, "out.txt")
+	out, runErr := runWrapped(t, sb, dir, "sh", "-c", "echo written > "+target+" && cat "+target)
+	if runErr != nil {
+		t.Fatalf("writing inside a /tmp-based writable dir failed (--tmpfs likely "+
+			"shadows the bind — check argv order): err=%v out=%q", runErr, out)
+	}
+	if !strings.Contains(out, "written") {
+		t.Errorf("expected the write to land and read back; got %q", out)
 	}
 }
 

@@ -2,6 +2,7 @@ package cmdexec
 
 import (
 	"os/exec"
+	"time"
 )
 
 // Limits bound what a single command may CONSUME, complementing [Sandbox],
@@ -57,7 +58,18 @@ func applyLimits(cmd *exec.Cmd, l Limits) { platformApplyLimits(cmd, l) }
 
 // killProcessGroup terminates the command's entire process group, so a converter
 // that spawned helpers (pandoc → a PDF engine) cannot leave orphans running
-// after the timeout. exec.CommandContext only signals the direct child, which a
+// after the timeout. exec's default kill only signals the direct child, which a
 // detached grandchild survives — verified: without this, a grandchild outlives
 // the deadline.
+//
+// MUST only be called while the child is unreaped — i.e. from [exec.Cmd.Cancel],
+// which the runtime invokes strictly between Start and Wait, or on an error path
+// that owns the process. After Wait reaps the leader, the kernel may recycle its
+// pid, and a group signal would then hit an UNRELATED process group.
 func killProcessGroup(cmd *exec.Cmd) { platformKillProcessGroup(cmd) }
+
+// waitDelay bounds how long Wait tolerates a child that ignored the shutdown
+// signal or left its output pipes open (e.g. a grandchild still holding stdout).
+// After it elapses the runtime force-kills and closes the pipes, so Wait cannot
+// hang on a wedged converter.
+const waitDelay = 2 * time.Second
