@@ -73,10 +73,11 @@ func newMockWorkspace() *mockWorkspace {
 // services returns lua.ReadDeps for the validation runtime.
 func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	return lua.ReadDeps{
-		Store:       m.store,
-		Tracer:      tracer.New(m.store),
-		Meta:        m.meta,
-		ProjectRoot: projectRoot,
+		VisibleReader:  m.store,
+		WritePrepStore: m.store,
+		Tracer:         tracer.New(m.store),
+		Meta:           m.meta,
+		ProjectRoot:    projectRoot,
 	}
 }
 

@@ -3,7 +3,6 @@
 package lua
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -2347,8 +2346,8 @@ func (r *Runtime) deepCopyAST(astTable *lua.LTable) *lua.LTable {
 // for use with resolve_refs. Iterates the store per entity type because
 // store.ListEntities requires a non-empty Type.
 func (r *Runtime) luaMdEntityRefs(ls *lua.LState) int {
-	if r.deps.Meta == nil || r.deps.Store == nil {
-		ls.RaiseError("rela.md.entity_refs: requires a runtime with metamodel and store")
+	if r.deps.Meta == nil {
+		ls.RaiseError("rela.md.entity_refs: requires a runtime with a metamodel")
 		return 0
 	}
 	opts, err := r.parseEntityRefsOpts(ls)
@@ -2361,10 +2360,18 @@ func (r *Runtime) luaMdEntityRefs(ls *lua.LState) int {
 		typeNames = r.deps.Meta.EntityTypes()
 	}
 
+	rd, ok := r.reader(ls, "rela.md.entity_refs")
+	if !ok {
+		return 0
+	}
 	out := r.L.NewTable()
-	ctx := context.Background()
+	// callerCtx, NOT context.Background(): the reader resolves the acting
+	// identity from ctx, so a background ctx has no principal and the gate
+	// fails closed on EVERY type — the binding would silently return an
+	// empty map for every user (RR-ZA452J).
+	ctx := r.callerCtx()
 	for _, t := range typeNames {
-		for e, listErr := range r.deps.Store.ListEntities(ctx, store.EntityQuery{Type: t}) {
+		for e, listErr := range rd.ListEntities(ctx, store.EntityQuery{Type: t}) {
 			if listErr != nil {
 				ls.RaiseError(
 					"rela.md.entity_refs: list entities of type %q: %s", t, listErr.Error())

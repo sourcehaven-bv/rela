@@ -42,7 +42,12 @@ type WorkspaceProvider interface {
 	Paths() *project.Context
 	Config() config.Loader
 	State() state.KV
-	LuaWriteDeps() lua.WriteDeps
+
+	// ScheduledLuaWriteDeps returns the per-task capability bundle. Its
+	// reads are ACL-bound to whatever principal is on the ctx at call time
+	// (DEC-O59WM4), which is the task's — see stampTaskAuditContext. The
+	// bundle is therefore identity-agnostic and safe to rebuild per task.
+	ScheduledLuaWriteDeps() lua.WriteDeps
 }
 
 // StartBackground starts the scheduler in a background goroutine if
@@ -80,16 +85,26 @@ func StartBackground(
 	}()
 }
 
-// stampTaskAuditContext stamps the scheduler-specific Principal and
-// the per-task triggered_by label on a child context so audit records
-// produced by the Lua script (directly via rela.create_entity, or
-// indirectly via automation cascades) carry the right attribution.
+// stampTaskAuditContext stamps the task's Principal and the per-task
+// triggered_by label on a child context so audit records produced by the
+// Lua script (directly via rela.create_entity, or indirectly via automation
+// cascades) carry the right attribution.
+//
+// The stamped principal is ALSO what the script's reads resolve against
+// (DEC-O59WM4) — the scheduler's identity is the one thing that decides
+// what a job can see, via acl.yaml. runAs overrides the default system
+// user, giving a job its own identity for both audit and read scope; empty
+// keeps today's shared scheduler identity.
 //
 // Extracted so the stamping logic can be unit-tested without booting
 // the script engine.
-func stampTaskAuditContext(ctx context.Context, taskName string) context.Context {
+func stampTaskAuditContext(ctx context.Context, taskName, runAs string) context.Context {
+	user := runAs
+	if user == "" {
+		user = principal.SystemUser()
+	}
 	out := principal.With(ctx, principal.Principal{
-		User: principal.SystemUser(),
+		User: user,
 		Tool: principal.ToolScheduler,
 	})
 	return audit.WithTriggeredBy(out, "schedule:"+taskName)
@@ -200,8 +215,10 @@ func (s *Scheduler) doExecuteTask(ctx context.Context, task TaskConfig) {
 	s.logger.Info("task started", "name", task.Name, "script", task.Script)
 	start := s.now()
 
-	taskCtx := stampTaskAuditContext(ctx, task.Name)
-	err := s.engine.ExecuteFile(taskCtx, task.Script, s.ws.LuaWriteDeps(), nil, nil)
+	// The principal goes on the CTX (not into the deps bundle) because the
+	// read seam resolves identity per call — see ScheduledLuaWriteDeps.
+	taskCtx := stampTaskAuditContext(ctx, task.Name, task.RunAs)
+	err := s.engine.ExecuteFile(taskCtx, task.Script, s.ws.ScheduledLuaWriteDeps(), nil, nil)
 	elapsed := s.now().Sub(start)
 
 	if err != nil {

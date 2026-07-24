@@ -152,10 +152,14 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// we layer the doc.* module (emit + resolvers + raw-store seed) on top. The
 	// seed writes go to the memstore directly, NOT through an entitymanager, so
 	// no Mutator/WriteDeps machinery is needed.
+	// Unrestricted reads: this runtime reads a throwaway memstore the doc
+	// build just seeded itself, and runs at the operator trust boundary
+	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		Store:  st,
-		Tracer: dr.tracer,
-		Meta:   opts.Meta,
+		VisibleReader:  st,
+		WritePrepStore: st,
+		Tracer:         dr.tracer,
+		Meta:           opts.Meta,
 	}
 	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(buildTimeout))
 	defer rt.Close()

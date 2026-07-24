@@ -428,6 +428,7 @@ deps:
       - templating
       - tracer
       - validator
+      - visibility
   appbuildtest:
     mayDependOn:
       - acl
@@ -512,15 +513,18 @@ deps:
       - statemachine
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
   # the ungated pure readers. tracer is needed for the decorator's
-  # interface/result types; no cycle (tracer depends only on store).
-  # Deliberately NO store: the package takes store.Store structurally
-  # through its one-method EntityGetter (RR-RT5YV8).
+  # interface/result types; store for the script reader's query types
+  # (store.EntityQuery / store.RelationQuery appear in the iterator
+  # signatures script runtimes consume — RR-RT5YV8 removed this allowance
+  # when only EntityGetter was needed; TKT-ZF2DTV reinstates it with a
+  # concrete use). No cycle: store depends only on metamodel.
   visibility:
     mayDependOn:
       - acl
       - affordances
       - entity
       - principal
+      - store
       - tracer
   audit:
     mayDependOn:

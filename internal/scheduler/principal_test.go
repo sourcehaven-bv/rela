@@ -14,7 +14,7 @@ import (
 func TestStampTaskAuditContext(t *testing.T) {
 	t.Setenv("USER", "alice")
 
-	stamped := stampTaskAuditContext(context.Background(), "nightly-rollup")
+	stamped := stampTaskAuditContext(context.Background(), "nightly-rollup", "")
 
 	p := principal.From(stamped)
 	if p.Tool != principal.ToolScheduler {
@@ -35,7 +35,7 @@ func TestStampTaskAuditContext_PreservesParentValues(t *testing.T) {
 	parent := principal.With(context.Background(),
 		principal.Principal{User: "preexisting", Tool: "cli"})
 
-	stamped := stampTaskAuditContext(parent, "weekly")
+	stamped := stampTaskAuditContext(parent, "weekly", "")
 
 	// Scheduler overrides Principal; the parent's pre-existing
 	// Principal is shadowed by the scheduler stamp. This is the

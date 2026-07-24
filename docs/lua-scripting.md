@@ -1367,6 +1367,40 @@ rela.output({
 
 The Lua runtime is sandboxed for security:
 
+### What a script can read (access control)
+
+When a project has an `acl.yaml`, **read bindings return the acting
+identity's view, not the whole graph**. `rela.get_entity`,
+`rela.list_entities`, `rela.search`, `rela.get_relations`,
+`rela.trace_from`/`trace_to`/`find_path` and `rela.md.entity_refs` all
+resolve against whoever the script is running as:
+
+| Where the script runs | Reads as |
+|---|---|
+| Data-entry action, `export_render`, MCP-invoked | the requesting user |
+| Automation / cascade | the user whose write triggered it |
+| Scheduled task | the task's identity (see `run_as` in [Scheduled Tasks](scheduled-tasks.md)) |
+| CLI, docs build | unrestricted (operator trust boundary) |
+
+Consequences worth knowing when writing scripts:
+
+- An entity the identity cannot read is simply **absent** — `get_entity`
+  returns `nil`, list/search omit it. That is indistinguishable from "does
+  not exist", by design.
+- `get_relations` is **peer-gated**: a relation appears only when *both*
+  endpoints are visible. An empty result means "none you may see", not "no
+  such edges".
+- Traversals **prune** hidden nodes together with everything beneath them,
+  and withhold a path that would run through one.
+- `rela.update_entity` reads the *unredacted* entity before writing, so
+  updating one property never erases others the caller cannot see.
+- Without an `acl.yaml`, everything behaves exactly as it always has.
+
+A script that genuinely needs to read beyond its caller's view has no
+implicit escape hatch — that is deliberate. The sanctioned mechanism is the
+write-side `rela.bypass_acl` closure, whose read counterpart is tracked
+separately.
+
 ### Available Libraries
 
 - `string` - String manipulation

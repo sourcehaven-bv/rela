@@ -292,12 +292,15 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	if paths != nil {
 		root = paths.Root
 	}
+	// Test fixture: unrestricted reads (no ACL wiring here). Production
+	// identity-bearing paths use Services.luaReadDepsFor instead.
 	return lua.ReadDeps{
-		Store:       st,
-		Tracer:      tr,
-		Searcher:    searcher,
-		Meta:        meta,
-		ProjectRoot: root,
+		VisibleReader:  st,
+		WritePrepStore: st,
+		Tracer:         tr,
+		Searcher:       searcher,
+		Meta:           meta,
+		ProjectRoot:    root,
 	}
 }
 

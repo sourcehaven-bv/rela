@@ -39,7 +39,7 @@ func (m *mockWorkspace) Config() config.Loader { return &mockConfig{m: m} }
 
 func (m *mockWorkspace) State() state.KV { return &mockState{m: m} }
 
-func (m *mockWorkspace) LuaWriteDeps() lua.WriteDeps {
+func (m *mockWorkspace) ScheduledLuaWriteDeps() lua.WriteDeps {
 	m.mu.Lock()
 	m.luaDepsCalls++
 	provider := m.luaDepsProvider

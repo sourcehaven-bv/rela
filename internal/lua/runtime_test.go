@@ -111,11 +111,12 @@ func (m *mockWorkspace) seedRelation(r *entity.Relation) {
 func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			Store:       m.store,
-			Tracer:      tracer.New(m.store),
-			Searcher:    &mockSearcher{ws: m},
-			Meta:        m.meta,
-			ProjectRoot: projectRoot,
+			VisibleReader:  m.store,
+			WritePrepStore: m.store,
+			Tracer:         tracer.New(m.store),
+			Searcher:       &mockSearcher{ws: m},
+			Meta:           m.meta,
+			ProjectRoot:    projectRoot,
 		},
 		EntityManager: &mockManager{ws: m},
 	}
@@ -2445,11 +2446,12 @@ func (s *ctxSpySearcher) Search(ctx context.Context, q search.Query) iter.Seq2[s
 func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			Store:       &ctxSpyStore{Store: realDeps.Store, rec: rec},
-			Tracer:      &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
-			Searcher:    &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
-			Meta:        realDeps.Meta,
-			ProjectRoot: realDeps.ProjectRoot,
+			VisibleReader:  &ctxSpyStore{Store: realDeps.WritePrepStore, rec: rec},
+			WritePrepStore: realDeps.WritePrepStore,
+			Tracer:         &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
+			Searcher:       &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
+			Meta:           realDeps.Meta,
+			ProjectRoot:    realDeps.ProjectRoot,
 		},
 		EntityManager: realDeps.EntityManager,
 	}
