@@ -334,6 +334,7 @@ deps:
       - tracer
       - transform
       - validator
+      - visibility
     canUse:
       - goldmark
       - gogit

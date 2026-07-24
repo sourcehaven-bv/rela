@@ -10,6 +10,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // listExportCap bounds how many rows a single list export renders. Past this the
@@ -49,6 +50,13 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		writeListPipelineError(w, r, err)
 		return
 	}
+	// Field-redact every row through the visibility seam before any cell is
+	// rendered (the #1188 IB-review finding): a hidden property renders as
+	// an empty cell and a hidden display property falls back to the ID.
+	// The row-gate inside Filter is idempotent over the already-scoped set
+	// (one extra batched probe for the type — structural consistency over
+	// micro-optimization).
+	entities = h.visReader.Filter(ctx, entities)
 	total := len(entities)
 	truncated := false
 	if total > listExportCap {
@@ -265,7 +273,9 @@ func (h *exportHandler) memoNeighborTitle(
 		}
 		t := ""
 		if node, ok := h.reader.getEntity(ctx, id); ok {
-			t = transform.DisplayTitle(meta, node)
+			// Redact BEFORE deriving the title (RR-5N4K35 class): a visible
+			// neighbor with a hidden display property renders as its ID.
+			t = transform.DisplayTitle(meta, visibility.Redact(ctx, h.redactor, node))
 		}
 		titleByID[id] = t
 		return t, t != ""

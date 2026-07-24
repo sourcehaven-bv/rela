@@ -165,6 +165,24 @@ behave consistently. On macOS a crafted document can therefore still disclose
 server-readable files into an export. Treat macOS as a development tier and run
 untrusted content through the Linux tier.
 
+### Access control
+
+- **Entity-level ACL**: export sits downstream of the same read gate as the
+  entity view — an entity the caller may not read is an indistinguishable 404,
+  and relation groups / relation columns only ever show visible neighbors.
+- **Field-level redaction**: exports are field-redacted like every other
+  read-out surface. The markdown handed to a converter is built from a
+  redacted copy of the entity (`internal/visibility`, DEC-ZBI39P): a property
+  hidden from the caller by a `visible:` policy appears in no exported cell,
+  heading, or filename — a hidden display property falls back to the entity
+  ID, including for visible neighbors whose titles are hidden.
+- **`export_render:` override scripts** now run under the **caller's
+  principal** (`rela.principal` reflects the requesting user, and the render
+  is attributable/cancellable). One residual until the Lua read seam lands
+  (TKT-ZF2DTV): the script's *own* `rela.get_entity`/`rela.search` reads are
+  not yet field-redacted — treat override scripts as operator-trusted content
+  until then, exactly like `documents:` scripts.
+
 ### Other notes
 
 - Transform commands come from project config (`metamodel.yaml`) — the same trust

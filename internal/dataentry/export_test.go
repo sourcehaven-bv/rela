@@ -10,7 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -30,8 +33,13 @@ func newExportApp(t *testing.T) *App {
 				Properties: map[string]metamodel.PropertyDef{
 					"title":  {Type: "string", Required: true},
 					"status": {Type: "string"},
+					// cost exists for the field-visibility tests: a DECLARED
+					// property (the visible: allowlist universe is
+					// metamodel-declared fields) that the entity renderer
+					// actually prints (unlike status, which it skips).
+					"cost": {Type: "string"},
 				},
-				PropertyOrder: []string{"title", "status"},
+				PropertyOrder: []string{"title", "status", "cost"},
 			},
 			"feature": {
 				Label:         "Feature",
@@ -465,4 +473,197 @@ func firstLines(s string, n int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// withFieldPolicy wires the FULL production field-visibility chain — acl.yaml →
+// acl.Declarative → affordances.New → policyResolver — onto app (the same
+// wiring acl_search_fields_test uses) and returns alice's gated ctx. The
+// export handler picks the resolver up through the affordanceService closure
+// chain, so no handler rebuild is needed.
+func withFieldPolicy(t *testing.T, app *App, aclYAML string) context.Context {
+	t.Helper()
+	var policy acl.Policy
+	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
+		t.Fatalf("unmarshal acl.yaml: %v", err)
+	}
+	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store), app.store)
+	if err != nil {
+		t.Fatalf("acl.NewDeclarative: %v", err)
+	}
+	resolver, err := affordances.New(app.Meta(), storeRelationLookup{st: app.store}, d)
+	if err != nil {
+		t.Fatalf("affordances.New: %v", err)
+	}
+	app.acl = d
+	app.fieldResolver = &policyResolver{inner: resolver}
+	return gateCtxFor(aliceCtx(), t, d)
+}
+
+// TestExport_Entity_HiddenFieldRedacted is the #1188 IB-review finding's
+// regression pin: a property hidden by the caller's `visible:` policy must
+// never reach the exported bytes — the transform receives already-redacted
+// markdown.
+func TestExport_Entity_HiddenFieldRedacted(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "Do the thing", "status": "open", "cost": "9999eur"}})
+
+	// Closed-world allowlist: only title is visible on tickets; cost is hidden.
+	ctx := withFieldPolicy(t, app, `
+roles:
+  viewer:
+    read: [ticket, feature]
+    visible:
+      ticket:
+        - field: title
+assignments:
+  alice: viewer
+`)
+
+	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "# Do the thing") {
+		t.Errorf("granted title missing from export:\n%s", body)
+	}
+	if strings.Contains(body, "9999eur") || strings.Contains(body, "cost") {
+		t.Errorf("hidden field leaked into export bytes:\n%s", body)
+	}
+}
+
+// TestExport_Entity_HiddenTitleFallsBackToID: when the display property itself
+// is hidden, the exported H1 must be the entity ID — the title value is a
+// secondary channel redaction must close (the RR-5N4K35 class).
+func TestExport_Entity_HiddenTitleFallsBackToID(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "Codename Nightfall", "cost": "42"}})
+
+	ctx := withFieldPolicy(t, app, `
+roles:
+  viewer:
+    read: [ticket, feature]
+    visible:
+      ticket:
+        - field: cost
+assignments:
+  alice: viewer
+`)
+
+	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "# TKT-001") {
+		t.Errorf("H1 should fall back to the entity ID:\n%s", body)
+	}
+	if strings.Contains(body, "Codename Nightfall") {
+		t.Errorf("hidden title value leaked into export:\n%s", body)
+	}
+}
+
+// TestExport_Entity_VisibleNeighborHiddenTitle: a relation group must render a
+// VISIBLE neighbor whose title is hidden as its ID, never the title value.
+func TestExport_Entity_VisibleNeighborHiddenTitle(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
+		Properties: map[string]any{"title": "Secret Roadmap Item"}})
+	seedRelation(app, &entity.Relation{From: "TKT-001", Type: "implements", To: "FEAT-001"})
+
+	// Features are READABLE (the row-gate passes) but their entire field set
+	// is hidden (empty allowlist) — the neighbor must appear as its ID.
+	ctx := withFieldPolicy(t, app, `
+roles:
+  viewer:
+    read: [ticket, feature]
+    visible:
+      feature: []
+assignments:
+  alice: viewer
+`)
+
+	rec := exportEntity(ctx, app, "ticket", "TKT-001", "copy")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "- FEAT-001") {
+		t.Errorf("visible neighbor should render as its ID:\n%s", body)
+	}
+	if strings.Contains(body, "Secret Roadmap Item") {
+		t.Errorf("hidden neighbor title leaked into export:\n%s", body)
+	}
+}
+
+// TestExport_List_FieldVisibility covers the list-table half of the finding:
+// hidden property columns render empty cells, a hidden display property makes
+// the title column fall back to the ID, and a visible neighbor with a hidden
+// title renders as its ID in the relation column.
+func TestExport_List_FieldVisibility(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket",
+		Properties: map[string]any{"title": "Visible Row", "status": "sekritstate", "cost": "1"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature",
+		Properties: map[string]any{"title": "Secret Feature Name"}})
+	seedRelation(app, &entity.Relation{From: "TKT-1", Type: "implements", To: "FEAT-1"})
+
+	t.Run("HiddenColumnEmptyAndNeighborID", func(t *testing.T) {
+		// status hidden on tickets; feature titles fully hidden (readable rows).
+		ctx := withFieldPolicy(t, app, `
+roles:
+  viewer:
+    read: [ticket, feature]
+    visible:
+      ticket:
+        - field: title
+      feature: []
+assignments:
+  alice: viewer
+`)
+		rec := exportList(ctx, app)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "sekritstate") {
+			t.Errorf("hidden status value leaked into a list cell:\n%s", body)
+		}
+		if !strings.Contains(body, "Visible Row") {
+			t.Errorf("granted title missing from list export:\n%s", body)
+		}
+		if strings.Contains(body, "Secret Feature Name") {
+			t.Errorf("hidden neighbor title leaked into relation column:\n%s", body)
+		}
+		if !strings.Contains(body, "FEAT-1") {
+			t.Errorf("visible neighbor should render as its ID in the relation column:\n%s", body)
+		}
+	})
+
+	t.Run("HiddenTitleColumnFallsBackToID", func(t *testing.T) {
+		ctx := withFieldPolicy(t, app, `
+roles:
+  viewer:
+    read: [ticket, feature]
+    visible:
+      ticket:
+        - field: status
+assignments:
+  alice: viewer
+`)
+		body := exportList(ctx, app).Body.String()
+		if strings.Contains(body, "Visible Row") {
+			t.Errorf("hidden title value leaked into the title column:\n%s", body)
+		}
+		if !strings.Contains(body, "| TKT-1 |") {
+			t.Errorf("title column should fall back to the entity ID:\n%s", body)
+		}
+	})
 }

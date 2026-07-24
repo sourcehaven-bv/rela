@@ -10,6 +10,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // exportHandler owns the view-export routes (transform list, entity export, list
@@ -22,10 +23,22 @@ type exportHandler struct {
 	meta            func() *metamodel.Metamodel
 	cfg             func() *Config
 	reader          entityReader
-	visibleReader   visibleReader
 	documents       *documentService
 	scopedEntities  func(ctx context.Context, typeName string, query map[string][]string) ([]*entityPkg.Entity, error)
 	findListForType func(entityType string) string
+
+	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P):
+	// entity export reads through Get (which owns the stored-type check,
+	// RR-SRZK6X) and list-export rows through Filter, so a hidden field can
+	// never reach the markdown handed to a transform. redactor is the same
+	// field-verdict source exposed directly, for redacting already-gated
+	// neighbor entities before title derivation (visibility.Redact).
+	visReader visibility.Reader
+	redactor  visibility.FieldRedactor
+
+	// visibleReader remains for the batched neighbor-ID gate
+	// (visibleRelationIDs) shared with the serializer paths.
+	visibleReader visibleReader
 
 	// engine is the SHARED transform engine. Sharing is load-bearing, not an
 	// optimisation: the engine owns the bounded worker pool that caps concurrent
@@ -40,11 +53,21 @@ type exportHandler struct {
 // collaborators it needs. Called from both NewApp and the test app builder so
 // the wiring lives in one place.
 func newExportHandler(app *App) *exportHandler {
+	redactor := affRedactor{aff: func() affordanceService { return app.affordances }}
+	// Constructor error is impossible here: all three collaborators are
+	// non-nil by construction (ctxRowGate/affRedactor are values, store is
+	// validated by NewApp). Guarded anyway per constructors-reject-nil.
+	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store)
+	if err != nil {
+		panic("dataentry: newExportHandler: " + err.Error())
+	}
 	return &exportHandler{
 		meta:           app.Meta,
 		cfg:            func() *Config { return app.State().Cfg },
 		reader:         app.reader,
 		visibleReader:  app.visibleReader,
+		visReader:      visReader,
+		redactor:       redactor,
 		documents:      app.documents,
 		scopedEntities: app.scopedSortedEntities,
 		findListForType: func(entityType string) string {
@@ -115,12 +138,15 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 
 	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
 	// indistinguishable 404, and the render never runs for a hidden entity.
-	entity, found, err := h.visibleReader.getVisible(ctx, typeName, entityID)
+	// visReader.Get also owns the stored-type check (RR-SRZK6X) and returns
+	// a FIELD-REDACTED copy — the renderer below can never see a property
+	// the caller's `visible:` policy hides (the #1188 IB-review finding).
+	entity, found, err := h.visReader.Get(ctx, typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
 	}
-	if !found || entity.Type != typeName {
+	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -280,7 +306,10 @@ func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.E
 		}
 		title := neighborID
 		if node, ok := h.reader.getEntity(ctx, neighborID); ok {
-			title = transform.DisplayTitle(meta, node)
+			// Redact BEFORE deriving the title: a visible neighbor whose
+			// display property is hidden must render as its ID, never the
+			// hidden value (the RR-5N4K35 title-leak class).
+			title = transform.DisplayTitle(meta, visibility.Redact(ctx, h.redactor, node))
 		}
 		byLabel[label] = append(byLabel[label], title)
 	}

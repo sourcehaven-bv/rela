@@ -51,7 +51,7 @@ func isFormRoute(path string) bool {
 // side (per CLAUDE.md) so tests can substitute a fake and the engine
 // stays decoupled from the data-entry package.
 type documentScriptEngine interface {
-	ExecuteDocument(path string, deps lua.WriteDeps, stdout io.Writer,
+	ExecuteDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
 		documentID, entryID string, timeout time.Duration) error
 }
 
@@ -193,7 +193,7 @@ func (s *documentService) RenderMarkdown(
 	ctx context.Context, entryID string, cfg documentRenderConfig,
 ) (string, error) {
 	if cfg.Script != "" {
-		return s.renderScript(entryID, cfg)
+		return s.renderScript(ctx, entryID, cfg)
 	}
 	return s.renderCommand(ctx, entryID, cfg)
 }
@@ -208,7 +208,7 @@ func (s *documentService) doRender(
 	var markdown string
 	var err error
 	if cfg.Script != "" {
-		markdown, err = s.renderScript(entryID, cfg)
+		markdown, err = s.renderScript(ctx, entryID, cfg)
 	} else {
 		markdown, err = s.renderCommand(ctx, entryID, cfg)
 	}
@@ -250,12 +250,14 @@ func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg
 
 // renderScript executes a Lua document script and returns its captured
 // stdout as markdown.
-func (s *documentService) renderScript(entryID string, cfg documentRenderConfig) (string, error) {
+func (s *documentService) renderScript(
+	ctx context.Context, entryID string, cfg documentRenderConfig,
+) (string, error) {
 	if s.scriptEngine == nil || s.luaDeps == nil {
 		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 	var buf bytes.Buffer
-	if err := s.scriptEngine.ExecuteDocument(cfg.Script, s.luaDeps(), &buf,
+	if err := s.scriptEngine.ExecuteDocument(ctx, cfg.Script, s.luaDeps(), &buf,
 		cfg.ConfigID, entryID, cfg.Timeout); err != nil {
 		// On a Lua failure the engine returns *lua.ScriptError; attach
 		// the print() output we captured before it threw, then bubble
