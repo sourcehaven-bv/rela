@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,37 @@ entities:
 	assertError(t, err)
 	if !strings.Contains(err.Error(), "reencode") {
 		t.Errorf("error should mention reencode: %v", err)
+	}
+}
+
+// TestParse_ImageTransformStep_QualityRange rejects an out-of-range quality.
+func TestParse_ImageTransformStep_QualityRange(t *testing.T) {
+	for _, q := range []int{-3, 0, 850} {
+		yaml := `version: "1.0"
+entities:
+  report:
+    label: Report
+    id_prefix: "REP-"
+    properties:
+      title:
+        type: string
+      pic:
+        type: file
+        transform:
+          - image: { reencode: jpeg, quality: ` + strconv.Itoa(q) + ` }
+`
+		_, err := Parse([]byte(yaml))
+		if q == 0 {
+			// 0 means "use default" — valid.
+			if err != nil {
+				t.Errorf("quality 0 should be valid (default): %v", err)
+			}
+			continue
+		}
+		assertError(t, err)
+		if !strings.Contains(err.Error(), "quality") {
+			t.Errorf("quality %d should be rejected with a quality message: %v", q, err)
+		}
 	}
 }
 

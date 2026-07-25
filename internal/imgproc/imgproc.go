@@ -30,7 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/gif"
+	_ "image/gif" // register the GIF decoder for image.Decode (frames counted in gif.go)
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -105,15 +105,29 @@ const (
 	bytesPerPixel = 4
 )
 
+// maxConcurrentCeiling caps the decode concurrency regardless of core count.
+// Without it, memory scales with GOMAXPROCS: on a 64-core host the worst-case
+// transient budget would be 64 × pixel-cap × 4 B ≈ 16 GiB, which is not a
+// meaningful bound. Decoding is CPU-bound, so a small ceiling costs little
+// throughput while keeping the memory budget flat across machine sizes.
+const maxConcurrentCeiling = 4
+
 // maxConcurrent bounds how many decodes run at once, process-wide. Combined
 // with the pixel cap it bounds worst-case transient memory to roughly
-// maxConcurrent × DefaultMaxPixels × bytesPerPixel. It is derived from the CPU
-// count (small, since decoding is CPU-bound) and floored at 1.
-var maxConcurrent = max(int64(runtime.GOMAXPROCS(0)), 1)
+// maxConcurrent × DefaultMaxPixels × bytesPerPixel. Derived from the CPU count,
+// floored at 1 and capped at [maxConcurrentCeiling] so the memory budget does
+// not grow with core count.
+var maxConcurrent = min(max(int64(runtime.GOMAXPROCS(0)), 1), maxConcurrentCeiling)
 
 // MemoryBudgetBytes is the documented worst-case transient decode memory:
 // concurrency bound × pixel cap × bytes-per-pixel. Exposed so operators tuning
 // MaxPixels can reason about the ceiling.
+//
+// Caveat: a decode that exceeds [Config.Timeout] unblocks its caller but keeps
+// running (Go image decoders are not cancellable) and holds its slot until it
+// finishes. A burst of slow-but-honest inputs can therefore tie up all slots
+// and make subsequent decodes queue for up to the slow decode's duration. The
+// memory budget stays bounded; latency does not.
 func MemoryBudgetBytes() int64 {
 	return maxConcurrent * DefaultMaxPixels * bytesPerPixel
 }
@@ -235,12 +249,13 @@ func Normalize(ctx context.Context, r io.Reader, cfg Config) ([]byte, Info, erro
 	}
 
 	// Animated GIF: re-encoding to a single-frame format would silently drop
-	// the animation, so reject rather than flatten. Checked from the header
-	// region without a full decode.
+	// the animation, so reject rather than flatten. The frame count is read
+	// from the GIF block structure WITHOUT decoding pixels — gif.DecodeAll
+	// would materialize every frame, which a many-frame GIF turns into a
+	// memory bomb that slips past the single-frame pixel cap (the cap only saw
+	// the logical-screen size). See gif.go.
 	if format == "gif" {
-		if animated, aerr := isAnimatedGIF(data); aerr != nil {
-			return nil, Info{}, fmt.Errorf("%w: %w", ErrUnsupported, aerr)
-		} else if animated {
+		if gi, gok := gifFrameCount(data); gok && gi.frames > 1 {
 			return nil, Info{}, ErrAnimated
 		}
 	}
@@ -329,15 +344,4 @@ func decodeBounded(ctx context.Context, data []byte, timeout time.Duration) (img
 	case res := <-done:
 		return res.img, res.err
 	}
-}
-
-// isAnimatedGIF reports whether data is a GIF with more than one frame, using
-// gif.DecodeAll. DecodeAll on a non-GIF returns an error, which callers treat
-// as ErrUnsupported.
-func isAnimatedGIF(data []byte) (bool, error) {
-	g, err := gif.DecodeAll(bytes.NewReader(data))
-	if err != nil {
-		return false, err
-	}
-	return len(g.Image) > 1, nil
 }

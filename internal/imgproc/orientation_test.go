@@ -164,6 +164,55 @@ func TestNormalize_AppliesOrientation_EndToEnd(t *testing.T) {
 	assert.Equal(t, 10, info.Height)
 }
 
+// FuzzExifOrientation exercises the hand-written EXIF/TIFF parser DIRECTLY on
+// mutated inputs. FuzzNormalize would essentially never synthesize a valid
+// JPEG+EXIF+TIFF-IFD by mutation, so this seeds real EXIF-bearing JPEGs (all 8
+// orientations) and lets the mutator explore offset/count/endianness space. The
+// invariant: exifOrientation never panics and always returns a value in 0..8.
+func FuzzExifOrientation(f *testing.F) {
+	base := solidImage(4, 4, color.White)
+	for o := 1; o <= 8; o++ {
+		f.Add(jpegWithOrientation(&testing.T{}, base, o))
+	}
+	f.Add(buildEXIFAPP1(6))                     // a bare APP1 segment
+	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xE1, 0x00}) // truncated APP1
+	f.Fuzz(func(t *testing.T, data []byte) {
+		got := exifOrientation(data) // must not panic
+		if got < 0 || got > 8 {
+			t.Fatalf("exifOrientation returned out-of-range %d", got)
+		}
+	})
+}
+
+// FuzzOrientationFromTIFF fuzzes the TIFF-IFD walk directly with a valid EXIF
+// TIFF payload as the seed, so mutation targets the IFD offset/count/entry math.
+func FuzzOrientationFromTIFF(f *testing.F) {
+	// The TIFF payload is the APP1 segment minus its 4-byte marker/length and
+	// the 6-byte "Exif\0\0" header.
+	seg := buildEXIFAPP1(3)
+	f.Add(seg[4+exifHeaderLen:])
+	f.Add([]byte("MM\x00\x2A\x00\x00\x00\x08"))
+	f.Add([]byte("II"))
+	f.Fuzz(func(t *testing.T, tiff []byte) {
+		got := orientationFromTIFF(tiff) // must not panic
+		if got < 0 || got > 8 {
+			t.Fatalf("orientationFromTIFF returned out-of-range %d", got)
+		}
+	})
+}
+
+// TestApplyOrientation_RecoversFromPanic verifies the recover() guard: even if
+// the parser were to panic on some input, applyOrientation returns the original
+// image rather than crashing. We can't easily force a panic in the current
+// parser, so this documents the contract via the non-JPEG and malformed paths
+// (which must return the input image, never panic).
+func TestApplyOrientation_MalformedReturnsInput(t *testing.T) {
+	src := solidImage(5, 5, color.White)
+	// Malformed "jpeg" bytes: applyOrientation must return src unchanged, no panic.
+	got := applyOrientation(src, []byte{0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFF}, "jpeg")
+	assert.Same(t, image.Image(src), got)
+}
+
 // TestNormalize_NoGoroutineLeak asserts that decoding many inputs — valid and
 // malformed — leaves no leaked goroutines once decodes complete.
 func TestNormalize_NoGoroutineLeak(t *testing.T) {

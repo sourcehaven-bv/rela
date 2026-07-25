@@ -2,7 +2,7 @@
 id: PLAN-3YTADL
 type: planning-checklist
 title: Planning
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -122,7 +122,7 @@ reencode/image-on-non-file) → load error; crafted panic corpus → handled err
 **Documentation Impact:**
 - [x] docs/metamodel.md — new native `image:` transform step
 - [x] docs/attachment-security.md — native normalisation/strip alongside `cmd:` recipes
-- [ ] CLAUDE.md — only if a new convention emerges (likely N/A)
+- [x] ~~CLAUDE.md~~ (N/A: no new cross-cutting convention; the feature follows the existing Processor/transform patterns)
 
 ## Design Review
 

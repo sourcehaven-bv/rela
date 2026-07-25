@@ -143,7 +143,10 @@ func mapImageError(err error) error {
 	case errors.Is(err, imgproc.ErrAnimated):
 		return Rejectedf("animated images are not supported by native image processing; use a cmd: transform")
 	case errors.Is(err, imgproc.ErrTimeout):
-		return Rejectedf("image processing timed out")
+		// A timeout is a server-side resource condition, not a bad file — surface
+		// it as an internal fault (5xx) so the user isn't told to fix a valid
+		// image. NOT wrapped in ErrRejected.
+		return fmt.Errorf("attachment: image processing timed out: %w", err)
 	default:
 		return fmt.Errorf("attachment: image transform: %w", err)
 	}

@@ -51,10 +51,21 @@ const (
 // applyOrientation returns img transformed per the EXIF orientation tag found
 // in data. format is the decoded format name (from image.DecodeConfig); only
 // "jpeg" carries EXIF here. Any parse failure is treated as orientation 1.
-func applyOrientation(img image.Image, data []byte, format string) image.Image {
+//
+// Unlike the image decode, this runs on the caller's goroutine (not the
+// recover-guarded worker), and it is hand-written byte arithmetic over
+// attacker-controlled bytes. Orientation is best-effort — the parser already
+// treats every malformation as "orientation 1" — so a panic here must never
+// crash the process: recover and fall back to the un-transformed image.
+func applyOrientation(img image.Image, data []byte, format string) (out image.Image) {
 	if format != "jpeg" {
 		return img
 	}
+	defer func() {
+		if recover() != nil {
+			out = img // best-effort: a parser bug must not take down the write path
+		}
+	}()
 	o := exifOrientation(data)
 	if o <= orientNormal || o > orientMax {
 		return img // 1 (or absent/invalid) = already upright

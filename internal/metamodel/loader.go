@@ -745,6 +745,11 @@ func validateTransformSteps(schemaName, propName string, steps []TransformStep) 
 					"%s: property %q transform step %d has unknown image reencode %q; want \"jpeg\" or \"png\"",
 					schemaName, propName, i, r))
 			}
+			if q := step.Image.Quality; q != 0 && (q < 1 || q > 100) {
+				errs = append(errs, fmt.Sprintf(
+					"%s: property %q transform step %d has image quality %d; must be 1..100 (0 = default)",
+					schemaName, propName, i, q))
+			}
 		default:
 			errs = append(errs, fmt.Sprintf(
 				"%s: property %q transform step %d must set exactly one of \"cmd\" or \"image\"",
