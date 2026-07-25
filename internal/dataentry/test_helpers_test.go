@@ -220,6 +220,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		denyAfford:         app.denyAffordance,
 		computeETag:        app.computeEntityETag,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		engine:             func() *script.Engine { return app.scriptEngine },
+		luaDeps:            app.luaWriteDeps,
+		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
 	}

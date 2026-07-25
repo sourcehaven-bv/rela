@@ -17,16 +17,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
 // endpoints (create/dry-run-create/update/delete entity, create/update/delete
-// relation), clone, conflict-resolve, and the modern relations reconciler they
-// share. Extracted from App (TKT-R68TV8 M5.4) to shrink the god object.
+// relation), clone, conflict-resolve, the modern relations reconciler they
+// share, and the Lua action surface (interactive actions + webhook dispatch).
+// Extracted from App (TKT-R68TV8 M5.4) to shrink the god object.
 //
 // This is a PURE STRUCTURAL extraction: the handlers move verbatim and the
 // concurrency model is untouched.
@@ -40,10 +43,11 @@ import (
 // audit, one ETag definition).
 //
 // writeMu is a POINTER to App's mutation mutex: every handler here serializes
-// against App's residual write paths (Lua actions, webhook) and the extracted
-// sync/attachment handlers, exactly as before. (The DEC-8UIL0 arc later
-// replaces this mutex with the store's Tx contract; that is deliberately NOT
-// part of this refactor.)
+// against the extracted sync/attachment handlers, exactly as before. With the
+// action surface moved in, writeHandler covers the complete data-entry write
+// surface — no App method takes writeMu directly anymore. (The DEC-8UIL0 arc
+// later replaces this mutex with the store's Tx contract; that is deliberately
+// NOT part of this refactor.)
 type writeHandler struct {
 	schema      func() *Schema
 	store       store.Store
@@ -53,6 +57,16 @@ type writeHandler struct {
 	affordances affordanceService
 	acl         func() acl.ACL
 	audit       func() audit.Audit
+
+	// The Lua action surface (interactive actions + webhook dispatch) —
+	// scripts may mutate the workspace, so they run under writeMu. All three
+	// are live closures over App: the engine so fixtures that build App
+	// piecemeal see late-set fields, luaDeps because the bundle is derived
+	// per call from swappable collaborators, fullScriptDetail because the
+	// security layer is wired after construction (SetSecurityConfig).
+	engine           func() *script.Engine
+	luaDeps          func() lua.WriteDeps
+	fullScriptDetail func(r *http.Request) bool
 
 	// Shared App helpers (also used by the read path — stay on App).
 	gateRead   func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool

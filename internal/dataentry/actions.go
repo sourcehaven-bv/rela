@@ -42,7 +42,7 @@ type v1ActionRequest struct {
 // Action scripts may mutate the workspace, so we serialize them via
 // writeMu for the duration of script execution. Concurrent reloads,
 // other mutations, and other action scripts wait for writeMu.
-func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
+func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -56,7 +56,7 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s := a.State()
+	s := h.schema()
 	action, ok := s.Cfg.Actions[id]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "action_not_found", "Action not found", "")
@@ -77,27 +77,27 @@ func (a *App) handleV1Action(w http.ResponseWriter, r *http.Request) {
 
 	// Serialize action script execution against other mutations and
 	// against workspace reloads via writeMu.
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
 
 	// Resolve entity if provided in the request.
 	var ent *entity.Entity
 	if req.EntityID != "" {
-		if e, err := a.store.GetEntity(r.Context(), req.EntityID); err == nil {
+		if e, err := h.store.GetEntity(r.Context(), req.EntityID); err == nil {
 			ent = e
 		}
 	}
 
-	// Reuse the App's long-lived engine so rela.cache state persists
+	// Reuse App's long-lived engine so rela.cache state persists
 	// across action invocations. Constructing a fresh engine per
 	// request would reset the cache each time and defeat memoization.
-	resp, err := a.scriptEngine.ExecuteAction(r.Context(), action.Script, a.luaWriteDeps(),
+	resp, err := h.engine().ExecuteAction(r.Context(), action.Script, h.luaDeps(),
 		ent, action.Params, actionTimeout, correlationID)
 	if err != nil {
 		slog.Warn("action failed", "action", id, "correlation", correlationID, "error", err)
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
+			writeV1ScriptError(w, se, h.fullScriptDetail(r), correlationID)
 			return
 		}
 		// Non-Lua failure (script-not-found, contract failure from

@@ -80,9 +80,12 @@ const userPaletteFile = "palette.yaml"
 // commandHandler (154 → 143); the attachment cluster (12 methods) moved to
 // attachmentHandler / package functions (143 → 131); the write nucleus —
 // entity/relation CRUD, clone, conflict-resolve, and the modern relations
-// reconciler (18 methods) — moved to writeHandler (131 → 114).
+// reconciler (18 methods) — moved to writeHandler (131 → 114); the Lua
+// action handler joined it (115 → 114, from a base that had absorbed the
+// DEC-O59WM4 script-read helpers), completing the write surface: every
+// writeMu write path now lives on or routes through writeHandler.
 //
-//plimsoll:max-methods=115
+//plimsoll:max-methods=114
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -755,6 +758,9 @@ func NewApp(
 		denyAfford:         app.denyAffordance,
 		computeETag:        app.computeEntityETag,
 		currentEdgesByPeer: app.currentEdgesByPeer,
+		engine:             func() *script.Engine { return app.scriptEngine },
+		luaDeps:            app.luaWriteDeps,
+		fullScriptDetail:   app.allowFullScriptDetail,
 		paths:              paths,
 		writeMu:            &app.writeMu,
 	}
