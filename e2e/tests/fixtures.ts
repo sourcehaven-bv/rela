@@ -36,7 +36,9 @@ function psqlExec(sql: string): void {
 
 /** Create a fresh isolated schema and return its name. Each postgres-backed test
  *  gets its own schema so runs never cross-contaminate (mirrors the pgstore Go
- *  conformance harness's per-schema isolation). */
+ *  conformance harness's per-schema isolation). Uniqueness rests on Playwright
+ *  running each worker as a SEPARATE OS PROCESS: `process.pid` disambiguates
+ *  workers and the per-process counter disambiguates tests within a worker. */
 function createPgSchema(): string {
   const schema = `relae2e_${process.pid}_${++pgSchemaCounter}`;
   psqlExec(`CREATE SCHEMA "${schema}"`);
@@ -53,7 +55,9 @@ function dropPgSchema(schema: string): void {
 
 /** Build the server's RELA_DATABASE_URL from the admin DSN, pinned to `schema`
  *  via search_path (keeping public for the pg_trgm extension). The postgres
- *  server auto-migrates the schema on first open. */
+ *  server auto-migrates the schema on first open. NOTE: this OVERRIDES any
+ *  pre-existing `options` param in the admin DSN — the e2e admin DSN is not
+ *  expected to carry one. */
 function pgDsnForSchema(schema: string): string {
   const u = new URL(PG_ADMIN_DSN);
   // libpq options: -c search_path=<schema>,public. Encode the space + comma.
@@ -200,9 +204,11 @@ export interface ApiHelpers {
   ): Promise<void>;
   /** Poll the relation-history timeline until it has at least `count` versions.
    *  Relation versioning is pgstore-only and create/update capture is async (the
-   *  reconciliation sweep), so seed-then-assert flows must wait for capture. */
+   *  reconciliation sweep), so seed-then-assert flows must wait for capture.
+   *  `fromType` is the singular entity type (the _relation_history path needs it);
+   *  passed explicitly rather than derived, so a new type never silently 404s. */
   waitForRelationVersions(
-    fromPlural: string,
+    fromType: string,
     fromId: string,
     relation: string,
     toId: string,
@@ -601,13 +607,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           id: toId,
         });
       },
-      async waitForRelationVersions(fromPlural, fromId, relation, toId, count, options) {
-        const singular: Record<string, string> = {
-          features: "feature",
-          bugs: "bug",
-          tasks: "task",
-        };
-        const fromType = singular[fromPlural] ?? fromPlural;
+      async waitForRelationVersions(fromType, fromId, relation, toId, count, options) {
         const apiPath =
           `_relation_history/${encodeURIComponent(fromType)}/${encodeURIComponent(fromId)}` +
           `/${encodeURIComponent(relation)}/${encodeURIComponent(toId)}`;

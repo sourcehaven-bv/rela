@@ -1,6 +1,11 @@
 import { type Locator, expect } from "@playwright/test";
 import { BasePage } from "./base.page";
 
+/** Escape a string for safe embedding in a RegExp (entity ids are hyphenated). */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Page object for the relation history view
  *  (`/relation-history/:fromType/:from/:relType/:to`, RelationHistoryView.vue)
  *  and the per-relation History affordance on relation cards
@@ -9,12 +14,15 @@ import { BasePage } from "./base.page";
  *  `.prop-diff`, etc. */
 export class RelationHistoryPage extends BasePage {
   /** The History button rendered on an outgoing relation card whose target is
-   *  `targetId`. Absent on incoming cards (the FROM entity owns the history). */
+   *  `targetId`. Absent on incoming cards (the FROM entity owns the history).
+   *  The `.entity-id` text is matched EXACTLY (anchored regex), not as a
+   *  substring — with sequential ids a substring `FEAT-3` would also match the
+   *  card for `FEAT-30`. */
   historyButtonForCard(targetId: string): Locator {
+    const exactId = new RegExp(`^\\s*${escapeRegExp(targetId)}\\s*$`);
     return this.page
-      .locator(".relation-card", {
-        has: this.page.locator(`.entity-id:has-text("${targetId}")`),
-      })
+      .locator(".relation-card")
+      .filter({ has: this.page.locator(".entity-id", { hasText: exactId }) })
       .locator(".history-btn");
   }
 

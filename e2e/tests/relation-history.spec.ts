@@ -48,11 +48,11 @@ test.describe("relation history UI", () => {
     await api.setRelationMeta("features", from, "blocks", "feature", to, {
       reason: "initial reason",
     });
-    await api.waitForRelationVersions("features", from, "blocks", to, 1);
+    await api.waitForRelationVersions("feature", from, "blocks", to, 1);
     await api.setRelationMeta("features", from, "blocks", "feature", to, {
       reason: "second reason",
     });
-    await api.waitForRelationVersions("features", from, "blocks", to, 2);
+    await api.waitForRelationVersions("feature", from, "blocks", to, 2);
 
     const cards = new RelationCardsPage(appPage);
     const history = new RelationHistoryPage(appPage);
@@ -81,7 +81,7 @@ test.describe("relation history UI", () => {
     // asynchronously — wait for the API to reflect it, then re-open the view to
     // confirm the extra version renders in the timeline.
     await history.restoreVersion(1);
-    await api.waitForRelationVersions("features", from, "blocks", to, n + 1);
+    await api.waitForRelationVersions("feature", from, "blocks", to, n + 1);
     await cards.navigateToEdit("feature", from);
     await history.openHistoryForCard(to);
     await expect
