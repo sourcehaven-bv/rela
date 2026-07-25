@@ -5,7 +5,7 @@ title: Asserted roles are inert on the production JWT gate — claims dropped at
 kind: enhancement
 priority: high
 effort: s
-status: review
+status: done
 ---
 
 The asserted-role feature (TKT-RP3X3Q) shipped with all its ACL machinery —
