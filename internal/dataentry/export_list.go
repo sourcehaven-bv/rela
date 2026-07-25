@@ -73,35 +73,36 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 	// field-redaction pass, and the cap. That ordering is load-bearing: a
 	// render override can only ever be handed rows that already survived
 	// every gate, and never more of them than the cap allows.
-	renderer := h.listExportRenderer(
-		listRenderInput{
-			listID: effListID, list: effList, haveList: haveList,
-			typeName: typeName, entities: entities, columns: columns,
-			total: total, truncated: truncated, query: query,
+	//
+	// haveList needs no test of its own: resolveEffectiveList returns a zero
+	// List when it finds none, and a zero List has no ExportRender.
+	renderer := h.listTableRenderer(entities, columns, total, truncated)
+	if effList.ExportRender != "" {
+		renderer = h.listOverrideRenderer(listOverride{
+			listID: effListID, script: effList.ExportRender, typeName: typeName,
+			rows: entities, total: total, query: query,
 		})
+	}
 	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
 }
 
-// listRenderInput bundles what listExportRenderer needs to choose and build a
-// renderer. A struct rather than nine positional parameters — several are the
-// same type and would be trivially transposable at the call site.
-type listRenderInput struct {
-	listID    string
-	list      dataentryconfig.List
-	haveList  bool
-	typeName  string
-	entities  []*entityPkg.Entity
-	columns   []dataentryconfig.ListColumn
-	total     int
-	truncated bool
-	query     map[string][]string
+// listOverride is what rendering a list THROUGH A SCRIPT needs: which list,
+// which script, and the resolved read it renders. Deliberately not a bundle of
+// everything the handler happens to hold — the built-in table path takes its
+// own arguments, so neither branch carries fields the other needs.
+type listOverride struct {
+	listID   string
+	script   string
+	typeName string
+	rows     []*entityPkg.Entity
+	total    int // pre-cap count; len(rows) is what the script can reach
+	query    map[string][]string
 }
 
-// listExportRenderer picks the markdown renderer for a list export. When the
-// effective list configures an `export_render:` Lua script, the export routes
-// through that script — the per-list render OVERRIDE — so exporting that list
-// automatically uses the operator's document instead of the built-in column
-// table. Otherwise the built-in [exportHandler.listTableRenderer] is used.
+// listOverrideRenderer builds the markdown renderer for a list export that
+// configures an `export_render:` Lua script — the per-list render OVERRIDE —
+// so exporting that list uses the operator's document instead of the built-in
+// column table.
 //
 // The rows were already resolved through the ACL read path, field-redacted,
 // and capped by the caller, so the override sees exactly the ROWS the
@@ -121,14 +122,10 @@ type listRenderInput struct {
 // caller may not read resolves to an empty set and renders an empty document,
 // which is what the built-in table does too. A 404 would leak the difference
 // between "no rows" and "no access".
-func (h *exportHandler) listExportRenderer(in listRenderInput) transform.Renderer {
-	if !in.haveList || in.list.ExportRender == "" {
-		return h.listTableRenderer(in.entities, in.columns, in.total, in.truncated)
-	}
-
+func (h *exportHandler) listOverrideRenderer(in listOverride) transform.Renderer {
 	lrc := lua.ListRenderContext{
 		ListID: in.listID,
-		Rows:   entitySliceRows(in.entities),
+		Rows:   entitySliceRows(in.rows),
 		Query:  buildListQuery(in),
 	}
 	// ConfigID is synthetic and namespaced: the "list:" infix keeps it from
@@ -142,7 +139,7 @@ func (h *exportHandler) listExportRenderer(in listRenderInput) transform.Rendere
 	// RenderListMarkdown neither caches nor shells out, so the ConfigID's only
 	// consumers are a Lua string and an error message. If a list render ever
 	// gains a disk cache, this needs the guard.
-	cfg := documentRenderConfig{ConfigID: "export:list:" + in.listID, Script: in.list.ExportRender}
+	cfg := documentRenderConfig{ConfigID: "export:list:" + in.listID, Script: in.script}
 
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
 		md, err := h.documents.RenderListMarkdown(ctx, cfg, lrc)
@@ -173,7 +170,7 @@ func (r entitySliceRows) At(i int) *entityPkg.Entity {
 // and how the cap applied. Only what the caller already supplied is echoed
 // back — this is context for titling and annotating an export, not a channel
 // for changing what it contains.
-func buildListQuery(in listRenderInput) lua.ListQuery {
+func buildListQuery(in listOverride) lua.ListQuery {
 	q := lua.ListQuery{
 		EntityType: in.typeName,
 		Q:          queryGet(in.query, "q"),
