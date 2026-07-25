@@ -412,18 +412,13 @@ type AssertedIdentity struct {
 	Roles   []string
 }
 
-// subjectVerifier verifies a signed assertion and returns only its subject.
-// [requireVerifiedJWT] gates on authenticity alone — it decides 401-or-proceed
-// and stamps the user — so it asks for nothing more, and a caller wiring only
-// the gate needn't implement the claims projection.
-type subjectVerifier interface {
-	VerifySubject(ctx context.Context, raw string) (string, error)
-}
-
-// assertionVerifier additionally projects the org/role claims this package
-// stamps onto a Principal. Satisfied by an adapter over *jwtauth.Verifier;
-// kept local (and unexported, per the other consumer interfaces here) so the
-// resolver is testable with a stub.
+// assertionVerifier verifies a signed assertion and projects the org/role
+// claims this package stamps onto a Principal. It is the seam for BOTH the
+// production gate ([requireVerifiedJWT], via [App.SetJWTGate]) and the
+// deprecated [JWTPrincipalResolver]; both must carry the full claims, or an
+// asserted_role_assignments policy grants nothing (TKT-OJL2GN). Satisfied by an
+// adapter over *jwtauth.Verifier — kept local (and unexported, per the other
+// consumer interfaces here) so both are testable with a stub.
 type assertionVerifier interface {
 	VerifyAssertion(ctx context.Context, raw string) (AssertedIdentity, error)
 }
@@ -468,32 +463,54 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 			return principal.Principal{}
 		}
 		id, err := v.VerifyAssertion(r.Context(), raw)
-		if err != nil || id.Subject == "" {
+		if err != nil {
 			return principal.Principal{}
 		}
-		// The subject is a controlled id (opaque, from the IdP), but sanitize it
-		// the same way as header/env users for defense in depth (length cap,
-		// control-char strip). A control-only value sanitizes to "" and falls
-		// through.
-		user := sanitizeUser(id.Subject)
-		if user == "" {
+		p, ok := verifiedPrincipal(id)
+		if !ok {
 			return principal.Principal{}
 		}
-		// Org and roles get the same treatment. Roles are already bounded by the
-		// verifier's projection; sanitizing here covers control chars and any
-		// future verifier that forgets to. A role that sanitizes away is dropped
-		// rather than kept as "" — an empty role name can never match a policy
-		// mapping, so keeping it would only pad the attribution set.
-		roles := make([]string, 0, len(id.Roles))
-		for _, role := range id.Roles {
-			if s := sanitizeUser(role); s != "" {
-				roles = append(roles, s)
-			}
-		}
-		return principal.Verified(
-			user, principal.ToolDataEntry,
-			sanitizeUser(id.OrgID), sanitizeUser(id.OrgSlug), roles)
+		return p
 	}
+}
+
+// verifiedPrincipal projects a verified [AssertedIdentity] into a stamped
+// Principal, or reports ok=false when the subject is unusable (empty, or all
+// control characters that sanitize away). It is the SINGLE place the assertion
+// claims become a Principal, shared by [JWTPrincipalResolver] (the deprecated
+// chain path) and [requireVerifiedJWT] (the production gate) so the two cannot
+// drift on how a subject is sanitized or how roles are filtered — a drift that
+// once silently dropped roles on the gate path (TKT-OJL2GN).
+//
+// It carries the org and role claims via [principal.Verified], the only
+// constructor that can populate them. A role reaching the ACL from an
+// unverified source would be a complete authorization bypass, so this must be
+// called ONLY on the output of a completed signature verification.
+func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
+	if id.Subject == "" {
+		return principal.Principal{}, false
+	}
+	// The subject is a controlled id (opaque, from the IdP), but sanitize it the
+	// same way as header/env users for defense in depth (length cap, control-char
+	// strip). A control-only value sanitizes to "" and is rejected.
+	user := sanitizeUser(id.Subject)
+	if user == "" {
+		return principal.Principal{}, false
+	}
+	// Org and roles get the same treatment. Roles are already bounded by the
+	// verifier's projection; sanitizing here covers control chars and any future
+	// verifier that forgets to. A role that sanitizes away is dropped rather than
+	// kept as "" — an empty role name can never match a policy mapping, so
+	// keeping it would only pad the attribution set.
+	roles := make([]string, 0, len(id.Roles))
+	for _, role := range id.Roles {
+		if s := sanitizeUser(role); s != "" {
+			roles = append(roles, s)
+		}
+	}
+	return principal.Verified(
+		user, principal.ToolDataEntry,
+		sanitizeUser(id.OrgID), sanitizeUser(id.OrgSlug), roles), true
 }
 
 // stripBearer trims the header value and removes an optional "Bearer" auth

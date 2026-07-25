@@ -264,7 +264,7 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 			os.Exit(1)
 		}
 		if err := app.SetJWTGate(dataentry.JWTGateConfig{
-			Verifier:   idv,
+			Verifier:   assertionVerifierAdapter{idv},
 			HeaderName: f.jwtHeader,
 			// Injected as a predicate so dataentry needn't import jwtauth.
 			KeysUnavailable: func(err error) bool {
@@ -338,6 +338,32 @@ func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifi
 	}
 	app.SetWebhookReceiver(webhookVerifierAdapter{wv}, f.webhookAction)
 	slog.Info("idp webhook enabled", "audience", f.webhookAudience, "action", f.webhookAction)
+}
+
+// assertionVerifierAdapter bridges the concrete jwtauth.Verifier to the
+// dataentry JWT gate's expected shape, translating jwtauth.AssertionClaims into
+// dataentry.AssertedIdentity. Like webhookVerifierAdapter it lives in the wiring
+// layer — the one place allowed to import both packages — so dataentry needn't
+// depend on jwtauth (the inward-pointing layering rule).
+//
+// The gate consumes VerifyAssertion (not VerifySubject) so the assertion's
+// org/roles reach the Principal it stamps; a subject-only adapter here would
+// silently strip every asserted role (TKT-OJL2GN).
+type assertionVerifierAdapter struct{ v *jwtauth.Verifier }
+
+func (a assertionVerifierAdapter) VerifyAssertion(
+	ctx context.Context, raw string,
+) (dataentry.AssertedIdentity, error) {
+	c, err := a.v.VerifyAssertion(ctx, raw)
+	if err != nil {
+		return dataentry.AssertedIdentity{}, err
+	}
+	return dataentry.AssertedIdentity{
+		Subject: c.Subject,
+		OrgID:   c.OrgID,
+		OrgSlug: c.OrgSlug,
+		Roles:   c.Roles,
+	}, nil
 }
 
 // webhookVerifierAdapter bridges the concrete jwtauth.WebhookVerifier to the
