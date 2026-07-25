@@ -38,3 +38,24 @@ and removes the whole 'verdict context mismatch' class.
 - Interacts with the entity_versions capture path (entitymanager version hook + sweep) and the store VersionSnapshot shape.
 - Consider whether to store the full resolved verdict, or the (relations + roles) inputs, or a per-field visible/hidden bitmap.
 - The relation-set-as-of question overlaps with relation history (TKT-VFJKMB).
+
+## Re-verification (2026-07-25, against develop dd0fe649)
+
+Premise STILL VALID — and now SHARPER. TKT-9E57 ("predicate-backed _fields
+resolver", done) made the field-visibility resolver genuinely conditional-grant
+capable: `internal/affordances/resolver.go:629-654` evaluates a `When` predicate
+per grant via `prog.Eval`, and the bindings resolve `has_edge`/`count_relations`
+against the LIVE store (`internal/dataentry/affordances_policy.go:96-106`). For a
+deleted entity the live store returns no edges, so a conditional `visible:` grant
+flips at read time — exactly the under-redaction this ticket describes, now a live
+policy capability rather than a hypothetical. History is still redacted at read
+time against the live ACL (`internal/dataentry/history_handler.go:194-208` →
+`entityserializer.go:117` → `affordances.go:895` stripHiddenProperties); the
+capture path stores no frozen verdict (`store.go` VersionSnapshot carries only
+content/properties/schema-projection). This ticket's fix is unimplemented and its
+value went UP with TKT-9E57.
+
+Coupled with TKT-B1F5Q1: both say "build the capture-time freeze with a shared
+design" — 73C6B2 is the entity-side freeze, B1F5Q1 adds relation-side `visible:`
+which needs the same freeze if relation grants are conditional. Design them
+together.
