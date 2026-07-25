@@ -11,6 +11,55 @@ import * as net from "net";
 
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
 const SERVER_BINARY = path.join(PROJECT_ROOT, "bin", "rela-server");
+// The PostgreSQL-backed server (go build -tags postgres ./cmd/rela-server). Used
+// only by the opt-in `postgresTest` fixture for specs that exercise pgstore-only
+// features (relation/entity content history). Built to a distinct path so it
+// never collides with the default fsstore binary.
+const PG_SERVER_BINARY = path.join(PROJECT_ROOT, "bin", "rela-server-postgres");
+
+// RELA_E2E_DATABASE_URL is the admin DSN for the postgres-backed e2e specs (a
+// database the runner may CREATE/DROP schemas in). When unset, postgresTest specs
+// SKIP — mirroring the pgstore Go suite's RELA_TEST_DATABASE_URL gating, so the
+// default fsstore e2e run and any environment without a database stay green.
+const PG_ADMIN_DSN = process.env.RELA_E2E_DATABASE_URL ?? "";
+export const POSTGRES_E2E_ENABLED = PG_ADMIN_DSN !== "";
+
+let pgSchemaCounter = 0;
+
+/** Run a SQL statement against the admin DSN via psql (no node pg dependency).
+ *  psql is present in CI's postgres service and in local Postgres installs. */
+function psqlExec(sql: string): void {
+  execFileSync("psql", [PG_ADMIN_DSN, "-v", "ON_ERROR_STOP=1", "-c", sql], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+}
+
+/** Create a fresh isolated schema and return its name. Each postgres-backed test
+ *  gets its own schema so runs never cross-contaminate (mirrors the pgstore Go
+ *  conformance harness's per-schema isolation). */
+function createPgSchema(): string {
+  const schema = `relae2e_${process.pid}_${++pgSchemaCounter}`;
+  psqlExec(`CREATE SCHEMA "${schema}"`);
+  return schema;
+}
+
+function dropPgSchema(schema: string): void {
+  try {
+    psqlExec(`DROP SCHEMA "${schema}" CASCADE`);
+  } catch (e) {
+    console.warn(`Failed to drop e2e schema ${schema}: ${String(e)}`);
+  }
+}
+
+/** Build the server's RELA_DATABASE_URL from the admin DSN, pinned to `schema`
+ *  via search_path (keeping public for the pg_trgm extension). The postgres
+ *  server auto-migrates the schema on first open. */
+function pgDsnForSchema(schema: string): string {
+  const u = new URL(PG_ADMIN_DSN);
+  // libpq options: -c search_path=<schema>,public. Encode the space + comma.
+  u.searchParams.set("options", `-c search_path=${schema},public`);
+  return u.toString();
+}
 // Resolve symlinks once — macOS $TMPDIR is typically /var/folders/... which
 // canonicalises to /private/var/folders/.... Tests that compare paths want
 // the canonical form. (review-response RR-F3IA3)
@@ -137,6 +186,29 @@ export interface ApiHelpers {
     relation: string,
     toId: string,
   ): Promise<void>;
+  /** Create-or-update a relation edge's meta (relation-property values) via a
+   *  modern relations PATCH on the FROM entity. Upserts, so calling it repeatedly
+   *  with different meta produces successive relation states — used to drive
+   *  relation version capture in the relation-history e2e. */
+  setRelationMeta(
+    fromPlural: string,
+    fromId: string,
+    relation: string,
+    toType: string,
+    toId: string,
+    meta: Record<string, unknown>,
+  ): Promise<void>;
+  /** Poll the relation-history timeline until it has at least `count` versions.
+   *  Relation versioning is pgstore-only and create/update capture is async (the
+   *  reconciliation sweep), so seed-then-assert flows must wait for capture. */
+  waitForRelationVersions(
+    fromPlural: string,
+    fromId: string,
+    relation: string,
+    toId: string,
+    count: number,
+    options?: { timeout?: number },
+  ): Promise<void>;
   /** Returns the current set of outgoing relation edges of the given type for an entity.
    *  Each edge exposes `id` (target entity) and `meta` (relation-property values). */
   listRelations(
@@ -235,7 +307,7 @@ async function waitForExit(
  *  don't race each other writing the same output file (RR-BZUH5). In CI the
  *  fixture should never fire because the binary is pre-built in a prior step;
  *  we fail loudly there to surface misconfiguration. */
-function buildIfMissing(binaryPath: string, target: string): string {
+function buildIfMissing(binaryPath: string, ...buildArgs: string[]): string {
   if (fs.existsSync(binaryPath)) return binaryPath;
   if (process.env.CI) {
     throw new Error(
@@ -274,7 +346,7 @@ function buildIfMissing(binaryPath: string, target: string): string {
     // execFileSync with an args array: no shell, so the absolute paths can't
     // be interpreted as shell syntax (CodeQL js/shell-command-injection-from-
     // environment; also just breaks on checkout paths containing spaces).
-    execFileSync("go", ["build", "-o", binaryPath, target], {
+    execFileSync("go", ["build", ...buildArgs, "-o", binaryPath], {
       cwd: PROJECT_ROOT,
       stdio: "inherit",
     });
@@ -317,6 +389,7 @@ function createTestProject(): string {
 async function spawnServer(
   serverBinary: string,
   cwd: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ proc: ChildProcess; url: string; logs: () => string }> {
   const attempts = 3;
   let lastErr: unknown;
@@ -326,7 +399,11 @@ async function spawnServer(
     const proc: ChildProcess = spawn(
       serverBinary,
       ["-port", String(port), "-allowed-origin", url],
-      { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        cwd,
+        env: { ...process.env, ...extraEnv },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
     let stdout = "";
     let stderr = "";
@@ -510,10 +587,43 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const p = query ? `${plural}?${query}` : plural;
         return (await call("GET", p)).json();
       },
+      async setRelationMeta(fromPlural, fromId, relation, toType, toId, meta) {
+        // Modern JSON:API relations body: upsert the edge with its meta. A PATCH
+        // that includes the edge again with new meta updates it in place.
+        await call("PATCH", `${fromPlural}/${fromId}`, {
+          relations: {
+            [relation]: { data: [{ type: toType, id: toId, meta }] },
+          },
+        });
+      },
       async createRelation(fromPlural, fromId, relation, toId) {
         await call("POST", `${fromPlural}/${fromId}/relations/${relation}`, {
           id: toId,
         });
+      },
+      async waitForRelationVersions(fromPlural, fromId, relation, toId, count, options) {
+        const singular: Record<string, string> = {
+          features: "feature",
+          bugs: "bug",
+          tasks: "task",
+        };
+        const fromType = singular[fromPlural] ?? fromPlural;
+        const apiPath =
+          `_relation_history/${encodeURIComponent(fromType)}/${encodeURIComponent(fromId)}` +
+          `/${encodeURIComponent(relation)}/${encodeURIComponent(toId)}`;
+        const timeout = options?.timeout ?? 20000;
+        const start = Date.now();
+        while (Date.now() - start < timeout) {
+          const resp = await call("GET", apiPath).catch(() => null);
+          if (resp && resp.ok()) {
+            const body = (await resp.json()) as { versions?: unknown[] };
+            if ((body.versions?.length ?? 0) >= count) return;
+          }
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        throw new Error(
+          `relation ${fromId}--${relation}--${toId} did not reach ${count} version(s) within ${timeout}ms`,
+        );
       },
       async listRelations(plural, id, relation) {
         const resp = await call("GET", `${plural}/${id}/relations/${relation}`);
@@ -558,6 +668,71 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         );
       },
     });
+  },
+});
+
+/**
+ * postgresTest is the opt-in fixture for specs that need pgstore-only features
+ * (entity/relation content history). It spawns `rela-server-postgres` against a
+ * per-test isolated schema instead of the default fsstore server; `appPage` and
+ * `api` are inherited unchanged and transparently talk to the postgres backend
+ * via the overridden `serverUrl`.
+ *
+ * Specs MUST guard with `postgresTest.skip(!POSTGRES_E2E_ENABLED, ...)` (or the
+ * describe-level equivalent) so they skip cleanly when RELA_E2E_DATABASE_URL is
+ * unset — the default e2e run has no database.
+ */
+export const postgresTest = test.extend<
+  { pgSchema: string },
+  { serverBinary: string }
+>({
+  // Worker-scoped: the postgres server binary (built by CI, or on demand locally).
+  serverBinary: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      await use(
+        buildIfMissing(
+          PG_SERVER_BINARY,
+          "-tags",
+          "postgres",
+          "./cmd/rela-server",
+        ),
+      );
+    },
+    { scope: "worker" },
+  ],
+
+  // A fresh isolated schema per test, dropped afterwards.
+  // eslint-disable-next-line no-empty-pattern
+  pgSchema: async ({}, use) => {
+    const schema = createPgSchema();
+    try {
+      await use(schema);
+    } finally {
+      dropPgSchema(schema);
+    }
+  },
+
+  // Override serverUrl to spawn the postgres server with a schema-pinned DSN.
+  serverUrl: async (
+    { testProject, serverBinary, pgSchema },
+    use,
+    testInfo,
+  ) => {
+    const { proc, url, logs } = await spawnServer(serverBinary, testProject, {
+      RELA_DATABASE_URL: pgDsnForSchema(pgSchema),
+    });
+    try {
+      await use(url);
+    } finally {
+      if (testInfo.status !== testInfo.expectedStatus) {
+        await testInfo.attach("rela-server-postgres.log", {
+          body: logs(),
+          contentType: "text/plain",
+        });
+      }
+      await waitForExit(proc);
+    }
   },
 });
 

@@ -221,6 +221,25 @@ jobs:
   e2e:
     name: E2E
     runs-on: ubuntu-latest
+    # A postgres service backs the pgstore-only e2e specs (relation/entity
+    # content history). The default fsstore specs ignore it; the postgres specs
+    # skip when RELA_E2E_DATABASE_URL is unset, so this is what turns them on.
+    env:
+      RELA_E2E_DATABASE_URL: postgres://rela@127.0.0.1:5432/rela_e2e?sslmode=disable
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rela
+          POSTGRES_DB: rela_e2e
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rela"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 
@@ -244,9 +263,12 @@ jobs:
         # build:e2e produces a development-mode bundle (import.meta.env.DEV
         # === true) so DEV-guarded test hooks compile in for the E2E suite.
         # Release builds use the production `build`, which strips them (#890).
+        # Also build the postgres-tagged server for the pgstore-only specs (the
+        # fixture forbids in-fixture builds under CI, so both must exist here).
         run: |
           cd frontend && npm run build:e2e && cd ..
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/rela-server ./cmd/rela-server
+          CGO_ENABLED=0 go build -tags postgres -trimpath -ldflags "-s -w" -o bin/rela-server-postgres ./cmd/rela-server
 
       - name: Install e2e dependencies
         working-directory: e2e
@@ -266,6 +288,13 @@ jobs:
 
       - name: Run E2E tests
         working-directory: e2e
+        # Short sweep cadence so the postgres relation-history spec sees
+        # create/update version captures within seconds instead of the 5-minute
+        # production default. Ignored by the fsstore specs.
+        env:
+          RELA_VERSION_SWEEP_INTERVAL: 500ms
+          RELA_VERSION_SWEEP_IDLE: 150ms
+          RELA_VERSION_SWEEP_MAX_STALENESS: 2s
         run: npx playwright test --reporter=line
 
       - name: Upload Playwright report
