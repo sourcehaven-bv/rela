@@ -906,9 +906,12 @@ func registerListDocumentFields(ls *lua.LState, docTable *lua.LTable, lrc ListRe
 
 	ls.SetField(docTable, "list_id", lua.LString(lrc.ListID))
 	ls.SetField(docTable, "entity_type", lua.LString(q.EntityType))
+	// count/total/truncated all derive from the two facts the caller supplied
+	// (the row set and the pre-cap count), so a script can never observe them
+	// disagreeing with each other.
 	ls.SetField(docTable, "count", lua.LNumber(rows.Len()))
 	ls.SetField(docTable, "total", lua.LNumber(q.Total))
-	ls.SetField(docTable, "truncated", lua.LBool(q.Truncated))
+	ls.SetField(docTable, "truncated", lua.LBool(q.Total > rows.Len()))
 
 	// The resolved request context, frozen so "read-only" is enforced
 	// rather than conventional (same treatment rela.principal gets).
@@ -928,7 +931,7 @@ func registerListDocumentFields(ls *lua.LState, docTable *lua.LTable, lrc ListRe
 		ls.SetField(spec, "direction", lua.LString(s.Direction))
 		sort.RawSetInt(i+1, freezeTable(ls, spec))
 	}
-	ls.SetField(queryTable, "sort", sort)
+	ls.SetField(queryTable, "sort", freezeTable(ls, sort))
 	ls.SetField(docTable, "query", freezeTable(ls, queryTable))
 
 	// row(i) -> entity table | nil. 1-based, per Lua convention.

@@ -213,9 +213,10 @@ func (s *documentService) RenderMarkdown(
 // view export feeds the markdown to a format transform rather than converting
 // it to HTML.
 //
-// Script-only. A `command:` renderer has no meaning here — its placeholders are
-// {id}/{id_lower} of an entry entity, and a list has none — so a Command config
-// is a wiring error rather than a supported branch.
+// Script-only: a `command:` renderer's placeholders are {id}/{id_lower} of an
+// entry entity and a list has none. No caller sets Command today; the guard
+// below is a fail-closed assertion so a future one gets an error instead of a
+// silently entry-less substitution.
 //
 // It deliberately does NOT hash, cache, or singleflight, and none of those are
 // oversights to be "optimized" back in later:

@@ -33,16 +33,42 @@ func (e *Engine) ExecuteListDocument(
 	lrc lua.ListRenderContext,
 	timeout time.Duration,
 ) error {
+	// The list id stands in for the entity id in the error envelope's subject
+	// slot: a list render has no entry entity, and "which list" is the useful
+	// thing to see in a failure.
+	return e.runDocumentScript(ctx, path, deps, stdout,
+		lua.WithListDocumentMode(documentID, lrc), lrc.ListID, timeout)
+}
+
+// runDocumentScript is the shared body behind the document-mode entry points
+// (ExecuteDocument, ExecuteListDocument): load the script, build the standard
+// opt set, run it with the file path as chunkname, and shape any failure into
+// a *lua.ScriptError.
+//
+// modeOpt is what distinguishes the callers, and keeping it a PARAMETER rather
+// than exposing variadic lua.Option is what preserves the typed seam: the
+// public methods each supply exactly one mode, so no caller can forge
+// WithOutputDir or WithActionMode. subject fills the error envelope's subject
+// slot (an entity id, or a list id where there is no entry entity).
+func (e *Engine) runDocumentScript(
+	ctx context.Context,
+	path string,
+	deps lua.WriteDeps,
+	stdout io.Writer,
+	modeOpt lua.Option,
+	subject string,
+	timeout time.Duration,
+) error {
 	scriptCode, err := loadScript(deps.ProjectRoot, path)
 	if err != nil {
 		return err
 	}
 
-	// ctx + principal threaded exactly as ExecuteDocument does: the render
-	// runs under the CALLER's identity, so its reads are ACL-bound
-	// (TKT-ZF2DTV) and it cancels with the request.
+	// ctx + principal are threaded so the render runs under the CALLER's
+	// identity: its reads are ACL-bound (TKT-ZF2DTV) and it cancels with the
+	// request.
 	opts := []lua.Option{
-		lua.WithListDocumentMode(documentID, lrc),
+		modeOpt,
 		lua.WithCache(e.cache),
 		lua.WithContext(ctx),
 		lua.WithPrincipal(principal.From(ctx)),
@@ -58,13 +84,11 @@ func (e *Engine) ExecuteListDocument(
 	defer runtime.Close()
 
 	// RunFileContent (not RunString) so gopher-lua receives the script path
-	// as the chunkname — see ExecuteDocument for the full rationale.
-	//nolint:contextcheck // ctx threaded via WithContext above, same as ExecuteDocument
+	// as the chunkname — that lands in the message handler's frame captures
+	// and lets ScriptError.Source populate from the right file.
+	//nolint:contextcheck // ctx threaded via WithContext above
 	if runErr := runtime.RunFileContent(path, []byte(scriptCode), nil); runErr != nil {
-		// The list id stands in for the entity id in the error envelope's
-		// subject slot: a list render has no entry entity, and "which list"
-		// is the useful thing to see in a failure.
-		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, lrc.ListID,
+		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, subject,
 			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
 	}
 	return nil

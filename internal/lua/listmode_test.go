@@ -34,13 +34,11 @@ func testListContext() ListRenderContext {
 		ListID: "tickets",
 		Rows:   testRows(),
 		Query: ListQuery{
-			ListID:     "tickets",
 			EntityType: "ticket",
 			Q:          "urgent",
 			Filters:    map[string]string{"status": "open"},
 			Sort:       []ListSortSpec{{Property: "title", Direction: "asc"}},
 			Total:      3,
-			Rendered:   3,
 		},
 	}
 }
@@ -219,8 +217,6 @@ func TestListDocumentMode_Truncation(t *testing.T) {
 	lrc := testListContext()
 	lrc.Rows = testRows()[:2]
 	lrc.Query.Total = 57
-	lrc.Query.Rendered = 2
-	lrc.Query.Truncated = true
 
 	got := runListDoc(t, lrc, `
 print(("showing %d of %d, truncated=%s"):format(

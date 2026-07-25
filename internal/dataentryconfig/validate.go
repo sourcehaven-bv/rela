@@ -452,6 +452,30 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
+// validateExportRenderShape validates an `export_render:` script path's shape.
+// Shape only — whether the file exists on disk is checked at app construction,
+// which is where the project root is known (see dataentry.NewApp).
+//
+// Shared by the list and view overrides so the two cannot fail differently:
+// before this, a typo'd list path failed here while the identical typo on a
+// view fell through to a generic loader error at boot. kind/id name the owner
+// for the message ("list"/"view").
+func validateExportRenderShape(kind, id, path string) []string {
+	if path == "" {
+		return nil
+	}
+	var errs []string
+	if !strings.HasSuffix(path, ".lua") {
+		errs = append(errs, fmt.Sprintf(
+			"%s %q: export_render must be a .lua script path, got %q", kind, id, path))
+	}
+	if !filepath.IsLocal(path) {
+		errs = append(errs, fmt.Sprintf(
+			"%s %q: export_render must be a local path under scripts/, got %q", kind, id, path))
+	}
+	return errs
+}
+
 // validateLists validates list definitions.
 //
 //nolint:gocognit // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
@@ -465,21 +489,7 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
-		// Validate the export render override. Shape only — whether the file
-		// exists on disk is checked at app construction, which is where the
-		// project root is known (see dataentry.NewApp).
-		if list.ExportRender != "" {
-			if !strings.HasSuffix(list.ExportRender, ".lua") {
-				errs = append(errs, fmt.Sprintf(
-					"list %q: export_render must be a .lua script path, got %q",
-					listID, list.ExportRender))
-			}
-			if !filepath.IsLocal(list.ExportRender) {
-				errs = append(errs, fmt.Sprintf(
-					"list %q: export_render must be a local path under scripts/, got %q",
-					listID, list.ExportRender))
-			}
-		}
+		errs = append(errs, validateExportRenderShape("list", listID, list.ExportRender)...)
 
 		// Validate columns
 		for i, c := range list.Columns {
@@ -762,6 +772,11 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 	}
 
 	for viewID, view := range cfg.Views {
+		// Before the entry-type check, which continues on failure: a bad
+		// export_render path is worth reporting even on a view whose entry
+		// type is also wrong.
+		errs = append(errs, validateExportRenderShape("view", viewID, view.ExportRender)...)
+
 		// Validate entry type
 		entDef, ok := meta.GetEntityDef(view.Entry.Type)
 		if !ok {

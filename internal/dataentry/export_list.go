@@ -42,11 +42,11 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Resolve the effective list ONCE, and use it for both the columns and
-	// the render override — see resolveEffectiveList for why these must not
-	// be looked up independently.
+	// Resolve the effective list ONCE and derive both the columns and the
+	// render override from it — see resolveEffectiveList for why these must
+	// not be looked up independently.
 	effListID, effList, haveList := h.resolveEffectiveList(query.Get("list"), typeName)
-	columns := h.exportListColumns(query.Get("list"), typeName)
+	columns := listColumnsOf(effList, haveList)
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
 	// exact read path the list view uses, so export can't widen past the view.
@@ -158,41 +158,36 @@ func (r entitySliceRows) At(i int) *entityPkg.Entity {
 // for changing what it contains.
 func buildListQuery(in listRenderInput) lua.ListQuery {
 	q := lua.ListQuery{
-		ListID:     in.listID,
 		EntityType: in.typeName,
 		Q:          queryGet(in.query, "q"),
 		Total:      in.total,
-		Rendered:   len(in.entities),
-		Truncated:  in.truncated,
 	}
 
-	// filter[<key>]=<value> → {key: value}. First value wins, matching how
-	// the list pipeline itself reads these.
+	// filter[<key>]=<value> → {key: value}, parsed with the SAME helper the
+	// filter pipeline uses. Rolling our own TrimPrefix/TrimSuffix here would
+	// reintroduce RR-6RF60V: `filter[status][ne]` would key the table on
+	// "status][ne" instead of "status", so a script would see a filter name
+	// that never matches what was actually filtered on. The operator segment
+	// is intentionally dropped — this context reports WHICH properties were
+	// filtered, and the last value wins, matching applyV1Filters.
 	for k, vals := range in.query {
-		key, ok := strings.CutPrefix(k, "filter[")
-		if !ok || !strings.HasSuffix(key, "]") || len(vals) == 0 {
+		if !strings.HasPrefix(k, "filter[") || len(vals) == 0 {
+			continue
+		}
+		key, _, ok := parseRelationFilterKey(k)
+		if !ok {
 			continue
 		}
 		if q.Filters == nil {
 			q.Filters = map[string]string{}
 		}
-		q.Filters[strings.TrimSuffix(key, "]")] = vals[0]
+		q.Filters[key] = vals[len(vals)-1]
 	}
 
-	// sort=-created,title — same grammar applyV1Sorting parses.
-	for part := range strings.SplitSeq(queryGet(in.query, "sort"), ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		spec := lua.ListSortSpec{Direction: "asc"}
-		if after, found := strings.CutPrefix(part, "-"); found {
-			spec.Direction = "desc"
-			part = after
-		}
-		spec.Property = part
-		q.Sort = append(q.Sort, spec)
-	}
+	// sort=-created,title, parsed by the same helper applyV1Sorting uses, so
+	// the sort reported to a script cannot drift from the sort applied.
+	// ListSortSpec aliases filter.SortSpec, so these pass straight through.
+	q.Sort = parseSortParam(in.query)
 	return q
 }
 
@@ -208,7 +203,7 @@ func buildListQuery(in listRenderInput) lua.ListQuery {
 // that is plainly configured.
 //
 // Note what this does NOT test: `len(Columns) > 0`. That predicate lives in
-// exportListColumns, where it belongs — it is a statement about whether a list
+// listColumnsOf, where it belongs — it is a statement about whether a list
 // can supply columns, not about which list this export is. A list configured
 // with `export_render:` and no `columns:` is perfectly valid (the script
 // renders whatever it likes), and folding the column check in here would make
@@ -233,16 +228,15 @@ func (h *exportHandler) resolveEffectiveList(
 	return "", dataentryconfig.List{}, false
 }
 
-// exportListColumns returns the columns for the export: the effective list's
+// listColumnsOf returns the columns for the export: the effective list's
 // columns when it has any, else a minimal [id, title] pair so an export always
 // produces a sensible table even when no list is configured.
 //
-// The two-step (effective list, then column check) preserves the original
-// behavior exactly for every configuration that has columns anywhere, while
-// keeping list identity and column availability as the separate questions they
-// are — see resolveEffectiveList.
-func (h *exportHandler) exportListColumns(listID, typeName string) []dataentryconfig.ListColumn {
-	if _, l, ok := h.resolveEffectiveList(listID, typeName); ok && len(l.Columns) > 0 {
+// Takes the ALREADY-resolved list rather than resolving one itself, so a
+// single request resolves exactly once and the columns can never come from a
+// different list than the render override — see resolveEffectiveList.
+func listColumnsOf(l dataentryconfig.List, haveList bool) []dataentryconfig.ListColumn {
+	if haveList && len(l.Columns) > 0 {
 		return l.Columns
 	}
 	return []dataentryconfig.ListColumn{

@@ -1,6 +1,9 @@
 package lua
 
-import "github.com/Sourcehaven-BV/rela/internal/entity"
+import (
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filter"
+)
 
 // ListRows supplies the rows a list-document render displays.
 //
@@ -24,29 +27,28 @@ type ListRows interface {
 	At(i int) *entity.Entity
 }
 
-// ListSortSpec is one resolved sort criterion, in priority order.
-type ListSortSpec struct {
-	Property  string
-	Direction string
-}
+// ListSortSpec is one resolved sort criterion, in priority order. Aliased to
+// the shared sort type rather than redeclared, following the same move
+// filter.SortSpec already makes — one sort shape across metamodel, filter,
+// and here, so a caller can pass parsed specs straight through.
+type ListSortSpec = filter.SortSpec
 
-// ListQuery is the read-only request context a list render receives: which
-// list, over which entity type, under which filters and sort, and how the
-// row cap applied. Plain data — a script may read it to title and annotate
-// the export, but it is exposed through a frozen Lua table so it cannot be
-// used as a back-channel to mutate the handler's state.
+// ListQuery is the read-only request context a list render receives: the
+// entity type, the filters and sort that produced the rows, and how many rows
+// existed before the export cap. Plain data — a script may read it to title
+// and annotate the export, but it is exposed through a frozen Lua table so it
+// cannot be used as a back-channel to mutate the handler's state.
 //
-// Total is the row count BEFORE the cap; Rendered is what the script can
-// actually see (== ListRows.Len()). They differ exactly when Truncated.
+// Total is the row count BEFORE the cap. How many the script can actually see
+// is ListRows.Len(), and whether the cap applied is Total > that — both
+// derived at render time rather than stored, so the three can never disagree.
+// The list's identity lives on [ListRenderContext], not here.
 type ListQuery struct {
-	ListID     string
 	EntityType string
 	Q          string
 	Filters    map[string]string
 	Sort       []ListSortSpec
 	Total      int
-	Rendered   int
-	Truncated  bool
 }
 
 // ListRenderContext bundles everything a list-document render needs beyond

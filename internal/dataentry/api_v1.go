@@ -1696,33 +1696,39 @@ func applyV1Filters(
 	return filtered, nil
 }
 
-// applyV1Sorting applies `sort=` query params to the entity slice. Pure data
-// transform — a free function, not App behavior (TKT-N26KLB M5.5).
-func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
-	sortParam := ""
-	if vals, ok := query["sort"]; ok && len(vals) > 0 {
-		sortParam = vals[0]
-	}
+// parseSortParam parses the `sort=` query param into ordered sort specs:
+// "-created,title" means descending created, then ascending title. Returns nil
+// when no sort was requested.
+//
+// Shared by every consumer of the grammar — the list pipeline that APPLIES the
+// sort and the export context that REPORTS it — so the two cannot drift into
+// describing different orderings.
+func parseSortParam(query map[string][]string) []filter.SortSpec {
+	sortParam := queryGet(query, "sort")
 	if sortParam == "" {
-		return entities
+		return nil
 	}
-
-	// Parse sort param: "-created,title" means descending created, ascending title
-	sortSpecs := make([]filter.SortSpec, 0)
+	var specs []filter.SortSpec
 	for part := range strings.SplitSeq(sortParam, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 		spec := filter.SortSpec{Direction: "asc"}
-		if strings.HasPrefix(part, "-") {
+		if after, found := strings.CutPrefix(part, "-"); found {
 			spec.Direction = "desc"
-			part = part[1:]
+			part = after
 		}
 		spec.Property = part
-		sortSpecs = append(sortSpecs, spec)
+		specs = append(specs, spec)
 	}
+	return specs
+}
 
+// applyV1Sorting applies `sort=` query params to the entity slice. Pure data
+// transform — a free function, not App behavior (TKT-N26KLB M5.5).
+func applyV1Sorting(entities []*entityPkg.Entity, query map[string][]string) []*entityPkg.Entity {
+	sortSpecs := parseSortParam(query)
 	if len(sortSpecs) == 0 {
 		return entities
 	}

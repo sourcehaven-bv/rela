@@ -32,7 +32,7 @@ func listCtx() lua.ListRenderContext {
 			{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "Second"}},
 		},
 		Query: lua.ListQuery{
-			ListID: "tickets", EntityType: "ticket", Total: 2, Rendered: 2,
+			EntityType: "ticket", Total: 2,
 		},
 	}
 }

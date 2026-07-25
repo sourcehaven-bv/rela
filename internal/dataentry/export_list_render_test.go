@@ -275,11 +275,10 @@ func TestExport_List_RenderOverride_TruncationReachesScript(t *testing.T) {
 	if call.query.Total != 5 {
 		t.Errorf("Total = %d, want 5 (pre-cap count)", call.query.Total)
 	}
-	if call.query.Rendered != 2 {
-		t.Errorf("Rendered = %d, want 2", call.query.Rendered)
-	}
-	if !call.query.Truncated {
-		t.Error("Truncated = false, want true")
+	// Truncation is derived at render time from Total vs the row count, so
+	// assert the two inputs the script's `truncated` is computed from.
+	if got := call.query.Total > len(call.rowIDs); !got {
+		t.Error("Total <= rows, so the script would see truncated=false")
 	}
 	// The built-in truncation notice must NOT appear — the script owns its
 	// own notice when it overrides.
@@ -327,8 +326,8 @@ func TestExport_List_RenderOverride_QueryContext(t *testing.T) {
 		t.Fatalf("want 1 call, got %d", len(fake.calls))
 	}
 	q := fake.calls[0].query
-	if q.ListID != "tickets" || q.EntityType != "ticket" {
-		t.Errorf("list identity wrong: %+v", q)
+	if fake.calls[0].listID != "tickets" || q.EntityType != "ticket" {
+		t.Errorf("list identity wrong: listID=%q %+v", fake.calls[0].listID, q)
 	}
 	if q.Q != "urgent" {
 		t.Errorf("Q = %q, want %q", q.Q, "urgent")
@@ -338,6 +337,31 @@ func TestExport_List_RenderOverride_QueryContext(t *testing.T) {
 	}
 	if len(q.Sort) != 1 || q.Sort[0].Property != "title" || q.Sort[0].Direction != "desc" {
 		t.Errorf("Sort = %+v, want one {title desc}", q.Sort)
+	}
+}
+
+// TestExport_List_RenderOverride_FilterOperatorKey pins that an operator
+// segment is parsed, not swallowed into the property name (the RR-6RF60V bug
+// class). A naive TrimPrefix/TrimSuffix keys this table on "status][ne", so a
+// script would report a filter name that never matches what was filtered on.
+func TestExport_List_RenderOverride_FilterOperatorKey(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedExportTickets(app, "TKT-1")
+	fake := withListRenderOverride(t, app, func(fakeScriptCall) string { return "ok\n" })
+	ctx := adminListCtx(t, app)
+
+	exportListURL(ctx, app, "transform=copy&list=tickets&filter[status][ne]=done")
+
+	if len(fake.calls) != 1 {
+		t.Fatalf("want 1 call, got %d", len(fake.calls))
+	}
+	filters := fake.calls[0].query.Filters
+	if got, ok := filters["status"]; !ok || got != "done" {
+		t.Errorf("Filters = %v, want the operator segment parsed off to key %q", filters, "status")
+	}
+	if _, bad := filters["status][ne"]; bad {
+		t.Errorf("operator segment swallowed into the key: %v", filters)
 	}
 }
 
