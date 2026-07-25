@@ -5,7 +5,13 @@ title: POST /webhooks/idp is unreachable — registered on the /api/-only inner 
 description: 'The inbound IdP webhook route has never been reachable in production. registerWebhookRoutes registers POST /webhooks/idp on the `inner` mux, but `inner` is only mounted under mux.Handle("/api/", ...). Since /webhooks/idp does not match the /api/ prefix, it falls through to the SPA catch-all and returns 200 SPA HTML. Every IdP membership event has been silently dropped since #1069.'
 priority: high
 effort: xs
-status: backlog
+why1: POST /webhooks/idp fell through to the SPA catch-all and returned 200 HTML; the webhook handler never ran.
+why2: registerWebhookRoutes registered the route on the `inner` ServeMux, but `inner` is only mounted under mux.Handle("/api/", ...). Since /webhooks/idp does not carry the /api/ prefix, Go's ServeMux never routed to inner — it matched the catch-all mux.Handle("/", ...) instead.
+why3: No test ever routed /webhooks/idp through the production NewRouter(). Every webhook test called the receiver's handle() method directly (postWebhook in webhook_test.go), so the mux wiring was never exercised.
+why4: 'The one test that DOES walk the router (TestRouterWalk_AllAPIRoutesReachHandlers) uses an oracle — unregistered path yields a stdlib 404 — that structurally cannot detect this bug: a non-/api/ unregistered path falls through to the SPA and returns 200 HTML, which reads as ''reachable''.'
+why5: 'The route''s mount location (inner, /api/-scoped) and its intended reachability (outside /api/) were in tension, and neither the code review of #1069 nor the test suite had a check that binds a route''s registration mux to its actual reachable path. The doc comment even asserted the route ''lives OUTSIDE /api/'', which was true of the path but false of the mux it was registered on — masking the defect.'
+prevention: Added TestWebhook_ReachableThroughRouter, which routes POST /webhooks/idp through the real NewRouter() with an oracle of 'not the SPA shell' (not 200-HTML), the only oracle that can catch a non-/api/ route falling through to the catch-all. Documented in router_walk_test.go why the webhook is excluded from the walk oracle and where its reachability is pinned instead. The automated-measure route-reachability-through-production-router captures the general rule.
+status: review
 ---
 
 ## Description
