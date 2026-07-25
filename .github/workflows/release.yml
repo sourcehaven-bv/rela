@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  # Escape hatch: rebuild and republish an existing tag after a failed run, or
+  # one pushed by hand. The normal path is the `push` trigger above — Tag
+  # Release pushes with a GitHub App token, which does fire it (the default
+  # GITHUB_TOKEN would not). See docs/releasing.md.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -124,6 +129,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # The CalVer tag (vYY.M.BUILD) is already a legal MSI ProductVersion —
+      # YY <= 99 and M <= 12 are well inside the 255/255/65535 field maxima —
+      # so it is used verbatim everywhere, installers included.
       - name: Extract version
         id: version
         shell: bash
