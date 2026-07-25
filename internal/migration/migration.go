@@ -38,6 +38,7 @@ type FileType string
 const (
 	FileTypeMetamodel FileType = "metamodel"  // metamodel.yaml
 	FileTypeDataEntry FileType = "data-entry" // data-entry.yaml
+	FileTypeACL       FileType = "acl"        // acl.yaml
 )
 
 // Migration defines the interface for schema migrations.

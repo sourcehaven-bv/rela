@@ -77,8 +77,9 @@ tasks:
 ### Identity and what a task can read (`run_as`)
 
 A scheduled task runs under an **identity**, and that identity decides what
-its script may read. By default every task runs as the scheduler's system
-user. `run_as` gives a task its own identity instead:
+its script may read. By default every task runs as `system:scheduler`, a
+fixed identity that does not depend on which OS account started the
+scheduler. `run_as` gives a task its own identity instead:
 
 ```yaml
 tasks:
@@ -105,6 +106,34 @@ With that pairing, `rela.get_entity` / `list_entities` / `search` /
 the `reporting` role may see. Anything else is invisible to the script —
 which is what bounds the data an AI-assisted or outbound-reporting job can
 possibly include.
+
+#### If your project has an `acl.yaml`, grant the scheduler
+
+The default identity is subject to the same rule as any other: it reads
+only what a role grants it. A project that has an `acl.yaml` but never
+assigns `system:scheduler` a role has tasks that read **nothing** — and
+because a gated read is indistinguishable from missing data, they fail
+silently rather than erroring.
+
+`rela migrate` adds the grant for you:
+
+```yaml
+# acl.yaml
+roles:
+  scheduler-system:
+    read: ["*"]
+assignments:
+  system:scheduler: scheduler-system
+```
+
+Narrow `read:` to the types your jobs actually need, or give each job its
+own `run_as` identity with a tighter role — the migration writes a
+permissive default so existing jobs keep working, not because wide access
+is recommended.
+
+Projects with **no** `acl.yaml` need do nothing: with no policy there is no
+access control, and scheduled tasks read the whole graph as they always
+have.
 
 Notes:
 
@@ -389,5 +418,10 @@ the audit log for scheduler-driven changes:
 ```bash
 cat .rela/audit/*.jsonl | jq 'select(.triggered_by == "schedule:traceability-report")'
 ```
+
+`principal.user` is the task's identity: `system:scheduler` by default, or
+its `run_as` value. Earlier versions recorded the OS account that started
+the scheduler, so records written before the upgrade carry that instead —
+worth knowing when reading back across the change.
 
 See [audit-log.md](audit-log.md) for the full record schema.
