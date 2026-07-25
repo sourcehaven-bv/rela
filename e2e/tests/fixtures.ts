@@ -412,14 +412,22 @@ async function spawnServer(
   for (let i = 0; i < attempts; i++) {
     const port = await findFreePort();
     const url = `http://localhost:${port}`;
+    // Reachability coverage: when RELA_E2E_COVERDIR is set, serverBinary is an
+    // instrumented (`go build -cover`) build that writes Go coverage data on a
+    // clean exit (the server's SIGTERM handler drains and exits gracefully).
+    // Give each spawned server its own GOCOVERDIR subdir so parallel workers
+    // never share a partial write; `go tool covdata` merges them afterwards.
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+    const coverRoot = process.env.RELA_E2E_COVERDIR;
+    if (coverRoot) {
+      const covDir = path.join(coverRoot, `srv-${port}-${Date.now()}`);
+      fs.mkdirSync(covDir, { recursive: true });
+      spawnEnv.GOCOVERDIR = covDir;
+    }
     const proc: ChildProcess = spawn(
       serverBinary,
       ["-port", String(port), "-allowed-origin", url],
-      {
-        cwd,
-        env: { ...process.env, ...extraEnv },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
+      { cwd, env: spawnEnv, stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
     let stderr = "";

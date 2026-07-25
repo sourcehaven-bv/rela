@@ -15,8 +15,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -500,9 +502,41 @@ func main() {
 	}
 
 	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := serveUntilSignal(srv); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+// shutdownGrace bounds how long a graceful shutdown waits for in-flight
+// requests to finish before the process exits.
+const shutdownGrace = 5 * time.Second
+
+// serveUntilSignal runs srv until it fails or a SIGINT/SIGTERM arrives, then
+// shuts it down gracefully. Graceful shutdown drains in-flight requests, and is
+// REQUIRED for coverage-instrumented builds: Go's `-cover` runtime only writes
+// counter data on a clean process exit, so a bare SIGTERM that killed the
+// process mid-serve would discard all coverage gathered during e2e runs.
+// Returning an error (rather than calling os.Exit here) keeps the deferred
+// cancel reachable.
+func serveUntilSignal(srv *http.Server) error {
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-serveErr:
+		return err
+	case s := <-sig:
+		slog.Info("shutting down", "signal", s.String())
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		return srv.Shutdown(ctx)
 	}
 }
 
