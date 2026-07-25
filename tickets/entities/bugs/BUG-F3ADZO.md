@@ -11,7 +11,7 @@ why3: No test ever routed /webhooks/idp through the production NewRouter(). Ever
 why4: 'The one test that DOES walk the router (TestRouterWalk_AllAPIRoutesReachHandlers) uses an oracle — unregistered path yields a stdlib 404 — that structurally cannot detect this bug: a non-/api/ unregistered path falls through to the SPA and returns 200 HTML, which reads as ''reachable''.'
 why5: 'The route''s mount location (inner, /api/-scoped) and its intended reachability (outside /api/) were in tension, and neither the code review of #1069 nor the test suite had a check that binds a route''s registration mux to its actual reachable path. The doc comment even asserted the route ''lives OUTSIDE /api/'', which was true of the path but false of the mux it was registered on — masking the defect.'
 prevention: Added TestWebhook_ReachableThroughRouter, which routes POST /webhooks/idp through the real NewRouter() with an oracle of 'not the SPA shell' (not 200-HTML), the only oracle that can catch a non-/api/ route falling through to the catch-all. Documented in router_walk_test.go why the webhook is excluded from the walk oracle and where its reachability is pinned instead. The automated-measure route-reachability-through-production-router captures the general rule.
-status: review
+status: done
 ---
 
 ## Description
