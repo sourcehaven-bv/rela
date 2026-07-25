@@ -297,9 +297,53 @@ jobs:
 
       - name: Run fuzz tests
         run: |
-          go test -run='^$' -fuzz='^FuzzParseDocument$' -fuzztime=10s ./internal/markdown/
-          go test -run='^$' -fuzz='^FuzzParseEntityID$' -fuzztime=10s ./internal/entity/
-          go test -run='^$' -fuzz='^FuzzValidateID$' -fuzztime=10s ./internal/entity/
+          # Run one fuzz target, failing ONLY on a real finding.
+          #
+          # Since Go 1.25, a `-fuzztime` budget that expires while a worker is
+          # mid-execution exits non-zero with "context deadline exceeded"
+          # instead of stopping cleanly. That is the timer doing its job, not a
+          # bug in the code under test — but GitHub's default `bash -e` treats
+          # it as a step failure, which made this job flake on slow runners
+          # (observed twice in one afternoon on two different targets, at ~14k
+          # execs/sec versus ~160k locally) and skip every target after the
+          # first.
+          #
+          # Swallowing the timeout is only safe because a genuine finding leaves
+          # different, unambiguous evidence: the target writes a reproducer
+          # under testdata/fuzz/ and prints "Failing input written to". We fail
+          # hard whenever that appears, so a real crash still breaks the build.
+          #
+          # Do NOT widen that grep to "--- FAIL": the timeout output contains
+          # `--- FAIL: <target>` AND "context deadline exceeded" together, so
+          # matching on it would re-fail exactly the case this exists to
+          # tolerate. Order matters for the same reason — the crash check is a
+          # positive match on reproducer evidence, not on generic failure.
+          run_fuzz() {
+            local target=$1 pkg=$2 out status
+            echo "==> fuzzing $target in $pkg"
+            set +e
+            out=$(go test -run='^$' -fuzz="^${target}\$" -fuzztime=10s "$pkg" 2>&1)
+            status=$?
+            set -e
+            echo "$out"
+            if [ $status -eq 0 ]; then
+              return 0
+            fi
+            if grep -q 'Failing input written to' <<<"$out"; then
+              echo "::error::fuzz target $target found a failing input"
+              return 1
+            fi
+            if grep -q 'context deadline exceeded' <<<"$out"; then
+              echo "::notice::$target hit its time budget without a finding (slow runner); treating as pass"
+              return 0
+            fi
+            echo "::error::fuzz target $target failed for an unrecognised reason (exit $status)"
+            return 1
+          }
+
+          run_fuzz FuzzParseDocument ./internal/markdown/
+          run_fuzz FuzzParseEntityID ./internal/entity/
+          run_fuzz FuzzValidateID ./internal/entity/
 
   postgres:
     name: Postgres Backend
