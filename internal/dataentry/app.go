@@ -118,9 +118,18 @@ type App struct {
 	// reader is the ungated entity/relation read seam over the store. Extracted
 	// from App (TKT-N26KLB); a single-dep leaf shared by read/write/affordance
 	// paths. ACL scoping lives in visibleReader, not here.
-	reader    entityReader
-	tracer    tracer.Tracer
-	validator validator.Validator
+	reader entityReader
+	// viewReader is the row-gating + field-redacting read-out seam
+	// (visibility.PolicyReader, DEC-ZBI39P) for the view pipeline. executeView
+	// loads raw from the store during traversal (a where: filter may reference
+	// a hidden property, and edges are walked by id), then routes the assembled
+	// result through viewReader so section builders receive already-redacted
+	// entities — closing BUG-9QL9XV (property values) and BUG-R9EHKV (titles,
+	// via Redact's _title fallback) structurally rather than per-field in
+	// sections.go. Same wiring as the export handler's visReader.
+	viewReader visibility.Reader
+	tracer     tracer.Tracer
+	validator  validator.Validator
 	// analyze runs the read-only graph-analysis checks. Extracted from App
 	// (TKT-N26KLB M5.1); holds its own {store, tracer, validator} and takes
 	// the metamodel snapshot per call.
@@ -309,7 +318,7 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // request. WritePrepStore stays RAW so update_entity's read-before-write
 // cannot erase hidden properties (see lua.ReadDeps.WritePrepStore).
 func (a *App) luaWriteDeps() lua.WriteDeps {
-	redactor := affRedactor{aff: func() affordanceService { return a.affordances }}
+	redactor := a.redactor()
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
 			VisibleReader:  a.scriptReader(redactor),
@@ -321,6 +330,15 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 		},
 		EntityManager: a.entityManager,
 	}
+}
+
+// redactor returns the field-redaction seam over the affordance service
+// (visibility.FieldRedactor), closing over App.affordances via a closure so it
+// stays valid after test builders rebind the service. It is the one source of
+// the affRedactor used by the script reader, the export handler, and the view
+// pipeline.
+func (a *App) redactor() visibility.FieldRedactor {
+	return affRedactor{aff: func() affordanceService { return a.affordances }}
 }
 
 // scriptReader returns the ACL-bound read-out handle for script runtimes,
@@ -657,6 +675,16 @@ func NewApp(
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
+
+	// viewReader row-gates + field-redacts entities on their way out of the
+	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
+	// the redactor closes over it. Same construction as the export handler's
+	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
+	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, app.redactor(), app.store)
+	if viewReaderErr != nil {
+		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
+	}
+	app.viewReader = viewReader
 
 	app.settings = newSettingsService(kv)
 
