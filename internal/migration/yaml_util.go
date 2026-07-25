@@ -52,6 +52,23 @@ func SetMapValue(node *yaml.Node, key, value string) {
 	node.Content = append(node.Content, keyNode, valueNode)
 }
 
+// SetMapNode sets `key` to an arbitrary value node, replacing any existing
+// value. [SetMapValue] is the scalar-only equivalent; this one accepts a
+// composite (sequence/mapping) value.
+func SetMapNode(node *yaml.Node, key string, value *yaml.Node) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			node.Content[i+1] = value
+			return
+		}
+	}
+	node.Content = append(node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key}, value)
+}
+
 // RenameMapKey renames a key in a mapping node.
 // Returns true if the key was found and renamed.
 func RenameMapKey(node *yaml.Node, oldKey, newKey string) bool {
@@ -211,6 +228,45 @@ func InsertMapKeyAfter(node *yaml.Node, anchor, key string, value *yaml.Node) {
 	}
 	// Anchor not found — append at end.
 	node.Content = append(node.Content, keyNode, value)
+}
+
+// EnsureMapping returns the mapping node stored under `key`, creating or
+// repairing it as needed so the caller always gets a usable mapping.
+//
+// It exists because `key:` with nothing under it parses as a NULL SCALAR,
+// not an empty mapping — a shape YAML accepts and operators write all the
+// time (a commented-out block, a half-finished file). Reaching for
+// [InsertMapKeyAfter] there silently does nothing: the key already exists,
+// so the insert no-ops and the freshly-built mapping is dropped. The
+// migration then reports success having changed nothing.
+//
+// Three cases:
+//   - key absent            → append `key: {}` after `anchor` and return it
+//   - key holds a mapping   → return it untouched
+//   - key holds null/scalar → convert THAT node in place to an empty
+//     mapping (preserving position and comments) and return it
+//
+// Returns nil only if `node` is not a mapping.
+func EnsureMapping(node *yaml.Node, anchor, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	if existing := GetMapValue(node, key); existing != nil {
+		if existing.Kind == yaml.MappingNode {
+			return existing
+		}
+		// Null or wrong kind: repair in place so the node keeps its
+		// position in the document and any attached comments.
+		existing.Kind = yaml.MappingNode
+		existing.Tag = "!!map"
+		existing.Value = ""
+		existing.Style = 0
+		existing.Content = nil
+		return existing
+	}
+	created := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	InsertMapKeyAfter(node, anchor, key, created)
+	return created
 }
 
 // DeleteMapKey removes a key-value pair from a mapping node by key name.

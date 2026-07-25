@@ -43,17 +43,53 @@ func TestACLSchedulerGrant_Detect(t *testing.T) {
 		},
 		{
 			name: "scheduler already assigned",
-			src:  "assignments:\n  system:scheduler: scheduler-system\n",
+			src: "roles:\n  scheduler-system:\n    read: [\"*\"]\n" +
+				"assignments:\n  system:scheduler: scheduler-system\n",
 			want: false,
 		},
 		{
 			name: "scheduler assigned to an operator's own role",
-			src:  "assignments:\n  system:scheduler: my-custom-role\n",
+			src: "roles:\n  my-custom-role:\n    read: [ticket]\n" +
+				"assignments:\n  system:scheduler: my-custom-role\n",
 			want: false,
 		},
 		{
 			name: "empty document",
 			src:  "",
+			want: false,
+		},
+		// The shapes that previously produced a silent false success.
+		{
+			name: "roles present but null",
+			src:  "roles:\nassignments:\n  alice: viewer\n",
+			want: true,
+		},
+		{
+			name: "assignments present but null",
+			src:  "roles:\n  viewer:\n    read: [ticket]\nassignments:\n",
+			want: true,
+		},
+		{
+			name: "assignment names a role that is not defined",
+			src:  "roles:\n  viewer:\n    read: [ticket]\nassignments:\n  system:scheduler: ghost\n",
+			want: true,
+		},
+		{
+			name: "assigned role grants no read",
+			src: "roles:\n  writer:\n    create: [ticket]\n" +
+				"assignments:\n  system:scheduler: writer\n",
+			want: true,
+		},
+		{
+			name: "granted via asserted_role_assignments (scalar)",
+			src: "roles:\n  reporting:\n    read: [ticket]\n" +
+				"asserted_role_assignments:\n  system:scheduler: reporting\n",
+			want: false,
+		},
+		{
+			name: "granted via asserted_role_assignments (list)",
+			src: "roles:\n  reporting:\n    read: [ticket]\n" +
+				"asserted_role_assignments:\n  system:scheduler: [other, reporting]\n",
 			want: false,
 		},
 	}
@@ -70,15 +106,33 @@ func TestACLSchedulerGrant_Detect(t *testing.T) {
 
 // TestACLSchedulerGrant_ApplyIsIdempotent pins the package convention:
 // after Apply, Detect must be false and a second Apply must not duplicate.
+// Runs over the awkward shapes too: idempotency is precisely the property
+// that broke on a null `assignments:` (Detect stayed true forever, so every
+// `rela migrate` re-applied and re-wrote the file).
 func TestACLSchedulerGrant_ApplyIsIdempotent(t *testing.T) {
-	m := &migration.ACLSchedulerGrantMigration{}
-	doc := parseDoc(t, "roles:\n  viewer:\n    read: [ticket]\nassignments:\n  alice: viewer\n")
+	sources := map[string]string{
+		"well formed":      "roles:\n  viewer:\n    read: [ticket]\nassignments:\n  alice: viewer\n",
+		"roles null":       "roles:\nassignments:\n  alice: viewer\n",
+		"assignments null": "roles:\n  viewer:\n    read: [ticket]\nassignments:\n",
+		"both null":        "roles:\nassignments:\n",
+	}
+	for name, src := range sources {
+		t.Run(name, func(t *testing.T) {
+			m := &migration.ACLSchedulerGrantMigration{}
+			doc := parseDoc(t, src)
+			applyIdempotently(t, m, doc)
+		})
+	}
+}
 
+func applyIdempotently(t *testing.T, m *migration.ACLSchedulerGrantMigration, doc *yaml.Node) {
+	t.Helper()
 	if err := m.Apply(doc); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if m.Detect(doc) {
-		t.Error("Detect still true after Apply")
+		out, _ := yaml.Marshal(doc)
+		t.Errorf("Detect still true after Apply — migration never converges:\n%s", out)
 	}
 
 	first, marshalErr := yaml.Marshal(doc)
@@ -142,6 +196,15 @@ func TestACLSchedulerGrant_ProducesLoadablePolicy(t *testing.T) {
 		"with existing roles": "roles:\n  viewer:\n    read: [ticket]\nassignments:\n  alice: viewer\n",
 		"assignments only":    "assignments:\n  alice: viewer\n",
 		"roles only":          "roles:\n  viewer:\n    read: [ticket]\n",
+		// `key:` with nothing under it parses as a NULL SCALAR, not an
+		// empty mapping. Both of these previously yielded a file that
+		// parsed and validated while granting nothing.
+		"roles null":          "roles:\nassignments:\n  alice: viewer\n",
+		"assignments null":    "roles:\n  viewer:\n    read: [ticket]\nassignments:\n",
+		"both null":           "roles:\nassignments:\n",
+		"dangling assignment": "roles:\n  viewer:\n    read: [ticket]\nassignments:\n  system:scheduler: ghost\n",
+		"assigned role grants no read": "roles:\n  writer:\n    create: [ticket]\n" +
+			"assignments:\n  system:scheduler: writer\n",
 	}
 
 	m := &migration.ACLSchedulerGrantMigration{}
@@ -176,9 +239,12 @@ func TestACLSchedulerGrant_ProducesLoadablePolicy(t *testing.T) {
 			if len(def.Read) == 0 {
 				t.Errorf("role %q grants no read:\n%s", role, out)
 			}
-			// Read-only: a privilege grant must not smuggle in write verbs.
-			if len(def.Update) != 0 || len(def.Delete) != 0 || len(def.Create) != 0 {
-				t.Errorf("scheduler role grants write verbs (create=%v update=%v delete=%v)",
+			// A role WE mint must be read-only — the migration must never
+			// hand the scheduler write verbs it did not already have. A
+			// role the operator wrote is theirs; we only ensure it reads.
+			writes := len(def.Update) + len(def.Delete) + len(def.Create)
+			if role == "scheduler-system" && writes != 0 {
+				t.Errorf("migration-created role grants write verbs (create=%v update=%v delete=%v)",
 					def.Create, def.Update, def.Delete)
 			}
 		})
@@ -219,8 +285,38 @@ func TestACLSchedulerGrant_RespectsOperatorRole(t *testing.T) {
 // duplicated — this test is what keeps the copy honest. If it fails, the
 // migration is writing a grant for a principal nothing runs as.
 func TestACLSchedulerGrant_PrincipalMatchesRuntime(t *testing.T) {
+	// Direct and unconditional: this holds regardless of whether Apply
+	// works on any particular input, so a structural bug elsewhere cannot
+	// masquerade as "the literal is fine".
+	if migration.SchedulerPrincipal != principal.UserScheduler {
+		t.Fatalf("migration.SchedulerPrincipal = %q but principal.UserScheduler = %q; "+
+			"the migration would grant a principal nothing runs as",
+			migration.SchedulerPrincipal, principal.UserScheduler)
+	}
+}
+
+// TestACLSchedulerGrant_RespectsAssertedRoleGrant: an operator who scoped
+// the scheduler through asserted_role_assignments has already thought about
+// this. Do not pile a read:["*"] role on top of their narrower grant.
+func TestACLSchedulerGrant_RespectsAssertedRoleGrant(t *testing.T) {
+	src := "roles:\n  reporting:\n    read: [ticket]\n" +
+		"asserted_role_assignments:\n  system:scheduler: reporting\n"
 	m := &migration.ACLSchedulerGrantMigration{}
-	doc := parseDoc(t, "assignments:\n  alice: viewer\n")
+	doc := parseDoc(t, src)
+
+	if m.Detect(doc) {
+		t.Fatal("Detect true despite an existing asserted read grant — would widen the operator's scope")
+	}
+}
+
+// TestACLSchedulerGrant_RepairsDeadRole: a role that exists but grants no
+// read must be given one, not silently bound to. Binding to an empty role
+// just relocates the bug.
+func TestACLSchedulerGrant_RepairsDeadRole(t *testing.T) {
+	src := "roles:\n  scheduler-system: {}\nassignments:\n  alice: viewer\n"
+	m := &migration.ACLSchedulerGrantMigration{}
+	doc := parseDoc(t, src)
+
 	if err := m.Apply(doc); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -232,10 +328,33 @@ func TestACLSchedulerGrant_PrincipalMatchesRuntime(t *testing.T) {
 	if err := yaml.Unmarshal(out, &policy); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if _, ok := policy.Assignments[principal.UserScheduler]; !ok {
-		t.Fatalf("migration grants no role to principal.UserScheduler (%q); "+
-			"the literal in acl_scheduler_grant.go has drifted:\n%s",
-			principal.UserScheduler, out)
+	if got := policy.Roles["scheduler-system"].Read; len(got) == 0 {
+		t.Errorf("dead role left without read:\n%s", out)
+	}
+}
+
+// TestACLSchedulerGrant_ApplyFailsLoudlyWhenItCannotGrant exercises the
+// postcondition. Every bug this migration has had produced a file that
+// parsed and validated while granting nothing, so Apply must verify its
+// own result rather than trust that it wrote something.
+//
+// The input is a malformed policy the repair cannot fix: the scheduler's
+// assignment value is a nested mapping, not a role name. Returning an
+// error stops the runner before it writes, so the operator's file survives
+// (see TestMigrate_MalformedACLDoesNotClobber for the on-disk half).
+func TestACLSchedulerGrant_ApplyFailsLoudlyWhenItCannotGrant(t *testing.T) {
+	src := "roles:\n  viewer:\n    read: [ticket]\n" +
+		"assignments:\n  system:scheduler:\n    nested: yes\n"
+	m := &migration.ACLSchedulerGrantMigration{}
+	doc := parseDoc(t, src)
+
+	err := m.Apply(doc)
+	if err == nil {
+		out, _ := yaml.Marshal(doc)
+		t.Fatalf("Apply reported success but granted nothing:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), migration.SchedulerPrincipal) {
+		t.Errorf("error should name the principal, got: %v", err)
 	}
 }
 
