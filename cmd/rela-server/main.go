@@ -15,8 +15,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -474,9 +476,33 @@ func main() {
 	}
 
 	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
-	if err := srv.ListenAndServe(); err != nil {
+
+	// Serve in the background so the main goroutine can wait for a shutdown
+	// signal. Graceful shutdown drains in-flight requests, and is REQUIRED for
+	// coverage-instrumented builds: Go's `-cover` runtime only writes counter
+	// data on a clean process exit, so a bare SIGTERM that kills the process
+	// mid-serve would discard all coverage gathered during e2e runs.
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-serveErr:
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
+	case s := <-sig:
+		slog.Info("shutting down", "signal", s.String())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("graceful shutdown failed", "error", err)
+			os.Exit(1)
+		}
 	}
 }
 
