@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -33,15 +34,17 @@ func verbStrings(verbs []acl.Verb) []string {
 // resolveEffective maps a raw principal key to its effective identity
 // (resolved user-entity ID when principal_property is configured, else
 // the raw key), returning the effective user and the raw value to show
-// when they differ.
+// when they differ. The raw key is trimmed first, matching who-can's
+// accessFor, so the two "same read path" commands agree on a principal
+// typed with stray whitespace.
 func (e *Engine) resolveEffective(ctx context.Context, raw string) (user, rawShown string, err error) {
-	user = raw
+	raw = strings.TrimSpace(raw)
 	if id, rErr := e.resolver.ResolvePrincipal(ctx, raw); rErr != nil {
 		return "", "", rErr
 	} else if id != "" && id != raw {
 		return id, raw, nil
 	}
-	return user, "", nil
+	return raw, "", nil
 }
 
 // allVerbs is the fixed verb set a map covers when no --verb filter is
@@ -160,99 +163,182 @@ func (e *Engine) MapPrincipal(
 }
 
 // typeAccess computes the principal's access to one entity type: the
-// type-level baseline (global / group / everyone routes — the same for
-// every entity of the type) and per-entity exceptions (entities that
-// carry additional local / inherited routes).
+// type-level baseline (grants that apply to EVERY entity of the type —
+// everyone, asserted, global assignment, group role) and per-entity
+// exceptions (entities that carry ADDITIONAL local / inherited routes).
 //
-// It iterates the type's entities once. For each, AccessRoutes gives the
-// full route set (read gated on the runtime PermitsRead). Routes are
-// partitioned by whether they depend on the specific entity:
+// The baseline is computed FIRST, entity-independently — it does NOT
+// depend on iterating entities. This is load-bearing: a global/group
+// grant on a type with ZERO entities must still show (and must NOT read
+// as "cut off" — the offboarding false all-clear, RR fixed here). Sources:
 //
-//   - type-level (global / group): identical across the type → baseline.
-//   - entity-level (local / local-via-*): specific to the entity →
-//     exception surplus.
+//   - everyone / asserted: pure policy lookups (EveryoneGrants /
+//     AssertedGrants). AccessRoutes omits the everyone role, so it is
+//     seeded explicitly.
+//   - global / group: AccessRoutes(verb, type, "") — the empty-entity
+//     probe returns the principal's Globals-only attributions (no local
+//     edges, since there is no entity), i.e. exactly the type-level set.
 //
-// The baseline is taken from the FIRST entity that exhibits type-level
-// routes (they are entity-independent, so any entity suffices); an entity
-// whose ONLY routes are type-level adds no exception. sawNonEveryone is
-// true if any route beyond the everyone role was seen — the signal that
-// clears MapPrincipalResult.EveryoneOnly.
+// Only THEN are entities iterated, and only to find LOCAL / inherited
+// routes beyond the baseline — those are the per-entity exceptions. Any
+// type-level kind reaching the exception path is a classification bug and
+// panics (isTypeLevel is an assertion, not a partition).
+//
+// sawNonEveryone is true if the principal has any grant beyond the
+// everyone role (baseline global/group OR an exception) — the signal that
+// clears MapPrincipalResult.EveryoneOnly. Asserted grants do NOT clear it:
+// their holders live in the IdP, so this principal may not hold the claim.
 func (e *Engine) typeAccess(
 	ctx context.Context, req *acl.Request, typ string, verbs []acl.Verb,
 ) (TypeAccess, bool, error) {
 	ta := TypeAccess{Type: typ}
-	baseline := map[string][]Route{}     // verb -> type-level routes
-	baselineKey := map[string]struct{}{} // "verb\x00routeKey" seen in baseline
-	var sawNonEveryone bool
 
-	// Seed the type baseline with the built-in everyone role and any
-	// asserted-claim grants. AccessRoutes deliberately omits the everyone
-	// role (WhoCan reports it globally, not per-principal), so it will
-	// never surface in the entity loop below — but for a per-principal map
-	// the everyone baseline IS part of this principal's access and must be
-	// shown. These are pure type-level policy lookups, entity-independent.
-	for _, verb := range verbs {
-		if eg := e.resolver.EveryoneGrants(verb, typ); eg.Granted {
-			addBaseline(baseline, baselineKey, string(verb),
-				Route{Kind: acl.SourceGlobal.String(), Role: acl.EveryoneRole})
-		}
-		for _, ag := range e.resolver.AssertedGrants(verb, typ) {
-			addBaseline(baseline, baselineKey, string(verb),
-				Route{Kind: "asserted", Role: ag.Role, Claim: ag.Claim})
-		}
+	baseline, baseNonEveryone, err := e.typeBaseline(ctx, req, typ, verbs)
+	if err != nil {
+		return TypeAccess{}, false, err
+	}
+	exceptions, exNonEveryone, err := e.typeExceptions(ctx, req, typ, verbs)
+	if err != nil {
+		return TypeAccess{}, false, err
 	}
 
-	for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: typ}) {
-		if err != nil {
-			return TypeAccess{}, false, fmt.Errorf("aclmap: list %s entities: %w", typ, err)
-		}
-		extra := map[string][]Route{}
-		for _, verb := range verbs {
-			attrs, aErr := req.AccessRoutes(ctx, verb, typ, ent.ID)
-			if aErr != nil {
-				return TypeAccess{}, false, fmt.Errorf("aclmap: access routes for %s: %w", ent.ID, aErr)
-			}
-			for _, a := range attrs {
-				// AccessRoutes already excludes the everyone role; anything it
-				// returns is a real assigned/group/graph grant for this principal.
-				sawNonEveryone = true
-				route := routeFromAttribution(a)
-				if isTypeLevel(a.Source.Kind) {
-					addBaseline(baseline, baselineKey, string(verb), route)
-				} else {
-					extra[string(verb)] = append(extra[string(verb)], route)
-				}
-			}
-		}
-		if len(extra) > 0 {
-			for v := range extra {
-				sort.Slice(extra[v], func(i, j int) bool { return lessRoute(extra[v][i], extra[v][j]) })
-			}
-			ta.Exceptions = append(ta.Exceptions, EntityException{Entity: ent.ID, Extra: extra})
-		}
-	}
-
-	for v := range baseline {
-		sort.Slice(baseline[v], func(i, j int) bool { return lessRoute(baseline[v][i], baseline[v][j]) })
-	}
 	if len(baseline) > 0 {
 		ta.Baseline = baseline
 	}
-	sort.Slice(ta.Exceptions, func(i, j int) bool { return ta.Exceptions[i].Entity < ta.Exceptions[j].Entity })
-	return ta, sawNonEveryone, nil
+	ta.Exceptions = exceptions
+	return ta, baseNonEveryone || exNonEveryone, nil
 }
 
-// isTypeLevel reports whether a source kind applies to every entity of a
-// type (global assignment or group role) rather than being conferred by
-// an edge to a specific entity or its ancestor.
+// typeBaseline computes the entity-INDEPENDENT grants for a type: the
+// everyone role, asserted-claim grants, and the principal's global/group
+// assignments (via the empty-entity probe, which yields Globals-only
+// attributions). Returns the per-verb route map and whether any non-
+// everyone route was seen. This does NOT touch entities, so a global/
+// group grant shows even when the type has zero entities.
+func (e *Engine) typeBaseline(
+	ctx context.Context, req *acl.Request, typ string, verbs []acl.Verb,
+) (routes map[string][]Route, sawNonEveryoneOut bool, err error) {
+	baseline := map[string][]Route{}
+	seen := map[string]struct{}{}
+	var sawNonEveryone bool
+	for _, verb := range verbs {
+		if eg := e.resolver.EveryoneGrants(verb, typ); eg.Granted {
+			addBaseline(baseline, seen, string(verb),
+				Route{Kind: acl.SourceGlobal.String(), Role: acl.EveryoneRole})
+		}
+		for _, ag := range e.resolver.AssertedGrants(verb, typ) {
+			addBaseline(baseline, seen, string(verb),
+				Route{Kind: "asserted", Role: ag.Role, Claim: ag.Claim})
+		}
+		attrs, err := req.AccessRoutes(ctx, verb, typ, "")
+		if err != nil {
+			return nil, false, fmt.Errorf("aclmap: type-level routes for %s: %w", typ, err)
+		}
+		for _, a := range attrs {
+			assertTypeLevel(a.Source.Kind, typ) // Globals-only must be type-level
+			sawNonEveryone = true
+			addBaseline(baseline, seen, string(verb), routeFromAttribution(a))
+		}
+	}
+	for v := range baseline {
+		sort.Slice(baseline[v], func(i, j int) bool { return lessRoute(baseline[v][i], baseline[v][j]) })
+	}
+	return baseline, sawNonEveryone, nil
+}
+
+// typeExceptions iterates the type's entities and collects the LOCAL /
+// inherited routes (beyond the type baseline) that make an entity differ.
+// Type-level kinds are skipped (already in the baseline). Returns the
+// sorted exception list and whether any (necessarily non-everyone) route
+// was seen.
+func (e *Engine) typeExceptions(
+	ctx context.Context, req *acl.Request, typ string, verbs []acl.Verb,
+) ([]EntityException, bool, error) {
+	var exceptions []EntityException
+	var sawNonEveryone bool
+	for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+		if err != nil {
+			return nil, false, fmt.Errorf("aclmap: list %s entities: %w", typ, err)
+		}
+		extra, saw, err := e.entityExtra(ctx, req, typ, ent.ID, verbs)
+		if err != nil {
+			return nil, false, err
+		}
+		sawNonEveryone = sawNonEveryone || saw
+		if len(extra) > 0 {
+			exceptions = append(exceptions, EntityException{Entity: ent.ID, Extra: extra})
+		}
+	}
+	sort.Slice(exceptions, func(i, j int) bool { return exceptions[i].Entity < exceptions[j].Entity })
+	return exceptions, sawNonEveryone, nil
+}
+
+// entityExtra returns the local / inherited routes for one entity, per
+// verb — the surplus over the type baseline.
+func (e *Engine) entityExtra(
+	ctx context.Context, req *acl.Request, typ, entityID string, verbs []acl.Verb,
+) (routes map[string][]Route, sawNonEveryoneOut bool, err error) {
+	extra := map[string][]Route{}
+	var sawNonEveryone bool
+	for _, verb := range verbs {
+		attrs, err := req.AccessRoutes(ctx, verb, typ, entityID)
+		if err != nil {
+			return nil, false, fmt.Errorf("aclmap: access routes for %s: %w", entityID, err)
+		}
+		for _, a := range attrs {
+			if isTypeLevel(a.Source.Kind) {
+				continue // captured in the baseline, not an exception
+			}
+			sawNonEveryone = true
+			extra[string(verb)] = append(extra[string(verb)], routeFromAttribution(a))
+		}
+	}
+	for v := range extra {
+		sort.Slice(extra[v], func(i, j int) bool { return lessRoute(extra[v][i], extra[v][j]) })
+	}
+	return extra, sawNonEveryone, nil
+}
+
+// isTypeLevel reports whether a source kind applies to EVERY entity of a
+// type — a global assignment, a group role, or an asserted-claim grant —
+// rather than being conferred by an edge to a specific entity or its
+// ancestor. It partitions the closed acl.SourceKind enum: the three
+// entity-independent kinds are type-level; the four Local* kinds are
+// entity-specific.
 func isTypeLevel(k acl.SourceKind) bool {
-	return k == acl.SourceGlobal || k == acl.SourceGroup
+	switch k {
+	case acl.SourceGlobal, acl.SourceGroup, acl.SourceAsserted:
+		return true
+	case acl.SourceLocal, acl.SourceLocalViaGroup,
+		acl.SourceLocalViaAncestor, acl.SourceLocalViaGroupAndAncestor:
+		return false
+	default:
+		return false
+	}
+}
+
+// assertTypeLevel panics if kind is not type-level. It guards the
+// empty-entity baseline probe, whose attributions come from Globals only
+// (global / group / asserted) and can never be a local-edge route. A
+// non-type-level kind here would mean the resolver's Globals contract
+// changed underneath us — fail loud in tests rather than silently emit a
+// per-entity route as a type-wide baseline.
+func assertTypeLevel(k acl.SourceKind, typ string) {
+	if !isTypeLevel(k) {
+		panic(fmt.Sprintf("aclmap: non-type-level source kind %v from empty-entity probe on %q "+
+			"(Globals contract violated)", k, typ))
+	}
 }
 
 // addBaseline records a type-level route under verb once (deduped across
-// the entities that all exhibit it).
+// the entities that all exhibit it). The key spans every Route field that
+// distinguishes a type-level route; Ancestor is included for completeness
+// even though a type-level route never carries one (isTypeLevel excludes
+// the Local*Ancestor kinds), so a future misclassification collides
+// loudly in tests rather than silently dropping a route.
 func addBaseline(baseline map[string][]Route, seen map[string]struct{}, verb string, r Route) {
-	key := verb + "\x00" + r.Kind + "\x00" + r.Role + "\x00" + r.Group + "\x00" + r.Relation + "\x00" + r.Claim
+	key := verb + "\x00" + r.Kind + "\x00" + r.Role + "\x00" + r.Group +
+		"\x00" + r.Ancestor + "\x00" + r.Relation + "\x00" + r.Claim
 	if _, dup := seen[key]; dup {
 		return
 	}

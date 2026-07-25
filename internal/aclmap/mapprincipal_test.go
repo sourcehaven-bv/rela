@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // groundingTypes is the entity-type universe of the grounding world,
@@ -171,8 +172,61 @@ func TestMapPrincipal_MatchesRuntime(t *testing.T) {
 					t.Errorf("disagreement: %s %s %s — map=%v runtime=%v",
 						prin, verb, e.id, mapGrants, runtime)
 				}
+				// Classification check (RR review #2): a grant that comes ONLY
+				// from a specific entity's edge must NOT appear as a type-wide
+				// baseline (that would falsely claim access to every entity of
+				// the type). We detect entity-specific grants as those the
+				// runtime grants HERE but denies on a sibling entity of the
+				// same type; such a grant must be an exception, not a baseline.
+				if runtime {
+					assertClassification(t, w, res, prin, e.id, e.typ, string(verb), verb)
+				}
 			}
 		}
+	}
+}
+
+// assertClassification checks that an entity-SPECIFIC runtime grant is
+// reported as an exception, not swallowed into a type-wide baseline.
+// It proves a grant is entity-specific by finding a SIBLING entity of the
+// same type on which the runtime DENIES the same verb: if access differs
+// across entities of one type, the grant cannot be type-wide, so the map's
+// baseline must not claim it (that would falsely imply access to the
+// sibling too). This is the check that would catch local-via-* routes
+// being misclassified into the baseline (RR review #2).
+func assertClassification(
+	t *testing.T, w *world, res *aclmap.MapPrincipalResult,
+	prin, id, typ, verbStr string, verb acl.Verb,
+) {
+	t.Helper()
+	ctx := context.Background()
+	req, err := w.decl.ForPrincipal(principal.Principal{User: prin, Tool: principal.ToolCLI})
+	if err != nil {
+		t.Fatalf("ForPrincipal: %v", err)
+	}
+	// Is there a sibling of this type the runtime denies this verb on?
+	entitySpecific := false
+	for sib, sErr := range w.store.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+		if sErr != nil {
+			t.Fatalf("list %s: %v", typ, sErr)
+		}
+		if sib.ID == id {
+			continue
+		}
+		if !runtimeVerdict(ctx, t, req, verb, typ, sib.ID) {
+			entitySpecific = true
+			break
+		}
+	}
+	if !entitySpecific {
+		return // grant holds type-wide (or only one entity) — baseline is fine
+	}
+	// Entity-specific: the map must NOT report it as a type baseline.
+	ta := typeOf(res, typ)
+	if ta != nil && len(ta.Baseline[verbStr]) > 0 {
+		t.Errorf("misclassification: %s's %s grant on %s is entity-specific "+
+			"(a sibling %s is denied) but appears as a type-wide baseline",
+			prin, verbStr, id, typ)
 	}
 }
 
@@ -254,6 +308,66 @@ func TestMapPrincipal_VerbAndTypeFilters(t *testing.T) {
 		if ta.Type != "ticket" {
 			t.Errorf("--type ticket leaked type %q", ta.Type)
 		}
+	}
+}
+
+// TestMapPrincipal_GlobalGrantOnEmptyTypeNotCutOff is the RR fix for the
+// critical review finding: a global/group grant on a type with ZERO
+// entities must still show as a baseline and must NOT read as "cut off".
+// The baseline is now computed entity-independently, so an empty ticket/
+// incident set no longer hides Alice's global editor role.
+func TestMapPrincipal_GlobalGrantOnEmptyTypeNotCutOff(t *testing.T) {
+	t.Parallel()
+	// PERS-ALICE is a global editor (ticket + incident), but NO ticket or
+	// incident entities exist.
+	w := buildWorld(t, groundingPolicy,
+		[]ent{{"PERS-ALICE", "person"}, {"PROJ", "project"}},
+		[]rel{},
+	)
+	res, err := w.eng.MapPrincipal(context.Background(), "PERS-ALICE", "", "", groundingTypes)
+	if err != nil {
+		t.Fatalf("MapPrincipal: %v", err)
+	}
+	if res.EveryoneOnly {
+		t.Errorf("global editor Alice reported EveryoneOnly with empty ticket/incident — false offboarding all-clear")
+	}
+	tk := typeOf(res, "ticket")
+	if tk == nil || len(tk.Baseline["update"]) == 0 {
+		t.Errorf("Alice's global editor update baseline on (empty) ticket must still show; got %+v", tk)
+	}
+}
+
+// TestMapPrincipal_LocalViaGroupIsException guards the classification of
+// the local-via-group route kind (RR review #2): a role conferred by an
+// edge from a GROUP the principal belongs to is entity-specific and must
+// be an exception, never folded into a type-wide baseline. PERS-EVE is a
+// member of ROLE-IR, which is editor-of INC-999 directly.
+func TestMapPrincipal_LocalViaGroupIsException(t *testing.T) {
+	t.Parallel()
+	res := mapAll(t, groundingWorld(t), "PERS-EVE")
+	inc := typeOf(res, "incident")
+	if inc == nil {
+		t.Fatalf("Eve should have incident access via ROLE-IR editor-of edges")
+	}
+	// The ROLE-IR editor-of INC-999 grant is local-via-group → INC-999
+	// must be an exception, NOT a type baseline (Eve can't edit every
+	// incident, only the ones ROLE-IR has an edge to).
+	if len(inc.Baseline) != 0 {
+		t.Errorf("Eve has no type-wide incident grant; want empty baseline, got %+v", inc.Baseline)
+	}
+	var found bool
+	for _, ex := range inc.Exceptions {
+		if ex.Entity == "INC-999" {
+			found = true
+			for _, r := range ex.Extra["read"] {
+				if r.Kind != "local-via-group" && r.Kind != "local-via-group-and-ancestor" {
+					t.Errorf("INC-999 exception route should be local-via-group*; got %q", r.Kind)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("INC-999 (ROLE-IR editor-of, Eve is a member) must be an exception; exceptions=%+v", inc.Exceptions)
 	}
 }
 

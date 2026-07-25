@@ -5,7 +5,7 @@ title: rela acl map --principal <P> — per-principal effective-access view (UC1
 kind: enhancement
 priority: high
 effort: m
-status: in-progress
+status: done
 ---
 
 # `rela acl map --principal <P>` — per-principal effective access
@@ -97,3 +97,32 @@ enumerated).
 - `rela acl can` (yes/no spot-check) — trivial, can bundle here or separately.
 - Full hop-by-hop provenance chains.
 - Drift (UC8), conformance assertions (UC4/UC5), web view.
+
+## Code review (cranky) — findings addressed
+
+Reviewed after implementation; MCP tracker offline, so findings are recorded
+here rather than as review-response entities.
+
+- **CRITICAL — empty-type false all-clear.** Global/group baselines were
+  discovered *inside* the entity loop, so a type with ZERO entities hid a real
+  global grant and reported `EveryoneOnly=true` — the exact UC2 offboarding
+  false all-clear. FIXED: the baseline is now computed entity-independently
+  (`typeBaseline` via the empty-entity `AccessRoutes(verb, type, "")` probe +
+  everyone/asserted seeds); the entity loop only collects local/inherited
+  exceptions. Regression test `TestMapPrincipal_GlobalGrantOnEmptyTypeNotCutOff`.
+- **SIGNIFICANT — conformance test blind to misclassification.** The read-vs-
+  runtime test only checked the boolean grant, not the baseline/exception split.
+  FIXED: `assertClassification` proves an entity-specific grant (a sibling of the
+  same type is denied) is reported as an exception, not a type-wide baseline.
+  Verified it bites by moving `SourceLocalViaGroup` into the type-level branch.
+  Added `TestMapPrincipal_LocalViaGroupIsException`.
+- **SIGNIFICANT — SourceAsserted misclassification.** `isTypeLevel` omitted the
+  asserted kind. FIXED: it now switches over the full closed enum (three
+  type-level kinds, four entity-level), and `assertTypeLevel` panics if a
+  non-type-level kind reaches the baseline probe (Globals-contract guard).
+- **SIGNIFICANT — trim parity.** `resolveEffective` now `TrimSpace`s the raw
+  principal, matching who-can's `accessFor`, so the two commands agree on a
+  principal typed with stray whitespace.
+- **MINOR — dedup key completeness.** `addBaseline`'s key now includes Ancestor
+  (defensive; a type-level route never carries one, so a future misclassification
+  collides loudly instead of silently dropping a route).
