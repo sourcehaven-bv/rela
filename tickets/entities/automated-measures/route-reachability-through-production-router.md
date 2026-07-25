@@ -5,7 +5,7 @@ title: Every registered route is reachable through the production router
 description: Assert each registered route responds through app.NewRouter() (the real mux composition) rather than through the sub-mux it was registered on. Catches routes registered on a sub-mux whose mount prefix does not match the route's own path — which returns the SPA catch-all instead of the handler.
 kind: test
 location: internal/dataentry/router_walk_test.go
-status: proposed
+status: active
 ---
 
 ## Why
