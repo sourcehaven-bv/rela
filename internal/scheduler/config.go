@@ -31,11 +31,11 @@ type TaskConfig struct {
 	// acl.yaml: assignments map this principal to roles, exactly like a
 	// human user. Naming a principal here grants nothing by itself.
 	//
-	// Empty (the default) means [principal.SystemUser], i.e. every task
-	// shares the scheduler's identity. Set it to give a job its own
-	// identity — which both narrows what it can read (via a scoped role)
-	// and makes the audit log name the specific job rather than a generic
-	// scheduler.
+	// Empty (the default) means [principal.UserScheduler] — the fixed
+	// "system:scheduler" identity every task shares. Set it to give a job
+	// its own identity, which both narrows what it can read (via a scoped
+	// role) and makes the audit log name the specific job rather than a
+	// generic scheduler.
 	//
 	// A task whose principal has no read grants reads nothing: privileges
 	// are granted in acl.yaml, never inferred from task config.

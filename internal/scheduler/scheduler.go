@@ -92,16 +92,20 @@ func StartBackground(
 //
 // The stamped principal is ALSO what the script's reads resolve against
 // (DEC-O59WM4) — the scheduler's identity is the one thing that decides
-// what a job can see, via acl.yaml. runAs overrides the default system
-// user, giving a job its own identity for both audit and read scope; empty
-// keeps today's shared scheduler identity.
+// what a job can see, via acl.yaml. runAs overrides the default, giving a
+// job its own identity for both audit and read scope.
+//
+// The default is the FIXED [principal.UserScheduler], not the OS user: a
+// grantable constant an operator can write into acl.yaml once, rather than
+// a per-host value that is "unknown" under systemd (which acl rejects as
+// unstamped). See that constant's godoc.
 //
 // Extracted so the stamping logic can be unit-tested without booting
 // the script engine.
 func stampTaskAuditContext(ctx context.Context, taskName, runAs string) context.Context {
 	user := runAs
 	if user == "" {
-		user = principal.SystemUser()
+		user = principal.UserScheduler
 	}
 	out := principal.With(ctx, principal.Principal{
 		User: user,

@@ -20,8 +20,10 @@ func TestStampTaskAuditContext(t *testing.T) {
 	if p.Tool != principal.ToolScheduler {
 		t.Errorf("Principal.Tool = %q, want %q", p.Tool, principal.ToolScheduler)
 	}
-	if p.User != "alice" {
-		t.Errorf("Principal.User = %q, want 'alice'", p.User)
+	// The identity is the fixed system principal, NOT $USER — even though
+	// $USER is set here. See runas_test.go for why.
+	if p.User != principal.UserScheduler {
+		t.Errorf("Principal.User = %q, want %q", p.User, principal.UserScheduler)
 	}
 
 	if got := audit.TriggeredByFrom(stamped); got != "schedule:nightly-rollup" {

@@ -31,14 +31,42 @@ func TestStampTaskAuditContext_RunAsOverridesIdentity(t *testing.T) {
 	}
 }
 
-func TestStampTaskAuditContext_EmptyRunAsKeepsSystemUser(t *testing.T) {
+// TestStampTaskAuditContext_EmptyRunAsIsFixedIdentity pins the default
+// identity to a FIXED constant rather than the OS user (RR-1USMEZ).
+//
+// The scheduler used to default to principal.SystemUser() ($USER). That
+// made the acl.yaml assignment an operator needed depend on which account
+// ran `rela scheduler`, so the grant could not be written down in advance
+// — it differed per host, and a migration could not compute it.
+//
+// $USER is deliberately set to a decoy here: if the default ever reverts
+// to the OS user, this fails.
+func TestStampTaskAuditContext_EmptyRunAsIsFixedIdentity(t *testing.T) {
 	t.Setenv("USER", "operator")
 
 	ctx := stampTaskAuditContext(context.Background(), "nightly", "")
 
-	// Non-regressing: tasks without run_as keep today's shared scheduler
-	// identity, so existing deployments behave exactly as before.
-	if got, want := principal.From(ctx).User, principal.SystemUser(); got != want {
-		t.Errorf("Principal.User = %q, want the default system user %q", got, want)
+	if got := principal.From(ctx).User; got != principal.UserScheduler {
+		t.Errorf("Principal.User = %q, want the fixed %q (not $USER)", got, principal.UserScheduler)
+	}
+}
+
+// TestStampTaskAuditContext_NoUserEnvStillStamped covers the deployment
+// that motivated the fixed identity: a systemd unit typically has no
+// $USER, so SystemUser() returned the literal "unknown" — which
+// acl.Declarative.ForPrincipal REJECTS as an unstamped principal
+// (ErrUnstampedPrincipal). Scheduled tasks then failed outright rather
+// than merely being scoped. The fixed identity is never "unknown".
+func TestStampTaskAuditContext_NoUserEnvStillStamped(t *testing.T) {
+	t.Setenv("USER", "")
+
+	ctx := stampTaskAuditContext(context.Background(), "nightly", "")
+
+	p := principal.From(ctx)
+	if p.User != principal.UserScheduler {
+		t.Errorf("Principal.User = %q, want %q", p.User, principal.UserScheduler)
+	}
+	if p.User == "unknown" || p.User == "" {
+		t.Error("principal is unstamped; acl.ForPrincipal would reject it")
 	}
 }

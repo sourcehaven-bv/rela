@@ -151,5 +151,19 @@ func getMigrateFiles(ctx *project.Context) []MigrateFile {
 			Name:     dataentryconfig.ConfigFile,
 			FileType: migration.FileTypeDataEntry,
 		},
+		{
+			// Only migrated when it already exists — the callers' skip-on-
+			// missing guard is load-bearing here. A project with no acl.yaml
+			// runs on NopACL and must stay that way; creating one would flip
+			// every principal to deny-by-default (RR-SVQ5HE).
+			Path:     filepath.Join(ctx.Root, aclConfigFile),
+			Name:     aclConfigFile,
+			FileType: migration.FileTypeACL,
+		},
 	}
 }
+
+// aclConfigFile is the policy filename. Declared here because the migrate
+// file list is the only place in projectsetup that needs it; appbuild and
+// the acl CLI commands each join the same literal against the project root.
+const aclConfigFile = "acl.yaml"

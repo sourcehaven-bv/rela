@@ -256,6 +256,27 @@ const (
 	ToolWebhookReceiver = "webhook-receiver"
 )
 
+// UserScheduler is the default [Principal.User] for scheduled tasks that
+// declare no `run_as` — a FIXED identity, deliberately not the OS user.
+//
+// The scheduler used to default to [SystemUser] ($USER). That made a job's
+// read scope depend on which OS account happened to run `rela scheduler`,
+// so the assignment an operator needed in acl.yaml differed per host and
+// could not be written down in advance. Worse, a systemd unit typically has
+// no $USER, so SystemUser() returned "unknown" — which [acl.Declarative]
+// rejects as an unstamped principal, failing the task outright rather than
+// merely scoping it.
+//
+// A fixed principal makes the scheduler's identity a documented, grantable
+// constant:
+//
+//	assignments:
+//	  system:scheduler: <a-role-with-read>
+//
+// It grants nothing by itself (DEC-O59WM4) — privileges still come only
+// from acl.yaml. `run_as` continues to override it per task.
+const UserScheduler = "system:scheduler"
+
 // principalKey is the unexported context.WithValue key so no other
 // package can collide with it or read/write the value outside this
 // package's API.
