@@ -5,7 +5,7 @@ title: 'visibility: name the ungated read path (visibility.Unrestricted) so ever
 kind: refactor
 priority: medium
 effort: s
-status: backlog
+status: done
 ---
 
 ## Summary
@@ -16,24 +16,57 @@ indistinguishable when reading a struct literal — you have to read the
 right-hand expression to tell. That is what allowed three production wiring
 sites to be silently ungated during review.
 
-## Proposal
+## Design correction: return type
 
-A named capability wrapper, mirroring the existing `visibility.AllowAllReader`
-idiom:
+The original sketch proposed:
 
 ```go
-// Unrestricted wraps a raw store as a script read handle. Named so that
-// `grep -r Unrestricted` enumerates every ungated read path in one command.
 func Unrestricted(st store.Store) lua.EntityReader
 ```
 
-Then:
-- CLI, docs runtime and the validator pass `visibility.Unrestricted(st)` instead of the bare store.
-- `appbuild.scriptEntityReader` / `dataentry.App.scriptReader` return it on the NopACL path (and, where they still degrade, on the fallback path).
-- The type system still permits a bare store — this is about legibility and auditability, not enforcement.
+That signature is **wrong for this package**. `internal/visibility` deliberately
+does not import `internal/lua` — it satisfies `lua.EntityReader` *structurally*
+(see the note in `luareader.go:13`), and `.go-arch-lint.yml:521-528` allows
+visibility to depend only on acl/affordances/entity/principal/store/tracer.
+Importing lua would fail `just arch-lint`.
 
-Same trick already used one level down for `WritePrepStore`: make the unsafe
-choice *look* unsafe at the call site.
+So `Unrestricted` returns a named concrete type whose method set matches
+`lua.EntityReader`. Structural satisfaction keeps working, and the wiring sites
+still read `visibility.Unrestricted(st)`.
+
+## Sites (enumerated, not assumed)
+
+`grep -rn "VisibleReader:"` gives four, three of them production:
+
+| Site | Why it is ungated |
+|---|---|
+| `appbuild.go:200` (`LuaReadDeps`) | Operator trust boundary — CLI/docs; whoever runs the binary has the project files (RR-17DMC) |
+| `dataentry/app.go:540` (validator deps) | Redacting here manufactures false violations: a rule asserting "every ticket links to a project" would fire on projects the principal cannot see |
+| `docs/runtime.go:159` | Throwaway memstore the doc build just seeded itself |
+| `appbuildtest/fixture.go:298` | Test fixture |
+
+Each is deliberate and already carries a prose justification. This ticket makes
+that decision **greppable**, it does not change behavior.
+
+## Approach
+
+- Add `visibility.Unrestricted(store.Store)` returning a named type
+(`UnrestrictedReader`) that delegates all three methods to the store.
+- Convert the three production sites plus the test fixture.
+- Keep every existing justification comment; the wrapper names the choice, the
+comment still explains it.
+- Non-goal: enforcement. The type system still permits a bare store — this is
+legibility and auditability. `grep -rn "visibility.Unrestricted"` must enumerate
+every ungated read path in one command.
+
+## Acceptance criteria
+
+- `grep -rn "visibility.Unrestricted" --include=*.go` lists every ungated
+script read path, and no `VisibleReader:` line in production is a bare store.
+- Behavior byte-identical: reads pass straight through, no copying, no gating.
+- `just arch-lint` passes (proving no lua import crept in).
+- A test pins that the wrapper is a true pass-through and that it is NOT a
+`store.Store` (so an accidental re-widening is visible).
 
 ## Why not in TKT-ZF2DTV
 
