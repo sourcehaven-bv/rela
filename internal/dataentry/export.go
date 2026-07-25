@@ -54,7 +54,7 @@ type exportHandler struct {
 // collaborators it needs. Called from both NewApp and the test app builder so
 // the wiring lives in one place.
 func newExportHandler(app *App) (*exportHandler, error) {
-	redactor := app.redactor()
+	redactor := appRedactor(app)
 	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store)
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: newExportHandler: %w", err)

@@ -55,7 +55,7 @@ func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) 
 	// (Filter gates by row). The entry is already row-gated at the handler
 	// (api_v1.go, TKT-BNX2PN), so it only needs field redaction, not a re-gate
 	// that could 404 an entry the caller was just cleared to read.
-	result.Entry = visibility.Redact(ctx, a.redactor(), result.Entry)
+	result.Entry = visibility.Redact(ctx, appRedactor(a), result.Entry)
 	for name, entities := range result.Collections {
 		result.Collections[name] = a.viewReader.Filter(ctx, entities)
 	}

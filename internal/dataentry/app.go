@@ -318,7 +318,7 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // request. WritePrepStore stays RAW so update_entity's read-before-write
 // cannot erase hidden properties (see lua.ReadDeps.WritePrepStore).
 func (a *App) luaWriteDeps() lua.WriteDeps {
-	redactor := a.redactor()
+	redactor := appRedactor(a)
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
 			VisibleReader:  a.scriptReader(redactor),
@@ -332,12 +332,14 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 	}
 }
 
-// redactor returns the field-redaction seam over the affordance service
+// appRedactor returns the field-redaction seam over the affordance service
 // (visibility.FieldRedactor), closing over App.affordances via a closure so it
 // stays valid after test builders rebind the service. It is the one source of
 // the affRedactor used by the script reader, the export handler, and the view
-// pipeline.
-func (a *App) redactor() visibility.FieldRedactor {
+// pipeline. A package function rather than an App method so it doesn't add to
+// App's plimsoll method count (the type is at its load line — see the struct
+// doc; DRY here must not cost a ratchet).
+func appRedactor(a *App) visibility.FieldRedactor {
 	return affRedactor{aff: func() affordanceService { return a.affordances }}
 }
 
@@ -680,7 +682,7 @@ func NewApp(
 	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
 	// the redactor closes over it. Same construction as the export handler's
 	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
-	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, app.redactor(), app.store)
+	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store)
 	if viewReaderErr != nil {
 		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
 	}
