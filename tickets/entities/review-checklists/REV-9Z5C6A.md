@@ -45,8 +45,8 @@ working; this makes the documented behavior true.
 
 ## Pull Request
 
-- [ ] `/pr` — PR opened, CI monitored
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] PR opened (`gh pr create`); auto-merge enabled, reviewer requested
+- [x] CI monitored to green (see below)
+- [x] PR URL documented below
 
-**PR:** *(pending — see next step)*
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1210
