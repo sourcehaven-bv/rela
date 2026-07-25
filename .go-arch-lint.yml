@@ -56,6 +56,7 @@ components:
   calfeed:          { in: internal/calfeed }
   conflict:         { in: internal/conflict }
   entitymanager:    { in: internal/entitymanager }
+  imgproc:          { in: internal/imgproc }
   importer:         { in: internal/importer }
   renametype:       { in: internal/renametype }
   mermaid:          { in: internal/mermaid }
@@ -154,6 +155,8 @@ vendors:
   fsnotify:    { in: github.com/fsnotify/fsnotify }
   pgx:         { in: github.com/jackc/pgx/** }
   singleflight: { in: golang.org/x/sync/singleflight }
+  semaphore:   { in: golang.org/x/sync/semaphore }
+  ximage:      { in: [golang.org/x/image, golang.org/x/image/**] }
   http2:
     in:
       - golang.org/x/net/http2
@@ -482,6 +485,7 @@ deps:
     mayDependOn:
       - cmdexec
       - entitymanager
+      - imgproc
       - metamodel
       - store
   # transform: view-export engine. Depends only on the safe-exec core (cmdexec)
@@ -492,6 +496,12 @@ deps:
     mayDependOn:
       - cmdexec
       - metamodel
+  # Pure-Go, in-process image normalize (decode/orient/re-encode). A leaf: no
+  # domain imports, only the image codecs and a concurrency semaphore.
+  imgproc:
+    canUse:
+      - ximage
+      - semaphore
   acl:
     mayDependOn:
       - entity

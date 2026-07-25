@@ -707,6 +707,7 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 			"%s: property %q has max %d; must be >= 1", schemaName, propName, propDef.Max))
 	}
 	if propDef.Type == PropertyTypeFile {
+		errs = append(errs, validateTransformSteps(schemaName, propName, propDef.Transform)...)
 		return errs
 	}
 	// Below here the property is NOT a file: none of the attachment options apply.
@@ -721,6 +722,34 @@ func validateFilePropertyOptions(schemaName, propName string, propDef PropertyDe
 	}
 	if len(propDef.ScanCmd) > 0 || len(propDef.Transform) > 0 {
 		errs = append(errs, fileOnlyOptionErr(schemaName, propName, "scan_cmd/transform", propDef.Type))
+	}
+	return errs
+}
+
+// validImageReencodeTargets is the allowlist of native re-encode output
+// formats. Both are always within the default-safe MIME allowlist, so a native
+// image step's output cannot escape the allowlist (RR-4G5YBU).
+var validImageReencodeTargets = map[string]bool{"jpeg": true, "png": true}
+
+// validateTransformSteps checks each transform step is well-formed: exactly one
+// of cmd/image is set, and a native image step names a known re-encode target.
+func validateTransformSteps(schemaName, propName string, steps []TransformStep) []string {
+	var errs []string
+	for i, step := range steps {
+		switch step.Kind() {
+		case "cmd":
+			// Existing external-command step; validated at runtime, not here.
+		case "image":
+			if r := step.Image.Reencode; r != "" && !validImageReencodeTargets[r] {
+				errs = append(errs, fmt.Sprintf(
+					"%s: property %q transform step %d has unknown image reencode %q; want \"jpeg\" or \"png\"",
+					schemaName, propName, i, r))
+			}
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"%s: property %q transform step %d must set exactly one of \"cmd\" or \"image\"",
+				schemaName, propName, i))
+		}
 	}
 	return errs
 }
