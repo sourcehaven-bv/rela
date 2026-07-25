@@ -76,13 +76,34 @@ func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 }
 
 // TestScriptEntityReader_NoPolicyIsPassThrough pins the NopACL path:
-// without a Declarative the helper returns the raw store, so behavior is
-// byte-identical to pre-ACL.
+// without a Declarative, reads are UNGATED — behavior byte-identical to
+// pre-ACL.
+//
+// Asserted behaviorally, not by identity with the raw store. Since
+// TKT-1WV50C the helper returns visibility.Unrestricted(st) so that the
+// NopACL path — the largest ungated surface in the tree — shows up in
+// `grep -rn visibility.Unrestricted`. That is a naming change, not a
+// behavior change, and this test pins the behavior.
 func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 	st := seedCascadeWorld(t)
-	if got := scriptEntityReader(st, nil, nil); got != any(st) {
-		t.Errorf("with no policy the helper must pass the raw store through, got %T", got)
+	ctx := context.Background()
+
+	rd := scriptEntityReader(st, nil, nil)
+	if rd == nil {
+		t.Fatal("scriptEntityReader returned nil with no policy")
 	}
+	// SEC-1 is the entity the gated tests above prove is HIDDEN under a
+	// policy. With no policy it must be readable: that is what ungated means.
+	for _, id := range []string{"TKT-1", "SEC-1"} {
+		if _, err := st.GetEntity(ctx, id); err != nil {
+			t.Fatalf("fixture: %s missing from the raw store: %v", id, err)
+		}
+		if _, err := rd.GetEntity(ctx, id); err != nil {
+			t.Errorf("NopACL path gated a read of %s (%v) — with no policy "+
+				"every entity the store holds must be readable", id, err)
+		}
+	}
+
 	if got := scriptTracer(tracer.New(st), st, nil, nil); got == nil {
 		t.Error("scriptTracer returned nil with no policy")
 	}
