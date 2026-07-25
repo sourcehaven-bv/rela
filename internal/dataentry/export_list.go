@@ -104,9 +104,18 @@ type listRenderInput struct {
 // table. Otherwise the built-in [exportHandler.listTableRenderer] is used.
 //
 // The rows were already resolved through the ACL read path, field-redacted,
-// and capped by the caller, so the override renders exactly the set the
-// on-screen view showed. The script is a fixed config value, never request
-// input: a request may choose a transform NAME, never a renderer.
+// and capped by the caller, so the override sees exactly the ROWS the
+// on-screen view resolved, with the same property redaction. The script is a
+// fixed config value, never request input: a request may choose a transform
+// NAME, never a renderer.
+//
+// It does NOT see only what the on-screen table showed. A row reaches the
+// script as a full entity table, so a script can render the entity BODY, which
+// the column table never displays. That is intended — a report override wants
+// bodies, and the entity export path already exposes them — but note that
+// `visibility.Redact` currently leaves `Content` verbatim (the body-redaction
+// TODO in internal/visibility/policyreader.go). When body redaction lands, this
+// is one of the paths that must route through it.
 //
 // Unlike the entity path there is no failure mode to report here — a list the
 // caller may not read resolves to an empty set and renders an empty document,
@@ -125,6 +134,14 @@ func (h *exportHandler) listExportRenderer(in listRenderInput) transform.Rendere
 	// ConfigID is synthetic and namespaced: the "list:" infix keeps it from
 	// colliding with the entity path's "export:<type>" for a list whose id
 	// happens to equal an entity type name.
+	//
+	// No isSafePathSegment guard here, unlike the entity path (see
+	// exportRenderer): that one validates because an entity id is REQUEST
+	// input that reaches a document cache filename. This id is neither — it
+	// is a key that matched cfg.Lists, so it is operator-authored config, and
+	// RenderListMarkdown neither caches nor shells out, so the ConfigID's only
+	// consumers are a Lua string and an error message. If a list render ever
+	// gains a disk cache, this needs the guard.
 	cfg := documentRenderConfig{ConfigID: "export:list:" + in.listID, Script: in.list.ExportRender}
 
 	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {

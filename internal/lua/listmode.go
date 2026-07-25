@@ -22,6 +22,13 @@ import (
 // At is called once per materialization, and a script may walk the set more
 // than once, so implementations must be repeatable for the same index and
 // must return nil when i is out of range.
+//
+// Rows reach the script through EntityToTable, which includes the entity
+// BODY. Property-level `visible:` redaction is already applied by the caller,
+// but visibility.Redact does not currently redact Content (the body-redaction
+// TODO in internal/visibility). When it does, this is one of the paths that
+// must route through it — a render override is a read-out surface like any
+// other.
 type ListRows interface {
 	Len() int
 	At(i int) *entity.Entity
@@ -39,9 +46,11 @@ type ListSortSpec = filter.SortSpec
 // and annotate the export, but it is exposed through a frozen Lua table so it
 // cannot be used as a back-channel to mutate the handler's state.
 //
-// Total is the row count BEFORE the cap. How many the script can actually see
-// is ListRows.Len(), and whether the cap applied is Total > that — both
-// derived at render time rather than stored, so the three can never disagree.
+// Total is the row count BEFORE the cap; how many the script can actually see
+// is ListRows.Len(), and whether the cap applied is derived from the two at
+// render time rather than stored. Total is the one value a caller supplies
+// independently, so the render clamps it up to the row count — a Total that
+// under-reports the rows it ships with cannot produce an incoherent view.
 // The list's identity lives on [ListRenderContext], not here.
 type ListQuery struct {
 	EntityType string

@@ -303,11 +303,15 @@ func TestExport_List_RenderOverride_RowsWalkableTwice(t *testing.T) {
 		t.Fatalf("want 1 call, got %d", len(fake.calls))
 	}
 	call := fake.calls[0]
-	if len(call.rowIDs) != 3 {
-		t.Fatalf("first walk saw %d rows, want 3", len(call.rowIDs))
+	want := "TKT-1,TKT-2,TKT-3"
+	if got := strings.Join(call.rowIDs, ","); got != want {
+		t.Errorf("provider yielded %q, want %q (in list order)", got, want)
 	}
-	if strings.Join(call.rowIDs, ",") != strings.Join(call.rowIDs2, ",") {
-		t.Errorf("second walk differed: %v vs %v", call.rowIDs, call.rowIDs2)
+	// The provider is re-readable — a precondition for the Lua cursor's
+	// walk-twice contract, which is itself pinned against a real runtime by
+	// TestListDocumentMode_IteratorWalkableTwice in internal/lua.
+	if got := strings.Join(call.rowIDs2, ","); got != want {
+		t.Errorf("second read yielded %q, want %q", got, want)
 	}
 }
 
@@ -362,6 +366,48 @@ func TestExport_List_RenderOverride_FilterOperatorKey(t *testing.T) {
 	}
 	if _, bad := filters["status][ne"]; bad {
 		t.Errorf("operator segment swallowed into the key: %v", filters)
+	}
+}
+
+// TestExport_List_RenderOverride_ConfigIDDistinctFromEntityPath pins the
+// PROPERTY the "list:" infix exists for: a list whose id equals an entity type
+// name must not produce the same config identity as that type's entity-export
+// override. Asserting the literal string alone would pass even if the infix
+// were dropped.
+func TestExport_List_RenderOverride_ConfigIDDistinctFromEntityPath(t *testing.T) {
+	requireCp(t)
+	app := newExportApp(t)
+	seedExportTickets(app, "TKT-1")
+
+	// A list literally named "ticket" — the same string as the entity type,
+	// whose entity-export ConfigID is "export:ticket".
+	s := app.State()
+	cfg := *s.Cfg
+	cfg.Lists = map[string]dataentryconfig.List{
+		"ticket": {EntityType: "ticket", ExportRender: "docs/fancy_list.lua"},
+	}
+	cfg.Navigation = []dataentryconfig.NavigationEntry{{List: "ticket"}}
+	app.schema.Publish(&Schema{
+		Cfg: &cfg, Meta: s.Meta, StyleMap: s.StyleMap,
+		StyledTypes: s.StyledTypes, OpenAPIGen: s.OpenAPIGen,
+	})
+	fake := &fakeScriptEngine{stdout: func(fakeScriptCall) string { return "ok\n" }}
+	app.documents = newDocumentService(app.store, app.kv, "/", fake,
+		func() lua.WriteDeps { return lua.WriteDeps{} })
+	var err error
+	if app.export, err = newExportHandler(app); err != nil {
+		t.Fatalf("newExportHandler: %v", err)
+	}
+	ctx := adminListCtx(t, app)
+
+	exportListURL(ctx, app, "transform=copy&list=ticket")
+
+	if len(fake.calls) != 1 {
+		t.Fatalf("want 1 call, got %d", len(fake.calls))
+	}
+	got := fake.calls[0].documentID
+	if entityPathID := "export:" + "ticket"; got == entityPathID {
+		t.Errorf("list ConfigID %q collides with the entity path's %q", got, entityPathID)
 	}
 }
 

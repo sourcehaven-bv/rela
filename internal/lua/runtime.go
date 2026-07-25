@@ -890,10 +890,12 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 // registerListDocumentFields populates the LIST-render half of
 // rela.document: the query context plus the lazy row accessors.
 //
-// A plain function taking *lua.LState, NOT a *Runtime method: Runtime sits
-// exactly on its plimsoll load line (max-methods=120, already justified up
-// to there by TKT-ZF2DTV), so adding a method here fails CI. It needs
-// nothing from the Runtime beyond the state and the render context anyway.
+// A plain function rather than a *Runtime method because it needs nothing
+// from the Runtime — the LState and the render context are the whole input.
+// (It also keeps Runtime off its plimsoll load line, which sits at exactly
+// max-methods=120. That is a consequence, not the reason: the fix for a full
+// Runtime is to take fields OFF it — see TKT-N0IKN9 — not to route new
+// methods around the counter.)
 //
 // Rows are materialized ONE AT A TIME. A 5000-row export therefore holds a
 // single Lua entity table at a time rather than 5000 (each of which is a
@@ -906,19 +908,29 @@ func registerListDocumentFields(ls *lua.LState, docTable *lua.LTable, lrc ListRe
 
 	ls.SetField(docTable, "list_id", lua.LString(lrc.ListID))
 	ls.SetField(docTable, "entity_type", lua.LString(q.EntityType))
-	// count/total/truncated all derive from the two facts the caller supplied
-	// (the row set and the pre-cap count), so a script can never observe them
-	// disagreeing with each other.
-	ls.SetField(docTable, "count", lua.LNumber(rows.Len()))
-	ls.SetField(docTable, "total", lua.LNumber(q.Total))
-	ls.SetField(docTable, "truncated", lua.LBool(q.Total > rows.Len()))
+	// count is ground truth (the rows the script can actually reach); total is
+	// the caller's pre-cap count, and truncated is derived from the two rather
+	// than stored, so those three can't drift apart.
+	//
+	// A caller that under-reports Total would still be incoherent, so clamp:
+	// total can never be less than the rows we are about to hand over. That
+	// makes "total >= count" an invariant of what the script sees rather than
+	// a promise about what every caller passes.
+	count := rows.Len()
+	total := max(q.Total, count)
+	ls.SetField(docTable, "count", lua.LNumber(count))
+	ls.SetField(docTable, "total", lua.LNumber(total))
+	ls.SetField(docTable, "truncated", lua.LBool(total > count))
 
 	// The resolved request context, frozen so "read-only" is enforced
 	// rather than conventional (same treatment rela.principal gets).
 	queryTable := ls.NewTable()
-	if q.Q != "" {
-		ls.SetField(queryTable, "q", lua.LString(q.Q))
-	}
+	// Always set, even when empty. Unlike entry_id — where absence is
+	// semantically right because a list HAS no entry entity — "no search
+	// term" is a representable value, so the empty string is the honest
+	// answer. Omitting it made `"Search: " .. rela.document.query.q` work on
+	// every filtered export and hard-error on every unfiltered one.
+	ls.SetField(queryTable, "q", lua.LString(q.Q))
 	filters := ls.NewTable()
 	for k, v := range q.Filters {
 		ls.SetField(filters, k, lua.LString(v))

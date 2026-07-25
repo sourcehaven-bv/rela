@@ -227,3 +227,101 @@ print(("showing %d of %d, truncated=%s"):format(
 		t.Errorf("truncation bookkeeping wrong:\n%s", got)
 	}
 }
+
+// TestListDocumentMode_EdgeCases covers the boundaries a render override can
+// hit in practice: nothing to render, a script that ignores the rows, a script
+// that drains an iterator and then walks again, and the exact-cap case where
+// truncated must stay false.
+func TestListDocumentMode_EdgeCases(t *testing.T) {
+	cases := []struct {
+		name string
+		lrc  ListRenderContext
+		src  string
+		want string
+	}{
+		{
+			name: "empty row set",
+			lrc: ListRenderContext{ListID: "l", Rows: sliceRows{},
+				Query: ListQuery{EntityType: "ticket", Total: 0}},
+			src: `local n=0
+for _ in rela.document.rows() do n=n+1 end
+print(("count=%d n=%d trunc=%s"):format(rela.document.count, n, tostring(rela.document.truncated)))`,
+			want: "count=0 n=0 trunc=false",
+		},
+		{
+			name: "script never iterates",
+			lrc:  testListContext(),
+			src:  `print("ignored rows entirely")`,
+			want: "ignored rows entirely",
+		},
+		{
+			name: "iterate past end then re-walk",
+			lrc:  testListContext(),
+			src: `local it = rela.document.rows()
+for i=1,10 do it() end
+local n=0
+for _ in rela.document.rows() do n=n+1 end
+print("after-exhaust n=" .. n)`,
+			want: "after-exhaust n=3",
+		},
+		{
+			name: "total equals len - no truncation at boundary",
+			lrc: ListRenderContext{ListID: "l", Rows: testRows(),
+				Query: ListQuery{EntityType: "ticket", Total: 3}},
+			src:  `print("trunc=" .. tostring(rela.document.truncated))`,
+			want: "trunc=false",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := newMockWorkspace(t)
+			var buf bytes.Buffer
+			r := NewReader(ws.readDeps(t.TempDir()), &buf, WithListDocumentMode("d", tc.lrc))
+			defer r.Close()
+			if err := r.RunString(tc.src); err != nil {
+				t.Fatalf("run: %v (out=%s)", err, buf.String())
+			}
+			if !strings.Contains(buf.String(), tc.want) {
+				t.Errorf("want %q, got:\n%s", tc.want, buf.String())
+			}
+		})
+	}
+}
+
+// TestListDocumentMode_TotalClamped pins that an under-reported Total cannot
+// produce an incoherent view: a caller passing Total=0 alongside 3 rows must
+// still see total >= count, and truncated=false.
+func TestListDocumentMode_TotalClamped(t *testing.T) {
+	t.Parallel()
+
+	lrc := testListContext()
+	lrc.Query.Total = 0 // inconsistent with the 3 rows supplied
+
+	got := runListDoc(t, lrc, `
+print(("count=%d total=%d trunc=%s"):format(
+  rela.document.count, rela.document.total, tostring(rela.document.truncated)))
+`)
+	if !strings.Contains(got, "count=3 total=3 trunc=false") {
+		t.Errorf("under-reported Total not clamped:\n%s", got)
+	}
+}
+
+// TestListDocumentMode_EmptyQIsEmptyString pins that query.q is always a
+// string. It was previously omitted when empty, so `"Search: " .. query.q`
+// worked on a filtered export and hard-errored on every unfiltered one.
+func TestListDocumentMode_EmptyQIsEmptyString(t *testing.T) {
+	t.Parallel()
+
+	lrc := testListContext()
+	lrc.Query.Q = ""
+
+	got := runListDoc(t, lrc, `
+print("type=" .. type(rela.document.query.q))
+print("concat=[" .. rela.document.query.q .. "]")
+`)
+	for _, want := range []string{"type=string", "concat=[]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in output:\n%s", want, got)
+		}
+	}
+}

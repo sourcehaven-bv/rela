@@ -50,6 +50,11 @@ func (e *Engine) ExecuteListDocument(
 // public methods each supply exactly one mode, so no caller can forge
 // WithOutputDir or WithActionMode. subject fills the error envelope's subject
 // slot (an entity id, or a list id where there is no entry entity).
+//
+// INVARIANT: this stays unexported and never grows a variadic option tail.
+// Both are what make the seam structural rather than conventional — an
+// exported version, or one taking ...lua.Option, hands every caller exactly
+// the option injection ExecuteDocument/ExecuteAction exist to prevent.
 func (e *Engine) runDocumentScript(
 	ctx context.Context,
 	path string,
