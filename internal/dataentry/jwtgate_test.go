@@ -407,6 +407,54 @@ func TestRequireVerifiedJWT_StampsAssertedClaims(t *testing.T) {
 	}
 }
 
+// TestRequireVerifiedJWT_SanitizesRolesThroughGate drives roles carrying control
+// characters through the gate and asserts they are cleaned before landing on the
+// Principal. The per-element cap and control-char strip live in the shared
+// verifiedPrincipal projection; this pins that they run on the gate path
+// specifically, not only in jwtauth's own unit tests. A hostile IdP must not be
+// able to inject a control-char role into the audit JSONL stream via the gate.
+//
+// (The 32-role count cap is enforced in jwtauth.VerifyAssertion, upstream of the
+// stub used here, so it is covered by internal/jwtauth; this guards the
+// dataentry-side per-element sanitization the gate applies.)
+func TestRequireVerifiedJWT_SanitizesRolesThroughGate(t *testing.T) {
+	const header = "X-Auth-Assertion"
+	cfg := JWTGateConfig{
+		Verifier: gateVerifier{
+			validToken: "good.jwt.token", subject: "usr_abc123",
+			// A control char in a role, and one role that is control-only (must
+			// be dropped, since an empty role can never match a policy mapping).
+			roles: []string{"ad\x00min", "\x00\x00", "ok"},
+		},
+		HeaderName: header,
+	}
+
+	var seen principal.Principal
+	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = principal.From(r.Context())
+	})
+	h := stampAuditPrincipal(requireVerifiedJWT(inner, cfg), defaultPrincipalResolver)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities", http.NoBody)
+	req.Header.Set(header, "good.jwt.token")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	for _, role := range seen.Roles() {
+		if strings.ContainsRune(role, 0) {
+			t.Errorf("role %q reached the Principal with a control char — the gate "+
+				"did not sanitize", role)
+		}
+		if role == "" {
+			t.Error("an empty role survived the gate; it can never match a policy " +
+				"mapping and only pads the attribution set")
+		}
+	}
+	// "ad\x00min" -> "ad min", "\x00\x00" -> dropped, "ok" -> "ok".
+	if len(seen.Roles()) != 2 {
+		t.Errorf("Roles = %v, want 2 surviving entries", seen.Roles())
+	}
+}
+
 // A denied request must never reach the handlers the gate protects — no store
 // read, no ACL request, no side effect.
 func TestRequireVerifiedJWT_DenialShortCircuits(t *testing.T) {

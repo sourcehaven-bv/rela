@@ -483,9 +483,11 @@ func JWTPrincipalResolver(v assertionVerifier, headerName string) PrincipalResol
 // once silently dropped roles on the gate path (TKT-OJL2GN).
 //
 // It carries the org and role claims via [principal.Verified], the only
-// constructor that can populate them. A role reaching the ACL from an
-// unverified source would be a complete authorization bypass, so this must be
-// called ONLY on the output of a completed signature verification.
+// constructor that populates them from request-path input (the audit
+// wire-format [principal.Principal.UnmarshalJSON] reads them back too, but only
+// from a record this process already wrote and verified). A role reaching the
+// ACL from an unverified source would be a complete authorization bypass, so
+// this must be called ONLY on the output of a completed signature verification.
 func verifiedPrincipal(id AssertedIdentity) (principal.Principal, bool) {
 	if id.Subject == "" {
 		return principal.Principal{}, false
