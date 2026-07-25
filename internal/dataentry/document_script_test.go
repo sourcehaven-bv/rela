@@ -47,11 +47,57 @@ type fakeScriptCall struct {
 	documentID string
 	entryID    string
 	timeout    time.Duration
+
+	// List-render fields, populated only by ExecuteListDocument.
+	listID  string
+	query   lua.ListQuery
+	rowIDs  []string // the provider drained once, in order
+	rowIDs2 []string // drained a SECOND time, to pin the walk-twice contract
 }
 
 func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, _ lua.WriteDeps, stdout io.Writer,
 	documentID, entryID string, timeout time.Duration) error {
 	call := fakeScriptCall{path: path, documentID: documentID, entryID: entryID, timeout: timeout}
+	f.mu.Lock()
+	f.calls = append(f.calls, call)
+	f.mu.Unlock()
+
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	if f.err != nil {
+		return f.err
+	}
+	if f.stdout != nil {
+		_, _ = io.WriteString(stdout, f.stdout(call))
+	}
+	return nil
+}
+
+// ExecuteListDocument records a list render. It DRAINS the row provider
+// (twice) rather than ignoring it, so tests can assert which rows reached the
+// script — and that a second walk restarts — without standing up a real Lua
+// runtime. The production binding materializes rows the same way.
+func (f *fakeScriptEngine) ExecuteListDocument(_ context.Context, path string, _ lua.WriteDeps,
+	stdout io.Writer, documentID string, lrc lua.ListRenderContext, timeout time.Duration) error {
+	drain := func() []string {
+		if lrc.Rows == nil {
+			return nil
+		}
+		ids := make([]string, 0, lrc.Rows.Len())
+		for i := range lrc.Rows.Len() {
+			if e := lrc.Rows.At(i); e != nil {
+				ids = append(ids, e.ID)
+			}
+		}
+		return ids
+	}
+
+	call := fakeScriptCall{
+		path: path, documentID: documentID, timeout: timeout,
+		listID: lrc.ListID, query: lrc.Query,
+		rowIDs: drain(), rowIDs2: drain(),
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
 	f.mu.Unlock()

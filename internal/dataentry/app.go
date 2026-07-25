@@ -572,6 +572,10 @@ func NewApp(
 		}
 	}
 
+	if err := checkExportRenderScripts(cfg, paths.Root); err != nil {
+		return nil, err
+	}
+
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
@@ -770,6 +774,34 @@ func NewApp(
 	}
 
 	return app, nil
+}
+
+// checkExportRenderScripts verifies every configured export render override
+// resolves to a real script under scripts/, for the same reason and by the
+// same mechanism as the documents:/actions: checks in NewApp — an operator
+// should learn about a typo'd path at boot, not on someone's first export.
+//
+// Both override kinds are checked. The per-type one (views.<type>.export_render)
+// went unverified until the per-list one was added, which was an oversight
+// rather than a decision.
+func checkExportRenderScripts(cfg Config, root string) error {
+	for id, list := range cfg.Lists {
+		if list.ExportRender == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, list.ExportRender); err != nil {
+			return fmt.Errorf("invalid %s: list %q: export_render: %w", ConfigFile, id, err)
+		}
+	}
+	for id, view := range cfg.Views {
+		if view.ExportRender == "" {
+			continue
+		}
+		if err := script.CheckDocumentScriptExists(root, view.ExportRender); err != nil {
+			return fmt.Errorf("invalid %s: view %q: export_render: %w", ConfigFile, id, err)
+		}
+	}
+	return nil
 }
 
 // NavItem is an enriched navigation entry that includes the entity type for client-side matching.

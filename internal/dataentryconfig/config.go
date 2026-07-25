@@ -235,6 +235,21 @@ type List struct {
 	DetailView     string          `yaml:"detail_view" json:"detail_view,omitempty"`
 	PageSize       int             `yaml:"page_size" json:"page_size,omitempty"`
 	Actions        []string        `yaml:"actions,omitempty" json:"actions,omitempty"`
+
+	// ExportRender is an optional Lua script (relative path under scripts/,
+	// e.g. "docs/ticket_report.lua") that renders THIS LIST for export. When
+	// set, "Export as PDF/ODT" on the list routes through the script instead
+	// of the built-in column table, so an operator fully controls the
+	// exported document (grouped sections, summaries, a cover header —
+	// anything a table cannot express).
+	//
+	// The script runs in list-document mode and receives the rows the server
+	// already resolved: rela.document.rows()/row(i)/count, plus the resolved
+	// query as read-only context. It must NOT derive its own row set — the
+	// handler resolved exactly the ACL-scoped, filtered, sorted, capped set
+	// the user is looking at, and re-querying would both diverge from that
+	// view and escape the row cap. Empty → built-in column table.
+	ExportRender string `yaml:"export_render,omitempty" json:"export_render,omitempty"`
 }
 
 // ListColumn defines a column in a list view.

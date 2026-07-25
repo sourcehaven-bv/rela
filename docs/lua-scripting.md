@@ -767,6 +767,27 @@ The script's stdout is captured and used as the rendered document's
 markdown (which is then converted to HTML). Use `print()` to produce
 output.
 
+**List renders** (a `lists.<id>.export_render` view export, see
+[Transforms](transforms.md#custom-per-list-rendering)) run in the same
+document mode — `rela.mode` is `"document"` there too — with the row set
+added and `entry_id` **absent**, since a list has no entry entity:
+
+| Variable                    | Meaning |
+|-----------------------------|---------|
+| `rela.document.list_id`     | The key under `lists:` being exported |
+| `rela.document.entity_type` | The list's entity type |
+| `rela.document.rows()`      | Iterator over the resolved rows |
+| `rela.document.row(i)`      | One row by 1-based index, or `nil` |
+| `rela.document.count`       | Rows this render can see |
+| `rela.document.total`       | Rows before the export cap |
+| `rela.document.truncated`   | Whether the cap applied |
+| `rela.document.query`       | Read-only `{q, filters, sort}` |
+
+Branch on `rela.document.list_id` (or `rows`) to tell the two apart. The
+rows are handed in already resolved and gated; don't re-derive them with
+`rela.list_entities`, or the export stops matching the list the user was
+looking at.
+
 ```lua
 -- scripts/docs/release_notes.lua
 local entry = rela.get_entity(rela.document.entry_id)

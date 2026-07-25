@@ -465,6 +465,22 @@ func validateLists(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
+		// Validate the export render override. Shape only — whether the file
+		// exists on disk is checked at app construction, which is where the
+		// project root is known (see dataentry.NewApp).
+		if list.ExportRender != "" {
+			if !strings.HasSuffix(list.ExportRender, ".lua") {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: export_render must be a .lua script path, got %q",
+					listID, list.ExportRender))
+			}
+			if !filepath.IsLocal(list.ExportRender) {
+				errs = append(errs, fmt.Sprintf(
+					"list %q: export_render must be a local path under scripts/, got %q",
+					listID, list.ExportRender))
+			}
+		}
+
 		// Validate columns
 		for i, c := range list.Columns {
 			if c.Relation != "" {

@@ -602,6 +602,77 @@ func TestValidateConfig_UnknownListEntityType(t *testing.T) {
 	}
 }
 
+// TestValidateConfig_ListExportRenderShape covers the shape half of
+// export_render validation. Existence on disk is checked at app construction,
+// where the project root is known.
+func TestValidateConfig_ListExportRenderShape(t *testing.T) {
+	tests := []struct {
+		name    string
+		script  string
+		wantErr string
+	}{
+		{
+			name:    "non-lua extension rejected",
+			script:  "docs/report.sh",
+			wantErr: `list "test": export_render must be a .lua script path`,
+		},
+		{
+			name:    "traversal rejected",
+			script:  "../../etc/evil.lua",
+			wantErr: `list "test": export_render must be a local path`,
+		},
+		{
+			name:   "valid script accepted",
+			script: "docs/report.lua",
+		},
+		{
+			name:   "empty means built-in table",
+			script: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := testMetamodel()
+			cfg := &Config{
+				Lists: map[string]List{
+					"test": {EntityType: "ticket", ExportRender: tc.script},
+				},
+			}
+
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error for export_render %q", tc.script)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("want error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestValidateConfig_ListExportRenderWithoutColumns pins that a list carrying
+// only an export_render (no columns) is valid — the script renders whatever it
+// likes, so requiring columns would be wrong.
+func TestValidateConfig_ListExportRenderWithoutColumns(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Lists: map[string]List{
+			"test": {EntityType: "ticket", ExportRender: "docs/report.lua"},
+		},
+	}
+
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("a columns-less list with export_render must be valid, got: %v", err)
+	}
+}
+
 func TestValidateConfig_UnknownListColumnProperty(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

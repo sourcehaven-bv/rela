@@ -54,6 +54,8 @@ func isFormRoute(path string) bool {
 type documentScriptEngine interface {
 	ExecuteDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
 		documentID, entryID string, timeout time.Duration) error
+	ExecuteListDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
+		documentID string, lrc lua.ListRenderContext, timeout time.Duration) error
 }
 
 // documentDeps yields the lua.WriteDeps the script engine needs. The App
@@ -204,6 +206,53 @@ func (s *documentService) RenderMarkdown(
 		return s.renderScript(ctx, entryID, cfg)
 	}
 	return s.renderCommand(ctx, entryID, cfg)
+}
+
+// RenderListMarkdown renders a LIST export override (`lists.<id>.export_render`)
+// to markdown, for the same reason RenderMarkdown exists on the entity side:
+// view export feeds the markdown to a format transform rather than converting
+// it to HTML.
+//
+// Script-only. A `command:` renderer has no meaning here — its placeholders are
+// {id}/{id_lower} of an entry entity, and a list has none — so a Command config
+// is a wiring error rather than a supported branch.
+//
+// It deliberately does NOT hash, cache, or singleflight, and none of those are
+// oversights to be "optimized" back in later:
+//   - computeDocumentHash loads ONE entity by id; a list has no entry entity,
+//     so there is nothing for it to hash.
+//   - The disk cache is keyed on that entry hash and holds HTML; list export
+//     produces per-request markdown.
+//   - A correct singleflight key would need the full resolved query AND the
+//     caller's ACL scope, because two principals' row sets legitimately differ.
+//     Getting that key wrong collapses two callers onto one render — a
+//     cross-principal leak, the RR-2QSGLU hazard with more to lose. Not
+//     deduping is the safe default.
+//
+// Callers MUST have resolved the rows through the ACL read path before calling
+// this — it makes no ACL decision of its own.
+func (s *documentService) RenderListMarkdown(
+	ctx context.Context, cfg documentRenderConfig, lrc lua.ListRenderContext,
+) (string, error) {
+	if cfg.Command != "" {
+		return "", errors.New("list export render must be a script, not a command")
+	}
+	if s.scriptEngine == nil || s.luaDeps == nil {
+		return "", errors.New("script rendering not available (engine or deps not wired)")
+	}
+	var buf bytes.Buffer
+	if err := s.scriptEngine.ExecuteListDocument(ctx, cfg.Script, s.luaDeps(), &buf,
+		cfg.ConfigID, lrc, cfg.Timeout); err != nil {
+		// Same shaping as renderScript: attach the output captured before the
+		// script threw, then bubble up unchanged so the HTTP layer can branch
+		// via errors.As.
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			return "", se.AttachCapturedOutput(buf.Bytes())
+		}
+		return "", fmt.Errorf("list script render: %w", err)
+	}
+	return buf.String(), nil
 }
 
 // doRender performs the actual rendering work. Dispatches on Script vs.
