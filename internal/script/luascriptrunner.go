@@ -88,7 +88,11 @@ type ReadElevation struct {
 // is nil, which is the right behavior for misconfigured deployments.
 //
 // Use [NewLuaScriptRunnerWithElevatedReads] to additionally grant the
-// bypass_acl closure a raw read handle.
+// bypass_acl closure a raw read handle. Since TKT-ACSBSA both production
+// wiring sites (appbuild.assemble, appbuildtest) use that one, so this
+// constructor has no production callers today — it is kept because
+// "no read elevation" is a real configuration a wiring site may want, and
+// the tests that pin the withheld-capability behavior need it.
 func NewLuaScriptRunner(exec Executor, readDeps lua.ReadDeps) *LuaScriptRunner {
 	return NewLuaScriptRunnerWithElevatedReads(exec, readDeps, ReadElevation{})
 }

@@ -3,6 +3,7 @@ package lua
 import (
 	"bytes"
 	"context"
+	"errors"
 	"iter"
 	"slices"
 	"strings"
@@ -91,6 +92,56 @@ func (g gatedReader) ListRelations(ctx context.Context, q store.RelationQuery) i
 			}
 		}
 	}
+}
+
+// failingElevatedReader yields one good row and then an error, to exercise
+// the mid-iteration failure path. The panic after the failing yield is the
+// point: if s.RaiseError did NOT unwind the range loop, the iterator would be
+// resumed and the panic would fire.
+type failingElevatedReader struct{ raw store.Store }
+
+func (f failingElevatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return f.raw.GetEntity(ctx, id)
+}
+
+func (f failingElevatedReader) ListEntities(
+	context.Context, store.EntityQuery,
+) iter.Seq2[*entity.Entity, error] {
+	return func(yield func(*entity.Entity, error) bool) {
+		if !yield(&entity.Entity{ID: "A", Type: "ticket"}, nil) {
+			return
+		}
+		yield(nil, errors.New("synthetic store failure"))
+		panic("iterator resumed after RaiseError -- the longjmp did not unwind " +
+			"the range loop, so the binding is leaking an in-flight iterator")
+	}
+}
+
+func (f failingElevatedReader) ListRelations(
+	context.Context, store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return func(func(*entity.Relation, error) bool) {}
+}
+
+// brokenElevatedReader fails every GetEntity with an INFRASTRUCTURE error
+// (not a miss), to pin that such errors surface rather than masquerading as
+// "does not exist".
+type brokenElevatedReader struct{}
+
+func (brokenElevatedReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+	return nil, errors.New("connection refused: database is down")
+}
+
+func (brokenElevatedReader) ListEntities(
+	context.Context, store.EntityQuery,
+) iter.Seq2[*entity.Entity, error] {
+	return func(func(*entity.Entity, error) bool) {}
+}
+
+func (brokenElevatedReader) ListRelations(
+	context.Context, store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return func(func(*entity.Relation, error) bool) {}
 }
 
 // recordingElevationRecorder captures the post-closure audit
@@ -459,6 +510,163 @@ func TestElevatedRead_DeniedReadIsNotAudited(t *testing.T) {
 	if len(rec.calls) != 0 {
 		t.Errorf("a DENIED elevated read was audited as though data was disclosed: %v",
 			rec.calls)
+	}
+}
+
+// TestElevatedRead_StoreErrorMidIterationUnwindsCleanly pins two properties
+// of the failure path that are easy to get wrong together.
+//
+// The elevated list bindings call s.RaiseError from INSIDE a range-over-func
+// loop -- unlike the gated bindings, which `break` on an iterator error. That
+// is a longjmp out of a running iterator, so this pins that (a) the range loop
+// really unwinds rather than resuming the iterator (the fixture panics if it
+// is resumed), (b) the store error reaches the script instead of being
+// silently swallowed into a short result -- a truncated list that looked
+// complete would be worse than an error -- and (c) the audit defer still
+// fires, so a read that partially succeeded before failing is still recorded.
+func TestElevatedRead_StoreErrorMidIterationUnwindsCleanly(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	rec := &recordingElevationRecorder{}
+	deps := ws.services("/tmp")
+	deps.VisibleReader = gatedReader{raw: ws.store}
+	deps.ElevatedManager = &recordingMutator{}
+	deps.ElevatedReader = failingElevatedReader{raw: ws.store}
+	deps.ElevationRecorder = rec
+	var buf bytes.Buffer
+	r := NewWriter(deps, &buf)
+	defer r.Close()
+
+	err := r.RunString(`rela.bypass_acl(function(admin) admin.list_entities("ticket") end)`)
+	if err == nil {
+		t.Fatal("a store failure mid-iteration was swallowed -- the script got a " +
+			"TRUNCATED list it would read as complete")
+	}
+	if !strings.Contains(err.Error(), "synthetic store failure") {
+		t.Errorf("error = %v, want it to carry the underlying store failure", err)
+	}
+	if len(rec.calls) != 1 {
+		t.Errorf("got %d audit records, want 1 -- the read partially succeeded "+
+			"before failing, so it must still be recorded", len(rec.calls))
+	}
+}
+
+// TestElevatedRead_StoreErrorIsNotMaskedAsMissing pins that only a genuine
+// MISS yields nil (RR: significant).
+//
+// Masking an infrastructure error as nil breaks the documented contract
+// ("admin.get_entity returns nil only when the entity genuinely does not
+// exist") and silently breaks the motivating use case: the guide's own
+// example is a cross-entity uniqueness check, and a nil returned during a
+// transient outage reads as "no duplicate" — so the invariant the elevated
+// read exists to ENFORCE gets violated, quietly, on exactly the occasions
+// the system is already unhealthy.
+func TestElevatedRead_StoreErrorIsNotMaskedAsMissing(t *testing.T) {
+	t.Parallel()
+	ws := newMockWorkspace(t)
+	deps := ws.services("/tmp")
+	deps.VisibleReader = gatedReader{raw: ws.store}
+	deps.ElevatedManager = &recordingMutator{}
+	deps.ElevatedReader = brokenElevatedReader{}
+	var buf bytes.Buffer
+	r := NewWriter(deps, &buf)
+	defer r.Close()
+
+	err := r.RunString(`rela.bypass_acl(function(admin) admin.get_entity("TKT-001") end)`)
+	if err == nil {
+		t.Fatal("a store OUTAGE was reported to the script as nil (not-found) -- " +
+			"a uniqueness check would read that as 'no duplicate' and admit one")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("error = %v, want it to carry the underlying store failure", err)
+	}
+}
+
+// TestElevatedRead_MissStillReturnsNil is the other half: a genuine miss must
+// stay nil, or every "does this exist?" script breaks.
+func TestElevatedRead_MissStillReturnsNil(t *testing.T) {
+	t.Parallel()
+	r := elevatedReadFixture(t, true)
+	if err := r.RunString(`rela.bypass_acl(function(admin)
+		if admin.get_entity("NOPE-404") ~= nil then
+			error("a missing entity did not come back as nil")
+		end
+	end)`); err != nil {
+		t.Fatalf("a genuine miss raised instead of returning nil: %v", err)
+	}
+}
+
+// TestElevatedRead_DeniedByArgValidationIsNotAudited pins that the audit row
+// means what it says (RR: significant).
+//
+// The empty-argument checks raise BEFORE the reader is ever called, so no
+// data was disclosed. Recording one anyway would make the audit log overstate
+// what happened — the same principle
+// TestElevatedRead_DeniedReadIsNotAudited pins for the nil-reader denial,
+// which is why the mark happens at the store call rather than in readGuard.
+func TestElevatedRead_DeniedByArgValidationIsNotAudited(t *testing.T) {
+	t.Parallel()
+	r, rec := elevatedReadFixtureWithRecorder(t, true)
+
+	// pcall so the raises do not abort the closure; the point is what got
+	// recorded, not that they raised (covered separately).
+	if err := r.RunString(`rela.bypass_acl(function(admin)
+		pcall(function() admin.get_entity("") end)
+		pcall(function() admin.list_entities("") end)
+	end)`); err != nil {
+		t.Fatalf("script: %v", err)
+	}
+
+	if len(rec.calls) != 0 {
+		t.Errorf("got %d audit records (%v), want 0 -- these calls were rejected "+
+			"by argument validation and never reached the store, so recording "+
+			"them claims a disclosure that did not happen", len(rec.calls), rec.calls)
+	}
+}
+
+// TestElevatedRead_GetRelationsRejectsNonStringFilter pins that a mistyped
+// filter fails loudly instead of becoming a whole-graph scan (RR: minor).
+//
+// `{from = 12345}` — an id that came back as a number, or a typo'd key —
+// previously dropped the constraint silently and returned EVERY edge, which
+// the script would read as a filtered result. On the gated path an
+// over-broad query is still peer-gated by the reader; here nothing gates it.
+func TestElevatedRead_GetRelationsRejectsNonStringFilter(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, opts string }{
+		{"numeric from", `{from = 12345}`},
+		{"boolean type", `{type = true}`},
+		{"table to", `{to = {}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := elevatedReadFixture(t, true)
+			err := r.RunString(
+				`rela.bypass_acl(function(admin) admin.get_relations(` + tc.opts + `) end)`)
+			if err == nil {
+				t.Fatal("a non-string filter was silently DROPPED -- the call returned " +
+					"an unfiltered whole-graph edge dump that the script reads as filtered")
+			}
+			if !strings.Contains(err.Error(), "must be a string") {
+				t.Errorf("error = %v, want it to name the bad option type", err)
+			}
+		})
+	}
+}
+
+// TestElevatedRead_GetRelationsAcceptsAbsentFilters pins that omitting the
+// options (or individual keys) still means "no constraint" — the rejection
+// above must not have turned absent into invalid.
+func TestElevatedRead_GetRelationsAcceptsAbsentFilters(t *testing.T) {
+	t.Parallel()
+	r := elevatedReadFixture(t, true)
+	if err := r.RunString(`rela.bypass_acl(function(admin)
+		admin.get_relations()
+		admin.get_relations({})
+		admin.get_relations({from = "TKT-001"})
+	end)`); err != nil {
+		t.Fatalf("absent or partial filters were rejected: %v", err)
 	}
 }
 

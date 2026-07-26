@@ -5,7 +5,7 @@ title: 'lua: extend rela.bypass_acl''s admin handle with read methods (elevated 
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Summary

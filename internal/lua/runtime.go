@@ -1694,9 +1694,16 @@ func (r *Runtime) newElevatedHandle(
 		}
 		return true
 	}
-	// readGuard adds the wired-reader check to the liveness check, and marks
-	// the binding as used. Both checks are required before any elevated read
-	// touches the store.
+	// readGuard adds the wired-reader check to the liveness check. Both are
+	// required before any elevated read touches the store.
+	//
+	// It deliberately does NOT mark the binding as used. Marking here would
+	// audit a read that never reached the store — the argument-validation
+	// raises (empty id, empty type) fire AFTER this guard, so a closure doing
+	// only `pcall(admin.get_entity, "")` would produce an `acl-bypass-read`
+	// row claiming a disclosure that never happened. Each method calls
+	// reads.mark immediately before its er.* call instead, so the audit row
+	// means what it says.
 	readGuard := func(name string) bool {
 		if !guard(name) {
 			return false
@@ -1705,11 +1712,6 @@ func (r *Runtime) newElevatedHandle(
 			ls.RaiseError("rela.bypass_acl: %s: no elevated reader is configured for this runtime", name)
 			return false
 		}
-		// Marked BEFORE the read, not after: a read that panics or raises
-		// mid-iteration still happened, and partial data may already have
-		// reached the script. Recording only completed reads would leave the
-		// noisiest failure cases untraced.
-		reads.mark(name)
 		return true
 	}
 	ls.SetField(t, "create_relation", ls.NewFunction(func(s *lua.LState) int {
@@ -1749,7 +1751,7 @@ func (r *Runtime) newElevatedHandle(
 		s.Push(lua.LTrue)
 		return 1
 	}))
-	registerElevatedReads(ls, t, er, readGuard, r.callerCtx)
+	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
 	return t
 }
 
@@ -1765,11 +1767,11 @@ func (r *Runtime) newElevatedHandle(
 // small and it keeps the two read paths physically separate.
 func registerElevatedReads(
 	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
-	ctxFn func() context.Context,
+	ctxFn func() context.Context, reads *readUsage,
 ) {
-	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn)))
-	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn)))
-	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn)))
+	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
+	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads)))
+	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn, reads)))
 }
 
 // elevatedGetEntity builds admin.get_entity(id) -> table|nil.
@@ -1780,6 +1782,7 @@ func registerElevatedReads(
 // deliberately ambiguous "missing or hidden" that keeps it oracle-free.
 func elevatedGetEntity(
 	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	reads *readUsage,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
 		if !readGuard("get_entity") {
@@ -1790,10 +1793,23 @@ func elevatedGetEntity(
 			s.RaiseError("bypass_acl get_entity: entity ID cannot be empty")
 			return 0
 		}
+		reads.mark("get_entity")
 		e, err := er.GetEntity(ctxFn(), id)
 		if err != nil {
-			s.Push(lua.LNil)
-			return 1
+			// Only a genuine MISS is nil. Any other error (store down, driver
+			// failure) RAISES — masking it as nil would make the documented
+			// contract ("nil means it does not exist") false, and would break
+			// the motivating use case: a uniqueness check that reads nil on a
+			// transient outage concludes "no duplicate" and lets the invariant
+			// the elevated read exists to enforce be violated. The two list
+			// bindings already raise on iteration errors; this keeps the three
+			// consistent.
+			if errors.Is(err, store.ErrNotFound) {
+				s.Push(lua.LNil)
+				return 1
+			}
+			s.RaiseError("bypass_acl get_entity error: %s", err.Error())
+			return 0
 		}
 		s.Push(EntityToTable(s, e))
 		return 1
@@ -1809,6 +1825,7 @@ func elevatedGetEntity(
 // (TKT-YWDGZD tracks paging for both).
 func elevatedListEntities(
 	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	reads *readUsage,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
 		if !readGuard("list_entities") {
@@ -1819,6 +1836,7 @@ func elevatedListEntities(
 			s.RaiseError("bypass_acl list_entities: entity type cannot be empty")
 			return 0
 		}
+		reads.mark("list_entities")
 		result := s.NewTable()
 		idx := 1
 		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType}) {
@@ -1843,12 +1861,18 @@ func elevatedListEntities(
 // elevated view incomplete.
 func elevatedGetRelations(
 	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	reads *readUsage,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
 		if !readGuard("get_relations") {
 			return 0
 		}
-		q := elevatedRelationQuery(s)
+		q, err := elevatedRelationQuery(s)
+		if err != nil {
+			s.RaiseError("bypass_acl get_relations: %s", err.Error())
+			return 0
+		}
+		reads.mark("get_relations")
 		result := s.NewTable()
 		idx := 1
 		for rel, err := range er.ListRelations(ctxFn(), q) {
@@ -1867,22 +1891,35 @@ func elevatedGetRelations(
 // elevatedRelationQuery reads the optional {from,type,to} options table off
 // the Lua stack. An absent or non-table argument yields the zero query,
 // which matches every relation.
-func elevatedRelationQuery(s *lua.LState) store.RelationQuery {
+func elevatedRelationQuery(s *lua.LState) (store.RelationQuery, error) {
 	var q store.RelationQuery
 	if s.GetTop() < 1 || s.Get(1).Type() != lua.LTTable {
-		return q
+		return q, nil
 	}
 	opts := s.CheckTable(1)
-	if v, ok := opts.RawGetString("from").(lua.LString); ok {
-		q.From = string(v)
+	fields := []struct {
+		name string
+		dst  *string
+	}{
+		{"from", &q.From}, {"type", &q.Type}, {"to", &q.To},
 	}
-	if v, ok := opts.RawGetString("type").(lua.LString); ok {
-		q.Type = string(v)
+	for _, f := range fields {
+		switch v := opts.RawGetString(f.name).(type) {
+		case *lua.LNilType:
+			// Absent: no constraint on this field.
+		case lua.LString:
+			*f.dst = string(v)
+		default:
+			// A non-string is REJECTED rather than skipped. Silently dropping
+			// it turns a mistyped filter (`{from = 12345}` when an id came
+			// back as a number) into an unfiltered whole-graph edge dump that
+			// the script reads as a filtered result — and nothing downstream
+			// gates it, because this is the elevated path.
+			return q, fmt.Errorf(
+				"option %q must be a string, got %s", f.name, v.Type())
+		}
 	}
-	if v, ok := opts.RawGetString("to").(lua.LString); ok {
-		q.To = string(v)
-	}
-	return q
+	return q, nil
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean

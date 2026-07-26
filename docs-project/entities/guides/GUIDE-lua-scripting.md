@@ -402,8 +402,15 @@ end)
 
 Note the two reads differ deliberately in what a `nil` means:
 `rela.get_entity` returns `nil` for "missing **or** hidden" (it stays
-oracle-free), while `admin.get_entity` returns `nil` only when the entity
-genuinely does not exist.
+oracle-free), while `admin.get_entity` returns `nil` only for a genuine
+miss. A store failure (backend down, driver error) **raises** rather than
+returning `nil` — otherwise the uniqueness check above would read a
+transient outage as "no duplicate" and admit one, silently violating the
+invariant it exists to enforce. All three `admin` read methods raise on
+store errors.
+
+Mistyped filter options raise too: `admin.get_relations({from = 12345})` is
+an error, not an unfiltered whole-graph dump.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
 automation action sets `allow_acl_bypass: true` in `metamodel.yaml` (an
