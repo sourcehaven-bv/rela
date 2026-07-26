@@ -45,33 +45,13 @@ type ACLWhoCanCmd struct {
 
 // Run executes `rela acl who-can`.
 func (c *ACLWhoCanCmd) Run(ctx context.Context, svc *readServices) error {
-	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
-	policy, err := acl.LoadPolicy(policyPath)
+	engine, err := buildACLEngine(svc)
 	if err != nil {
-		if stderrors.Is(err, os.ErrNotExist) {
+		if stderrors.Is(err, errNoACLPolicy) {
 			out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")
 			return nil
 		}
-		return fmt.Errorf("load acl.yaml: %w", err)
-	}
-
-	// Fail loud on a policy that references schema the metamodel doesn't
-	// declare (e.g. a non-unique principal_property) — the same gate the
-	// server applies at wiring time, so who-can can't report against a
-	// policy the server would reject.
-	if vErr := policy.ValidateAgainstMetamodel(aclMetamodelView{svc.Meta}); vErr != nil {
-		return fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
-	}
-
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store)))
-	if err != nil {
-		return fmt.Errorf("build ACL resolver: %w", err)
-	}
-
-	engine, err := aclmap.New(svc.Store, decl)
-	if err != nil {
-		return fmt.Errorf("build access engine: %w", err)
+		return err
 	}
 
 	result, err := engine.WhoCan(ctx, acl.Verb(c.Verb), c.Entity)
@@ -161,6 +141,40 @@ func formatRoute(rt aclmap.Route) string {
 		parts = append(parts, rt.Relation+" edge")
 	}
 	return fmt.Sprintf("%s [%s]", strings.Join(parts, ", "), rt.Kind)
+}
+
+// errNoACLPolicy signals that the project has no acl.yaml. Callers treat
+// it as "no policy → nothing to report" and print a friendly note rather
+// than an error, so the shared builder can stay a plain helper.
+var errNoACLPolicy = stderrors.New("aclmap: no acl.yaml")
+
+// buildACLEngine loads acl.yaml, validates it against the metamodel, and
+// wires an aclmap.Engine over the store — the shared setup for every
+// `rela acl` reporting command (who-can, map). Returns errNoACLPolicy
+// (via errors.Is) when the project has no policy so the caller can print
+// its own friendly message.
+func buildACLEngine(svc *readServices) (*aclmap.Engine, error) {
+	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
+	policy, err := acl.LoadPolicy(policyPath)
+	if err != nil {
+		if stderrors.Is(err, os.ErrNotExist) {
+			return nil, errNoACLPolicy
+		}
+		return nil, fmt.Errorf("load acl.yaml: %w", err)
+	}
+	if vErr := policy.ValidateAgainstMetamodel(aclMetamodelView{svc.Meta}); vErr != nil {
+		return nil, fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
+	}
+	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
+		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store)))
+	if err != nil {
+		return nil, fmt.Errorf("build ACL resolver: %w", err)
+	}
+	engine, err := aclmap.New(svc.Store, decl)
+	if err != nil {
+		return nil, fmt.Errorf("build access engine: %w", err)
+	}
+	return engine, nil
 }
 
 // aclMetamodelView adapts *metamodel.Metamodel to acl.MetamodelView for
