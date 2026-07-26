@@ -159,17 +159,17 @@ type SectionData struct {
 // Returns a value (not a pointer) so callers can layer on display-mode-
 // specific fields (e.g. `Content`/`HasContent` for the `content`/`cards`
 // branch) without sharing mutation across rows.
-func (a *App) buildSectionEntityData(
+func (h *viewsHandler) buildSectionEntityData(
 	ctx context.Context, e *entity.Entity, secFields []ViewSectionField, eDef *metamodel.EntityDef,
 ) SectionEntityData {
-	s := a.State()
+	s := h.schema()
 	sed := SectionEntityData{
 		ID:            e.ID,
 		Title:         s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Type:          e.Type,
-		EditFormID:    a.editFormForType(e.Type),
-		Props:         a.affordances.copyVisibleProperties(ctx, e),
-		FieldVerdicts: a.affordances.computeFieldAffordances(ctx, e),
+		EditFormID:    h.editFormForType(e.Type),
+		Props:         h.affordances.copyVisibleProperties(ctx, e),
+		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 	}
 	for _, f := range secFields {
 		values := propertyToStrings(e.Properties[f.Property])
@@ -194,8 +194,8 @@ func (a *App) buildSectionEntityData(
 // buildSections builds template-ready section data from view sections and a view result.
 //
 //nolint:gocognit,funlen // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
-func (a *App) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
-	s := a.State()
+func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
+	s := h.schema()
 	out := make([]SectionData, 0, len(sections))
 
 	for _, sec := range sections {
@@ -245,20 +245,20 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			case "properties", "list":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := a.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
 				sd.Columns = sec.Columns
 				buildRow := func(e *entity.Entity) SectionRowData {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: a.editFormForType(e.Type)}
+					row := SectionRowData{EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type)}
 					for _, col := range sec.Columns {
 						cell := SectionColumnData{
-							Link: a.resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
+							Link: resolveLinkTarget(col.Link, e.Type, e.ID), EntityID: e.ID, EntityType: e.Type,
 						}
 						if col.Relation != "" {
-							cell.Values = a.resolveRelationColumnValues(ctx, e.ID, col.Relation, col.Direction)
+							cell.Values = h.resolveRelationColumnValues(ctx, e.ID, col.Relation, col.Direction)
 						} else {
 							var pd metamodel.PropertyDef
 							if eDef != nil {
@@ -310,7 +310,7 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := a.buildSectionEntityData(ctx, e, sec.Fields, eDef)
+					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef)
 					sed.Content = e.Content
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)
@@ -326,7 +326,9 @@ func (a *App) buildSections(ctx context.Context, sections []ViewSection, result 
 
 // executeSidePanel runs the side panel traversal and builds section data.
 // Returns nil if the form has no side panel or the entity doesn't exist.
-func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, entityID, entityType string) []SectionData {
+func (h *viewsHandler) executeSidePanel(
+	ctx context.Context, panel *SidePanelConfig, entityID, entityType string,
+) []SectionData {
 	if panel == nil || entityID == "" {
 		return nil
 	}
@@ -338,12 +340,12 @@ func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, enti
 		Sections: panel.Sections,
 	}
 
-	result, err := a.executeView(ctx, viewCfg, entityID)
+	result, err := h.executeView(ctx, viewCfg, entityID)
 	if err != nil {
 		return nil
 	}
 
-	return a.buildSections(ctx, panel.Sections, result)
+	return h.buildSections(ctx, panel.Sections, result)
 }
 
 // resolveSectionButtonsWithTraverse populates AddInfo and LinkInfo on
@@ -353,8 +355,10 @@ func (a *App) executeSidePanel(ctx context.Context, panel *SidePanelConfig, enti
 // hand-built from a form's SidePanel config — it is not a generic view.
 //
 //nolint:gocognit // resolves section buttons across traverse targets; the branches are per-source button-resolution cases, not shared logic to extract.
-func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections []SectionData, entry *entity.Entity) {
-	s := a.State()
+func (h *viewsHandler) resolveSectionButtonsWithTraverse(
+	viewConfig ViewConfig, sections []SectionData, entry *entity.Entity,
+) {
+	s := h.schema()
 	for i, sec := range viewConfig.Sections {
 		if sec.Source == "entry" {
 			continue
@@ -382,7 +386,7 @@ func (a *App) resolveSectionButtonsWithTraverse(viewConfig ViewConfig, sections 
 			}
 			var targets []SectionAddTarget
 			for _, et := range candidateTypes {
-				formID := a.createFormForType(et)
+				formID := h.createFormForType(et)
 				if formID == "" {
 					continue
 				}

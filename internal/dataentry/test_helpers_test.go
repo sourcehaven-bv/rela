@@ -173,6 +173,19 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// own, so sync writes serialize with the other mutation handlers just as in
 	// production.
 	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	// viewsHandler mirrors production wiring (see NewApp): fixed service
+	// handles by value, schema/services closures, and App's shared read gate.
+	app.views = &viewsHandler{
+		schema:      app.State,
+		store:       svc.Store(),
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        app.logo,
+		gateRead:    app.gateReadOrNotFound,
+	}
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
@@ -180,7 +193,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		executeView: app.executeView,
+		executeView: app.views.executeView,
 		// Late-bound like production: ACL-gating tests reassign app.acl after
 		// this rebind.
 		aclImpl: func() acl.ACL { return app.acl },
