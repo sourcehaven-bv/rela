@@ -2,9 +2,37 @@
 id: RES-8TX9KF
 type: research
 title: 'Effective-access map: enumerate who can access what, with provenance and drift detection'
-summary: 'ACL effective-access map: enumerate who-can-access-what with all-routes provenance, filtering, drift. UC3 (who-can) SHIPPED in TKT-9089I6.'
+summary: 'ACL effective-access map: enumerate who-can-access-what with all-routes provenance, filtering, drift. UC3 (who-can) + UC1/UC2 (map --principal) SHIPPED.'
 status: done
 ---
+
+## Implementation notes — UC1/UC2 (`map --principal`) SHIPPED (TKT-B1YE7, PR #1218, merged 2026-07-26)
+
+Second slice — `rela acl map --principal <P>` — is in `develop`
+(`internal/aclmap/mapprincipal.go` + `acl` empty-entity probe support). The
+inverse of who-can: fix the principal, show everything reachable by type. What
+this slice taught us (refines the design above):
+
+- **Baseline must be computed entity-independently, NOT discovered inside the
+  entity loop.** Type-level grants (global/group/asserted/everyone) apply to
+  every entity of a type, so the per-type baseline is computed once via an
+  **empty-entity probe** — `AccessRoutes(verb, type, "")`. Discovering baselines
+  inside the entity loop meant a type with ZERO entities hid a real global grant
+  and reported `EveryoneOnly=true` — the exact UC2 offboarding false all-clear
+  (CRITICAL, caught in code review, fixed + regression test). The entity loop now
+  only collects local/inherited **exceptions**.
+- **The baseline/exception split is itself a correctness surface, not just
+  presentation.** A conformance test that only checks the boolean grant is blind
+  to misclassifying an entity-specific grant as a type-wide baseline (or vice
+  versa) — the split must be asserted (`assertClassification`: an entity-specific
+  grant's same-type sibling is denied). `isTypeLevel` switches over the full
+  closed `SourceKind` enum (3 type-level, 4 entity-level) with a panic-guard on
+  the baseline probe.
+- **This is the scale mechanism.** O(E) per principal, but the output is O(types)
+  baseline rows + O(exceptions) — never a row per entity. The reverse index
+  (RR-K72ML0) is still deferred; a single principal's O(E) is acceptable, but
+  whole-graph `map` (all principals) is O(P·E) and IS where the index becomes
+  load-bearing — see TKT-CAN9GM.
 
 ## Implementation notes — UC3 (`who-can`) SHIPPED (TKT-9089I6, PR #1141, merged 2026-07-16)
 
@@ -55,8 +83,9 @@ cache); bounded by `depthCap=5`, fine for single-entity `who-can`. A reverse
 principal→entity index is the optimization the `map` command will need
 (RR-K72ML0, deferred).
 
-**Still open (this feature):** `map` (UC1/UC2), `can`, full hop-chains, drift
-(UC8), assertions (UC4/UC5), reverse index, web view — see FEAT-RCQ6SJ.
+**Still open (this feature):** `can` + whole-graph `map` (TKT-CAN9GM), full
+hop-chains, drift (UC8), assertions (UC4/UC5), reverse index, web view — see
+FEAT-RCQ6SJ.
 
 ## Context
 
