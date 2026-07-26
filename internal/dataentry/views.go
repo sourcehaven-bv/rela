@@ -55,6 +55,13 @@ func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) 
 	// (Filter gates by row). The entry is already row-gated at the handler
 	// (api_v1.go, TKT-BNX2PN), so it only needs field redaction, not a re-gate
 	// that could 404 an entry the caller was just cleared to read.
+	//
+	// Residual (accepted, like the computed-path timing note in
+	// internal/visibility): a traverse rule's where: runs on raw entities above,
+	// so for a READABLE neighbor whose only hidden aspect is a field value, its
+	// presence/absence in a collection still reflects whether it matched a
+	// predicate over that hidden field. The value is redacted; membership is a
+	// one-bit inference channel, not a value disclosure.
 	result.Entry = visibility.Redact(ctx, appRedactor(a), result.Entry)
 	for name, entities := range result.Collections {
 		result.Collections[name] = a.viewReader.Filter(ctx, entities)
