@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // buildTimeout bounds a whole manual build (all islands together, via a child
@@ -156,7 +157,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// build just seeded itself, and runs at the operator trust boundary
 	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		VisibleReader:  st,
+		VisibleReader:  visibility.Unrestricted(st),
 		WritePrepStore: st,
 		Tracer:         dr.tracer,
 		Meta:           opts.Meta,

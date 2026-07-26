@@ -357,7 +357,9 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 	d, ok := a.acl.(*acl.Declarative)
 	if !ok || d == nil {
-		return a.store
+		// Named so the NopACL path is greppable alongside every other
+		// ungated read site (TKT-1WV50C).
+		return visibility.Unrestricted(a.store)
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
@@ -540,7 +542,7 @@ func NewApp(
 	// principal cannot see. Same reasoning the validator already applies to
 	// locked/unreadable entities, which it skips rather than mis-validates.
 	readDeps := lua.ReadDeps{
-		VisibleReader:  st,
+		VisibleReader:  visibility.Unrestricted(st),
 		WritePrepStore: st,
 		Tracer:         trc,
 		Searcher:       searcher,

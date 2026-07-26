@@ -110,6 +110,14 @@ func TestDiscover_LuaDepsDerivable(t *testing.T) {
 	if read.VisibleReader == nil || read.WritePrepStore == nil || read.Tracer == nil || read.Meta == nil {
 		t.Errorf("LuaReadDeps incomplete: %+v", read)
 	}
+	// The nil check above no longer proves the reader is wired to a store:
+	// visibility.Unrestricted always returns a non-nil value, so a bundle
+	// built over a nil store would still pass it (TKT-1WV50C). Assert the
+	// reader actually reaches the store instead.
+	if _, err := read.VisibleReader.GetEntity(t.Context(), "does-not-exist"); err == nil {
+		t.Error("LuaReadDeps.VisibleReader did not reach a real store: " +
+			"a missing entity should surface a not-found error")
+	}
 	if read.ProjectRoot == "" {
 		t.Error("LuaReadDeps.ProjectRoot is empty")
 	}

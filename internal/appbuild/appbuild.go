@@ -197,7 +197,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		VisibleReader:  s.store,
+		VisibleReader:  visibility.Unrestricted(s.store),
 		WritePrepStore: s.store,
 		Tracer:         s.tracer,
 		Searcher:       s.searcher,
@@ -253,7 +253,11 @@ func scriptEntityReader(
 	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
 ) lua.EntityReader {
 	if d == nil {
-		return st
+		// Named, not bare: this is the NopACL path and the single largest
+		// ungated read surface in the tree, so it must show up in
+		// `grep -rn visibility.Unrestricted` like every other one
+		// (TKT-1WV50C).
+		return visibility.Unrestricted(st)
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}

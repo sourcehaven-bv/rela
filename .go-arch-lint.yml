@@ -452,6 +452,9 @@ deps:
       - templating
       - tracer
       - validator
+      # visibility: only for visibility.Unrestricted, which NAMES the
+      # fixture's deliberately ungated reads (TKT-1WV50C).
+      - visibility
   projectsetup:
     mayDependOn:
       - conditionlint
@@ -557,6 +560,10 @@ deps:
       - acl
       - entity
       - lua
+      # visibility: only for visibility.Unrestricted, which NAMES the
+      # docs runtime's deliberately ungated reads (TKT-1WV50C). It reads a
+      # throwaway memstore the doc build just seeded itself.
+      - visibility
       - mermaid
       - metamodel
       - store

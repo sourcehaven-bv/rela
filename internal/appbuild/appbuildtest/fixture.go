@@ -38,6 +38,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Option configures a [*appbuild.Services] built via [New].
@@ -295,7 +296,7 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	// Test fixture: unrestricted reads (no ACL wiring here). Production
 	// identity-bearing paths use Services.luaReadDepsFor instead.
 	return lua.ReadDeps{
-		VisibleReader:  st,
+		VisibleReader:  visibility.Unrestricted(st),
 		WritePrepStore: st,
 		Tracer:         tr,
 		Searcher:       searcher,
