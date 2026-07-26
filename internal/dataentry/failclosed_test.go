@@ -133,8 +133,18 @@ func TestScriptReadSeam_PolicylessProjectStaysUnrestricted(t *testing.T) {
 		t.Error("policy-less project got DenyReader — absence of acl.yaml is " +
 			"an intentional state, not a construction fault")
 	}
-	if any(reader) != any(app.store) {
-		t.Errorf("policy-less scriptReader should be the raw store, got %T", reader)
+	// The ungated path is spelled visibility.Unrestricted (TKT-1WV50C), not a
+	// bare a.store, so pin the CONTRACT — no gate, no redaction — rather than
+	// pointer identity with the store. Reads must pass straight through.
+	if _, isUngated := reader.(*visibility.UnrestrictedReader); !isUngated {
+		t.Errorf("policy-less scriptReader should be the ungated reader, got %T", reader)
+	}
+	got, err := reader.GetEntity(context.Background(), "TKT-001")
+	if err != nil {
+		t.Fatalf("policy-less read failed: %v", err)
+	}
+	if got == nil || got.ID != "TKT-001" {
+		t.Errorf("policy-less read did not pass through to the store, got %v", got)
 	}
 
 	tr := app.scriptTracer(nil)
