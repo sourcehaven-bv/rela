@@ -120,8 +120,11 @@ func TestScriptTracer_FailsClosedOnGateFault(t *testing.T) {
 // TestScriptReadSeam_PolicylessProjectStaysUnrestricted pins the other side
 // of the contract. Absence of a policy is a documented intentional state
 // ("no access control desired"), NOT a fault — it must keep returning the
-// raw store, byte-identical to pre-ACL behavior. Failing closed here would
-// break every policy-less deployment's scripts.
+// ungated read handle over the raw store, byte-identical to pre-ACL
+// behavior. Since TKT-1WV50C that handle is the NAMED wrapper
+// [visibility.Unrestricted], so every ungated read site is greppable —
+// not the bare store value. Failing closed here would break every
+// policy-less deployment's scripts.
 func TestScriptReadSeam_PolicylessProjectStaysUnrestricted(t *testing.T) {
 	app := newTestAppV1(t)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
@@ -133,8 +136,9 @@ func TestScriptReadSeam_PolicylessProjectStaysUnrestricted(t *testing.T) {
 		t.Error("policy-less project got DenyReader — absence of acl.yaml is " +
 			"an intentional state, not a construction fault")
 	}
-	if any(reader) != any(app.store) {
-		t.Errorf("policy-less scriptReader should be the raw store, got %T", reader)
+	if _, ok := reader.(*visibility.UnrestrictedReader); !ok {
+		t.Errorf("policy-less scriptReader should be the named Unrestricted handle "+
+			"over the raw store (TKT-1WV50C), got %T", reader)
 	}
 
 	tr := app.scriptTracer(nil)
