@@ -322,9 +322,35 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 
 // scriptReader returns the ACL-bound read-out handle for script runtimes,
 // or the raw store when no Declarative policy is configured (the NopACL
-// path — byte-identical to pre-ACL behavior). A construction fault
-// degrades to the raw store with a warning rather than breaking every
-// script; a genuine DENY is still a deny.
+// path — byte-identical to pre-ACL behavior, not a bypass).
+//
+// When a policy IS configured but the gate cannot be built, this REFUSES
+// (returns [visibility.DenyReader]) rather than degrading to the raw store
+// — matching appbuild's unattended-path wiring (RR-GKCZO5, rela#1198).
+//
+// This wiring was fail-open on the theory that its callers are interactive,
+// so a broken gate would surface as an immediate, human-visible outage.
+// That does not hold: of the three consumers of [App.luaWriteDeps] —
+// actions.go (interactive), document.go/export_render, and webhook.go — the
+// IdP webhook is unattended machine-to-machine, running as `webhook:<event>`
+// with nobody watching the log. An unattended job quietly reverting to
+// full-graph reads is an unbounded silent disclosure into whatever it sends
+// onward — the exact failure DenyReader exists to stop.
+//
+// Failing closed costs the interactive callers nothing they were promised:
+// [visibility.ErrReaderUnavailable] is a loud, immediate, diagnosable error,
+// which is what the fail-open argument actually wanted — just without the
+// ungated read. A genuine DENY remains a deny, distinct from this error.
+//
+// DELIBERATE DIVERGENCE from appbuild: that seam substitutes
+// [visibility.NopRedactor] for a nil redactor, because its callers
+// (scheduler, cascades) legitimately have no affordance resolver and row
+// gating alone is the best available there (RR-7408F5). Data-entry always
+// has one, so a nil redactor here is a WIRING BUG, not a capability gap —
+// silently swapping in NopRedactor would drop field-level redaction on a
+// path that is supposed to enforce it. Do not "align" these by copying
+// appbuild's guard: it would convert a caught bug into a silent downgrade,
+// and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 	d, ok := a.acl.(*acl.Declarative)
 	if !ok || d == nil {
@@ -332,18 +358,18 @@ func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
-		slog.Warn("dataentry: ACL gate unavailable; script reads stay unrestricted", "err", err)
-		return a.store
+		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
 	reader, err := visibility.NewPolicyReader(gate, redactor, a.store)
 	if err != nil {
-		slog.Warn("dataentry: policy reader unavailable; script reads stay unrestricted", "err", err)
-		return a.store
+		slog.Error("dataentry: policy reader unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
 	sr, err := visibility.NewScriptReader(reader, a.store, gate)
 	if err != nil {
-		slog.Warn("dataentry: script reader unavailable; script reads stay unrestricted", "err", err)
-		return a.store
+		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
+		return visibility.DenyReader{}
 	}
 	return sr
 }
@@ -351,6 +377,10 @@ func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
 // scriptTracer wraps the tracer in the visibility decorator when a
 // Declarative policy is configured. Trace bindings are unchanged either
 // way — pruning happens inside the decorator.
+//
+// Construction faults REFUSE ([visibility.DenyTracer]) for the same reason
+// as [App.scriptReader]: traversal is a read, and an unattended caller must
+// not silently walk the whole graph.
 func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	d, ok := a.acl.(*acl.Declarative)
 	if !ok || d == nil {
@@ -358,13 +388,13 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
-		slog.Warn("dataentry: ACL gate unavailable; traversal stays unrestricted", "err", err)
-		return a.tracer
+		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
 	}
 	vt, err := visibility.NewVisibleTracer(a.tracer, gate, redactor, a.store)
 	if err != nil {
-		slog.Warn("dataentry: visible tracer unavailable; traversal stays unrestricted", "err", err)
-		return a.tracer
+		slog.Error("dataentry: visible tracer unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
 	}
 	return vt
 }

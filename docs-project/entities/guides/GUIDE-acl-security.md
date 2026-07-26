@@ -561,6 +561,22 @@ The `attachACLRequest` middleware:
   was a fail-open path — every read became AllowAll because the
   read handlers couldn't tell "no ACL" from "ACL but no
   principal."
+- **Refuses script reads when the read gate cannot be built.** If an
+  `acl.yaml` is configured but the visibility decorator fails to
+  construct, script runtimes (data-entry actions, `export_render`,
+  and the IdP webhook) receive a refusing reader rather than the raw
+  store: every read returns `read gate unavailable; refusing to read
+  ungated`, logged at ERROR at the wiring site. Degrading to ungated
+  reads would be an unbounded silent disclosure on the unattended
+  paths, where nobody is watching a warning. Note the asymmetry with
+  traversals: `trace_from`, `trace_to` and `find_path` cannot report
+  an error, so a refused traversal looks like an empty result to the
+  script — correlate with the ERROR log by timestamp when a script
+  reports an unexpectedly empty graph.
+
+A project with **no** `acl.yaml` is unaffected: that is a deliberate
+"no access control" configuration, not a fault, and scripts there read
+the full graph exactly as they always have.
 
 ## Property-level redaction (`visible:`)
 

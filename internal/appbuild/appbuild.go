@@ -225,9 +225,10 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 //
 // Falls back to unrestricted reads when no Declarative ACL is configured —
 // that is the NopACL path, byte-identical to pre-ACL behavior, not a
-// bypass. A construction failure is also unrestricted-with-a-warning
-// rather than silent denial: failing every script closed on a wiring error
-// would be a louder outage than the ACL is worth here, and it is logged.
+// bypass. A construction failure does NOT: it REFUSES, via
+// [visibility.DenyReader] / [visibility.DenyTracer] (RR-GKCZO5). See
+// [scriptEntityReader] for why an unattended path must not degrade to the
+// raw store.
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
 	// WritePrepStore stays RAW on purpose — see lua.ReadDeps.WritePrepStore.
