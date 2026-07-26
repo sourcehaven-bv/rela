@@ -525,32 +525,68 @@ jobs:
         if: steps.gate.outputs.applies == 'true'
         run: go build -o bin/rela ./cmd/rela
 
-      - name: Check for new or modified bug/feature/ticket entity
+      - name: Check for new or modified work-item entity
         if: steps.gate.outputs.require_new == 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
 
           # Get list of added or modified entity files in this PR
           # A = Added (new tickets), M = Modified (continuation work on existing tickets)
+          #
+          # Any work-item entity counts, not just bugs/features/tickets: flipping a
+          # review-response to `addressed` or closing out a doc-task is exactly the
+          # ticket hygiene this gate wants, and failing it for touching the "wrong"
+          # entity subdirectory taught people to bolt a no-op ticket edit onto the PR.
+          # Reference material (concepts, decisions, ideas, guides) is deliberately
+          # NOT here — editing a concept is not evidence of tracked work.
           CHANGED_ENTITIES=$(git diff --name-only --diff-filter=AM "${BASE_SHA}"...HEAD -- \
             'tickets/entities/bugs/*.md' \
             'tickets/entities/features/*.md' \
-            'tickets/entities/tickets/*.md' || true)
+            'tickets/entities/tickets/*.md' \
+            'tickets/entities/researchs/*.md' \
+            'tickets/entities/review-responses/*.md' \
+            'tickets/entities/doc-tasks/*.md' \
+            'tickets/entities/bug-analysis-checklists/*.md' \
+            'tickets/entities/implementation-checklists/*.md' \
+            'tickets/entities/planning-checklists/*.md' \
+            'tickets/entities/review-checklists/*.md' \
+            'tickets/entities/docs-checklists/*.md' || true)
+
+          # A code-only PR may carry its tickets on a companion branch (so the code
+          # PR is reviewable as code, and the ticket PR merges when the work actually
+          # reaches a terminal state). Such a PR declares the companion explicitly.
+          TICKETS_PR=""
+          if [[ -n "${PR_BODY:-}" ]]; then
+            TICKETS_PR=$(printf '%s' "$PR_BODY" \
+              | grep -oiE 'Tickets-PR:[[:space:]]*#?[0-9]+' \
+              | head -1 | grep -oE '[0-9]+' || true)
+          fi
+
+          if [[ -z "$CHANGED_ENTITIES" && -n "$TICKETS_PR" ]]; then
+            echo "No work-item entity in this PR, but it declares its tickets live in #${TICKETS_PR}."
+            echo "Ticket state is gated on that PR; this one is code-only."
+            exit 0
+          fi
 
           if [[ -z "$CHANGED_ENTITIES" ]]; then
             echo ""
-            echo "ERROR: PR must include a new or modified bug, feature, or ticket entity in tickets/entities/"
+            echo "ERROR: PR must include a new or modified work-item entity in tickets/entities/"
             echo ""
             echo "Create one with:"
             echo "  rela create bug --project tickets -P title='Title'"
             echo "  rela create feature --project tickets -P title='Title'"
             echo "  rela create ticket --project tickets -P title='Title'"
+            echo ""
+            echo "Or, if this PR is code-only and its tickets live on a companion"
+            echo "branch, add a line to the PR body:"
+            echo "  Tickets-PR: #1234"
             exit 1
           fi
 
-          echo "Found ticket entities:"
+          echo "Found work-item entities:"
           echo "$CHANGED_ENTITIES"
 
       - name: Run rela validate
