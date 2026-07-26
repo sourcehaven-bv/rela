@@ -10,6 +10,8 @@ status: backlog
 
 > **Sweep note (2026-07-20): M5.2 sub-tickets confirmed landed (sync_handler.go, command_handler.go, attachment_handler.go all exist). Epic remains open: App still has 132 receiver methods (goal <40), //plimsoll:max-methods=131 directive still present in app.go, and the M5.4 write nucleus is not carved (writeMu still a field on App, taken directly in api_v1.go write handlers).**
 
+> **Update (2026-07-25): M5.4 write nucleus carved — [[TKT-HKY8RJ]] / PR #1191 merged, then [[TKT-6NDSH9]] moved the Lua action + webhook dispatch in as well. App at 114 methods, directive 114. The write surface is COMPLETE on writeHandler: no App method takes writeMu directly anymore. writeMu itself remains App-owned and pointer-shared; deleting it outright stays the [[DEC-8UIL0]] Tx arc, which now has a single obvious seam.**
+
 **Epic / parent ticket** for the remainder of the `dataentry.App` decomposition.
 Each shippable step is its own sub-ticket (moved to `done` with its PR); this
 parent stays in `backlog` until the whole arc lands — App under the 40-method
@@ -35,6 +37,11 @@ functions (143 → 131). PR #1149.
 - **M5.4 — write nucleus.** Carve the entity/relation/attachment write handlers
 behind one shared `writeMu`; drive `App` under 40 and delete the
 `//plimsoll:max-methods` directive in `internal/dataentry/app.go`.
+  - [x] [[TKT-HKY8RJ]] — write nucleus (entity/relation CRUD + dry-run, clone,
+conflict-resolve, relations reconciler; 18 methods) → `writeHandler` (131 →
+114). PR #1191.
+  - [x] [[TKT-6NDSH9]] — Lua action handler + webhook dispatch → `writeHandler`
+(115 → 114 after develop drift), completing the write surface.
   - **Open question — settled.** Researched in [[RES-Z1SJ5]], decided in
 [[DEC-8UIL0]]: write serialization becomes a `Tx` contract on `store.Store` (fs
 = mutex, postgres = native transactions + advisory lock), implemented as its

@@ -47,7 +47,7 @@ func postWebhook(app *App, body string) *httptest.ResponseRecorder {
 	// in registerWebhookRoutes.
 	r := app.webhook
 	r.handle(rec, req, func(ctx context.Context, claims WebhookClaims) error {
-		return dispatchWebhookAction(ctx, app, r.actionID, claims)
+		return dispatchWebhookAction(ctx, app.write, r.actionID, claims)
 	})
 	return rec
 }

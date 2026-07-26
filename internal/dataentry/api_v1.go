@@ -108,7 +108,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.handleV1Views)
-	mux.HandleFunc("/api/v1/_action/", a.handleV1Action)
+	mux.HandleFunc("/api/v1/_action/", a.write.handleV1Action)
 	mux.HandleFunc("/api/v1/_apps/", a.handleV1App)
 
 	// Dynamic entity routes are handled by a catch-all
