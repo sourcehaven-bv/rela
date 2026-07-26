@@ -45,13 +45,15 @@ interfaces (`ListEntities`, a `ForPrincipal`-style resolver, policy accessors) �
 
 ## Use-cases covered (from RES-8TX9KF)
 
-| UC | What v1 delivers |
-|----|------------------|
-| UC1 onboarding | `map --principal` — per-principal verb grid, spot a stray write grant |
-| UC2 offboarding | `map --principal` — complete reachable set, `everyone`-only = cut off |
-| UC3 sensitive spot-check | `who-can read <entity>` — readers + the path each took |
-| UC6 blast-radius | `map --principal` before/after diff — count of newly-reachable entities |
-| UC7 (partial) | surfaces everyone-readable types etc.; full heuristics are a separate aclaudit ticket |
+| UC | What v1 delivers | Status |
+|----|------------------|--------|
+| UC1 onboarding | `map --principal` — per-principal verb grid, spot a stray write grant | ✅ TKT-B1YE7 |
+| UC2 offboarding | `map --principal` — complete reachable set, `everyone`-only = cut off | ✅ TKT-B1YE7 |
+| UC3 sensitive spot-check | `who-can read <entity>` — readers + the path each took | ✅ TKT-9089I6 |
+| UC6 blast-radius | `map --principal` before/after diff — count of newly-reachable entities | ✅ TKT-B1YE7 (diff = external) |
+| `can` spot-check | `can <P> <verb> <E>` — scriptable yes/no + exit code | TKT-CAN9GM |
+| whole-graph `map` | `map` (no `--principal`) — full inventory, reverse index | TKT-CAN9GM |
+| UC7 (partial) | surfaces everyone-readable types etc.; full heuristics are a separate aclaudit ticket | later |
 
 ## Acceptance criteria
 
