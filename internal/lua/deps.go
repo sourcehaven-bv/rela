@@ -110,4 +110,63 @@ type WriteDeps struct {
 	// rela.bypass_acl(fn). Nil on every other runtime, so rela.bypass_acl is
 	// absent and a script cannot elevate.
 	ElevatedManager Mutator
+
+	// ElevatedReader, when non-nil, is the RAW read handle backing the
+	// admin.get_entity / list_entities / get_relations methods of the
+	// bypass_acl closure (TKT-ACSBSA). Reads through it are unredacted and
+	// ungated — the closure is the boundary, so a half-elevated read would
+	// be a confusing contract.
+	//
+	// SEPARATE from WritePrepStore on purpose, even though production wires
+	// both from the same raw store. WritePrepStore is present on EVERY
+	// writer runtime (update_entity's read-before-write needs it); routing
+	// elevated reads through it would hand every writer runtime an ungated
+	// read path and dissolve the two-key gate that makes elevation
+	// opt-in. This field is set at the same site, under the same two
+	// conditions, as ElevatedManager.
+	//
+	// Nil is a DENY, not a fallback: admin.get_entity raises rather than
+	// silently reading through the gated VisibleReader. Elevation that
+	// quietly degrades to the caller's view is worse than a loud failure —
+	// the script would see a partial graph and treat it as complete.
+	ElevatedReader EntityReader
+
+	// ElevationRecorder, when non-nil, is notified once per bypass_acl
+	// closure that performed at least one elevated READ (TKT-ACSBSA).
+	//
+	// Elevated WRITES are already audited inside entitymanager
+	// (audit.OpACLBypass). Reads never reach entitymanager — they go
+	// straight to the store — so without this an operator querying the
+	// audit log for elevation sees every elevated write and is silently
+	// blind to every elevated read. That asymmetry is the gap this closes.
+	//
+	// ONCE PER CLOSURE, not per read: a single admin.list_entities can
+	// traverse the whole graph, and a per-row audit record would put an
+	// unbounded synchronous write on a read path. The forensic question an
+	// operator actually asks is "which elevated scopes read raw data", and
+	// the closure is the unit of elevation.
+	//
+	// Nil disables recording. Unlike ElevatedReader, nil here is NOT a deny:
+	// a wiring site may legitimately have no audit sink (CLI, tests), and
+	// refusing to run automations because of that would be a worse failure
+	// than an unrecorded read.
+	ElevationRecorder ElevationRecorder
+}
+
+// ElevationRecorder receives a notification when a rela.bypass_acl closure
+// used its elevated READ capability. Defined here at the consumer per
+// CLAUDE.md "interfaces at the call site" — one method, which is all the
+// binding needs; the wiring site adapts it onto the audit sink.
+type ElevationRecorder interface {
+	// RecordElevatedRead is called at most once per closure, after it
+	// returns, when at least one elevated read occurred. bindings names the
+	// distinct admin read methods used (e.g. "get_entity,list_entities") so
+	// the record says what kind of access happened without recording the
+	// data itself.
+	//
+	// Implementations must not block: this runs on the script's goroutine
+	// inside the cascade. Errors are the implementation's to handle — the
+	// binding has no way to surface them and a failed audit write must not
+	// fail the automation.
+	RecordElevatedRead(ctx context.Context, bindings []string)
 }

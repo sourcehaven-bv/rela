@@ -578,6 +578,16 @@ A project with **no** `acl.yaml` is unaffected: that is a deliberate
 "no access control" configuration, not a fault, and scripts there read
 the full graph exactly as they always have.
 
+**When an automation legitimately needs more than its caller can see**,
+the sanctioned route is `rela.bypass_acl` — not widening the policy. Its
+`admin` handle carries `get_entity`, `list_entities` and `get_relations`
+alongside the write methods, all reading raw. That keeps the privilege
+scoped to a closure and visible at the call site, and it leaves an
+`acl-bypass-read` audit row, where relaxing a role in `acl.yaml` would
+widen access for every read on every path with nothing in the log to
+show for it. It requires operator opt-in (`allow_acl_bypass: true` on
+the action) — see the Lua scripting guide.
+
 ## Property-level redaction (`visible:`)
 
 Entity-level filtering decides whether you see an entity at all. The

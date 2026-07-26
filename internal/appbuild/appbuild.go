@@ -854,7 +854,7 @@ func assemble(
 		ACL:                     resolvedACL,
 		Automations:             autoEngine,
 		Cascade:                 cascadeRunner,
-		ScriptRunner:            script.NewLuaScriptRunner(cfg.ScriptEngine, readDeps),
+		ScriptRunner:            cascadeScriptRunner(cfg.ScriptEngine, readDeps, st, cfg.Audit),
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Transitions:             tw.Enforcer,

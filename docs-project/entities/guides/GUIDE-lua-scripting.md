@@ -345,20 +345,20 @@ local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
 ```
 
-### Elevated writes — `rela.bypass_acl`
+### Elevated access — `rela.bypass_acl`
 
-By default an automation script's writes are **ACL-checked against the
-triggering principal** (the user whose action fired the automation). That is
-correct for most automations. But some scripts enforce a *system invariant* on
-behalf of a user who isn't authorized to make the write directly — e.g.
-stamping `submitter --created-by--> ticket` on ticket create so the submitter
-(and only they) can later read their own ticket, without the submitter being
-able to write `person` relations themselves.
+By default an automation script's reads **and** writes are **ACL-checked
+against the triggering principal** (the user whose action fired the
+automation). That is correct for most automations. But some scripts enforce a
+*system invariant* on behalf of a user who isn't authorized to act directly —
+e.g. stamping `submitter --created-by--> ticket` on ticket create so the
+submitter (and only they) can later read their own ticket, without the
+submitter being able to write `person` relations themselves.
 
 For those, `rela.bypass_acl(fn)` runs `fn` with a single argument `admin`: a
-write handle whose mutations **skip the ACL deny**. Elevation is scoped to the
-closure and carried by the `admin` object — the ordinary `rela.*` write
-bindings are never elevated.
+handle whose reads and writes **skip the ACL**. Elevation is scoped to the
+closure and carried by the `admin` object — the ordinary `rela.*` bindings are
+never elevated.
 
 ```lua
 -- on ticket create: stamp the submitter as author, server-side, unforgeable
@@ -369,7 +369,41 @@ end)
 -- back to normal (gated) authority here
 ```
 
-`admin` exposes `create_relation`, `delete_relation`, `delete_entity`.
+`admin` exposes:
+
+| Method | Purpose |
+|--------|---------|
+| `admin.create_relation(from, type, to)` | Link, skipping the ACL deny |
+| `admin.delete_relation(from, type, to)` | Unlink, skipping the ACL deny |
+| `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
+| `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
+| `admin.list_entities(type)` | Every entity of `type`, ungated |
+| `admin.get_relations(opts?)` | Every matching edge, not peer-gated |
+
+**Elevated reads return raw data.** `admin.get_entity` returns the entity with
+all properties, including ones the triggering user cannot see; `list_entities`
+returns rows the gated `rela.list_entities` would drop; `get_relations` returns
+edges even when neither endpoint is visible to the caller. A half-elevated read
+would be a confusing contract — the closure is the boundary.
+
+Use them when an automation genuinely needs a whole-graph view, e.g. checking a
+uniqueness invariant across entities the submitter cannot see:
+
+```lua
+rela.bypass_acl(function(admin)
+  for _, t in ipairs(admin.list_entities("ticket")) do
+    if t.properties.external_ref == entity.properties.external_ref
+       and t.id ~= entity.id then
+      error("duplicate external_ref: " .. t.id)
+    end
+  end
+end)
+```
+
+Note the two reads differ deliberately in what a `nil` means:
+`rela.get_entity` returns `nil` for "missing **or** hidden" (it stays
+oracle-free), while `admin.get_entity` returns `nil` only when the entity
+genuinely does not exist.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
 automation action sets `allow_acl_bypass: true` in `metamodel.yaml` (an
@@ -390,13 +424,27 @@ automations:
 - **Audited, not anonymous.** Every elevated write records an `acl-bypass`
   audit row carrying the **real** triggering principal (not a system user) plus
   `acl_bypass=true`, so "who caused this elevated write" is always answerable.
+- **Elevated reads are audited too.** A closure that used any of the `admin`
+  read methods emits one `acl-bypass-read` row naming the principal, the
+  automation, and which bindings were used. It is **one row per closure**, not
+  per read — a single `admin.list_entities` can span the graph — and it
+  deliberately records **no subject and no entity data**, since logging the
+  read set would copy the very data the ACL protects into the audit log. The
+  row is written even when the closure then raises, so failing is not a way to
+  erase the evidence. Isolate them with `op == "acl-bypass-read"`.
 - **No leak into nested cascades.** A cascade that an elevated write triggers
   runs with normal (gated) ACL authority — elevation does not propagate to
   descendant writes.
 - **Closure-scoped.** After `fn` returns, `admin` is invalidated; stashing it in
-  a global and calling it later raises.
+  a global and calling it later raises — for reads as well as writes, so
+  elevation cannot become a durable ungated handle.
 - **Cannot forge identity.** `rela.principal` is read-only and the write
   attribution derives from the request context, never from the script.
+- **Fails loudly, never silently degraded.** If a deployment grants elevated
+  writes but no elevated read capability, the `admin` read methods **raise**
+  rather than falling back to the caller's gated view. A closure that looked
+  elevated but silently returned a partial graph would be worse than one that
+  refuses.
 
 ### Schema Functions
 
