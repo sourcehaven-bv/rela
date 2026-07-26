@@ -4,7 +4,8 @@ type: ticket
 title: E2E coverage for relation history UI (RelationHistoryView + per-relation affordance)
 kind: test
 priority: low
-status: backlog
+effort: m
+status: done
 ---
 
 ## Problem

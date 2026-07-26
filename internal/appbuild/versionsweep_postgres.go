@@ -3,6 +3,10 @@
 package appbuild
 
 import (
+	"log/slog"
+	"os"
+	"time"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
@@ -30,10 +34,41 @@ func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte
 
 // startVersionSweepIfSupported starts the pgstore reconciliation sweep. In the
 // postgres build the store is a *pgstore.Store; a non-pgstore store (should not
-// happen in this build) is left unswept.
+// happen in this build) is left unswept. The sweep cadence is taken from
+// sweepConfigFromEnv so a test/dev deployment can make create/update versions
+// appear quickly (production uses the zero-value defaults: 5m interval/idle).
 func startVersionSweepIfSupported(st store.Store, meta *metamodel.Metamodel) {
 	if s, ok := st.(*pgstore.Store); ok {
-		s.StartVersionSweep(metaProjectionProvider{meta: meta}, pgstore.SweepConfig{})
+		s.StartVersionSweep(metaProjectionProvider{meta: meta}, sweepConfigFromEnv())
+	}
+}
+
+// sweepConfigFromEnv reads optional sweep-cadence overrides from the environment.
+// All zero by default (→ pgstore's 5m/5m/1h/500 defaults). Intended for e2e/dev
+// where waiting minutes for create/update capture is impractical:
+//
+//	RELA_VERSION_SWEEP_INTERVAL / _IDLE / _MAX_STALENESS  (Go durations, e.g. 500ms)
+//
+// Unparseable values are ignored with a warning rather than failing boot — a
+// misconfigured cadence must never take down the server; it just falls back to
+// the default for that field.
+func sweepConfigFromEnv() pgstore.SweepConfig {
+	dur := func(env string) time.Duration {
+		v := os.Getenv(env)
+		if v == "" {
+			return 0
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			slog.Warn("appbuild: ignoring invalid sweep duration", "env", env, "value", v, "error", err)
+			return 0
+		}
+		return d
+	}
+	return pgstore.SweepConfig{
+		Interval:     dur("RELA_VERSION_SWEEP_INTERVAL"),
+		Idle:         dur("RELA_VERSION_SWEEP_IDLE"),
+		MaxStaleness: dur("RELA_VERSION_SWEEP_MAX_STALENESS"),
 	}
 }
 

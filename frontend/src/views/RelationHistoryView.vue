@@ -190,6 +190,7 @@ onMounted(load)
             :key="m.version"
             class="timeline-item"
             :class="{ selected: selectedVersion === m.version }"
+            :data-version="m.version"
           >
             <button type="button" class="timeline-select" @click="selectVersion(m.version)">
               <span class="timeline-badge" :data-op="m.op">{{ m.op }}</span>
