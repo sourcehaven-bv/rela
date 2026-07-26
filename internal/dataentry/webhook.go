@@ -19,9 +19,8 @@ var errWebhookActionMissing = errors.New("dataentry: configured webhook action n
 // WebhookClaims is the verified subset of an inbound webhook the receiver acts
 // on. It mirrors jwtauth.WebhookClaims but is declared HERE so the dataentry
 // package needn't import jwtauth (the inward-pointing layering rule — the same
-// reason JWTPrincipalResolver takes a local subjectVerifier interface). The
-// wiring layer, which may import both, adapts the concrete verifier to this
-// shape.
+// reason the JWT gate takes a local assertionVerifier interface). The wiring
+// layer, which may import both, adapts the concrete verifier to this shape.
 type WebhookClaims struct {
 	Event  string // the event name, e.g. "membership.created"
 	UserID string // the subject the event concerns
