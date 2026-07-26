@@ -24,6 +24,13 @@ import (
 // handlers block until context cancellation and have dedicated tests
 // (TestNewRouterSSEEndpoint, TestHandleSSE*).
 //
+// POST /webhooks/idp is also excluded, but for a different reason: it is NOT an
+// /api/ path, so this test's oracle (unregistered → stdlib 404) cannot see it —
+// an unregistered non-/api/ path falls through to the SPA catch-all and returns
+// 200 HTML, which reads as "reachable" here. That exact blind spot let BUG-F3ADZO
+// ship. Its reachability is pinned by TestWebhook_ReachableThroughRouter, whose
+// oracle is "not the SPA shell" instead.
+//
 // When registering a new route, add a probe here — the registration
 // sites in router.go and api_v1.go carry pointer comments.
 //

@@ -94,15 +94,20 @@ func (a *App) NewRouter() http.Handler {
 	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
 	a.sync.registerSyncRoutes(inner)
 
-	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
-	// configured (SetWebhookReceiver). It lives OUTSIDE /api/ because it
-	// authenticates itself by verifying a signed JWT body, not a proxy header or
-	// cookie, so it is CSRF-immune by construction and needs no same-origin gate.
-	a.registerWebhookRoutes(inner)
-
 	// noCacheMiddleware sets no-cache headers on API responses so that
 	// browsers always fetch fresh data after file changes trigger a reload.
 	mux.Handle("/api/", a.noCacheMiddleware(inner))
+
+	// Inbound-IdP webhook (POST /webhooks/idp) — mounted only when a receiver is
+	// configured (SetWebhookReceiver). Registered on the OUTER mux, NOT on
+	// `inner`: `inner` is only reachable under the `/api/` prefix, and
+	// `/webhooks/idp` does not carry it, so registering there left the route
+	// unreachable — every request fell through to the SPA catch-all below and
+	// returned 200 HTML, so the handler never ran (BUG-F3ADZO). It lives outside
+	// `/api/` on purpose: it authenticates itself by verifying a signed JWT body,
+	// not a proxy header or cookie, so it is CSRF-immune by construction and
+	// needs neither the same-origin gate nor the JWT identity gate.
+	a.registerWebhookRoutes(mux)
 
 	// Serve Vue SPA at root (catch-all for client-side routing)
 	mux.Handle("/", spaHandler(spaFS))
