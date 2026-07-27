@@ -5,7 +5,7 @@ title: 'lua: reject non-string filter options in the gated rela.get_relations'
 kind: enhancement
 priority: medium
 effort: s
-status: review
+status: done
 ---
 
 Follow-up to RR-D7KXKV, which fixed the elevated path only and deferred this one
