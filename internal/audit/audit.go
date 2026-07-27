@@ -46,6 +46,28 @@ const (
 	// `op == "acl-bypass"`.
 	OpACLBypass = "acl-bypass"
 
+	// OpACLBypassRead records that an elevated automation closure
+	// (rela.bypass_acl) performed at least one RAW READ — TKT-ACSBSA.
+	//
+	// Separate from OpACLBypass because the two answer different questions
+	// and have different blast radii: a bypass WRITE changed the graph and
+	// names its subject; a bypass READ changed nothing but may have
+	// disclosed anything. Folding reads into "acl-bypass" would silently
+	// change what every existing `op == "acl-bypass"` query means.
+	//
+	// Emitted ONCE PER CLOSURE, not per read: one admin.list_entities can
+	// traverse the entire graph, so a per-row record would be an unbounded
+	// synchronous write on a read path. Subject is deliberately EMPTY and no
+	// entity data is recorded — the read set is unbounded, and logging it
+	// would copy ACL-protected content into the audit log, a wider
+	// disclosure than the read itself. Summary carries acl_bypass_read=true
+	// plus the admin bindings used. The Principal is the REAL triggering
+	// identity; TriggeredBy carries automation:<name>. Isolate elevated
+	// reads with `op == "acl-bypass-read"`.
+	//
+	//nolint:gosec // G101 false positive: an audit op name, not a credential.
+	OpACLBypassRead = "acl-bypass-read"
+
 	// OpPurgeVersion records an operator hard-delete of version snapshot rows
 	// (TKT-BW6UUL) — the deliberate, irreversible exception to append-only
 	// history, for compliance redaction. Subject names the entity/relation whose

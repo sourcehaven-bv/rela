@@ -44,17 +44,78 @@ type Executor interface {
 type LuaScriptRunner struct {
 	exec     Executor
 	readDeps lua.ReadDeps
+
+	// elevatedReader is the raw read capability handed to a bypass_acl
+	// closure (TKT-ACSBSA). Nil means this wiring scope grants no read
+	// elevation: admin.get_entity et al. raise rather than degrading to the
+	// caller's gated view.
+	elevatedReader lua.EntityReader
+
+	// elevationRecorder receives the post-closure notification when elevated
+	// reads occurred. Travels WITH elevatedReader — granting the capability
+	// without the trace is what the audit gap looked like before TKT-ACSBSA.
+	elevationRecorder lua.ElevationRecorder
+}
+
+// ReadElevation is the read-side capability a wiring site grants to
+// rela.bypass_acl closures (TKT-ACSBSA): the raw reader plus the audit sink
+// that records its use.
+//
+// The two are one struct because they must be decided together. A Reader
+// without a Recorder is ungated access that leaves no trace — the audit
+// asymmetry the ticket exists to close — so the pairing is visible at every
+// wiring site rather than being two independent arguments one of which is
+// easy to forget.
+type ReadElevation struct {
+	// Reader must be UNGATED — the point of elevation is to see past the
+	// acting principal's view. A gated reader here produces a closure that
+	// looks elevated and silently is not, which is the one failure mode
+	// worse than no elevation at all. Wiring sites name it through
+	// visibility.Unrestricted so `grep -rn visibility.Unrestricted`
+	// enumerates this path with every other ungated read (TKT-1WV50C).
+	Reader lua.EntityReader
+
+	// Recorder is notified once per closure that used Reader. Nil is
+	// permitted (a deployment may genuinely have no audit sink) but is a
+	// deliberate choice, not a default — see the field godoc on
+	// lua.WriteDeps.ElevationRecorder.
+	Recorder lua.ElevationRecorder
 }
 
 // NewLuaScriptRunner returns a LuaScriptRunner bound to exec and the
-// static read deps. Returns nil if exec is nil — Runner records each
-// scripted action as an error when ScriptRunner is nil, which is the
-// right behavior for misconfigured deployments.
+// static read deps, granting NO read elevation. Returns nil if exec is
+// nil — Runner records each scripted action as an error when ScriptRunner
+// is nil, which is the right behavior for misconfigured deployments.
+//
+// Use [NewLuaScriptRunnerWithElevatedReads] to additionally grant the
+// bypass_acl closure a raw read handle. Since TKT-ACSBSA both production
+// wiring sites (appbuild.assemble, appbuildtest) use that one, so this
+// constructor has no production callers today — it is kept because
+// "no read elevation" is a real configuration a wiring site may want, and
+// the tests that pin the withheld-capability behavior need it.
 func NewLuaScriptRunner(exec Executor, readDeps lua.ReadDeps) *LuaScriptRunner {
+	return NewLuaScriptRunnerWithElevatedReads(exec, readDeps, ReadElevation{})
+}
+
+// NewLuaScriptRunnerWithElevatedReads is [NewLuaScriptRunner] plus the read
+// capability backing admin.get_entity / list_entities / get_relations inside
+// a rela.bypass_acl closure (TKT-ACSBSA).
+//
+// The capability is inert until BOTH TKT-D8T148 keys turn: the action must
+// be allow_acl_bypass and the per-cascade Mutator must offer
+// ElevatedProvider. Passing an elevation here grants nothing on its own.
+func NewLuaScriptRunnerWithElevatedReads(
+	exec Executor, readDeps lua.ReadDeps, elevation ReadElevation,
+) *LuaScriptRunner {
 	if exec == nil {
 		return nil
 	}
-	return &LuaScriptRunner{exec: exec, readDeps: readDeps}
+	return &LuaScriptRunner{
+		exec:              exec,
+		readDeps:          readDeps,
+		elevatedReader:    elevation.Reader,
+		elevationRecorder: elevation.Recorder,
+	}
 }
 
 // Run dispatches the action to the underlying executor. The mutator
@@ -91,6 +152,17 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 	if action.AllowACLBypass {
 		if ep, ok := m.(autocascade.ElevatedProvider); ok {
 			deps.ElevatedManager = ep.Elevated()
+			// TKT-ACSBSA: the elevated READ handle is set under the SAME two
+			// keys, inside the same branch — never on its own, so read
+			// elevation cannot outlive or precede write elevation.
+			//
+			// elevatedReader is supplied by the wiring site (nil when that site
+			// chose not to grant read elevation), exactly as the elevated WRITE
+			// handle comes from the caller's Mutator rather than being minted
+			// here. This package does not construct the capability; it only
+			// decides when to hand over one it was given.
+			deps.ElevatedReader = l.elevatedReader
+			deps.ElevationRecorder = l.elevationRecorder
 		}
 	}
 	var err error

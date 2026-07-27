@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1600,11 +1601,22 @@ func (r *Runtime) luaBypassACL(ls *lua.LState) int {
 	// live gates every admin.* call; set false after fn returns so a captured
 	// handle is dead outside the closure's dynamic extent.
 	live := true
-	admin := r.newElevatedHandle(ls, r.deps.ElevatedManager, &live)
+	// reads accumulates the distinct elevated read bindings this closure
+	// used, for the single post-closure audit record (TKT-ACSBSA).
+	reads := &readUsage{}
+	admin := r.newElevatedHandle(ls, r.deps.ElevatedManager, r.deps.ElevatedReader, &live, reads)
 
 	// Invalidate on every exit path (normal return or Lua error). pcall keeps
 	// the runtime alive so we can flip `live` before re-raising.
-	defer func() { live = false }()
+	//
+	// The audit record rides the SAME defer, so a closure that reads raw data
+	// and then raises still leaves a trace. Recording only on the success
+	// path would let a script read everything and erase the evidence by
+	// failing — the exact shape an attacker would choose.
+	defer func() {
+		live = false
+		recordElevatedReads(r.callerCtx(), r.deps.ElevationRecorder, reads)
+	}()
 
 	ls.Push(fn)
 	ls.Push(admin)
@@ -1620,21 +1632,84 @@ func (r *Runtime) luaBypassACL(ls *lua.LState) int {
 }
 
 // newElevatedHandle builds the `admin` table passed to a rela.bypass_acl
-// closure. Its methods route to the elevated Mutator `em` and check `*live`
-// first, so they raise once the closure has returned. No reads, no principal,
-// no nested bypass.
+// closure. Its methods route to the elevated Mutator `em` (writes) and the
+// elevated EntityReader `er` (reads), and check `*live` first, so they raise
+// once the closure has returned. No principal, no nested bypass.
 //
-// v1 surface: create_relation, delete_relation, delete_entity — the
+// Write surface: create_relation, delete_relation, delete_entity — the
 // link/unlink + remove operations the system-invariant use cases (e.g.
 // authorship stamping via created-by) need. create_entity / update_entity are a
 // deliberate follow-up: they marshal a full entity table and aren't required by
 // the motivating case; gating elevated *entity* creation is a larger surface
 // best added with its own tests.
-func (r *Runtime) newElevatedHandle(ls *lua.LState, em Mutator, live *bool) *lua.LTable {
+//
+// Read surface (TKT-ACSBSA): get_entity, list_entities, get_relations —
+// mirroring the gated rela.* bindings one-for-one so a script can lift a read
+// into the closure without rewriting it. Reads are RAW: full properties, no
+// row gate, no redaction. A half-elevated read is a confusing contract and the
+// closure is already the boundary.
+//
+// A nil `er` leaves the three read methods present but RAISING, not absent.
+// Absence would make `if admin.get_entity then` silently take the
+// no-elevation branch on a misconfigured deployment; raising names the
+// missing capability. Writes behave the same way via the outer nil check on
+// ElevatedManager.
+// readUsage accumulates which elevated read bindings a bypass_acl closure
+// actually used, so the post-closure audit record can name them. Order is
+// first-use, and each binding appears once — the record answers "what kind
+// of raw access happened", not "how many times".
+//
+// Not safe for concurrent use, and does not need to be: a Lua state is
+// single-goroutine, and one readUsage is scoped to one closure.
+type readUsage struct{ names []string }
+
+// mark records a use of binding `name`, ignoring repeats.
+func (u *readUsage) mark(name string) {
+	if slices.Contains(u.names, name) {
+		return
+	}
+	u.names = append(u.names, name)
+}
+
+// recordElevatedReads emits the single post-closure audit notification when
+// the closure used its read elevation. Silent when no recorder is wired or
+// when the closure performed no elevated reads — a bypass_acl block that
+// only writes is already covered by entitymanager's OpACLBypass rows, and
+// an empty record would just add noise to the log.
+func recordElevatedReads(ctx context.Context, rec ElevationRecorder, u *readUsage) {
+	if rec == nil || len(u.names) == 0 {
+		return
+	}
+	rec.RecordElevatedRead(ctx, u.names)
+}
+
+func (r *Runtime) newElevatedHandle(
+	ls *lua.LState, em Mutator, er EntityReader, live *bool, reads *readUsage,
+) *lua.LTable {
 	t := ls.NewTable()
 	guard := func(name string) bool {
 		if !*live {
 			ls.RaiseError("rela.bypass_acl: handle %q used outside its closure (invalidated)", name)
+			return false
+		}
+		return true
+	}
+	// readGuard adds the wired-reader check to the liveness check. Both are
+	// required before any elevated read touches the store.
+	//
+	// It deliberately does NOT mark the binding as used. Marking here would
+	// audit a read that never reached the store — the argument-validation
+	// raises (empty id, empty type) fire AFTER this guard, so a closure doing
+	// only `pcall(admin.get_entity, "")` would produce an `acl-bypass-read`
+	// row claiming a disclosure that never happened. Each method calls
+	// reads.mark immediately before its er.* call instead, so the audit row
+	// means what it says.
+	readGuard := func(name string) bool {
+		if !guard(name) {
+			return false
+		}
+		if er == nil {
+			ls.RaiseError("rela.bypass_acl: %s: no elevated reader is configured for this runtime", name)
 			return false
 		}
 		return true
@@ -1676,7 +1751,175 @@ func (r *Runtime) newElevatedHandle(ls *lua.LState, em Mutator, live *bool) *lua
 		s.Push(lua.LTrue)
 		return 1
 	}))
+	registerElevatedReads(ls, t, er, readGuard, r.callerCtx, reads)
 	return t
+}
+
+// registerElevatedReads adds the three raw read methods to the `admin` table
+// (TKT-ACSBSA). Split out of newElevatedHandle to keep each function within
+// the length limit; `readGuard` carries both the liveness and wired-reader
+// checks so neither can be forgotten at an individual method.
+//
+// Deliberately NOT sharing code with the gated luaGetEntity / luaListEntities
+// / luaGetRelations bindings: those funnel through r.reader() (which resolves
+// VisibleReader), and a shared helper parameterized by reader would be one
+// edit away from letting a gated binding read raw. The duplication here is
+// small and it keeps the two read paths physically separate.
+func registerElevatedReads(
+	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
+	ctxFn func() context.Context, reads *readUsage,
+) {
+	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
+	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads)))
+	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn, reads)))
+}
+
+// elevatedGetEntity builds admin.get_entity(id) -> table|nil.
+//
+// Returns nil on a miss, matching rela.get_entity. The two nils mean
+// different things, though: under elevation a nil means the entity
+// genuinely does not exist, where the gated binding's nil is the
+// deliberately ambiguous "missing or hidden" that keeps it oracle-free.
+func elevatedGetEntity(
+	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	reads *readUsage,
+) func(*lua.LState) int {
+	return func(s *lua.LState) int {
+		if !readGuard("get_entity") {
+			return 0
+		}
+		id := s.CheckString(1)
+		if id == "" {
+			s.RaiseError("bypass_acl get_entity: entity ID cannot be empty")
+			return 0
+		}
+		reads.mark("get_entity")
+		e, err := er.GetEntity(ctxFn(), id)
+		if err != nil {
+			// Only a genuine MISS is nil. Any other error (store down, driver
+			// failure) RAISES — masking it as nil would make the documented
+			// contract ("nil means it does not exist") false, and would break
+			// the motivating use case: a uniqueness check that reads nil on a
+			// transient outage concludes "no duplicate" and lets the invariant
+			// the elevated read exists to enforce be violated. The two list
+			// bindings already raise on iteration errors; this keeps the three
+			// consistent.
+			if errors.Is(err, store.ErrNotFound) {
+				s.Push(lua.LNil)
+				return 1
+			}
+			s.RaiseError("bypass_acl get_entity error: %s", err.Error())
+			return 0
+		}
+		s.Push(EntityToTable(s, e))
+		return 1
+	}
+}
+
+// elevatedListEntities builds admin.list_entities(type) -> table.
+//
+// No filter-expression argument: rela.list_entities' filter is a
+// convenience over an already-gated set, and adding an expression parser to
+// the elevated path widens it for no gain — a script can filter the
+// returned table in Lua. Unbounded, like its gated counterpart
+// (TKT-YWDGZD tracks paging for both).
+func elevatedListEntities(
+	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	reads *readUsage,
+) func(*lua.LState) int {
+	return func(s *lua.LState) int {
+		if !readGuard("list_entities") {
+			return 0
+		}
+		entityType := s.CheckString(1)
+		if entityType == "" {
+			s.RaiseError("bypass_acl list_entities: entity type cannot be empty")
+			return 0
+		}
+		reads.mark("list_entities")
+		result := s.NewTable()
+		idx := 1
+		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType}) {
+			if err != nil {
+				s.RaiseError("bypass_acl list_entities error: %s", err.Error())
+				return 0
+			}
+			result.RawSetInt(idx, EntityToTable(s, e))
+			idx++
+		}
+		s.Push(result)
+		return 1
+	}
+}
+
+// elevatedGetRelations builds admin.get_relations(opts?) -> table, with
+// opts.{from,type,to}.
+//
+// NOT peer-gated (unlike rela.get_relations): an edge is returned even when
+// neither endpoint would be visible to the caller. Re-adding the peer drop
+// here would look like a safety improvement and would silently make the
+// elevated view incomplete.
+func elevatedGetRelations(
+	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
+	reads *readUsage,
+) func(*lua.LState) int {
+	return func(s *lua.LState) int {
+		if !readGuard("get_relations") {
+			return 0
+		}
+		q, err := elevatedRelationQuery(s)
+		if err != nil {
+			s.RaiseError("bypass_acl get_relations: %s", err.Error())
+			return 0
+		}
+		reads.mark("get_relations")
+		result := s.NewTable()
+		idx := 1
+		for rel, err := range er.ListRelations(ctxFn(), q) {
+			if err != nil {
+				s.RaiseError("bypass_acl get_relations error: %s", err.Error())
+				return 0
+			}
+			result.RawSetInt(idx, relationToTable(s, rel))
+			idx++
+		}
+		s.Push(result)
+		return 1
+	}
+}
+
+// elevatedRelationQuery reads the optional {from,type,to} options table off
+// the Lua stack. An absent or non-table argument yields the zero query,
+// which matches every relation.
+func elevatedRelationQuery(s *lua.LState) (store.RelationQuery, error) {
+	var q store.RelationQuery
+	if s.GetTop() < 1 || s.Get(1).Type() != lua.LTTable {
+		return q, nil
+	}
+	opts := s.CheckTable(1)
+	fields := []struct {
+		name string
+		dst  *string
+	}{
+		{"from", &q.From}, {"type", &q.Type}, {"to", &q.To},
+	}
+	for _, f := range fields {
+		switch v := opts.RawGetString(f.name).(type) {
+		case *lua.LNilType:
+			// Absent: no constraint on this field.
+		case lua.LString:
+			*f.dst = string(v)
+		default:
+			// A non-string is REJECTED rather than skipped. Silently dropping
+			// it turns a mistyped filter (`{from = 12345}` when an id came
+			// back as a number) into an unfiltered whole-graph edge dump that
+			// the script reads as a filtered result — and nothing downstream
+			// gates it, because this is the elevated path.
+			return q, fmt.Errorf(
+				"option %q must be a string, got %s", f.name, v.Type())
+		}
+	}
+	return q, nil
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean

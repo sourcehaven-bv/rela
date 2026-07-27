@@ -1,0 +1,177 @@
+package script
+
+import (
+	"context"
+	"errors"
+	"iter"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/autocascade"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+)
+
+// The TKT-D8T148 / TKT-ACSBSA two-key gate lives HERE, in Run: elevation is
+// granted only when the action is allow_acl_bypass AND the per-cascade
+// Mutator offers ElevatedProvider. internal/lua cannot test this — it
+// receives WriteDeps already assembled. These tests inspect the deps this
+// package hands the executor.
+
+// depsCapturingExecutor records the lua.WriteDeps it was called with, which
+// is exactly the elevation decision this package makes.
+type depsCapturingExecutor struct{ got lua.WriteDeps }
+
+func (d *depsCapturingExecutor) ExecuteCode(
+	_ context.Context, _ string, deps lua.WriteDeps, _, _ *entity.Entity,
+) error {
+	d.got = deps
+	return nil
+}
+
+func (d *depsCapturingExecutor) ExecuteFile(
+	_ context.Context, _ string, deps lua.WriteDeps, _, _ *entity.Entity,
+) error {
+	d.got = deps
+	return nil
+}
+
+// elevatingMutator offers the optional ElevatedProvider capability.
+type elevatingMutator struct{ autocascade.Mutator }
+
+func (e elevatingMutator) Elevated() autocascade.Mutator { return e }
+
+// plainMutator does NOT offer ElevatedProvider — a Mutator that declines to
+// grant elevation, which no flag can override.
+type plainMutator struct{ autocascade.Mutator }
+
+// errStubRead is returned by every stubReader method. The stub is never
+// called by these tests — they assert which reader is HANDED OVER, not what
+// it returns — so a sentinel error is the honest zero behavior; returning a
+// nil entity with a nil error would model a contract no real reader has.
+var errStubRead = errors.New("stubReader: not expected to be called")
+
+// stubReader is a non-nil lua.EntityReader standing in for the raw store.
+type stubReader struct{}
+
+func (stubReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+	return nil, errStubRead
+}
+func (stubReader) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(func(*entity.Entity, error) bool) {}
+}
+func (stubReader) ListRelations(
+	context.Context, store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return func(func(*entity.Relation, error) bool) {}
+}
+
+// stubRecorder is a non-nil lua.ElevationRecorder. Like stubReader it is
+// never invoked; these tests assert what is handed over.
+type stubRecorder struct{}
+
+func (stubRecorder) RecordElevatedRead(context.Context, []string) {}
+
+// TestRun_ElevationRequiresBothKeys is the table that pins the gate. Read
+// and write elevation are asserted TOGETHER because they must turn on and
+// off as one — a row where one is granted and the other is not would mean
+// the two capabilities had drifted apart.
+func TestRun_ElevationRequiresBothKeys(t *testing.T) {
+	t.Parallel()
+
+	elevation := ReadElevation{Reader: stubReader{}, Recorder: stubRecorder{}}
+	for _, tc := range []struct {
+		name        string
+		allowBypass bool
+		mutator     autocascade.Mutator
+		wantGranted bool
+	}{
+		{
+			name:        "both keys: elevation granted",
+			allowBypass: true,
+			mutator:     elevatingMutator{},
+			wantGranted: true,
+		},
+		{
+			// Operator opt-in alone is not enough: a Mutator that does not
+			// offer the capability cannot be forced to grant it.
+			name:        "flag set but mutator declines: denied",
+			allowBypass: true,
+			mutator:     plainMutator{},
+		},
+		{
+			// The mirror image, and the more dangerous direction: a Mutator
+			// that CAN elevate must not do so for an ordinary action.
+			name:    "mutator can elevate but flag unset: denied",
+			mutator: elevatingMutator{},
+		},
+		{
+			name:    "neither key: denied",
+			mutator: plainMutator{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			exec := &depsCapturingExecutor{}
+			r := NewLuaScriptRunnerWithElevatedReads(exec, lua.ReadDeps{}, elevation)
+
+			err := r.Run(context.Background(), autocascade.ScriptAction{
+				Code:           "print('x')",
+				AllowACLBypass: tc.allowBypass,
+			}, tc.mutator)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			gotWrite := exec.got.ElevatedManager != nil
+			gotRead := exec.got.ElevatedReader != nil
+			if gotWrite != tc.wantGranted {
+				t.Errorf("elevated WRITE granted = %v, want %v", gotWrite, tc.wantGranted)
+			}
+			if gotRead != tc.wantGranted {
+				t.Errorf("elevated READ granted = %v, want %v -- read elevation must "+
+					"turn on and off with the same two keys as write elevation, never "+
+					"on its own", gotRead, tc.wantGranted)
+			}
+			// The recorder must accompany the reader on every row. Granting
+			// the capability without the audit trace is the exact gap
+			// TKT-ACSBSA closes, and it would be invisible in behavior.
+			if gotRec := exec.got.ElevationRecorder != nil; gotRec != tc.wantGranted {
+				t.Errorf("elevation RECORDER passed = %v, want %v -- the audit sink "+
+					"must travel with the elevated reader, or elevated reads happen "+
+					"untraced", gotRec, tc.wantGranted)
+			}
+		})
+	}
+}
+
+// TestRun_NoElevatedReaderWhenNoneSupplied pins that Run hands over only
+// what the WIRING SITE gave it. A runner built without a reader must not
+// synthesize one from readDeps — WritePrepStore is a raw store sitting
+// right there, and reaching for it would grant read elevation at every
+// wiring site rather than the ones that opted in.
+func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
+	t.Parallel()
+	exec := &depsCapturingExecutor{}
+	// NewLuaScriptRunner is the no-read-elevation constructor. WritePrepStore
+	// is deliberately populated: the temptation this test guards against.
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{WritePrepStore: nil})
+
+	err := r.Run(context.Background(), autocascade.ScriptAction{
+		Code:           "print('x')",
+		AllowACLBypass: true,
+	}, elevatingMutator{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if exec.got.ElevatedReader != nil {
+		t.Error("read elevation was granted by a runner that was never given a " +
+			"reader -- the capability must come from the wiring site, not be " +
+			"synthesized from the read deps")
+	}
+	// Write elevation is unaffected: the two are independent capabilities.
+	if exec.got.ElevatedManager == nil {
+		t.Error("withholding read elevation also disabled WRITE elevation")
+	}
+}

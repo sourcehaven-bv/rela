@@ -175,14 +175,23 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		panic(fmt.Sprintf("appbuildtest.New: compile transitions: %v", err))
 	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store:           st,
-		Meta:            meta,
-		Templater:       templater,
-		Audit:           auditSink,
-		ACL:             aclImpl,
-		Automations:     autoEngine,
-		Cascade:         cascadeRunner,
-		ScriptRunner:    script.NewLuaScriptRunner(scriptEngine, readDeps),
+		Store:       st,
+		Meta:        meta,
+		Templater:   templater,
+		Audit:       auditSink,
+		ACL:         aclImpl,
+		Automations: autoEngine,
+		Cascade:     cascadeRunner,
+		// Mirrors the production wiring in appbuild.assemble: elevated reads
+		// are granted here so an integration test exercises the same
+		// capability set a real deployment has (TKT-ACSBSA). Still inert
+		// without an allow_acl_bypass action + an ElevatedProvider Mutator.
+		ScriptRunner: script.NewLuaScriptRunnerWithElevatedReads(
+			scriptEngine, readDeps, script.ReadElevation{
+				Reader:   visibility.Unrestricted(st),
+				Recorder: appbuild.NewElevationAuditor(auditSink),
+			},
+		),
 		Transitions:     tw.Enforcer,
 		TransitionGuard: tw.Guard,
 		TransitionGraph: tw.Graph,
