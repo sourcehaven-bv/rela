@@ -54,8 +54,14 @@
   (`Reader`, the tracer decorator) injected at the wiring site — never
   by per-consumer redaction calls, and never inside `store`/`tracer`/
   `search` themselves (DEC-ZBI39P; the `search.VisibleSearcher`
-  pattern generalized). Hidden = nonexistent (pruned subtrees,
-  withheld paths, indistinguishable 404s). A system job that may read
+  pattern generalized). **Row-level**: a hidden entity is nonexistent —
+  pruned subtrees, withheld paths, a denied GET indistinguishable from a
+  real 404 (whether an entity *exists* is a genuine secret). **Field-level**
+  (`visible:`): redaction hides property **values only** — it makes no claim
+  to conceal *which* properties exist, since the metamodel (declared property
+  names per type) is served over the API. A "field-existence oracle" is not a
+  threat this guards against; code need not contort to hide field names, only
+  their values. A system job that may read
   everything gets an `AllowAllReader` capability at wiring while
   keeping its genuine `system:*` principal for audit — allow-all is
   never inferred from identity. Write-prep reads (entitymanager
