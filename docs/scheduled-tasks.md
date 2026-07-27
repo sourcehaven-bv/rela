@@ -325,7 +325,11 @@ tasks:
 local entities = rela.list_entities()
 local lines = {}
 for _, e in ipairs(entities) do
-    local rels = rela.get_relations(e.id)
+    -- Note the table: get_relations takes an options table, not a bare id.
+    -- rela.get_relations(e.id) ignores the argument and returns EVERY
+    -- relation, so `#rels == 0` would never fire and the check would
+    -- silently pass forever.
+    local rels = rela.get_relations({ from = e.id })
     if #rels == 0 then
         table.insert(lines, "- **" .. e.id .. "**: " .. (e.properties.title or "(no title)"))
     end

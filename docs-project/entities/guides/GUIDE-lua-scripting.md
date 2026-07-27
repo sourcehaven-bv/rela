@@ -286,6 +286,25 @@ Transport errors (e.g., terminal not interactive) also raise Lua errors.
 | `rela.trace_to(id, depth?)` | Trace incoming dependencies | table (tree) |
 | `rela.find_path(from, to)` | Find shortest path | table (array) or nil |
 
+`rela.get_relations` takes an **options table** — `{from = ..., type = ...,
+to = ...}` — where each key is optional and must be a **string**. Omitting a
+key means "no constraint on that field"; omitting the table entirely returns
+every relation.
+
+```lua
+local rels = rela.get_relations({ from = e.id, type = "implements" })
+```
+
+A non-string option raises rather than being ignored, because silently
+dropping it would widen the query to the whole graph while the script reads
+the answer as filtered:
+
+```lua
+rela.get_relations({ from = 12345 })   -- error: option "from" must be a string
+rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
+                                       -- table, so this returns EVERY relation
+```
+
 ### Mutation Functions
 
 | Function | Description | Returns |
@@ -410,7 +429,9 @@ invariant it exists to enforce. All three `admin` read methods raise on
 store errors.
 
 Mistyped filter options raise too: `admin.get_relations({from = 12345})` is
-an error, not an unfiltered whole-graph dump.
+an error, not an unfiltered whole-graph dump. The gated `rela.get_relations`
+applies the same rule, from the same code — the two cannot drift on what a
+filter means.
 
 **Operator opt-in is required.** `rela.bypass_acl` only exists when the
 automation action sets `allow_acl_bypass: true` in `metamodel.yaml` (an

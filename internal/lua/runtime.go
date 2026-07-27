@@ -931,22 +931,16 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 }
 
 // luaGetRelations implements rela.get_relations(opts?) -> table
-// opts can have: from, type, to
+// opts can have: from, type, to — each an optional string.
 func (r *Runtime) luaGetRelations(ls *lua.LState) int {
-	var fromFilter, typeFilter, toFilter string
-
-	// Parse options table if provided
-	if ls.GetTop() >= 1 && ls.Get(1).Type() == lua.LTTable {
-		opts := ls.CheckTable(1)
-		if v, ok := opts.RawGetString("from").(lua.LString); ok {
-			fromFilter = string(v)
-		}
-		if v, ok := opts.RawGetString("type").(lua.LString); ok {
-			typeFilter = string(v)
-		}
-		if v, ok := opts.RawGetString("to").(lua.LString); ok {
-			toFilter = string(v)
-		}
+	// Shares relationQuery with the elevated admin.get_relations so the two
+	// surfaces cannot drift on what a filter means (RR-D7KXKV). A non-string
+	// option raises here as it does there: silently dropping it turns a scoped
+	// question into a whole-graph one that the script reads as scoped.
+	q, err := relationQuery(ls)
+	if err != nil {
+		ls.RaiseError("rela.get_relations: %s", err.Error())
+		return 0
 	}
 
 	rd, ok := r.reader(ls, "rela.get_relations")
@@ -958,7 +952,6 @@ func (r *Runtime) luaGetRelations(ls *lua.LState) int {
 	// the caller cannot see, so an explicit opts.from can legitimately
 	// return fewer rows than the graph holds. An empty result means "no
 	// edges you may see", not "no edges".
-	q := store.RelationQuery{From: fromFilter, Type: typeFilter, To: toFilter}
 	result := ls.NewTable()
 	idx := 1
 	for rel, err := range rd.ListRelations(r.callerCtx(), q) {
@@ -1867,7 +1860,7 @@ func elevatedGetRelations(
 		if !readGuard("get_relations") {
 			return 0
 		}
-		q, err := elevatedRelationQuery(s)
+		q, err := relationQuery(s)
 		if err != nil {
 			s.RaiseError("bypass_acl get_relations: %s", err.Error())
 			return 0
@@ -1888,10 +1881,15 @@ func elevatedGetRelations(
 	}
 }
 
-// elevatedRelationQuery reads the optional {from,type,to} options table off
-// the Lua stack. An absent or non-table argument yields the zero query,
-// which matches every relation.
-func elevatedRelationQuery(s *lua.LState) (store.RelationQuery, error) {
+// relationQuery reads the optional {from,type,to} options table off the Lua
+// stack. An absent or non-table argument yields the zero query, which matches
+// every relation.
+//
+// Shared by the gated rela.get_relations and the elevated admin.get_relations
+// so the two cannot disagree about what a filter means. Callers differ only in
+// what they do with the result: the gated reader additionally peer-gates the
+// rows, the elevated one does not.
+func relationQuery(s *lua.LState) (store.RelationQuery, error) {
 	var q store.RelationQuery
 	if s.GetTop() < 1 || s.Get(1).Type() != lua.LTTable {
 		return q, nil
@@ -1913,8 +1911,10 @@ func elevatedRelationQuery(s *lua.LState) (store.RelationQuery, error) {
 			// A non-string is REJECTED rather than skipped. Silently dropping
 			// it turns a mistyped filter (`{from = 12345}` when an id came
 			// back as a number) into an unfiltered whole-graph edge dump that
-			// the script reads as a filtered result — and nothing downstream
-			// gates it, because this is the elevated path.
+			// the script reads as a filtered result. On the elevated path
+			// nothing gates that at all; on the gated path peer-gating bounds
+			// the rows to the caller's own view, so the disclosure is bounded
+			// but the answer is still silently the wrong question.
 			return q, fmt.Errorf(
 				"option %q must be a string, got %s", f.name, v.Type())
 		}
