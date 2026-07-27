@@ -5,7 +5,7 @@ title: rela acl can <P> <verb> <E> + whole-graph map (no --principal) — spot-c
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 # `rela acl can` + whole-graph `rela acl map`
@@ -118,3 +118,42 @@ Confirm during planning:
 - Conformance assertions `rela acl verify` (UC4/UC5).
 - Graph-aware heuristics folded into `rela acl audit` (UC7 full).
 - Data-entry web view.
+
+## Code review (cranky) — findings addressed
+
+Reviewed after implementation; MCP tracker offline, so findings are recorded
+here rather than as review-response entities. Read/update/delete false-negative
+guarantee confirmed intact (both surfaces decide via the runtime read path).
+
+- **SIGNIFICANT — one blank key aborted the whole-graph inventory.** `MapAll`
+  ran `MapPrincipal` per candidate and propagated a blank key's
+  `ErrUnstampedPrincipal`, so a single malformed assignment key or empty
+  relation `From` turned the entire attestation into a hard error — unlike
+  `who-can`, which skips blanks. FIXED: `MapPrincipal` returns an empty result
+  for a blank/whitespace key and `MapAll` skips empty-principal rows. Regression
+  test `TestMapAll_BlankKeyDoesNotAbort`.
+- **SIGNIFICANT — no-policy `can` skipped the entity-existence gate.** With no
+  `acl.yaml`, `rela acl can P v TYPO` short-circuited to ALLOW (exit 0) before
+  `engine.Can` ran, so a typo'd id read as a green attestation. FIXED: the
+  no-policy path (`runNoPolicy`) now checks `GetEntity` and errors "entity not
+  found", matching the under-policy gate. Test
+  `TestACLCan_NoPolicyMissingEntityErrors`.
+- **INVESTIGATED, NOT A BUG — "create over-reports (globals-only)".** The review
+  read `authz_write.go`'s `s.ID == ""` comment as "create is globals-only" and
+  flagged edge-conferred create routes as a false ALLOW. But the PRODUCTION
+  create path (`entitymanager.ApplyEntity`) authorizes with
+  `EntitySubject{ID: e.ID}` — a concrete id — so the runtime takes the
+  `s.ID != ""` branch and DOES fold local-edge routes into a create decision.
+  Collapsing create to globals-only in the report would have introduced a false
+  DENY (the worst class). Kept create computed with the concrete id; added
+  `TestCreate_MatchesRuntime` + `TestCreate_EdgeConferredCreateReported` pinning
+  `Can(create) == AuthorizeWrite(create)` in both directions, and a clarifying
+  godoc on `grantingAttributions`.
+- **MINOR — dedup comment vs code.** `MapAll`'s first-key-wins comment said
+  "first non-empty result"; code stores the first result unconditionally.
+  Corrected the comment to state the real invariant (access depends only on the
+  effective User, so duplicate keys compute identical access; the who-can
+  route-union asymmetry is called out) and added the blank-skip.
+- **NIT — deny vs error both exit 1.** Documented in the command godoc: exit 0 =
+  allow, 1 = deny OR engine error (fail-closed), missing entity is a distinct
+  error, never a deny. A separate exit code for error-vs-deny deferred.
