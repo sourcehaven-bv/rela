@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // TestACLAnalyze_FiltersHiddenIssues pins TKT-QU7REX: _analyze walks the whole
@@ -110,6 +111,58 @@ func TestACLAnalyze_RedactsHiddenPrimaryTitle(t *testing.T) {
 	}
 	if body := rec.Body.String(); strings.Contains(body, "SECRET-ANALYZE-TITLE") {
 		t.Errorf("LEAK: hidden primary property leaked as an analyze issue title: %s", body)
+	}
+}
+
+// TestACLAnalyze_RedactsHiddenTemplatedTitle pins the TEMPLATED display_property
+// case (review finding on the R9EHKV analyze fix): a type whose title is
+// `{voornaam} {achternaam}` has no single "primary" property, so a check built
+// on GetPrimaryProperty misses it. When a template PLACEHOLDER is hidden, the
+// whole analyze title must fall back to the id — a partial render ("Jeroen ")
+// would leak the readable half and confirm a hidden half.
+func TestACLAnalyze_RedactsHiddenTemplatedTitle(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"persoon": {
+				Label:           "Persoon",
+				IDPrefix:        "PERS-",
+				DisplayProperty: "{voornaam} {achternaam}",
+				Properties: map[string]metamodel.PropertyDef{
+					"voornaam":   {Type: "string", Required: true},
+					"achternaam": {Type: "string", Required: true},
+				},
+				PropertyOrder: []string{"voornaam", "achternaam"},
+			},
+		},
+	}
+	app := newAppFromParts(&Config{}, meta, newFixture())
+	app.broker = newEventBroker()
+	// Hide the achternaam placeholder for everyone.
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"achternaam": false},
+	}}
+	// Orphan persoon → orphans warning with a templated title.
+	seedEntity(app, &entity.Entity{
+		ID: "PERS-001", Type: "persoon",
+		Properties: map[string]any{"voornaam": "Jeroen", "achternaam": "SECRET-SURNAME"},
+	})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"persoon"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "SECRET-SURNAME") {
+		t.Errorf("LEAK: hidden template placeholder leaked in analyze title: %s", body)
 	}
 }
 

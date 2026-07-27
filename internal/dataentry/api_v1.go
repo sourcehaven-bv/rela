@@ -1461,7 +1461,7 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 	// id — the same field-level fallback the view/mention/settings surfaces get
 	// (BUG-R9EHKV). Only permitted entities are loaded (the row gate already
 	// ran), and only when their primary property is actually hidden.
-	titleFallback := hiddenPrimaryEntityIDs(ctx, a, allowed)
+	titleFallback := hiddenDisplayTitleEntityIDs(ctx, a, allowed)
 
 	// Build the filtered, order-preserving result.
 	var out []visibleIssue
@@ -1481,35 +1481,48 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 	return out
 }
 
-// hiddenPrimaryEntityIDs returns the set of permitted entity ids whose display
-// (primary) property is hidden from the ctx principal — the ids whose analyze
-// issue title must fall back to the id rather than leak the hidden value. It
-// loads only already-permitted entities and redacts each: when redaction strips
-// the display property, DisplayTitle yields the id, which is exactly the
-// condition we flag. Fail-closed on a load miss (treated as not-hidden is safe:
-// a missing entity produces no title to leak).
+// hiddenDisplayTitleEntityIDs returns the set of permitted entity ids whose
+// DISPLAY TITLE draws on a property hidden from the ctx principal — the ids
+// whose analyze issue title must fall back to the id rather than leak the
+// hidden value. It loads only already-permitted entities and redacts each; if
+// redaction strips ANY property that backs the display title, the whole title
+// is suppressed to the id (a partial template render like "Jeroen " would leak
+// the readable half and confirm a hidden half, so full fallback is correct).
+//
+// Uses DisplayProperties (the full read set — handles templated
+// display_property), NOT GetPrimaryProperty, which returns "" for a template
+// and would miss `{voornaam} {achternaam}`-style titles entirely. Fail-closed
+// on a load miss (treated as not-hidden is safe: a missing entity produces no
+// baked title to leak).
 //
 // A package function, not an App method, to keep App under its plimsoll cap.
-func hiddenPrimaryEntityIDs(ctx context.Context, a *App, allowed map[string]map[string]bool) map[string]bool {
+func hiddenDisplayTitleEntityIDs(ctx context.Context, a *App, allowed map[string]map[string]bool) map[string]bool {
 	redactor := appRedactor(a)
 	meta := a.State().Meta
 	out := map[string]bool{}
 	for _, ids := range allowed {
 		for id, ok := range ids {
 			if !ok {
-				continue
+				continue // perm maps carry explicit false entries
 			}
 			e, err := a.store.GetEntity(ctx, id)
 			if err != nil {
 				continue
 			}
 			def, defOK := meta.GetEntityDef(e.Type)
-			if !defOK || def.GetPrimaryProperty() == "" {
-				continue // no primary property → title is the id already
+			if !defOK {
+				continue
+			}
+			displayProps := def.DisplayProperties()
+			if len(displayProps) == 0 {
+				continue // title is the id already → nothing to leak
 			}
 			redacted := visibility.Redact(ctx, redactor, e)
-			if _, present := redacted.Properties[def.GetPrimaryProperty()]; !present {
-				out[id] = true // primary stripped by redaction → title would leak
+			for _, prop := range displayProps {
+				if _, present := redacted.Properties[prop]; !present {
+					out[id] = true // a display-title source was stripped → title would leak
+					break
+				}
 			}
 		}
 	}
