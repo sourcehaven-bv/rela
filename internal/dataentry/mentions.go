@@ -15,6 +15,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // collectMentions scans the supplied markdown blobs for inline code spans
@@ -31,19 +32,24 @@ import (
 // have already bound the request context and abandoning further lookups
 // after the client disconnects saves wasted work.
 func collectMentions(
-	ctx context.Context, s store.EntityReader, meta *metamodel.Metamodel, contents ...string,
+	ctx context.Context, s store.EntityReader, vis visibility.Reader,
+	meta *metamodel.Metamodel, contents ...string,
 ) map[string]v1.Mention {
 	candidates := scanCodeSpanCandidates(contents...)
 	if len(candidates) == 0 {
 		return nil
 	}
-	out := make(map[string]v1.Mention, len(candidates))
+
+	// Load the referenced entities, then route them through the read gate +
+	// redactor (DEC-ZBI39P) before deriving any title: a mention to an entity
+	// the principal may not read is dropped (row-gate), and a survivor whose
+	// display property is hidden falls back to its id (BUG-R9EHKV). Mentions
+	// are arbitrary code-span IDs in user markdown, so without this a `TKT-…`
+	// span pointing at a hidden entity leaked its title via DisplayTitle.
+	loaded := make([]*entityPkg.Entity, 0, len(candidates))
 	for id := range candidates {
 		if err := ctx.Err(); err != nil {
-			if len(out) == 0 {
-				return nil
-			}
-			return out
+			break
 		}
 		ent, err := s.GetEntity(ctx, id)
 		if err != nil {
@@ -54,7 +60,13 @@ func collectMentions(
 				"id", id, "err", err)
 			continue
 		}
-		out[id] = buildMention(ent, meta)
+		loaded = append(loaded, ent)
+	}
+
+	visible := vis.Filter(ctx, loaded)
+	out := make(map[string]v1.Mention, len(visible))
+	for _, ent := range visible {
+		out[ent.ID] = buildMention(ent, meta)
 	}
 	if len(out) == 0 {
 		return nil

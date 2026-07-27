@@ -77,6 +77,42 @@ func TestACLAnalyze_FiltersHiddenIssues(t *testing.T) {
 	}
 }
 
+// TestACLAnalyze_RedactsHiddenPrimaryTitle pins the field-level half of the
+// analyze surface (BUG-R9EHKV): an entity the principal CAN read but whose
+// display (primary) property is hidden by `visible:` must have its analyze
+// issue title fall back to the id, not leak the hidden value. TKT-QU7REX already
+// drops issues for unreadable rows; this covers the readable-but-redacted case.
+func TestACLAnalyze_RedactsHiddenPrimaryTitle(t *testing.T) {
+	app := newTestAppV1(t)
+	// title is the ticket's display property; hide it for everyone.
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"title": false},
+	}}
+	// Orphan ticket → trips the orphans warning, producing an issue with a title.
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "SECRET-ANALYZE-TITLE"},
+	})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "SECRET-ANALYZE-TITLE") {
+		t.Errorf("LEAK: hidden primary property leaked as an analyze issue title: %s", body)
+	}
+}
+
 func countWarnings(issues []APIIssue) int {
 	n := 0
 	for _, i := range issues {
