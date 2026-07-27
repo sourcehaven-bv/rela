@@ -129,6 +129,73 @@ assignments:
 	}
 }
 
+// RR (role-resolution leak): under the historical marker, a type that ANY role
+// gates with `visible:` gets a TYPE-LEVEL closed-world, so a reader who resolves
+// to FEWER roles historically (e.g. a local role dropped because it was
+// conferred by a now-untrusted live edge) fails closed to hidden instead of
+// defaulting to all-visible. Here alice holds NO global role, so the historical
+// role set is empty — every field must be hidden, not shown.
+func TestHistorical_TypeLevelClosedWorld_EmptyRoleSet(t *testing.T) {
+	t.Parallel()
+	p := policyFromYAML(t, `
+roles:
+  owner:
+    visible:
+      ticket:
+        - field: title
+assignments:
+  bob: owner
+`)
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// alice has no role at all. LIVE read: no role declares a visible: block for
+	// her → closed-world never opts in → all fields visible (protected by the
+	// row gate live, not field redaction).
+	fvLive := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	if v, ok := fvLive.Visible["priority"]; ok && !v {
+		t.Errorf("live, no role: priority should default visible, got hidden")
+	}
+
+	// HISTORICAL read: ticket has a visible: block (declared by owner), so the
+	// type-level closed-world opts in even though alice holds no role → every
+	// field in the universe is hidden.
+	fvHist := r.FieldVerdicts(affordances.WithHistoricalSubject(ctxAs("alice")), ticket("T-1", nil))
+	if v, ok := fvHist.Visible["priority"]; !ok || v {
+		t.Errorf("historical, no role: priority must fail closed (hidden), got ok=%v v=%v", ok, v)
+	}
+	if v, ok := fvHist.Visible["title"]; !ok || v {
+		t.Errorf("historical, no role: title must fail closed (hidden), got ok=%v v=%v", ok, v)
+	}
+}
+
+// The historical marker is INERT for a type no role gates with `visible:` —
+// there is nothing to fail closed, so redaction matches live (all visible). This
+// guards against the type-level closed-world over-firing on unredacted types.
+func TestHistorical_NoVisiblePolicyForType_MarkerInert(t *testing.T) {
+	t.Parallel()
+	p := policyFromYAML(t, `
+roles:
+  triager:
+    fields:
+      ticket:
+        - field: status
+assignments:
+  alice: triager
+`)
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// No visible: block anywhere → historical marker changes nothing.
+	fv := r.FieldVerdicts(affordances.WithHistoricalSubject(ctxAs("alice")), ticket("T-1", nil))
+	if v, ok := fv.Visible["priority"]; ok && !v {
+		t.Errorf("no visible policy: historical marker must be inert, priority hidden unexpectedly")
+	}
+}
+
 // Scenario 7: a visible: grant that references a property the frozen record
 // does not carry (e.g. today's policy references a since-renamed/removed
 // property) binds that property as Nil (DR-C2 coerce-not-fail), the predicate

@@ -70,6 +70,13 @@ type PolicyResolver struct {
 
 	// grants is indexed by (role, entityType) → compiled grant blocks.
 	grants map[grantKey]*compiledGrants
+
+	// typesWithVisible records entity types for which ANY role declares a
+	// `visible:` block. Under the historical marker ([WithHistoricalSubject])
+	// such a type gets a type-level closed-world so a reader whose live roles
+	// were reduced to globals-only (see resolveViaDeclarative) fails closed
+	// rather than defaulting to all-visible (TKT-73C6B2).
+	typesWithVisible map[string]bool
 }
 
 type grantKey struct {
@@ -130,12 +137,13 @@ func New(
 	}
 	policy := declarative.Policy()
 	r := &PolicyResolver{
-		policy:      policy,
-		meta:        meta,
-		lookup:      lookup,
-		declarative: declarative,
-		envs:        map[string]*predicate.Env{},
-		grants:      map[grantKey]*compiledGrants{},
+		policy:           policy,
+		meta:             meta,
+		lookup:           lookup,
+		declarative:      declarative,
+		envs:             map[string]*predicate.Env{},
+		grants:           map[grantKey]*compiledGrants{},
+		typesWithVisible: map[string]bool{},
 	}
 	if policy == nil {
 		return r, nil
@@ -224,6 +232,7 @@ func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error 
 	for et, grants := range role.Visible {
 		g := get(et)
 		g.declaredVisible = true
+		r.typesWithVisible[et] = true
 		errs = append(errs, r.compileFieldBlock(roleName, et, "visible", grants, &g.visible)...)
 	}
 	for et, grants := range role.Options {
@@ -353,28 +362,44 @@ func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) Fi
 	if e == nil || r.policy == nil {
 		return out
 	}
-	bc, roles := r.bindingFor(ctx, e)
-	if bc == nil {
-		return out
-	}
 
 	writable := newDimension()
 	visible := newDimension()
 	options := newOptionDimension()
 
-	for _, role := range roles {
-		g := r.grants[grantKey{role, e.Type}]
-		if g == nil {
-			continue
-		}
-		if g.declaredFields {
-			r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
-		}
-		if g.declaredVisible {
-			r.applyFieldGrants(ctx, bc, role, "hidden", g.visible, visible)
-		}
-		if g.declaredOptions {
-			r.applyOptionGrants(ctx, bc, role, g.options, options)
+	// Historical type-level closed-world (TKT-73C6B2): when serializing a
+	// snapshot of a type that ANY role gates with `visible:`, force the visible
+	// dimension to opt in up front. Ordinarily the `visible:` closed-world is
+	// role-scoped — it bites only for roles the reader holds that declare a
+	// block, so a reader with no such role sees all fields and is protected only
+	// by the row-level read gate. For history that is not enough: the reader's
+	// live roles are reduced to globals-only (resolveViaDeclarative), which can
+	// drop the very role that declared the block, and the reduced set would
+	// otherwise default to all-visible — leaking a field that was redacted at
+	// write time. Opting in here means every field not affirmatively granted
+	// visible by a globally-held role is hidden. Deliberately stricter than a
+	// live read; a holder of acl.PermHistoryReadRedacted bypasses redaction
+	// entirely at the handler.
+	if isHistoricalSubject(ctx) && r.typesWithVisible[e.Type] {
+		visible.optIn("hidden")
+	}
+
+	bc, roles := r.bindingFor(ctx, e)
+	if bc != nil {
+		for _, role := range roles {
+			g := r.grants[grantKey{role, e.Type}]
+			if g == nil {
+				continue
+			}
+			if g.declaredFields {
+				r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
+			}
+			if g.declaredVisible {
+				r.applyFieldGrants(ctx, bc, role, "hidden", g.visible, visible)
+			}
+			if g.declaredOptions {
+				r.applyOptionGrants(ctx, bc, role, g.options, options)
+			}
 		}
 	}
 
@@ -603,7 +628,24 @@ func (r *PolicyResolver) resolveViaDeclarative(
 	for _, a := range gr.Attributions {
 		global[a.Role] = true
 	}
-	attrs := req.ForEntity(ctx, e.Type, e.ID)
+	// For a HISTORICAL subject ([WithHistoricalSubject]) the effective role set
+	// is GLOBALS-ONLY: local roles (conferred by live `role_relations` edges)
+	// and ancestor-conferred roles (via `inherit_roles_through` containment) are
+	// resolved by ForEntity against the LIVE graph, which no longer describes
+	// the entity as-of-version. Trusting them would let a role newly conferred
+	// after capture flip a `visible:` grant OPEN in an old snapshot — both by
+	// SELECTING which roles' grant blocks apply and by feeding has_role. Globals
+	// are assignment-based (reader-side), so they are the safe tier. Dropping to
+	// globals-only can leave a reader with FEWER roles than live; the type-level
+	// historical closed-world in [PolicyResolver.FieldVerdicts] compensates so
+	// the reduced role set fails closed rather than defaulting to all-visible
+	// (TKT-73C6B2 / RR — the role-resolution leak).
+	var attrs []acl.RoleAttribution
+	if isHistoricalSubject(ctx) {
+		attrs = gr.Attributions
+	} else {
+		attrs = req.ForEntity(ctx, e.Type, e.ID)
+	}
 	seen := make(map[string]bool, len(attrs))
 	roles = make([]string, 0, len(attrs))
 	for _, a := range attrs {

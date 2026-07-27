@@ -668,9 +668,15 @@ DENIED at write time flip OPEN and leak a field that was hidden when the version
 was written.
 
 So historical redaction does **not** trust the live store for subject-world
-predicates. When serializing a snapshot, `has_relation` / `count_relations`
-resolve as *no edges*, so any grant that needs them evaluates false and the
-field is **hidden**. The rule, stated as an invariant:
+state. Two things are neutered when serializing a snapshot: `has_relation` /
+`count_relations` resolve as *no edges*, and the effective role set is reduced to
+**globals-only** — local roles conferred by live `role_relations` edges and
+ancestor roles inherited via `inherit_roles_through` are dropped, because they
+too come from the live graph and would otherwise let a role conferred *after*
+capture reveal a field. To keep that reduction from silently defaulting to
+all-visible, a type that any role gates with `visible:` gets a **type-level
+closed-world** in history: every field not affirmatively granted visible by a
+globally-held role is hidden. The rule, stated as an invariant:
 
 > A historical version shows a field only if today's `visible:` policy
 > affirmatively grants it against inputs that can be safely evaluated. Every

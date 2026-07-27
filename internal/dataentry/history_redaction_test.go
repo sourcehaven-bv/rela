@@ -109,7 +109,7 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 	}
 	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
-			"TKT-001": {snapshot(1, "ticket", "body",
+			"TKT-001": {snapshot("ticket", "body",
 				map[string]any{"title": "t", "priority": "high", "status": "open"})},
 		},
 	}
@@ -132,6 +132,64 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 	}
 }
 
+// C1 regression (RR — the role-resolution leak): a `visible:` grant on a role
+// conferred by a LIVE role-relation edge (`role_relations`) must ALSO fail
+// closed in history. The subject-world neutering has to reach role resolution,
+// not just has_relation/count_relations — otherwise a role newly conferred
+// after capture (a reassignment) selects a `visible:` block that reveals a
+// field hidden when the version was written. Globals-only under the historical
+// marker is the fix.
+func TestHistoryRedaction_LocalRoleConferred_FailsClosed(t *testing.T) {
+	const aclYAML = `
+roles:
+  owner:
+    read:
+      - ticket
+    visible:
+      ticket:
+        - field: title
+        - field: status
+        - field: priority
+role_relations:
+  owns:
+    confers: owner
+`
+	app := buildPolicyApp(t, aclYAML, nil)
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "t", "priority": "high", "status": "open"},
+	})
+	// Live edge alice --owns--> TKT-001 confers `owner` on alice for this entity.
+	if _, err := app.store.CreateRelation(context.Background(),
+		"alice", "owns", "TKT-001", nil); err != nil {
+		t.Fatalf("CreateRelation: %v", err)
+	}
+	app.versions = historyStore{
+		versions: map[string][]store.VersionSnapshot{
+			"TKT-001": {snapshot("ticket", "body",
+				map[string]any{"title": "t", "priority": "high", "status": "open"})},
+		},
+	}
+
+	// Sanity: LIVE read confers owner via the edge → priority visible.
+	live := getAs(t, app, "alice", "TKT-001")
+	if _, ok := live.Properties["priority"]; !ok {
+		t.Fatalf("live read should confer owner and expose priority; props=%v", live.Properties)
+	}
+
+	// Historical read (no reveal permission): the owner role is conferred by a
+	// LIVE edge, but historical resolution is globals-only → alice holds no
+	// role that grants `priority` → it must be stripped. Before the C1 fix this
+	// leaked (owner selected against the live edge).
+	gate := permGate{perms: map[string]bool{acl.PermHistoryRead: true}}
+	hist := decodeHistoryEntity(t, getHistoryVersion(app, "alice", "ticket", "TKT-001", gate))
+	if _, ok := hist.Properties["priority"]; ok {
+		t.Errorf("historical read must fail closed on local-role-conferred visibility: priority should be stripped, got %v",
+			hist.Properties["priority"])
+	}
+}
+
 // Scenario 2/4 (reveal): a holder of history:read-redacted sees the frozen
 // field the ordinary reader has redacted — OVERRIDE semantics.
 func TestHistoryRedaction_RevealPermission_ShowsFrozenField(t *testing.T) {
@@ -143,7 +201,7 @@ func TestHistoryRedaction_RevealPermission_ShowsFrozenField(t *testing.T) {
 	})
 	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
-			"TKT-001": {snapshot(1, "ticket", "body",
+			"TKT-001": {snapshot("ticket", "body",
 				map[string]any{"title": "t", "priority": "high", "status": "open"})},
 		},
 	}

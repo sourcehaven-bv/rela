@@ -5,7 +5,7 @@ title: Historical field redaction fails closed — deny-by-default with a histor
 kind: enhancement
 priority: medium
 effort: m
-status: planning
+status: review
 ---
 
 Follow-up to TKT-9INY0Y / review finding RR-TPATBK. Design superseded 2026-07-27
@@ -128,6 +128,14 @@ visible:
 - New permission constant `PermHistoryReadRedacted = "history:read-redacted"`
   beside PermHistoryRead; documented in docs/acl-security.md alongside it.
 - No entity_versions / schema_versions schema change. No capture-path change.
+- FUTURE (RR-73CA/L1): the sounder long-term design is to FREEZE the
+  subject-world (edge/role state) at capture time — like the schema projection
+  — so both edge and role predicates answer as-of-version instead of being
+  blinded. That removes the over-redaction this deny-by-default accepts, and
+  removes the need to enumerate every subject-world input to neuter (the
+  enumeration that originally missed role resolution). Deliberately out of scope
+  here (larger capture-path lift); deny-by-default is the security-complete
+  stopgap.
 
 ## Re-verification (2026-07-25, against develop dd0fe649)
 
