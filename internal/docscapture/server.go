@@ -155,6 +155,12 @@ func copyProjectSchema(src, dst string) error {
 	return nil
 }
 
+// copyIfExists copies src to dst, treating a missing src as a no-op.
+//
+// Both paths are built by copyProjectSchema from a fixed set of literal
+// filenames: dst under a temp dir this process just created, src under the
+// operator's --project root. No caller- or manual-supplied string reaches
+// either, so there is no traversal surface here.
 func copyIfExists(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if os.IsNotExist(err) {
@@ -163,6 +169,8 @@ func copyIfExists(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// #nosec G703 -- dst is filepath.Join(<os.MkdirTemp dir>, <literal name>);
+	// the only non-constant part is a temp dir this process created.
 	return os.WriteFile(dst, data, 0o644)
 }
 
