@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // --- API v1 Types ---
@@ -1454,6 +1455,14 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 		allowed[typeName] = perm
 	}
 
+	// A permitted entity may still have its DISPLAY property hidden by a
+	// field-level `visible:` grant. The issue title was baked upstream by
+	// DisplayTitle against raw properties (analyze.go), so redact it here to the
+	// id — the same field-level fallback the view/mention/settings surfaces get
+	// (BUG-R9EHKV). Only permitted entities are loaded (the row gate already
+	// ran), and only when their primary property is actually hidden.
+	titleFallback := hiddenDisplayTitleEntityIDs(ctx, a, allowed)
+
 	// Build the filtered, order-preserving result.
 	var out []visibleIssue
 	for _, section := range sections {
@@ -1462,8 +1471,59 @@ func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSect
 				if !allowed[issue.EntityType][issue.EntityID] {
 					continue // hidden entity → drop the issue
 				}
+				if titleFallback[issue.EntityID] {
+					issue.Title = issue.EntityID // hidden display property → no title leak
+				}
 			}
 			out = append(out, visibleIssue{issue: issue, section: section.Name})
+		}
+	}
+	return out
+}
+
+// hiddenDisplayTitleEntityIDs returns the set of permitted entity ids whose
+// DISPLAY TITLE draws on a property hidden from the ctx principal — the ids
+// whose analyze issue title must fall back to the id rather than leak the
+// hidden value. It loads only already-permitted entities and redacts each; if
+// redaction strips ANY property that backs the display title, the whole title
+// is suppressed to the id (a partial template render like "Jeroen " would leak
+// the readable half and confirm a hidden half, so full fallback is correct).
+//
+// Uses DisplayProperties (the full read set — handles templated
+// display_property), NOT GetPrimaryProperty, which returns "" for a template
+// and would miss `{voornaam} {achternaam}`-style titles entirely. Fail-closed
+// on a load miss (treated as not-hidden is safe: a missing entity produces no
+// baked title to leak).
+//
+// A package function, not an App method, to keep App under its plimsoll cap.
+func hiddenDisplayTitleEntityIDs(ctx context.Context, a *App, allowed map[string]map[string]bool) map[string]bool {
+	redactor := appRedactor(a)
+	meta := a.State().Meta
+	out := map[string]bool{}
+	for _, ids := range allowed {
+		for id, ok := range ids {
+			if !ok {
+				continue // perm maps carry explicit false entries
+			}
+			e, err := a.store.GetEntity(ctx, id)
+			if err != nil {
+				continue
+			}
+			def, defOK := meta.GetEntityDef(e.Type)
+			if !defOK {
+				continue
+			}
+			displayProps := def.DisplayProperties()
+			if len(displayProps) == 0 {
+				continue // title is the id already → nothing to leak
+			}
+			redacted := visibility.Redact(ctx, redactor, e)
+			for _, prop := range displayProps {
+				if _, present := redacted.Properties[prop]; !present {
+					out[id] = true // a display-title source was stripped → title would leak
+					break
+				}
+			}
 		}
 	}
 	return out
@@ -2716,7 +2776,8 @@ func (a *App) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		resp.Sections = append(resp.Sections, v1Sec)
 	}
 
-	resp.Mentions = collectMentions(r.Context(), a.store, s.Meta, viewContentBlobs(result.Entry, sections)...)
+	resp.Mentions = collectMentions(
+		r.Context(), a.store, a.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

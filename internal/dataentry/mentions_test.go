@@ -12,7 +12,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
+
+// mustAllowAll wraps a store in a pass-through visibility.Reader for mention
+// tests: these exercise scanning/resolution, not ACL, so the reader must not
+// gate or redact. ACL behavior for mentions is covered separately.
+func mustAllowAll(t *testing.T, get visibility.EntityGetter) visibility.Reader {
+	t.Helper()
+	r, err := visibility.NewAllowAllReader(get)
+	if err != nil {
+		t.Fatalf("NewAllowAllReader: %v", err)
+	}
+	return r
+}
 
 func TestCollectMentions(t *testing.T) {
 	t.Parallel()
@@ -181,7 +194,7 @@ func TestCollectMentions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := collectMentions(context.Background(), st, meta, tc.contents...)
+			got := collectMentions(context.Background(), st, mustAllowAll(t, st), meta, tc.contents...)
 			assertMentionsEqual(t, tc.want, got)
 		})
 	}
@@ -197,7 +210,7 @@ func TestCollectMentions_SelfReference(t *testing.T) {
 		t.Fatalf("seed self: %v", err)
 	}
 
-	got := collectMentions(context.Background(), st, meta, "see `TKT-SELF` for the recursion")
+	got := collectMentions(context.Background(), st, mustAllowAll(t, st), meta, "see `TKT-SELF` for the recursion")
 	want := map[string]v1.Mention{
 		"TKT-SELF": {Type: self.Type, Title: self.Title()},
 	}
@@ -218,7 +231,7 @@ func TestCollectMentions_ContextCancellationStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got := collectMentions(ctx, st, meta, "`TKT-CTX`")
+	got := collectMentions(ctx, st, mustAllowAll(t, st), meta, "`TKT-CTX`")
 	if got != nil {
 		t.Errorf("expected nil on cancelled context, got %+v", got)
 	}
@@ -236,7 +249,7 @@ func TestCollectMentions_StoreErrorIsLoggedAndSkipped(t *testing.T) {
 		good: mustEntity("TKT-OK", "ticket", "Resolves fine"),
 	}
 
-	got := collectMentions(context.Background(), flaky, meta, "`TKT-FAIL` then `TKT-OK`")
+	got := collectMentions(context.Background(), flaky, mustAllowAll(t, flaky), meta, "`TKT-FAIL` then `TKT-OK`")
 	want := map[string]v1.Mention{
 		"TKT-OK": {Type: "ticket", Title: "Resolves fine"},
 	}
@@ -256,13 +269,14 @@ func TestCollectMentions_ConcurrentScanIsSafe(t *testing.T) {
 	}
 
 	const n = 64
+	vis := mustAllowAll(t, st) // built on the test goroutine; shared read-only
 	var wg sync.WaitGroup
 	wg.Add(n)
 	results := make([]map[string]v1.Mention, n)
 	for i := range n {
 		go func(idx int) {
 			defer wg.Done()
-			results[idx] = collectMentions(context.Background(), st, meta, "ref to `TKT-CONC`")
+			results[idx] = collectMentions(context.Background(), st, vis, meta, "ref to `TKT-CONC`")
 		}(i)
 	}
 	wg.Wait()

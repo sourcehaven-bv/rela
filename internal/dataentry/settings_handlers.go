@@ -237,7 +237,14 @@ func (a *App) handleAPIGetSettings(w http.ResponseWriter, r *http.Request) {
 		if len(relDef.To) > 0 {
 			rd.TargetType = relDef.To[0]
 			for _, targetType := range relDef.To {
-				for _, e := range listFromStoreByTypes(r.Context(), a.Services(), []string{targetType}) {
+				// Route candidates through the read gate + redactor (DEC-ZBI39P):
+				// listFromStoreByTypes is ungated, so without Filter this picker
+				// leaked every target entity's title — including unreadable ones
+				// and hidden display properties (BUG-R9EHKV, the worst surface: no
+				// gate at all). Filter drops unreadable targets and redacts the
+				// rest so DisplayTitle falls back to the id.
+				candidates := listFromStoreByTypes(r.Context(), a.Services(), []string{targetType})
+				for _, e := range a.viewReader.Filter(r.Context(), candidates) {
 					rd.Targets = append(rd.Targets, APIRelationTarget{
 						ID:    e.ID,
 						Title: s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
