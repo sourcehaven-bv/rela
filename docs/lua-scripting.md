@@ -763,13 +763,9 @@ script runs in a specialized mode with extra context exposed:
 | `rela.document.id`       | The key under `documents:` in `data-entry.yaml` |
 | `rela.document.entry_id` | The ID of the entity being rendered |
 
-The script's stdout is captured and used as the rendered document's
-markdown (which is then converted to HTML). Use `print()` to produce
-output.
-
 **List renders** (a `lists.<id>.export_render` view export, see
-[Transforms](transforms.md#custom-per-list-rendering)) run in the same
-document mode — `rela.mode` is `"document"` there too — with the row set
+[Transforms](../../../docs/transforms.md#custom-per-list-rendering)) run in the
+same document mode — `rela.mode` is `"document"` there too — with the row set
 added and `entry_id` **absent**, since a list has no entry entity:
 
 | Variable                    | Meaning |
@@ -783,10 +779,14 @@ added and `entry_id` **absent**, since a list has no entry entity:
 | `rela.document.truncated`   | Whether the cap applied |
 | `rela.document.query`       | Read-only `{q, filters, sort}` |
 
-Branch on `rela.document.list_id` (or `rows`) to tell the two apart. The
-rows are handed in already resolved and gated; don't re-derive them with
+Branch on `rela.document.list_id` (or `rows`) to tell the two apart. The rows
+are handed in already resolved and gated; don't re-derive them with
 `rela.list_entities`, or the export stops matching the list the user was
 looking at.
+
+The script's stdout is captured and used as the rendered document's
+markdown (which is then converted to HTML). Use `print()` to produce
+output.
 
 ```lua
 -- scripts/docs/release_notes.lua
