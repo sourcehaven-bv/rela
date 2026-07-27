@@ -299,7 +299,18 @@ func (s *documentService) doRender(
 
 // renderCommand invokes the external render command and returns its stdout
 // as markdown. Placeholder substitution happens on the command string.
+//
+// The substituted text is spliced into a string that executeCommand runs
+// through `sh -c`, so entryID is the one request-derived value that reaches a
+// shell. Every HTTP caller already rejects unsafe ids with isSafePathSegment
+// (handleV1Documents, exportRendererFor), but that is an invariant held by
+// convention at three call sites. Re-check it here so the guarantee lives at
+// the point where the value enters the shell string: a future caller that
+// forgets the upstream check gets an error, not an injection.
 func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg documentRenderConfig) (string, error) {
+	if !isSafePathSegment(entryID) {
+		return "", fmt.Errorf("unsafe entity id %q for command render", entryID)
+	}
 	command := cfg.Command
 	command = strings.ReplaceAll(command, "{id}", entryID)
 	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
@@ -387,6 +398,15 @@ func (s *documentService) executeCommand(ctx context.Context, command string, ti
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// #nosec G702 -- command is operator-authored: it is the `command:` string
+	// of a `documents:` entry in the project's data-entry.yaml, chosen by
+	// config key (docName), never supplied by the request. A shell is
+	// intentional — `command:` is documented as a shell snippet (pipes,
+	// redirection), and running it is the feature; the trust boundary is write
+	// access to the config file. The only request-derived text spliced in is
+	// the {id}/{id_lower} placeholder, which renderCommand constrains to
+	// isSafePathSegment (ASCII alphanumerics, `-`, `_`, `.`) before
+	// substitution, so no shell metacharacter can reach this line.
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = s.projectRoot
 
