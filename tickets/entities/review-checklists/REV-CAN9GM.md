@@ -48,4 +48,4 @@ status: done
 - [x] All CI checks pass — every code check green; this review completion clears the Rela Tickets gate.
 - [x] PR URL documented below
 
-**PR:** (to be filled after `gh pr create`)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1234
