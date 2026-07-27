@@ -139,7 +139,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
-	app.userState = userStateStore{kv: svc.State()}
 	// logo + palette stores over the same kv; fresh fixtures have nothing on
 	// disk so the loads can't error (nil-returns match production's clean-boot
 	// path). Callers that need a specific project palette resolved re-wire

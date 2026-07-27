@@ -49,7 +49,6 @@ type (
 	KanbanSwimlane   = dataentryconfig.KanbanSwimlane
 	KanbanCard       = dataentryconfig.KanbanCard
 	NavigationEntry  = dataentryconfig.NavigationEntry
-	UIState          = dataentryconfig.UIState
 	UserDefaults     = dataentryconfig.UserDefaults
 	DefaultOverride  = dataentryconfig.DefaultOverride
 	DashboardConfig  = dataentryconfig.DashboardConfig
