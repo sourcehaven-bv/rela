@@ -50,4 +50,4 @@ status: done
 - [x] All CI checks pass (monitored post-creation)
 - [x] PR URL documented below
 
-**PR:** (filled after creation)
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1236
