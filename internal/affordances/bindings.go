@@ -65,7 +65,17 @@ type bindingContext struct {
 
 // outgoingCounts returns the entity's outgoing-edge counts, loading
 // and caching them on first call.
+//
+// For a HISTORICAL subject ([WithHistoricalSubject]) the live store cannot
+// answer the entity's as-of-version edges, so this returns an empty map
+// WITHOUT consulting the store: has_relation / count_relations then see no
+// edges, any conditional `visible:` grant that needs them evaluates false, and
+// the field fails CLOSED (TKT-73C6B2). Not consulting the store also avoids a
+// misleading live lookup on a since-deleted or drifted id.
 func (bc *bindingContext) outgoingCounts(ctx context.Context) map[string]int {
+	if isHistoricalSubject(ctx) {
+		return nil
+	}
 	if !bc.outgoingReady {
 		bc.outgoing = bc.lookup.OutgoingCounts(ctx, bc.entity.ID)
 		bc.outgoingReady = true

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -191,12 +193,24 @@ func serveHistoryVersion(a *App,
 	// serializer so field-level redaction (stripHiddenProperties) applies — a
 	// raw snapshot would leak `visible:`-denied properties (RR-YDMJV7).
 	//
-	// KNOWN LIMITATION (RR-TPATBK): redaction runs against the LIVE ACL context
-	// (relations, roles), not the context as-of the version. For unconditional
-	// per-type `visible:` grants this is exactly correct; for relation- or
-	// property-CONDITIONED grants a deleted entity's snapshot may under-redact.
-	// The sound fix is to freeze the visibility verdict at capture time (like
-	// the stored schema projection) — tracked as a follow-up.
+	// Historical redaction FAILS CLOSED (TKT-73C6B2). Two reader tiers:
+	//
+	//   - Ordinary reader: the ctx is marked historical-subject, so a conditional
+	//     `visible:` grant whose subject-world inputs (has_relation /
+	//     count_relations) can't be affirmed for this possibly-deleted/drifted
+	//     entity evaluates false and HIDES the field. The live store no longer
+	//     holds the entity's as-of-version edges, so trusting it would let such a
+	//     grant flip OPEN and leak a field hidden at write time (the old
+	//     RR-TPATBK under-redaction). Reader-side inputs stay live (per-reader
+	//     redaction is intended).
+	//
+	//   - Holder of acl.PermHistoryReadRedacted (audit super-user): bypass the
+	//     strip entirely via forWireHistoricalReveal — sees ALL frozen fields
+	//     (OVERRIDE semantics, sibling of PermHistoryRead). Skipping only the
+	//     historical marker would NOT be enough: the ordinary live strip would
+	//     still run and hide fields the live policy redacts, which is not the
+	//     all-or-nothing reveal this permission grants.
+	ctx := r.Context()
 	snapEntity := entityPkg.New(entityID, snap.Type)
 	snapEntity.Content = snap.Content
 	snapEntity.Properties = cloneProps(snap.Properties) // N1: don't alias the snapshot map
@@ -205,7 +219,12 @@ func serveHistoryVersion(a *App,
 	if def, ok := meta.GetEntityDef(snap.Type); ok {
 		plural = def.GetPlural(snap.Type)
 	}
-	wire := a.serializer.forWire(r.Context(), snapEntity, nil, meta, plural)
+	var wire v1.Entity
+	if readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryReadRedacted) {
+		wire = a.serializer.forWireHistoricalReveal(ctx, snapEntity, meta, plural)
+	} else {
+		wire = a.serializer.forWire(affordances.WithHistoricalSubject(ctx), snapEntity, nil, meta, plural)
+	}
 
 	writeV1JSON(w, http.StatusOK, map[string]any{
 		"id":         entityID,

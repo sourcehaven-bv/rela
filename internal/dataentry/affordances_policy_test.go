@@ -53,6 +53,7 @@ func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBod
 	return rec.Code, rec.Body.String()
 }
 
+//nolint:unparam // user is intentionally explicit per-test (documents the principal each case exercises)
 func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id, http.NoBody)

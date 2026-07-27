@@ -265,6 +265,13 @@ func serveRelationHistoryVersion(
 		writeGateError(w, r, err)
 		return
 	}
+	// Relation meta is emitted RAW: relations have no field-level `visible:`
+	// redaction today (TKT-B1F5Q1). When B1F5Q1 adds a relation strip step, it
+	// MUST wrap this snapshot's ctx in affordances.WithHistoricalSubject (unless
+	// the reader holds acl.PermHistoryReadRedacted) so relation history inherits
+	// the same deny-by-default fail-closed rule the entity path uses
+	// (serveHistoryVersion, TKT-73C6B2). There is nothing to gate until then —
+	// no `visible:` grant is evaluated on this path.
 	row := map[string]any{
 		"from": snap.From, "type": snap.Type, "to": snap.To,
 		"content": snap.Content, "meta": snap.Properties,

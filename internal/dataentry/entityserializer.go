@@ -119,6 +119,22 @@ func (s entitySerializer) forWire(
 	return result
 }
 
+// forWireHistoricalReveal renders a historical snapshot for an audit reader
+// holding acl.PermHistoryReadRedacted (TKT-73C6B2): it SKIPS
+// stripHiddenProperties entirely, emitting every frozen field — OVERRIDE
+// semantics, the field-grained sibling of acl.PermHistoryRead's all-or-nothing
+// audit power. This is the ONLY serializer path that intentionally does not
+// strip; every ordinary read path (forWire / forWireRelated) strips. Callers
+// MUST gate this on the permission (the history handler does) — it is not a
+// general-purpose entry point. No `_fields` / `_relations` affordance maps: a
+// historical snapshot is read-only, and those maps describe live-edit
+// affordances that don't apply to a past version.
+func (s entitySerializer) forWireHistoricalReveal(
+	ctx context.Context, e *entityPkg.Entity, meta *metamodel.Metamodel, plural string,
+) v1.Entity {
+	return s.toV1(ctx, e, nil, nil, nil, meta, plural)
+}
+
 // forWireRelated renders an entity that is NOT the per-entity response root —
 // list rows, `?include=*` peers, search-result include map. Strips hidden
 // properties but omits the `_fields` / `_relations` maps (those ride on
