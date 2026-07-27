@@ -129,10 +129,15 @@ linters:
         # belongs in FEAT-ESLP (data-entry server hardening). Deferring
         # these so the v2 migration doesn't block on threat-model decisions;
         # track the work under that feature instead.
+        #
+        # G705 (XSS) is ENABLED: the data-entry HTML/feed sinks were audited
+        # and fixed — the entity-help fragment now renders through
+        # html/template (contextual auto-escaping) instead of fmt.Fprintf,
+        # and the calendar feeds serve escaped non-HTML bodies under nosniff.
+        # Remaining G705 sites carry a narrow #nosec with the reason.
         - G702  # command injection via taint analysis
         - G703  # path traversal via taint analysis
         - G704  # SSRF via taint analysis
-        - G705  # XSS via taint analysis
         - G706  # log injection via taint analysis
       config:
         global:
