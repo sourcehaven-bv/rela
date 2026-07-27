@@ -47,11 +47,14 @@ TKT-92JL8P (RR-BZNL0S) at the same time.
 
 ## Interaction with TKT-73C6B2
 
-Freezing the visibility verdict at capture time (TKT-73C6B2) is the entity-side
-correctness fix for CONDITIONAL grants. If relation `visible:` grants can also
-be conditional, the same freeze applies — build these two with a shared design
-so relation history doesn't reintroduce the conditional-grant under-redaction
-hole.
+TKT-73C6B2 makes historical field redaction **fail closed** (deny-by-default;
+any grant whose subject-world inputs cannot be affirmed for a historical/deleted
+entity is hidden, revealed only by the `history:read-redacted` audit permission).
+Its earlier "freeze the visibility verdict at capture" framing was superseded
+2026-07-27 (too magical). Relation `visible:` grants inherit the SAME rule for
+free: relation history fails closed, same reveal permission. Build 73C6B2's
+deny-by-default machinery generically enough that relations plug in — do NOT
+build a relation-specific redaction path.
 
 ## Origin
 

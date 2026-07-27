@@ -665,6 +665,59 @@ is read-gated on the same principles as everything else:
   requesting a deleted entity's history gets the same 404 as a nonexistent id,
   so the permission boundary does not itself leak which deleted entities exist.
 
+### Historical field redaction fails closed (`history:read-redacted`)
+
+Field-level `visible:` redaction of a *historical* snapshot **fails closed**.
+A `visible:` grant can be conditional on the subject entity's own graph state —
+`visible: has_relation(entity, 'reviewed-by')` or
+`count_relations(entity, 'blocks') > 0`. Evaluating such a grant needs the
+entity's edges *as they were when the version was captured*, but the live store
+only holds its edges *now*: for a deleted entity there are none, and for a live
+entity they may have drifted. Trusting the live store would let a grant that was
+DENIED at write time flip OPEN and leak a field that was hidden when the version
+was written.
+
+So historical redaction does **not** trust the live store for subject-world
+state. Two things are neutered when serializing a snapshot: `has_relation` /
+`count_relations` resolve as *no edges*, and the effective role set is reduced to
+**globals-only** — local roles conferred by live `role_relations` edges and
+ancestor roles inherited via `inherit_roles_through` are dropped, because they
+too come from the live graph and would otherwise let a role conferred *after*
+capture reveal a field. To keep that reduction from silently defaulting to
+all-visible, a type that any role gates with `visible:` gets a **type-level
+closed-world** in history: every field not affirmatively granted visible by a
+globally-held role is hidden. The rule, stated as an invariant:
+
+> A historical version shows a field only if today's `visible:` policy
+> affirmatively grants it against inputs that can be safely evaluated. Every
+> grant that would need untrusted subject-world state is hidden. Reader-side
+> inputs (`current_user`, the roles the reader holds) stay live — so redaction
+> is still per-reader, and a reader who gains a role gains historical
+> visibility.
+
+This is deliberately conservative: it can **over-redact** (hide a field a reader
+could legitimately have seen) but never **under-redact** (leak). A grant that
+references a property the frozen record no longer carries (a since-renamed
+field) likewise binds Nil and hides the field — a drifted schema over-redacts,
+never leaks.
+
+To see the fully un-redacted frozen snapshot, a role must hold the global
+**`history:read-redacted`** permission — the field-grained sibling of
+`history:read`:
+
+```yaml
+roles:
+  auditor:
+    permissions: [history:read, history:read-redacted]
+```
+
+Its semantics are **OVERRIDE**, all-or-nothing like `history:read`: a holder
+sees *every* frozen field of a historical snapshot, bypassing field redaction
+entirely (the snapshot already contains every field; the reveal just skips the
+strip). Grant it only to trusted audit/compliance roles — it exposes fields the
+live `visible:` policy would redact. A non-holder always sees the fail-closed
+redaction described above.
+
 ## Command execution gating (`command:*`)
 
 Data-entry [commands](data-entry.md#commands) execute arbitrary shell via

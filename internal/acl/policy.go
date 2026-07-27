@@ -43,6 +43,18 @@ const EveryoneRole = "everyone"
 // "audit-everything-deleted" super-permission.
 const PermHistoryRead = "history:read"
 
+// PermHistoryReadRedacted is the global named permission that reveals fields a
+// historical snapshot would otherwise redact (TKT-73C6B2). Historical field
+// redaction fails CLOSED: any `visible:` grant whose subject-world inputs cannot
+// be affirmed for a historical/deleted entity (the live store no longer holds
+// the entity's as-of-version edges, so a conditional `has_relation` /
+// `count_relations` grant cannot be trusted) hides the field. A holder of this
+// permission sees ALL frozen fields — OVERRIDE semantics, the field-grained
+// sibling of [PermHistoryRead]'s all-or-nothing audit power. Granted via a
+// role's `permissions:` list like the delegate-X permissions and PermHistoryRead;
+// documented in docs/acl-security.md alongside it.
+const PermHistoryReadRedacted = "history:read-redacted"
+
 // Policy is the declarative ACL configuration parsed from `acl.yaml`
 // at the project root.
 //
