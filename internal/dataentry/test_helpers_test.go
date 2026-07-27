@@ -20,6 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // seedEntity writes an entity directly into the app's store.
@@ -163,6 +164,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		currentEdgesByPeer: app.currentEdgesByPeer,
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}
+	// viewReader mirrors the production wiring (NewApp) so view-pipeline reads
+	// are row-gated + field-redacted in tests too. The construction only errors
+	// on nil args, which the literals above cannot produce — same clean-boot
+	// swallow as the logo/palette stores.
+	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
 	// Rebuild the sync handler over the rebound store/manager. writeMu is App's
 	// own, so sync writes serialize with the other mutation handlers just as in
 	// production.

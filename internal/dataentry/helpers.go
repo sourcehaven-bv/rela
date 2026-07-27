@@ -717,6 +717,14 @@ func listAllFromStore(ctx context.Context, svc Services) []*entity.Entity {
 // resolveRelationColumnValues returns display titles for all targets of the given
 // relation type from an entity. Direction controls whether to follow edges pointing
 // to the entity (incoming) or from the entity (outgoing, the default).
+//
+// The targets are routed through viewReader.Filter (DEC-ZBI39P) before their
+// titles are derived: a neighbor the principal may not read is dropped
+// (row-gate), and a survivor whose display property is hidden has it redacted so
+// DisplayTitle falls back to the id (BUG-R9EHKV). Without this, a table
+// relation-column leaked a hidden neighbor's title via the raw store read —
+// the one builder path the executeView redaction did not cover, since these
+// targets are fetched fresh here rather than carried in result.Collections.
 func (a *App) resolveRelationColumnValues(
 	ctx context.Context, entityID, relationType string, direction dataentryconfig.Direction,
 ) []string {
@@ -727,30 +735,26 @@ func (a *App) resolveRelationColumnValues(
 		Direction: relationDirection(direction),
 	}
 
-	var titles []string
+	var targets []*entity.Entity
 	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
-			return titles
+			break
 		}
 		targetID := r.To
 		if direction.IsIncoming() {
 			targetID = r.From
 		}
-		if title, ok := entityTitle(ctx, svc, targetID); ok {
-			titles = append(titles, title)
+		if e, gerr := svc.Store.GetEntity(ctx, targetID); gerr == nil {
+			targets = append(targets, e)
 		}
 	}
-	return titles
-}
 
-// entityTitle resolves an entity ID to its metamodel-rendered display title.
-// Returns ("", false) when the entity does not exist (e.g. dangling relation).
-func entityTitle(ctx context.Context, svc Services, id string) (string, bool) {
-	e, err := svc.Store.GetEntity(ctx, id)
-	if err != nil {
-		return "", false
+	visible := a.viewReader.Filter(ctx, targets)
+	titles := make([]string, 0, len(visible))
+	for _, e := range visible {
+		titles = append(titles, svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties))
 	}
-	return svc.Meta.DisplayTitle(e.ID, e.Type, e.Properties), true
+	return titles
 }
 
 // relationDirection maps the data-entry config direction type to the

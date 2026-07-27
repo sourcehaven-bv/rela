@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // viewResult holds the entry entity and collected entities after traversal.
@@ -44,6 +45,27 @@ func (a *App) executeView(ctx context.Context, view ViewConfig, entryID string) 
 
 	// Remove internal "entry" collection
 	delete(result.Collections, "entry")
+
+	// Row-gate + field-redact on the way out (DEC-ZBI39P). Traversal above runs
+	// on raw store entities on purpose: a rule's where: filter may reference a
+	// hidden property, and edges are walked by id — redacting mid-traversal
+	// would break both. Redacting here, once, gives every section builder
+	// already-redacted entities (closes BUG-9QL9XV property-value leak and
+	// BUG-R9EHKV title leak) and drops hidden neighbors from collections
+	// (Filter gates by row). The entry is already row-gated at the handler
+	// (api_v1.go, TKT-BNX2PN), so it only needs field redaction, not a re-gate
+	// that could 404 an entry the caller was just cleared to read.
+	//
+	// Residual (accepted, like the computed-path timing note in
+	// internal/visibility): a traverse rule's where: runs on raw entities above,
+	// so for a READABLE neighbor whose only hidden aspect is a field value, its
+	// presence/absence in a collection still reflects whether it matched a
+	// predicate over that hidden field. The value is redacted; membership is a
+	// one-bit inference channel, not a value disclosure.
+	result.Entry = visibility.Redact(ctx, appRedactor(a), result.Entry)
+	for name, entities := range result.Collections {
+		result.Collections[name] = a.viewReader.Filter(ctx, entities)
+	}
 
 	return result, nil
 }

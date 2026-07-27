@@ -268,6 +268,11 @@ func (h *commandHandler) buildListInput(listID string, entities []*entity.Entity
 	}
 }
 
+// buildViewInput assembles the stdin JSON for a view-context command. The
+// viewResult it receives is already row-gated + field-redacted (executeView,
+// DEC-ZBI39P): a command script sees the same visibility the HTTP view does, so
+// a property hidden from the invoking principal is absent from the entity JSON
+// rather than raw. (Behavior change since BUG-9QL9XV: previously raw.)
 func (h *commandHandler) buildViewInput(ctx context.Context, viewID string, vr *viewResult) *commandInput {
 	// Collect all entity IDs in the result set.
 	idSet := map[string]bool{vr.Entry.ID: true}
