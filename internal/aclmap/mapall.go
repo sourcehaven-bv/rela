@@ -68,15 +68,23 @@ func (e *Engine) MapAll(
 
 	// Merge by EFFECTIVE principal — a single human can surface as several
 	// candidate keys (raw UPN + resolved entity). Running MapPrincipal on
-	// each and keying the result by its resolved Principal collapses them;
-	// the per-principal map is deterministic, so the first non-empty result
-	// per effective ID is authoritative (a later duplicate key resolves to
-	// the same identity and computes the same access).
+	// each and keying the result by its resolved Principal collapses them.
+	//
+	// First-key-wins is safe because access depends only on the effective
+	// User: the CLI never sets verified role claims and RawUser is
+	// audit-only, so every candidate key resolving to one effective
+	// principal computes IDENTICAL access. (This deliberately differs from
+	// who-can, which UNIONS routes across duplicate keys via mergeRoutes;
+	// here there is nothing to union.) A blank key yields an empty-Principal
+	// result — skip it so a malformed key adds no phantom row.
 	byPrincipal := map[string]*MapPrincipalResult{}
 	for _, raw := range candidates {
 		res, err := e.MapPrincipal(ctx, raw, verbFilter, typeFilter, entityTypes)
 		if err != nil {
 			return nil, err
+		}
+		if res.Principal == "" {
+			continue
 		}
 		if _, seen := byPrincipal[res.Principal]; !seen {
 			byPrincipal[res.Principal] = res

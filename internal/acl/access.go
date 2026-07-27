@@ -209,6 +209,17 @@ func (r *Request) AccessRoutes(
 // The verb→predicate mapping is the same one the runtime uses
 // (roleGrantsRead / grantsVerb), so the routes it credits are the real
 // reasons access was granted.
+//
+// Create is intentionally computed with the concrete entityID, same as
+// every other write verb — NOT globals-only. This mirrors the production
+// create path: entitymanager.ApplyEntity authorizes create with
+// EntitySubject{ID: e.ID} (the new entity's id, which exists at authz
+// time), so authorizeEntityWrite takes its `s.ID != ""` branch and folds
+// in local-role-via-edge / via-ancestor routes. Collapsing create to
+// Globals here would report a false DENY for a principal the runtime WOULD
+// let create via an edge — the worst error class for an attestation tool.
+// The `s.ID == ""` globals-only branch exists for callers with no id yet;
+// this report always has one.
 func (r *Request) grantingAttributions(
 	ctx context.Context, verb Verb, entityType, entityID string,
 ) []RoleAttribution {

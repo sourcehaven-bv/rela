@@ -87,10 +87,30 @@ func TestACLCan_JSON(t *testing.T) {
 
 func TestACLCan_NoPolicyAllows(t *testing.T) {
 	svc := aclTestServices(t, whoCanMeta(), "") // no acl.yaml
+	seedWhoCanGraph(t, svc)                     // INC-042 must exist for the allow
 	withOutput(t, output.FormatTable)
 
 	cmd := &ACLCanCmd{Principal: "PERS-ALICE", Verb: "read", Entity: "INC-042"}
 	if err := cmd.Run(context.Background(), svc); err != nil {
 		t.Errorf("no policy must allow (exit 0), got %v", err)
+	}
+}
+
+// TestACLCan_NoPolicyMissingEntityErrors: even with no acl.yaml, a typo'd
+// entity must error, not attest a green ALLOW on nothing (the existence
+// gate applies with or without a policy).
+func TestACLCan_NoPolicyMissingEntityErrors(t *testing.T) {
+	svc := aclTestServices(t, whoCanMeta(), "") // no acl.yaml
+	seedWhoCanGraph(t, svc)
+	withOutput(t, output.FormatTable)
+
+	cmd := &ACLCanCmd{Principal: "PERS-ALICE", Verb: "read", Entity: "NO-SUCH"}
+	err := cmd.Run(context.Background(), svc)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("no-policy missing entity must error with 'not found', got %v", err)
+	}
+	var exitErr *relaerrors.ExitError
+	if stderrors.As(err, &exitErr) {
+		t.Errorf("missing entity must not surface as a deny exit code")
 	}
 }

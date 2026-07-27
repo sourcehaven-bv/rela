@@ -226,6 +226,41 @@ func TestMapAll_VerbAndTypeFilters(t *testing.T) {
 	}
 }
 
+// TestMapAll_BlankKeyDoesNotAbort: a malformed (blank) assignment key must
+// not abort the whole-graph inventory — the rest of the principals must
+// still be reported. A hard failure on one bad key is worse than a partial
+// attestation for a compliance tool.
+func TestMapAll_BlankKeyDoesNotAbort(t *testing.T) {
+	t.Parallel()
+	// A policy with a blank assignment key alongside a real one.
+	const policy = `
+membership_relation: member-of
+roles:
+  editor: { read: [incident], update: [incident] }
+assignments:
+  PERS-REAL: editor
+  "       ": editor
+role_relations: {}
+`
+	w := buildWorld(t, policy,
+		[]ent{{"PERS-REAL", "person"}, {"INC-1", "incident"}},
+		nil,
+	)
+	res, err := w.eng.MapAll(context.Background(), "", "", []string{"person", "incident"})
+	if err != nil {
+		t.Fatalf("a blank assignment key must not abort MapAll: %v", err)
+	}
+	// PERS-REAL still reported; the blank key contributes no phantom row.
+	if principalOf(res, "PERS-REAL") == nil {
+		t.Errorf("PERS-REAL must survive a blank sibling key; got principals %+v", res.Principals)
+	}
+	for _, p := range res.Principals {
+		if p.Principal == "" {
+			t.Errorf("a blank key must not add an empty-principal row")
+		}
+	}
+}
+
 // TestMapAll_UnknownVerbErrors: an invalid verb filter errors.
 func TestMapAll_UnknownVerbErrors(t *testing.T) {
 	t.Parallel()

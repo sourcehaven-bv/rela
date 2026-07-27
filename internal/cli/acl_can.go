@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ACLCanCmd implements `rela acl can <principal> <verb> <entity>`. It is
@@ -21,7 +22,13 @@ import (
 // Read is decided by the same read path the server enforces (shared with
 // who-can / map), so a "no" is never a false negative. A grant via the
 // built-in everyone role counts as a "yes" — the spot-check answers "can
-// this principal?", including when the reason is "everyone can".
+// this principal?", including when the reason is "everyone can". Create is
+// decided with the entity's id, matching the production create path (which
+// folds local-edge routes), so an edge-conferred create reads as ALLOW.
+//
+// Exit codes: 0 = allow, 1 = deny OR an engine/store error (fail-closed).
+// A missing entity is a distinct error ("entity not found"), never a plain
+// deny, so a typo is never a green attestation.
 //
 // Scope caveat: when the policy sets `principal_property`, that raw→entity
 // resolution is wired only into the data-entry (HTTP) transport. This
@@ -39,9 +46,7 @@ func (c *ACLCanCmd) Run(ctx context.Context, svc *readServices) error {
 	engine, err := buildACLEngine(svc)
 	if err != nil {
 		if stderrors.Is(err, errNoACLPolicy) {
-			// No policy → every principal has full access → allow, exit 0.
-			out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")
-			return nil
+			return c.runNoPolicy(ctx, svc)
 		}
 		return err
 	}
@@ -69,6 +74,22 @@ func (c *ACLCanCmd) Run(ctx context.Context, svc *readServices) error {
 	if !result.Allowed {
 		return errors.NewExitError(1)
 	}
+	return nil
+}
+
+// runNoPolicy handles `acl can` when the project has no acl.yaml: every
+// principal has full access, so the answer is ALLOW — but the entity
+// existence gate still applies, so a typo'd id errors rather than attesting
+// a green exit on nothing (the same gate engine.Can enforces under a
+// policy).
+func (c *ACLCanCmd) runNoPolicy(ctx context.Context, svc *readServices) error {
+	if _, err := svc.Store.GetEntity(ctx, c.Entity); err != nil {
+		if stderrors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("entity %q not found", c.Entity)
+		}
+		return err
+	}
+	out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")
 	return nil
 }
 
