@@ -93,6 +93,54 @@ func TestACLMap_JSONSchema(t *testing.T) {
 	}
 }
 
+func TestACLMap_WholeGraphText(t *testing.T) {
+	svc := aclTestServices(t, whoCanMeta(), whoCanPolicy)
+	seedWhoCanGraph(t, svc)
+	buf := withOutput(t, output.FormatTable)
+
+	// No --principal → whole-graph inventory.
+	cmd := &ACLMapCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
+		t.Fatalf("whole-graph map: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{"Whole-graph access", "principal(s)", "PERS-ALICE", "PERS-BOB"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}
+
+func TestACLMap_WholeGraphJSON(t *testing.T) {
+	svc := aclTestServices(t, whoCanMeta(), whoCanPolicy)
+	seedWhoCanGraph(t, svc)
+	buf := withOutput(t, output.FormatJSON)
+
+	cmd := &ACLMapCmd{}
+	if err := cmd.Run(context.Background(), svc); err != nil {
+		t.Fatalf("whole-graph map json: %v", err)
+	}
+	var result struct {
+		SchemaVersion  int `json:"schema_version"`
+		PrincipalCount int `json:"principal_count"`
+		Principals     []struct {
+			Principal string `json:"principal"`
+		} `json:"principals"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, buf.String())
+	}
+	if result.SchemaVersion != 1 {
+		t.Errorf("schema_version = %d, want 1", result.SchemaVersion)
+	}
+	if result.PrincipalCount != len(result.Principals) {
+		t.Errorf("principal_count %d != len(principals) %d", result.PrincipalCount, len(result.Principals))
+	}
+	if result.PrincipalCount == 0 {
+		t.Errorf("whole-graph map should enumerate principals")
+	}
+}
+
 func TestACLMap_NoPolicyFile(t *testing.T) {
 	svc := aclTestServices(t, whoCanMeta(), "") // no acl.yaml
 	buf := withOutput(t, output.FormatTable)

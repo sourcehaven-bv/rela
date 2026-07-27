@@ -18,7 +18,8 @@ import (
 type ACLCmd struct {
 	Audit  ACLAuditCmd  `cmd:"" help:"Audit the ACL policy (acl.yaml) for misconfigurations."`
 	WhoCan ACLWhoCanCmd `cmd:"" name:"who-can" help:"List every principal who can perform a verb on an entity, with the route each grant took."`
-	Map    ACLMapCmd    `cmd:"" help:"Map one principal's effective access across the graph, by type with per-entity exceptions."`
+	Can    ACLCanCmd    `cmd:"" help:"Spot-check whether one principal can perform a verb on an entity; exits non-zero on deny."`
+	Map    ACLMapCmd    `cmd:"" help:"Map effective access across the graph — one principal (--principal) or every principal — by type with per-entity exceptions."`
 }
 
 // ACLAuditCmd runs the on-demand authorization-misconfiguration linter over the

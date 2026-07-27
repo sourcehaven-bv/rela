@@ -133,6 +133,19 @@ func (e *Engine) MapPrincipal(
 	if err != nil {
 		return nil, err
 	}
+	if user == "" {
+		// A blank/whitespace candidate key can't be a principal (ForPrincipal
+		// would reject it as unstamped). Return an empty result rather than
+		// erroring, matching who-can's accessFor skip: in the whole-graph map
+		// (MapAll), one malformed assignment key or empty relation From must
+		// NOT abort the entire inventory — an attestation that fails hard on a
+		// single bad key is worse than one that reports the rest.
+		return &MapPrincipalResult{
+			SchemaVersion: schemaVersion,
+			Verbs:         verbStrings(verbs),
+			EveryoneOnly:  true,
+		}, nil
+	}
 	req, err := e.resolver.ForPrincipal(
 		principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown})
 	if err != nil {
