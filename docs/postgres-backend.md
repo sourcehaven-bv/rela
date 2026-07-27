@@ -183,6 +183,26 @@ rela restore TKT-42 3              # restore the entity to version 3
 The data-entry web UI shows the same timeline, an in-page diff, and a restore
 button (gated by your write permission) on each entity's detail page.
 
+**Sharing a diff.** The two compared versions live in the URL as `?base=` and
+`?target=`, so a specific diff can be linked, bookmarked, or reopened after a
+reload:
+
+```text
+/history/feature/FEAT-42?base=3&target=7          # v3 → v7
+/history/feature/FEAT-42?base=3&target=current    # what changed since v3
+```
+
+Either side takes a version ordinal or `current`. Note that `current` is
+**live-relative**: a link with `target=current` shows the diff against the
+entity as it stands when the recipient opens it, not as it stood when the link
+was made. Link two ordinals for a diff that is frozen. Omit the params for the
+default view, and a value that names no existing version (a stale link, a typo)
+falls back to that default rather than erroring — the address bar is rewritten
+to the pair actually being shown, so a corrected link is what you copy. A
+shared link is not a
+capability — the recipient still needs their own read permission on the entity,
+and sees the same 404 they would without the link.
+
 Access control: reading the history of a **live** entity requires the same read
 permission as reading the entity itself. Reading the history of a **deleted**
 entity requires the global `history:read` permission — see
@@ -226,6 +246,15 @@ global `history:read`). In the web UI, a relation's history is owned by its
 **source** (`from`) entity: each outgoing relation on an entity's detail page has
 a History affordance. Restore goes through the normal write path; re-creating a
 relation whose endpoint entity no longer exists is refused (409).
+
+Relation diffs are shareable the same way, with `?base=`/`?target=` on the
+relation-history URL — though here `current` resolves to the newest captured
+version (labelled *latest*), since a relation has no separate live-read
+endpoint:
+
+```text
+/relation-history/ticket/TKT-42/blocks/TKT-99?base=1&target=3
+```
 
 ### Purging history for compliance
 
