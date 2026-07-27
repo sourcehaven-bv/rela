@@ -175,6 +175,19 @@ func (p *openAICompatProvider) executeRequest(
 ) (*http.Response, []byte, time.Time, error) {
 	start := time.Now()
 
+	// The destination is operator configuration, not attacker input: the
+	// only source of BaseURL is .rela/ai.yaml (gitignored, per-user), read
+	// from local disk by ai.LoadConfig and reachable only via
+	// lua.LoadContextOptions -> ai.LoadProvider. Pointing rela at a
+	// self-hosted or alternative OpenAI-compatible endpoint (ollama, LM
+	// Studio, a corporate gateway) is the feature, so a host allowlist would
+	// break the documented use case. Nothing below the config file can steer
+	// it: ai.ChatRequest/EmbedRequest carry no URL, and the Lua ai.* bindings
+	// accept only messages/model/temperature/max_tokens — a script (even an
+	// untrusted one) cannot override the endpoint per call. Config.Validate
+	// already constrains the value to http/https with no credentials, query,
+	// or fragment, and redirect-following is disabled above.
+	//nolint:gosec // G704: destination comes from operator-owned .rela/ai.yaml, not from request/script input.
 	resp, doErr := p.httpClient.Do(httpReq)
 	if doErr != nil {
 		netErr := wrapNetworkError(doErr, apiKey)
