@@ -436,11 +436,6 @@ func (n NavigationEntry) IsGroup() bool {
 	return n.Group != ""
 }
 
-// UIState holds user-specific UI preferences persisted in .rela/ui-state.json.
-type UIState struct {
-	CollapsedGroups map[string]bool `json:"collapsed_groups"`
-}
-
 // UserDefaults holds user-configurable default values for entity creation,
 // persisted in .rela/user-defaults.yaml.
 type UserDefaults struct {

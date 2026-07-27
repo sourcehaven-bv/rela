@@ -36,9 +36,6 @@ import (
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = dataentryconfig.ConfigFile
 
-// uiStateFile is the filename for persisted UI state within the .rela directory.
-const uiStateFile = "ui-state.json"
-
 // userDefaultsFile is the filename for user-specific default values within the .rela directory.
 const userDefaultsFile = "user-defaults.yaml"
 
@@ -143,9 +140,6 @@ type App struct {
 	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
 	// loaded outgoing relations, the serializer does no loading.
 	serializer entitySerializer
-	// userState persists per-user UI state (UI state, defaults, palette)
-	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
-	userState userStateStore
 	// logo owns the user-uploaded sidebar logo — persistence AND the served
 	// in-memory cache — self-synchronized. Extracted from the schema snapshot so the
 	// logo no longer rides the App-wide snapshot + writeMu.
@@ -656,7 +650,6 @@ func NewApp(
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,
-		userState:       userStateStore{kv: kv},
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		scriptEngine:    scriptEngine,

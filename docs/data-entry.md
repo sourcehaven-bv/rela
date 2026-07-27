@@ -1499,12 +1499,13 @@ navigation:
 | Field       | Type   | Description                                              |
 | ----------- | ------ | -------------------------------------------------------- |
 | `group`     | string | Group header text (displayed as uppercase label)         |
-| `collapsed` | bool   | Default collapsed state (optional, default: `false`)     |
+| `collapsed` | bool   | Default collapsed state (accepted and sent on the wire; the current SPA renders groups always expanded) |
 | `items`     | list   | List of direct navigation items within the group         |
 
-Groups appear as collapsible sections in the sidebar. Clicking the group header toggles
-expand/collapse. The collapsed state is persisted server-side in `.rela/ui-state.json`, so it
-survives page reloads. If the active page is inside a collapsed group, the group auto-expands.
+Groups appear as titled sections in the sidebar. The `collapsed` flag is kept in the config
+schema and the sidebar API response for compatibility, but the current SPA does not render a
+collapse toggle — groups are always expanded. (The old server-rendered UI persisted collapse
+state in `.rela/ui-state.json`; that mechanism has been removed.)
 
 Nested groups are not supported. If an item inside `items` has a `group` field, config validation
 will reject it with a clear error message.

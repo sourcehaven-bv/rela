@@ -448,49 +448,6 @@ func TestFirstNavTarget(t *testing.T) {
 	})
 }
 
-func TestUIStateLoadSave(t *testing.T) {
-	// Create an app with a workspace backed by memfs
-	fs := storage.NewMemFS()
-	ctx := &project.Context{
-		Root:     "/project",
-		CacheDir: "/project/.rela",
-	}
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-
-	app, _ := testAppInstance()
-	bindRepoWithFS(app, fs, ctx)
-
-	t.Run("load returns defaults when file missing", func(t *testing.T) {
-		state := app.userState.loadUIState(context.Background())
-		if len(state.CollapsedGroups) != 0 {
-			t.Errorf("expected empty collapsed groups, got %v", state.CollapsedGroups)
-		}
-	})
-
-	t.Run("save and load round-trip", func(t *testing.T) {
-		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
-		if err := app.userState.saveUIState(state); err != nil {
-			t.Fatalf("save error: %v", err)
-		}
-		loaded := app.userState.loadUIState(context.Background())
-		if !loaded.CollapsedGroups["Tickets"] {
-			t.Error("expected Tickets to be collapsed after load")
-		}
-	})
-
-	t.Run("nil kv is safe", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.kv = nil
-		state := app2.userState.loadUIState(context.Background())
-		if len(state.CollapsedGroups) != 0 {
-			t.Error("expected empty state")
-		}
-		if err := app2.userState.saveUIState(state); err != nil {
-			t.Errorf("expected no error, got %v", err)
-		}
-	})
-}
-
 func TestUserDefaultsLoadSave(t *testing.T) {
 	fs := storage.NewMemFS()
 	ctx := &project.Context{
