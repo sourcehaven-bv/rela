@@ -5,7 +5,7 @@ title: Historical field redaction fails closed — deny-by-default with a histor
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Follow-up to TKT-9INY0Y / review finding RR-TPATBK. Design superseded 2026-07-27

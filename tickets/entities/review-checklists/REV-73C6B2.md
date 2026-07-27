@@ -2,7 +2,7 @@
 id: REV-73C6B2
 type: review-checklist
 title: 'Review: historical redaction fails closed'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -46,8 +46,8 @@ status: in-progress
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass (monitored post-creation)
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass (monitored post-creation)
+- [x] PR URL documented below
 
 **PR:** (filled after creation)
