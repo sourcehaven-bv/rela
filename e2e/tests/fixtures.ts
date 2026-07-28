@@ -215,6 +215,16 @@ export interface ApiHelpers {
     count: number,
     options?: { timeout?: number },
   ): Promise<void>;
+  /** Poll the entity-history timeline until it has at least `count` versions.
+   *  The entity counterpart of waitForRelationVersions — same async-sweep
+   *  caveat, same pgstore-only restriction. `type` is the singular entity type
+   *  the _history path expects (e.g. "feature", not "features"). */
+  waitForEntityVersions(
+    type: string,
+    id: string,
+    count: number,
+    options?: { timeout?: number },
+  ): Promise<void>;
   /** Returns the current set of outgoing relation edges of the given type for an entity.
    *  Each edge exposes `id` (target entity) and `meta` (relation-property values). */
   listRelations(
@@ -554,6 +564,33 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   api: async ({ serverUrl, appPage }, use) => {
     const request: APIRequestContext = appPage.request;
 
+    /** Poll a `_history` / `_relation_history` listing until it reports at
+     *  least `count` versions. Shared by the entity and relation waiters —
+     *  both face the same async reconciliation sweep, so a seed-then-assert
+     *  flow has to wait for capture rather than read straight after writing.
+     *  `subject` only labels the timeout error. */
+    async function pollForVersions(
+      get: typeof call,
+      apiPath: string,
+      count: number,
+      subject: string,
+      options?: { timeout?: number },
+    ): Promise<void> {
+      const timeout = options?.timeout ?? 20000;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        const resp = await get("GET", apiPath).catch(() => null);
+        if (resp && resp.ok()) {
+          const body = (await resp.json()) as { versions?: unknown[] };
+          if ((body.versions?.length ?? 0) >= count) return;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      throw new Error(
+        `${subject} did not reach ${count} version(s) within ${timeout}ms`,
+      );
+    }
+
     async function call(method: string, apiPath: string, data?: unknown) {
       const options: Record<string, unknown> = {
         method,
@@ -608,21 +645,22 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         });
       },
       async waitForRelationVersions(fromType, fromId, relation, toId, count, options) {
-        const apiPath =
+        await pollForVersions(
+          call,
           `_relation_history/${encodeURIComponent(fromType)}/${encodeURIComponent(fromId)}` +
-          `/${encodeURIComponent(relation)}/${encodeURIComponent(toId)}`;
-        const timeout = options?.timeout ?? 20000;
-        const start = Date.now();
-        while (Date.now() - start < timeout) {
-          const resp = await call("GET", apiPath).catch(() => null);
-          if (resp && resp.ok()) {
-            const body = (await resp.json()) as { versions?: unknown[] };
-            if ((body.versions?.length ?? 0) >= count) return;
-          }
-          await new Promise((r) => setTimeout(r, 200));
-        }
-        throw new Error(
-          `relation ${fromId}--${relation}--${toId} did not reach ${count} version(s) within ${timeout}ms`,
+            `/${encodeURIComponent(relation)}/${encodeURIComponent(toId)}`,
+          count,
+          `relation ${fromId}--${relation}--${toId}`,
+          options,
+        );
+      },
+      async waitForEntityVersions(type, id, count, options) {
+        await pollForVersions(
+          call,
+          `_history/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+          count,
+          `entity ${id}`,
+          options,
         );
       },
       async listRelations(plural, id, relation) {

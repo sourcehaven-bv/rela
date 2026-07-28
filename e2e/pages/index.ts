@@ -13,3 +13,5 @@ export { RelationCardsPage } from './relation-cards.page';
 export { AppShellPage } from './app-shell.page';
 export { AppHostPage } from './app-host.page';
 export { DocumentPage } from './document.page';
+export { HistoryPage } from './history.page';
+export { RelationHistoryPage } from './relation-history.page';
