@@ -199,9 +199,8 @@ was made. Link two ordinals for a diff that is frozen. Omit the params for the
 default view, and a value that names no existing version (a stale link, a typo)
 falls back to that default rather than erroring — the address bar is rewritten
 to the pair actually being shown, so a corrected link is what you copy. A
-shared link is not a
-capability — the recipient still needs their own read permission on the entity,
-and sees the same 404 they would without the link.
+shared link is not a capability — the recipient still needs their own read
+permission on the entity, and sees the same 404 they would without the link.
 
 Access control: reading the history of a **live** entity requires the same read
 permission as reading the entity itself. Reading the history of a **deleted**
