@@ -5,7 +5,7 @@ title: Relation field-level ACL redaction (visible:) — currently absent for re
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Problem
