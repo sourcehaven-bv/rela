@@ -1183,10 +1183,13 @@ watch(
             </table>
           </div>
         </section>
-      </div>
 
-      <!-- External documents (renders only when configured for this type). -->
-      <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+        <!-- External documents (renders only when configured for this type).
+             Nested here (not a sibling of .sections) so it picks up the
+             container's flex `gap` for free instead of duplicating that
+             spacing via its own margin. -->
+        <DocumentsPanel :entity-type="entityType" :entity-id="entityId" />
+      </div>
 
       <CommandModal ref="commandModalRef" :entity-id="entityId" />
     </template>
