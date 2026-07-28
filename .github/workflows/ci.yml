@@ -496,14 +496,11 @@ jobs:
         with:
           go-version: '1.26'
 
+      # Compile-only gate. Release binaries come from GoReleaser in
+      # release.yml, so there is no artifact to upload here — a per-run copy
+      # was retained for 90 days and never downloaded.
       - name: Build
         run: go build -o bin/rela ./cmd/rela
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v7
-        with:
-          name: rela-linux
-          path: bin/rela
 
   rela-tickets:
     name: Rela Tickets
