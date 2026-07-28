@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -375,23 +377,90 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	d, ok := a.acl.(*acl.Declarative)
+	return gatedScriptReader(a.acl, a.store, redactor)
+}
+
+// lateGatedReader is a lua.EntityReader that resolves the gated reader from the
+// LIVE App on every call, so a reassignment of a.acl / a.fieldResolver (tests
+// rebind these after construction; a policy reload can too) is honored rather
+// than frozen at wiring time. The validator and analyzeService hold their reader
+// as a value, so a construction-time-captured reader would go stale — this
+// wrapper is the fix. It mirrors why luaWriteDeps is a method invoked per call.
+type lateGatedReader struct{ app *App }
+
+func (r lateGatedReader) reader() lua.EntityReader {
+	return r.app.scriptReader(appRedactor(r.app))
+}
+
+func (r lateGatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+	return r.reader().GetEntity(ctx, id)
+}
+
+func (r lateGatedReader) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return r.reader().ListEntities(ctx, q)
+}
+
+func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	return r.reader().ListRelations(ctx, q)
+}
+
+// lateGatedTracer is the tracer.Tracer counterpart of lateGatedReader: it
+// resolves the gated tracer (scriptTracer, which prunes hidden nodes and fails
+// closed) from the LIVE App per call, so a rule's rela.trace_from/trace_to/
+// find_path cannot walk into entities the requester cannot see. Wired into the
+// validator's ReadDeps.Tracer so the traversal seam is gated by construction,
+// not left safe only because a Lua message never reaches the wire (code review).
+type lateGatedTracer struct{ app *App }
+
+func (t lateGatedTracer) tracer() tracer.Tracer {
+	return t.app.scriptTracer(appRedactor(t.app))
+}
+
+func (t lateGatedTracer) TraceFrom(ctx context.Context, id string, maxDepth int) *tracer.TraceResult {
+	return t.tracer().TraceFrom(ctx, id, maxDepth)
+}
+
+func (t lateGatedTracer) TraceTo(ctx context.Context, id string, maxDepth int) *tracer.TraceResult {
+	return t.tracer().TraceTo(ctx, id, maxDepth)
+}
+
+func (t lateGatedTracer) FindPath(ctx context.Context, fromID, toID string) []tracer.PathStep {
+	return t.tracer().FindPath(ctx, fromID, toID)
+}
+
+func (t lateGatedTracer) FindOrphans(ctx context.Context) ([]string, error) {
+	return t.tracer().FindOrphans(ctx)
+}
+
+func (t lateGatedTracer) HasCycle(ctx context.Context, startID string) bool {
+	return t.tracer().HasCycle(ctx, startID)
+}
+
+// gatedScriptReader builds the ACL-bound read-out handle from an acl
+// implementation directly (not App.acl), so it can be wired at CONSTRUCTION
+// time — before the App receiver exists — for the validator's read deps. Under
+// NopACL it degrades to the raw store (byte-identical to pre-ACL); under a
+// Declarative policy it row-gates + field-redacts, resolving the principal from
+// ctx per call; a construction fault REFUSES (DenyReader) rather than reading
+// ungated. Same policy the per-request App.scriptReader wraps.
+func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor) lua.EntityReader {
+	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(a.store)
+		return visibility.Unrestricted(store)
 	}
 	gate, err := visibility.NewDeclarativeGate(d)
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, a.store)
+	reader, err := visibility.NewPolicyReader(gate, redactor, store)
 	if err != nil {
 		slog.Error("dataentry: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	sr, err := visibility.NewScriptReader(reader, a.store, gate)
+	sr, err := visibility.NewScriptReader(reader, store, gate)
 	if err != nil {
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
@@ -551,25 +620,9 @@ func NewApp(
 	kv := state.NewFSKV(kvRoot)
 	trc := tracer.New(st)
 	templater := templating.NewFSTemplater(fs, paths)
-	// VALIDATOR: unrestricted reads, deliberately (DEC-O59WM4).
-	//
-	// The entity being validated does NOT come through this bundle — the
-	// validator loads it itself and passes it in as the `entity` global, so
-	// redacting here would not protect it anyway. What this bundle serves
-	// is a rule body's incidental cross-entity lookups, and redacting THOSE
-	// manufactures false violations: a rule asserting "every ticket links
-	// to a project" would fire on tickets whose project the current
-	// principal cannot see. Same reasoning the validator already applies to
-	// locked/unreadable entities, which it skips rather than mis-validates.
-	readDeps := lua.ReadDeps{
-		VisibleReader:  visibility.Unrestricted(st),
-		WritePrepStore: st,
-		Tracer:         trc,
-		Searcher:       searcher,
-		Meta:           meta,
-		ProjectRoot:    paths.Root,
-	}
-	val := validator.New(st, meta, readDeps)
+	// The validator (val) is built AFTER app.affordances below — its reader is
+	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
+	// that closes over app.affordances.
 
 	// Load data-entry config from project root
 	cfgData, err := cfgLoader.Load(context.Background(), ConfigFile)
@@ -646,8 +699,6 @@ func NewApp(
 		visibleReader:   newVisibleReader(st),
 		reader:          entityReader{store: st},
 		tracer:          trc,
-		validator:       val,
-		analyze:         analyzeService{store: st, tracer: trc, validator: val},
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,
@@ -677,6 +728,35 @@ func NewApp(
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
+
+	// The validator and analyze reads are GATED per requesting principal
+	// (TKT-3FL2S6, superseding DEC-O59WM4): a rule cannot read data the requester
+	// cannot see, so a hidden value never reaches a validation message or an
+	// issue title — the leak closes by construction. gatedReader resolves the
+	// principal from ctx per call (one instance serves every request); under
+	// NopACL it is the raw store. The trigger entity the validator loads
+	// (validator.New's first arg) and its rule bodies' cross-entity lookups
+	// (ReadDeps.VisibleReader) both go through it.
+	gatedReader := lateGatedReader{app: app}
+	readDeps := lua.ReadDeps{
+		VisibleReader:  gatedReader,
+		WritePrepStore: st,
+		Tracer:         lateGatedTracer{app: app},
+		Searcher:       searcher,
+		Meta:           meta,
+		ProjectRoot:    paths.Root,
+	}
+	val := validator.New(gatedReader, meta, readDeps)
+	app.validator = val
+
+	// analyzeService entity reads route through the same gated reader; relation
+	// COUNTS stay raw (structural, cannot leak).
+	app.analyze = analyzeService{
+		reads:     gatedReader,
+		relCounts: st,
+		tracer:    lateGatedTracer{app: app},
+		validator: val,
+	}
 
 	// viewReader row-gates + field-redacts entities on their way out of the
 	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because

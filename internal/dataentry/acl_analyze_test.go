@@ -166,6 +166,63 @@ func TestACLAnalyze_RedactsHiddenTemplatedTitle(t *testing.T) {
 	}
 }
 
+// TestACLAnalyze_GatedReadClosesMessageLeak pins the leak the wire-boundary
+// sentinel caught and the whole gated-analyze arc (TKT-3FL2S6) exists to close:
+// the Properties check reports "Invalid value \"X\" (allowed: …)" where X is the
+// entity's raw property value. If that property is hidden from the requester, X
+// is a value they cannot see — leaked through the issue MESSAGE (not the title).
+// Gated reads close it by construction: the entity is redacted before
+// ValidateEntity sees it, so there is no bad value to quote.
+func TestACLAnalyze_GatedReadClosesMessageLeak(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Types: map[string]metamodel.CustomType{
+			"status_type": {Values: []string{"open", "closed"}},
+		},
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {
+				Label:    "Ticket",
+				IDPrefix: "TKT-",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":  {Type: "string", Required: true},
+					"status": {Type: "status_type"},
+				},
+				PropertyOrder: []string{"title", "status"},
+			},
+		},
+	}
+	app := newAppFromParts(&Config{}, meta, newFixture())
+	app.broker = newEventBroker()
+	// Hide `status` — the property whose invalid value the Properties check would
+	// otherwise quote in its message.
+	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+		Visible: map[string]bool{"status": false},
+	}}
+	// status holds an INVALID enum value → Properties check fires "Invalid value
+	// \"SECRET-STATUS\" (allowed: [open closed])".
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-001", Type: "ticket",
+		Properties: map[string]any{"title": "visible title", "status": "SECRET-STATUS"},
+	})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
+		Assignments: map[string]string{"alice": "viewer"},
+	}, app.store)
+	app.acl = d
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
+	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+	rec := httptest.NewRecorder()
+	app.handleV1Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "SECRET-STATUS") {
+		t.Errorf("LEAK: hidden property value leaked through an analyze issue MESSAGE: %s", body)
+	}
+}
+
 func countWarnings(issues []APIIssue) int {
 	n := 0
 	for _, i := range issues {

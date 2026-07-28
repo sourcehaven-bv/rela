@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -20,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -134,8 +136,20 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
-	app.validator = svc.Validator()
-	app.analyze = analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
+	// Gated reads mirror production (NewApp): the validator and analyze read
+	// through lateGatedReader so tests exercise the real per-principal gating
+	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
+	// app.affordances being rebound below.
+	gatedReader := lateGatedReader{app: app}
+	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
+		VisibleReader:  gatedReader,
+		WritePrepStore: svc.Store(),
+		Tracer:         lateGatedTracer{app: app},
+		Searcher:       svc.Searcher(),
+		Meta:           svc.Meta(),
+		ProjectRoot:    paths.Root,
+	})
+	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
