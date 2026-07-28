@@ -5,7 +5,7 @@ title: 'Native in-process image processing: decode-verify, EXIF-orientation, re-
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Summary

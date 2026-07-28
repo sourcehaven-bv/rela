@@ -2,7 +2,7 @@
 id: REV-H9QLRQ
 type: review-checklist
 title: 'Review: Native in-process image processing: decode-verify, EXIF-orientation, re-encode (Phase 1)'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -53,8 +53,8 @@ AC13 animated-GIF rejected cheaply (`TestGIFBomb_RejectedWithoutDecode`, ~350µs
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass — monitored below
+- [x] PR URL documented below
 
-**PR:** <!-- filled after creation -->
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1252
