@@ -27,6 +27,13 @@ type migration struct {
 // migration lock. pg_advisory_xact_lock serializes concurrent migrators (rela /
 // rela-server / rela mcp may all call Migrate against the same database); the
 // transaction-scoped lock is released automatically on commit or rollback.
+//
+// Like the version-sweep lock, it is SCHEMA-SCOPED via the two-key form
+// pg_advisory_xact_lock(key, hashtext(current_schema())) — see the
+// tryAdvisoryLock doc in sweep.go for why. Advisory locks are database-GLOBAL,
+// so a bare key made two rela schemas on one database serialize their startup
+// migrations behind each other. Unqualified DDL lands in current_schema(), so
+// that is exactly the schema this transaction's migrations target.
 const migrateAdvisoryLockKey = 0x52_45_4c_41 // "RELA"
 
 // Migrate applies any unapplied migrations to the database in version order,
@@ -52,8 +59,12 @@ func Migrate(ctx context.Context, db DBTX) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	// Serialize concurrent migrators. The lock is held until this tx ends.
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, migrateAdvisoryLockKey); err != nil {
+	// Serialize concurrent migrators OF THIS SCHEMA. The lock is held until this
+	// tx ends. hashtext(current_schema()) scopes it so another schema's startup
+	// migration on the same database runs independently.
+	if _, err = tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock($1::int, hashtext(current_schema()))`,
+		migrateAdvisoryLockKey); err != nil {
 		return fmt.Errorf("pgstore: acquire migration lock: %w", err)
 	}
 
