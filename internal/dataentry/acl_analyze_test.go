@@ -161,8 +161,29 @@ func TestACLAnalyze_RedactsHiddenTemplatedTitle(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("_analyze: got %d, want 200; body=%s", rec.Code, rec.Body)
 	}
-	if body := rec.Body.String(); strings.Contains(body, "SECRET-SURNAME") {
-		t.Errorf("LEAK: hidden template placeholder leaked in analyze title: %s", body)
+	var result APIAnalysisResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode _analyze response: %v", err)
+	}
+	var sawPersoon bool
+	for _, iss := range result.Issues {
+		if iss.EntityID != "PERS-001" {
+			continue
+		}
+		sawPersoon = true
+		// The hidden surname must not leak — AND neither may the PARTIAL title
+		// "Jeroen" (readable half). When any template placeholder is hidden the
+		// whole title must fall back to the id (tschmits review, TKT-3FL2S6):
+		// a partial render leaks the readable half and confirms a hidden half.
+		if iss.Title != "PERS-001" {
+			t.Errorf("PARTIAL-TITLE LEAK: templated title with a hidden placeholder must fall back to id, got %q", iss.Title)
+		}
+	}
+	if !sawPersoon {
+		t.Fatalf("expected an issue for PERS-001; got %+v", result.Issues)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "SECRET-SURNAME") || strings.Contains(body, "Jeroen") {
+		t.Errorf("LEAK: hidden/partial template value in analyze response: %s", body)
 	}
 }
 

@@ -176,7 +176,7 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
-			Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+			Title:      safeDisplayTitle(meta, e),
 			Message:    "No relations",
 			Severity:   "warning",
 		})
@@ -197,7 +197,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		if err != nil {
 			break
 		}
-		title := normalizeTitle(meta.DisplayTitle(e.ID, e.Type, e.Properties))
+		title := normalizeTitle(safeDisplayTitle(meta, e))
 		if title != "" {
 			titleGroups[title] = append(titleGroups[title], e)
 		}
@@ -223,7 +223,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      safeDisplayTitle(meta, e),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
 				Severity:   "warning",
 			})
@@ -361,7 +361,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -379,7 +379,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -401,7 +401,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -423,7 +423,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -458,7 +458,7 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      safeDisplayTitle(meta, e),
 				Message:    err.Error(),
 				Severity:   "error",
 			})
@@ -498,7 +498,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      safeDisplayTitle(meta, e),
 				Message:    rule.Description,
 				Severity:   severity,
 				Detail:     v.Detail,
@@ -552,6 +552,26 @@ func sortStoreEntitiesByID(entities []*entity.Entity) {
 	sort.Slice(entities, func(i, j int) bool {
 		return natsort.Less(entities[i].ID, entities[j].ID)
 	})
+}
+
+// safeDisplayTitle renders an entity's display title, falling back to the id if
+// ANY property backing the title is absent from the (already gated-redacted)
+// entity — including one placeholder of a templated display_property. Plain
+// DisplayTitle would render a PARTIAL template ("Jeroen " when achternaam is
+// hidden), which leaks the readable half and confirms a hidden half exists (the
+// BUG-R9EHKV leak class). Gating strips the value; this restores the whole-title
+// fallback the deleted hiddenDisplayTitleEntityIDs used to provide (RR-7GN3LV
+// follow-up / tschmits review on TKT-3FL2S6). e.Properties is the redacted map,
+// so a hidden display property is simply absent here.
+func safeDisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
+	if def, ok := meta.GetEntityDef(e.Type); ok {
+		for _, prop := range def.DisplayProperties() {
+			if _, present := e.Properties[prop]; !present {
+				return e.ID // a display-title source was redacted → don't leak a partial title
+			}
+		}
+	}
+	return meta.DisplayTitle(e.ID, e.Type, e.Properties)
 }
 
 // normalizeTitle normalizes a title for duplicate comparison.
