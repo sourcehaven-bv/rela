@@ -1007,6 +1007,27 @@ func (svc affordanceService) visibleRelationMetaIncoming(
 	return svc.visibleRelationMeta(ctx, src, relType, meta)
 }
 
+// redactRelationMetaStrip reassigns one strip's `rel["meta"]` to the redacted copy
+// (TKT-B1F5Q1) — the shared relation-meta redaction chokepoint both live handlers
+// route through. The strip is the single source of truth for whether the edge is
+// incoming: an outgoing edge resolves the grant against pathEntity; an incoming
+// edge resolves against its peer (s.peerID), failing closed if the peer is gone
+// ([affordanceService.visibleRelationMetaIncoming]). Do NOT reintroduce an
+// `incoming` parameter alongside s.incoming — a caller that disagreed with the
+// strip could route an incoming edge down the outgoing branch and silently
+// under-redact against the wrong-type pathEntity instead of failing closed
+// (RR-B1F5-N3).
+func (svc affordanceService) redactRelationMetaStrip(
+	ctx context.Context, s relationMetaStrip, pathEntity *entityPkg.Entity, relType string,
+) {
+	meta, _ := s.rel["meta"].(map[string]any)
+	if s.incoming {
+		s.rel["meta"] = svc.visibleRelationMetaIncoming(ctx, s.peerID, relType, meta)
+		return
+	}
+	s.rel["meta"] = svc.visibleRelationMeta(ctx, pathEntity, relType, meta)
+}
+
 // computeTransitions returns the per-entity `_transitions` wire map: for each
 // state-machine-typed property, the resolved outgoing transitions for the ctx
 // principal on e. Returns nil (→ `_transitions` omitted from the wire) when the
