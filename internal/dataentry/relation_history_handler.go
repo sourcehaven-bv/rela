@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -30,10 +31,12 @@ import (
 // requires the global acl.PermHistoryRead; a non-holder gets the same 404 as a
 // nonexistent relation (no existence oracle).
 //
-// Field redaction (RR-BZNL0S): relations have NO field-level redaction anywhere
-// in the live system today (unlike entities). Relation history therefore exposes
-// exactly what a live relation GET exposes — no more. This is pinned by a test;
-// a relation field-redaction path is a separate follow-up.
+// Field redaction (TKT-B1F5Q1, was RR-BZNL0S): relation meta now supports
+// field-level `visible:` redaction, both on a live relation GET and here in
+// history. Relation history therefore exposes exactly what a live relation GET
+// exposes — no more — and fails CLOSED for a possibly-deleted/drifted relation
+// (deny-by-default, same rule + acl.PermHistoryReadRedacted reveal as the entity
+// path). See serveRelationHistoryVersion.
 func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_relation_history/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -105,7 +108,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	q := store.RelationHistoryQuery{From: from, Type: relType, To: to, RecordID: recordID}
 
 	if len(parts) >= 5 && parts[4] != "" {
-		serveRelationHistoryVersion(w, r, reader, q, parts[4])
+		serveRelationHistoryVersion(a, w, r, reader, fromType, q, parts[4])
 		return
 	}
 	serveRelationHistoryTimeline(w, r, reader, q)
@@ -246,9 +249,19 @@ func serveRelationHistoryTimeline(
 
 // serveRelationHistoryVersion writes one relation version's full snapshot for the
 // lifetime the query selects.
+//
+// Field redaction fails closed (TKT-B1F5Q1, inheriting TKT-73C6B2): the frozen
+// relation meta is redacted against TODAY's relation `visible:` policy through a
+// historical-subject ctx, so any grant whose subject-world inputs cannot be
+// affirmed for a possibly-deleted/drifted relation HIDES the field rather than
+// leaking it. fromType (from the URL) keys the source's relation grant block; the
+// snapshot itself carries no live entity, so a minimal source entity is
+// synthesized — under the historical marker the resolver neuters subject-world
+// lookups anyway. A holder of acl.PermHistoryReadRedacted bypasses the strip
+// entirely (OVERRIDE reveal), exactly as serveHistoryVersion does for entities.
 func serveRelationHistoryVersion(
-	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	q store.RelationHistoryQuery, versionStr string,
+	a *App, w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
+	fromType string, q store.RelationHistoryQuery, versionStr string,
 ) {
 	version, convErr := strconv.Atoi(versionStr)
 	if convErr != nil || version < 1 {
@@ -256,7 +269,8 @@ func serveRelationHistoryVersion(
 			"Version must be a positive integer", "")
 		return
 	}
-	snap, err := reader.GetRelationVersion(r.Context(), q, version)
+	ctx := r.Context()
+	snap, err := reader.GetRelationVersion(ctx, q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -265,16 +279,21 @@ func serveRelationHistoryVersion(
 		writeGateError(w, r, err)
 		return
 	}
-	// Relation meta is emitted RAW: relations have no field-level `visible:`
-	// redaction today (TKT-B1F5Q1). When B1F5Q1 adds a relation strip step, it
-	// MUST wrap this snapshot's ctx in affordances.WithHistoricalSubject (unless
-	// the reader holds acl.PermHistoryReadRedacted) so relation history inherits
-	// the same deny-by-default fail-closed rule the entity path uses
-	// (serveHistoryVersion, TKT-73C6B2). There is nothing to gate until then —
-	// no `visible:` grant is evaluated on this path.
+
+	meta := cloneProps(snap.Properties) // don't alias the snapshot map
+	if !readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryReadRedacted) {
+		// Fail closed: resolve relation `visible:` under the historical marker. The
+		// grant block is keyed by the source entity type; synthesize a minimal
+		// source (the marker neuters subject-world lookups, so no live entity is
+		// needed).
+		src := entityPkg.New(snap.From, fromType)
+		meta = a.affordances.visibleRelationMeta(
+			affordances.WithHistoricalSubject(ctx), src, snap.Type, meta)
+	}
+
 	row := map[string]any{
 		"from": snap.From, "type": snap.Type, "to": snap.To,
-		"content": snap.Content, "meta": snap.Properties,
+		"content": snap.Content, "meta": meta,
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
 		"from":       q.From,

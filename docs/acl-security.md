@@ -610,6 +610,38 @@ the hidden property redacted from its body. The property-level conformance
 suite (`storetest.RunVisibleFieldSearchTests`) pins this across all
 backends.
 
+**Relation meta is redacted the same way.** A relation carries its own
+property map (`meta`), and a role's `relations:` grant can add a `visible:`
+block beside its write-side `fields:` block to redact those per-field:
+
+```yaml
+roles:
+  owner:
+    relations:
+      ticket:
+        - relation: employed-by
+          visible:
+            - field: salary          # only `salary` visible; every other
+                                      # meta key on the edge is closed-world hidden
+            - field: approval_note
+              when: "has_role('hr')"  # conditional, same predicate vocabulary
+```
+
+The block is keyed on the relation's **source** entity type (the `from`
+side owns the grant), and redaction runs on every browser-reachable relation
+read shape — the `/relations` map, the single-relation-type GET, and both the
+outgoing and incoming direction (an incoming edge resolves its grant against
+the true source, not the entity being viewed). It also runs on relation
+history (see below). The machine-to-machine sync channel (`/api/sync/`) is the
+one deliberate exception — it is a full-fidelity replication path outside the
+`visible:` contract; see "What still leaks (deferred)". The deny universe is the edge's actual
+meta keys, so a free-form key never declared in the metamodel is redacted
+too — a caller cannot smuggle a secret past the closed-world by using an
+undeclared property name. Relations have no display-title channel, so there
+is no `_title` fallback to worry about; the redaction is a straight
+value-omission from `meta`. A relation type with no `visible:` block emits
+its meta unchanged (permissive default).
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on
@@ -626,6 +658,22 @@ backends.
   neither the entity-level read gate nor `visible:` redaction; they
   return full entity bodies. The MCP server is local-only (stdio), so
   this is an accepted gap at this stage.
+- **Machine-to-machine sync (`/api/sync/`)** — the fs↔pg replication
+  channel (FEAT-NJ9FEN) returns each record's **full canonical body**
+  (all entity properties and all relation meta), gated only by the
+  **row-level** read verdict — it does not apply `visible:` field/meta
+  redaction. This is by design and cannot be closed by simply redacting
+  it: the sync GET is a read that feeds a write (the client hashes the
+  body and pushes it back under `If-Match`), so a redacted read would
+  erase the hidden fields on the authoritative store — the "never redact
+  a read that feeds a write" data-destruction bug. A deployment that puts
+  `visible:`-redacted data behind sync must therefore treat sync-channel
+  access as equivalent to unredacted read: gate `/api/sync/` behind a
+  trusted-replica boundary (network/mTLS/a dedicated sync principal), not
+  ordinary reader access. This applies to both entity fields (pre-existing)
+  and relation meta (TKT-B1F5Q1). A per-field sync-redaction that stays
+  round-trip-safe (e.g. a merge that re-reads hidden fields on push) is the
+  documented follow-up, not built here.
 
 For threat-modelling purposes today: per-entity GET, write, include,
 list, sidebar, pagination, global-search, and the SSE event stream are
@@ -717,6 +765,16 @@ entirely (the snapshot already contains every field; the reveal just skips the
 strip). Grant it only to trusted audit/compliance roles — it exposes fields the
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
+
+**Relation history inherits the same rule.** Relation `visible:` grants fail
+closed in relation history exactly as entity grants do: a snapshot of a
+relation whose meta is gated by a subject-world-conditional grant hides that
+meta unless the reader holds `history:read-redacted`, and a relation type any
+role gates with `visible:` gets the same type-level closed-world so a
+globals-only reduced role set never defaults to all-visible. `history:read-redacted`
+reveals frozen relation meta the same all-or-nothing way it reveals entity
+fields. (Relation restore reads the raw frozen meta, never the redacted view —
+a redacted read-modify-write would erase the caller's hidden meta on save.)
 
 ## Command execution gating (`command:*`)
 

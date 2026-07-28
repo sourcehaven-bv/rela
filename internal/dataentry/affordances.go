@@ -184,6 +184,24 @@ type TransitionResolver interface {
 	EntryValues(entityType string) map[string]string
 }
 
+// RelationVisibilityResolver is the OPTIONAL sibling of [FieldVerdictResolver]
+// that answers per-meta-field READ visibility for one relation edge
+// (TKT-B1F5Q1). Kept separate and type-asserted (not embedded) for the same
+// reason as [TransitionResolver]: only the policy-backed resolver can express a
+// relation `visible:` grant, so the Nop and Demo resolvers don't implement it
+// and relation meta is emitted un-redacted under them (matching how relations
+// behaved before B1F5Q1). This mirrors the store's optional capabilities.
+//
+// from is the source entity that owns the relation grant block; relType is the
+// edge's relation type; metaKeys are the property names actually present on the
+// edge about to be serialized (the closed-world deny universe). The result is
+// sparse: an absent key means visible, a `false` value means hide that meta key.
+type RelationVisibilityResolver interface {
+	RelationFieldVerdicts(
+		ctx context.Context, from *entityPkg.Entity, relType string, metaKeys []string,
+	) map[string]bool
+}
+
 // FieldVerdicts carries per-entity field-level affordance decisions.
 // All maps use sparse semantics: absence of a key means "default" (the
 // permissive default — writable, visible, all options allowed). Only
@@ -913,6 +931,80 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 		// missing-property branch. The ID is non-secret by design.
 		result.Title = e.ID
 	}
+}
+
+// visibleRelationMeta returns a copy of a relation edge's property map with
+// hidden meta keys removed, honoring the relation `visible:` grants resolved for
+// the edge's SOURCE entity (TKT-B1F5Q1). meta is the raw edge property map; from
+// is the relation's source entity (use [affordanceService.relationSourceEntity]
+// to resolve it for incoming edges, where the source is the peer, not the path
+// entity); relType is the canonical relation type.
+//
+// It NEVER mutates the argument: when at least one key is redacted it returns a
+// fresh copy with those keys removed; when nothing is redacted it returns the
+// input map unchanged (the store-owned edge.Properties, which some backends share
+// across reads). Callers must therefore treat the result as read-only — the two
+// live call sites only reassign it into the wire `rel["meta"]` and serialize,
+// never mutate it. Returns the input unchanged when the active resolver does not
+// implement [RelationVisibilityResolver] (Nop / Demo): relations then serialize
+// un-redacted, matching pre-B1F5Q1 behavior. The deny universe is the meta map's
+// actual keys, so redaction covers exactly what would reach the wire (including
+// free-form keys not declared in the metamodel). Under a historical-subject ctx
+// (relation history) the underlying resolver fails closed; a holder of
+// history:read-redacted must skip this call entirely at the handler, not rely on
+// it.
+func (svc affordanceService) visibleRelationMeta(
+	ctx context.Context, from *entityPkg.Entity, relType string, meta map[string]any,
+) map[string]any {
+	rv, ok := svc.resolver().(RelationVisibilityResolver)
+	if !ok || len(meta) == 0 || from == nil {
+		return meta
+	}
+	keys := make([]string, 0, len(meta))
+	for k := range meta {
+		keys = append(keys, k)
+	}
+	hidden := rv.RelationFieldVerdicts(ctx, from, relType, keys)
+	if len(hidden) == 0 {
+		return meta
+	}
+	out := make(map[string]any, len(meta))
+	for k, v := range meta {
+		if h, ok := hidden[k]; ok && !h {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// visibleRelationMetaIncoming redacts an INCOMING edge's meta, resolving the
+// relation grant against the edge's true source (the peer, peerID) rather than
+// the entity being viewed (the TO side). It FAILS CLOSED if the peer cannot be
+// fetched (RR-B1F5-N1): a peer deleted between the neighbor-visibility pass and
+// this read would otherwise leave the source unresolvable, and falling back to
+// the wrong-type path entity — whose type likely has no `visible:` block for this
+// relation — would silently emit the meta un-redacted. When the active resolver
+// can redact at all (implements [RelationVisibilityResolver]) and the source is
+// unresolvable, drop the whole meta map rather than leak it. (The analogous
+// fallback in relationSourceEntity is correct for the WRITE path, where a denied
+// write is the safe failure; the read/redaction consumer needs the opposite bias,
+// so it is handled here rather than by changing the shared helper.)
+func (svc affordanceService) visibleRelationMetaIncoming(
+	ctx context.Context, peerID, relType string, meta map[string]any,
+) map[string]any {
+	if len(meta) == 0 {
+		return meta
+	}
+	if _, canRedact := svc.resolver().(RelationVisibilityResolver); !canRedact {
+		return meta // Nop / Demo: no redaction at all, matching pre-B1F5Q1.
+	}
+	src, ok := svc.getEntity(ctx, peerID)
+	if !ok {
+		// Source gone mid-request → cannot resolve its grants → fail closed.
+		return map[string]any{}
+	}
+	return svc.visibleRelationMeta(ctx, src, relType, meta)
 }
 
 // computeTransitions returns the per-entity `_transitions` wire map: for each

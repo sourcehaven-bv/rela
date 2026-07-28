@@ -77,6 +77,14 @@ type PolicyResolver struct {
 	// were reduced to globals-only (see resolveViaDeclarative) fails closed
 	// rather than defaulting to all-visible (TKT-73C6B2).
 	typesWithVisible map[string]bool
+
+	// relationTypesWithVisible records relation types for which ANY role
+	// declares a relation `visible:` block. The relation-history analog of
+	// typesWithVisible: under the historical marker a relation of such a type
+	// gets a type-level closed-world in [PolicyResolver.RelationFieldVerdicts]
+	// so the globals-only reduced role set fails closed rather than defaulting
+	// to all-visible (TKT-B1F5Q1, inheriting the TKT-73C6B2 rule).
+	relationTypesWithVisible map[string]bool
 }
 
 type grantKey struct {
@@ -137,13 +145,14 @@ func New(
 	}
 	policy := declarative.Policy()
 	r := &PolicyResolver{
-		policy:           policy,
-		meta:             meta,
-		lookup:           lookup,
-		declarative:      declarative,
-		envs:             map[string]*predicate.Env{},
-		grants:           map[grantKey]*compiledGrants{},
-		typesWithVisible: map[string]bool{},
+		policy:                   policy,
+		meta:                     meta,
+		lookup:                   lookup,
+		declarative:              declarative,
+		envs:                     map[string]*predicate.Env{},
+		grants:                   map[grantKey]*compiledGrants{},
+		typesWithVisible:         map[string]bool{},
+		relationTypesWithVisible: map[string]bool{},
 	}
 	if policy == nil {
 		return r, nil
@@ -322,6 +331,24 @@ func (r *PolicyResolver) compileRelationGrant(
 		}
 		cr.fields = append(cr.fields, compiledFieldGrant{field: fg.Field, program: fprog})
 	}
+	for j, fg := range rg.Visible {
+		fprog, ferr := r.compile(roleName, entityType,
+			fmt.Sprintf("relations[%d].visible", i), j, fg.When)
+		if ferr != nil {
+			errs = append(errs, ferr)
+			metaFailed = true
+			continue
+		}
+		cr.visible = append(cr.visible, compiledFieldGrant{field: fg.Field, program: fprog})
+	}
+	if len(rg.Visible) > 0 {
+		// Record the relation type for the historical closed-world in
+		// RelationFieldVerdicts (TKT-B1F5Q1, mirrors typesWithVisible). Recorded
+		// only when the grant carries a visible: block AND compiled cleanly is
+		// wrong — a compile error hard-fails New below, so recording eagerly here
+		// is harmless; keep it unconditional on the block's presence.
+		r.relationTypesWithVisible[rg.Relation] = true
+	}
 	// Append the grant only when it compiled cleanly end-to-end. A
 	// grant that lost a meta field to a compile error must not be
 	// half-installed (S4): silently dropping the field would flip a
@@ -474,6 +501,77 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 	}
 	out.Types = acc.verdicts()
 	return out
+}
+
+// RelationFieldVerdicts computes the sparse per-meta-field READ-visibility
+// verdict for one relation edge: relType links FROM the entity `from`, and
+// metaKeys are the property names actually present on the edge about to be
+// serialized. The result is a sparse map keyed by meta field name; an absent
+// key means visible (the permissive default), a `false` value means hidden.
+// This is the relation-side analog of [PolicyResolver.FieldVerdicts]'s Visible
+// dimension, resolved against the SAME bindings so has_relation / count_relations
+// / has_role behave identically (TKT-B1F5Q1).
+//
+// Role grants are keyed by the FROM entity type (the source owns the relation
+// grant block, matching [PolicyResolver.RelationVerdicts]). A relation
+// `visible:` field is visible only when BOTH the whole relation grant's `when:`
+// AND the field's own `when:` pass — a field can be more restrictive than its
+// grant, never less (same rule as write-side metaFieldResults).
+//
+// The deny universe is metaKeys (the edge's actual property names) plus any
+// grant-mentioned candidate — so redaction covers exactly what would otherwise
+// reach the wire, including free-form meta keys not declared in the metamodel.
+//
+// Fails closed for a HISTORICAL subject exactly as the entity path does: under
+// [WithHistoricalSubject] the role set is reduced to globals-only
+// (resolveViaDeclarative), and a relation type that ANY role gates with
+// `visible:` gets a type-level closed-world here so the reduced set hides every
+// non-affirmatively-granted field rather than defaulting to all-visible. A
+// holder of acl.PermHistoryReadRedacted bypasses this entirely at the handler
+// (the strip step is skipped), matching serveHistoryVersion's reveal branch.
+func (r *PolicyResolver) RelationFieldVerdicts(
+	ctx context.Context, from *entity.Entity, relType string, metaKeys []string,
+) map[string]bool {
+	if from == nil || r.policy == nil {
+		return nil
+	}
+
+	visible := newDimension()
+
+	// Historical type-level closed-world (TKT-B1F5Q1, mirrors FieldVerdicts):
+	// serializing a relation-history snapshot of a type any role gates with
+	// `visible:` forces the dimension closed-world up front, so a reader whose
+	// live roles were reduced to globals-only fails closed.
+	if isHistoricalSubject(ctx) && r.relationTypesWithVisible[relType] {
+		visible.optIn("hidden")
+	}
+
+	bc, roles := r.bindingFor(ctx, from)
+	if bc != nil {
+		for _, role := range roles {
+			g := r.grants[grantKey{role, from.Type}]
+			if g == nil || !g.declaredRelations {
+				continue
+			}
+			for _, rg := range g.relations {
+				if rg.relation != relType || len(rg.visible) == 0 {
+					continue
+				}
+				visible.optIn("hidden")
+				grantPassed := r.passes(ctx, bc, rg.program, role)
+				for _, fg := range rg.visible {
+					if grantPassed && r.passes(ctx, bc, fg.program, role) {
+						visible.allow(fg.field)
+					} else {
+						visible.observeDeny(fg.field, role)
+					}
+				}
+			}
+		}
+	}
+
+	denied, _ := visible.deny(metaKeys, nil)
+	return denied
 }
 
 // TransitionVerdicts resolves, per state-machine-typed property on e, the
