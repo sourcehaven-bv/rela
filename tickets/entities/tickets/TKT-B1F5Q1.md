@@ -4,7 +4,8 @@ type: ticket
 title: Relation field-level ACL redaction (visible:) — currently absent for relations, live and history
 kind: enhancement
 priority: medium
-status: backlog
+effort: m
+status: review
 ---
 
 ## Problem
@@ -49,12 +50,12 @@ TKT-92JL8P (RR-BZNL0S) at the same time.
 
 TKT-73C6B2 makes historical field redaction **fail closed** (deny-by-default;
 any grant whose subject-world inputs cannot be affirmed for a historical/deleted
-entity is hidden, revealed only by the `history:read-redacted` audit permission).
-Its earlier "freeze the visibility verdict at capture" framing was superseded
-2026-07-27 (too magical). Relation `visible:` grants inherit the SAME rule for
-free: relation history fails closed, same reveal permission. Build 73C6B2's
-deny-by-default machinery generically enough that relations plug in — do NOT
-build a relation-specific redaction path.
+entity is hidden, revealed only by the `history:read-redacted` audit
+permission). Its earlier "freeze the visibility verdict at capture" framing was
+superseded 2026-07-27 (too magical). Relation `visible:` grants inherit the SAME
+rule for free: relation history fails closed, same reveal permission. Build
+73C6B2's deny-by-default machinery generically enough that relations plug in —
+do NOT build a relation-specific redaction path.
 
 ## Origin
 
@@ -69,15 +70,15 @@ ACL-bound script reads) strengthened the ENTITY side but added nothing for
 relations:
 
 - The policy schema still cannot express a relation `visible:` grant:
-  `internal/acl/policy.go:271-277` `RelationGrant` has only
-  `Relation`/`Create`/`Remove`/`Fields`/`When` — no `Visible`.
+`internal/acl/policy.go:271-277` `RelationGrant` has only
+`Relation`/`Create`/`Remove`/`Fields`/`When` — no `Visible`.
 - The live relation GET still emits properties raw:
-  `internal/dataentry/api_v1.go:893,918,1043` all do `rel["meta"] =
-  edge.Properties` with no stripping. `stripHiddenProperties` exists only for
-  entities (`affordances.go:895`, called from `entityserializer.go:117,142`).
+`internal/dataentry/api_v1.go:893,918,1043` all do `rel["meta"] =
+edge.Properties` with no stripping. `stripHiddenProperties` exists only for
+entities (`affordances.go:895`, called from `entityserializer.go:117,142`).
 - `RelationVerdict.Fields` gates WRITES only (`affordances.go:226-229`;
-  consumers are the write-path validators `validateRelationMetaWrite` +
-  `_actions` emission) — never a read-side redaction.
+consumers are the write-path validators `validateRelationMetaWrite` + `_actions`
+emission) — never a read-side redaction.
 
 CORRECTION to the Problem section: the claim "`entity.Relation.Inaccessible` …
 never populated (zero writers)" is now imprecise. `fsstore/markdown.go:349`

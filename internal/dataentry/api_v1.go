@@ -954,7 +954,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 
 	// Redact hidden relation meta AFTER sorting, through the shared chokepoint.
 	for _, ps := range pendingStrips {
-		a.redactRelationMetaStrip(r.Context(), ps.relationMetaStrip, entity, ps.relType, ps.incoming)
+		a.redactRelationMetaStrip(r.Context(), ps.relationMetaStrip, entity, ps.relType)
 	}
 
 	writeV1JSON(w, http.StatusOK, relations)
@@ -1007,13 +1007,18 @@ func buildRelationTypeRows(
 }
 
 // redactRelationMetaStrip reassigns one strip's `rel["meta"]` to the redacted copy
-// (TKT-B1F5Q1). Outgoing edges resolve the grant against pathEntity; incoming edges
-// resolve against the peer, failing closed if it is gone (visibleRelationMetaIncoming).
+// (TKT-B1F5Q1). The strip itself is the single source of truth for whether the
+// edge is incoming: an outgoing edge resolves the grant against pathEntity; an
+// incoming edge resolves against its peer (s.peerID), failing closed if the peer
+// is gone (visibleRelationMetaIncoming). Do NOT reintroduce an `incoming`
+// parameter alongside s.incoming — a caller that disagreed with the strip could
+// route an incoming edge down the outgoing branch and silently under-redact
+// against the wrong-type pathEntity instead of failing closed (RR-B1F5-N3).
 func (a *App) redactRelationMetaStrip(
-	ctx context.Context, s relationMetaStrip, pathEntity *entityPkg.Entity, relType string, incoming bool,
+	ctx context.Context, s relationMetaStrip, pathEntity *entityPkg.Entity, relType string,
 ) {
 	meta, _ := s.rel["meta"].(map[string]any)
-	if incoming {
+	if s.incoming {
 		s.rel["meta"] = a.affordances.visibleRelationMetaIncoming(ctx, s.peerID, relType, meta)
 		return
 	}
@@ -1124,7 +1129,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 
 	// Redact hidden relation meta after sorting (see relationMetaStrip).
 	for _, ps := range pendingStrips {
-		a.redactRelationMetaStrip(r.Context(), ps, entity, relType, incoming)
+		a.redactRelationMetaStrip(r.Context(), ps, entity, relType)
 	}
 
 	writeV1JSON(w, http.StatusOK, relations)
