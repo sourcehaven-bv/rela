@@ -705,6 +705,7 @@ lists:
 | `edit_form`       | string | Form name for the row edit action                           |
 | `page_size`       | int    | Rows per page (default: 25)                                 |
 | `actions`         | list   | Action IDs available as keyboard shortcuts on selected rows |
+| `export_render`   | string | Lua script under `scripts/` that renders this list for export instead of the built-in column table (see View Export & Transforms) |
 
 #### Header and footer info regions
 

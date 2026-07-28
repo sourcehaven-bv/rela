@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -41,7 +42,11 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	columns := h.exportListColumns(query.Get("list"), typeName)
+	// Resolve the effective list ONCE and derive both the columns and the
+	// render override from it — see resolveEffectiveList for why these must
+	// not be looked up independently.
+	effListID, effList, haveList := h.resolveEffectiveList(query.Get("list"), typeName)
+	columns := listColumnsOf(effList, haveList)
 
 	// The WHOLE ACL-scoped, filtered, sorted set — pre-pagination. Reuses the
 	// exact read path the list view uses, so export can't widen past the view.
@@ -64,25 +69,189 @@ func (h *exportHandler) handleV1ExportList(w http.ResponseWriter, r *http.Reques
 		truncated = true
 	}
 
+	// Override selection happens HERE — after the ACL-scoped read, the
+	// field-redaction pass, and the cap. That ordering is load-bearing: a
+	// render override can only ever be handed rows that already survived
+	// every gate, and never more of them than the cap allows.
+	//
+	// haveList needs no test of its own: resolveEffectiveList returns a zero
+	// List when it finds none, and a zero List has no ExportRender.
 	renderer := h.listTableRenderer(entities, columns, total, truncated)
+	if effList.ExportRender != "" {
+		renderer = h.listOverrideRenderer(listOverride{
+			listID: effListID, script: effList.ExportRender, typeName: typeName,
+			rows: entities, total: total, query: query,
+		})
+	}
 	h.convertAndWrite(w, r, reg, name, renderer, typeName+"-list", "type", typeName)
 }
 
-// exportListColumns returns the columns for the export. It prefers the named
-// list's columns, falls back to the type's default list, and finally to a
-// minimal [id, title] pair so an export always produces a sensible table even
-// when no list is configured.
-func (h *exportHandler) exportListColumns(listID, typeName string) []dataentryconfig.ListColumn {
+// listOverride is what rendering a list THROUGH A SCRIPT needs: which list,
+// which script, and the resolved read it renders. Deliberately not a bundle of
+// everything the handler happens to hold — the built-in table path takes its
+// own arguments, so neither branch carries fields the other needs.
+type listOverride struct {
+	listID   string
+	script   string
+	typeName string
+	rows     []*entityPkg.Entity
+	total    int // pre-cap count; len(rows) is what the script can reach
+	query    map[string][]string
+}
+
+// listOverrideRenderer builds the markdown renderer for a list export that
+// configures an `export_render:` Lua script — the per-list render OVERRIDE —
+// so exporting that list uses the operator's document instead of the built-in
+// column table.
+//
+// The rows were already resolved through the ACL read path, field-redacted,
+// and capped by the caller, so the override sees exactly the ROWS the
+// on-screen view resolved, with the same property redaction. The script is a
+// fixed config value, never request input: a request may choose a transform
+// NAME, never a renderer.
+//
+// It does NOT see only what the on-screen table showed. A row reaches the
+// script as a full entity table, so a script can render the entity BODY, which
+// the column table never displays. That is intended — a report override wants
+// bodies, and the entity export path already exposes them — but note that
+// `visibility.Redact` currently leaves `Content` verbatim (the body-redaction
+// TODO in internal/visibility/policyreader.go). When body redaction lands, this
+// is one of the paths that must route through it.
+//
+// Unlike the entity path there is no failure mode to report here — a list the
+// caller may not read resolves to an empty set and renders an empty document,
+// which is what the built-in table does too. A 404 would leak the difference
+// between "no rows" and "no access".
+func (h *exportHandler) listOverrideRenderer(in listOverride) transform.Renderer {
+	lrc := lua.ListRenderContext{
+		ListID: in.listID,
+		Rows:   entitySliceRows(in.rows),
+		Query:  buildListQuery(in),
+	}
+	// ConfigID is synthetic and namespaced: the "list:" infix keeps it from
+	// colliding with the entity path's "export:<type>" for a list whose id
+	// happens to equal an entity type name.
+	//
+	// No isSafePathSegment guard here, unlike the entity path (see
+	// exportRenderer): that one validates because an entity id is REQUEST
+	// input that reaches a document cache filename. This id is neither — it
+	// is a key that matched cfg.Lists, so it is operator-authored config, and
+	// RenderListMarkdown neither caches nor shells out, so the ConfigID's only
+	// consumers are a Lua string and an error message. If a list render ever
+	// gains a disk cache, this needs the guard.
+	cfg := documentRenderConfig{ConfigID: "export:list:" + in.listID, Script: in.script}
+
+	return transform.RendererFunc(func(ctx context.Context) ([]byte, error) {
+		md, err := h.documents.RenderListMarkdown(ctx, cfg, lrc)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(md), nil
+	})
+}
+
+// entitySliceRows adapts an already-resolved entity slice to lua.ListRows.
+// The laziness that matters is on the Lua side — one entity TABLE is
+// materialized at a time — so a plain indexed slice is exactly the right
+// backing store here.
+type entitySliceRows []*entityPkg.Entity
+
+func (r entitySliceRows) Len() int { return len(r) }
+
+func (r entitySliceRows) At(i int) *entityPkg.Entity {
+	if i < 0 || i >= len(r) {
+		return nil
+	}
+	return r[i]
+}
+
+// buildListQuery flattens the request into the read-only context a render
+// override sees: which list, over which type, under which filters and sort,
+// and how the cap applied. Only what the caller already supplied is echoed
+// back — this is context for titling and annotating an export, not a channel
+// for changing what it contains.
+func buildListQuery(in listOverride) lua.ListQuery {
+	q := lua.ListQuery{
+		EntityType: in.typeName,
+		Q:          queryGet(in.query, "q"),
+		Total:      in.total,
+	}
+
+	// filter[<key>]=<value> → {key: value}, parsed with the SAME helper the
+	// filter pipeline uses. Rolling our own TrimPrefix/TrimSuffix here would
+	// reintroduce RR-6RF60V: `filter[status][ne]` would key the table on
+	// "status][ne" instead of "status", so a script would see a filter name
+	// that never matches what was actually filtered on. The operator segment
+	// is intentionally dropped — this context reports WHICH properties were
+	// filtered, and the last value wins, matching applyV1Filters.
+	for k, vals := range in.query {
+		if !strings.HasPrefix(k, "filter[") || len(vals) == 0 {
+			continue
+		}
+		key, _, ok := parseRelationFilterKey(k)
+		if !ok {
+			continue
+		}
+		if q.Filters == nil {
+			q.Filters = map[string]string{}
+		}
+		q.Filters[key] = vals[len(vals)-1]
+	}
+
+	// sort=-created,title, parsed by the same helper applyV1Sorting uses, so
+	// the sort reported to a script cannot drift from the sort applied.
+	// ListSortSpec aliases filter.SortSpec, so these pass straight through.
+	q.Sort = parseSortParam(in.query)
+	return q
+}
+
+// resolveEffectiveList returns the list configuration governing this export:
+// the named ?list= when it exists and matches the type, else the type's
+// default list from navigation, else ok=false.
+//
+// BOTH the column set and the render override MUST resolve through this. They
+// used to be one lookup because columns were the only thing a list
+// contributed; now that a list can also carry an `export_render:` script,
+// resolving them independently would let an export take its columns from one
+// list and its override from another — or, worse, silently skip an override
+// that is plainly configured.
+//
+// Note what this does NOT test: `len(Columns) > 0`. That predicate lives in
+// listColumnsOf, where it belongs — it is a statement about whether a list
+// can supply columns, not about which list this export is. A list configured
+// with `export_render:` and no `columns:` is perfectly valid (the script
+// renders whatever it likes), and folding the column check in here would make
+// its override silently not apply.
+func (h *exportHandler) resolveEffectiveList(
+	listID, typeName string,
+) (string, dataentryconfig.List, bool) {
 	cfg := h.cfg()
 	if listID != "" {
-		if l, ok := cfg.Lists[listID]; ok && l.EntityType == typeName && len(l.Columns) > 0 {
-			return l.Columns
+		if l, ok := cfg.Lists[listID]; ok && l.EntityType == typeName {
+			return listID, l, true
 		}
 	}
 	if def := h.findListForType(typeName); def != "" {
-		if l, ok := cfg.Lists[def]; ok && len(l.Columns) > 0 {
-			return l.Columns
+		// The EntityType re-check is belt-and-braces: findListForType only
+		// returns lists of this type, but it makes the contract total, so a
+		// future navigation change cannot hand back a mismatched list.
+		if l, ok := cfg.Lists[def]; ok && l.EntityType == typeName {
+			return def, l, true
 		}
+	}
+	return "", dataentryconfig.List{}, false
+}
+
+// listColumnsOf returns the columns for the export: the effective list's
+// columns when it has any, else a minimal [id, title] pair so an export always
+// produces a sensible table even when no list is configured.
+//
+// Takes the ALREADY-resolved list rather than resolving one itself, so a
+// single request resolves exactly once and the columns can never come from a
+// different list than the render override — see resolveEffectiveList.
+func listColumnsOf(l dataentryconfig.List, haveList bool) []dataentryconfig.ListColumn {
+	if haveList && len(l.Columns) > 0 {
+		return l.Columns
 	}
 	return []dataentryconfig.ListColumn{
 		{Property: "id", Label: "ID"},

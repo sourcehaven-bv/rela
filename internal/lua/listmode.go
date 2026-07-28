@@ -1,0 +1,71 @@
+package lua
+
+import (
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filter"
+)
+
+// ListRows supplies the rows a list-document render displays.
+//
+// Defined here at the consumer (per CLAUDE.md "interfaces at the call site")
+// so the lua package never learns about data-entry: the wiring site passes an
+// adapter over a slice it has already resolved. Two methods because the
+// bindings need both a cheap length (rela.document.count, without draining)
+// and indexed access (row(i) / the rows() iterator).
+//
+// The rows are ALREADY resolved, ACL-scoped, filtered, sorted, and capped by
+// the caller. The lua package performs no query of its own for them — that
+// is the whole point of the seam. A list render must show what the on-screen
+// view showed; re-deriving the set here would let the export drift from the
+// view and escape the caller's row cap.
+//
+// At is called once per materialization, and a script may walk the set more
+// than once, so implementations must be repeatable for the same index and
+// must return nil when i is out of range.
+//
+// Rows reach the script through EntityToTable, which includes the entity
+// BODY. Property-level `visible:` redaction is already applied by the caller,
+// but visibility.Redact does not currently redact Content (the body-redaction
+// TODO in internal/visibility). When it does, this is one of the paths that
+// must route through it — a render override is a read-out surface like any
+// other.
+type ListRows interface {
+	Len() int
+	At(i int) *entity.Entity
+}
+
+// ListSortSpec is one resolved sort criterion, in priority order. Aliased to
+// the shared sort type rather than redeclared, following the same move
+// filter.SortSpec already makes — one sort shape across metamodel, filter,
+// and here, so a caller can pass parsed specs straight through.
+type ListSortSpec = filter.SortSpec
+
+// ListQuery is the read-only request context a list render receives: the
+// entity type, the filters and sort that produced the rows, and how many rows
+// existed before the export cap. Plain data — a script may read it to title
+// and annotate the export, but it is exposed through a frozen Lua table so it
+// cannot be used as a back-channel to mutate the handler's state.
+//
+// Total is the row count BEFORE the cap; how many the script can actually see
+// is ListRows.Len(), and whether the cap applied is derived from the two at
+// render time rather than stored. Total is the one value a caller supplies
+// independently, so the render clamps it up to the row count — a Total that
+// under-reports the rows it ships with cannot produce an incoherent view.
+// The list's identity lives on [ListRenderContext], not here.
+type ListQuery struct {
+	EntityType string
+	Q          string
+	Filters    map[string]string
+	Sort       []ListSortSpec
+	Total      int
+}
+
+// ListRenderContext bundles everything a list-document render needs beyond
+// the script path itself. Bundled rather than passed as three more
+// parameters so [WithListDocumentMode] stays a two-argument option and
+// script.Engine.ExecuteListDocument keeps a readable signature.
+type ListRenderContext struct {
+	ListID string
+	Rows   ListRows
+	Query  ListQuery
+}

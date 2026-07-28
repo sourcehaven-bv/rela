@@ -104,43 +104,13 @@ func (e *Engine) ExecuteDocument(
 	entryID string,
 	timeout time.Duration,
 ) error {
-	scriptCode, err := loadScript(deps.ProjectRoot, path)
-	if err != nil {
-		return err
-	}
-
 	// ctx + principal are threaded like execute()/ExecuteAction: the script
 	// runs under the CALLER's identity (rela.principal reflects the request
 	// principal, reads cancel with the request). Before TKT-L9Q669 this
 	// path ran on context.Background() with no principal — an export_render
 	// or document script could never be attributed or ACL-bound.
-	opts := []lua.Option{
-		lua.WithDocumentMode(documentID, entryID),
-		lua.WithCache(e.cache),
-		lua.WithContext(ctx),
-		lua.WithPrincipal(principal.From(ctx)),
-	}
-	if timeout > 0 {
-		opts = append(opts, lua.WithTimeout(timeout))
-	}
-
-	runtime, err := NewWriterRuntime(deps, path, stdout, opts...)
-	if err != nil {
-		return err
-	}
-	defer runtime.Close()
-
-	// RunFileContent (not RunString) so gopher-lua receives the script
-	// path as the chunkname — that lands in the message handler's frame
-	// captures and lets ScriptError.Source populate from the right file.
-	// Doubles as the rela.cache.* namespace, so SetScriptPath is no
-	// longer needed alongside it.
-	//nolint:contextcheck // ctx threaded via WithContext above, same as execute()
-	if runErr := runtime.RunFileContent(path, []byte(scriptCode), nil); runErr != nil {
-		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, entryID,
-			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
-	}
-	return nil
+	return e.runDocumentScript(ctx, path, deps, stdout,
+		lua.WithDocumentMode(documentID, entryID), entryID, timeout)
 }
 
 // wrapScriptError builds a *lua.ScriptError from a runtime failure.

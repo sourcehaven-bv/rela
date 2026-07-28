@@ -91,9 +91,18 @@ type Runtime struct {
 	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
 	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
 	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
-	aiProvider    ai.Provider       // nil means AI is not configured
-	cache         cacheStore        // nil means rela.cache.* is not registered
-	scriptPath    string            // set by RunFile; empty for RunString/inline
+
+	// listRender is set (non-nil Rows) only for a LIST document render — the
+	// lists: export_render override. It rides on document mode rather than
+	// introducing a third mode: a list render wants document mode's stdout
+	// capture and its rela.output warning verbatim, and a parallel mode
+	// would have to be OR-ed into every one of those guards forever.
+	// Entity renders leave this zero, so rela.document carries no row
+	// bindings there.
+	listRender ListRenderContext
+	aiProvider ai.Provider // nil means AI is not configured
+	cache      cacheStore  // nil means rela.cache.* is not registered
+	scriptPath string      // set by RunFile; empty for RunString/inline
 
 	// principal is the identity this runtime runs as, exposed read-only as
 	// rela.principal (TKT-5U6NRR). Set by [WithPrincipal] from the caller's
@@ -214,6 +223,28 @@ func WithDocumentMode(documentID, entryID string) Option {
 		r.isDocument = true
 		r.documentID = documentID
 		r.documentEntry = entryID
+	}
+}
+
+// WithListDocumentMode marks the runtime as rendering a LIST export (the
+// `lists.<id>.export_render` override). It sets document mode, so stdout
+// capture and the rela.output warning behave exactly as for an entity
+// render, and additionally populates the row/query bindings on
+// rela.document.
+//
+// It is a SEPARATE constructor from [WithDocumentMode] rather than extra
+// optional arguments on it: a caller holding only WithDocumentMode cannot
+// conjure a row provider, which keeps the typed-seam property that the
+// script.Engine methods are the only way to enter either mode.
+//
+// entryID is deliberately not a parameter — a list render has no entry
+// entity, and rela.document.entry_id stays absent (Lua nil) rather than
+// empty-string. See registerContextBindings for why.
+func WithListDocumentMode(documentID string, lrc ListRenderContext) Option {
+	return func(r *Runtime) {
+		r.isDocument = true
+		r.documentID = documentID
+		r.listRender = lrc
 	}
 }
 
@@ -822,17 +853,133 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	// rela.url submodule — typed URL builders for the SPA's routes.
 	r.registerURLModule(rela)
 
-	// Document-mode context: rela.mode + rela.document.{id, entry_id}.
-	// Only populated when WithDocumentMode was applied. In every other
-	// context rela.mode and rela.document are absent (Lua nil), so a
-	// script that branches on them sees nil outside document renders.
+	// Document-mode context: rela.mode + rela.document.*.
+	// Only populated when WithDocumentMode or WithListDocumentMode was
+	// applied. In every other context rela.mode and rela.document are
+	// absent (Lua nil), so a script that branches on them sees nil outside
+	// document renders.
 	if r.isDocument {
 		r.L.SetField(rela, "mode", lua.LString("document"))
 		docTable := r.L.NewTable()
 		r.L.SetField(docTable, "id", lua.LString(r.documentID))
-		r.L.SetField(docTable, "entry_id", lua.LString(r.documentEntry))
+
+		// entry_id is set ONLY when there is a real entry entity. An entity
+		// render always has one (the caller path-validates it before we get
+		// here), so this is byte-identical to the previous unconditional
+		// set; a LIST render has none and must see Lua nil, never "".
+		// Empty-string would be the worse lie: it is truthy in Lua, so the
+		// idiomatic `if rela.document.entry_id then rela.get_entity(...)`
+		// guard would pass and then raise ("entity ID cannot be empty"),
+		// and `entry_id or default` would yield "" instead of the default.
+		if r.documentEntry != "" {
+			r.L.SetField(docTable, "entry_id", lua.LString(r.documentEntry))
+		}
+
+		// List-render bindings. Kept as closures over the provider rather
+		// than *Runtime methods on purpose: Runtime is pinned at the
+		// plimsoll load line (max-methods=120), and these would push it
+		// over. They are also genuinely per-render state, not runtime
+		// behavior.
+		if r.listRender.Rows != nil {
+			registerListDocumentFields(r.L, docTable, r.listRender)
+		}
+
 		r.L.SetField(rela, "document", docTable)
 	}
+}
+
+// registerListDocumentFields populates the LIST-render half of
+// rela.document: the query context plus the lazy row accessors.
+//
+// A plain function rather than a *Runtime method because it needs nothing
+// from the Runtime — the LState and the render context are the whole input.
+// (It also keeps Runtime off its plimsoll load line, which sits at exactly
+// max-methods=120. That is a consequence, not the reason: the fix for a full
+// Runtime is to take fields OFF it — see TKT-N0IKN9 — not to route new
+// methods around the counter.)
+//
+// Rows are materialized ONE AT A TIME. A 5000-row export therefore holds a
+// single Lua entity table at a time rather than 5000 (each of which is a
+// table plus a properties sub-table plus two closures). That is what makes
+// the caller's existing row cap the only bound needed here — no second,
+// separately-tuned cap for the script path.
+func registerListDocumentFields(ls *lua.LState, docTable *lua.LTable, lrc ListRenderContext) {
+	rows := lrc.Rows
+	q := lrc.Query
+
+	ls.SetField(docTable, "list_id", lua.LString(lrc.ListID))
+	ls.SetField(docTable, "entity_type", lua.LString(q.EntityType))
+	// count is ground truth (the rows the script can actually reach); total is
+	// the caller's pre-cap count, and truncated is derived from the two rather
+	// than stored, so those three can't drift apart.
+	//
+	// A caller that under-reports Total would still be incoherent, so clamp:
+	// total can never be less than the rows we are about to hand over. That
+	// makes "total >= count" an invariant of what the script sees rather than
+	// a promise about what every caller passes.
+	count := rows.Len()
+	total := max(q.Total, count)
+	ls.SetField(docTable, "count", lua.LNumber(count))
+	ls.SetField(docTable, "total", lua.LNumber(total))
+	ls.SetField(docTable, "truncated", lua.LBool(total > count))
+
+	// The resolved request context, frozen so "read-only" is enforced
+	// rather than conventional (same treatment rela.principal gets).
+	queryTable := ls.NewTable()
+	// Always set, even when empty. Unlike entry_id — where absence is
+	// semantically right because a list HAS no entry entity — "no search
+	// term" is a representable value, so the empty string is the honest
+	// answer. Omitting it made `"Search: " .. rela.document.query.q` work on
+	// every filtered export and hard-error on every unfiltered one.
+	ls.SetField(queryTable, "q", lua.LString(q.Q))
+	filters := ls.NewTable()
+	for k, v := range q.Filters {
+		ls.SetField(filters, k, lua.LString(v))
+	}
+	ls.SetField(queryTable, "filters", freezeTable(ls, filters))
+	sort := ls.NewTable()
+	for i, s := range q.Sort {
+		spec := ls.NewTable()
+		ls.SetField(spec, "property", lua.LString(s.Property))
+		ls.SetField(spec, "direction", lua.LString(s.Direction))
+		sort.RawSetInt(i+1, freezeTable(ls, spec))
+	}
+	ls.SetField(queryTable, "sort", freezeTable(ls, sort))
+	ls.SetField(docTable, "query", freezeTable(ls, queryTable))
+
+	// row(i) -> entity table | nil. 1-based, per Lua convention.
+	ls.SetField(docTable, "row", ls.NewFunction(func(s *lua.LState) int {
+		i := s.CheckInt(1)
+		e := rows.At(i - 1)
+		if e == nil {
+			s.Push(lua.LNil)
+			return 1
+		}
+		s.Push(EntityToTable(s, e))
+		return 1
+	}))
+
+	// rows() -> stateful iterator, for `for _, row in rela.document.rows() do`.
+	// Each CALL to rows() mints a fresh cursor, so a script may walk the set
+	// more than once; each walk re-materializes its tables. That is the
+	// deliberate trade for flat memory — CPU, not RAM. Do not memoize the
+	// materialized tables here; that would reintroduce exactly the O(n)
+	// retention the laziness exists to avoid.
+	ls.SetField(docTable, "rows", ls.NewFunction(func(s *lua.LState) int {
+		i := 0
+		s.Push(s.NewFunction(func(inner *lua.LState) int {
+			if i >= rows.Len() {
+				inner.Push(lua.LNil)
+				return 1
+			}
+			e := rows.At(i)
+			i++
+			inner.Push(lua.LNumber(i))
+			inner.Push(EntityToTable(inner, e))
+			return 2
+		}))
+		return 1
+	}))
 }
 
 // reader returns the read-out handle, raising when it is absent.
