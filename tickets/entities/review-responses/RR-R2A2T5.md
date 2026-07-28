@@ -1,0 +1,8 @@
+---
+id: RR-R2A2T5
+type: review-response
+title: ACL-redacted properties are indistinguishable from deleted ones — merge could emit properties_unset for a hidden field
+finding: 'The plan''s security reasoning (''theirs comes from the ACL-gated GET so the merge never sees data the user couldn''t read'') is true but incomplete: the danger is what the BASE loses, not what the merge reads. Redaction DELETES hidden property names from the wire entirely (stripHiddenProperties: delete(result.Properties, name), affordances.go:895-899); the Inaccessible marker is populated only for git-crypt-locked entities (entityserializer.go:61-69), NOT for ACL redaction. So a hidden property is simply absent. mergeServerResponse already treats absence as deletion (useAutoSave.ts:521-526, ''Properties that disappeared — server-side unset by automation''). The plan''s edge case at PLAN-H6XW20:176 states deletion-vs-edit should be a genuine conflict — applied to a redacted field, if the merge materializes theirs-absence into properties_unset, it ERASES a field the user cannot see. That is exactly the root CLAUDE.md ''never redact a read that feeds a write'' violation (silent data destruction). Today this is safe only by accident: PATCH is a server-side read-modify-write (maps.Copy over the RAW entity, write_handler.go:395/312), so absent keys survive. FIX: merge domain must be restricted to keys present in ''ours''; NEVER emit properties_unset from theirs-absence; deletion only expressible via the local UNSET sentinel. The edge case at :176 is stated backwards and must be corrected.'
+severity: critical
+status: open
+---
