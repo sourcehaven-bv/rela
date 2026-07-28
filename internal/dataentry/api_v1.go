@@ -27,7 +27,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // --- API v1 Types ---
@@ -1359,14 +1358,12 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 
 	analysisResult := a.analyze.runAnalysis(r.Context(), a.State().Meta)
 
-	// ACL gate (TKT-QU7REX): runAnalysis walks the WHOLE graph, so every issue
-	// carries an entityId/entityType/title that would leak existence + title to
-	// a principal who cannot read that entity. Filter each issue through the
-	// per-entity read gate (batched by type, fail-closed) BEFORE building the
-	// response, and recompute the Errors/Warnings/ByCheck counts so the
-	// aggregates can't leak the count of hidden issues either. Issues with no
-	// entityId (graph-level checks) name no entity and pass through.
-	visible := a.visibleAnalysisIssues(r.Context(), analysisResult.Sections)
+	// runAnalysis now reads GATED per the requesting principal (TKT-3FL2S6), so
+	// a hidden entity never enters a check and a visible entity is redacted
+	// before its value can reach an issue title or message. No post-hoc output
+	// filter is needed — the issues are already the requester's visible slice.
+	// Flatten sections to (issue, section) pairs for the wire builder.
+	visible := flattenIssues(analysisResult.Sections)
 
 	result := APIAnalysisResult{
 		Issues:  make([]APIIssue, 0, len(visible)),
@@ -1414,116 +1411,16 @@ type visibleIssue struct {
 	section string
 }
 
-// visibleAnalysisIssues filters analysis issues through the per-entity read
-// gate (TKT-QU7REX). Issues are batched by entity type and resolved with one
-// PermitsReadMany call per type (mirroring filterVisibleIncludes), so the cost
-// is O(distinct-types) not O(issues). An issue with an empty EntityID names no
-// entity (graph-level checks like ID gaps) and is always kept. On a gate error
-// for a type, that type's issues are dropped fail-closed and logged, matching
-// the include path — under-reporting is safer than leaking a denied entity.
-func (a *App) visibleAnalysisIssues(ctx context.Context, sections []AnalysisSection) []visibleIssue {
-	gate := readGateFromContext(ctx)
-
-	// Collect entity ids to check, grouped by type.
-	idsByType := make(map[string]map[string]struct{})
-	for _, section := range sections {
-		for _, issue := range section.Issues {
-			if issue.EntityID == "" || issue.EntityType == "" {
-				continue
-			}
-			if idsByType[issue.EntityType] == nil {
-				idsByType[issue.EntityType] = make(map[string]struct{})
-			}
-			idsByType[issue.EntityType][issue.EntityID] = struct{}{}
-		}
-	}
-
-	// Resolve visibility once per type.
-	allowed := make(map[string]map[string]bool, len(idsByType))
-	for typeName, idset := range idsByType {
-		ids := make([]string, 0, len(idset))
-		for id := range idset {
-			ids = append(ids, id)
-		}
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			slog.Warn("dataentry: visibleAnalysisIssues: PermitsReadMany failed; dropping type",
-				"type", typeName, "issues", len(ids), "err", err)
-			allowed[typeName] = map[string]bool{} // fail-closed: nothing of this type visible
-			continue
-		}
-		allowed[typeName] = perm
-	}
-
-	// A permitted entity may still have its DISPLAY property hidden by a
-	// field-level `visible:` grant. The issue title was baked upstream by
-	// DisplayTitle against raw properties (analyze.go), so redact it here to the
-	// id — the same field-level fallback the view/mention/settings surfaces get
-	// (BUG-R9EHKV). Only permitted entities are loaded (the row gate already
-	// ran), and only when their primary property is actually hidden.
-	titleFallback := hiddenDisplayTitleEntityIDs(ctx, a, allowed)
-
-	// Build the filtered, order-preserving result.
+// flattenIssues walks the analysis sections into (issue, section) pairs for the
+// wire builder. No filtering: runAnalysis already read gated, so the issues are
+// the requester's visible slice — a hidden entity produced no issue and a
+// visible entity was redacted before its value could reach a title or message
+// (TKT-3FL2S6, replacing the former visibleAnalysisIssues output filter).
+func flattenIssues(sections []AnalysisSection) []visibleIssue {
 	var out []visibleIssue
 	for _, section := range sections {
 		for _, issue := range section.Issues {
-			if issue.EntityID != "" && issue.EntityType != "" {
-				if !allowed[issue.EntityType][issue.EntityID] {
-					continue // hidden entity → drop the issue
-				}
-				if titleFallback[issue.EntityID] {
-					issue.Title = issue.EntityID // hidden display property → no title leak
-				}
-			}
 			out = append(out, visibleIssue{issue: issue, section: section.Name})
-		}
-	}
-	return out
-}
-
-// hiddenDisplayTitleEntityIDs returns the set of permitted entity ids whose
-// DISPLAY TITLE draws on a property hidden from the ctx principal — the ids
-// whose analyze issue title must fall back to the id rather than leak the
-// hidden value. It loads only already-permitted entities and redacts each; if
-// redaction strips ANY property that backs the display title, the whole title
-// is suppressed to the id (a partial template render like "Jeroen " would leak
-// the readable half and confirm a hidden half, so full fallback is correct).
-//
-// Uses DisplayProperties (the full read set — handles templated
-// display_property), NOT GetPrimaryProperty, which returns "" for a template
-// and would miss `{voornaam} {achternaam}`-style titles entirely. Fail-closed
-// on a load miss (treated as not-hidden is safe: a missing entity produces no
-// baked title to leak).
-//
-// A package function, not an App method, to keep App under its plimsoll cap.
-func hiddenDisplayTitleEntityIDs(ctx context.Context, a *App, allowed map[string]map[string]bool) map[string]bool {
-	redactor := appRedactor(a)
-	meta := a.State().Meta
-	out := map[string]bool{}
-	for _, ids := range allowed {
-		for id, ok := range ids {
-			if !ok {
-				continue // perm maps carry explicit false entries
-			}
-			e, err := a.store.GetEntity(ctx, id)
-			if err != nil {
-				continue
-			}
-			def, defOK := meta.GetEntityDef(e.Type)
-			if !defOK {
-				continue
-			}
-			displayProps := def.DisplayProperties()
-			if len(displayProps) == 0 {
-				continue // title is the id already → nothing to leak
-			}
-			redacted := visibility.Redact(ctx, redactor, e)
-			for _, prop := range displayProps {
-				if _, present := redacted.Properties[prop]; !present {
-					out[id] = true // a display-title source was stripped → title would leak
-					break
-				}
-			}
 		}
 	}
 	return out
