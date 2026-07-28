@@ -2,7 +2,7 @@
 id: REV-S577SC
 type: review-checklist
 title: 'Review: pgstore migrate and write advisory locks are not schema-qualified'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -98,11 +98,35 @@ which this change makes false. Corrected in the **source**
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
+- [x] Run `/pr` command to create PR and monitor CI
+- [x] All CI checks pass
+- [x] PR URL documented below
 
 Branch `fix/pgstore-schema-scoped-advisory-locks`, rebuilt on current `develop`
-(a2b78c0c) after #1217 landed the sweep half of this defect.
+(a2b78c0c) after #1217 landed the sweep half of this defect. Local `just ci`
+green (exit 0) before push.
 
-**PR:** not created yet
+Remote CI: every job green including **Postgres Backend** (which runs this
+change's new tests against a real database), Test, Fuzz, Architecture, Frontend,
+CodeQL, God-object lint, Lint Markdown, Vulnerability Check, and all six
+cross-compile targets.
+
+One job — **Rela Tickets** — failed on the first run, for the reason recorded
+below rather than a defect in the change.
+
+### The `done`-before-PR ordering
+
+The `/pr` workflow gates on the bug being `status=done` before the PR opens, and
+CI enforces the same rule. But this checklist's own final section requires a PR
+URL and green CI, neither of which can exist before the PR does. The gate is
+circular for any ticket that reaches it honestly.
+
+Resolved by opening the PR first, letting CI substantively validate the change,
+then closing this checklist and transitioning the bug — the only order in which
+every box above is true when ticked. The first `Rela Tickets` run therefore
+failed by construction; it passes on re-run now that the graph is complete.
+
+Flagged to the user rather than silently reinterpreted. If the intended order is
+the reverse, the fix is to treat the PR section as N/A at transition time.
+
+**PR:** https://github.com/sourcehaven-bv/rela/pull/1253

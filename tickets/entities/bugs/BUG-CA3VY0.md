@@ -10,7 +10,7 @@ why3: pgstore was designed single-schema-per-database. The change feed hit the s
 why4: 'When the sweep lock was fixed under #1217, the fix was scoped to the lock that caused the observed e2e starvation; the migrate and write locks share the root cause but produce blocking rather than data loss, so nothing surfaced them.'
 why5: No test exercised two schemas contending on the same database for the migrate or write paths, so the shared-key assumption was never falsifiable.
 prevention: All three advisory locks now use the two-key form pg_advisory_xact_lock(key, hashtext(current_schema())). Pinned by TestMigrateDoesNotBlockAnotherSchema and TestWriteTxDoesNotBlockAnotherSchema, which drive the REAL Migrate/Tx code paths and hold BOTH the scoped and legacy key spaces on the blocking schema — without holding the legacy space a regression to the bare key would take a lock nobody holds and pass. Verified fail-before/pass-after. The sweep's silent lost-lock branch now escalates to a warning after 10 consecutive skips.
-status: in-progress
+status: done
 ---
 
 ## Summary
