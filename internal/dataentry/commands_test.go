@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
 // --- resolveCommands ---
@@ -1046,20 +1047,21 @@ func equalArgs(a, b []string) bool {
 
 // --- Command authorization (TKT-MJ02AO, policy DEC-EIHQSU) ---
 
-// TestCommandExecReadOnlyDenied is the canary for RR-CWWJGW. Command exec
-// builds no acl.WriteRequest, so ReadOnlyACL's only method (AuthorizeWrite)
-// is never consulted; and readGateFromContext hands back nopReadGate under
-// BOTH NopACL and ReadOnlyACL, whose HoldsPermission returns true
-// unconditionally (readgate.go). A guard written against the read gate alone
-// therefore fails OPEN here. The permission is deliberately set AND would be
-// granted, so the only thing that can produce a 403 is the read-only check
-// itself.
+// TestCommandExecReadOnlyDenied is the canary for RR-CWWJGW / RR-QWVG8Y.
+// Under read-only, the wiring site selects a denyAuthorizer. The reason this
+// canary matters: readGateFromContext hands back the permissive nopReadGate
+// under BOTH NopACL and ReadOnlyACL (readgate.go), so an authorizer written
+// against the read gate alone would fail OPEN. The permission is deliberately
+// set AND would be granted, so the only thing that can produce a 403 is the
+// deny authorizer the seam installs for read-only — not a per-permission check.
 func TestCommandExecReadOnlyDenied(t *testing.T) {
 	for _, ctxName := range []string{"entity", "list", "view", "global"} {
 		t.Run(ctxName, func(t *testing.T) {
 			app := newHandlerTestApp(t)
 			bindRepo(app, t.TempDir())
-			app.acl = acl.ReadOnlyACL{}
+			// Read-only maps to denyAuthorizer at the wiring seam (RR-CWBZVT:
+			// drive the authorizer directly, not via app.acl).
+			app.commands.authz = denyAuthorizer{}
 			app.Cfg().Commands = map[string]CommandConfig{
 				"cmd": {
 					Label:      "Cmd",
@@ -1086,9 +1088,10 @@ func TestCommandExecReadOnlyDenied(t *testing.T) {
 	}
 }
 
-// TestCommandExecNopACLFailsOpen pins the fail-open half of DEC-EIHQSU: with
-// no policy configured, a command with no permission: runs exactly as before
-// this ticket, in all four contexts including the deferred view context.
+// TestCommandExecNopACLFailsOpen pins the ungated path: on loopback with no
+// policy (the wiring site installs an ungatedAuthorizer), a command with no
+// permission: runs exactly as before this ticket, in all four contexts
+// including the deferred view context.
 func TestCommandExecNopACLFailsOpen(t *testing.T) {
 	cases := []struct{ name, ctxName, query string }{
 		{"entity", "entity", "?entity_id=TKT-001"},
@@ -1100,7 +1103,8 @@ func TestCommandExecNopACLFailsOpen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newHandlerTestApp(t)
 			bindRepo(app, t.TempDir())
-			app.acl = acl.NopACL{}
+			// NopACL+loopback maps to ungatedAuthorizer at the wiring seam.
+			app.commands.authz = ungatedAuthorizer{}
 			app.Cfg().Commands = map[string]CommandConfig{
 				"cmd": {
 					Label:   "Cmd",
@@ -1195,7 +1199,7 @@ func TestCommandExecDeclarativeFailsClosed(t *testing.T) {
 			app := newHandlerTestApp(t)
 			bindRepo(app, t.TempDir())
 			d := commandPolicyACL(t, app)
-			app.acl = d
+			app.commands.authz = mustGatedAuthorizer(t, d)
 			app.Cfg().Commands = map[string]CommandConfig{
 				"cmd": {
 					Label:      "Cmd",
@@ -1227,7 +1231,7 @@ func TestResolveCommandsFiltersUnauthorized(t *testing.T) {
 		app := newHandlerTestApp(t)
 		bindRepo(app, t.TempDir())
 		d := commandPolicyACL(t, app)
-		app.acl = d
+		app.commands.authz = mustGatedAuthorizer(t, d)
 		app.Cfg().Commands = map[string]CommandConfig{
 			"allowed":       {Label: "A", Script: "echo hi", Context: "entity", Permission: "command:allowed"},
 			"not-granted":   {Label: "B", Script: "echo hi", Context: "entity", Permission: "command:other"},
@@ -1256,7 +1260,7 @@ func TestResolveCommandsFiltersUnauthorized(t *testing.T) {
 
 	t.Run("read-only hides every command", func(t *testing.T) {
 		app, _ := setup(t)
-		app.acl = acl.ReadOnlyACL{}
+		app.commands.authz = denyAuthorizer{}
 		cmds := app.commands.resolveCommands(context.Background(), "entity", "", "ticket")
 		if len(cmds) != 0 {
 			t.Errorf("read-only must hide all commands, got %v", cmdIDs(cmds))
@@ -1265,7 +1269,7 @@ func TestResolveCommandsFiltersUnauthorized(t *testing.T) {
 
 	t.Run("nop acl shows all", func(t *testing.T) {
 		app, _ := setup(t)
-		app.acl = acl.NopACL{}
+		app.commands.authz = ungatedAuthorizer{}
 		ids := cmdIDs(app.commands.resolveCommands(context.Background(), "entity", "", "ticket"))
 		assertContains(t, ids, "allowed")
 		assertContains(t, ids, "not-granted")
@@ -1273,56 +1277,107 @@ func TestResolveCommandsFiltersUnauthorized(t *testing.T) {
 	})
 }
 
-// TestAuthorizeCommandNilACLDenies pins that a wiring omission fails closed.
-// A guard that granted on a nil field would be worse than no guard, since it
-// would look present in review.
-func TestAuthorizeCommandNilACLDenies(t *testing.T) {
-	if authorizeCommand(context.Background(), nil, CommandConfig{Context: "global"}) {
-		t.Error("nil ACL must deny")
+// mustGatedAuthorizer builds a gatedAuthorizer over d, failing the test on a
+// nil policy. Command-auth tests drive app.commands.authz directly rather than
+// reassigning app.acl (RR-CWBZVT): the wiring seam is the distinguisher, not
+// the ctx read gate, so a test that set app.acl would exercise the wrong impl.
+func mustGatedAuthorizer(t *testing.T, d *acl.Declarative) commandAuthorizer {
+	t.Helper()
+	a, err := newGatedAuthorizer(d)
+	if err != nil {
+		t.Fatalf("newGatedAuthorizer: %v", err)
 	}
-	h := &commandHandler{} // no aclImpl closure
-	if h.currentACL() != nil {
-		t.Error("currentACL must return nil when unwired, not panic")
+	return a
+}
+
+// TestCommandHandlerNilAuthorizerDenies pins that a wiring omission fails
+// closed: a commandHandler with no authz field denies, never panics and never
+// grants. A guard that granted on a nil field would be worse than no guard,
+// since it would look present in review.
+func TestCommandHandlerNilAuthorizerDenies(t *testing.T) {
+	h := &commandHandler{} // no authz wired
+	if h.authorizer().Authorize(context.Background(), CommandConfig{Context: "global"}) {
+		t.Error("nil authorizer must deny")
 	}
 }
 
-// TestAuthorizeCommandUnknownACLDenies pins the inverted default (RR-CAUBAZ).
-// The switch must be closed by construction: an acl.ACL implementation with no
-// explicit arm denies rather than granting shell execution.
+// TestSelectCommandAuthorizer pins the wiring-seam decision matrix (DEC-EIHQSU,
+// TKT-AQIT9M). This is where NopACL vs ReadOnly and loopback vs network are
+// distinguished — the ctx read gate cannot, since it answers permissive under
+// both NopACL and ReadOnly (RR-QWVG8Y).
 //
-// The face cases matter because ReadOnlyACL/NopACL declare AuthorizeWrite on
-// a VALUE receiver, so &acl.ReadOnlyACL{} satisfies acl.ACL while being a
-// distinct dynamic type. Matching only the value form put it in the default
-// arm — when that arm granted, `--read-only` was bypassable by one `&`.
-func TestAuthorizeCommandUnknownACLDenies(t *testing.T) {
-	cmd := CommandConfig{Context: "global", Permission: "command:x"}
+// The face ReadOnly case matters: ReadOnlyACL declares AuthorizeWrite on a
+// VALUE receiver, so &acl.ReadOnlyACL{} satisfies acl.ACL as a distinct dynamic
+// type. Matching only the value form would drop it into an ungated path — the
+// `--read-only`-bypassable-by-one-`&` bug (RR-CAUBAZ).
+func TestSelectCommandAuthorizer(t *testing.T) {
+	// A real Declarative for the gated arm (empty policy is fine; we only
+	// assert the *type* selected here — behavior is covered by the exec tests).
+	realDecl := mustNewACL(t, &acl.Policy{}, memstore.New())
 
-	t.Run("face ReadOnlyACL denies", func(t *testing.T) {
-		if authorizeCommand(context.Background(), &acl.ReadOnlyACL{}, cmd) {
-			t.Error("face ReadOnlyACL must deny — value-only match was a --read-only bypass")
-		}
-	})
+	cases := []struct {
+		name         string
+		active       acl.ACL
+		decl         *acl.Declarative
+		loopback     bool
+		override     bool
+		wantType     commandAuthorizer
+		wantOnFire   bool // expect onOverride invoked
+		wantOnRefuse bool // expect onRefuse invoked
+	}{
+		{"readonly value → deny", acl.ReadOnlyACL{}, nil, true, false, denyAuthorizer{}, false, false},
+		{"readonly face → deny", &acl.ReadOnlyACL{}, nil, true, false, denyAuthorizer{}, false, false},
+		{"readonly beats override", acl.ReadOnlyACL{}, nil, false, true, denyAuthorizer{}, false, false},
+		{"declarative → gated", realDecl, realDecl, false, false, gatedAuthorizer{}, false, false},
+		{"declarative on network → gated (override irrelevant)", realDecl, realDecl, false, true, gatedAuthorizer{}, false, false},
+		{"nop + loopback → ungated", acl.NopACL{}, nil, true, false, ungatedAuthorizer{}, false, false},
+		{"nop + network, no override → deny", acl.NopACL{}, nil, false, false, denyAuthorizer{}, false, true},
+		{"nop + network + override → ungated (fires)", acl.NopACL{}, nil, false, true, ungatedAuthorizer{}, true, false},
+		{"nop + loopback + override → ungated (no fire)", acl.NopACL{}, nil, true, true, ungatedAuthorizer{}, false, false},
+	}
 
-	t.Run("face NopACL still fails open", func(t *testing.T) {
-		if !authorizeCommand(context.Background(), &acl.NopACL{}, cmd) {
-			t.Error("face NopACL should behave like the value form")
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fired, refused := false, false
+			got, err := SelectCommandAuthorizer(
+				tc.active, tc.decl, tc.loopback, tc.override,
+				CommandAuthNotifier{
+					OnOverride: func() { fired = true },
+					OnRefuse:   func() { refused = true },
+				})
+			if err != nil {
+				t.Fatalf("SelectCommandAuthorizer: %v", err)
+			}
+			if gotT, wantT := authorizerKind(got), authorizerKind(tc.wantType); gotT != wantT {
+				t.Errorf("authorizer type = %s, want %s", gotT, wantT)
+			}
+			if fired != tc.wantOnFire {
+				t.Errorf("onOverride fired = %v, want %v", fired, tc.wantOnFire)
+			}
+			// The refusal hook is the operator's only startup signal that a
+			// working deployment just lost its commands, so it must fire on
+			// exactly the network-no-policy-no-override path and nowhere else.
+			if refused != tc.wantOnRefuse {
+				t.Errorf("onRefuse fired = %v, want %v", refused, tc.wantOnRefuse)
+			}
+		})
+	}
+}
 
-	t.Run("unrecognized implementation denies", func(t *testing.T) {
-		// *acl.Request implements acl.ACL and has no arm in the switch.
-		var unknown acl.ACL = (*acl.Request)(nil)
-		if authorizeCommand(context.Background(), unknown, cmd) {
-			t.Error("an ACL implementation with no explicit arm must deny")
-		}
-	})
-
-	t.Run("typed-nil Declarative denies", func(t *testing.T) {
-		var typedNil acl.ACL = (*acl.Declarative)(nil)
-		if authorizeCommand(context.Background(), typedNil, cmd) {
-			t.Error("typed-nil Declarative must deny")
-		}
-	})
+// authorizerKind names the concrete authorizer type for assertions without
+// reflect DeepEqual (gatedAuthorizer holds a *acl.Declarative that would break
+// value comparison).
+func authorizerKind(a commandAuthorizer) string {
+	switch a.(type) {
+	case ungatedAuthorizer:
+		return "ungated"
+	case denyAuthorizer:
+		return "deny"
+	case gatedAuthorizer:
+		return "gated"
+	default:
+		return "unknown"
+	}
 }
 
 // TestCommandCancelOwnerBound pins RR-YZV7SY: a command may be cancelled only

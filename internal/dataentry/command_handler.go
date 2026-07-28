@@ -3,8 +3,6 @@ package dataentry
 import (
 	"context"
 	"net/http"
-
-	"github.com/Sourcehaven-BV/rela/internal/acl"
 )
 
 // commandHandler serves the user-configured command surface: the SSE-streaming
@@ -37,23 +35,26 @@ type commandHandler struct {
 	// leaves the process.
 	executeView func(ctx context.Context, view ViewConfig, entryID string, w viewWorld) (*viewResult, error)
 
-	// aclImpl yields the active ACL, consulted by authorizeCommand to gate
-	// execution (TKT-MJ02AO). A closure, not a value, for the same reason as
-	// the other fields and as app.go's affordance wiring: tests reassign
-	// app.acl AFTER construction, so a captured value would go stale and the
-	// handler would authorize against the wrong policy.
-	aclImpl func() acl.ACL
+	// authz decides whether a command may execute (TKT-MJ02AO, TKT-AQIT9M).
+	// It is chosen ONCE at the wiring site from (ACL, bind, override) — see
+	// SelectCommandAuthorizer — because the decision needs the bind address,
+	// which lives in cmd/rela-server, not in App. Unlike the old aclImpl
+	// closure, this is a value: the authorizer is fixed for the process
+	// lifetime (bind and policy don't change under a running server). Tests
+	// that need a different verdict assign app.commands.authz directly rather
+	// than reassigning app.acl (RR-CWBZVT). A nil authz is treated as deny by
+	// the accessor, so a wiring omission fails closed.
+	authz commandAuthorizer
 }
 
-// currentACL resolves the active ACL, or nil when the handler was constructed
-// without the aclImpl closure. Callers must treat nil as deny (see
-// authorizeCommand) — a wiring omission has to fail closed, not panic and not
-// grant.
-func (h *commandHandler) currentACL() acl.ACL {
-	if h.aclImpl == nil {
-		return nil
+// authorizer returns the wired command authorizer, or a denyAuthorizer when the
+// handler was constructed without one. A wiring omission has to fail closed —
+// never panic, never grant.
+func (h *commandHandler) authorizer() commandAuthorizer {
+	if h.authz == nil {
+		return denyAuthorizer{}
 	}
-	return h.aclImpl()
+	return h.authz
 }
 
 // registerCommandRoutes mounts the command-exec and launcher endpoints. The

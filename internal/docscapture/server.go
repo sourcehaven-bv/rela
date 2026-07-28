@@ -167,6 +167,8 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 		dataentry.NopFieldVerdictResolver{},
 		svc.Audit(),
 		svc.State(),
+		// In-process render harness, no network listener: loopback-equivalent.
+		dataentry.UngatedCommandAuthorizer(),
 	)
 	if err != nil {
 		svc.Close()

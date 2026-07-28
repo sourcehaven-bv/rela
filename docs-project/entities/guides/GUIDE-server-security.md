@@ -553,6 +553,43 @@ shell scripts that run with your user privileges. Be careful what you put
 there. The `/api/command/` endpoint is `POST`-only and protected by the
 Origin allowlist, but the scripts themselves are still trusted code.
 
+Because a command is arbitrary shell execution, `rela-server` gates
+`/api/command/` by the active access-control mode and the bind:
+
+| Mode | Bind | Command execution |
+| --- | --- | --- |
+| **Policy** (`acl.yaml`) | any | Governed: a command runs only when its `permission:` is set **and** held by the caller. `context: view` commands are denied (no fine-grained control yet). |
+| **Read-only** (`--read-only`) | any | Denied — read-only means no execution. |
+| **Open** (no `acl.yaml`) | loopback | Ungated (the server host is your own machine). |
+| **Open** (no `acl.yaml`) | non-loopback | **Denied by default.** |
+
+The last row is the important one: on a network bind with no `acl.yaml`,
+command execution is **refused**, because any client that can reach the
+server could otherwise run an arbitrary shell script. To restore ungated
+commands on such a bind you must either add an `acl.yaml` (and gate each
+command with a `permission:`) **or** opt in explicitly with:
+
+```sh
+rela-server --bind 0.0.0.0 --port 8080 --allow-unauthenticated-commands
+# or: RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1
+```
+
+Only use `--allow-unauthenticated-commands` for a **single-user**
+deployment that is isolated at another layer — Docker port-publishing
+scoped to a trusted host, a host firewall, or a reverse proxy that
+authenticates every request. It is the command-authorization analogue of
+[`--unconfined-commands`](transforms.md) (which disables the *sandbox*):
+the platform refuses the risky thing by default, and a host that isolates
+elsewhere asserts that explicitly. When the override is active the server
+logs a prominent warning at startup. Loopback binds and any deployment
+with an `acl.yaml` never need this flag.
+
+> **Upgrade note.** Earlier versions ran configured commands ungated on
+> *every* bind when no `acl.yaml` was present. A non-loopback deployment
+> that relied on that now refuses commands until you add an `acl.yaml` or
+> pass `--allow-unauthenticated-commands`. This is deliberate — the old
+> default exposed unauthenticated shell execution to the network.
+
 ### Remote MCP exposes every tool, with no per-transport allowlist
 
 `-mcp` (see [mcp-server.md](mcp-server.md#remote-mcp-over-http)) serves the

@@ -222,9 +222,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
 		executeView: app.views.executeView,
-		// Late-bound like production: ACL-gating tests reassign app.acl after
-		// this rebind.
-		aclImpl: func() acl.ACL { return app.acl },
+		// Default to ungated (the loopback/desktop behavior). Command-auth tests
+		// assign app.commands.authz directly to the impl under test rather than
+		// reassigning app.acl — the wiring seam, not the ctx read gate, is what
+		// distinguishes NopACL/ReadOnly/Declarative (RR-CWBZVT / RR-QWVG8Y).
+		authz: ungatedAuthorizer{},
 	}
 	// attachmentHandler mirrors production wiring: closures for the swappable
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl

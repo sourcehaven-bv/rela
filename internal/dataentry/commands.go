@@ -49,75 +49,165 @@ type ResolvedCommand struct {
 // data so 403 bodies don't leak the full effective-role set").
 const commandDenyReason = "not permitted to run this command"
 
-// authorizeCommand reports whether the principal on ctx may execute cmd.
+// commandAuthorizer reports whether the principal on ctx may execute cmd.
 //
-// It is the SINGLE decision point, called by both the exec handler and
-// resolveCommands so the rendered button set and the enforced boundary cannot
-// drift. The 403 is the boundary; the resolve filter is a UX affordance.
+// It is the SINGLE decision point (one instance held by commandHandler), called
+// by both the exec handler and resolveCommands so the rendered button set and
+// the enforced boundary cannot drift (DEC-EIHQSU). The 403 is the boundary; the
+// resolve filter is a UX affordance.
 //
-// Policy (DEC-EIHQSU), keyed on the configured ACL implementation:
+// Which implementation a handler holds is decided ONCE at the wiring site from
+// (ACL, bind, override) — see SelectCommandAuthorizer. This is the seam that
+// distinguishes NopACL from ReadOnlyACL and loopback from network: the ctx read
+// gate cannot, because readGateFromContext hands back the permissive nopReadGate
+// under BOTH NopACL and ReadOnlyACL (RR-QWVG8Y / RR-CWWJGW). A guard written
+// against the read gate alone therefore fails OPEN — so gatedAuthorizer is only
+// ever constructed when a real *acl.Declarative is present.
+type commandAuthorizer interface {
+	Authorize(ctx context.Context, cmd CommandConfig) bool
+}
+
+// ungatedAuthorizer grants every command. It is the pre-ACL / NopACL behavior,
+// selected only for a loopback bind (or the desktop/in-process server, which has
+// no network listener) or when an operator explicitly opts in on a network bind
+// via --allow-unauthenticated-commands. Named, not an anonymous `return true`,
+// so every ungated command path is greppable.
+type ungatedAuthorizer struct{}
+
+func (ungatedAuthorizer) Authorize(context.Context, CommandConfig) bool { return true }
+
+// denyAuthorizer refuses every command. It is the fail-closed choice:
+// ReadOnlyACL, a network bind with no policy and no override, a gate that was
+// required but could not be built, and the nil-authorizer wiring-bug fallback.
+// The DenyReader analog for command execution.
+type denyAuthorizer struct{}
+
+func (denyAuthorizer) Authorize(context.Context, CommandConfig) bool { return false }
+
+// gatedAuthorizer enforces a configured Declarative policy: a command needs its
+// `permission:` set AND held by the principal (resolved per-request from the ctx
+// read gate). `context: view` commands are denied outright — they have no
+// fine-grained control yet (their payload is the whole traversal closure, not
+// one entity; see TKT-MJ02AO), so a granted permission must not open the gate.
 //
-//   - [acl.ReadOnlyACL] → deny everything, every context. Checked FIRST and
-//     independently of the read gate: command exec builds no acl.WriteRequest,
-//     so ReadOnlyACL.AuthorizeWrite is never consulted, and readGateFromContext
-//     hands back nopReadGate (HoldsPermission ⇒ true) under read-only exactly
-//     as it does under NopACL. A guard written against the read gate alone
-//     therefore fails OPEN here — that was the live bug (RR-CWWJGW) this
-//     function exists to close. TestCommandExecReadOnlyDenied is its canary.
-//   - [*acl.Declarative] → fail closed. `context: view` is denied outright
-//     (its payload is the whole traversal closure, not one entity — see
-//     TKT-MJ02AO); otherwise Permission must be set AND held.
-//   - [acl.NopACL] → fail open, preserving pre-ACL behavior. This is the ONLY
-//     arm that grants by default.
-//   - anything else → DENY.
+// LOAD-BEARING (RR-QWVG8Y): a gatedAuthorizer is only valid over a real
+// Declarative policy. newGatedAuthorizer rejects a nil *acl.Declarative, and the
+// wiring site never selects this impl for NopACL/ReadOnly/unknown — because on
+// those paths readGateFromContext returns the permissive nopReadGate and the
+// per-permission check would fail OPEN.
 //
-// The switch is closed by construction (RR-CAUBAZ): the default arm denies, so
-// an ACL implementation nobody taught this function about cannot silently grant
-// shell execution. Both value and face forms of the nop/read-only types are
-// matched explicitly, because their AuthorizeWrite has a VALUE receiver — a
-// `&acl.ReadOnlyACL{}` therefore satisfies acl.ACL, and matching only the value
-// form would drop it into the default arm. When that arm granted, that was a
-// silent `--read-only` bypass reachable by one `&`.
-//
-// Adding a new acl.ACL implementation? It denies commands until you add an arm.
-// That is deliberate: the failure mode of forgetting is a denied command, not
-// an ungoverned shell.
-func authorizeCommand(ctx context.Context, aclImpl acl.ACL, cmd CommandConfig) bool {
-	// A nil ACL means the handler was wired without one. Deny: an
-	// authorization guard must fail closed on a wiring bug, never grant
-	// because a field was left unset. (Catches an untyped nil; a typed-nil
-	// interface falls to the arms below, which also deny.)
-	if aclImpl == nil {
+// The d field is not read by Authorize (the verdict comes from the per-request
+// ctx read gate, which shares the same policy) — it exists so the type cannot be
+// constructed without a non-nil policy. Do not drop it: an empty gatedAuthorizer{}
+// selected on a NopACL path is exactly the fail-open this guard prevents.
+type gatedAuthorizer struct {
+	d *acl.Declarative
+}
+
+// newGatedAuthorizer builds a gatedAuthorizer, rejecting a nil policy so a
+// wiring mistake can never produce a gate that silently grants via nopReadGate.
+func newGatedAuthorizer(d *acl.Declarative) (gatedAuthorizer, error) {
+	if d == nil {
+		return gatedAuthorizer{}, errors.New("dataentry: newGatedAuthorizer: acl.Declarative is nil")
+	}
+	return gatedAuthorizer{d: d}, nil
+}
+
+func (gatedAuthorizer) Authorize(ctx context.Context, cmd CommandConfig) bool {
+	// View commands have no fine-grained control yet: `permission:` is not
+	// honored for them, so a granted permission must NOT open the gate.
+	// Deferred deliberately, not overlooked.
+	if cmd.Context == "view" {
 		return false
 	}
+	if cmd.Permission == "" {
+		return false // fail closed: a policy is configured, this command is ungoverned
+	}
+	return readGateFromContext(ctx).HoldsPermission(ctx, cmd.Permission)
+}
 
-	switch a := aclImpl.(type) {
-	case acl.NopACL, *acl.NopACL:
-		// No policy configured ⇒ commands behave exactly as they did before
-		// this gating existed.
-		return true
+// UngatedCommandAuthorizer returns the pass-through authorizer for an
+// in-process or strictly-loopback server (rela-desktop's Wails asset server,
+// docscapture's local render harness) — hosts with no network listener where
+// the server host IS the user's machine. Exported so those cmd entry points can
+// wire it without the (ACL, bind) selection that only rela-server needs.
+func UngatedCommandAuthorizer() commandAuthorizer { return ungatedAuthorizer{} }
 
+// CommandAuthNotifier carries the startup-log hooks for the two command-auth
+// outcomes an operator must not discover at runtime. Either field may be nil.
+//
+// Both are needed. Instrumenting only OnOverride (the path that grants) leaves
+// the path that DENIES silent — and that is the one that changes behavior for
+// an existing non-loopback deployment on upgrade.
+type CommandAuthNotifier struct {
+	// OnOverride fires when --allow-unauthenticated-commands actually takes
+	// effect on a network bind, i.e. commands became ungated by operator choice.
+	OnOverride func()
+	// OnRefuse fires when a network bind with no policy refuses command
+	// execution, i.e. configured commands stopped working and the operator
+	// needs to know the remedy.
+	OnRefuse func()
+}
+
+// SelectCommandAuthorizer chooses the command authorizer for rela-server from
+// the active ACL, the concrete Declarative policy (nil when none), the bind
+// host, and the operator's --allow-unauthenticated-commands override. This is
+// the seam: the bind address lives here in the cmd layer, not in App, so the
+// loopback-vs-network decision cannot be made inside dataentry alone.
+//
+// Decision matrix (fail-closed by construction — the only paths to ungated are
+// loopback or an explicit override):
+//
+//   - ReadOnlyACL                       → deny  (read-only means no exec, ever)
+//   - Declarative policy present        → gated (permission must be set AND held)
+//   - NopACL + loopback bind            → ungated (pre-ACL local behavior)
+//   - NopACL + network bind + override  → ungated (operator opted in; log loudly)
+//   - NopACL + network bind, no override→ deny  (THE FIX: was ungated)
+//   - anything else / gate unbuildable  → deny
+//
+// loopback reports whether the bind host is loopback (the caller passes
+// isLoopbackHost(bind); an in-process server with no bind passes true).
+// override is the --allow-unauthenticated-commands flag.
+//
+// notify carries the two startup-log hooks. BOTH branches that change what an
+// operator gets are instrumented, deliberately symmetric: taking the override
+// is loud because it opens a network shell, and REFUSING is loud because it
+// silently breaks a previously-working deployment (buttons vanish, exec 403s)
+// with nothing on screen to say why.
+func SelectCommandAuthorizer(
+	active acl.ACL, declarative *acl.Declarative, loopback, override bool, notify CommandAuthNotifier,
+) (commandAuthorizer, error) {
+	// ReadOnly is checked before anything else: it is a stronger guarantee than
+	// "no policy" and must deny exec on every bind. Match both value and pointer
+	// forms (AuthorizeWrite has a value receiver, so &ReadOnlyACL{} also
+	// satisfies acl.ACL) — the same &-reachable bypass the old switch guarded.
+	switch active.(type) {
 	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
-
-	case *acl.Declarative:
-		if a == nil {
-			return false // misconfigured policy must not fail open
-		}
-		// View commands have no fine-grained control yet: `permission:` is
-		// not honored for them, so a granted permission must NOT open the
-		// gate. Deferred deliberately, not overlooked.
-		if cmd.Context == "view" {
-			return false
-		}
-		if cmd.Permission == "" {
-			return false // fail closed: a policy is configured, this command is ungoverned
-		}
-		return readGateFromContext(ctx).HoldsPermission(ctx, cmd.Permission)
-
-	default:
-		return false
+		return denyAuthorizer{}, nil
 	}
+
+	// A configured Declarative policy governs commands on any bind. Build the
+	// gated authorizer from the concrete policy — never fall back to the ctx
+	// read gate for NopACL/ReadOnly, which answers permissive there (RR-QWVG8Y).
+	if declarative != nil {
+		return newGatedAuthorizer(declarative)
+	}
+
+	// No policy (NopACL / off-metamodel). Loopback stays ungated for local
+	// desktop/dev use; a network bind refuses unless the operator opts in.
+	if loopback {
+		return ungatedAuthorizer{}, nil
+	}
+	if override {
+		if notify.OnOverride != nil {
+			notify.OnOverride()
+		}
+		return ungatedAuthorizer{}, nil
+	}
+	if notify.OnRefuse != nil {
+		notify.OnRefuse()
+	}
+	return denyAuthorizer{}, nil
 }
 
 // resolveCommands returns commands available for a given page context.
@@ -126,8 +216,8 @@ func authorizeCommand(ctx context.Context, aclImpl acl.ACL, cmd CommandConfig) b
 // entityType is the entity type shown on the page (empty for dashboard).
 //
 // Commands the principal may not execute are omitted, so the SPA never renders
-// a button that would 403 on click. This is presentation only — authorizeCommand
-// is re-consulted at exec time, which is the actual boundary.
+// a button that would 403 on click. This is presentation only — the same
+// authorizer is re-consulted at exec time, which is the actual boundary.
 func (h *commandHandler) resolveCommands(
 	ctx context.Context, pageType, qualifier, entityType string,
 ) []ResolvedCommand {
@@ -143,14 +233,13 @@ func (h *commandHandler) resolveCommands(
 	}
 	natsort.Strings(ids)
 
-	aclImpl := h.currentACL()
 	var result []ResolvedCommand
 	for _, id := range ids {
 		cmd := s.Cfg.Commands[id]
 		if !matchesPage(cmd, pageType, qualifier, entityType) {
 			continue
 		}
-		if authorizeCommand(ctx, aclImpl, cmd) {
+		if h.authorizer().Authorize(ctx, cmd) {
 			result = append(result, ResolvedCommand{
 				ID:       id,
 				Label:    cmd.Label,
@@ -408,7 +497,7 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 	// unauthorized commands from the UI, but that is presentation: this is the
 	// check that actually holds. 403 rather than 404 — the command's existence
 	// is already public via config, so there is no oracle to protect.
-	if !authorizeCommand(r.Context(), h.currentACL(), cmd) {
+	if !h.authorizer().Authorize(r.Context(), cmd) {
 		http.Error(w, commandDenyReason, http.StatusForbidden)
 		return
 	}

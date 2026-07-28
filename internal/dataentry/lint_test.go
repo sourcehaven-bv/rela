@@ -281,3 +281,61 @@ func TestViewTraversalIsSourceGated(t *testing.T) {
 		})
 	}
 }
+
+// TestCommandAuthorizationHasNoACLTypeSwitch is AC7 for TKT-AQIT9M. The command
+// authorization decision moved OUT of a per-request acl.ACL type-switch and INTO
+// three commandAuthorizer impls selected ONCE at the wiring site
+// (SelectCommandAuthorizer). The command source must therefore never type-switch
+// on acl.ACL again: doing so would recreate the drift the seam removed and, worse,
+// risk the fail-open trap where the ctx read gate cannot distinguish NopACL from
+// ReadOnly (RR-QWVG8Y). The only place that inspects the ACL is
+// SelectCommandAuthorizer, which lives in commands.go but keys off the concrete
+// *acl.Declarative, not a switch over the acl.ACL interface in the exec path.
+func TestCommandAuthorizationHasNoACLTypeSwitch(t *testing.T) {
+	// command_handler.go must not even import acl — it holds a commandAuthorizer,
+	// not an acl.ACL. commands.go legitimately references acl in
+	// SelectCommandAuthorizer (ReadOnly arm + *acl.Declarative), but must not
+	// switch on the acl.ACL interface value inside the request-handling path.
+	body := mustReadPkgFile(t, "command_handler.go")
+	if strings.Contains(body, "internal/acl") {
+		t.Errorf("command_handler.go imports internal/acl — it should hold a commandAuthorizer, " +
+			"not the ACL. The ACL is inspected only at the wiring seam (SelectCommandAuthorizer).")
+	}
+
+	// The old authorizeCommand free function and currentACL accessor are gone;
+	// their reappearance would mean the type-switch crept back.
+	cmds := mustReadPkgFile(t, "commands.go")
+	for _, banned := range []string{"func authorizeCommand", "func (h *commandHandler) currentACL"} {
+		if strings.Contains(cmds, banned) {
+			t.Errorf("commands.go contains %q — the per-request ACL type-switch was replaced by the "+
+				"commandAuthorizer seam (TKT-AQIT9M); do not reintroduce it.", banned)
+		}
+	}
+}
+
+// TestCommandTestsDriveAuthorizerNotACL is the RR-CWBZVT guard. Command-auth
+// tests must set app.commands.authz directly, never reassign app.acl expecting
+// command authorization to follow — the authorizer is fixed at wiring, so an
+// `app.acl =` in these tests would silently exercise the wrong impl and a
+// security canary (e.g. read-only-denied) could pass vacuously.
+func TestCommandTestsDriveAuthorizerNotACL(t *testing.T) {
+	body := mustReadPkgFile(t, "commands_test.go")
+	if strings.Contains(body, "app.acl =") {
+		t.Errorf("commands_test.go reassigns app.acl — command-auth tests must set " +
+			"app.commands.authz directly (RR-CWBZVT). Reassigning app.acl exercises the wrong " +
+			"authorizer because it is chosen once at the wiring seam, not re-derived per request.")
+	}
+}
+
+func mustReadPkgFile(t *testing.T, name string) string {
+	t.Helper()
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(body)
+}
