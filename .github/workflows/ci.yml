@@ -61,6 +61,38 @@ jobs:
           name: coverage-report
           path: coverage.out
 
+  # Reachability floor (report-only). Merges coverage from unit + cross-package
+  # (-coverpkg) and reports the number via scupper. This is NOT a required check
+  # and does NOT fail the build — it establishes the honest baseline before a
+  # rising floor is introduced. e2e/postgres legs are opt-in (RUN_E2E /
+  # RELA_TEST_DATABASE_URL) and omitted here to keep the job fast.
+  reachability:
+    name: Reachability (report-only)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Measure reachability (report-only, no threshold)
+        run: ./scripts/reachability.sh
+
+      - name: Upload reachability profile
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reachability-report
+          path: reachability.out
+
   vulncheck:
     name: Vulnerability Check
     # Only gate PRs that touch Go dependencies. Non-dep PRs get their vuln signal

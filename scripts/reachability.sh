@@ -32,7 +32,7 @@ done
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-SCUPPER_VERSION="v0.1.0"
+SCUPPER_VERSION="v0.2.0"
 DIRECTIVE_ARGS=(-d coverage-ignore --require-reason)
 
 # Ensure scupper is available (pinned). Installed to GOBIN; fall back to `go run`.

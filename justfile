@@ -158,6 +158,14 @@ coverage-html: test-coverage
     go tool cover -html=coverage.out -o coverage.html
     @echo "Coverage report generated: coverage.html"
 
+# Reachability floor: every line executed at least once by ANY test (unit +
+# cross-package + postgres-tagged + e2e), or explicitly dismissed with a reasoned
+# // coverage-ignore. This is a FLOOR, not a quality gate — see scripts/reachability.sh.
+# Report-only for now (no threshold): establishes the honest baseline. Set
+# RUN_E2E=1 / RELA_TEST_DATABASE_URL to include those legs.
+reachability:
+    ./scripts/reachability.sh
+
 # Run fuzz tests (30 seconds each)
 fuzz:
     @echo "Running fuzz tests..."
