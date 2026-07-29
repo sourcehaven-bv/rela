@@ -279,12 +279,48 @@ Transport errors (e.g., terminal not interactive) also raise Lua errors.
 | Function | Description | Returns |
 |----------|-------------|---------|
 | `rela.get_entity(id)` | Get entity by ID | table or nil |
-| `rela.list_entities(type, filter?)` | List entities of a type | table (array) |
+| `rela.list_entities(type, opts?)` | List entities of a type (bounded) | table (array) |
 | `rela.search(query, limit?)` | Full-text search | table (array) |
 | `rela.get_relations(opts?)` | Get relations with filters | table (array) |
 | `rela.trace_from(id, depth?)` | Trace outgoing dependencies | table (tree) |
 | `rela.trace_to(id, depth?)` | Trace incoming dependencies | table (tree) |
 | `rela.find_path(from, to)` | Find shortest path | table (array) or nil |
+
+#### Reads are bounded
+
+**`rela.list_entities` never returns more than 2000 rows.** There is no
+spelling for "give me everything" — an unbounded read of a large type is the
+failure this bound exists to prevent, and leaving it as the default would make
+the dangerous path the shortest one.
+
+```lua
+local tickets = rela.list_entities("ticket")                      -- up to 2000
+local recent  = rela.list_entities("ticket", { limit = 50 })      -- up to 50
+local open    = rela.list_entities("ticket", "status=open")       -- filter shorthand
+local both    = rela.list_entities("ticket",
+                  { filter = "status=open", limit = 50 })
+```
+
+`limit` may lower the bound but never raise it: asking for more than 2000
+clamps rather than erroring, so a script can say "as much as possible" without
+hard-coding the number. `limit = 0` is **an error, not "unbounded"** — it means
+unbounded on `store.ListEntitiesPage`, and silently inheriting the opposite
+meaning here would be the worst kind of near-miss.
+
+The bound stops the read at the source. Rows past the limit are never loaded,
+gated, or converted — this is a real saving, not a slice after the fact.
+
+**Iterating past the bound is not yet possible.** Cursor paging is planned;
+until it lands, `{cursor = ...}` is *rejected* rather than accepted-and-ignored,
+so a script written against the future API fails loudly here instead of
+silently re-reading the first page forever. The same applies to any unknown
+option: a typo'd key raises rather than being skipped.
+
+One caveat worth knowing: with a `filter`, the bound applies to rows
+**examined**, so a `limit` of 50 can return fewer than 50 matches. Without a
+filter it is exact.
+
+#### Relation filters
 
 `rela.get_relations` takes an **options table** — `{from = ..., type = ...,
 to = ...}` — where each key is optional and must be a **string**. Omitting a
