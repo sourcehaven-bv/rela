@@ -1025,18 +1025,38 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 		ls.RaiseError("entity type cannot be empty")
 		return 0
 	}
-	filterExpr := ls.OptString(2, "")
+	filterExpr, opts, err := listEntitiesArgs(ls)
+	if err != nil {
+		ls.RaiseError("rela.list_entities: %s", err.Error())
+		return 0
+	}
 	rd, ok := r.reader(ls, "rela.list_entities")
 	if !ok {
 		return 0
 	}
 
-	entities := make([]*entity.Entity, 0)
+	// The bound is applied by stopping the iterator, not by slicing a
+	// materialized set: rows past the limit are never loaded, redacted, or
+	// turned into Lua tables. On fsstore that is a saved file read and parse
+	// per skipped row.
+	//
+	// It bounds rows EXAMINED. With a property filter (which the store cannot
+	// express, so it runs here) a full page in can be fewer rows out, and the
+	// caller cannot tell "that is everything" from "the rest was filtered".
+	// Resolving that needs the cursor -- DEC-IYHLNF stage 2.
+	entities := make([]*entity.Entity, 0, min(opts.limit, initialRowCapacity))
 	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
 		if err != nil {
-			break
+			// RAISE, never break-and-return-what-we-have (TKT-FVQ4). A short
+			// list is indistinguishable from a genuinely short result, so
+			// swallowing this hands the script a wrong answer that looks right.
+			ls.RaiseError("rela.list_entities: %s", err.Error())
+			return 0
 		}
 		entities = append(entities, e)
+		if len(entities) >= opts.limit {
+			break
+		}
 	}
 
 	// Apply filter if provided

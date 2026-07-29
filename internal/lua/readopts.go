@@ -27,6 +27,12 @@ import (
 // (same rationale as dataentry's listExportCap).
 var maxReadLimit = 2000
 
+// initialRowCapacity pre-sizes a read binding's result slice. Capped well
+// below maxReadLimit on purpose: `limit` is an upper BOUND, not a prediction,
+// so allocating for it up front would reserve 2000 slots for a query that
+// typically returns a handful. Growth past this is amortized doubling.
+const initialRowCapacity = 64
+
 // readOpts is the parsed form of the options table every read binding accepts:
 // `f(required..., {limit = n, ...})`. Binding-specific keys are read by the
 // binding itself; this carries only what they all share.
@@ -39,6 +45,38 @@ var maxReadLimit = 2000
 // loudly here instead of silently returning page one forever.
 type readOpts struct {
 	limit int
+}
+
+// listEntitiesArgs reads rela.list_entities' second argument, which may be
+// either the options table or a bare filter string.
+//
+// The bare string is kept because `list_entities("ticket", "status=open")`
+// is the single most common call in every script in the tree, and a filter
+// expression is genuinely the one thing worth a positional shorthand. It is
+// exactly equivalent to `{filter = "status=open"}` and gets the same default
+// bound — the shorthand buys brevity, never different semantics.
+func listEntitiesArgs(s *lua.LState) (filterExpr string, o readOpts, err error) {
+	if s.GetTop() >= 2 {
+		if str, isStr := s.Get(2).(lua.LString); isStr {
+			return string(str), readOpts{limit: maxReadLimit}, nil
+		}
+	}
+	o, err = parseReadOpts(s, 2, "filter")
+	if err != nil {
+		return "", o, err
+	}
+	if s.GetTop() >= 2 {
+		if tbl, isTbl := s.Get(2).(*lua.LTable); isTbl {
+			switch v := tbl.RawGetString("filter").(type) {
+			case *lua.LNilType:
+			case lua.LString:
+				filterExpr = string(v)
+			default:
+				return "", o, fmt.Errorf("option %q must be a string, got %s", "filter", v.Type())
+			}
+		}
+	}
+	return filterExpr, o, nil
 }
 
 // parseReadOpts reads the options table at stack position pos.
