@@ -27,6 +27,7 @@ require (
 	github.com/yuin/goldmark v1.8.4
 	github.com/yuin/gopher-lua v1.1.2
 	go.uber.org/goleak v1.3.0
+	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0

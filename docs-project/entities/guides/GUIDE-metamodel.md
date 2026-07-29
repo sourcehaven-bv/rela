@@ -618,7 +618,7 @@ entities:
 | `accept`         | For `file` properties: narrow the MIME allowlist (e.g. `[application/pdf]`)           |
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
 | `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd`                |
-| `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}`                   |
+| `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` or `{image: {...}}` |
 
 ### File attachments and `max`
 

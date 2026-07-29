@@ -321,12 +321,58 @@ type PropertyDef struct {
 	Transform []TransformStep `yaml:"transform,omitempty"`
 }
 
-// TransformStep is one entry in a `transform:` pipeline — an external command
-// (array args) that rewrites the attachment bytes (e.g. metadata strip,
-// resize, CDR). The command receives templated {in}/{out} paths owned by the
-// runner; see the attachment-security guide for vetted recipes.
+// TransformStep is one entry in a `transform:` pipeline. A step is EITHER an
+// external command (Cmd) OR a native, in-process image operation (Image) —
+// exactly one must be set, enforced at load. The two kinds have very different
+// trust models: a Cmd shells out to an operator-configured binary (sandboxed by
+// internal/cmdexec), while an Image step runs a memory-safe pure-Go decoder
+// in-process with no external tool and no sandbox. See the attachment-security
+// guide.
 type TransformStep struct {
-	Cmd []string `yaml:"cmd"`
+	// Cmd is an external command (array args) that rewrites the bytes; it
+	// receives templated {in}/{out} paths owned by the runner.
+	Cmd []string `yaml:"cmd,omitempty"`
+	// Image is a native in-process image transform (decode, orient, re-encode).
+	// Mutually exclusive with Cmd.
+	Image *ImageStep `yaml:"image,omitempty"`
+}
+
+// ImageStep is a native, in-process image transform: it decodes the upload with
+// a memory-safe pure-Go decoder, bakes in EXIF orientation, and re-encodes to a
+// canonical format, dropping all metadata. Supported inputs are PNG, JPEG, GIF,
+// and WebP (decode); the output is always PNG or JPEG (there is no pure-Go WebP
+// encoder). Because decoding is memory-safe, this needs no external tool and no
+// OS sandbox. Resize/thumbnail is a later phase and deliberately absent here.
+type ImageStep struct {
+	// Reencode is the canonical output format: "jpeg" (default) or "png". Both
+	// are always within the default-safe MIME allowlist, so the re-encoded
+	// output is safe by construction.
+	Reencode string `yaml:"reencode,omitempty"`
+	// Quality is the JPEG quality (1..100) when Reencode is "jpeg". Zero uses
+	// the package default. Ignored for PNG.
+	Quality int `yaml:"quality,omitempty"`
+}
+
+// ImageReencode returns the effective re-encode target for the step, applying
+// the "jpeg" default when unset.
+func (s ImageStep) ImageReencode() string {
+	if s.Reencode == "" {
+		return "jpeg"
+	}
+	return s.Reencode
+}
+
+// Kind reports which of the two mutually-exclusive step kinds is set, or an
+// empty string when the step is malformed (both/neither set).
+func (t TransformStep) Kind() string {
+	switch {
+	case len(t.Cmd) > 0 && t.Image == nil:
+		return "cmd"
+	case t.Image != nil && len(t.Cmd) == 0:
+		return "image"
+	default:
+		return ""
+	}
 }
 
 // TransformDef is one entry in the top-level `transforms:` view-export registry.
