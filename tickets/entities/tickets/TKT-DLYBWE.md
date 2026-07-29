@@ -5,7 +5,7 @@ title: 'lua: bounded read API shape — uniform opts, ACL pushdown, errors raise
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 Stage 1 of DEC-IYHLNF. Splits out the half of TKT-YWDGZD that is NOT blocked on
