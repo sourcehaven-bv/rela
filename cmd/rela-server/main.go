@@ -66,7 +66,7 @@ type serverFlags struct {
 	webhookAction   string
 }
 
-// coverage-ignore: flag wiring — exercised at startup, not in tests
+// coverage-ignore-func: flag wiring — exercised at startup, not in tests
 func parseFlags() *serverFlags {
 	f := &serverFlags{}
 	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
@@ -254,7 +254,7 @@ func validateIdentityFlags(f *serverFlags, envUser string) (identityMode, error)
 // resolver chain — the JWT resolver is deliberately not chained, because with a
 // single exclusive source there is nothing to fall through to.
 //
-// coverage-ignore: startup wiring — the decision it acts on is validateIdentityFlags.
+// coverage-ignore-func: startup wiring — the decision it acts on is validateIdentityFlags.
 func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier, mode identityMode) {
 	if mode == identityJWT {
 		if idv == nil {
@@ -296,7 +296,7 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 // and errors if it can't). The one verifier is reused by both the principal
 // resolver and the webhook receiver, so the JWKS is fetched once.
 //
-// coverage-ignore: startup wiring — exercised via jwtauth's own tests.
+// coverage-ignore-func: startup wiring — exercised via jwtauth's own tests.
 func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifier {
 	if f.jwtIssuer == "" || f.jwtAudience == "" || f.jwtJWKSURL == "" {
 		return nil
@@ -320,7 +320,7 @@ func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifie
 // failure, is fatal so a misconfiguration fails loud rather than silently leaving
 // the endpoint off.
 //
-// coverage-ignore: startup wiring — exercised via the shim + verifier tests.
+// coverage-ignore-func: startup wiring — exercised via the shim + verifier tests.
 func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
 	if f.webhookAudience == "" && f.webhookAction == "" {
 		return // disabled
@@ -383,7 +383,7 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 	return dataentry.WebhookClaims{Event: c.Event, UserID: c.UserID, OrgID: c.OrgID, ID: c.ID}, nil
 }
 
-// coverage-ignore: main function - entry point
+// coverage-ignore-func: main function - entry point
 func main() {
 	f := parseFlags()
 
@@ -552,7 +552,7 @@ func serveUntilSignal(srv *http.Server) error {
 // they still see a normal *http.Request with Host/Origin/etc. populated the
 // same way.
 //
-// coverage-ignore: server construction, exercised via integration tests
+// coverage-ignore-func: server construction, exercised via integration tests
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	protocols := &http.Protocols{}
 	protocols.SetHTTP1(true)
@@ -629,7 +629,7 @@ func configureLogging(verbose, quiet bool) {
 // listener also refuses non-loopback binds so a misconfigured
 // --bind 0.0.0.0 cannot accidentally expose goroutine dumps to the LAN.
 //
-// coverage-ignore: diagnostic-only, off by default
+// coverage-ignore-func: diagnostic-only, off by default
 func startPprofIfRequested(addr string) error {
 	if addr == "" {
 		return nil

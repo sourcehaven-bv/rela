@@ -47,7 +47,7 @@ type renameEntityInfo struct {
 	hasTemplate     bool
 }
 
-// coverage-ignore: interactive CLI - tested via integration tests
+// coverage-ignore-func: interactive CLI - tested via integration tests
 func runRenameEntity(
 	svc *writeServices, rt *renametype.Service, oldType, newType string, force bool, plural string,
 ) error {
@@ -136,7 +136,7 @@ func showRenamePreview(info *renameEntityInfo) {
 	}
 }
 
-// coverage-ignore: interactive prompt
+// coverage-ignore-func: interactive prompt
 func confirmRename() (bool, error) {
 	fmt.Print("\nProceed? [y/N] ")
 	reader := bufio.NewReader(os.Stdin)

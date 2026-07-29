@@ -9,6 +9,8 @@ fuzz-failures.txt
 coverage_test.out
 coverage.txt
 coverage.html
+reachability.out
+reachability.filtered.out
 test-logs/
 *.log
 

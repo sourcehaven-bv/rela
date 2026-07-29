@@ -40,12 +40,12 @@ type cli struct {
 	docscli.Root
 }
 
-// coverage-ignore: main function - entry point, tested via integration tests
+// coverage-ignore-func: main function - entry point, tested via integration tests
 func main() {
 	os.Exit(run())
 }
 
-// coverage-ignore: CLI entry point - tested via integration tests
+// coverage-ignore-func: CLI entry point - tested via integration tests
 func run() int {
 	var c cli
 	ktx := kong.Parse(&c,

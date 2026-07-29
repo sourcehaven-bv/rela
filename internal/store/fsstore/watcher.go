@@ -72,7 +72,7 @@ func (s *FSStore) Close() error {
 //
 // Calling StartWatching more than once is a no-op after the first call.
 //
-// coverage-ignore: requires real filesystem events via fsnotify
+// coverage-ignore-func: requires real filesystem events via fsnotify
 func (s *FSStore) StartWatching() error {
 	s.mu.Lock()
 	if s.extWatcher != nil {
