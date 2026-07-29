@@ -6,10 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -25,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
-	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -41,9 +37,6 @@ import (
 
 // ConfigFile is the conventional filename for data-entry configuration within a rela project.
 const ConfigFile = dataentryconfig.ConfigFile
-
-// uiStateFile is the filename for persisted UI state within the .rela directory.
-const uiStateFile = "ui-state.json"
 
 // userDefaultsFile is the filename for user-specific default values within the .rela directory.
 const userDefaultsFile = "user-defaults.yaml"
@@ -85,9 +78,14 @@ const userPaletteFile = "palette.yaml"
 // reconciler (18 methods) — moved to writeHandler (131 → 114); the Lua
 // action handler joined it (115 → 114, from a base that had absorbed the
 // DEC-O59WM4 script-read helpers), completing the write surface: every
-// writeMu write path now lives on or routes through writeHandler.
+// writeMu write path now lives on or routes through writeHandler. The
+// views cluster — view traversal, section building, the /_views,
+// /_sidepanel, /_sidebar handlers, and the form-resolution helpers (16
+// methods) — moved to viewsHandler, three receiver-free helpers became
+// package functions, and the dead ungated server-rendered nav path (5
+// methods, #1043) was deleted (114 → 90).
 //
-//plimsoll:max-methods=114
+//plimsoll:max-methods=90
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -144,9 +142,6 @@ type App struct {
 	// App (TKT-N26KLB); pure transform — handlers pass the entity's already-
 	// loaded outgoing relations, the serializer does no loading.
 	serializer entitySerializer
-	// userState persists per-user UI state (UI state, defaults, palette)
-	// to the .rela/ KV store. Extracted from App (TKT-N26KLB M5.3).
-	userState userStateStore
 	// logo owns the user-uploaded sidebar logo — persistence AND the served
 	// in-memory cache — self-synchronized. Extracted from the schema snapshot so the
 	// logo no longer rides the App-wide snapshot + writeMu.
@@ -179,7 +174,11 @@ type App struct {
 
 	// write owns the entity/relation CRUD + clone + conflict-resolve write
 	// nucleus (TKT-R68TV8 M5.4); shares writeMu by pointer.
-	write     *writeHandler
+	write *writeHandler
+	// views owns the read-only view-assembly surface: view traversal,
+	// section building, and the /_views, /_sidepanel, /_sidebar endpoints
+	// (TKT-R68TV8). No writeMu — this surface never mutates.
+	views     *viewsHandler
 	templater templating.Templater
 	cfgLoader config.Loader
 	kv        state.KV
@@ -706,7 +705,6 @@ func NewApp(
 		templater:       templater,
 		cfgLoader:       cfgLoader,
 		kv:              kv,
-		userState:       userStateStore{kv: kv},
 		acl:             aclImpl,
 		broker:          newEventBroker(),
 		scriptEngine:    scriptEngine,
@@ -800,6 +798,23 @@ func NewApp(
 	// where the sync endpoints degrade to 501).
 	app.sync = newSyncHandler(st, app.entityManager, &app.writeMu)
 
+	// viewsHandler owns the read-only view-assembly surface (view traversal,
+	// section building, /_views, /_sidepanel, /_sidebar). Fixed service
+	// handles by value — none of these are swapped by tests — plus the schema
+	// snapshot / Services bundle as closures and App's shared read gate so
+	// the uniform-404 behavior can't drift from the entity read path.
+	app.views = &viewsHandler{
+		schema:      app.State,
+		store:       st,
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        logo,
+		gateRead:    app.gateReadOrNotFound,
+	}
+
 	// commandHandler owns the user-configured command surface. Its
 	// collaborators are narrow closures over App: the schema snapshot (command/
 	// list/view config), the Services read bundle, the project root (exec cwd +
@@ -808,7 +823,7 @@ func NewApp(
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		executeView: app.executeView,
+		executeView: app.views.executeView,
 		// Late-bound: tests reassign app.acl after construction.
 		aclImpl: func() acl.ACL { return app.acl },
 	}
@@ -952,77 +967,14 @@ func checkExportRenderScripts(cfg Config, root string) error {
 	return nil
 }
 
-// NavItem is an enriched navigation entry that includes the entity type for client-side matching.
-type NavItem struct {
-	Label      string
-	List       string
-	Dashboard  bool
-	Kanban     string
-	EntityType string
-	Count      int
-}
-
-// NavGroup is an enriched navigation group containing resolved nav items.
-type NavGroup struct {
-	Group     string
-	Collapsed bool
-	Items     []NavItem
-}
-
-// NavElement is a union of either a direct NavItem or a NavGroup.
-// Exactly one of Item or Group is non-nil.
-type NavElement struct {
-	Item  *NavItem
-	Group *NavGroup
-}
-
-// enrichNavEntry resolves a single NavigationEntry into a NavItem with entity type and count.
-func (a *App) enrichNavEntry(ctx context.Context, nav NavigationEntry) NavItem {
-	item := NavItem{Label: nav.Label, List: nav.List, Dashboard: nav.Dashboard, Kanban: nav.Kanban}
-	if nav.Dashboard || nav.Kanban != "" {
-		return item
-	}
-	s := a.State()
-	if list, ok := s.Cfg.Lists[nav.List]; ok {
-		item.EntityType = list.EntityType
-		entities := listFromStoreByTypes(ctx, a.Services(), []string{list.EntityType})
-		entities = applyFilters(entities, list.Filters)
-		item.Count = len(entities)
-	}
-	return item
-}
-
-// navElements returns the navigation structure with groups and items resolved.
-// The activeList parameter is used to auto-expand the group containing the active item.
-func (a *App) navElements(ctx context.Context, activeList string) []NavElement {
-	uiState := a.userState.loadUIState(ctx)
-	cfgNav := a.State().Cfg.Navigation
-	elements := make([]NavElement, 0, len(cfgNav))
-	for _, nav := range cfgNav {
-		if nav.IsGroup() {
-			grp := NavGroup{Group: nav.Group}
-			// Determine collapsed state: UIState overrides config default
-			if override, ok := uiState.CollapsedGroups[nav.Group]; ok {
-				grp.Collapsed = override
-			} else {
-				grp.Collapsed = nav.Collapsed
-			}
-			grp.Items = make([]NavItem, len(nav.Items))
-			for i, child := range nav.Items {
-				grp.Items[i] = a.enrichNavEntry(ctx, child)
-				// Auto-expand group if it contains the active list
-				if child.List == activeList && activeList != "" {
-					grp.Collapsed = false
-				}
-			}
-			elements = append(elements, NavElement{Group: &grp})
-		} else {
-			item := a.enrichNavEntry(ctx, nav)
-			elements = append(elements, NavElement{Item: &item})
-		}
-	}
-	return elements
-}
+// The server-rendered nav-enrichment path (NavItem/NavGroup/NavElement,
+// enrichNavEntry, navElements) and the active-list resolvers
+// (activeListForEntityType, activeListFromReferer, resolveActiveList) are
+// deleted: nothing outside their own tests called them since the SPA took
+// over navigation, and enrichNavEntry counted entities from the RAW store
+// — leaking existence counts of ACL-hidden entities (#1043). The live
+// sidebar (viewsHandler.handleV1Sidebar) routes every count through the
+// ACL read scope and is pinned by TestACLSidebar_CountsMatchList.
 
 // coverage-ignore: requires running workspace, tested via e2e
 
@@ -1039,138 +991,6 @@ func firstNavTarget(nav []NavigationEntry) *NavigationEntry {
 		return &nav[i]
 	}
 	return nil
-}
-
-// editFormForType returns the first edit form ID configured for the given entity type,
-// or "" if no edit form is found. Forms with explicit mode="edit" are preferred.
-func (a *App) editFormForType(entityType string) string {
-	s := a.State()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
-		ids = append(ids, id)
-	}
-	natsort.Strings(ids)
-	// First pass: look for explicit edit mode
-	for _, id := range ids {
-		f := s.Cfg.Forms[id]
-		if f.EntityType == entityType && f.Mode == "edit" {
-			return id
-		}
-	}
-	// Second pass: fall back to forms with no mode specified
-	for _, id := range ids {
-		f := s.Cfg.Forms[id]
-		if f.EntityType == entityType && f.Mode == "" {
-			return id
-		}
-	}
-	return ""
-}
-
-// createFormForType returns the first form ID that can be used to create an entity
-// of the given type. It prefers forms with mode "create" or unset, but falls back
-// to edit-mode forms (which work for creation when no entity ID is provided).
-func (a *App) createFormForType(entityType string) string {
-	s := a.State()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
-		ids = append(ids, id)
-	}
-	natsort.Strings(ids)
-	fallback := ""
-	for _, id := range ids {
-		f := s.Cfg.Forms[id]
-		if f.EntityType != entityType {
-			continue
-		}
-		if f.Mode != "edit" {
-			return id
-		}
-		if fallback == "" {
-			fallback = id
-		}
-	}
-	return fallback
-}
-
-// resolveLinkTarget resolves a link configuration value to a URL.
-// Supported values:
-//   - "" or empty: no link (returns "")
-//   - "detail": link to entity detail view (/entity/{type}/{id})
-//   - "document/<name>": link to document preview (/document/<name>/{id})
-func (a *App) resolveLinkTarget(link, entityType, entityID string) string {
-	switch {
-	case link == "":
-		return ""
-	case link == "detail":
-		return "/entity/" + entityType + "/" + entityID
-	case strings.HasPrefix(link, "document/"):
-		docName := strings.TrimPrefix(link, "document/")
-		return "/document/" + docName + "/" + entityID
-	default:
-		return ""
-	}
-}
-
-// activeListForEntityType returns the first navigation list ID whose entity type
-// matches the given type, or "" if none match. Walks into groups.
-func (a *App) activeListForEntityType(entityType string) string {
-	s := a.State()
-	return a.findListByEntityType(s, s.Cfg.Navigation, entityType)
-}
-
-func (a *App) findListByEntityType(s *Schema, entries []NavigationEntry, entityType string) string {
-	for _, nav := range entries {
-		if nav.IsGroup() {
-			if found := a.findListByEntityType(s, nav.Items, entityType); found != "" {
-				return found
-			}
-			continue
-		}
-		if list, ok := s.Cfg.Lists[nav.List]; ok && list.EntityType == entityType {
-			return nav.List
-		}
-	}
-	return ""
-}
-
-// activeListFromReferer extracts a list ID from the Referer header path
-// (e.g. "/list/tickets" -> "tickets"). Returns "" if the referer doesn't
-// point to a known list.
-func (a *App) activeListFromReferer(r *http.Request) string {
-	ref := r.Header.Get("Referer")
-	if ref == "" {
-		return ""
-	}
-	parsed, err := url.Parse(ref)
-	if err != nil {
-		return ""
-	}
-	path := parsed.Path
-	if !strings.HasPrefix(path, "/list/") {
-		return ""
-	}
-	listID := strings.TrimPrefix(path, "/list/")
-	if _, ok := a.State().Cfg.Lists[listID]; ok {
-		return listID
-	}
-	return ""
-}
-
-// resolveActiveList returns the best active list for the sidebar.
-// It first checks for an explicit "from" query parameter (set when navigating
-// from a list), then tries matching by entity type, then falls back to the
-// Referer header.
-func (a *App) resolveActiveList(entityType string, r *http.Request) string {
-	if from := r.URL.Query().Get("from"); from != "" {
-		if _, ok := a.State().Cfg.Lists[from]; ok {
-			return from
-		}
-	}
-	if active := a.activeListForEntityType(entityType); active != "" {
-		return active
-	}
-	return a.activeListFromReferer(r)
 }
 
 // ProjectName returns the display name of the loaded project.
