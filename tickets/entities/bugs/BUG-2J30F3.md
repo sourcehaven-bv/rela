@@ -10,7 +10,7 @@ why3: release.yml's test job ran on ubuntu-latest with no bubblewrap install ste
 why4: release.yml duplicates CI's test gate rather than reusing it, so the sandbox requirements added to ci.yml were never mirrored into release.yml.
 why5: Nothing enforces that the two gates stay equivalent, and the release gate only executes on a tag push — so drift stays invisible until a release is cut and cannot be caught at PR time.
 prevention: The release test gate now pins ubuntu-26.04, installs bubblewrap, and keeps ci.yml's `bwrap --unshare-all --ro-bind / / /bin/true` verification step so an absent sandbox is a hard failure rather than a silent mass-skip. docs/releasing.md documents runner drift from CI as a named release failure mode. The structural fix — a workflow_call reusable gate shared by both workflows, which would make this drift impossible — is deliberately deferred as a larger refactor.
-status: review
+status: done
 ---
 
 ## Summary

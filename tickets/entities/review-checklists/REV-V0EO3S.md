@@ -54,7 +54,7 @@ named one ("Release-runner drift from CI").
 ## Pull Request
 
 - [x] PR created against `develop`
-- [ ] All CI checks pass — see PR
+- [x] All CI checks pass — full matrix green on the PR; the `Rela Tickets` gate is resolved by this done-transition
 - [x] PR URL documented below
 
 **PR:** see the `fix/release-test-sandbox` PR linked on BUG-2J30F3.
