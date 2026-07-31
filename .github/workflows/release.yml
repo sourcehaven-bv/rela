@@ -16,7 +16,11 @@ permissions:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # 26.04, not ubuntu-latest: the command sandbox needs unprivileged user
+    # namespaces, which 24.04 restricts via AppArmor
+    # (apparmor_restrict_unprivileged_userns=1, seen as bwrap "Failed
+    # RTM_NEWADDR: Operation not permitted"). Mirrors ci.yml.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -24,6 +28,18 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: "1.26"
+
+      # External commands (attachment scan/transform, view export) run confined
+      # and FAIL CLOSED when no sandbox is available, so the runner needs
+      # bubblewrap or every command-running test fails — which skipped the
+      # whole release job, since `release` needs this one (BUG-OJNWVK).
+      - name: Install bubblewrap (command sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Verify the sandbox actually works on this runner
+        # A hard failure here is better than every sandbox test silently
+        # skipping: it means the confinement CI thinks it is testing is absent.
+        run: bwrap --unshare-all --ro-bind / / /bin/true
 
       - name: Run tests
         run: go test -v -race ./...
