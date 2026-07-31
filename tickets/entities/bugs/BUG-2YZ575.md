@@ -11,7 +11,7 @@ why3: internal/dataentry/static/v2/ is gitignored (generated output), so a clean
 why4: 'The frontend-build dependency is expressed only in the justfile (`build-server: build-frontend`), not in the release workflow; the `desktop` job re-declared it by hand and the `release` job simply never did.'
 why5: Generated-but-embedded assets have no enforced producer→consumer dependency at the release boundary, and nothing verified the published artifact. TKT-O03TB specified exactly this guard after BUG-W144 but was left in backlog, so the identical failure recurred undetected across every release since v0.7.
 prevention: 'Build the SPA in the release job AND assert the packaged binary actually contains vite assets (release-embedded-spa-guard). The artifact-level assertion is the load-bearing half: it fails the release if a future edit drops or reorders the build step, rather than silently publishing a dead UI.'
-status: review
+status: done
 ---
 
 ## Symptom
