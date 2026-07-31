@@ -5,7 +5,7 @@ title: Packaged-binary smoke test (//go:embed assets non-empty + served)
 kind: test
 priority: medium
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Problem
