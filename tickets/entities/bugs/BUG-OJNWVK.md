@@ -11,7 +11,7 @@ why3: 'internal/cmdexec deliberately fails closed: on a host with no sandbox mec
 why4: release.yml's Test job is a bare `go test -v -race ./...` with no dependency install step. ci.yml grew an `Install bubblewrap (command sandbox)` step when the sandbox requirement landed; release.yml was never updated to match.
 why5: release.yml only runs on tag pushes, so its jobs are never exercised by PR CI. Workflow drift between ci.yml and release.yml is therefore invisible until a release is attempted — the same blind spot that let BUG-2YZ575 ship a dead SPA across every release since v0.7.
 prevention: 'Install bubblewrap in release.yml''s Test job, mirroring ci.yml. Longer term the two workflows should share the setup rather than re-declaring it (see BUG-2YZ575 why5: release.yml re-declaring what ci.yml/justfile already express is the recurring root cause).'
-status: in-progress
+status: done
 ---
 
 ## Symptom
