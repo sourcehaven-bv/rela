@@ -58,6 +58,32 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # rela-server embeds the Vue SPA via //go:embed from the gitignored
+      # internal/dataentry/static/v2/. Without this build the embed resolves
+      # to an empty tree and the release ships a dead web UI (BUG-2YZ575) —
+      # the Go build itself stays green, so only the guard below catches it.
+      - name: Build Vue frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Verify SPA build output
+        run: |
+          ./scripts/check-embedded-spa-test.sh
+          ./scripts/check-embedded-spa.sh tree internal/dataentry/static/v2
+          # app_editor_dist keeps a committed .gitkeep, so its embed glob always
+          # matches and a missing bundle is not even a build error.
+          test -s internal/dataentry/app_editor_dist/rela-editor.js \
+            || { echo "FAIL: app editor bundle missing or empty" >&2; exit 1; }
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.2.3
         with:
@@ -66,6 +92,36 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Artifact-level guard: assert the binaries that were actually packaged
+      # embed the SPA. The step above checks the working tree; this checks
+      # what ships, so dropping or reordering the build step fails the release
+      # instead of silently republishing the BUG-2YZ575 regression.
+      #
+      # Every binary that links internal/dataentry embeds the SPA, across BOTH
+      # archives — rela-server-postgres lives in rela-postgres_*, which the
+      # rela_* glob does not match. One linux/amd64 archive per pair is enough:
+      # all platforms are built from the same embed source in this same job.
+      - name: Verify packaged binaries embed the SPA
+        run: |
+          set -euo pipefail
+          check() {
+            local pattern="$1" binary="$2" archive dir
+            archive=$(find dist -maxdepth 1 -name "$pattern" | head -1)
+            if [ -z "$archive" ]; then
+              echo "FAIL: no $pattern found in dist/" >&2
+              exit 1
+            fi
+            dir=$(mktemp -d)
+            echo "Checking $binary in $archive"
+            tar xzf "$archive" -C "$dir" "$binary"
+            ./scripts/check-embedded-spa.sh binary "$dir/$binary" \
+              internal/dataentry/static/v2
+            rm -rf "$dir"
+          }
+          check 'rela_*_linux_amd64.tar.gz'          rela-server
+          check 'rela_*_linux_amd64.tar.gz'          rela-docs
+          check 'rela-postgres_*_linux_amd64.tar.gz' rela-server-postgres
 
   desktop:
     name: Desktop (${{ matrix.os_name }}-${{ matrix.arch }})
