@@ -77,14 +77,6 @@ type PolicyResolver struct {
 	// were reduced to globals-only (see resolveViaDeclarative) fails closed
 	// rather than defaulting to all-visible (TKT-73C6B2).
 	typesWithVisible map[string]bool
-
-	// relationTypesWithVisible records relation types for which ANY role
-	// declares a relation `visible:` block. The relation-history analog of
-	// typesWithVisible: under the historical marker a relation of such a type
-	// gets a type-level closed-world in [PolicyResolver.RelationFieldVerdicts]
-	// so the globals-only reduced role set fails closed rather than defaulting
-	// to all-visible (TKT-B1F5Q1, inheriting the TKT-73C6B2 rule).
-	relationTypesWithVisible map[string]bool
 }
 
 type grantKey struct {
@@ -145,14 +137,13 @@ func New(
 	}
 	policy := declarative.Policy()
 	r := &PolicyResolver{
-		policy:                   policy,
-		meta:                     meta,
-		lookup:                   lookup,
-		declarative:              declarative,
-		envs:                     map[string]*predicate.Env{},
-		grants:                   map[grantKey]*compiledGrants{},
-		typesWithVisible:         map[string]bool{},
-		relationTypesWithVisible: map[string]bool{},
+		policy:           policy,
+		meta:             meta,
+		lookup:           lookup,
+		declarative:      declarative,
+		envs:             map[string]*predicate.Env{},
+		grants:           map[grantKey]*compiledGrants{},
+		typesWithVisible: map[string]bool{},
 	}
 	if policy == nil {
 		return r, nil
@@ -341,14 +332,6 @@ func (r *PolicyResolver) compileRelationGrant(
 		}
 		cr.visible = append(cr.visible, compiledFieldGrant{field: fg.Field, program: fprog})
 	}
-	if len(rg.Visible) > 0 {
-		// Record the relation type for the historical closed-world in
-		// RelationFieldVerdicts (TKT-B1F5Q1, mirrors typesWithVisible). Recorded
-		// only when the grant carries a visible: block AND compiled cleanly is
-		// wrong — a compile error hard-fails New below, so recording eagerly here
-		// is harmless; keep it unconditional on the block's presence.
-		r.relationTypesWithVisible[rg.Relation] = true
-	}
 	// Append the grant only when it compiled cleanly end-to-end. A
 	// grant that lost a meta field to a compile error must not be
 	// half-installed (S4): silently dropping the field would flip a
@@ -522,13 +505,11 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 // grant-mentioned candidate — so redaction covers exactly what would otherwise
 // reach the wire, including free-form meta keys not declared in the metamodel.
 //
-// Fails closed for a HISTORICAL subject exactly as the entity path does: under
-// [WithHistoricalSubject] the role set is reduced to globals-only
-// (resolveViaDeclarative), and a relation type that ANY role gates with
-// `visible:` gets a type-level closed-world here so the reduced set hides every
-// non-affirmatively-granted field rather than defaulting to all-visible. A
-// holder of acl.PermHistoryReadRedacted bypasses this entirely at the handler
-// (the strip step is skipped), matching serveHistoryVersion's reveal branch.
+// This is always resolved against a LIVE source entity: the live relation GET,
+// and relation history's live-source case (a deleted-source relation history
+// serves no meta at all, so it never reaches here — IB-review #1). There is
+// therefore no historical-subject / fail-closed-reconstruct handling on this
+// path; redaction is simply "today's policy against the live source."
 func (r *PolicyResolver) RelationFieldVerdicts(
 	ctx context.Context, from *entity.Entity, relType string, metaKeys []string,
 ) map[string]bool {
@@ -537,15 +518,6 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 	}
 
 	visible := newDimension()
-
-	// Historical type-level closed-world (TKT-B1F5Q1, mirrors FieldVerdicts):
-	// serializing a relation-history snapshot of a type any role gates with
-	// `visible:` forces the dimension closed-world up front, so a reader whose
-	// live roles were reduced to globals-only fails closed.
-	if isHistoricalSubject(ctx) && r.relationTypesWithVisible[relType] {
-		visible.optIn("hidden")
-	}
-
 	bc, roles := r.bindingFor(ctx, from)
 	if bc != nil {
 		for _, role := range roles {

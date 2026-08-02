@@ -7,15 +7,15 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // handleV1RelationHistory serves a relation's version history (postgres-backed
-// only). A relation is addressed by its composite key plus the FROM entity's
-// type (so the read gate can evaluate a per-type verdict on the from endpoint).
+// only). A relation is addressed by its composite key. The leading `{fromType}`
+// URL segment is COSMETIC — it is never an ACL trust input (see the note at the
+// parts split, and authorizeRelationHistoryRead).
 //
 // Routes:
 //
@@ -24,19 +24,19 @@ import (
 //	POST /api/v1/_relation_history/{fromType}/{from}/{relType}/{to}/{version}/restore
 //
 // Security (design-review RR-SDDYZO): relation-history read is gated on BOTH
-// endpoints' read verdicts (FROM ∧ TO). The "FROM entity owns the history" UI
-// decision governs placement only — it must NOT become the authorization
-// boundary, or the TO endpoint would be an existence/content oracle for a
-// principal who can read FROM but not TO. A deleted relation (endpoints gone)
-// requires the global acl.PermHistoryRead; a non-holder gets the same 404 as a
-// nonexistent relation (no existence oracle).
+// endpoints' read verdicts (FROM ∧ TO), each resolved against the endpoint's
+// LIVE type. The "FROM entity owns the history" UI decision governs placement
+// only — it must NOT become the authorization boundary, or the TO endpoint would
+// be an existence/content oracle for a principal who can read FROM but not TO. A
+// deleted relation (endpoints gone) requires the global acl.PermHistoryRead; a
+// non-holder gets the same 404 as a nonexistent relation (no existence oracle).
 //
-// Field redaction (TKT-B1F5Q1, was RR-BZNL0S): relation meta now supports
-// field-level `visible:` redaction, both on a live relation GET and here in
-// history. Relation history therefore exposes exactly what a live relation GET
-// exposes — no more — and fails CLOSED for a possibly-deleted/drifted relation
-// (deny-by-default, same rule + acl.PermHistoryReadRedacted reveal as the entity
-// path). See serveRelationHistoryVersion.
+// Field redaction (TKT-B1F5Q1, IB-review #1): relation meta supports field-level
+// `visible:` redaction, on the live relation GET and here in history. History
+// redaction is governed by the CURRENT LIVE world evaluated against the LIVE
+// source entity — a live source redacts per-field against today's policy; a
+// deleted source serves NO meta to anyone (no reveal). See
+// serveRelationHistoryVersion.
 func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_relation_history/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -46,7 +46,10 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 			"Path must be /_relation_history/{fromType}/{from}/{relType}/{to}[/{version}[/restore]]", "")
 		return
 	}
-	fromType, from, relType, to := parts[0], parts[1], parts[2], parts[3]
+	// parts[0] is the {fromType} URL segment. It is COSMETIC only — never an ACL
+	// trust input (the gate + redaction resolve the real type from the globally-
+	// unique id; see authorizeRelationHistoryRead / serveRelationHistoryVersion).
+	from, relType, to := parts[1], parts[2], parts[3]
 
 	if a.versions == nil {
 		writeV1Error(w, r, http.StatusNotImplemented, "history_unsupported",
@@ -66,7 +69,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 			return
 		}
-		restoreRelationHistoryVersion(a, w, r, reader, fromType, from, relType, to, parts[4])
+		restoreRelationHistoryVersion(a, w, r, reader, from, relType, to, parts[4])
 		return
 	}
 
@@ -80,7 +83,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !authorizeRelationHistoryRead(a, w, r, fromType, from, to) {
+	if !authorizeRelationHistoryRead(a, w, r, from, to) {
 		return
 	}
 
@@ -108,7 +111,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	q := store.RelationHistoryQuery{From: from, Type: relType, To: to, RecordID: recordID}
 
 	if len(parts) >= 5 && parts[4] != "" {
-		serveRelationHistoryVersion(a, w, r, reader, fromType, q, parts[4])
+		serveRelationHistoryVersion(a, w, r, reader, q, parts[4])
 		return
 	}
 	serveRelationHistoryTimeline(w, r, reader, q)
@@ -133,12 +136,15 @@ func parseRecordID(r *http.Request) (int64, bool) {
 // relation's history, writing an indistinguishable-404 otherwise.
 //
 // Dual-endpoint gating (RR-SDDYZO): BOTH endpoints must be readable. If both are
-// live, each must pass the per-type read verdict (the FROM type comes from the
-// URL; the TO type from its live row). If either endpoint is not live, the
-// relation's endpoints are (at least partly) gone — treat it as deleted-relation
-// history and require the global PermHistoryRead, else the same 404 as a
-// nonexistent relation.
-func authorizeRelationHistoryRead(a *App, w http.ResponseWriter, r *http.Request, fromType, from, to string) bool {
+// live, each must pass the per-type read verdict. Each endpoint's type is
+// resolved from its LIVE row — never from the URL: rela ids are globally unique,
+// so `getEntity(id)` yields the real type, and the URL `{fromType}` segment is
+// therefore never an ACL trust input (a caller could otherwise spoof a type whose
+// verdict is more favorable to them — IB-review #1). If either endpoint is not
+// live, the relation's endpoints are (at least partly) gone — treat it as
+// deleted-relation history and require the global PermHistoryRead, else the same
+// 404 as a nonexistent relation.
+func authorizeRelationHistoryRead(a *App, w http.ResponseWriter, r *http.Request, from, to string) bool {
 	ctx := r.Context()
 	gate := readGateFromContext(ctx)
 
@@ -146,12 +152,8 @@ func authorizeRelationHistoryRead(a *App, w http.ResponseWriter, r *http.Request
 	toEntity, toLive := a.reader.getEntity(ctx, to)
 
 	if fromLive && toLive {
-		// From type must match the URL type (no borrowing another type's verdict).
-		if fromEntity.Type != fromType {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return false
-		}
-		fromOK, err := gate.PermitsRead(ctx, fromType, from)
+		// Gate each endpoint on its REAL (live) type, not the URL segment.
+		fromOK, err := gate.PermitsRead(ctx, fromEntity.Type, from)
 		if err != nil {
 			writeGateError(w, r, err)
 			return false
@@ -250,18 +252,33 @@ func serveRelationHistoryTimeline(
 // serveRelationHistoryVersion writes one relation version's full snapshot for the
 // lifetime the query selects.
 //
-// Field redaction fails closed (TKT-B1F5Q1, inheriting TKT-73C6B2): the frozen
-// relation meta is redacted against TODAY's relation `visible:` policy through a
-// historical-subject ctx, so any grant whose subject-world inputs cannot be
-// affirmed for a possibly-deleted/drifted relation HIDES the field rather than
-// leaking it. fromType (from the URL) keys the source's relation grant block; the
-// snapshot itself carries no live entity, so a minimal source entity is
-// synthesized — under the historical marker the resolver neuters subject-world
-// lookups anyway. A holder of acl.PermHistoryReadRedacted bypasses the strip
-// entirely (OVERRIDE reveal), exactly as serveHistoryVersion does for entities.
+// Field redaction is governed by the CURRENT, LIVE ACL world evaluated against
+// the LIVE source entity (TKT-B1F5Q1, IB-review #1). Relation history is a lens
+// onto data whose access is decided by today's policy and today's graph — not by
+// anything reconstructed from the moment of capture. Two cases:
+//
+//   - The source entity is LIVE → redact the frozen meta per-field against the
+//     current relation `visible:` policy resolved for the live source (exactly
+//     the live relation GET does). Lose a role today and you lose historical
+//     visibility; gain one and you gain it — reader-side access is always live.
+//
+//   - The source entity is DELETED → serve NO meta, to everyone. The thing that
+//     grants access to a relation's properties is the live relation; once its
+//     source is gone there is nothing to evaluate current ACL against, and its
+//     type is unrecoverable (the version row stores the id, not the type — so we
+//     must never trust the caller-supplied URL fromType to key a grant, or a
+//     principal could spoof a type their own role has a favorable grant for).
+//     There is deliberately NO history:read-redacted reveal for a deleted
+//     relation: gone is gone, uniformly. (This is the intentional divergence from
+//     ENTITY history, which keeps a reconstruct-and-reveal model — a relation's
+//     access is a property of the live relation, so it cannot outlive it.)
+//
+// Timeline/attribution metadata (version, op, who, when) still serves in both
+// cases — that is the history feature working; only the ACL-governed property
+// values follow the live-world rule.
 func serveRelationHistoryVersion(
 	a *App, w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	fromType string, q store.RelationHistoryQuery, versionStr string,
+	q store.RelationHistoryQuery, versionStr string,
 ) {
 	version, convErr := strconv.Atoi(versionStr)
 	if convErr != nil || version < 1 {
@@ -280,15 +297,10 @@ func serveRelationHistoryVersion(
 		return
 	}
 
-	meta := cloneProps(snap.Properties) // don't alias the snapshot map
-	if !readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryReadRedacted) {
-		// Fail closed: resolve relation `visible:` under the historical marker. The
-		// grant block is keyed by the source entity type; synthesize a minimal
-		// source (the marker neuters subject-world lookups, so no live entity is
-		// needed).
-		src := entityPkg.New(snap.From, fromType)
-		meta = a.affordances.visibleRelationMeta(
-			affordances.WithHistoricalSubject(ctx), src, snap.Type, meta)
+	// Live source → redact against today's policy; deleted source → no meta.
+	meta := map[string]any{}
+	if src, live := a.reader.getEntity(ctx, snap.From); live {
+		meta = a.affordances.visibleRelationMeta(ctx, src, snap.Type, cloneProps(snap.Properties))
 	}
 
 	row := map[string]any{
@@ -313,11 +325,11 @@ func serveRelationHistoryVersion(
 // exists, the create maps ErrEntityNotFound → 409 dangling-edge (not 500).
 func restoreRelationHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	fromType, from, relType, to, versionStr string,
+	from, relType, to, versionStr string,
 ) {
 	// Restore is a write; gate reads first so a caller who can't even read the
 	// history can't probe it via restore.
-	if !authorizeRelationHistoryRead(a, w, r, fromType, from, to) {
+	if !authorizeRelationHistoryRead(a, w, r, from, to) {
 		return
 	}
 	version, convErr := strconv.Atoi(versionStr)

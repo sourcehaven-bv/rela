@@ -766,15 +766,35 @@ strip). Grant it only to trusted audit/compliance roles — it exposes fields th
 live `visible:` policy would redact. A non-holder always sees the fail-closed
 redaction described above.
 
-**Relation history inherits the same rule.** Relation `visible:` grants fail
-closed in relation history exactly as entity grants do: a snapshot of a
-relation whose meta is gated by a subject-world-conditional grant hides that
-meta unless the reader holds `history:read-redacted`, and a relation type any
-role gates with `visible:` gets the same type-level closed-world so a
-globals-only reduced role set never defaults to all-visible. `history:read-redacted`
-reveals frozen relation meta the same all-or-nothing way it reveals entity
-fields. (Relation restore reads the raw frozen meta, never the redacted view —
-a redacted read-modify-write would erase the caller's hidden meta on save.)
+**Relation history is governed by the current live world — deliberately unlike
+entity history.** Where *entity* history reconstructs the moment of capture and
+adds a `history:read-redacted` audit reveal, *relation* history takes a simpler,
+stricter stance: a relation's meta is redacted against **today's** `visible:`
+policy evaluated against the **live source entity**, and the version's frozen
+values are never served on their own terms.
+
+- **Source entity live** → redact per-field against the current policy and the
+  live source, exactly as a live relation GET. Reader-side access is live in both
+  directions: lose the role that granted a field today and you lose it in history
+  too; gain the role and you gain it. (This is the point — being removed from a
+  team takes effect on history, not just on live reads. A copy the reader already
+  made is a separate matter; rela simply stops *serving* it.)
+- **Source entity deleted** → **no meta is served, to anyone.** The thing that
+  grants access to a relation's properties is the live relation; once its source
+  is gone there is nothing to evaluate current ACL against (and the version row
+  stores the source *id*, not its *type*, so the type is unrecoverable — the
+  caller-supplied URL `{fromType}` is never trusted, or a principal could spoof a
+  type their own role has a favorable grant for). There is deliberately **no
+  `history:read-redacted` reveal** for a deleted relation: gone is gone. The
+  timeline/attribution metadata (version, op, who, when) still serves — only the
+  ACL-governed property values follow this rule.
+
+(The version rows themselves are *retained* — history is append-only, and a
+deleted source's relation-version rows persist until an operator runs the audited
+`relation-history-purge`. "Not served" is an access guarantee, not an erasure
+one; erasure is the separate operator tool. Relation restore reads the raw frozen
+meta, never the redacted view — a redacted read-modify-write would erase the
+caller's hidden meta on save.)
 
 ## Command execution gating (`command:*`)
 
@@ -889,11 +909,13 @@ denied `to` could enumerate `from`'s outgoing relation histories and learn about
 the hidden `to` endpoint. A deleted relation (endpoints gone) uses the same global
 `history:read`; a non-holder gets the same 404 as a nonexistent relation.
 
-Note that relations have **no field-level (`visible:`) redaction** anywhere today
-— a live relation GET returns its properties in full — so relation history
-exposes exactly what a live relation read exposes, no more. A relation
-field-redaction path is a separate follow-up; the dual-endpoint gate is what
-bounds relation-history visibility today.
+Relations DO support field-level (`visible:`) redaction (TKT-B1F5Q1) — on the
+live relation GET and in history. Relation history exposes exactly what a live
+relation read exposes, no more, and its history redaction is governed by the
+**current live world** against the **live source** (a deleted source serves no
+meta at all). See the property-level-redaction section above; the dual-endpoint
+gate bounds *which relations' histories* are reachable, and the live-world rule
+bounds *which meta fields* within a reachable one.
 
 ## Where to read next
 

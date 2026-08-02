@@ -108,121 +108,11 @@ assignments:
 	}
 }
 
-// A relation `visible:` grant conditioned on a subject-world lookup
-// (has_relation) fails CLOSED under the historical marker: the live store can't
-// answer the source's as-of-version edges, so trusting it would leak a field
-// hidden at write time.
-func TestRelationVisible_HistoricalHasRelation_FailsClosed(t *testing.T) {
-	t.Parallel()
-	p := policyFromYAML(t, `
-roles:
-  triager:
-    relations:
-      ticket:
-        - relation: has-planning
-          visible:
-            - field: note
-              when: "has_relation(entity, 'blocks')"
-assignments:
-  alice: triager
-`)
-	// Source T-1 has a live blocks edge.
-	r, err := affordances.New(testMeta(t),
-		newStubLookup([3]string{"T-1", "blocks", "T-9"}), declFor(t, p))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	keys := []string{"note"}
-
-	// Live: edge present → grant passes → note visible.
-	hidden := r.RelationFieldVerdicts(ctxAs("alice"), ticket("T-1", nil), "has-planning", keys)
-	if v, ok := hidden["note"]; ok && !v {
-		t.Errorf("live: note should be visible (blocks edge present), got hidden")
-	}
-
-	// Historical: marker neuters the subject-world lookup → grant fails → note hidden.
-	ctxHist := affordances.WithHistoricalSubject(ctxAs("alice"))
-	hidden = r.RelationFieldVerdicts(ctxHist, ticket("T-1", nil), "has-planning", keys)
-	if v, ok := hidden["note"]; !ok || v {
-		t.Errorf("historical: note must fail closed (hidden), got ok=%v v=%v", ok, v)
-	}
-}
-
-// RR (role-resolution leak, relation analog): under the historical marker, a
-// relation type that ANY role gates with `visible:` gets a TYPE-LEVEL
-// closed-world, so a reader who resolves to zero applicable roles fails closed to
-// hidden instead of defaulting to all-visible. alice holds no global role here.
-func TestRelationVisible_HistoricalTypeLevelClosedWorld_EmptyRoleSet(t *testing.T) {
-	t.Parallel()
-	p := policyFromYAML(t, `
-roles:
-  owner:
-    relations:
-      ticket:
-        - relation: has-planning
-          visible:
-            - field: note
-assignments:
-  bob: owner
-`)
-	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	keys := []string{"note", "secret"}
-
-	// alice has no role. LIVE: no role opts in for her → all visible.
-	hidden := r.RelationFieldVerdicts(ctxAs("alice"), ticket("T-1", nil), "has-planning", keys)
-	for k, v := range hidden {
-		if !v {
-			t.Errorf("live, no role: %q should default visible, got hidden", k)
-		}
-	}
-
-	// HISTORICAL: has-planning has a visible: block (declared by owner) → type-level
-	// closed-world opts in even though alice holds no role → every key hidden.
-	fvHist := r.RelationFieldVerdicts(
-		affordances.WithHistoricalSubject(ctxAs("alice")), ticket("T-1", nil), "has-planning", keys)
-	for _, k := range keys {
-		if v, ok := fvHist[k]; !ok || v {
-			t.Errorf("historical, no role: %q must fail closed (hidden), got ok=%v v=%v", k, ok, v)
-		}
-	}
-}
-
-// The historical marker is INERT for a relation type no role gates with
-// `visible:` — nothing to fail closed, so redaction matches live (all visible).
-func TestRelationVisible_HistoricalNoVisiblePolicy_MarkerInert(t *testing.T) {
-	t.Parallel()
-	p := policyFromYAML(t, `
-roles:
-  triager:
-    relations:
-      ticket:
-        - relation: has-planning
-          fields:
-            - field: note
-assignments:
-  alice: triager
-`)
-	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	hidden := r.RelationFieldVerdicts(
-		affordances.WithHistoricalSubject(ctxAs("alice")), ticket("T-1", nil), "has-planning",
-		[]string{"note", "secret"})
-	for k, v := range hidden {
-		if !v {
-			t.Errorf("no visible policy: historical marker must be inert, %q hidden unexpectedly", k)
-		}
-	}
-}
-
-// Reader-side grants (current_user) stay live under the marker — an entitled
-// reader keeps historical relation-meta visibility; an unentitled one stays
-// denied. Confirms the marker only neuters subject-world, not the reader.
-func TestRelationVisible_HistoricalReaderSide_Unaffected(t *testing.T) {
+// Reader-side grants (current_user) resolve normally — an entitled reader sees
+// the field, an unentitled one doesn't. (Relation redaction is always resolved
+// live against the source now; there is no historical-marker special case at the
+// resolver — deleted-source history serves no meta at the handler instead.)
+func TestRelationVisible_ReaderSideGrant(t *testing.T) {
 	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
@@ -243,28 +133,16 @@ assignments:
 	}
 	keys := []string{"note"}
 
-	// auditor matches reader-side predicate → note visible, live AND historical.
-	for _, hist := range []bool{false, true} {
-		ctx := ctxAs("auditor")
-		if hist {
-			ctx = affordances.WithHistoricalSubject(ctx)
-		}
-		hidden := r.RelationFieldVerdicts(ctx, ticket("T-1", nil), "has-planning", keys)
-		if v, ok := hidden["note"]; ok && !v {
-			t.Errorf("auditor (historical=%v): note should be visible (reader is live), got hidden", hist)
-		}
+	// auditor matches → note visible.
+	hidden := r.RelationFieldVerdicts(ctxAs("auditor"), ticket("T-1", nil), "has-planning", keys)
+	if v, ok := hidden["note"]; ok && !v {
+		t.Errorf("auditor: note should be visible, got hidden")
 	}
 
-	// bob does not match → note hidden, live AND historical.
-	for _, hist := range []bool{false, true} {
-		ctx := ctxAs("bob")
-		if hist {
-			ctx = affordances.WithHistoricalSubject(ctx)
-		}
-		hidden := r.RelationFieldVerdicts(ctx, ticket("T-1", nil), "has-planning", keys)
-		if v, ok := hidden["note"]; !ok || v {
-			t.Errorf("bob (historical=%v): note should be hidden, got ok=%v v=%v", hist, ok, v)
-		}
+	// bob does not match → note hidden.
+	hidden = r.RelationFieldVerdicts(ctxAs("bob"), ticket("T-1", nil), "has-planning", keys)
+	if v, ok := hidden["note"]; !ok || v {
+		t.Errorf("bob: note should be hidden, got ok=%v v=%v", ok, v)
 	}
 }
 
