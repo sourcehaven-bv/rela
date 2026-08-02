@@ -10,6 +10,7 @@ package validator
 
 import (
 	"context"
+	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -77,19 +78,29 @@ type Validator interface {
 	CheckAll(ctx context.Context) ([]Violation, error)
 }
 
+// EntityLister is the narrow read surface the validator needs to load the
+// candidate entities it validates — just ListEntities. Consumer-side interface
+// (not store.EntityReader) so a GATED reader that exposes only reads can back
+// the validator: analyze wires a per-principal gated reader here so a rule's
+// candidate set is the requester's visible slice (TKT-3FL2S6). store.Store and
+// visibility.ScriptReader both satisfy it structurally.
+type EntityLister interface {
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+}
+
 // GenericValidator implements Validator by reading from a store.
 type GenericValidator struct {
-	r    store.EntityReader
+	r    EntityLister
 	meta *metamodel.Metamodel
 	svc  *validation.Service
 }
 
 var _ Validator = (*GenericValidator)(nil)
 
-// New creates a Validator backed by an EntityReader and a metamodel.
+// New creates a Validator backed by an EntityLister and a metamodel.
 // deps provides read-only Lua access for validation rules that use Lua scripts.
 // deps.ProjectRoot is used to resolve lua_file paths from validations/.
-func New(r store.EntityReader, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericValidator {
+func New(r EntityLister, meta *metamodel.Metamodel, deps lua.ReadDeps) *GenericValidator {
 	return &GenericValidator{
 		r:    r,
 		meta: meta,

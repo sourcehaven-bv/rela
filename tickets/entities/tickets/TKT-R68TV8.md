@@ -12,6 +12,8 @@ status: backlog
 
 > **Update (2026-07-25): M5.4 write nucleus carved — [[TKT-HKY8RJ]] / PR #1191 merged, then [[TKT-6NDSH9]] moved the Lua action + webhook dispatch in as well. App at 114 methods, directive 114. The write surface is COMPLETE on writeHandler: no App method takes writeMu directly anymore. writeMu itself remains App-owned and pointer-shared; deleting it outright stays the [[DEC-8UIL0]] Tx arc, which now has a single obvious seam.**
 
+> **Update (2026-07-26): views cluster carved — [[TKT-I37338]]. App at 90 methods, directive 90. The dead server-rendered nav path was deleted, closing GitHub #1043 (ungated nav-badge counts). Remaining toward <40: read handlers (list/get/relations/search/analyze/includes on api_v1.go, the largest cluster), config/schema/docs/templates endpoints, and the misc app.go surface.**
+
 **Epic / parent ticket** for the remainder of the `dataentry.App` decomposition.
 Each shippable step is its own sub-ticket (moved to `done` with its PR); this
 parent stays in `backlog` until the whole arc lands — App under the 40-method
@@ -48,6 +50,10 @@ conflict-resolve, relations reconciler; 18 methods) → `writeHandler` (131 →
 **own follow-up arc** that deletes `writeMu` outright. M5.4 itself proceeds
 conservatively: the mutex moves with the write-nucleus struct, semantics
 untouched — refactors don't change concurrency behavior.
+- **M5.5 — views cluster.**
+  - [x] [[TKT-I37338]] — view traversal + section builders + /_views,
+/_sidepanel, /_sidebar → `viewsHandler`; 3 helpers package-leveled; dead ungated
+nav path deleted (114 → 90), closing GitHub #1043.
 
 ## Invariants (unchanged)
 
@@ -60,9 +66,10 @@ store `Tx`.)
 ## Related finding
 
 The read-path audit also surfaced an ungated nav-badge count leak
-(`enrichNavEntry`, same #1010 read-ACL class) — tracked separately as GitHub
-issue #1043. It should fall out naturally when the decomposition reaches the nav
-handler.
+(`enrichNavEntry`, same #1010 read-ACL class) — tracked as GitHub issue #1043.
+**Closed by [[TKT-I37338]]**: the leaky path was production-dead (SPA-era);
+deleting it removes the leak, and the live gated sidebar count path is pinned by
+`TestACLSidebar_CountsMatchList`.
 
 ## Done when
 

@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"iter"
 	"sort"
 	"strings"
 
@@ -15,16 +16,43 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
+// analyzeReader is the narrow, consumer-side ENTITY-read surface the analyze
+// checks need. It is satisfied structurally by store.Store AND by the ctx-gating
+// visibility.ScriptReader / Unrestricted readers. Wiring a GATED reader here
+// (per TKT-3FL2S6, superseding DEC-O59WM4) makes the whole-graph scans read only
+// the requester's slice: a hidden entity produces no issue, and a visible
+// entity comes back REDACTED, so its value cannot reach an issue title or a
+// validation message. The leak closes by construction, not by filtering output.
+//
+// Only entity reads: analyze never mutates. Relation COUNTS (cardinality) go
+// through a separate counter that stays on the raw store — a count is a
+// structural fact, not a value, so it cannot leak; under-visibility only makes
+// cardinality potentially false-positive, which is correctness (guarded by the
+// roles annotation, arc step 2), not a disclosure.
+type analyzeReader interface {
+	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+}
+
+// relationCounter counts relations for the cardinality check. Raw (ungated) on
+// purpose — see analyzeReader.
+type relationCounter interface {
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+}
+
 // analyzeService runs the read-only graph-analysis checks (orphans,
 // duplicates, gaps, cardinality, properties, validations). Extracted from App
 // (TKT-N26KLB M5.1): it depends only on the stable read services, and each
 // method takes the per-request metamodel snapshot explicitly (capture-once,
 // per the project's snapshot rule) rather than reaching back into App.
 //
-// The whole-graph scans are intentionally ungated; visibility is applied to
-// the resulting issues at the HTTP boundary (see visibleAnalysisIssues).
+// reads is GATED per the requesting principal (TKT-3FL2S6, DEC-O59WM4
+// superseded); relCounts is the raw relation counter (structural, cannot leak);
+// the tracer is the gated decorator. Under NopACL, reads/tracer are the raw
+// store/tracer (no gating).
 type analyzeService struct {
-	store     store.Store
+	reads     analyzeReader
+	relCounts relationCounter
 	tracer    tracer.Tracer
 	validator validator.Validator
 }
@@ -129,8 +157,14 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 
 	orphanIDs, _ := svc.tracer.FindOrphans(ctx)
 
+	// Each orphan id is re-loaded through the GATED reader before it can become
+	// an issue: a hidden entity's GetEntity returns not-found and is dropped, and
+	// a visible one is redacted. So even if the tracer yielded a raw id (it does
+	// not — svc.tracer is gated too), no hidden entity reaches the wire. Do NOT
+	// emit an issue straight from an orphan id/type without this gated re-load —
+	// that would reopen the leak this arc closed (TKT-3FL2S6).
 	var orphans []*entity.Entity
-	st := svc.store
+	st := svc.reads
 	for _, id := range orphanIDs {
 		if e, err := st.GetEntity(ctx, id); err == nil {
 			orphans = append(orphans, e)
@@ -142,7 +176,7 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
-			Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+			Title:      safeDisplayTitle(meta, e),
 			Message:    "No relations",
 			Severity:   "warning",
 		})
@@ -159,11 +193,11 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 	}
 
 	titleGroups := make(map[string][]*entity.Entity)
-	for e, err := range svc.store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
-		title := normalizeTitle(meta.DisplayTitle(e.ID, e.Type, e.Properties))
+		title := normalizeTitle(safeDisplayTitle(meta, e))
 		if title != "" {
 			titleGroups[title] = append(titleGroups[title], e)
 		}
@@ -189,7 +223,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      safeDisplayTitle(meta, e),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
 				Severity:   "warning",
 			})
@@ -223,7 +257,7 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 
 	// Group IDs by prefix
 	prefixGroups := make(map[string][]int)
-	for e, err := range svc.store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -282,8 +316,6 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 		Description: "Relation cardinality constraint violations",
 	}
 
-	st := svc.store
-
 	// Sort relation names for deterministic output
 	relNames := make([]string, 0, len(meta.Relations))
 	for name := range meta.Relations {
@@ -291,10 +323,12 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 	}
 	natsort.Strings(relNames)
 
-	// listEntities lists entities of a given type, sorted by ID.
+	// listEntities lists entities of a given type, sorted by ID. GATED: only the
+	// requester's visible entities are considered, so a hidden entity's title
+	// cannot reach a cardinality issue.
 	listEntities := func(t string) []*entity.Entity {
 		var out []*entity.Entity
-		for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: t}) {
+		for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{Type: t}) {
 			if err != nil {
 				break
 			}
@@ -304,9 +338,12 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 		return out
 	}
 
-	// countRelations counts relations of a specific type for an entity.
+	// countRelations counts relations of a specific type for an entity. RAW
+	// (ungated): a count is a structural fact, not a value — it cannot leak.
+	// Under partial visibility this may over/under-count and produce a false
+	// cardinality violation (guarded by the roles annotation, arc step 2).
 	countRelations := func(entityID, relType string, direction store.Direction) int {
-		n, _ := st.CountRelations(ctx, store.RelationQuery{
+		n, _ := svc.relCounts.CountRelations(ctx, store.RelationQuery{
 			EntityID: entityID, Type: relType, Direction: direction,
 		})
 		return n
@@ -324,7 +361,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -342,7 +379,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
 							Severity:   "error",
 						})
@@ -364,7 +401,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -386,7 +423,7 @@ func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamode
 						section.Issues = append(section.Issues, AnalysisIssue{
 							EntityID:   e.ID,
 							EntityType: e.Type,
-							Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+							Title:      safeDisplayTitle(meta, e),
 							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
 							Severity:   "error",
 						})
@@ -407,7 +444,7 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 	}
 
 	entities := make([]*entity.Entity, 0)
-	for e, err := range svc.store.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range svc.reads.ListEntities(ctx, store.EntityQuery{}) {
 		if err != nil {
 			break
 		}
@@ -421,7 +458,7 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      safeDisplayTitle(meta, e),
 				Message:    err.Error(),
 				Severity:   "error",
 			})
@@ -444,7 +481,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 		Description: "Custom validation rules defined in the metamodel",
 	}
 
-	st := svc.store
+	st := svc.reads
 	validator := svc.validator
 
 	for _, rule := range meta.Validations {
@@ -461,7 +498,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   e.ID,
 				EntityType: e.Type,
-				Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
+				Title:      safeDisplayTitle(meta, e),
 				Message:    rule.Description,
 				Severity:   severity,
 				Detail:     v.Detail,
@@ -515,6 +552,26 @@ func sortStoreEntitiesByID(entities []*entity.Entity) {
 	sort.Slice(entities, func(i, j int) bool {
 		return natsort.Less(entities[i].ID, entities[j].ID)
 	})
+}
+
+// safeDisplayTitle renders an entity's display title, falling back to the id if
+// ANY property backing the title is absent from the (already gated-redacted)
+// entity — including one placeholder of a templated display_property. Plain
+// DisplayTitle would render a PARTIAL template ("Jeroen " when achternaam is
+// hidden), which leaks the readable half and confirms a hidden half exists (the
+// BUG-R9EHKV leak class). Gating strips the value; this restores the whole-title
+// fallback the deleted hiddenDisplayTitleEntityIDs used to provide (RR-7GN3LV
+// follow-up / tschmits review on TKT-3FL2S6). e.Properties is the redacted map,
+// so a hidden display property is simply absent here.
+func safeDisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
+	if def, ok := meta.GetEntityDef(e.Type); ok {
+		for _, prop := range def.DisplayProperties() {
+			if _, present := e.Properties[prop]; !present {
+				return e.ID // a display-title source was redacted → don't leak a partial title
+			}
+		}
+	}
+	return meta.DisplayTitle(e.ID, e.Type, e.Properties)
 }
 
 // normalizeTitle normalizes a title for duplicate comparison.

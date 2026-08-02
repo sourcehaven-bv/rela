@@ -126,6 +126,12 @@ the Actions tab.
   (govulncheck). If either fails, `release` is skipped and no assets are
   produced — this is correct gating, not a bug. Bump deps / fix the vuln
   and re-tag.
+- **Release-runner drift from CI.** The `test` job in `release.yml` is a
+  *second* copy of CI's test gate, so it can rot independently. It must
+  keep matching `ci.yml`'s: `ubuntu-26.04` plus the bubblewrap install.
+  External commands fail closed with no sandbox, so a runner without
+  `bwrap` fails ~35 attachment/cmdexec/transform/export tests — on a commit
+  that passed CI. This is what left `v26.7.1` a tag with no release.
 
 ## Verifying a release
 

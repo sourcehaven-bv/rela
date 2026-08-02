@@ -130,12 +130,16 @@ linters:
         # these so the v2 migration doesn't block on threat-model decisions;
         # track the work under that feature instead.
         #
+        # G704 (SSRF) is ENABLED: its two findings were reviewed and are
+        # operator-configured destinations (.rela/ai.yaml base_url; the
+        # `rela sync --remote` flag), annotated with narrow nolint
+        # directives naming the trust boundary at each call site.
+        #
         # G706 (log injection) is ENABLED — it is enforced everywhere except
         # internal/dataentry, which is excluded by path below with a pinned
         # structural invariant. See that exclusion for the rationale.
         - G702  # command injection via taint analysis
         - G703  # path traversal via taint analysis
-        - G704  # SSRF via taint analysis
         - G705  # XSS via taint analysis
       config:
         global:

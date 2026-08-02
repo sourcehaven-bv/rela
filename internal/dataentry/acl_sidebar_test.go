@@ -87,7 +87,7 @@ func sidebarCountsByLabel(ctx context.Context, t *testing.T, app *App) map[strin
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET _sidebar: %d %s", rec.Code, rec.Body)
 	}

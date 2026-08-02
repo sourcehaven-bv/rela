@@ -86,7 +86,7 @@ func TestBuildSectionEntityData_PopulatesPropsAndFieldVerdicts(t *testing.T) {
 		{Property: "title"},
 		{Property: "status"},
 	}
-	sed := app.buildSectionEntityData(context.Background(), e, secFields, eDef)
+	sed := app.views.buildSectionEntityData(context.Background(), e, secFields, eDef)
 
 	// Props carries the typed values.
 	if !reflect.DeepEqual(sed.Props, map[string]any{"title": "First", "status": "open"}) {
@@ -119,7 +119,7 @@ func TestBuildSectionEntityData_HiddenAbsentFromBothMaps(t *testing.T) {
 		Properties: map[string]any{"title": "First", "status": "open"},
 	}
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
-	sed := app.buildSectionEntityData(context.Background(), e, nil, eDef)
+	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef)
 	if _, ok := sed.Props["status"]; ok {
 		t.Errorf("hidden 'status' must not appear in Props; got %+v", sed.Props)
 	}
@@ -144,7 +144,7 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 		},
 	}
 	eDef, _ := st.Meta.GetEntityDef(e.Type)
-	sed := app.buildSectionEntityData(context.Background(), e, nil, eDef)
+	sed := app.views.buildSectionEntityData(context.Background(), e, nil, eDef)
 
 	hidden := app.affordances.hiddenProperties(context.Background(), e)
 	for k := range sed.Props {

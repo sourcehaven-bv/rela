@@ -27,12 +27,19 @@ import (
 //
 // A nested Tx on the view joins the open transaction.
 
-// writeAdvisoryLockKey serializes write transactions deployment-wide
-// ("RELW"). Distinct from migrateAdvisoryLockKey ("RELA", xact-scoped in
-// Migrate) and sweepAdvisoryLockKey ("RELV", session-scoped, shared by
-// sweep and purge): a write Tx must not block — or be blocked by — a
-// sweep tick, matching today's behavior where ordinary writes never
-// take the sweep lock.
+// writeAdvisoryLockKey serializes write transactions across the processes
+// sharing one SCHEMA ("RELW"). Distinct from migrateAdvisoryLockKey ("RELA",
+// xact-scoped in Migrate) and sweepAdvisoryLockKey ("RELV", session-scoped,
+// shared by sweep and purge): a write Tx must not block — or be blocked by — a
+// sweep tick, matching today's behavior where ordinary writes never take the
+// sweep lock.
+//
+// Like both of those, it is SCHEMA-SCOPED via the two-key form
+// pg_advisory_xact_lock(key, hashtext(current_schema())) — see the
+// tryAdvisoryLock doc in sweep.go. Advisory locks are database-GLOBAL, so a
+// bare key made every write transaction serialize against writes to UNRELATED
+// schemas on the same database: a throughput fault rather than the capture loss
+// the sweep suffered, but the same root cause.
 const writeAdvisoryLockKey int64 = 0x52_45_4c_57
 
 // txPending buffers the in-process notifications of one open Tx, in
@@ -61,7 +68,9 @@ func (s *Store) Tx(ctx context.Context, fn func(store.Store) error) error {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, writeAdvisoryLockKey); err != nil {
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock($1::int, hashtext(current_schema()))`,
+		writeAdvisoryLockKey); err != nil {
 		return err
 	}
 
