@@ -10,6 +10,7 @@ import {
   type RelationVersionMeta,
 } from '@/api/history'
 import { lineDiff, propertyDiff, type DiffLine, type PropertyChange } from '@/utils/lineDiff'
+import { useVersionSelectionSync, type Side } from '@/composables/useVersionSelectionSync'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,10 +30,37 @@ const versions = ref<RelationVersionMeta[]>([])
 
 // A comparison side is a version ordinal or 'current' (the live relation, taken
 // from the newest snapshot since relations have no separate live-fetch endpoint
-// here — the newest version reflects the current settled state).
-type Side = number | 'current'
-const baseSel = ref<Side>('current')
-const targetSel = ref<Side>('current')
+// here — the newest version reflects the current settled state). The pair is
+// mirrored into `?base=`/`?target=` so a diff can be linked to; the URL token
+// stays `current` here even though this view LABELS it "latest", so a history
+// link reads the same for entities and relations.
+const {
+  base: baseSel,
+  target: targetSel,
+  seedFromUrl,
+  resetToDefaults,
+  select,
+  swap: swapSides,
+  publish: publishSelection,
+} = useVersionSelectionSync({
+  validVersions: () => versions.value.map((m) => m.version),
+  // Default: second-newest → newest, i.e. "what the most recent edit changed".
+  defaults: () => defaultSelection(),
+  onChange: () => void recompute(),
+})
+
+// Extracted so load() can reset to the same defaults after a restore.
+//
+// The target is the `current` SENTINEL rather than the newest ordinal, so the
+// published default link stays live-relative and keeps meaning "what the most
+// recent edit changed" as new versions land — matching HistoryView, whose
+// default is likewise `→ current`. Pinning the ordinal here would make an
+// otherwise-identical shared link freeze for relations but not for entities.
+function defaultSelection(): { base: Side; target: Side } {
+  if (versions.value.length < 2) return { base: 'current', target: 'current' }
+  return { base: versions.value[versions.value.length - 2].version, target: 'current' }
+}
+
 const contentDiff = ref<DiffLine[]>([])
 const propDiff = ref<PropertyChange[]>([])
 const restoring = ref(false)
@@ -57,18 +85,27 @@ function displayValue(v: unknown): string {
   return String(v)
 }
 
-async function load() {
+// `fromUrl` re-reads `?base=`/`?target=` now that the version list is known and
+// params can be validated against real ordinals. A reload after a RESTORE
+// passes false: the version list has changed underneath, so re-seeding would
+// resurrect a pair the user chose against the old list.
+async function load(fromUrl = true) {
   loading.value = true
   error.value = ''
   try {
     versions.value = await listRelationVersions(fromType.value, from.value, relType.value, to.value)
-    if (versions.value.length) {
-      const last = versions.value[versions.value.length - 1].version
-      baseSel.value =
-        versions.value.length > 1 ? versions.value[versions.value.length - 2].version : last
-      targetSel.value = last
-      await recompute()
+    if (fromUrl) {
+      seedFromUrl()
+    } else {
+      resetToDefaults()
     }
+    if (versions.value.length) await recompute()
+    // Publish the resolved pair so a bare URL becomes an explicit, shareable one
+    // (and so a post-restore reset is reflected in the address bar). Runs even
+    // with NO versions: that is exactly when the URL is most likely to carry a
+    // stale ordinal, and leaving it there would let a bookmark re-apply it once
+    // the sweep captures versions later.
+    publishSelection()
   } catch (err) {
     if (err instanceof ApiError && err.status === 501) {
       unsupported.value = true
@@ -120,13 +157,18 @@ async function recompute() {
 }
 
 function selectVersion(v: number) {
-  baseSel.value = v
-  void recompute()
+  select({ base: v })
 }
 
-function swapSides() {
-  ;[baseSel.value, targetSel.value] = [targetSel.value, baseSel.value]
-  void recompute()
+// The dropdowns bind v-model directly, so `select` re-publishes the value the
+// ref already holds; passing it explicitly keeps one write path for all four
+// mutation sources (dropdown, timeline row, swap, external nav).
+function onBaseChange() {
+  select({ base: baseSel.value })
+}
+
+function onTargetChange() {
+  select({ target: targetSel.value })
 }
 
 async function restore(v: number) {
@@ -135,7 +177,7 @@ async function restore(v: number) {
   try {
     await restoreRelationVersion(fromType.value, from.value, relType.value, to.value, v)
     uiStore.showToast('success', `Restored relation to version ${v}`)
-    await load()
+    await load(false)
   } catch (err) {
     uiStore.showToast('error', getErrorMessage(err, 'Restore failed'))
   } finally {
@@ -218,7 +260,7 @@ onMounted(load)
       <section class="card diff-card">
         <div class="compare-bar">
           <span class="compare-label">Compare</span>
-          <select v-model="baseSel" class="compare-select" @change="recompute">
+          <select v-model="baseSel" class="compare-select" @change="onBaseChange">
             <option value="current">latest</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
               v{{ m.version }} · {{ m.op }}
@@ -232,7 +274,7 @@ onMounted(load)
           >
             ⇄
           </button>
-          <select v-model="targetSel" class="compare-select" @change="recompute">
+          <select v-model="targetSel" class="compare-select" @change="onTargetChange">
             <option value="current">latest</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
               v{{ m.version }} · {{ m.op }}

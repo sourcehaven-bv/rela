@@ -111,18 +111,24 @@ What you need to know to run it:
 
 The store exposes a write-transaction contract (`store.Store.Tx`,
 DEC-8UIL0). On PostgreSQL a `Tx` callback runs inside one real database
-transaction, serialized **deployment-wide** by a transaction-scoped
-advisory lock (its own key, distinct from the migration and
-version-sweep locks): every process of the deployment executes write
-transactions one at a time. An error rolls the whole callback back —
-no rows, no cross-process NOTIFYs, and no in-process events are
-delivered (event fan-out is buffered until commit). On the filesystem
-backend the same contract degrades to a process-local write mutex with
-no rollback — acceptable for its single-user deployments.
+transaction, serialized **across the processes sharing a schema** by a
+transaction-scoped advisory lock (its own key, distinct from the
+migration and version-sweep locks): every process serving that schema
+executes write transactions one at a time. An error rolls the whole
+callback back — no rows, no cross-process NOTIFYs, and no in-process
+events are delivered (event fan-out is buffered until commit). On the
+filesystem backend the same contract degrades to a process-local write
+mutex with no rollback — acceptable for its single-user deployments.
 
-Because the advisory lock is deployment-wide, a slow transaction stalls
-every writer. Keep `Tx` callbacks short and never perform external I/O
-inside one.
+Because the advisory lock covers the whole schema, a slow transaction
+stalls every writer against it. Keep `Tx` callbacks short and never
+perform external I/O inside one.
+
+All three of rela's advisory locks — migration, version sweep, and
+write — are keyed by the schema they act on. PostgreSQL advisory locks
+are otherwise database-global, so without this two rela schemas sharing
+one database would migrate, sweep, and write behind each other's locks
+despite being entirely independent deployments.
 
 ## Version history (time machine)
 
@@ -183,6 +189,25 @@ rela restore TKT-42 3              # restore the entity to version 3
 The data-entry web UI shows the same timeline, an in-page diff, and a restore
 button (gated by your write permission) on each entity's detail page.
 
+**Sharing a diff.** The two compared versions live in the URL as `?base=` and
+`?target=`, so a specific diff can be linked, bookmarked, or reopened after a
+reload:
+
+```text
+/history/feature/FEAT-42?base=3&target=7          # v3 → v7
+/history/feature/FEAT-42?base=3&target=current    # what changed since v3
+```
+
+Either side takes a version ordinal or `current`. Note that `current` is
+**live-relative**: a link with `target=current` shows the diff against the
+entity as it stands when the recipient opens it, not as it stood when the link
+was made. Link two ordinals for a diff that is frozen. Omit the params for the
+default view, and a value that names no existing version (a stale link, a typo)
+falls back to that default rather than erroring — the address bar is rewritten
+to the pair actually being shown, so a corrected link is what you copy. A
+shared link is not a capability — the recipient still needs their own read
+permission on the entity, and sees the same 404 they would without the link.
+
 Access control: reading the history of a **live** entity requires the same read
 permission as reading the entity itself. Reading the history of a **deleted**
 entity requires the global `history:read` permission — see
@@ -226,6 +251,15 @@ global `history:read`). In the web UI, a relation's history is owned by its
 **source** (`from`) entity: each outgoing relation on an entity's detail page has
 a History affordance. Restore goes through the normal write path; re-creating a
 relation whose endpoint entity no longer exists is refused (409).
+
+Relation diffs are shareable the same way, with `?base=`/`?target=` on the
+relation-history URL — though here `current` resolves to the newest captured
+version (labelled *latest*), since a relation has no separate live-read
+endpoint:
+
+```text
+/relation-history/ticket/TKT-42/blocks/TKT-99?base=1&target=3
+```
 
 ### Purging history for compliance
 

@@ -63,11 +63,51 @@ export class RelationHistoryPage extends BasePage {
   }
 
   /** Choose the two compared versions in the diff pane and read back the
-   *  rendered property changes. */
-  async compare(baseVersion: number, targetVersion: number) {
+   *  rendered property changes. Accepts the `latest` sentinel, which is
+   *  spelled `current` in the option value and the URL. */
+  async compare(baseVersion: number | "current", targetVersion: number | "current") {
     const selects = this.page.locator(".compare-select");
     await selects.nth(0).selectOption(String(baseVersion));
     await selects.nth(1).selectOption(String(targetVersion));
+  }
+
+  /** The pair the dropdowns currently show. Reading the SELECT values (rather
+   *  than the URL) is what catches a v-model type mismatch: a numeric side
+   *  parsed as a string matches no <option> and leaves the control blank. */
+  async selectedPair(): Promise<{ base: string; target: string }> {
+    const selects = this.page.locator(".compare-select");
+    return {
+      base: await selects.nth(0).inputValue(),
+      target: await selects.nth(1).inputValue(),
+    };
+  }
+
+  /** The `?base=`/`?target=` params currently in the address bar (TKT-YOHC3N —
+   *  the compared pair is mirrored into the URL so a diff is linkable). */
+  urlSelection(): { base: string | null; target: string | null } {
+    const params = new URL(this.page.url()).searchParams;
+    return { base: params.get("base"), target: params.get("target") };
+  }
+
+  /** Wait until the URL reflects a specific pair (the write is a
+   *  router.replace, so it lands a tick after the interaction). */
+  async expectUrlSelection(base: number | "current", target: number | "current") {
+    await expect
+      .poll(() => this.urlSelection())
+      .toEqual({ base: String(base), target: String(target) });
+  }
+
+  /** Assert the view rendered (used after a raw navigation). */
+  async expectLoaded() {
+    await expect(this.page.locator(".history-view")).toBeVisible();
+  }
+
+  /** Wait until the timeline has at least `n` rows, polling because
+   *  create/update capture is asynchronous (the reconciliation sweep). */
+  async waitForTimelineAtLeast(n: number) {
+    await expect
+      .poll(async () => this.timelineCount(), { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(n);
   }
 
   propDiffRows(): Locator {

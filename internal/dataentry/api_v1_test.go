@@ -1714,7 +1714,7 @@ func TestV1SidePanelMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_sidepanel/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -1727,7 +1727,7 @@ func TestV1SidePanelInvalidPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidepanel/invalid", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", rec.Code)
@@ -1740,7 +1740,7 @@ func TestV1SidePanelFormNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidepanel/nonexistent/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
@@ -1757,7 +1757,7 @@ func TestV1SidePanelNoConfig(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidepanel/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1SidePanel(rec, req)
+	app.views.handleV1SidePanel(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -1944,7 +1944,7 @@ func TestV1SidebarEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -1957,7 +1957,7 @@ func TestV1SidebarMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected status 405, got %d", rec.Code)
@@ -1990,7 +1990,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
 
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
@@ -2046,7 +2046,7 @@ func TestV1SidebarAppliesListFilters(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -2107,7 +2107,7 @@ func TestV1SidebarAppliesKanbanFilters(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Sidebar(rec, req)
+	app.views.handleV1Sidebar(rec, req)
 
 	var resp v1.SidebarResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
@@ -3992,7 +3992,7 @@ func TestV1Views_DefaultViewForUnconfiguredType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4037,7 +4037,7 @@ func TestV1Views_ConfiguredViewForType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4150,7 +4150,7 @@ func TestV1Views_NoAddOrLinkInfoOnSections(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/"+entryType+"/"+entryID, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Views(rec, req)
+			app.views.handleV1Views(rec, req)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4165,7 +4165,7 @@ func TestV1Views_UnknownEntityType(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/nonexistent/X-1", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: want 404, got %d", rec.Code)
@@ -4177,7 +4177,7 @@ func TestV1Views_UnknownEntityID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/MISSING", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status: want 422 for missing entity, got %d", rec.Code)
@@ -4199,7 +4199,7 @@ func TestV1Views_BadPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
 			rec := httptest.NewRecorder()
-			app.handleV1Views(rec, req)
+			app.views.handleV1Views(rec, req)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status: want 400, got %d", rec.Code)
 			}
@@ -4212,7 +4212,7 @@ func TestV1Views_MethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status: want 405, got %d", rec.Code)
@@ -4242,7 +4242,7 @@ func TestV1Views_MentionsPopulated(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d (body: %s)", rec.Code, rec.Body.String())
@@ -4273,7 +4273,7 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_views/ticket/TKT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: want 200, got %d", rec.Code)

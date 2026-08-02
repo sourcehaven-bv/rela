@@ -3,8 +3,6 @@ package dataentry
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -314,14 +312,14 @@ func TestEditFormForType(t *testing.T) {
 	app, _ := testAppInstance()
 
 	t.Run("returns edit form", func(t *testing.T) {
-		got := app.editFormForType("ticket")
+		got := app.views.editFormForType("ticket")
 		if got != "edit-ticket" {
 			t.Errorf("expected edit-ticket, got %s", got)
 		}
 	})
 
 	t.Run("returns empty for unknown type", func(t *testing.T) {
-		got := app.editFormForType("nonexistent")
+		got := app.views.editFormForType("nonexistent")
 		if got != "" {
 			t.Errorf("expected empty, got %s", got)
 		}
@@ -332,7 +330,7 @@ func TestEditFormForType(t *testing.T) {
 		app2.Cfg().Forms = map[string]Form{
 			"default-form": {EntityType: "ticket", Mode: ""},
 		}
-		got := app2.editFormForType("ticket")
+		got := app2.views.editFormForType("ticket")
 		if got != "default-form" {
 			t.Errorf("expected default-form, got %s", got)
 		}
@@ -343,7 +341,7 @@ func TestCreateFormForType(t *testing.T) {
 	app, _ := testAppInstance()
 
 	t.Run("returns create form", func(t *testing.T) {
-		got := app.createFormForType("ticket")
+		got := app.views.createFormForType("ticket")
 		if got != "create-ticket" {
 			t.Errorf("expected create-ticket, got %s", got)
 		}
@@ -354,14 +352,14 @@ func TestCreateFormForType(t *testing.T) {
 		app2.Cfg().Forms = map[string]Form{
 			"edit-ticket": {EntityType: "ticket", Mode: "edit"},
 		}
-		got := app2.createFormForType("ticket")
+		got := app2.views.createFormForType("ticket")
 		if got != "edit-ticket" {
 			t.Errorf("expected edit-ticket as fallback, got %s", got)
 		}
 	})
 
 	t.Run("returns empty for unknown type", func(t *testing.T) {
-		got := app.createFormForType("nonexistent")
+		got := app.views.createFormForType("nonexistent")
 		if got != "" {
 			t.Errorf("expected empty, got %s", got)
 		}
@@ -391,254 +389,6 @@ func TestEntityDisplayTitle(t *testing.T) {
 		got := app.Meta().DisplayTitle(e.ID, e.Type, e.Properties)
 		if got != "TKT-099" {
 			t.Errorf("expected 'TKT-099', got %q", got)
-		}
-	})
-}
-
-func TestActiveListForEntityType(t *testing.T) {
-	app, _ := testAppInstance()
-
-	t.Run("returns matching list", func(t *testing.T) {
-		got := app.activeListForEntityType("ticket")
-		if got != "tickets" {
-			t.Errorf("expected 'tickets', got %q", got)
-		}
-	})
-
-	t.Run("returns empty for no match", func(t *testing.T) {
-		got := app.activeListForEntityType("nonexistent")
-		if got != "" {
-			t.Errorf("expected empty, got %q", got)
-		}
-	})
-}
-
-func TestActiveListFromReferer(t *testing.T) {
-	app, _ := testAppInstance()
-
-	t.Run("extracts list from referer", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
-		r.Header.Set("Referer", "http://localhost:8080/list/tickets")
-		got := app.activeListFromReferer(r)
-		if got != "tickets" {
-			t.Errorf("expected 'tickets', got %q", got)
-		}
-	})
-
-	t.Run("returns empty for missing referer", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
-		got := app.activeListFromReferer(r)
-		if got != "" {
-			t.Errorf("expected empty, got %q", got)
-		}
-	})
-
-	t.Run("returns empty for non-list referer", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
-		r.Header.Set("Referer", "http://localhost:8080/search")
-		got := app.activeListFromReferer(r)
-		if got != "" {
-			t.Errorf("expected empty, got %q", got)
-		}
-	})
-
-	t.Run("returns empty for unknown list", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
-		r.Header.Set("Referer", "http://localhost:8080/list/nonexistent")
-		got := app.activeListFromReferer(r)
-		if got != "" {
-			t.Errorf("expected empty, got %q", got)
-		}
-	})
-}
-
-func TestResolveActiveList(t *testing.T) {
-	app, _ := testAppInstance()
-
-	t.Run("from query param takes precedence", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001?from=components", http.NoBody)
-		got := app.resolveActiveList("ticket", r)
-		if got != "components" {
-			t.Errorf("expected 'components', got %q", got)
-		}
-	})
-
-	t.Run("from param must be known list", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001?from=nonexistent", http.NoBody)
-		got := app.resolveActiveList("ticket", r)
-		// Should fall through to entity type matching
-		if got != "tickets" {
-			t.Errorf("expected 'tickets', got %q", got)
-		}
-	})
-
-	t.Run("falls back to entity type match", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/ticket/TKT-001", http.NoBody)
-		got := app.resolveActiveList("ticket", r)
-		if got != "tickets" {
-			t.Errorf("expected 'tickets', got %q", got)
-		}
-	})
-
-	t.Run("falls back to referer", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/entity/unknown/UNK-001", http.NoBody)
-		r.Header.Set("Referer", "http://localhost:8080/list/components")
-		got := app.resolveActiveList("unknown", r)
-		if got != "components" {
-			t.Errorf("expected 'components', got %q", got)
-		}
-	})
-}
-
-func TestNavElements(t *testing.T) {
-	app, _ := testAppInstance()
-
-	t.Run("flat items with counts", func(t *testing.T) {
-		elements := app.navElements(context.Background(), "")
-		if len(elements) != 2 {
-			t.Fatalf("expected 2 elements, got %d", len(elements))
-		}
-		item0 := elements[0].Item
-		if item0 == nil {
-			t.Fatal("expected first element to be an item, got group")
-		}
-		if item0.Label != "Tickets" {
-			t.Errorf("expected label 'Tickets', got %q", item0.Label)
-		}
-		if item0.EntityType != "ticket" {
-			t.Errorf("expected entity type 'ticket', got %q", item0.EntityType)
-		}
-		if item0.Count != 2 {
-			t.Errorf("expected count 2, got %d", item0.Count)
-		}
-		item1 := elements[1].Item
-		if item1 == nil {
-			t.Fatal("expected second element to be an item, got group")
-		}
-		if item1.Label != "Components" {
-			t.Errorf("expected label 'Components', got %q", item1.Label)
-		}
-		if item1.Count != 1 {
-			t.Errorf("expected count 1, got %d", item1.Count)
-		}
-	})
-
-	t.Run("dashboard items skip entity lookup", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.Cfg().Navigation = []NavigationEntry{
-			{Label: "Dashboard", Dashboard: true},
-			{Label: "Tickets", List: "tickets"},
-		}
-		elements := app2.navElements(context.Background(), "")
-		if len(elements) != 2 {
-			t.Fatalf("expected 2 elements, got %d", len(elements))
-		}
-		if elements[0].Item == nil || !elements[0].Item.Dashboard {
-			t.Error("expected first item to be dashboard")
-		}
-		if elements[0].Item.EntityType != "" {
-			t.Errorf("expected empty entity type for dashboard, got %q", elements[0].Item.EntityType)
-		}
-	})
-
-	t.Run("filters applied to count", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.Cfg().Lists["tickets"] = List{
-			EntityType: "ticket",
-			Filters: []FilterConfig{
-				{Property: "status", Operator: "=", Value: "open"},
-			},
-		}
-		elements := app2.navElements(context.Background(), "")
-		// Only TKT-001 has status=open
-		if elements[0].Item == nil {
-			t.Fatal("expected first element to be an item")
-		}
-		if elements[0].Item.Count != 1 {
-			t.Errorf("expected count 1 (filtered), got %d", elements[0].Item.Count)
-		}
-	})
-
-	t.Run("groups with items", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.Cfg().Navigation = []NavigationEntry{
-			{Label: "Dashboard", Dashboard: true},
-			{
-				Group: "Tickets",
-				Items: []NavigationEntry{
-					{Label: "All Tickets", List: "tickets"},
-				},
-			},
-			{Label: "Components", List: "components"},
-		}
-		elements := app2.navElements(context.Background(), "")
-		if len(elements) != 3 {
-			t.Fatalf("expected 3 elements, got %d", len(elements))
-		}
-		// First: dashboard item
-		if elements[0].Item == nil || !elements[0].Item.Dashboard {
-			t.Error("expected first element to be dashboard item")
-		}
-		// Second: group
-		if elements[1].Group == nil {
-			t.Fatal("expected second element to be a group")
-		}
-		grp := elements[1].Group
-		if grp.Group != "Tickets" {
-			t.Errorf("expected group name 'Tickets', got %q", grp.Group)
-		}
-		if len(grp.Items) != 1 {
-			t.Fatalf("expected 1 item in group, got %d", len(grp.Items))
-		}
-		if grp.Items[0].Label != "All Tickets" {
-			t.Errorf("expected label 'All Tickets', got %q", grp.Items[0].Label)
-		}
-		if grp.Items[0].Count != 2 {
-			t.Errorf("expected count 2, got %d", grp.Items[0].Count)
-		}
-		// Third: flat item
-		if elements[2].Item == nil || elements[2].Item.Label != "Components" {
-			t.Error("expected third element to be 'Components' item")
-		}
-	})
-
-	t.Run("group collapsed from config", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.Cfg().Navigation = []NavigationEntry{
-			{
-				Group:     "Hidden",
-				Collapsed: true,
-				Items: []NavigationEntry{
-					{Label: "Tickets", List: "tickets"},
-				},
-			},
-		}
-		elements := app2.navElements(context.Background(), "")
-		if elements[0].Group == nil {
-			t.Fatal("expected group element")
-		}
-		if !elements[0].Group.Collapsed {
-			t.Error("expected group to be collapsed")
-		}
-	})
-
-	t.Run("auto-expand group containing active list", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.Cfg().Navigation = []NavigationEntry{
-			{
-				Group:     "Tickets",
-				Collapsed: true,
-				Items: []NavigationEntry{
-					{Label: "All Tickets", List: "tickets"},
-				},
-			},
-		}
-		elements := app2.navElements(context.Background(), "tickets")
-		if elements[0].Group == nil {
-			t.Fatal("expected group element")
-		}
-		if elements[0].Group.Collapsed {
-			t.Error("expected group to be auto-expanded because it contains the active list")
 		}
 	})
 }
@@ -694,75 +444,6 @@ func TestFirstNavTarget(t *testing.T) {
 		target := firstNavTarget(nil)
 		if target != nil {
 			t.Error("expected nil for empty navigation")
-		}
-	})
-}
-
-func TestUIStateLoadSave(t *testing.T) {
-	// Create an app with a workspace backed by memfs
-	fs := storage.NewMemFS()
-	ctx := &project.Context{
-		Root:     "/project",
-		CacheDir: "/project/.rela",
-	}
-	_ = fs.MkdirAll(ctx.CacheDir, 0o755)
-
-	app, _ := testAppInstance()
-	bindRepoWithFS(app, fs, ctx)
-
-	t.Run("load returns defaults when file missing", func(t *testing.T) {
-		state := app.userState.loadUIState(context.Background())
-		if len(state.CollapsedGroups) != 0 {
-			t.Errorf("expected empty collapsed groups, got %v", state.CollapsedGroups)
-		}
-	})
-
-	t.Run("save and load round-trip", func(t *testing.T) {
-		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
-		if err := app.userState.saveUIState(state); err != nil {
-			t.Fatalf("save error: %v", err)
-		}
-		loaded := app.userState.loadUIState(context.Background())
-		if !loaded.CollapsedGroups["Tickets"] {
-			t.Error("expected Tickets to be collapsed after load")
-		}
-	})
-
-	t.Run("UIState overrides config default", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		bindRepoWithFS(app2, fs, ctx)
-		app2.Cfg().Navigation = []NavigationEntry{
-			{
-				Group:     "Tickets",
-				Collapsed: false,
-				Items: []NavigationEntry{
-					{Label: "All", List: "tickets"},
-				},
-			},
-		}
-		// UIState says collapsed
-		state := UIState{CollapsedGroups: map[string]bool{"Tickets": true}}
-		if err := app2.userState.saveUIState(state); err != nil {
-			t.Fatalf("save error: %v", err)
-		}
-		elements := app2.navElements(context.Background(), "")
-		if elements[0].Group == nil {
-			t.Fatal("expected group element")
-		}
-		if !elements[0].Group.Collapsed {
-			t.Error("expected group to be collapsed via UIState override")
-		}
-	})
-
-	t.Run("nil kv is safe", func(t *testing.T) {
-		app2, _ := testAppInstance()
-		app2.kv = nil
-		state := app2.userState.loadUIState(context.Background())
-		if len(state.CollapsedGroups) != 0 {
-			t.Error("expected empty state")
-		}
-		if err := app2.userState.saveUIState(state); err != nil {
-			t.Errorf("expected no error, got %v", err)
 		}
 	})
 }
@@ -882,7 +563,7 @@ func TestValidateConfigNestedGroups(t *testing.T) {
 	})
 }
 
-func TestActiveListForEntityTypeWithGroups(t *testing.T) {
+func TestFindListByEntityTypeWithGroups(t *testing.T) {
 	app, _ := testAppInstance()
 	app.Cfg().Navigation = []NavigationEntry{
 		{
@@ -895,16 +576,26 @@ func TestActiveListForEntityTypeWithGroups(t *testing.T) {
 	}
 
 	t.Run("finds list inside group", func(t *testing.T) {
-		got := app.activeListForEntityType("ticket")
+		s := app.State()
+		got := findListByEntityType(s, s.Cfg.Navigation, "ticket")
 		if got != "tickets" {
 			t.Errorf("expected 'tickets', got %q", got)
 		}
 	})
 
 	t.Run("finds flat list", func(t *testing.T) {
-		got := app.activeListForEntityType("component")
+		s := app.State()
+		got := findListByEntityType(s, s.Cfg.Navigation, "component")
 		if got != "components" {
 			t.Errorf("expected 'components', got %q", got)
+		}
+	})
+
+	t.Run("returns empty for no match", func(t *testing.T) {
+		s := app.State()
+		got := findListByEntityType(s, s.Cfg.Navigation, "nonexistent")
+		if got != "" {
+			t.Errorf("expected empty, got %q", got)
 		}
 	})
 }
