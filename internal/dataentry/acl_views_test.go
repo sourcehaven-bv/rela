@@ -28,7 +28,7 @@ func viewsAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 		"/api/v1/_views/"+entityType+"/"+entityID, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
-	app.handleV1Views(rec, req)
+	app.views.handleV1Views(rec, req)
 	return rec
 }
 
@@ -170,7 +170,7 @@ func TestACLViews_RelationColumnRedactsHiddenNeighborTitle(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	titles := app.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
+	titles := app.views.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
 	for _, tt := range titles {
 		if strings.Contains(tt, "SECRET-FEATURE") {
 			t.Errorf("LEAK: hidden neighbor display value in relation column: %v", titles)
@@ -197,7 +197,7 @@ func TestACLViews_RelationColumnDropsUnreadableNeighbor(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	titles := app.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
+	titles := app.views.resolveRelationColumnValues(gateCtxFor(aliceCtx(), t, d), "TKT-001", "implements", dataentryconfig.DirectionOutgoing)
 	if len(titles) != 0 {
 		t.Errorf("unreadable neighbor leaked into relation column: %v", titles)
 	}

@@ -26,7 +26,7 @@ func newAnalyzeService(t *testing.T, f *fixture, meta *metamodel.Metamodel) anal
 	}
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
 	seedFromFixture(svc.Store(), f)
-	return analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
+	return analyzeService{reads: svc.Store(), relCounts: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
 }
 
 func TestAnalyzeOrphans(t *testing.T) {

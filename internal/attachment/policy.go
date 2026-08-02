@@ -59,26 +59,15 @@ func (p *PolicyProcessor) Process(
 		info.FileName = mimeInfo.FileName
 	}
 
-	// 2 & 3. Scan + transforms (cmd:) — only when a runner is wired (Phase 2).
-	if p.runner != nil {
-		out, info, err = p.applyCommands(ctx, pc, prop, out, info)
-		if err != nil {
-			return nil, ProcessInfo{}, err
-		}
+	// 2 & 3. Scan + transforms. Native (image:) transform steps run in-process
+	// and need no runner; scan and external (cmd:) steps require the runner.
+	// applyTransforms handles the mix and gates the runner-dependent steps.
+	out, info, err = p.applyTransforms(ctx, pc, prop, out, info)
+	if err != nil {
+		return nil, ProcessInfo{}, err
 	}
 
 	return out, info, nil
-}
-
-// transformCommands returns the ordered transform commands for a property.
-func (p *PolicyProcessor) transformCommands(prop metamodel.PropertyDef) [][]string {
-	cmds := make([][]string, 0, len(prop.Transform))
-	for _, step := range prop.Transform {
-		if len(step.Cmd) > 0 {
-			cmds = append(cmds, step.Cmd)
-		}
-	}
-	return cmds
 }
 
 // propertyDef looks up a property definition by entity type and name.

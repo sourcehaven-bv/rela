@@ -88,7 +88,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "entry", Follow: "depends_on", CollectAs: "dependencies"},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -109,7 +109,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "entry", FollowIncoming: "depends_on", CollectAs: "dependents"},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-002")
+		result, err := app.views.executeView(context.Background(), view, "TKT-002")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "entry", Follow: "depends_on", CollectAs: "all_deps", Recursive: true},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -145,7 +145,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "entry", Follow: "depends_on", CollectAs: "limited_deps", Recursive: true, MaxDepth: 1},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -164,7 +164,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "*", Follow: "depends_on", CollectAs: "transitive_deps"},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -179,7 +179,7 @@ func TestExecuteView(t *testing.T) {
 
 	t.Run("entry not found", func(t *testing.T) {
 		view := ViewConfig{Entry: ViewEntry{Type: "ticket"}}
-		_, err := app.executeView(context.Background(), view, "NONEXISTENT")
+		_, err := app.views.executeView(context.Background(), view, "NONEXISTENT")
 		if err == nil {
 			t.Error("expected error for nonexistent entry")
 		}
@@ -187,7 +187,7 @@ func TestExecuteView(t *testing.T) {
 
 	t.Run("wrong entry type", func(t *testing.T) {
 		view := ViewConfig{Entry: ViewEntry{Type: "component"}}
-		_, err := app.executeView(context.Background(), view, "TKT-001")
+		_, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err == nil {
 			t.Error("expected error for wrong entry type")
 		}
@@ -197,7 +197,7 @@ func TestExecuteView(t *testing.T) {
 		view := ViewConfig{
 			Entry: ViewEntry{Type: "ticket"},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -214,7 +214,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "entry", Follow: "belongs_to", CollectAs: "components"},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -239,7 +239,7 @@ func TestExecuteView(t *testing.T) {
 				{From: "entry", Follow: "depends_on", CollectAs: "collected"}, // same rule again
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "TKT-001")
+		result, err := app.views.executeView(context.Background(), view, "TKT-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -348,7 +348,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "BOUWBLOK-001")
+		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -376,7 +376,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "BOUWBLOK-001")
+		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -399,7 +399,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "BOUWBLOK-001")
+		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -427,7 +427,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "BOUWBLOK-001")
+		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -464,7 +464,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "BOUWBLOK-001")
+		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -491,7 +491,7 @@ func TestExecuteViewWithWhere(t *testing.T) {
 				},
 			},
 		}
-		result, err := app.executeView(context.Background(), view, "BOUWBLOK-001")
+		result, err := app.views.executeView(context.Background(), view, "BOUWBLOK-001")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -515,7 +515,7 @@ func TestFilterEntities(t *testing.T) {
 	}
 
 	t.Run("filter by type", func(t *testing.T) {
-		result, err := app.filterEntities(entities, "type = function")
+		result, err := app.views.filterEntities(entities, "type = function")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -525,7 +525,7 @@ func TestFilterEntities(t *testing.T) {
 	})
 
 	t.Run("filter by type not equal", func(t *testing.T) {
-		result, err := app.filterEntities(entities, "type != function")
+		result, err := app.views.filterEntities(entities, "type != function")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -535,7 +535,7 @@ func TestFilterEntities(t *testing.T) {
 	})
 
 	t.Run("invalid expression returns error", func(t *testing.T) {
-		_, err := app.filterEntities(entities, "no operator here")
+		_, err := app.views.filterEntities(entities, "no operator here")
 		if err == nil {
 			t.Error("expected error for invalid expression")
 		}

@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -20,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/validator"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -134,12 +136,23 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
-	app.validator = svc.Validator()
-	app.analyze = analyzeService{store: svc.Store(), tracer: svc.Tracer(), validator: svc.Validator()}
+	// Gated reads mirror production (NewApp): the validator and analyze read
+	// through lateGatedReader so tests exercise the real per-principal gating
+	// (TKT-3FL2S6). lateGatedReader is late-bound, so it tolerates app.acl /
+	// app.affordances being rebound below.
+	gatedReader := lateGatedReader{app: app}
+	app.validator = validator.New(gatedReader, svc.Meta(), lua.ReadDeps{
+		VisibleReader:  gatedReader,
+		WritePrepStore: svc.Store(),
+		Tracer:         lateGatedTracer{app: app},
+		Searcher:       svc.Searcher(),
+		Meta:           svc.Meta(),
+		ProjectRoot:    paths.Root,
+	})
+	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.kv = svc.State()
-	app.userState = userStateStore{kv: svc.State()}
 	// logo + palette stores over the same kv; fresh fixtures have nothing on
 	// disk so the loads can't error (nil-returns match production's clean-boot
 	// path). Callers that need a specific project palette resolved re-wire
@@ -173,6 +186,19 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// own, so sync writes serialize with the other mutation handlers just as in
 	// production.
 	app.sync = newSyncHandler(svc.Store(), svc.EntityManager(), &app.writeMu)
+	// viewsHandler mirrors production wiring (see NewApp): fixed service
+	// handles by value, schema/services closures, and App's shared read gate.
+	app.views = &viewsHandler{
+		schema:      app.State,
+		store:       svc.Store(),
+		reader:      app.reader,
+		serializer:  app.serializer,
+		affordances: app.affordances,
+		viewReader:  app.viewReader,
+		services:    app.Services,
+		logo:        app.logo,
+		gateRead:    app.gateReadOrNotFound,
+	}
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than
 	// relying on a nil zero value, since newHandlerTestApp bypasses NewApp.)
@@ -180,7 +206,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		schema:      app.State,
 		services:    app.Services,
 		projectRoot: app.ProjectRoot,
-		executeView: app.executeView,
+		executeView: app.views.executeView,
 		// Late-bound like production: ACL-gating tests reassign app.acl after
 		// this rebind.
 		aclImpl: func() acl.ACL { return app.acl },

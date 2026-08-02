@@ -34,5 +34,22 @@ against a 2 GB quota. The upload step is removed; the job stays as a compile
 gate.
 
 The 24.6 GB backlog was purged separately (retention changes are not
-retroactive): 1121 artifacts deleted, 0 failures, org storage verified down to
-214 MB.
+retroactive): 1121 artifacts deleted, 0 failures. Live (unexpired) storage
+verified down to ~214 MB, all of it `coverage-report` plus a few small
+sarif/fuzz artifacts.
+
+Two clarifications on that figure, prompted by review (IB-review #1244):
+
+- **Expired rows still list.** The artifacts API returns already-expired
+  artifacts with `"expired": true`; ~1143 such `rela-linux` rows (~17.4 GB
+  nominal) remain enumerable. They are a disjoint set from the 1121 deleted
+  (zero id overlap) — GitHub had already expired them at their 90-day mark, so
+  they were never mine to delete and hold no billable storage. Any count of
+  remaining `rela-linux` must filter on `expired == false`, or it double-counts
+  bytes that no longer exist. The 1121 deletions were re-verified: all return
+  404 individually and none appear in a fresh full listing.
+- **Two stragglers, since removed.** Two runs on `develop` (`b98deaa6`,
+  `4333c858`, both pushed 16:03–16:04 UTC) started before this PR merged and so
+  still ran the old workflow, uploading 45 MB after the purge. Both were
+  deleted. `develop` no longer contains the upload step, so no further
+  `rela-linux` artifacts can be produced.
