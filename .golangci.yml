@@ -137,8 +137,12 @@ linters:
         # comments naming their trust boundary — see internal/dataentry
         # commands.go and document.go. Keep it enabled: it is what catches a
         # new exec site that splices request data into a shell.
+        #
+        # G704 (SSRF) is ENABLED: its two findings were reviewed and are
+        # operator-configured destinations (.rela/ai.yaml base_url; the
+        # `rela sync --remote` flag), annotated with narrow nolint
+        # directives naming the trust boundary at each call site.
         - G703  # path traversal via taint analysis
-        - G704  # SSRF via taint analysis
         - G705  # XSS via taint analysis
         - G706  # log injection via taint analysis
       config:

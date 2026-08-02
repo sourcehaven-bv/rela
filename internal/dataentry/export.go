@@ -70,7 +70,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		scopedEntities: app.scopedSortedEntities,
 		findListForType: func(entityType string) string {
 			s := app.State()
-			return app.findListByEntityType(s, s.Cfg.Navigation, entityType)
+			return findListByEntityType(s, s.Cfg.Navigation, entityType)
 		},
 		engine: transform.NewEngine(),
 	}, nil

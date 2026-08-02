@@ -64,6 +64,8 @@ override:
     threshold: 70
   - path: ^internal/lua$
     threshold: 80
+  - path: ^internal/imgproc$
+    threshold: 78 # native image decode/orient/re-encode; security-critical, keep well-covered
 
 # Exclude packages that are not meaningful to coverage-check
 exclude:
