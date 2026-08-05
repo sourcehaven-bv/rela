@@ -54,12 +54,13 @@ type compiledOptionGrant struct {
 }
 
 // compiledRelationGrant carries a relation type's create/remove
-// verdicts, its meta-field grants, and an optional whole-grant
-// predicate.
+// verdicts, its meta-field write grants (fields) and read-visibility
+// grants (visible), and an optional whole-grant predicate.
 type compiledRelationGrant struct {
 	relation string
 	create   *bool
 	remove   *bool
 	fields   []compiledFieldGrant
+	visible  []compiledFieldGrant
 	program  *predicate.Program
 }
