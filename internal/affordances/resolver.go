@@ -322,6 +322,16 @@ func (r *PolicyResolver) compileRelationGrant(
 		}
 		cr.fields = append(cr.fields, compiledFieldGrant{field: fg.Field, program: fprog})
 	}
+	for j, fg := range rg.Visible {
+		fprog, ferr := r.compile(roleName, entityType,
+			fmt.Sprintf("relations[%d].visible", i), j, fg.When)
+		if ferr != nil {
+			errs = append(errs, ferr)
+			metaFailed = true
+			continue
+		}
+		cr.visible = append(cr.visible, compiledFieldGrant{field: fg.Field, program: fprog})
+	}
 	// Append the grant only when it compiled cleanly end-to-end. A
 	// grant that lost a meta field to a compile error must not be
 	// half-installed (S4): silently dropping the field would flip a
@@ -474,6 +484,66 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 	}
 	out.Types = acc.verdicts()
 	return out
+}
+
+// RelationFieldVerdicts computes the sparse per-meta-field READ-visibility
+// verdict for one relation edge: relType links FROM the entity `from`, and
+// metaKeys are the property names actually present on the edge about to be
+// serialized. The result is a sparse map keyed by meta field name; an absent
+// key means visible (the permissive default), a `false` value means hidden.
+// This is the relation-side analog of [PolicyResolver.FieldVerdicts]'s Visible
+// dimension, resolved against the SAME bindings so has_relation / count_relations
+// / has_role behave identically (TKT-B1F5Q1).
+//
+// Role grants are keyed by the FROM entity type (the source owns the relation
+// grant block, matching [PolicyResolver.RelationVerdicts]). A relation
+// `visible:` field is visible only when BOTH the whole relation grant's `when:`
+// AND the field's own `when:` pass — a field can be more restrictive than its
+// grant, never less (same rule as write-side metaFieldResults).
+//
+// The deny universe is metaKeys (the edge's actual property names) plus any
+// grant-mentioned candidate — so redaction covers exactly what would otherwise
+// reach the wire, including free-form meta keys not declared in the metamodel.
+//
+// This is always resolved against a LIVE source entity: the live relation GET,
+// and relation history's live-source case (a deleted-source relation history
+// serves no meta at all, so it never reaches here — IB-review #1). There is
+// therefore no historical-subject / fail-closed-reconstruct handling on this
+// path; redaction is simply "today's policy against the live source."
+func (r *PolicyResolver) RelationFieldVerdicts(
+	ctx context.Context, from *entity.Entity, relType string, metaKeys []string,
+) map[string]bool {
+	if from == nil || r.policy == nil {
+		return nil
+	}
+
+	visible := newDimension()
+	bc, roles := r.bindingFor(ctx, from)
+	if bc != nil {
+		for _, role := range roles {
+			g := r.grants[grantKey{role, from.Type}]
+			if g == nil || !g.declaredRelations {
+				continue
+			}
+			for _, rg := range g.relations {
+				if rg.relation != relType || len(rg.visible) == 0 {
+					continue
+				}
+				visible.optIn("hidden")
+				grantPassed := r.passes(ctx, bc, rg.program, role)
+				for _, fg := range rg.visible {
+					if grantPassed && r.passes(ctx, bc, fg.program, role) {
+						visible.allow(fg.field)
+					} else {
+						visible.observeDeny(fg.field, role)
+					}
+				}
+			}
+		}
+	}
+
+	denied, _ := visible.deny(metaKeys, nil)
+	return denied
 }
 
 // TransitionVerdicts resolves, per state-machine-typed property on e, the

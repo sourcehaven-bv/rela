@@ -881,6 +881,15 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// Orderable mode. Empty string disables sorting for that group.
 	groupSortProp := make(map[string]string)
 
+	// pendingStrips defers per-edge relation-meta redaction (TKT-B1F5Q1) until
+	// AFTER sortRelationGroup runs (see relationMetaStrip). Each strip also carries
+	// the relation type so the redaction resolves the right grant block.
+	type typedStrip struct {
+		relationMetaStrip
+		relType string
+	}
+	var pendingStrips []typedStrip
+
 	for _, edge := range outgoing {
 		if !visibleNeighbors[edge.To] {
 			continue
@@ -892,6 +901,9 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
+			pendingStrips = append(pendingStrips, typedStrip{
+				relationMetaStrip: relationMetaStrip{rel: rel}, relType: edge.Type,
+			})
 		}
 		relations[edge.Type] = append(relations[edge.Type], rel)
 		if relDef, ok := s.Meta.Relations[edge.Type]; ok {
@@ -917,6 +929,12 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
+			// The relation grant lives on the SOURCE entity type (edge.From for an
+			// incoming edge — the peer). Resolved fail-closed at strip time.
+			pendingStrips = append(pendingStrips, typedStrip{
+				relationMetaStrip: relationMetaStrip{rel: rel, incoming: true, peerID: edge.From},
+				relType:           edge.Type,
+			})
 		}
 		relations[inverseName] = append(relations[inverseName], rel)
 		if p := relDef.IncomingOrderProperty(); p != "" {
@@ -933,7 +951,58 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 		sortRelationGroup(relations[groupName], prop)
 	}
 
+	// Redact hidden relation meta AFTER sorting, through the shared chokepoint.
+	for _, ps := range pendingStrips {
+		a.affordances.redactRelationMetaStrip(r.Context(), ps.relationMetaStrip, entity, ps.relType)
+	}
+
 	writeV1JSON(w, http.StatusOK, relations)
+}
+
+// relationMetaStrip is a deferred relation-meta redaction (TKT-B1F5Q1): the built
+// wire `rel` map plus what is needed to resolve the source's `visible:` grants.
+// The strip runs AFTER sortRelationGroup because the sort reads the managed order
+// property out of `meta`, so redacting a (possibly hidden) order key first would
+// break ordering. An outgoing edge's source is the path entity; an incoming edge's
+// source is the peer (peerID), resolved fail-closed at strip time.
+type relationMetaStrip struct {
+	rel      map[string]any
+	incoming bool
+	peerID   string // incoming only: the source (from) entity id
+}
+
+// buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
+// for the visible edges of relType in the given direction, plus the deferred meta
+// strips. It is the shared build step for handleV1GetRelationType; the caller
+// sorts then applies [App.redactRelationMetaStrip].
+func buildRelationTypeRows(
+	ctx context.Context, reader entityReader, edges []*entityPkg.Relation,
+	relType string, incoming bool, visibleNeighbors map[string]bool,
+) (rows []map[string]any, strips []relationMetaStrip) {
+	rows = make([]map[string]any, 0, len(edges))
+	for _, edge := range edges {
+		if edge.Type != relType {
+			continue
+		}
+		peerID := edge.To
+		if incoming {
+			peerID = edge.From
+		}
+		if !visibleNeighbors[peerID] {
+			continue
+		}
+		rel := map[string]any{"id": peerID, "type": reader.entityType(ctx, peerID)}
+		if len(edge.Properties) > 0 {
+			rel["meta"] = edge.Properties
+			s := relationMetaStrip{rel: rel, incoming: incoming}
+			if incoming {
+				s.peerID = peerID
+			}
+			strips = append(strips, s)
+		}
+		rows = append(rows, rel)
+	}
+	return rows, strips
 }
 
 // sortRelationGroup sorts a relation group in place by a numeric meta key.
@@ -1023,28 +1092,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	}
 	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
 
-	relations := make([]map[string]any, 0, len(edges))
-
-	for _, edge := range edges {
-		if edge.Type != relType {
-			continue
-		}
-		peerID := edge.To
-		if incoming {
-			peerID = edge.From
-		}
-		if !visibleNeighbors[peerID] {
-			continue
-		}
-		rel := map[string]any{
-			"id":   peerID,
-			"type": a.reader.entityType(r.Context(), peerID),
-		}
-		if len(edge.Properties) > 0 {
-			rel["meta"] = edge.Properties
-		}
-		relations = append(relations, rel)
-	}
+	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
 
 	// Apply orderable sort when the type declares the relevant side.
 	if relDef, ok := a.State().Meta.Relations[relType]; ok {
@@ -1057,6 +1105,11 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		if prop != "" {
 			sortRelationGroup(relations, prop)
 		}
+	}
+
+	// Redact hidden relation meta after sorting (see relationMetaStrip).
+	for _, ps := range pendingStrips {
+		a.affordances.redactRelationMetaStrip(r.Context(), ps, entity, relType)
 	}
 
 	writeV1JSON(w, http.StatusOK, relations)
