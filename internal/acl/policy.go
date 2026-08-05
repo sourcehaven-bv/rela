@@ -279,12 +279,16 @@ type OptionGrant struct {
 // "unset" (use the grant's implied default of true — the grant
 // existing is itself the opt-in) is distinguishable from an explicit
 // false. Fields grants per-meta-field writability on links of this
-// type. When conditions the whole grant on a predicate.
+// type. Visible grants per-meta-field READ visibility (redaction) —
+// the read-side sibling of Fields, mirroring how RoleDef keeps entity
+// Fields (write) and Visible (read) as separate dimensions (TKT-B1F5Q1).
+// When conditions the whole grant on a predicate.
 type RelationGrant struct {
 	Relation string       `yaml:"relation"`
 	Create   *bool        `yaml:"create,omitempty"`
 	Remove   *bool        `yaml:"remove,omitempty"`
 	Fields   []FieldGrant `yaml:"fields,omitempty"`
+	Visible  []FieldGrant `yaml:"visible,omitempty"`
 	When     string       `yaml:"when,omitempty"`
 }
 

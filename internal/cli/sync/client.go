@@ -314,6 +314,17 @@ func relationSegments(from, relType, to string) []string {
 }
 
 func (c *Client) do(req *http.Request) (*http.Response, error) {
+	// The destination is operator configuration, not attacker input: the base
+	// URL is the `rela sync push/pull --remote` flag (env RELA_REMOTE), supplied
+	// by whoever invokes the CLI, and NewClient requires it to be absolute.
+	// Choosing which rela-server to sync against is the entire point of the
+	// command, so a host allowlist would defeat it. Remote-controlled data never
+	// reaches the destination: the path is built from JoinPath over segments this
+	// package derives from local record ids, so a hostile server's manifest can
+	// influence the path (escaped exactly once by JoinPath) but never the
+	// scheme/host. The trust boundary is the operator's shell, the same one that
+	// already grants full local filesystem access.
+	//nolint:gosec // G704: destination comes from the operator's --remote/RELA_REMOTE, not from request input.
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// Never include req.URL with credentials — newRequest keeps the token in

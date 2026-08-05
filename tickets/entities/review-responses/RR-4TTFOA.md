@@ -1,0 +1,9 @@
+---
+id: RR-4TTFOA
+type: review-response
+title: 'Deleted-relation history could leak meta via spoofed URL fromType (CISO IB-review #1)'
+finding: 'CISO review of PR #1254 (CHANGES_REQUESTED): for a DELETED relation, fromType is an unvalidated URL segment, and RelationFieldVerdicts keys the visible: grant block on the source entity type. A principal holding an UNCONDITIONAL visible: grant on the relation under type X can request the deleted relation with fromType=X (their own favorable type), unmasking a field that should stay hidden for the relation''s real source type. The original B1F5Q1 test only covered a NON-matching spoofed fromType (which failed closed via a subject-conditional grant); the spoof-to-own-grant variant leaked. Reproduced: reason=''leaked?'' came through.'
+severity: critical
+resolution: 'Redesigned relation-history redaction to be governed by the CURRENT LIVE world against the LIVE source (user decision: ''only current live relations should count for ACL'' — removed from a team must take effect on history). serveRelationHistoryVersion now resolves the source type from the live entity (ids are globally unique, so the URL fromType is never an ACL trust input); a live source redacts per-field against today''s policy, a DELETED source serves NO meta to anyone — no history:read-redacted reveal (deliberate divergence from entity history: a relation''s access is a property of the live relation, so it cannot outlive it). Also cleaned up authorizeRelationHistoryRead to gate on the live type from the id, dropping the fromType==URL check. Removed the now-dead relation-side historical machinery (WithHistoricalSubject on the relation path, relationTypesWithVisible). Pinned by scenario tests S1-S7 incl. the spoof-to-own-grant + reveal cases (TestRelHistory_S5_SourceDeleted_NoMetaEvenWithReveal). Documented the intentional entity-vs-relation divergence in acl-security.md + mirror.'
+status: addressed
+---

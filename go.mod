@@ -3,8 +3,8 @@ module github.com/Sourcehaven-BV/rela
 go 1.26
 
 require (
-	github.com/MicahParks/jwkset v0.11.0
-	github.com/MicahParks/keyfunc/v3 v3.8.0
+	github.com/MicahParks/jwkset v0.11.1
+	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/alecthomas/kong v1.16.0
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/charmbracelet/glamour v1.0.0
@@ -13,18 +13,18 @@ require (
 	github.com/chromedp/chromedp v0.16.0
 	github.com/fatih/color v1.19.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-git/go-git/v5 v5.19.1
+	github.com/go-git/go-git/v5 v5.19.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/mark3labs/mcp-go v0.56.0
-	github.com/mattn/go-runewidth v0.0.24
+	github.com/mark3labs/mcp-go v0.57.0
+	github.com/mattn/go-runewidth v0.0.27
 	github.com/mitchellh/go-wordwrap v1.0.1
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/stretchr/testify v1.11.1
 	github.com/teambition/rrule-go v1.8.2
 	github.com/teekennedy/goldmark-markdown v0.5.1
 	github.com/wailsapp/wails/v2 v2.13.0
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.5
 	github.com/yuin/gopher-lua v1.1.2
 	go.uber.org/goleak v1.3.0
 	golang.org/x/image v0.44.0
@@ -152,7 +152,7 @@ require (
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	golang.org/x/time v0.9.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
