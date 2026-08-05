@@ -2,23 +2,18 @@
 id: release-test-job-sandbox-install
 type: automated-measure
 title: Release workflow Test job installs the command sandbox
-description: The Release workflow's Test job installs bubblewrap before running `go test -race ./...`, mirroring the equivalent step in ci.yml. Without it internal/cmdexec fails closed, ~20 cmdexec/attachment/transform tests fail, and the Release job is skipped so nothing is published (BUG-OJNWVK).
+description: SUPERSEDED by release-test-gate-sandbox-parity (BUG-2J30F3), which describes the same steps in release.yml and shipped first. Kept only so BUG-OJNWVK's adds-measure link resolves; do not treat as a second, independent guard.
 kind: ci
 location: .github/workflows/release.yml
-status: active
+status: deprecated
 ---
 
-Keeps the Release workflow's Test job able to run the command-sandbox tests.
+Superseded by [[release-test-gate-sandbox-parity]].
 
-`internal/cmdexec` fails closed by design: with no sandbox mechanism on the
-host, commands refuse to run. That makes bubblewrap a hard **test dependency**
-on Linux, not an optional extra — every command-running test fails without it.
+Both entities describe the **same** steps in `release.yml` — pin `ubuntu-26.04`,
+install bubblewrap, keep the `bwrap --unshare-all --ro-bind / / /bin/true`
+probe. BUG-2J30F3's version landed on `develop` first (PR #1256) and is the one
+actually in the workflow; this entity records the duplicate discovery via
+[[BUG-OJNWVK]] and is retained only so that bug's `adds-measure` link resolves.
 
-`ci.yml` has installed it since the sandbox landed; `release.yml` never did, and
-because `release.yml` only fires on tag pushes the drift stayed invisible until
-a release was attempted.
-
-Related: [[release-embedded-spa-guard]] guards the same workflow against a
-different silent failure. Both share a root cause — `release.yml` re-declares
-setup that `ci.yml` and the justfile already express, and nothing keeps the
-copies in sync.
+There is one guard in the file, not two.

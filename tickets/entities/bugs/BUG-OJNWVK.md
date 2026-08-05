@@ -2,7 +2,7 @@
 id: BUG-OJNWVK
 type: bug
 title: Release workflow Test job never installs bubblewrap, so cmdexec/attachment tests fail and the release is blocked
-description: 'release.yml''s Test job runs `go test -v -race ./...` without installing bubblewrap. internal/cmdexec fails closed when no sandbox mechanism exists, so ~20 cmdexec/attachment/transform tests fail, the Test job fails, and the Release job (needs: [test, security]) is skipped — no artifacts are ever published. ci.yml installs bubblewrap; release.yml never has.'
+description: 'DUPLICATE of BUG-2J30F3, which diagnosed the same defect independently and landed the fix on develop first (PR #1256). Kept as a record of the parallel discovery; no separate fix shipped. See BUG-2J30F3 for the authoritative analysis.'
 priority: high
 effort: xs
 why1: The Release workflow's Test job fails, so the Release job is skipped and no artifacts are published.
@@ -11,60 +11,40 @@ why3: 'internal/cmdexec deliberately fails closed: on a host with no sandbox mec
 why4: release.yml's Test job is a bare `go test -v -race ./...` with no dependency install step. ci.yml grew an `Install bubblewrap (command sandbox)` step when the sandbox requirement landed; release.yml was never updated to match.
 why5: release.yml only runs on tag pushes, so its jobs are never exercised by PR CI. Workflow drift between ci.yml and release.yml is therefore invisible until a release is attempted — the same blind spot that let BUG-2YZ575 ship a dead SPA across every release since v0.7.
 prevention: 'Install bubblewrap in release.yml''s Test job, mirroring ci.yml. Longer term the two workflows should share the setup rather than re-declaring it (see BUG-2YZ575 why5: release.yml re-declaring what ci.yml/justfile already express is the recurring root cause).'
-status: done
+status: wont-fix
 ---
 
-## Symptom
+## Duplicate of BUG-2J30F3 — closed unfixed
 
-The `Release` workflow's `Test` job fails, so `release` (which declares `needs:
-[test, security]`) is **skipped** and nothing is ever published.
+Same defect, found independently and concurrently. **BUG-2J30F3 landed the fix
+on `develop` first** (PR #1256), so this branch's duplicate commit was dropped
+when merging `develop` in; the surviving implementation is BUG-2J30F3's.
 
-```text
-cmdexec: start "bwrap": exec: "bwrap": executable file not found in $PATH
-```
+The two diagnoses agree completely — release.yml's test gate ran on
+`ubuntu-latest` without bubblewrap while ci.yml used `ubuntu-26.04` with it
+installed and verified, and `internal/cmdexec` fails closed, so every
+command-running test errored. Both fixes were byte-equivalent in effect (runner
+pin + install + `bwrap --unshare-all` probe).
 
-~20 failures across `internal/cmdexec`, `internal/attachment` and the
-transform/export paths — e.g. `TestRun_Stdout`, `TestRun_InOutFiles`,
-`TestCmdRunner_ArrayArgsNoShellInjection`,
-`TestAttachmentTransformBlocksEgress`, `TestExport_List_RenderOverride`.
+BUG-2J30F3 is the better record and should be treated as authoritative:
 
-## How it was found
+- It counted the blast radius precisely (35 tests across `internal/attachment`,
+`internal/cli`, `internal/cmdexec`, `internal/dataentry`, `internal/transform`).
+- It identified the real-world consequence — **`v26.7.1` was tagged but produced
+no release object at all**, the inverse of the empty-release failure mode.
+- It also documented the fix in `docs/releasing.md` under the enumerated release
+failure modes.
 
-While verifying the BUG-2YZ575 SPA guard, `release.yml` was temporarily given a
-`pull_request` trigger (GoReleaser in `--snapshot`, publishing nothing) so the
-new guard could be observed running. The guard never got to run: the `Test` gate
-failed first and skipped the `release` job. Run 30611472878.
+## What this entity still contributes
 
-## Root cause
+The discovery path differed and is worth keeping: this one surfaced while
+temporarily giving `release.yml` a `pull_request` trigger to exercise the
+BUG-2YZ575 SPA guard. That is direct evidence for the shared why5 both bugs
+reached — the release gate only runs on tag pushes, so drift is invisible at PR
+time.
 
-`internal/cmdexec` **fails closed** — on a host with no sandbox mechanism,
-commands refuse to run rather than executing unconfined. That is correct and
-deliberate (CLAUDE.md: "On a host with no mechanism, commands REFUSE to run").
-
-`ci.yml` accounts for it:
-
-```yaml
-- name: Install bubblewrap (command sandbox)
-  run: sudo apt-get update && sudo apt-get install -y bubblewrap
-```
-
-`release.yml`'s Test job is a bare `go test -v -race ./...` with no such step,
-and never has been. Verified byte-identical to `develop` — this is pre-existing,
-not a regression from the BUG-2YZ575 branch.
-
-## Impact
-
-**The next real release would fail at the Test gate before reaching
-GoReleaser.** Combined with BUG-2YZ575 (which made every published `rela-server`
-ship a dead web UI), the release path had two independent defects that PR CI
-could not see.
-
-## Fix
-
-Add the bubblewrap install to `release.yml`'s Test job, mirroring `ci.yml`.
-
-## Acceptance criteria
-
-- `release.yml`'s Test job installs bubblewrap before running the suite.
-- The `cmdexec` / `attachment` / transform tests pass in the Release workflow.
-- The `release` job is reachable (not skipped by a failed Test gate).
+Both bugs, and [[BUG-2YZ575]], share one root cause: `release.yml` duplicates
+setup that `ci.yml` and the justfile already express, with nothing keeping the
+copies in sync. BUG-2J30F3 names the structural fix (a `workflow_call` reusable
+gate) and defers it; that deferral is tracked as remaining scope on
+[[TKT-O03TB]], alongside the case for a spawn-and-serve release e2e.
