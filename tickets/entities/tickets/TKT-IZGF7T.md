@@ -5,7 +5,7 @@ title: Unify the two entity-ID validators into one enforced rule
 kind: refactor
 priority: high
 effort: m
-status: ready
+status: done
 ---
 
 ## Description
