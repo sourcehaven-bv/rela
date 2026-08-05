@@ -134,9 +134,14 @@ linters:
         # operator-configured destinations (.rela/ai.yaml base_url; the
         # `rela sync --remote` flag), annotated with narrow nolint
         # directives naming the trust boundary at each call site.
+        #
+        # G705 (XSS) is ENABLED: the data-entry HTML/feed sinks were audited
+        # and fixed — the entity-help fragment now renders through
+        # html/template (contextual auto-escaping) instead of fmt.Fprintf,
+        # and the calendar feeds serve escaped non-HTML bodies under nosniff.
+        # Remaining G705 sites carry a narrow #nosec with the reason.
         - G702  # command injection via taint analysis
         - G703  # path traversal via taint analysis
-        - G705  # XSS via taint analysis
         - G706  # log injection via taint analysis
       config:
         global:
