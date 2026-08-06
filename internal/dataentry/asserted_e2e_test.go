@@ -175,7 +175,7 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 	handler := attachACLRequest(
 		http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			got = principal.From(r.Context())
-		}), d)
+		}), d, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
 	handler.ServeHTTP(httptest.NewRecorder(),
