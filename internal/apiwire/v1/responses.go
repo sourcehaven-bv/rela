@@ -261,32 +261,9 @@ type Config struct {
 	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
 	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
-	Documents        map[string]Document                         `json:"documents,omitempty"`
+	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
 	Apps             map[string]App                              `json:"apps,omitempty"`
 	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
-}
-
-// Document is the client-facing view of a configured document. Like [App] it
-// deliberately omits the server-side execution details — `command:`, `script:`,
-// `timeout:`, and `permission:` — because the SPA needs only enough to decide
-// which documents to offer and where to route. The markdown is produced by
-// GET /api/v1/_documents/{name}[/{id}], which re-checks everything.
-//
-// Withholding `permission:` matters: naming the permission that guards a
-// document tells a caller who cannot render it exactly which grant to seek.
-// Withholding `command:`/`script:` keeps server-side paths and shell strings
-// off the wire. The map itself is also permission-filtered before it is
-// served, so a document a principal may not render is absent entirely rather
-// than merely stripped — see handleV1Config.
-type Document struct {
-	Title string `json:"title,omitempty"`
-	// EntityType drives DocumentsPanel's per-entity filtering. Empty means a
-	// standalone document, which the panel must NOT offer (it has no entity to
-	// render against); it is reached from a navigation entry instead.
-	EntityType string `json:"entity_type,omitempty"`
-	// Edit mirrors the config's `edit:` block so the full-page view can render
-	// the button. Entity-anchored documents only.
-	Edit *dataentryconfig.DocumentEdit `json:"edit,omitempty"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the

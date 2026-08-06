@@ -197,24 +197,12 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 				Items:     make([]v1.SidebarItem, 0),
 			}
 			for _, item := range entry.Items {
-				if hidesNavEntry(r.Context(), s, item) {
-					continue
-				}
 				sidebarItem := h.navEntryToSidebarItem(r.Context(), item, counts)
 				group.Items = append(group.Items, sidebarItem)
-			}
-			// A group whose every item was hidden is dropped: an empty
-			// labeled group is a visible outline of what the principal
-			// cannot see, and reads as a rendering bug.
-			if len(group.Items) == 0 {
-				continue
 			}
 			navigation = append(navigation, group)
 		} else {
 			// Top-level item without group
-			if hidesNavEntry(r.Context(), s, entry) {
-				continue
-			}
 			item := h.navEntryToSidebarItem(r.Context(), entry, counts)
 			navigation = append(navigation, v1.SidebarGroup{
 				Items: []v1.SidebarItem{item},
@@ -371,37 +359,6 @@ func (h *viewsHandler) navEntryToSidebarItem(
 	}
 
 	return item
-}
-
-// hidesNavEntry reports whether a navigation entry must be omitted from the
-// sidebar for the requesting principal.
-//
-// Only `document:` entries can be hidden today, and only when the referenced
-// document declares a `permission:` the principal lacks. This is a UX
-// affordance, NOT an authorization boundary: handleV1StandaloneDocument
-// re-checks the same permission, so a hidden entry is unreachable by direct
-// URL regardless. Same rule as `_actions` (see this package's CLAUDE.md) —
-// the server never trusts what it told the client to render.
-//
-// Entries are omitted rather than rendered-and-disabled: a link that always
-// 404s is worse than no link, and the whole point is to keep reports a user
-// cannot use out of their menu.
-//
-// Takes the caller's *Schema rather than calling h.schema() itself: the
-// sidebar handler already captured one, and re-reading mid-loop could observe
-// a different snapshot if a config reload lands (the capture-state-once rule
-// in the root CLAUDE.md). Reading the navigation list from one snapshot and
-// the documents map from another is exactly how a renamed document turns into
-// a visible gated entry.
-func hidesNavEntry(ctx context.Context, s *Schema, entry dataentryconfig.NavigationEntry) bool {
-	if entry.Document == "" {
-		return false
-	}
-	docCfg, ok := s.Cfg.Documents[entry.Document]
-	if !ok {
-		return false
-	}
-	return !permitsDocument(ctx, docCfg)
 }
 
 // handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.

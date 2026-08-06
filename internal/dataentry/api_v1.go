@@ -1337,8 +1337,8 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Kanbans:          s.Cfg.Kanbans,
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
-		Navigation:       visibleNavigation(r.Context(), s),
-		Documents:        visibleDocuments(r.Context(), s),
+		Navigation:       s.Cfg.Navigation,
+		Documents:        s.Cfg.Documents,
 		Apps:             appsToV1(a.scanAppsOrLog()),
 		Palette:          a.palette.Resolved(),
 	}
@@ -2134,7 +2134,7 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
 	// above — it narrows, never widens (a holder still needs to pass the
 	// entity read gate). Same uniform-404 treatment for the same reason.
-	if !gateDocumentPermission(w, r, docCfg) {
+	if !gateDocumentPermission(w, r, docName, docCfg) {
 		return
 	}
 

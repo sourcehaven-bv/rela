@@ -383,20 +383,22 @@ export interface SidebarData {
   logoUrl?: string | null
 }
 
-// Client-facing view of a configured document (the Go `v1.Document`).
-//
-// The server deliberately withholds the execution details — `command`,
-// `script`, `timeout` and `permission` — and omits documents the principal
-// may not render. Don't add those fields back here expecting them to arrive:
-// naming a document's guarding permission tells a caller who cannot render it
-// which grant to seek, and the rendered markdown comes from
-// GET /_documents/{name}[/{id}] anyway.
+// Document config, mirroring the Go `dataentryconfig.DocumentConfig` that
+// /_config serves verbatim. Exactly one of `command` / `script` is set
+// (enforced server-side).
 export interface DocumentConfig {
   title?: string
   /** Entity type this document applies to (for frontend filtering).
    *  ABSENT means a standalone document: it renders at /document/:name with
    *  no entry entity, rather than being attached to one. */
   entity_type?: string
+  command?: string
+  script?: string
+  timeout?: number
+  /** Global named permission required to render this document, if any.
+   *  Present here because the config is not secret; the SPA does not act on
+   *  it — the render endpoint enforces it and returns 403. */
+  permission?: string
   edit?: DocumentEdit
 }
 

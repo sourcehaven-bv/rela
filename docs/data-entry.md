@@ -2391,25 +2391,27 @@ roles:
     permissions: [report:sales]
 ```
 
-A principal without the permission gets a 404 identical to the one an unknown
-document name produces, and the renderer never runs. A `document:` navigation
-entry pointing at a gated document is omitted from the sidebar for principals
-who lack it (a group left empty by that filtering is dropped entirely), and the
-document is absent from `/api/v1/_config` for them too — so its name is not
-recoverable by any of the three routes.
+A principal without the permission gets a **403** naming the document and the
+required permission, and the renderer never runs.
 
-The config endpoint additionally withholds `command:`, `script:`, `timeout:`
-and `permission:` from **every** principal: the SPA needs only `title`,
-`entity_type` and `edit` to decide what to offer and where to route. Naming the
-permission that guards a document would tell a caller exactly which grant to go
-after.
+The menu is **not** filtered: a `document:` navigation entry is shown to every
+principal, and `/api/v1/_config` serves the document config in full. That is
+deliberate and matches the rest of the app — see
+[ACL security](acl-security.md#sidebar-menu-structure-is-principal-independent).
+Your `data-entry.yaml` is an operator-authored file that lives in your repo, so
+document names, script paths, and permission names are not secrets; hiding them
+from the API would buy nothing and make the menu differ per user for no gain.
+A user may therefore see an entry that 403s, which is the accepted trade: an
+actionable error beats a silently divergent menu.
 
-Note that this differs from `commands:`, which **fails closed** under a
-configured `acl.yaml` — a command without `permission:` is denied. Documents
-fail open because their content is already bounded by the read ACL (above),
-while a command shells out and its side effects are not. If you are adding both
-to the same config, the identical-looking `permission:` key has opposite
-defaults.
+What *is* protected is the entity data behind the document, by the read ACL —
+that is the boundary, and it does not depend on `permission:` at all.
+
+Note this differs from `commands:`, which **fails closed** under a configured
+`acl.yaml`: a command without `permission:` is denied. Documents fail open
+because their content is already bounded by the read ACL, while a command
+shells out and its side effects are not. If you are adding both to the same
+config, the identical-looking `permission:` key has opposite defaults.
 
 `permission:` is **optional, and its absence is not an oversight.** Document
 *content* is already bounded by the ACL: a document's Lua reads go through the

@@ -2,11 +2,9 @@ package dataentry
 
 import (
 	"context"
-	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -190,9 +188,14 @@ func TestStandaloneDocument_UngatedByDefault(t *testing.T) {
 }
 
 // TestStandaloneDocument_PermissionGate pins AC8: a document declaring a
-// `permission:` renders only for a holder. The deny is a 404 identical to an
-// unknown document (so names stay non-enumerable) and fires BEFORE the
-// renderer.
+// `permission:` renders only for a holder, and the gate fires BEFORE the
+// renderer (an unauthorized caller must not trigger an expensive aggregation).
+//
+// The deny is a 403 that NAMES the document and the required permission.
+// Which documents exist is not a secret — they are keys in an operator's
+// data-entry.yaml — so there is nothing to conceal and an actionable error
+// beats a disguised 404. See "The configuration is not a secret; the data is"
+// in the root CLAUDE.md.
 func TestStandaloneDocument_PermissionGate(t *testing.T) {
 	app := newTestAppV1(t)
 	fake := withFakeDocRenderer(t, app)
@@ -213,30 +216,23 @@ func TestStandaloneDocument_PermissionGate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.handleV1Documents(rec, standaloneDocReq(gateCtxFor(principalCtx("bob"), t, d), "sales_review"))
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("bob (no permission): got %d, want 404; body=%s", rec.Code, rec.Body)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("bob (no permission): got %d, want 403; body=%s", rec.Code, rec.Body)
 	}
 	if fake.callCount() != 0 {
-		t.Errorf("LEAK: denied request invoked the renderer (%d calls)", fake.callCount())
+		t.Errorf("denied request invoked the renderer (%d calls)", fake.callCount())
 	}
 
-	// The deny must be indistinguishable from an unknown document, or the
-	// difference tells an unauthorized caller which documents exist. Compared
-	// field-by-field except `instance`, which echoes the request path the
-	// caller already supplied and so carries no information back to them.
-	unknownRec := httptest.NewRecorder()
-	app.handleV1Documents(unknownRec,
-		standaloneDocReq(gateCtxFor(principalCtx("bob"), t, d), "no_such_document"))
-
-	deny, unknown := decodeProblem(t, rec), decodeProblem(t, unknownRec)
-	delete(deny, "instance")
-	delete(unknown, "instance")
-	if !maps.Equal(deny, unknown) {
-		t.Errorf("deny response distinguishable from unknown-document response:\n deny=%v\n unknown=%v",
-			deny, unknown)
-	}
-	if unknownRec.Code != rec.Code {
-		t.Errorf("deny status %d != unknown-document status %d", rec.Code, unknownRec.Code)
+	// The 403 must be actionable: it names the document and the permission the
+	// operator needs to grant. Deliberately NOT disguised as the unknown-doc
+	// 404 — a config key is not a secret, and an opaque denial is
+	// unsupportable at scale (the same reasoning acl.Decision records for
+	// every deny).
+	body := rec.Body.String()
+	for _, want := range []string{"sales_review", "report:sales"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("403 body should name %q so the operator can act on it, got: %s", want, body)
+		}
 	}
 
 	// Permitted: alice's role grants report:sales.
@@ -300,18 +296,22 @@ func TestAnchoredDocument_PermissionGate(t *testing.T) {
 	t.Run("may read the entity but lacks the permission", func(t *testing.T) {
 		before := fake.callCount()
 		rec := get(t, principalCtx("bob"))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("got %d, want 404; body=%s", rec.Code, rec.Body)
+		// 403: the missing capability is a config key, safe to name.
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body)
 		}
 		if fake.callCount() != before {
-			t.Errorf("LEAK: denied request invoked the renderer")
+			t.Errorf("denied request invoked the renderer")
 		}
 	})
 
 	t.Run("holds the permission but may not read the entity", func(t *testing.T) {
 		before := fake.callCount()
 		rec := get(t, principalCtx("carol"))
-		// The permission must NOT widen entity visibility.
+		// 404, NOT 403: the entity gate fires first and whether TKT-001 exists
+		// is a genuine secret. This is the case that proves the permission
+		// narrows and never widens — carol holds report:tickets and still
+		// cannot see a ticket she may not read.
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("got %d, want 404 (permission must not widen entity access); body=%s",
 				rec.Code, rec.Body)
@@ -322,14 +322,15 @@ func TestAnchoredDocument_PermissionGate(t *testing.T) {
 	})
 }
 
-// TestAnchoredDocument_GateOrderingNoTypeOracle pins the gate ORDER in
-// handleV1Documents, which a comment there calls load-bearing but nothing
+// TestAnchoredDocument_GateOrderingNoTypeOracle pins the gate ORDER in the
+// anchored handler, which a comment there calls load-bearing but nothing
 // previously enforced.
 //
-// Both ACL gates must fire before the entity_type-mismatch 400. Otherwise a
-// principal denied the document learns, from a 400 rather than a 404, that the
-// id they guessed exists and is of some other type — an oracle on an endpoint
-// they have no access to. TKT-M1AX6P inserted a second gate into that
+// The ENTITY read gate must fire before the entity_type-mismatch 400.
+// Otherwise a principal who may not read an entity learns, from a 400 rather
+// than a 404, that the id they guessed exists and is of some other type. That
+// IS a real oracle: unlike a document name, whether an entity exists (and what
+// type it is) is a genuine secret. TKT-M1AX6P inserted a second gate into that
 // sequence, so the ordering is now easy to break by reordering two adjacent
 // blocks.
 func TestAnchoredDocument_GateOrderingNoTypeOracle(t *testing.T) {
@@ -340,17 +341,19 @@ func TestAnchoredDocument_GateOrderingNoTypeOracle(t *testing.T) {
 	seedEntity(app, ticket)
 	seedEntity(app, feature)
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
-		"ticket_report": {EntityType: "ticket", Script: "docs/t.lua", Permission: "report:tickets"},
+		"ticket_report": {EntityType: "ticket", Script: "docs/t.lua"},
 	}
 
+	// bob may read NEITHER type, so the entity gate denies him whichever id he
+	// aims at. That is the principal for whom the ordering matters.
 	d := mustNewACL(t, &acl.Policy{
-		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
-		Assignments: map[string]string{"bob": "viewer"},
+		Roles:       map[string]acl.RoleDef{"outsider": {}},
+		Assignments: map[string]string{"bob": "outsider"},
 	}, app.store)
 	app.acl = d
 
-	// bob lacks report:tickets. Whether he aims at a right-type or wrong-type
-	// id, the response must be the same 404 — no type information either way.
+	// Whether bob aims at a right-type or wrong-type id, the response must be
+	// the same 404 — no type information either way.
 	probe := func(t *testing.T, id string) *httptest.ResponseRecorder {
 		t.Helper()
 		rec := httptest.NewRecorder()
@@ -380,20 +383,27 @@ func TestAnchoredDocument_GateOrderingNoTypeOracle(t *testing.T) {
 	}
 }
 
-// TestConfig_HidesGatedDocuments is the counterpart to the deny path's uniform
-// 404. That 404 exists so document names are not enumerable — which is empty
-// pointless if /_config serves the whole documents map to everyone.
+// TestSidebarAndConfig_PrincipalIndependent pins the OPPOSITE of what an
+// earlier draft of this feature did.
 //
-// It also pins that the config projection withholds server-side execution
-// details (command/script/timeout/permission) even for documents the principal
-// CAN render: naming the guarding permission tells a caller which grant to
-// seek, and script paths / shell strings have no business on the wire.
-func TestConfig_HidesGatedDocuments(t *testing.T) {
+// Menu structure and config are served identically to every principal, gated
+// document or not. docs/acl-security.md § "Sidebar menu structure is
+// principal-independent" already recorded this decision — the metamodel is not
+// a secret, and a divergent menu per principal complicates SPA caching for no
+// confidentiality gain. `data-entry.yaml` is an operator-authored file in the
+// repo, so its keys, script paths and permission names are already disclosed
+// (see "The configuration is not a secret; the data is" in the root
+// CLAUDE.md).
+//
+// The render endpoint still enforces `permission:` — see
+// TestStandaloneDocument_PermissionGate. A user may therefore see a menu entry
+// that 403s, which is the accepted trade: an actionable error beats a menu
+// that silently differs per principal.
+func TestSidebarAndConfig_PrincipalIndependent(t *testing.T) {
 	app := newTestAppV1(t)
 	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
 		"sales_review": {Title: "Verkoop", Script: "docs/sales.lua", Permission: "report:sales"},
 		"open_report":  {Title: "Open", Script: "docs/open.lua"},
-		"ticket_doc":   {Title: "Ticket", EntityType: "ticket", Command: "secret-renderer {id}"},
 	}
 	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
 		{Label: "Verkoop", Document: "sales_review"},
@@ -409,143 +419,37 @@ func TestConfig_HidesGatedDocuments(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	configFor := func(t *testing.T, ctx context.Context) map[string]any {
+	bodyFor := func(t *testing.T, ctx context.Context, path string,
+		h func(http.ResponseWriter, *http.Request),
+	) string {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		app.handleV1Config(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_config", http.NoBody).
+		h(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody).
 			WithContext(gateCtxFor(ctx, t, d)))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("config: got %d, want 200; body=%s", rec.Code, rec.Body)
+			t.Fatalf("%s: got %d, want 200; body=%s", path, rec.Code, rec.Body)
 		}
-		var m map[string]any
-		if err := decodeJSON(rec.Body, &m); err != nil {
-			t.Fatalf("decode config: %v", err)
-		}
-		return m
+		return rec.Body.String()
 	}
 
-	t.Run("gated document is absent for a non-holder", func(t *testing.T) {
-		cfg := configFor(t, principalCtx("bob"))
-		docs, _ := cfg["documents"].(map[string]any)
-		if _, present := docs["sales_review"]; present {
-			t.Errorf("gated document name leaked to a non-holder: %v", docs)
+	t.Run("sidebar is byte-identical for a holder and a non-holder", func(t *testing.T) {
+		alice := bodyFor(t, aliceCtx(), "/api/v1/_sidebar", app.views.handleV1Sidebar)
+		bob := bodyFor(t, principalCtx("bob"), "/api/v1/_sidebar", app.views.handleV1Sidebar)
+		if alice != bob {
+			t.Errorf("sidebar differs by principal:\n alice=%s\n bob=%s", alice, bob)
 		}
-		if _, present := docs["open_report"]; !present {
-			t.Errorf("ungated document must remain visible: %v", docs)
-		}
-		// The nav entry would leak the same name a second way.
-		if strings.Contains(string(mustJSON(t, cfg["navigation"])), "sales_review") {
-			t.Errorf("gated document leaked via navigation: %v", cfg["navigation"])
+		if !strings.Contains(bob, "/document/sales_review") {
+			t.Errorf("gated document missing from the non-holder's sidebar: %s", bob)
 		}
 	})
 
-	t.Run("gated document is present for a holder", func(t *testing.T) {
-		cfg := configFor(t, aliceCtx())
-		docs, _ := cfg["documents"].(map[string]any)
-		if _, present := docs["sales_review"]; !present {
-			t.Errorf("holder should see the document: %v", docs)
+	t.Run("config is byte-identical for a holder and a non-holder", func(t *testing.T) {
+		alice := bodyFor(t, aliceCtx(), "/api/v1/_config", app.handleV1Config)
+		bob := bodyFor(t, principalCtx("bob"), "/api/v1/_config", app.handleV1Config)
+		if alice != bob {
+			t.Errorf("config differs by principal:\n alice=%s\n bob=%s", alice, bob)
 		}
 	})
-
-	t.Run("execution details never reach the wire", func(t *testing.T) {
-		body := string(mustJSON(t, configFor(t, aliceCtx())))
-		for _, leak := range []string{
-			"docs/sales.lua",  // script path
-			"secret-renderer", // command string
-			"report:sales",    // the permission that guards it
-		} {
-			if strings.Contains(body, leak) {
-				t.Errorf("config leaked %q:\n%s", leak, body)
-			}
-		}
-	})
-}
-
-func mustJSON(t *testing.T, v any) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	return b
-}
-
-// TestSidebar_HidesGatedDocument pins AC10's ACL half: a document entry the
-// principal cannot render is omitted from the sidebar entirely, and a group
-// left empty by that filtering is dropped rather than rendered as a bare
-// heading.
-//
-// The endpoint re-checks the same permission (TestStandaloneDocument_PermissionGate),
-// so this is a UX affordance, not the boundary — asserted here so nobody
-// "simplifies" the sidebar into the authorization decision.
-func TestSidebar_HidesGatedDocument(t *testing.T) {
-	app := newTestAppV1(t)
-	app.State().Cfg.Documents = map[string]dataentryconfig.DocumentConfig{
-		"sales_review": {Script: "docs/sales.lua", Permission: "report:sales"},
-		"open_report":  {Script: "docs/open.lua"},
-	}
-	app.Cfg().Navigation = []dataentryconfig.NavigationEntry{
-		{Group: "Reports", Items: []dataentryconfig.NavigationEntry{
-			{Label: "Verkooprapportage", Document: "sales_review"},
-		}},
-		{Label: "Open Report", Document: "open_report"},
-	}
-
-	d := mustNewACL(t, &acl.Policy{
-		Roles: map[string]acl.RoleDef{
-			"directie": {Read: []string{"ticket"}, Permissions: []string{"report:sales"}},
-			"viewer":   {Read: []string{"ticket"}},
-		},
-		Assignments: map[string]string{"alice": "directie", "bob": "viewer"},
-	}, app.store)
-	app.acl = d
-
-	hrefsFor := func(t *testing.T, ctx context.Context) []string {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/_sidebar", http.NoBody)
-		rec := httptest.NewRecorder()
-		app.views.handleV1Sidebar(rec, req.WithContext(gateCtxFor(ctx, t, d)))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("sidebar: got %d, want 200; body=%s", rec.Code, rec.Body)
-		}
-		var resp struct {
-			Navigation []struct {
-				Group string `json:"group"`
-				Items []struct {
-					Href string `json:"href"`
-				} `json:"items"`
-			} `json:"navigation"`
-		}
-		if err := decodeJSON(rec.Body, &resp); err != nil {
-			t.Fatalf("decode sidebar: %v", err)
-		}
-		var hrefs []string
-		for _, g := range resp.Navigation {
-			if len(g.Items) == 0 {
-				t.Errorf("group %q rendered with no items; empty groups must be dropped", g.Group)
-			}
-			for _, it := range g.Items {
-				hrefs = append(hrefs, it.Href)
-			}
-		}
-		return hrefs
-	}
-
-	alice := hrefsFor(t, aliceCtx())
-	if !slices.Contains(alice, "/document/sales_review") {
-		t.Errorf("alice holds report:sales but the entry is missing: %v", alice)
-	}
-	if !slices.Contains(alice, "/document/open_report") {
-		t.Errorf("ungated document missing for alice: %v", alice)
-	}
-
-	bob := hrefsFor(t, principalCtx("bob"))
-	if slices.Contains(bob, "/document/sales_review") {
-		t.Errorf("bob lacks report:sales but the entry is present: %v", bob)
-	}
-	if !slices.Contains(bob, "/document/open_report") {
-		t.Errorf("ungated document must stay visible to bob: %v", bob)
-	}
 }
 
 // decodeProblem decodes an RFC-7807 error body into a comparable map.

@@ -74,19 +74,26 @@ Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
   is entity-anchored, `/_documents/{name}` is standalone; each 400s on the
   other. Do not "helpfully" fall back to rendering with an empty or guessed
   entry id — that produces a document about the wrong thing, silently.
-- **`permission:` is an intent/UX gate, NOT the confidentiality boundary.**
+- **`permission:` is an intent gate, NOT the confidentiality boundary.**
   Document content is bounded by `lua.ReadDeps.VisibleReader` like every other
   read path, so a principal who cannot read the underlying entities renders an
-  empty report regardless. That is why standalone documents are ungated by
-  default (`TestStandaloneDocument_UngatedByDefault` pins it) — don't
-  "harden" it into a required field. `permission:` exists for aggregates whose
-  *composition* is sensitive, and to keep unusable entries out of a sidebar.
+  empty report regardless. That is why documents are ungated by default
+  (`TestStandaloneDocument_UngatedByDefault` pins it) — don't "harden" it into
+  a required field. `permission:` exists for aggregates whose *composition* is
+  sensitive.
 - **Gate before the renderer anyway.** Content would be safe either way, but a
-  denied caller must not be able to trigger an expensive Lua aggregation. Deny
-  responses reuse the unknown-document 404 verbatim so names stay
-  non-enumerable.
-- **Sidebar filtering is an affordance, not authorization** — the endpoint
-  re-checks, exactly as with `_actions` above.
+  denied caller must not be able to trigger an expensive Lua aggregation.
+- **Deny with a 403 that NAMES the document and permission.** Do not disguise
+  it as the unknown-document 404: which documents exist is not a secret (they
+  are `data-entry.yaml` keys — see "The configuration is not a secret; the data
+  is" in the root CLAUDE.md), and an opaque denial is unsupportable at scale.
+  The uniform 404 is for **entity ids**, where existence genuinely is secret.
+- **Do NOT filter the sidebar or `/_config` per principal.** Menu structure is
+  principal-independent by an already-recorded decision
+  (`docs/acl-security.md` § "Sidebar menu structure is principal-independent");
+  a gated document is listed for everyone and 403s on render.
+  `TestSidebarAndConfig_PrincipalIndependent` pins it. An earlier draft of
+  TKT-M1AX6P filtered both and it was reverted — don't reintroduce it.
 - **A standalone render has no entry entity, so it has no `ContentHash`,
   `Entities`, or disk cache**, and it is script-only. Don't reintroduce those
   by keying a cache on something else; there is nothing to invalidate against

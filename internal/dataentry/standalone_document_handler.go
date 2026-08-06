@@ -1,7 +1,6 @@
 package dataentry
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,100 +20,34 @@ import (
 // ACL-gated reader the render's Lua uses (lua.ReadDeps.VisibleReader), not
 // this check: a principal who cannot read the underlying entities renders an
 // empty or partial document either way. `permission:` exists for documents
-// whose COMPOSITION is sensitive even though the parts are readable, and to
-// keep entries a user cannot use out of their sidebar.
+// whose COMPOSITION is sensitive even though the parts are readable.
 //
-// The deny response is the SAME 404 an unknown document name produces, so a
-// caller cannot enumerate configured document names by probing. It fires
-// before any renderer runs: content would be safe regardless, but an
+// The deny is a plain 403 NAMING the document, not a disguised 404. Which
+// documents exist is not a secret — they are keys in `data-entry.yaml`, an
+// operator-authored file in the repo (see "The configuration is not a secret;
+// the data is" in the root CLAUDE.md). Concealing a config key would buy
+// nothing and cost the operator a debuggable error. Contrast the entity-id
+// path, where a uniform 404 IS required: whether an entity exists is a genuine
+// secret.
+//
+// It fires before any renderer runs. Content would be safe regardless, but an
 // unauthorized caller must not be able to trigger an expensive Lua aggregation.
 //
 // A plain function rather than an *App method: it needs only the request's
 // read gate and the document's own config, and App sits on its plimsoll load
 // line (see the directive on the type).
 func gateDocumentPermission(
-	w http.ResponseWriter, r *http.Request, docCfg dataentryconfig.DocumentConfig,
+	w http.ResponseWriter, r *http.Request, docName string, docCfg dataentryconfig.DocumentConfig,
 ) bool {
-	if permitsDocument(r.Context(), docCfg) {
-		return true
-	}
-	writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
-	return false
-}
-
-// permitsDocument reports whether the principal on ctx may render docCfg.
-// The single predicate behind every document permission decision: the render
-// endpoints, the sidebar filter, and the _config projection all call it, so
-// they cannot drift into disagreeing about who may see what.
-func permitsDocument(ctx context.Context, docCfg dataentryconfig.DocumentConfig) bool {
 	if docCfg.Permission == "" {
 		return true
 	}
-	return readGateFromContext(ctx).HoldsPermission(ctx, docCfg.Permission)
-}
-
-// visibleDocuments projects the configured documents onto the wire type,
-// dropping any the principal may not render.
-//
-// Both halves matter. The projection keeps `command:`, `script:`, `timeout:`
-// and `permission:` off the wire (see [v1.Document]); the filtering keeps a
-// gated document's very NAME off it. Without the filter, the deny path's
-// uniform 404 would be pointless — a caller would simply read the
-// document names out of _config instead of probing for them.
-func visibleDocuments(ctx context.Context, s *Schema) map[string]v1.Document {
-	if len(s.Cfg.Documents) == 0 {
-		return nil
+	if readGateFromContext(r.Context()).HoldsPermission(r.Context(), docCfg.Permission) {
+		return true
 	}
-	out := make(map[string]v1.Document, len(s.Cfg.Documents))
-	for name, docCfg := range s.Cfg.Documents {
-		if !permitsDocument(ctx, docCfg) {
-			continue
-		}
-		out[name] = v1.Document{
-			Title:      docCfg.Title,
-			EntityType: docCfg.EntityType,
-			Edit:       docCfg.Edit,
-		}
-	}
-	return out
-}
-
-// visibleNavigation drops navigation entries pointing at documents the
-// principal may not render, so _config cannot be used to recover what the
-// sidebar endpoint filters out (viewsHandler.hidesNavEntry).
-//
-// Groups left empty by the filtering are dropped, matching the sidebar.
-func visibleNavigation(ctx context.Context, s *Schema) []dataentryconfig.NavigationEntry {
-	keep := func(entry dataentryconfig.NavigationEntry) bool {
-		if entry.Document == "" {
-			return true
-		}
-		docCfg, ok := s.Cfg.Documents[entry.Document]
-		return !ok || permitsDocument(ctx, docCfg)
-	}
-
-	out := make([]dataentryconfig.NavigationEntry, 0, len(s.Cfg.Navigation))
-	for _, entry := range s.Cfg.Navigation {
-		if !entry.IsGroup() {
-			if keep(entry) {
-				out = append(out, entry)
-			}
-			continue
-		}
-		items := make([]dataentryconfig.NavigationEntry, 0, len(entry.Items))
-		for _, item := range entry.Items {
-			if keep(item) {
-				items = append(items, item)
-			}
-		}
-		if len(items) == 0 {
-			continue
-		}
-		group := entry
-		group.Items = items
-		out = append(out, group)
-	}
-	return out
+	writeV1Error(w, r, http.StatusForbidden, "permission_required",
+		fmt.Sprintf("document %q requires the %q permission", docName, docCfg.Permission), "")
+	return false
 }
 
 // handleV1StandaloneDocument handles GET /api/v1/_documents/{docName} — the
@@ -162,7 +95,7 @@ func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Gate BEFORE rendering — see gateDocumentPermission.
-	if !gateDocumentPermission(w, r, docCfg) {
+	if !gateDocumentPermission(w, r, docName, docCfg) {
 		return
 	}
 
