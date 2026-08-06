@@ -1312,6 +1312,8 @@ kanbans:
 | ------------------ | ------ | ---------------------------------------------------------- |
 | `entity_type`      | string | Entity type to display on the board                        |
 | `title`            | string | Board heading                                              |
+| `header`           | string | Markdown rendered above the board (info/help; see below)   |
+| `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
 | `columns`          | list   | Explicit column definitions (optional)                     |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
@@ -1321,6 +1323,34 @@ kanbans:
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
 | `filter_controls`  | list   | Interactive filter controls (same as lists)                |
+
+#### Header and footer info regions
+
+Boards support the same admin-authored info regions as lists — see
+[Header and footer info regions](#header-and-footer-info-regions) under Lists
+for the full description. `header` and `footer` accept Markdown, render as
+sanitized HTML above and below the board, and are authored in
+`data-entry.yaml` only.
+
+```yaml
+kanbans:
+  ticket_board:
+    entity_type: ticket
+    title: "Ticket Board"
+    header: |
+      Cards move **left to right**. Drag a card to change its status — see the
+      [workflow guide](/entity/guide-ticket-workflow).
+    footer: |
+      _Reopening a done ticket? Talk to the maintainers first._
+    column_property: status
+```
+
+The regions sit outside the board's horizontal scroll area, so they stay
+visible when a wide board scrolls sideways.
+
+Unlike lists, a kanban has **no `description` fallback** for `header`: that
+alias exists on lists only because `description` predated the info regions and
+was already present in configs. Set `header` directly.
 
 ### Columns
 

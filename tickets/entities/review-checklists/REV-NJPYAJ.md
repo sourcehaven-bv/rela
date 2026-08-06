@@ -48,9 +48,9 @@ two payloads are kept on separate fields with the reason documented.
 Findings deliberately NOT actioned (discretionary, logged for future work):
 
 - *Extract a `<ViewInfo>` component* — the reviewer's leverage suggestion. Both
-views now share resolvers and styles but each wires its own computeds + `v-html`
-+ eslint-disable. Real duplication, but component extraction is scope beyond
-this ticket and better done when a third view wants info regions.
+views now share resolvers and styles, but each still wires its own computeds,
+`v-html` div, and eslint-disable. Real duplication, but component extraction is
+scope beyond this ticket and better done when a third view wants info regions.
 - *`.view-info` naming / `mountBoard` positional `{}` filler* — cosmetic.
 - *`-12px` coupled to two headers with no test* — pre-existing coupling
 (RR-PUIE0H), now documented in `view-info.css`. The reviewer notes a filter-bar
