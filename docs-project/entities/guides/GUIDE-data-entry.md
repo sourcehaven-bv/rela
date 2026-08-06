@@ -345,6 +345,15 @@ Each entry in `fields:` configures one property input:
 | `widget`      | string            | Input widget type (see below)                                  |
 | `transitions` | map[string]list   | Allowed state transitions for enum fields (edit forms only)    |
 
+> **Labels are authored, never derived.** When `label` is omitted the raw
+> property name is displayed — rela never converts `laatste_contact` into
+> `Laatste Contact`. Any such conversion would encode an English orthographic
+> convention (word splitting, capitalization) into a metamodel that is
+> deliberately language-neutral, and it is wrong for most languages. Write the
+> label you want, in your project's own language. The same rule applies to list
+> column headers, relation field labels, view-section fields, and Lua flow
+> fields. `rela migrate` will never remove a `label:` you have written.
+
 ### Widget Types
 
 | Widget     | Description                                      | Use For                        |
@@ -1344,7 +1353,7 @@ kanbans:
 | Field   | Type   | Description                                    |
 | ------- | ------ | ---------------------------------------------- |
 | `value` | string | Enum value that maps to this column            |
-| `label` | string | Display label (defaults to title-cased value)  |
+| `label` | string | Display label (defaults to the raw enum value)  |
 
 Entities with column property values not in the explicit list are hidden from the board.
 
@@ -1368,7 +1377,7 @@ kanbans:
 | Field   | Type   | Description                                      |
 | ------- | ------ | ------------------------------------------------ |
 | `value` | string | Enum value that maps to this swimlane            |
-| `label` | string | Display label (defaults to title-cased value)    |
+| `label` | string | Display label (defaults to the raw enum value)    |
 
 Without explicit swimlanes, values are inferred from the metamodel. Entities whose swimlane
 property value is not in the list are hidden.

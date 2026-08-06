@@ -49,10 +49,8 @@ watch(sanitizedContent, async () => {
 
 // Get document config
 const docConfig = computed(() => schemaStore.documents.get(props.name))
-const docTitle = computed(() => {
-  if (docConfig.value?.title) return docConfig.value.title
-  return props.name.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-})
+// Authored `title:` wins; otherwise the raw document id — DEC-6C1NAA.
+const docTitle = computed(() => docConfig.value?.title || props.name)
 
 // Back affordance — follows return_to > from precedence. See TKT-JIEKC.
 // Renders no button when neither is present (e.g. deep-linked arrival).
@@ -121,9 +119,13 @@ function handleEntityChange() {
 }
 
 // Load on mount and watch for prop changes
-watch([() => props.name, () => props.entityId], () => {
-  loadDocument()
-}, { immediate: true })
+watch(
+  [() => props.name, () => props.entityId],
+  () => {
+    loadDocument()
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   on('entity:changed', handleEntityChange)
@@ -142,18 +144,10 @@ onUnmounted(() => {
       </div>
       <h1>{{ docTitle }}: {{ entityId }}</h1>
       <div class="header-right">
-        <button
-          v-if="editConfig"
-          class="btn btn-secondary"
-          @click="editEntity"
-        >
+        <button v-if="editConfig" class="btn btn-secondary" @click="editEntity">
           {{ editConfig.label }}
         </button>
-        <button
-          class="btn btn-secondary"
-          :disabled="loading"
-          @click="loadDocument(true)"
-        >
+        <button class="btn btn-secondary" :disabled="loading" @click="loadDocument(true)">
           <span v-if="loading" class="spinner-sm" />
           <span v-else>Refresh</span>
         </button>
@@ -167,12 +161,19 @@ onUnmounted(() => {
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
-      <div ref="docBody" class="document-body md-body" @click="handleContentClick" v-html="sanitizedContent" />
+      <div
+        ref="docBody"
+        class="document-body md-body"
+        @click="handleContentClick"
+        v-html="sanitizedContent"
+      />
     </div>
 
     <div v-else class="empty-state">
       <p>No document content available</p>
-      <p class="muted">Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.</p>
+      <p class="muted">
+        Document "{{ name }}" may not be configured or the entity "{{ entityId }}" may not exist.
+      </p>
     </div>
   </div>
 </template>

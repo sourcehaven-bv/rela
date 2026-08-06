@@ -73,9 +73,9 @@ function sideLabel(s: Side): string {
   return s === 'current' ? 'latest' : `v${s}`
 }
 
+// Raw property name, never a derived label — DEC-6C1NAA.
 function propertyLabel(name: string): string {
-  const spaced = name.replace(/[_-]+/g, ' ').trim()
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+  return name
 }
 
 function displayValue(v: unknown): string {

@@ -108,12 +108,26 @@ func generateDOT(
 
 	for entityType, group := range typeGroups {
 		fmt.Fprintf(&sb, "  subgraph cluster_%s {\n", sanitizeDOTID(entityType))
-		fmt.Fprintf(&sb, "    label=\"%ss\";\n", strings.ToUpper(entityType[:1])+entityType[1:])
 
+		// Cluster heading + color both come from the entity def. The heading
+		// uses the AUTHORED plural label, falling back to the raw type name —
+		// never a capitalize-and-append-"s" guess, which was English-only and
+		// produced mojibake on a non-ASCII type name (DEC-6C1NAA).
 		color := "#FFFFFF"
-		if def, ok := meta.GetEntityDef(entityType); ok && def.Color != "" {
-			color = def.Color
+		clusterLabel := entityType
+		if def, ok := meta.GetEntityDef(entityType); ok {
+			if def.Color != "" {
+				color = def.Color
+			}
+			// Guard on Label: GetLabelPlural falls back to Label+"s", which is
+			// a bare "s" when Label is unset.
+			if def.LabelPlural != "" {
+				clusterLabel = def.LabelPlural
+			} else if def.Label != "" {
+				clusterLabel = def.Label
+			}
 		}
+		fmt.Fprintf(&sb, "    label=\"%s\";\n", escapeLabel(clusterLabel))
 		for _, e := range group {
 			// DisplayTitle honors display_property (bare or template); it
 			// falls back to the ID itself, so strip a title equal to the ID
