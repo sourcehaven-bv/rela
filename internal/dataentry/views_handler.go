@@ -197,7 +197,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 				Items:     make([]v1.SidebarItem, 0),
 			}
 			for _, item := range entry.Items {
-				if h.hidesNavEntry(r.Context(), item) {
+				if hidesNavEntry(r.Context(), s, item) {
 					continue
 				}
 				sidebarItem := h.navEntryToSidebarItem(r.Context(), item, counts)
@@ -212,7 +212,7 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 			navigation = append(navigation, group)
 		} else {
 			// Top-level item without group
-			if h.hidesNavEntry(r.Context(), entry) {
+			if hidesNavEntry(r.Context(), s, entry) {
 				continue
 			}
 			item := h.navEntryToSidebarItem(r.Context(), entry, counts)
@@ -386,15 +386,22 @@ func (h *viewsHandler) navEntryToSidebarItem(
 // Entries are omitted rather than rendered-and-disabled: a link that always
 // 404s is worse than no link, and the whole point is to keep reports a user
 // cannot use out of their menu.
-func (h *viewsHandler) hidesNavEntry(ctx context.Context, entry dataentryconfig.NavigationEntry) bool {
+//
+// Takes the caller's *Schema rather than calling h.schema() itself: the
+// sidebar handler already captured one, and re-reading mid-loop could observe
+// a different snapshot if a config reload lands (the capture-state-once rule
+// in the root CLAUDE.md). Reading the navigation list from one snapshot and
+// the documents map from another is exactly how a renamed document turns into
+// a visible gated entry.
+func hidesNavEntry(ctx context.Context, s *Schema, entry dataentryconfig.NavigationEntry) bool {
 	if entry.Document == "" {
 		return false
 	}
-	docCfg, ok := h.schema().Cfg.Documents[entry.Document]
-	if !ok || docCfg.Permission == "" {
+	docCfg, ok := s.Cfg.Documents[entry.Document]
+	if !ok {
 		return false
 	}
-	return !readGateFromContext(ctx).HoldsPermission(ctx, docCfg.Permission)
+	return !permitsDocument(ctx, docCfg)
 }
 
 // handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.

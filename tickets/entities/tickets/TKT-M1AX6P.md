@@ -5,7 +5,7 @@ title: 'Standalone documents: document: as a navigation entry with optional enti
 kind: enhancement
 priority: medium
 effort: m
-status: in-progress
+status: review
 ---
 
 ## Problem

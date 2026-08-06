@@ -60,7 +60,9 @@ describe('Schema Store', () => {
         lists: { tasks: { entity: 'task', columns: [] } },
         views: { 'task-view': { entity: 'task', sections: [] } },
         kanbans: { 'task-board': { entity: 'task', column_property: 'status', card: { title: 'title' } } },
-        documents: { report: { command: 'echo test' } },
+        // The server projects documents onto a narrow wire type: no command /
+        // script / timeout / permission (see v1.Document).
+        documents: { report: { title: 'Report', entity_type: 'task' } },
         dashboard: { cards: [] },
         navigation: [{ label: 'Tasks', list: 'tasks' }],
       })

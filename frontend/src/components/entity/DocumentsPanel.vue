@@ -49,12 +49,18 @@ watch(sanitizedContent, async () => {
   }
 })
 
-// Find documents that apply to this entity type
+// Find documents that apply to this entity type.
+//
+// Standalone documents (no entity_type) are excluded by construction: their
+// entity_type is undefined, which never equals a real type. They render at
+// /document/:name from a navigation entry and have no entity to attach to.
+//
+// The server also omits documents the principal may not render from the
+// config payload, so a gated document never reaches this filter — no dead tab.
 const availableDocuments = computed(() => {
   const docs: Array<{ name: string; config: DocumentConfig }> = []
   for (const [name, config] of schemaStore.documents) {
-    const targetType = config.entity_type
-    if (targetType === props.entityType) {
+    if (config.entity_type && config.entity_type === props.entityType) {
       docs.push({ name, config })
     }
   }

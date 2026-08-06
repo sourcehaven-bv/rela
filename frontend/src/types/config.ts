@@ -383,19 +383,20 @@ export interface SidebarData {
   logoUrl?: string | null
 }
 
-// Document config for external rendering via a shell command or Lua script.
-// Exactly one of `command` / `script` is set (enforced server-side).
+// Client-facing view of a configured document (the Go `v1.Document`).
+//
+// The server deliberately withholds the execution details — `command`,
+// `script`, `timeout` and `permission` — and omits documents the principal
+// may not render. Don't add those fields back here expecting them to arrive:
+// naming a document's guarding permission tells a caller who cannot render it
+// which grant to seek, and the rendered markdown comes from
+// GET /_documents/{name}[/{id}] anyway.
 export interface DocumentConfig {
   title?: string
   /** Entity type this document applies to (for frontend filtering).
    *  ABSENT means a standalone document: it renders at /document/:name with
    *  no entry entity, rather than being attached to one. */
   entity_type?: string
-  command?: string
-  script?: string
-  timeout?: number
-  /** Global named permission gating this document, if any. */
-  permission?: string
   edit?: DocumentEdit
 }
 

@@ -1337,8 +1337,8 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Kanbans:          s.Cfg.Kanbans,
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
-		Navigation:       s.Cfg.Navigation,
-		Documents:        s.Cfg.Documents,
+		Navigation:       visibleNavigation(r.Context(), s),
+		Documents:        visibleDocuments(r.Context(), s),
 		Apps:             appsToV1(a.scanAppsOrLog()),
 		Palette:          a.palette.Resolved(),
 	}
@@ -2060,7 +2060,10 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse path: /api/v1/_documents/{docName}[/{entityId}]
+	// Parse path: /api/v1/_documents/{docName}[/{entityId}], then dispatch on
+	// the shape. The two branches live in separate functions so neither grows
+	// the other's guards by accident — they differ in their ACL story, not
+	// just in whether an id is present.
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 1 || parts[1] == "" {
@@ -2071,9 +2074,16 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
 		return
 	}
+	handleV1AnchoredDocument(a, w, r, parts[0], parts[1])
+}
 
-	docName, entityID := parts[0], parts[1]
-
+// handleV1AnchoredDocument serves GET /api/v1/_documents/{docName}/{entityId}
+// — a document declared WITH an `entity_type:`, rendered about one entity.
+//
+// Gate ordering here is load-bearing; see the comments inline. A plain
+// function taking *App for the same reason handleV1StandaloneDocument is one:
+// App sits on its plimsoll load line.
+func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, docName, entityID string) {
 	// Both segments flow into the on-disk document cache filename
 	// (workspace/document.go). Reject anything that could escape the cache
 	// directory before any filesystem work happens.

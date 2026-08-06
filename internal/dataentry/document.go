@@ -260,8 +260,18 @@ func (s *documentService) RenderListMarkdown(
 
 // RenderStandalone renders a STANDALONE document — one declared without an
 // `entity_type:`, whose content is company-wide rather than about one entity
-// (TKT-M1AX6P). Returns HTML, like Render, so the HTTP layer treats both
-// document kinds identically from here on.
+// (TKT-M1AX6P). Returns HTML.
+//
+// It returns a plain string rather than a *DocumentResult because two of that
+// struct's three fields — ContentHash and Entities — describe an entry
+// entity's dependency footprint, and a standalone document has no entry
+// entity. Returning a struct whose fields this constructor can never populate
+// would invite a caller to wire the SSE live-reload subscription to an always-
+// empty Entities and ship a document that silently never refreshes. The
+// narrower type makes that a compile error instead of a comment nobody reads.
+// (Standalone documents do refresh on any entity change — the SPA's SSE feed
+// is type-scoped, not keyed on this return value — but on-demand Refresh is
+// the reliable path until TKT-E1FO1 lets scripts declare dependencies.)
 //
 // Script-only, for the same reason RenderListMarkdown is: a `command:`
 // renderer's placeholders are {id}/{id_lower} of an entry entity, and a
@@ -285,12 +295,12 @@ func (s *documentService) RenderListMarkdown(
 // render at all.)
 func (s *documentService) RenderStandalone(
 	ctx context.Context, cfg documentRenderConfig,
-) (*DocumentResult, error) {
+) (string, error) {
 	if cfg.Command != "" {
-		return nil, errors.New("a document without an entity_type must use a script renderer, not a command")
+		return "", errors.New("a document without an entity_type must use a script renderer, not a command")
 	}
 	if s.scriptEngine == nil || s.luaDeps == nil {
-		return nil, errors.New("script rendering not available (engine or deps not wired)")
+		return "", errors.New("script rendering not available (engine or deps not wired)")
 	}
 
 	var buf bytes.Buffer
@@ -301,23 +311,16 @@ func (s *documentService) RenderStandalone(
 		// HTTP layer can branch via errors.As.
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
-			return nil, se.AttachCapturedOutput(buf.Bytes())
+			return "", se.AttachCapturedOutput(buf.Bytes())
 		}
-		return nil, fmt.Errorf("standalone script render: %w", err)
+		return "", fmt.Errorf("standalone script render: %w", err)
 	}
 
 	htmlContent, err := markdownToHTML(buf.String())
 	if err != nil {
-		return nil, fmt.Errorf("markdown conversion: %w", err)
+		return "", fmt.Errorf("markdown conversion: %w", err)
 	}
-
-	// No ContentHash and no Entities: both describe an entry entity's
-	// dependency footprint, which a standalone document does not have. The
-	// SSE live-reload path keys off Entities, so a standalone document
-	// refreshes on demand rather than on entity change — the same limitation
-	// TKT-E1FO1 (rela.document.depends_on) exists to lift, and inventing a
-	// bogus entity list here would make it worse, not better.
-	return &DocumentResult{HTML: htmlContent}, nil
+	return htmlContent, nil
 }
 
 // doRender performs the actual rendering work. Dispatches on Script vs.

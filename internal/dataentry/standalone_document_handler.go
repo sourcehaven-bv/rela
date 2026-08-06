@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,14 +35,86 @@ import (
 func gateDocumentPermission(
 	w http.ResponseWriter, r *http.Request, docCfg dataentryconfig.DocumentConfig,
 ) bool {
-	if docCfg.Permission == "" {
-		return true
-	}
-	if readGateFromContext(r.Context()).HoldsPermission(r.Context(), docCfg.Permission) {
+	if permitsDocument(r.Context(), docCfg) {
 		return true
 	}
 	writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
 	return false
+}
+
+// permitsDocument reports whether the principal on ctx may render docCfg.
+// The single predicate behind every document permission decision: the render
+// endpoints, the sidebar filter, and the _config projection all call it, so
+// they cannot drift into disagreeing about who may see what.
+func permitsDocument(ctx context.Context, docCfg dataentryconfig.DocumentConfig) bool {
+	if docCfg.Permission == "" {
+		return true
+	}
+	return readGateFromContext(ctx).HoldsPermission(ctx, docCfg.Permission)
+}
+
+// visibleDocuments projects the configured documents onto the wire type,
+// dropping any the principal may not render.
+//
+// Both halves matter. The projection keeps `command:`, `script:`, `timeout:`
+// and `permission:` off the wire (see [v1.Document]); the filtering keeps a
+// gated document's very NAME off it. Without the filter, the deny path's
+// uniform 404 would be pointless — a caller would simply read the
+// document names out of _config instead of probing for them.
+func visibleDocuments(ctx context.Context, s *Schema) map[string]v1.Document {
+	if len(s.Cfg.Documents) == 0 {
+		return nil
+	}
+	out := make(map[string]v1.Document, len(s.Cfg.Documents))
+	for name, docCfg := range s.Cfg.Documents {
+		if !permitsDocument(ctx, docCfg) {
+			continue
+		}
+		out[name] = v1.Document{
+			Title:      docCfg.Title,
+			EntityType: docCfg.EntityType,
+			Edit:       docCfg.Edit,
+		}
+	}
+	return out
+}
+
+// visibleNavigation drops navigation entries pointing at documents the
+// principal may not render, so _config cannot be used to recover what the
+// sidebar endpoint filters out (viewsHandler.hidesNavEntry).
+//
+// Groups left empty by the filtering are dropped, matching the sidebar.
+func visibleNavigation(ctx context.Context, s *Schema) []dataentryconfig.NavigationEntry {
+	keep := func(entry dataentryconfig.NavigationEntry) bool {
+		if entry.Document == "" {
+			return true
+		}
+		docCfg, ok := s.Cfg.Documents[entry.Document]
+		return !ok || permitsDocument(ctx, docCfg)
+	}
+
+	out := make([]dataentryconfig.NavigationEntry, 0, len(s.Cfg.Navigation))
+	for _, entry := range s.Cfg.Navigation {
+		if !entry.IsGroup() {
+			if keep(entry) {
+				out = append(out, entry)
+			}
+			continue
+		}
+		items := make([]dataentryconfig.NavigationEntry, 0, len(entry.Items))
+		for _, item := range entry.Items {
+			if keep(item) {
+				items = append(items, item)
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+		group := entry
+		group.Items = items
+		out = append(out, group)
+	}
+	return out
 }
 
 // handleV1StandaloneDocument handles GET /api/v1/_documents/{docName} — the
@@ -95,7 +168,7 @@ func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, 
 
 	returnPath := isSafeReturnPath(r.URL.Query().Get("return_to"))
 
-	result, err := a.documents.RenderStandalone(r.Context(), a.toDocumentRenderConfig(docName, &docCfg))
+	html, err := a.documents.RenderStandalone(r.Context(), a.toDocumentRenderConfig(docName, &docCfg))
 	if err != nil {
 		var se *lua.ScriptError
 		if errors.As(err, &se) {
@@ -113,9 +186,11 @@ func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, 
 	// subscription, and a standalone document has no entry entity whose
 	// changes would define staleness. Reloading is the refresh button until
 	// TKT-E1FO1 (rela.document.depends_on) gives scripts a way to declare
-	// their real dependencies.
+	// their real dependencies. Cached is likewise always false — a standalone
+	// render has no entry hash to key a disk cache on, so `?refresh=true` is
+	// accepted and ignored rather than forgotten.
 	writeV1JSON(w, http.StatusOK, v1.DocumentResponse{
-		HTML:      RewriteDocumentLinks(result.HTML, returnPath, nil),
+		HTML:      RewriteDocumentLinks(html, returnPath, nil),
 		Cached:    false,
 		EntityIDs: []string{},
 	})

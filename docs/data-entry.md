@@ -2272,11 +2272,6 @@ notes, a ticket's summary). Use a [standalone document](#standalone-documents)
 for content that is company-wide — a periodic sales report aggregated across
 many types — which would otherwise have to be anchored to an arbitrary entity
 that does not actually drive its content.
-Captured markdown is converted to HTML via goldmark. Links using
-app-relative paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`)
-get a `return_to` query param appended automatically on form links so the
-user lands back on the document after submitting the form. See "Links in
-rendered documents" below.
 
 Captured markdown is converted to HTML via goldmark. Links using app-relative
 paths (e.g. `/form/<form_id>/<entity_id>`, `/entity/ticket/TKT-001`) get a
@@ -2397,10 +2392,24 @@ roles:
 ```
 
 A principal without the permission gets a 404 identical to the one an unknown
-document name produces, so configured document names are not enumerable, and
-the renderer never runs. A `document:` navigation entry pointing at a gated
-document is omitted from the sidebar for principals who lack it (a group left
-empty by that filtering is dropped entirely).
+document name produces, and the renderer never runs. A `document:` navigation
+entry pointing at a gated document is omitted from the sidebar for principals
+who lack it (a group left empty by that filtering is dropped entirely), and the
+document is absent from `/api/v1/_config` for them too — so its name is not
+recoverable by any of the three routes.
+
+The config endpoint additionally withholds `command:`, `script:`, `timeout:`
+and `permission:` from **every** principal: the SPA needs only `title`,
+`entity_type` and `edit` to decide what to offer and where to route. Naming the
+permission that guards a document would tell a caller exactly which grant to go
+after.
+
+Note that this differs from `commands:`, which **fails closed** under a
+configured `acl.yaml` — a command without `permission:` is denied. Documents
+fail open because their content is already bounded by the read ACL (above),
+while a command shells out and its side effects are not. If you are adding both
+to the same config, the identical-looking `permission:` key has opposite
+defaults.
 
 `permission:` is **optional, and its absence is not an oversight.** Document
 *content* is already bounded by the ACL: a document's Lua reads go through the
