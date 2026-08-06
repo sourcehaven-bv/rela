@@ -5,7 +5,11 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { actionAllowed } from '@/utils/affordancesWarning'
-import { isFieldWritable, optionVerdictsFor as optionVerdictsForVerdict } from '@/utils/affordances'
+import {
+  isFieldWritable,
+  isPropertyRedacted,
+  optionVerdictsFor as optionVerdictsForVerdict,
+} from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
@@ -68,6 +72,12 @@ const relations = ref<Record<string, string[]>>({})
 // readonly + option-filter rendering and the F1 hidden-field filter
 // (TKT-G7N5).
 const fieldAffordances = ref<Record<string, FieldAffordance>>({})
+// Property names the server withheld by field-level ACL (`_redacted`,
+// DEC-T0XIWQ). This is the edit-mode hidden-field signal: previously the
+// filter inferred hiding from a key's absence in `properties`, which also
+// matches a property that was simply never set — so every unset property
+// became permanently unreachable (BUG-MLT9DE). Empty = nothing redacted.
+const redactedProps = ref<string[]>([])
 // Same for relation affordances. Drives RelationCards' +Add / x button
 // visibility and meta-field disable.
 const relationAffordances = ref<Record<string, RelationAffordance>>({})
@@ -231,34 +241,12 @@ watch(
   }
 )
 
-// TKT-G7N5 F1 / TKT-3I5U: filter the config-driven field list against
-// the entity's affordances. A property field is rendered only if it is
-// visible: either (a) it appears in `_fields` (server emitted a verdict,
-// including the implicit "writable default") or (b) the server treated
-// it as visible — in edit mode that's "present in `properties`"; in
-// create mode the staged dry-run reports visible props in
-// `stagedVisibleProps` (hidden fields are stripped server-side in both
-// cases). Relations / non-property fields are never filtered here.
-//
-// F19 flicker prevention: render the unfiltered list until affordances
-// are available — during initial `loading` (edit), and in create until
-// the first dry-run resolves (`stagedAffordancesReady`). Otherwise a
-// policy-hidden field would flash in then disappear. If a create-mode
-// dry-run never resolves (fail-open, RR-HUQ3) the form stays unfiltered
-// and usable; the commit gate is the real boundary.
-const fields = computed((): FormFieldOrRelation[] => {
-  const all = allFields.value
-  if (loading.value) return all
-  if (!isEdit.value && !stagedAffordancesReady.value) return all
-  const visibleProps = isEdit.value ? formData.value : undefined
-  return all.filter((f) => {
-    if (!f.property) return true // relations / non-property fields untouched
-    if (f.property in fieldAffordances.value) return true
-    if (visibleProps && f.property in visibleProps) return true
-    if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
-    return false
-  })
-})
+// TKT-G7N5 F1 / TKT-3I5U / DEC-T0XIWQ: filter the config-driven field list
+// against the entity's affordances. Both render paths (this and the wizard's
+// `visibleStepFields`) delegate to the single `affordanceVisible` predicate
+// below — two hand-synced copies of this rule is how the wizard path silently
+// carried BUG-MLT9DE alongside the flat one.
+const fields = computed((): FormFieldOrRelation[] => allFields.value.filter(affordanceVisible))
 
 // TKT-G7N5 readonly helper: the rendered field is readonly if either
 // the config marks it so OR the server's _fields verdict reports
@@ -352,6 +340,7 @@ async function loadEntity(force = false) {
     // default to empty maps so the filter / readonly / options paths
     // can treat absence as "default everything".
     fieldAffordances.value = entity._fields ?? {}
+    redactedProps.value = entity._redacted ?? []
     relationAffordances.value = entity._relations ?? {}
     attachments.value = entity._attachments ?? {}
     transitions.value = entity._transitions ?? {}
@@ -688,16 +677,33 @@ function validate(scopeFields?: FormFieldOrRelation[], requiredProps?: Set<strin
   return scopeValid
 }
 
-// The affordance filter applied to flat forms in `fields`, reusable for a
-// wizard step's field list so policy-hidden fields are dropped consistently.
+// The single affordance filter for BOTH render paths — flat `fields` and the
+// wizard's `visibleStepFields`. Decides whether a config-declared field is
+// rendered at all (readonly/options are separate, see isFieldReadonly).
+//
+// Edit mode (DEC-T0XIWQ): a configured field renders unless the server
+// positively names it in `_redacted`. It previously rendered only if the key
+// was already in `properties`, which conflated "redacted" with "never set" and
+// made every unset property permanently unfillable (BUG-MLT9DE) — the field
+// could not be filled in because it did not render, and did not render because
+// it had never been filled in.
+//
+// Create mode is unchanged: the staged dry-run's candidate carries metamodel
+// defaults, so `stagedVisibleProps` is a genuine visible-set (it distinguishes
+// hidden from unset by construction) rather than an inference from absence.
+//
+// F19 flicker prevention: render unfiltered until affordances are available —
+// during initial `loading` (edit) and until the first dry-run resolves
+// (create). Otherwise a policy-hidden field would flash in then disappear. If a
+// create-mode dry-run never resolves (fail-open, RR-HUQ3) the form stays
+// unfiltered and usable; the commit gate is the real boundary.
 function affordanceVisible(f: FormFieldOrRelation): boolean {
   if (!f.property) return true // relations / non-property fields untouched
   if (loading.value) return true
-  if (!isEdit.value && !stagedAffordancesReady.value) return true
+  if (isEdit.value) return !isPropertyRedacted(f.property, redactedProps.value)
+  if (!stagedAffordancesReady.value) return true
   if (f.property in fieldAffordances.value) return true
-  if (isEdit.value && f.property in formData.value) return true
-  if (!isEdit.value && stagedVisibleProps.value.has(f.property)) return true
-  return false
+  return stagedVisibleProps.value.has(f.property)
 }
 
 // A wizard step's fields to render: per-field `visible_when` (wizard layer)
