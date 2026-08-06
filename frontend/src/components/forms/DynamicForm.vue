@@ -816,6 +816,13 @@ async function handleSubmit() {
   if (!formConfig.value) return
   // Edit mode has no explicit submit — autosave persists per field. Guard
   // against an Enter-key form submit doing anything (there's no Save button).
+  //
+  // This early return is load-bearing beyond the Enter-key case: because edit
+  // mode never bulk-submits, an untouched field can never reach a payload, so
+  // a redacted field's withheld value cannot be overwritten with empty
+  // (DEC-T0XIWQ). Everything below is therefore the CREATE path only. If you
+  // ever add a bulk edit submit here, you must first prune properties the
+  // server reported in `_redacted` that the user did not touch.
   if (isEdit.value) return
   const scope = submitScopeFields()
   if (!validate(scope, requiredWhenProps(scope))) {
@@ -889,72 +896,50 @@ async function handleSubmit() {
       content: content.value || undefined,
     }
 
-    if (isEdit.value && props.entityId) {
-      const updated = await entitiesStore.update(formConfig.value.entity, props.entityId, payload)
-      // After TKT-GFQK incoming-direction edits flow through the same
-      // unified PATCH (remapped to inverse body keys), so no second
-      // save channel is needed. Clear pending state.
-      pendingCardChanges.value.clear()
-      saveGeneration.value++
-      surfaceWarnings(updated.warnings)
-      uiStore.success('Entity updated successfully')
-    } else {
-      // Create path uses the same modern shape as edit. Cards never
-      // render in create mode (they require entityId), so
-      // pendingCardChanges is empty and relationsPayload is composed
-      // entirely from reshaped picker selections.
-      //
-      // TKT-3I5U: send only visible + writable property keys; the server
-      // fills hidden / read-only defaults after the affordance gate. For a
-      // wizard, also drop keys under a condition-hidden step/field — a
-      // `visible_when=false` branch wins over the affordance filter's
-      // userTouched-preserve rule, so a revealed-then-hidden field is not
-      // persisted (TKT-CHLAJ).
-      payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
-      Object.assign(payload, idControls.buildPayloadFields())
-      const entity = await entitiesStore.create(formConfig.value.entity, payload)
+    // Create only — the isEdit early return above means this is never an
+    // update. Cards never render in create mode (they require entityId), so
+    // pendingCardChanges is empty and relationsPayload is composed entirely
+    // from reshaped picker selections.
+    //
+    // TKT-3I5U: send only visible + writable property keys; the server
+    // fills hidden / read-only defaults after the affordance gate. For a
+    // wizard, also drop keys under a condition-hidden step/field — a
+    // `visible_when=false` branch wins over the affordance filter's
+    // userTouched-preserve rule, so a revealed-then-hidden field is not
+    // persisted (TKT-CHLAJ).
+    payload.properties = pruneWizardHidden(visibleWritablePropertiesForCommit())
+    Object.assign(payload, idControls.buildPayloadFields())
+    const entity = await entitiesStore.create(formConfig.value.entity, payload)
+    // DEC-HWZHA soft conditions ride the 200 create response; surface them or
+    // they are invisible. (Edit-mode warnings come through autosave's own
+    // response handling — this is the create channel.)
+    surfaceWarnings(entity.warnings)
 
-      // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
-      // For link_as=to, the relation is already included in relations.value (pre-filled)
-      // For link_as=from, we need to create the reverse relation: peer --relation--> new_entity
-      if (linkParams.value && linkParams.value.as === 'from') {
-        try {
-          const { relation, peer } = linkParams.value
-          // Look up peer type from ID prefix
-          const peerType = getTypeFromId(peer)
-          if (peerType) {
-            await createRelation(peerType, peer, relation, entity.id)
-          }
-        } catch (linkErr) {
-          console.warn('Auto-link failed:', linkErr)
-          // Continue with navigation even if link fails
+    // Handle auto-linking from link_* params (e.g., from custom view "Add" buttons)
+    // For link_as=to, the relation is already included in relations.value (pre-filled)
+    // For link_as=from, we need to create the reverse relation: peer --relation--> new_entity
+    if (linkParams.value && linkParams.value.as === 'from') {
+      try {
+        const { relation, peer } = linkParams.value
+        // Look up peer type from ID prefix
+        const peerType = getTypeFromId(peer)
+        if (peerType) {
+          await createRelation(peerType, peer, relation, entity.id)
         }
+      } catch (linkErr) {
+        console.warn('Auto-link failed:', linkErr)
+        // Continue with navigation even if link fails
       }
-
-      uiStore.success('Entity created successfully')
-      dirty.value = false
-
-      // Navigate to return_to or entity detail
-      if (returnTo.value) {
-        router.push(returnTo.value)
-      } else {
-        router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
-      }
-      return
     }
 
+    uiStore.success('Entity created successfully')
     dirty.value = false
-    originalData.value = JSON.stringify({
-      formData: formData.value,
-      relations: relations.value,
-      content: content.value,
-    })
 
-    // Navigate to return_to or back
+    // Navigate to return_to or entity detail
     if (returnTo.value) {
       router.push(returnTo.value)
     } else {
-      router.back()
+      router.push(`/entity/${formConfig.value.entity}/${entity.id}`)
     }
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
