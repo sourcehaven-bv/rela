@@ -611,7 +611,10 @@ func TestFlowRuntime_MultipleMarkdownFieldsNoDuplicateError(t *testing.T) {
 	}
 }
 
-func TestFlowRuntime_LabelDefaultsToTitleCase(t *testing.T) {
+// TestFlowRuntime_LabelDefaultsToFieldName pins DEC-6C1NAA for flow forms: an
+// unset label falls back to the raw field name, never a title-cased guess.
+// This test previously asserted the opposite ("user_name" -> "User name").
+func TestFlowRuntime_LabelDefaultsToFieldName(t *testing.T) {
 	t.Parallel()
 	r := newTestRuntime(t)
 	defer r.Close()
@@ -639,11 +642,43 @@ func TestFlowRuntime_LabelDefaultsToTitleCase(t *testing.T) {
 	}
 
 	screen := transport.screens[0]
-	if screen.Fields[0].Label != "User name" {
-		t.Errorf("expected label 'User name', got '%s'", screen.Fields[0].Label)
+	if screen.Fields[0].Label != "user_name" {
+		t.Errorf("expected label 'user_name', got '%s'", screen.Fields[0].Label)
 	}
-	if screen.Fields[1].Label != "Email" {
-		t.Errorf("expected label 'Email', got '%s'", screen.Fields[1].Label)
+	if screen.Fields[1].Label != "email" {
+		t.Errorf("expected label 'email', got '%s'", screen.Fields[1].Label)
+	}
+}
+
+// TestFlowRuntime_ExplicitLabelWins confirms the authored label is still the
+// source of truth — removing the derivation must not weaken explicit labels.
+func TestFlowRuntime_ExplicitLabelWins(t *testing.T) {
+	t.Parallel()
+	r := newTestRuntime(t)
+	defer r.Close()
+
+	transport := &mockTransport{
+		events: []Event{{Action: "submit"}},
+	}
+
+	flow := NewFlowRuntime(r, transport)
+
+	code := `
+		rela.flow.emit({
+			type = "form",
+			fields = {
+				{name = "user_name", type = "text", label = "Gebruikersnaam"},
+			},
+			actions = {{"submit", "Submit"}},
+		})
+	`
+
+	if err := flow.RunString(code); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := transport.screens[0].Fields[0].Label; got != "Gebruikersnaam" {
+		t.Errorf("expected label 'Gebruikersnaam', got '%s'", got)
 	}
 }
 

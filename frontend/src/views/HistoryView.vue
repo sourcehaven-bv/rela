@@ -73,11 +73,10 @@ const canRestore = computed(() => current.value?._actions?.update !== false)
 const typeDef = computed(() => schemaStore.getEntityType(entityType.value))
 
 // Property labels are not carried on PropertyDef (they live on form/view field
-// config); for a raw property diff, humanize the property name — "display_name"
-// → "Display name".
+// config), so a raw property diff shows the property name as-is. Humanizing it
+// here would be a derived label, which DEC-6C1NAA rules out.
 function propertyLabel(name: string): string {
-  const spaced = name.replace(/[_-]+/g, ' ').trim()
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+  return name
 }
 
 // Whether a property should render as a Badge (enum types), reusing the same

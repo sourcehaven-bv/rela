@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -371,11 +370,17 @@ func (f *FlowRuntime) parseInputField(t *lua.LTable, field Field) (Field, error)
 		return field, fmt.Errorf("validation: field name '%s' exceeds max length %d", field.Name, maxFieldNameLength)
 	}
 
-	// Label (optional, defaults to titlecased name)
+	// Label (optional, defaults to the raw field name).
+	//
+	// A label is authored, never derived (DEC-6C1NAA): title-casing the name
+	// would bake an English orthographic convention into a flow whose prompts
+	// may be written in any language. The label is shown directly as the
+	// prompt title, so an unset label falls back to the name itself rather
+	// than to an empty prompt.
 	if v := t.RawGetString("label"); v != lua.LNil {
 		field.Label = lua.LVAsString(v)
 	} else {
-		field.Label = titleCase(field.Name)
+		field.Label = field.Name
 	}
 
 	// Required (optional)
@@ -664,22 +669,6 @@ func validateEventData(event Event, screen Screen) error {
 		}
 	}
 	return nil
-}
-
-// titleCase converts a snake_case name to Title Case.
-func titleCase(s string) string {
-	if s == "" {
-		return s
-	}
-	// Simple implementation: capitalize first letter, replace _ with space
-	result := strings.ReplaceAll(s, "_", " ")
-	if result != "" {
-		first, size := utf8.DecodeRuneInString(result)
-		if first != utf8.RuneError {
-			result = strings.ToUpper(string(first)) + result[size:]
-		}
-	}
-	return result
 }
 
 // isValidDateFormat checks if a string is in YYYY-MM-DD format and represents a valid date.
