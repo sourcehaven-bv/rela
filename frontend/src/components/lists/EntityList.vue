@@ -999,19 +999,19 @@ watch(searchQuery, () => {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-xs);
   padding: 8px 16px;
   border-radius: var(--radius-md);
   font-size: var(--font-size-base);
@@ -1043,7 +1043,7 @@ watch(searchQuery, () => {
 .configured-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-top: 12px;
   margin-bottom: 12px;
 }
@@ -1054,13 +1054,13 @@ watch(searchQuery, () => {
   padding: 4px 10px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border-radius: 16px;
   font-size: var(--font-size-sm);
   color: var(--text-color);
 }
 
 .filter-chip.removable {
-  gap: 6px;
+  gap: var(--space-xs);
   padding-right: 4px;
   background: color-mix(in srgb, var(--accent-color) 15%, transparent);
   border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
@@ -1085,21 +1085,21 @@ watch(searchQuery, () => {
 .search-row {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
 .adhoc-filter-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
 .list-content {
   background: var(--card-bg);
-  border-radius: var(--radius-md);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -1110,7 +1110,7 @@ watch(searchQuery, () => {
   align-items: center;
   justify-content: center;
   padding: 48px;
-  gap: 16px;
+  gap: var(--space-lg);
   color: var(--muted-text);
 }
 
@@ -1163,7 +1163,7 @@ watch(searchQuery, () => {
 
 .action-header-count {
   font-weight: 600;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   margin-right: 0.75rem;
 }
@@ -1197,7 +1197,7 @@ watch(searchQuery, () => {
   display: inline-block;
   padding: 0.05rem 0.3rem;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: 3px;
   background: var(--hover-bg);
   font-family: monospace;
   font-size: var(--font-size-xs);
@@ -1227,7 +1227,7 @@ watch(searchQuery, () => {
   background: var(--accent-color);
   color: white;
   padding: 1px 4px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   margin-right: 2px;
 }
 
@@ -1350,7 +1350,7 @@ watch(searchQuery, () => {
 .mobile-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -1378,7 +1378,7 @@ watch(searchQuery, () => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .mobile-card-title {
@@ -1401,8 +1401,8 @@ watch(searchQuery, () => {
 .mobile-card-field {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: var(--font-size-md);
+  gap: var(--space-2xs);
+  font-size: var(--font-size-dense);
 }
 
 .mobile-card-label {

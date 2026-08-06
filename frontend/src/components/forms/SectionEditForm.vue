@@ -284,7 +284,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-sm);
   margin: 0 0 16px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
@@ -311,7 +311,7 @@ defineExpose({
 .property-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
   min-width: 200px;
 }
 

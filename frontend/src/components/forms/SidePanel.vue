@@ -252,7 +252,7 @@ onMounted(() => loadSidePanel())
   margin-bottom: 16px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -286,7 +286,7 @@ onMounted(() => loadSidePanel())
 }
 
 .empty-state {
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
   font-style: italic;
 }
@@ -299,7 +299,7 @@ onMounted(() => loadSidePanel())
 .property-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-3xs);
   margin-bottom: 12px;
 }
 
@@ -328,7 +328,7 @@ onMounted(() => loadSidePanel())
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .entity-list-item {
@@ -344,7 +344,7 @@ onMounted(() => loadSidePanel())
 .entity-cards {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .entity-card {
@@ -381,13 +381,13 @@ onMounted(() => loadSidePanel())
 .card-fields {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .card-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2xs);
   font-size: var(--font-size-sm);
 }
 
@@ -413,7 +413,7 @@ onMounted(() => loadSidePanel())
   border: 1px dashed var(--border-color);
   border-radius: var(--radius-md);
   color: var(--muted-text);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -427,7 +427,7 @@ onMounted(() => loadSidePanel())
 .btn-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .btn-add-sm {

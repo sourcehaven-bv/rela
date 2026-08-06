@@ -640,12 +640,12 @@ function createNew() {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .btn {
@@ -669,17 +669,17 @@ function createNew() {
 
 .filter-bar {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   margin-bottom: 20px;
   padding: 12px 16px;
   background: var(--card-bg);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
 }
 
 .filter-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .filter-group label {
@@ -703,7 +703,7 @@ function createNew() {
   padding: 10px 16px;
   margin-bottom: 16px;
   border: 1px solid #f59e0b;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: rgba(245, 158, 11, 0.12);
   color: var(--text-color);
   font-size: var(--font-size-base);
@@ -712,7 +712,7 @@ function createNew() {
 .loading-state {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 48px;
   color: var(--muted-text);
 }
@@ -734,7 +734,7 @@ function createNew() {
 
 .kanban-board {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   min-height: 500px;
   padding-bottom: 20px;
   /* Per CSS spec a non-visible overflow on one axis coerces the other from
@@ -752,7 +752,7 @@ function createNew() {
   min-width: 280px;
   max-width: 350px;
   background: var(--hover-bg);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
 }
@@ -775,7 +775,7 @@ function createNew() {
   background: var(--border-color);
   color: var(--muted-text);
   padding: 2px 8px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   font-size: var(--font-size-sm);
   font-weight: 500;
 }
@@ -785,7 +785,7 @@ function createNew() {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
   overflow-y: auto;
 }
 
@@ -824,12 +824,12 @@ function createNew() {
 .card-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .card-field {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2xs);
   font-size: var(--font-size-sm);
 }
 
@@ -843,7 +843,7 @@ function createNew() {
 
 .empty-column {
   color: var(--muted-text);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   text-align: center;
   padding: 24px;
 }
@@ -890,7 +890,7 @@ function createNew() {
 
 .swimlane-label {
   font-weight: 600;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   writing-mode: horizontal-tb;
 }
@@ -900,7 +900,7 @@ function createNew() {
   padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
   min-height: 100px;
   overflow-y: auto;
 }
@@ -919,7 +919,7 @@ function createNew() {
 
 @media (max-width: 768px) {
   .kanban-board {
-    gap: 12px;
+    gap: var(--space-md);
     min-height: 300px;
   }
 

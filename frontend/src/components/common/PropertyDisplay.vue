@@ -114,7 +114,7 @@ function isLong(prop: PropertyItem): boolean {
 .property-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
   min-width: 120px;
 }
 

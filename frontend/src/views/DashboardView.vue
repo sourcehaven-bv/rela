@@ -257,7 +257,7 @@ onMounted(() => {
 .loading-state {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 48px;
   color: var(--muted-text);
 }
@@ -287,7 +287,7 @@ onMounted(() => {
 .dashboard-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: 16px;
 }
 
@@ -330,18 +330,18 @@ onMounted(() => {
 .card-breakdown {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .breakdown-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .breakdown-label {
   min-width: 80px;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
 }
 
@@ -363,7 +363,7 @@ onMounted(() => {
 .breakdown-count {
   min-width: 32px;
   text-align: right;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   font-weight: 600;
   color: var(--text-color);
 }
@@ -376,7 +376,7 @@ onMounted(() => {
 .card-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
 }
 
 .card-table th {
@@ -404,7 +404,7 @@ onMounted(() => {
 
 .no-data {
   color: var(--muted-text);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   padding: 8px 0;
 }
 
@@ -412,14 +412,14 @@ onMounted(() => {
 .validation-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: 16px;
 }
 
 .validation-content {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .validation-success {
@@ -447,7 +447,7 @@ onMounted(() => {
 
 .view-details {
   margin-left: auto;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--accent-color);
   text-decoration: none;
   font-weight: 500;
@@ -472,7 +472,7 @@ onMounted(() => {
 
   .dashboard-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 12px;
+    gap: var(--space-md);
   }
 
   .dashboard-card {
@@ -500,7 +500,7 @@ onMounted(() => {
   }
 
   .breakdown-row {
-    gap: 8px;
+    gap: var(--space-sm);
   }
 }
 

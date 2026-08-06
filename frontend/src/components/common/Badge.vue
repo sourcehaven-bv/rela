@@ -134,6 +134,6 @@ const displayText = computed(() => label.value ?? props.value)
 .badge-row {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 </style>

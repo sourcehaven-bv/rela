@@ -37,27 +37,38 @@
   --space-2xl: 32px;
   --space-3xl: 48px;
 
-  /* Radius — three steps plus a pill. The old 2/3/4 collapse to -sm and
-   * 10/12/16/20 collapse to -lg; 6px stays the workhorse default (-md).
-   * --radius-pill is for fully-rounded chips; --radius-circle for avatars. */
+  /* Radius. Four steps, chosen to be VALUE-PRESERVING for the sites migrated
+   * in TKT-8VVBRI rather than to be the shortest possible ramp: 4px and 6px
+   * are the two most common values (13 and 11 uses on the migrated surfaces)
+   * and 8px is the card radius (10 uses), so collapsing 8 into 6 would have
+   * quietly flattened every card in the app. 2px and 3px DID round up to -sm
+   * (4 sites, +1/+2px on hairline chips) — the only deliberate visual change.
+   *
+   * --radius-pill is for fully-rounded chips. --radius-circle is a SHAPE, not
+   * a step on this ramp: it is a percentage, so it can never substitute for
+   * its px siblings — don't reach for it on a card. */
   --radius-sm: 4px;
   --radius-md: 6px;
-  --radius-lg: 12px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   --radius-pill: 999px;
   --radius-circle: 50%;
 
   /* Typography. The four contract steps (sm/base/lg/xl) are frozen; the rest
    * extend the ramp for SPA-only chrome and page titles.
    *
-   * --font-size-md (13px) sits INSIDE the contract's 12->14 gap on purpose:
-   * 13px is the second-most-used size in the SPA (86 declarations, behind
-   * only 14px's 110) and carries dense secondary text — table cells, meta
-   * rows, card bodies. The contract can't absorb it without changing frozen
-   * values, so it is an SPA-only step. Apps get the four contract sizes;
-   * nothing about --font-size-md crosses the boundary. */
+   * --font-size-dense (13px) is deliberately NOT named as a ramp step. 13px is
+   * the second-most-used size in the SPA (86 declarations, behind only 14px's
+   * 110) and carries dense secondary text — table cells, meta rows, card
+   * bodies — but it is SPA-only and undefined in the _rela.css served to apps.
+   * Naming it "--font-size-md" would have wedged an SPA-only value inside the
+   * contract's 12->14 gap, where it reads like a contract member: an app author
+   * copying a var(--font-size-md) usage would get a silent fallback to the
+   * inherited size, with no error. A role name can't be mistaken for a step.
+   * TestAppCSSSource pins the negative side (apps must NOT define it). */
   --font-size-xs: 11px;
   --font-size-sm: 12px;
-  --font-size-md: 13px;
+  --font-size-dense: 13px;
   --font-size-base: 14px;
   --font-size-lg: 18px;
   --font-size-xl: 22px;
@@ -66,16 +77,22 @@
 
   /* Elevation. Deliberately few: the UI is mostly flat, with borders rather
    * than shadows carrying separation. -sm for resting cards, -md for hover /
-   * sticky bars, -lg for overlays (modals, popovers, dropdowns). */
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 8%);
+   * sticky bars, -lg for overlays (modals, popovers, dropdowns).
+   *
+   * Values are taken from shadows already in the tree rather than invented, so
+   * adopting a token is value-preserving: -sm is EntityList's list-content
+   * shadow, -lg is EntityDetail's overflow-menu shadow. */
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 10%);
   --shadow-md: 0 2px 8px rgb(0 0 0 / 12%);
-  --shadow-lg: 0 8px 24px rgb(0 0 0 / 18%);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 12%);
 }
 
-/* Dark mode needs heavier shadows: on a dark surface a 8%-alpha black shadow
- * is invisible. Same names, same selector convention as tokens.css. */
+/* Dark mode needs heavier shadows: on a dark surface a 10%-alpha black shadow
+ * is effectively invisible. Same names, same `:root.dark` selector convention
+ * as tokens.css (App.vue toggles the class on <html>). Exercised by the two
+ * migrated call sites below, so this branch is not dead code. */
 :root.dark {
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 30%);
   --shadow-md: 0 2px 8px rgb(0 0 0 / 40%);
-  --shadow-lg: 0 8px 24px rgb(0 0 0 / 55%);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 45%);
 }

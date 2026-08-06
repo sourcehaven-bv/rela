@@ -395,14 +395,14 @@ onBeforeUnmount(() => {
 
 .filters {
   display: flex;
-  gap: 16px;
+  gap: var(--space-lg);
   flex-wrap: wrap;
 }
 
 .filter-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .filter-item label {
@@ -436,7 +436,7 @@ onBeforeUnmount(() => {
   background: none;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
@@ -466,14 +466,14 @@ onBeforeUnmount(() => {
        stretched vertically next to a wrapping filter grid. */
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
+    gap: var(--space-sm);
   }
 
   /* Filters fill the width and wrap evenly. Each item flexes from a small
      min-width so up to two enum filters fit on a row before wrapping. */
   .filters {
     width: 100%;
-    gap: 8px;
+    gap: var(--space-sm);
   }
 
   .clear-filters {

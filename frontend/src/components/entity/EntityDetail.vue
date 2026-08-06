@@ -1213,7 +1213,7 @@ watch(
 .inaccessible-banner {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--space-md);
   margin-bottom: 24px;
   padding: 12px 16px;
   border: 1px solid var(--color-border, #ccc);
@@ -1236,7 +1236,7 @@ watch(
 .inaccessible-banner code {
   padding: 1px 4px;
   background: var(--color-code-bg, #eee);
-  border-radius: var(--radius-sm);
+  border-radius: 3px;
   font-family: var(--font-mono, monospace);
 }
 
@@ -1247,14 +1247,14 @@ watch(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-lg);
   margin-bottom: 24px;
 }
 
 .header-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .entity-type-badge {
@@ -1275,14 +1275,14 @@ watch(
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .header-actions kbd {
   padding: 2px 5px;
   font-size: 10px;
   background: var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: 3px;
   font-family: monospace;
   margin-left: 4px;
 }
@@ -1336,7 +1336,7 @@ watch(
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  box-shadow: var(--shadow-lg);
   min-width: 160px;
   z-index: 50;
 }
@@ -1362,12 +1362,12 @@ watch(
 .scope-nav {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   margin-bottom: 20px;
 }
 
 .scope-nav-progress {
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   font-weight: 600;
   color: var(--text-color);
   font-family: monospace;
@@ -1375,7 +1375,7 @@ watch(
 
 .scope-nav-label {
   flex: 1;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--muted-text);
 }
 
@@ -1383,7 +1383,7 @@ watch(
 .jump-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-sm);
   padding: 12px 0;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 24px;
@@ -1394,7 +1394,7 @@ watch(
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-dense);
   color: var(--text-color);
   cursor: pointer;
   transition: all 0.15s;
@@ -1410,7 +1410,7 @@ watch(
 .sections {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: var(--space-2xl);
 }
 
 .view-section {
@@ -1463,7 +1463,7 @@ watch(
 .content-cards {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .content-card {
@@ -1476,7 +1476,7 @@ watch(
 .content-card .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
   cursor: pointer;
 }
@@ -1489,7 +1489,7 @@ watch(
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .entity-card {
@@ -1508,7 +1508,7 @@ watch(
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   margin-bottom: 12px;
 }
 
@@ -1518,7 +1518,7 @@ watch(
   color: var(--muted-text);
   background: var(--border-color);
   padding: 2px 4px;
-  border-radius: var(--radius-sm);
+  border-radius: 2px;
 }
 
 .entity-title {
@@ -1551,14 +1551,14 @@ watch(
 .card-fields {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 
 .card-field {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-md);
+  gap: var(--space-xs);
+  font-size: var(--font-size-dense);
 }
 
 .field-label {
@@ -1576,14 +1576,14 @@ watch(
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .list-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-md);
   padding: 8px 12px;
   background: var(--card-bg);
   border: 1px solid var(--border-color);
@@ -1593,7 +1593,7 @@ watch(
 .list-link {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   cursor: pointer;
   flex: 1;
 }
@@ -1604,7 +1604,7 @@ watch(
 
 .list-fields {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 /* AutoSaveIndicator slot for inline-edit rows (TKT-IHC7C). Rendered inline
@@ -1719,7 +1719,7 @@ watch(
      above. */
   .mobile-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-sm);
     align-items: center;
   }
 
