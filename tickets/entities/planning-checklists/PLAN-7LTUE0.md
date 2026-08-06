@@ -385,11 +385,24 @@ permissions (`history:read`, delegate-X)
 - [x] `internal/dataentry/CLAUDE.md` — one line: a standalone document's
 `permission:` is an intent/UX gate; the Lua read gate remains the
 confidentiality boundary
-- [ ] `docs/metamodel.md` — N/A (this is `data-entry.yaml`, not the metamodel)
+- [x] ~~`docs/metamodel.md`~~ (N/A: this is `data-entry.yaml`, not the metamodel)
 
 ## Design Review
 
-- [ ] Run `/design-review` before starting implementation
-- [ ] All critical/significant findings addressed in plan
+- [x] ~~Run `/design-review` before starting implementation~~ (N/A: skipped at
+      the user's direction — the plan was presented, the one open design
+      question was resolved with the user directly, and they said "go")
+- [x] All critical/significant findings addressed — via `/code-review` instead
 
-**Design Review Findings:** <!-- pending -->
+**Design Review Findings:** No separate design review ran. The design's central
+assumption was nonetheless independently challenged and verified during the
+CODE review: that a standalone document is safe ungated because its Lua reads
+go through the ACL-gated `VisibleReader`. The reviewer traced that path end to
+end and confirmed it. Two critical findings came out of that review
+(RR-E8Z1MR, RR-THBQQK) — both implementation gaps rather than design faults,
+both addressed. See REV-DKI1T0.
+
+Worth noting for next time: the `_config` enumeration leak (RR-E8Z1MR) was a
+*design*-level gap — the plan asserted a non-enumerability property without
+enumerating which endpoints serve document config. A design review would
+plausibly have caught it before the code was written.

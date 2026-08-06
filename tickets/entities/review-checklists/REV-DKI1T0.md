@@ -2,55 +2,98 @@
 id: REV-DKI1T0
 type: review-checklist
 title: 'Review: Standalone documents: document: as a navigation entry with optional entity_type'
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] `go test ./...` — all pass
+- [x] `just lint` — 0 issues
+- [x] `just arch-lint` — no warnings
+- [x] `just plimsoll` — no warnings (see note)
+- [x] `just coverage-check` — PASS, total 77.2%
+- [x] frontend `npm run test:run` — 1437 passed
+- [x] frontend `npm run typecheck` — clean
+- [x] frontend `npm run lint` — 0 errors
+
+**plimsoll note:** during implementation the two new handlers pushed `App` from
+89 to 91 methods, over its pinned line of 90. Fixed by making them plain
+functions rather than raising the directive.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+Run with the cranky-code-reviewer agent against the full branch diff, asked
+specifically to challenge the ungated-by-default decision and to verify the
+claim it rests on.
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**The central claim was independently verified as TRUE.** The reviewer traced
+`handleV1StandaloneDocument` → `RenderStandalone` → `luaWriteDeps` →
+`ReadDeps.VisibleReader = gatedScriptReader(...)` and confirmed there is no
+ungated read reachable from a standalone document script (Searcher is raw but
+`rela.search` hydrates every hit through `VisibleReader`). So the ungated
+default is sound and stays.
+
+Eight findings, all recorded as review-response entities:
+
+| ID | Severity | Status |
+|----|----------|--------|
+| RR-E8Z1MR | critical | addressed — `_config` leaked gated document names + permission/script/command |
+| RR-THBQQK | critical | addressed — anchored permission gate untested; gate ordering unpinned |
+| RR-DYNFSM | significant | addressed — `RenderStandalone` returned a struct it can't populate |
+| RR-ZXGPCU | significant | addressed — documents fail open where commands fail closed (documented) |
+| RR-R9O8BB | significant | addressed — `hidesNavEntry` re-read the schema mid-request |
+| RR-P4E9GL | significant | **deferred** → TKT-OGR566 (no concurrency cap on Lua renders) |
+| RR-R6SJB8 | minor | addressed — extracted `handleV1AnchoredDocument` (134 → 22 line dispatcher) |
+| RR-WINN6Z | nit | addressed — duplicated docs paragraph |
+
+No open critical or significant responses remain.
+
+**On the deferral (RR-P4E9GL):** the uncapped Lua render path predates this
+ticket — an entity-anchored `script:` document with a wide traversal has the
+same exposure, and singleflight only ever collapsed identical `(principal,
+entry, config)` triples rather than bounding load. Standalone documents raise
+the likelihood, not the ceiling. The fix is a shared bounded pool on the render
+path (the `internal/cmdexec` precedent), which is a change to shared
+infrastructure rather than to this feature. It degrades availability under load,
+does not leak data, and per-document `timeout:` bounds any single render.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+Verified against a live `rela-server` on `prototypes/data-entry/project`, with a
+real aggregating Lua report and both an ACL-enabled and ACL-free run.
 
-**Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+| AC | Result | Evidence |
+|----|--------|----------|
+| 1 | PASS | Standalone config loads; server starts |
+| 2-4 | PASS | Nav validation table tests; valid entry accepted, entity-anchored + unknown rejected |
+| 5 | PASS | `GET /_documents/status_review` → 200 with real aggregated content |
+| 6 | PASS | standalone+id → 400; anchored w/o id → 400 (both directions) |
+| 7 | PASS | Script `assert(rela.document.entry_id == nil)` passed on a live render |
+| 8 | PASS | alice (holder) 200 / bob 404, renderer not invoked, deny ≡ unknown-doc |
+| 9 | PASS | Ungated document renders for a principal with no permissions |
+| 10 | PASS | Sidebar href `/document/status_review`; present for alice, absent for bob |
+| — | PASS | No regression: anchored `category_overview/backend` → 200, `entity_ids=['backend']` |
 
-## Documentation (enhancements only)
+Post-fix re-verification (after the wire-type and extraction refactors):
+standalone 200, anchored 200, both kind mismatches 400, unknown 404, sidebar
+entry present. `_config` as bob no longer contains `status_review`; neither
+principal's payload contains a script path, permission name, or command string.
 
-Skip this section for bugs and internal refactors.
+Browser-verified: sidebar entry beneath Dashboard with a document icon;
+click-through and direct deep-link both render; active-route highlight correct;
+no Edit button on a standalone document; entity-anchored view and its documents
+panel unchanged (the panel offers `ticket_summary` and correctly does not offer
+the standalone document).
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+**Two bugs were found by manual verification that no unit test caught:**
+`DocumentView.vue` rendered a dangling "Status Review:" from a hardcoded `{{
+docTitle }}: {{ entityId }}`, and the empty state would have read `the entity ""
+may not exist`. Both fixed.
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+## Follow-ups filed
 
-## Final Checks
-
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
-
-## Pull Request
-
-- [ ] Run `/pr` command to create PR and monitor CI
-- [ ] All CI checks pass
-- [ ] PR URL documented below
-
-**PR:** <!-- e.g., https://github.com/org/repo/pull/123 -->
+- **TKT-OGR566** — bound concurrent Lua renders with a shared pool (from RR-P4E9GL)
+- **TKT-VKM63H** — `navigation:` entries aren't validated for exactly one kind
+(pre-existing hole this feature widens by one)
