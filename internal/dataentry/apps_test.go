@@ -138,6 +138,24 @@ func TestAppCSSSource(t *testing.T) {
 			t.Errorf("appCSSSource(nil) missing %q", want)
 		}
 	}
+	// The four --font-size-* steps are a FROZEN cross-boundary contract
+	// (TKT-PF4E6S): the same names and values are declared in the SPA's
+	// frontend/src/styles/scales.css. An app that links _rela.css must get
+	// typography identical to the host UI it renders inside, so neither side
+	// may rename a step or drift its value independently. Assert the pairs,
+	// not just the names — a silent value change is the drift that a
+	// name-only check would miss.
+	for name, value := range map[string]string{
+		"--font-size-sm":   "12px",
+		"--font-size-base": "14px",
+		"--font-size-lg":   "18px",
+		"--font-size-xl":   "22px",
+	} {
+		if !strings.Contains(css, name+": "+value) {
+			t.Errorf("appCSSSource(nil): frozen typography contract %s must be %s\n"+
+				"if you changed this, change frontend/src/styles/scales.css to match", name, value)
+		}
+	}
 	// Stays tokens + atomic controls — must NOT smuggle in component-shaped
 	// classes (the documented line).
 	for _, unwanted := range []string{".table", ".modal", ".select", ".dropdown"} {

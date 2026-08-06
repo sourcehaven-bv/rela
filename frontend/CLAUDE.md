@@ -92,3 +92,30 @@ Global styles in `App.vue` use CSS custom properties for theming:
 - Light/dark mode via `:root.dark` class
 - Shared utility classes: `.btn`, `.btn-primary`, `.modal`, `.page-header`
 - Components use scoped styles with BEM-like naming
+
+### Design tokens: two files, different contracts
+
+| File | Holds | Contract |
+|------|-------|----------|
+| `src/styles/tokens.css` | **Colour only** | Copied byte-identically into the Go binary (`internal/dataentry/apps_tokens.css`) and served to custom apps as `_rela.css`. `TestAppTokensCSSInSyncWithFrontend` fails on drift. |
+| `src/styles/scales.css` | Spacing, radius, typography, elevation | SPA-only, except the four `--font-size-*` steps noted below. |
+
+Both are imported from `main.ts`. Keep them separate: `tokens.css` documents
+itself as theme-tokens-only, so dimension scales do **not** belong there.
+
+**Use the scales instead of hardcoding.** Prefer `var(--space-sm)`,
+`var(--radius-md)`, `var(--font-size-base)`, `var(--shadow-sm)` over raw px.
+Before this existed the SPA had 10 distinct border-radius values and 17 font
+sizes chosen per-component, so nothing lined up between components.
+
+**`--font-size-{sm,base,lg,xl}` is a frozen cross-boundary contract.** The same
+four names and values are declared in Go, in `appTypographyCSS`
+(`internal/dataentry/apps_css.go`), and served to every custom app — TKT-PF4E6S
+froze them. Changing one side without the other makes an app's typography drift
+from the host UI it renders inside. `TestAppCSSSource` asserts the name/value
+pairs on the Go side. Extending the ramp (`-xs`, `-md`, `-2xl`, `-3xl` are
+SPA-only) is safe; renaming or revaluing those four is not.
+
+A handful of off-scale sizes (9/10/15/16/17/20/21/24/48px) are deliberately
+left as literals — each is rare and rounding them would change a size the
+author picked on purpose.

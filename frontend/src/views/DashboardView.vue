@@ -267,7 +267,7 @@ onMounted(() => {
   height: 24px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
 }
 
@@ -287,7 +287,7 @@ onMounted(() => {
 .dashboard-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 16px;
 }
 
@@ -308,7 +308,7 @@ onMounted(() => {
 .card-link {
   color: var(--muted-text);
   text-decoration: none;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .card-link:hover {
@@ -341,7 +341,7 @@ onMounted(() => {
 
 .breakdown-label {
   min-width: 80px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--muted-text);
 }
 
@@ -349,21 +349,21 @@ onMounted(() => {
   flex: 1;
   height: 8px;
   background: var(--hover-bg);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .breakdown-bar-fill {
   height: 100%;
   background: var(--accent-color, #6366f1);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: width 0.3s ease;
 }
 
 .breakdown-count {
   min-width: 32px;
   text-align: right;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-color);
 }
@@ -376,7 +376,7 @@ onMounted(() => {
 .card-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .card-table th {
@@ -404,7 +404,7 @@ onMounted(() => {
 
 .no-data {
   color: var(--muted-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   padding: 8px 0;
 }
 
@@ -412,7 +412,7 @@ onMounted(() => {
 .validation-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 16px;
 }
 
@@ -425,13 +425,13 @@ onMounted(() => {
 .validation-success {
   color: var(--success-color);
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .badge {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 500;
 }
 
@@ -447,7 +447,7 @@ onMounted(() => {
 
 .view-details {
   margin-left: auto;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--accent-color);
   text-decoration: none;
   font-weight: 500;
@@ -462,7 +462,7 @@ onMounted(() => {
      mobile-bars.css. Override only typography and hide the description
      to keep the bar compact. */
   .dashboard-header h1 {
-    font-size: 18px;
+    font-size: var(--font-size-lg);
     margin: 0;
   }
 
@@ -491,12 +491,12 @@ onMounted(() => {
   }
 
   .count-number {
-    font-size: 32px;
+    font-size: var(--font-size-3xl);
   }
 
   .breakdown-label {
     min-width: 60px;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
   }
 
   .breakdown-row {

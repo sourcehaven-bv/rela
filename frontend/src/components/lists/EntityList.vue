@@ -1013,8 +1013,8 @@ watch(searchQuery, () => {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
   font-weight: 500;
   text-decoration: none;
   cursor: pointer;
@@ -1054,8 +1054,8 @@ watch(searchQuery, () => {
   padding: 4px 10px;
   background: var(--hover-bg);
   border: 1px solid var(--border-color);
-  border-radius: 16px;
-  font-size: 12px;
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
   color: var(--text-color);
 }
 
@@ -1071,7 +1071,7 @@ watch(searchQuery, () => {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1;
   padding: 0 4px;
   color: inherit;
@@ -1098,7 +1098,7 @@ watch(searchQuery, () => {
 
 .list-content {
   background: var(--card-bg);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
@@ -1119,7 +1119,7 @@ watch(searchQuery, () => {
   height: 32px;
   border: 3px solid var(--border-color);
   border-top-color: var(--accent-color);
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   animation: spin 1s linear infinite;
 }
 
@@ -1145,7 +1145,7 @@ watch(searchQuery, () => {
   padding: 12px 16px;
   background: var(--hover-bg);
   border-bottom: 1px solid var(--border-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1163,7 +1163,7 @@ watch(searchQuery, () => {
 
 .action-header-count {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-color);
   margin-right: 0.75rem;
 }
@@ -1176,10 +1176,10 @@ watch(searchQuery, () => {
   vertical-align: middle;
   padding: 0.2rem 0.6rem;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--card-bg);
   color: var(--text-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -1197,10 +1197,10 @@ watch(searchQuery, () => {
   display: inline-block;
   padding: 0.05rem 0.3rem;
   border: 1px solid var(--border-color);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--hover-bg);
   font-family: monospace;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
 }
 
@@ -1227,14 +1227,14 @@ watch(searchQuery, () => {
   background: var(--accent-color);
   color: white;
   padding: 1px 4px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   margin-right: 2px;
 }
 
 .entity-table td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .entity-row {
@@ -1331,7 +1331,7 @@ watch(searchQuery, () => {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--muted-text);
   cursor: pointer;
   transition: all 0.15s;
@@ -1350,7 +1350,7 @@ watch(searchQuery, () => {
 .mobile-card {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 12px;
   cursor: pointer;
   transition: all 0.15s;
@@ -1402,7 +1402,7 @@ watch(searchQuery, () => {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .mobile-card-label {
@@ -1421,7 +1421,7 @@ watch(searchQuery, () => {
   /* .list-header uses .mobile-topbar.mobile-topbar--with-menu from
      mobile-bars.css (sticky chrome + safe-area math + hamburger room). */
   .list-header h1 {
-    font-size: 18px;
+    font-size: var(--font-size-lg);
   }
 
   .list-content {

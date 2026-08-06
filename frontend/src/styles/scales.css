@@ -1,0 +1,81 @@
+/* rela dimension scales — spacing, radius, typography, elevation.
+ *
+ * The SIBLING of tokens.css, deliberately separate. tokens.css is the theme
+ * (color) contract that is copied byte-identically into the Go binary and
+ * served to custom apps as _rela.css; its doc comment restricts it to theme
+ * tokens only. These scales are layout, not theme, so they live here and are
+ * imported from main.ts alongside it.
+ *
+ * WHY THIS FILE EXISTS
+ * Before it, the SPA had color discipline and nothing else: 10 distinct
+ * border-radius values (2/3/4/6/8/10/12/16/20/999px), 17 distinct font sizes
+ * (9px through 48px), and spacing that mixed px with 0.25/0.3/0.4/0.6rem.
+ * Values were picked per-component, so nothing lined up between components.
+ *
+ * --font-size-* IS A FROZEN CROSS-BOUNDARY CONTRACT
+ * The four names --font-size-{sm,base,lg,xl} and their values are ALSO defined
+ * in Go, in appTypographyCSS (internal/dataentry/apps_css.go), and served to
+ * every custom app. TKT-PF4E6S froze them. The values below are deliberately
+ * identical to that block. If you change one, change both, or an app's
+ * typography silently drifts from the host UI it is embedded in.
+ * TestAppCSSSource pins the Go side.
+ *
+ * The -xs / -2xl / -3xl steps are SPA-only extensions: apps get the four
+ * contract sizes, the SPA gets the full ramp. Extending the ramp here is safe;
+ * renaming or revaluing the four contract steps is not.
+ */
+:root {
+  /* Spacing — 4px base. Covers the observed 4/6/8/12/16/24/32/48 cluster
+   * without the rem/px mixing. Use these for padding, margin, and gap. */
+  --space-3xs: 2px;
+  --space-2xs: 4px;
+  --space-xs: 6px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+
+  /* Radius — three steps plus a pill. The old 2/3/4 collapse to -sm and
+   * 10/12/16/20 collapse to -lg; 6px stays the workhorse default (-md).
+   * --radius-pill is for fully-rounded chips; --radius-circle for avatars. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  /* Typography. The four contract steps (sm/base/lg/xl) are frozen; the rest
+   * extend the ramp for SPA-only chrome and page titles.
+   *
+   * --font-size-md (13px) sits INSIDE the contract's 12->14 gap on purpose:
+   * 13px is the second-most-used size in the SPA (86 declarations, behind
+   * only 14px's 110) and carries dense secondary text — table cells, meta
+   * rows, card bodies. The contract can't absorb it without changing frozen
+   * values, so it is an SPA-only step. Apps get the four contract sizes;
+   * nothing about --font-size-md crosses the boundary. */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 26px;
+  --font-size-3xl: 32px;
+
+  /* Elevation. Deliberately few: the UI is mostly flat, with borders rather
+   * than shadows carrying separation. -sm for resting cards, -md for hover /
+   * sticky bars, -lg for overlays (modals, popovers, dropdowns). */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 8%);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 12%);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+/* Dark mode needs heavier shadows: on a dark surface a 8%-alpha black shadow
+ * is invisible. Same names, same selector convention as tokens.css. */
+:root.dark {
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 55%);
+}

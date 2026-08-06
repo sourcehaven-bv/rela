@@ -124,7 +124,7 @@ function isLong(prop: PropertyItem): boolean {
 }
 
 .property-item dt {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--muted-text);
@@ -132,7 +132,7 @@ function isLong(prop: PropertyItem): boolean {
 
 .property-item dd {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   color: var(--text-color);
   line-height: 1.5;
 }

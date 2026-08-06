@@ -73,8 +73,8 @@ const displayText = computed(() => label.value ?? props.value)
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
   font-weight: 500;
   text-transform: capitalize;
 }
