@@ -158,8 +158,19 @@ func TestACLSidebar_DenyAllZeroCounts(t *testing.T) {
 
 	counts := sidebarCountsByLabel(gateCtxFor(principalCtx("mallory"), t, d), t, app)
 	for _, label := range []string{"All", "Open", "Board"} {
-		if counts[label] != 0 {
-			t.Errorf("%s count = %d for deny-all principal, want 0", label, counts[label])
+		// Assert PRESENCE explicitly. sidebarCountsByLabel builds a map, so a
+		// missing key reads as 0 and a bare `counts[label] != 0` check would
+		// pass vacuously if the entry vanished from the sidebar entirely.
+		// These entries carry no `permission:` and so are never filtered
+		// (TKT-TXDK8U) — this makes that a tested property rather than a
+		// coincidence.
+		count, present := counts[label]
+		if !present {
+			t.Errorf("%s missing from the sidebar; an unfiltered entry must always appear", label)
+			continue
+		}
+		if count != 0 {
+			t.Errorf("%s count = %d for deny-all principal, want 0", label, count)
 		}
 	}
 }

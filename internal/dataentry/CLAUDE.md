@@ -65,6 +65,29 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
 
+## Sidebar navigation filtering (`permission:` on a nav entry)
+
+`permitsNavEntry` (`views_handler.go`) omits entries the principal cannot use
+from `/_sidebar`. Rules for new code:
+
+- **It is a UX filter, not a boundary.** Nothing downstream may rely on an
+  entry being hidden. The target enforces what it always did, and
+  `TestNavPermission_FilterIsPresentationOnly` asserts precisely that. Same
+  rule as `_actions` above.
+- **Do NOT filter `/_config`.** It serves the navigation tree verbatim, on
+  purpose (root CLAUDE.md, "The configuration is not a secret; the data is").
+  Filtering it would be concealment-shaped, and an earlier attempt at exactly
+  that was reverted in TKT-M1AX6P. `TestNavPermission_ConfigUnfiltered` pins it.
+- **The ReadOnlyACL arm is load-bearing.** `readGateFromContext` returns
+  `nopReadGate` under ReadOnlyACL *and* NopACL, and its `HoldsPermission`
+  returns true — so a predicate written against the read gate alone fails OPEN
+  under `--read-only`. That is the RR-CWWJGW shape. Keep the explicit arm ahead
+  of the gate; `TestNavPermission_ReadOnlyHides` is the canary. Match value
+  **and** pointer forms — `AuthorizeWrite` has a value receiver.
+- **The switch stays closed.** A new `acl.ACL` implementation hides gated
+  entries until someone adds an arm; the failure mode of forgetting should be a
+  missing menu item, not an unintended one.
+
 ## Custom apps (`apps/<id>/` + `_apps/{id}/...` + the bridge)
 
 User-authored apps served in a sandboxed iframe. An app is a **folder**

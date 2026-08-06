@@ -198,6 +198,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		services:    app.Services,
 		logo:        app.logo,
 		gateRead:    app.gateReadOrNotFound,
+		// Late-bound, as in NewApp: tests reassign app.acl after construction.
+		aclImpl: func() acl.ACL { return app.acl },
 	}
 	// commandHandler holds closures over App methods, which read the fields
 	// rebound above — so it stays valid after this rebind. (Rebuilt rather than

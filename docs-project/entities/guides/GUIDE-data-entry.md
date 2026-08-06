@@ -1500,6 +1500,7 @@ navigation:
 | `dashboard` | bool   | Link to the dashboard page                                     |
 | `graph`     | bool   | Link to the graph explorer                                     |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
+| `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
 
 ### Groups
 
@@ -1522,6 +1523,46 @@ inside the first group. Order matters; items appear in the sidebar in the order 
 
 List entries show an entity count badge next to the label (based on the list's filters). Dashboard
 and graph entries do not show a count.
+
+### Hiding entries a user cannot act on (`permission:`)
+
+An entry with a `permission:` is omitted from the sidebar for principals who do
+not hold that permission — a global named permission granted through a role's
+`permissions:` list in `acl.yaml`, the same mechanism behind `history:read` and
+the `delegate-*` family:
+
+```yaml
+navigation:
+  - label: "Tickets"
+    list: all_tickets
+  - label: "Audit log"
+    list: audit_log
+    permission: admin:read      # only holders see this entry
+  - group: "Admin"
+    items:
+      - label: "Settings"
+        settings: true
+        permission: admin:settings
+```
+
+A group whose every item is hidden disappears with them, so you never get a
+heading with nothing under it. `permission:` is not valid **on** a group —
+gate the items instead.
+
+Behaviour without a policy: with no `acl.yaml`, every entry is shown. Nothing
+is denied when nothing is configured. Under `--read-only`, entries carrying a
+`permission:` are hidden, since the principal cannot act on anything.
+
+**This is a convenience, not a security control.** It keeps menu entries a user
+cannot act on out of their way; it does not protect anything. The target of a
+hidden entry behaves exactly as it always did — type its URL and you reach it,
+and a list still returns its ACL-scoped rows, which for someone permitted to
+read none of them is simply an empty list. Nor is anything concealed:
+`/api/v1/_config` serves the whole navigation tree to every principal.
+
+So do not use `permission:` here *instead of* real access control. What
+protects your data is the read ACL on the entities themselves; this only
+decides what appears in a menu.
 
 Direct items and groups can be freely mixed in any order.
 
