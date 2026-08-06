@@ -378,9 +378,17 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 }
 
 // Kanban defines a kanban board view for an entity type.
+//
+// Header and Footer carry admin-authored markdown rendered above and below the
+// board, respectively (sanitized client-side via renderMarkdown), matching the
+// list info regions. Unlike List there is no Description fallback: that alias
+// exists only because List.Description predated the feature and was already
+// present in configs, and a Kanban has no such legacy field to accommodate.
 type Kanban struct {
 	EntityType       string           `yaml:"entity_type" json:"entity"`
 	Title            string           `yaml:"title" json:"title"`
+	Header           string           `yaml:"header" json:"header,omitempty"`
+	Footer           string           `yaml:"footer" json:"footer,omitempty"`
 	ColumnProperty   string           `yaml:"column_property" json:"column_property"`
 	Columns          []KanbanColumn   `yaml:"columns,omitempty" json:"columns,omitempty"`
 	SwimlaneProperty string           `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
