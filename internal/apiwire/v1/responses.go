@@ -34,6 +34,31 @@ type Entity struct {
 	// per-entity GET responses. Same pointer / closed-world semantics
 	// as FieldAffordances.
 	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
+	// Redacted names the properties withheld from `Properties` by
+	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
+	// field-level sibling of Inaccessible, which says the same thing
+	// ("exists, value unreadable") for git-crypt-locked content.
+	//
+	// It exists because absence from `Properties` is ambiguous — a key can be
+	// missing because it was redacted OR because it was never set — and a
+	// WRITE surface has to tell those apart to know which inputs it may
+	// offer. Read-out surfaces are happy to conflate them; an edit form is
+	// not. Clients MUST NOT infer redaction from absence: consult this list.
+	//
+	// Disclosure boundary: this leaks property NAMES, never VALUES. That is
+	// not a new disclosure — the metamodel endpoint already serves the
+	// declared property names per type, and `visible:` redaction is defined
+	// as hiding values only, making no claim to conceal which properties
+	// exist. Row-level ACL is unaffected: whether an ENTITY exists remains a
+	// genuine secret, and this list only ever rides a response the caller was
+	// already authorized to read.
+	//
+	// Same pointer / closed-world semantics as FieldAffordances: present
+	// (possibly empty) on per-entity responses — `[]` meaning "evaluated,
+	// nothing redacted" — and nil on list rows and other non-per-entity
+	// shapes, which carry no write affordances. Names are sorted for a
+	// deterministic wire.
+	Redacted *[]string `json:"_redacted,omitempty"`
 	// Attachments maps a `file`-type property name to the LIST of files
 	// currently attached to it (a property may hold several when its
 	// metamodel `max` > 1). The value is always an array — even a
