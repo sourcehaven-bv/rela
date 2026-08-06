@@ -156,6 +156,31 @@ var (
 	sortedRemove     = storeutil.SortedRemove
 )
 
+// idTaken reports whether any key of index case-folds to the same identity as
+// id. except is skipped so a rename can ask "does any OTHER entity claim this
+// identity?" without self-colliding.
+//
+// Derived from the entities map on each call rather than kept as a second
+// index: entity IDs are written at five sites here, and a parallel map would
+// silently drift out of sync at whichever one a future change forgets. The
+// scan is O(n) but runs only on create and rename, never on a read path.
+//
+// Callers must hold m.mu.
+// A free function rather than a method — MemStore is at its plimsoll
+// max-methods line, and this needs no receiver state beyond the index.
+func idTaken(index map[string]*entity.Entity, id, except string) bool {
+	folded := storeutil.FoldID(id)
+	for existing := range index {
+		if existing == except {
+			continue
+		}
+		if storeutil.FoldID(existing) == folded {
+			return true
+		}
+	}
+	return false
+}
+
 // --- EntityReader ---
 
 func (m *MemStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
@@ -330,7 +355,9 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.entities[e.ID]; exists {
+	// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore they
+	// are one file, and the backends must agree on identity (BUG-3RCWNS).
+	if idTaken(m.entities, e.ID, "") {
 		return store.ErrConflict
 	}
 
@@ -441,7 +468,9 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	if _, exists := m.entities[newID]; exists {
+	// except=oldID: renaming an entity to a different casing of its own ID
+	// (abc -> ABC) is legitimate and must not self-collide.
+	if idTaken(m.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 
