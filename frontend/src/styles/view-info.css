@@ -1,0 +1,48 @@
+/* Admin-authored info regions (header/footer markdown) on list and kanban
+   views, authored in data-entry.yaml. Rendered HTML is sanitized by
+   renderMarkdown; these styles only govern typography/spacing.
+
+   Global rather than component-scoped so both EntityList and KanbanView render
+   the regions identically — a scoped copy per view drifts. No :deep() here: the
+   descendant selectors apply directly outside a scoped block. */
+.view-info {
+  color: var(--text-color);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.view-info--top {
+  /* Pulls up against the page/list header's margin-bottom: 24px so the info
+     sits close to the title rather than a full gap below it. Both .list-header
+     (EntityList) and .page-header (KanbanView) use 24px — keep in sync if
+     either changes. */
+  margin-top: -12px;
+  margin-bottom: 20px;
+}
+
+.view-info--bottom {
+  margin-top: 24px;
+}
+
+.view-info > :first-child {
+  margin-top: 0;
+}
+
+.view-info > :last-child {
+  margin-bottom: 0;
+}
+
+.view-info p,
+.view-info ul,
+.view-info ol {
+  margin: 0 0 8px;
+}
+
+.view-info a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.view-info a:hover {
+  text-decoration: underline;
+}

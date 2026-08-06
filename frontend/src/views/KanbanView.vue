@@ -7,11 +7,13 @@ import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type { Entity, KanbanConfig, KanbanCardField } from '@/types'
+import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import Badge from '@/components/common/Badge.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { renderMarkdown } from '@/utils/markdown'
 
 const props = defineProps<{
   id: string
@@ -96,6 +98,12 @@ const loadError = computed(() => {
   if (!err) return null
   return getErrorMessage(err, 'Failed to load board')
 })
+
+// Admin-authored info regions from data-entry.yaml, rendered as sanitized
+// markdown (renderMarkdown) above and below the board. Shares its resolvers and
+// its .view-info styles with EntityList so both views behave identically.
+const headerHtml = computed(() => renderMarkdown(viewHeaderMarkdown(kanbanConfig.value)))
+const footerHtml = computed(() => renderMarkdown(viewFooterMarkdown(kanbanConfig.value)))
 
 const entityType = computed(() => {
   if (!kanbanConfig.value) return undefined
@@ -469,6 +477,9 @@ function createNew() {
       </div>
     </div>
 
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="headerHtml" class="view-info view-info--top" v-html="headerHtml"/>
+
     <div v-if="truncated" class="truncation-banner" role="alert">
       Showing {{ entities.length }} of {{ totalCount }} items — the board is incomplete.
     </div>
@@ -597,13 +608,22 @@ function createNew() {
         </div>
       </div>
     </div>
+
+    <!-- Sits after every board branch (loading/error/simple/swimlane) so it
+         renders once regardless of state, and outside the board's horizontal
+         scroll container so it stays visible on a wide board. -->
+    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
+    <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml"/>
   </div>
 </template>
 
 <style scoped>
+/* The horizontal scroll belongs to the board containers, NOT this page wrapper.
+   With overflow-x here, a board wider than the viewport dragged the page title,
+   filter bar, truncation banner, and info regions sideways along with the
+   columns. Scoping it to the boards keeps page furniture fixed. */
 .kanban-view {
   max-width: 100%;
-  overflow-x: auto;
 }
 
 .page-header {
@@ -717,6 +737,14 @@ function createNew() {
   gap: 16px;
   min-height: 500px;
   padding-bottom: 20px;
+  /* Per CSS spec a non-visible overflow on one axis coerces the other from
+     `visible` to `auto`, so this box now ALSO clips vertically — `overflow-y:
+     visible` cannot opt out. Safe today: the card hover box-shadow (8px blur)
+     is inset by .column-cards' 12px padding, and padding-bottom cushions the
+     last card. Anything that must escape a card's box vertically (drag ghost,
+     tooltip, popover, sticky column header) will be clipped here — that is the
+     accepted cost of scoping the horizontal scroll to the board. */
+  overflow-x: auto;
 }
 
 .kanban-column {
@@ -828,7 +856,10 @@ function createNew() {
   background: var(--border-color);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  overflow: hidden;
+  /* Two-value form: scroll horizontally when the grid is wider than the
+     viewport, while keeping the vertical `hidden` that clips cells to the
+     rounded border. A bare `overflow-x: auto` would drop that clipping. */
+  overflow: auto hidden;
   min-height: 400px;
 }
 
