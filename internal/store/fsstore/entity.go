@@ -199,19 +199,21 @@ func (s *FSStore) PropertyValues(_ context.Context, property string, limit int) 
 
 // --- EntityWriter ---
 
-// idTaken reports whether a stored entity case-folds to the same identity as
+// idTaken reports whether any key of index case-folds to the same identity as
 // id. except is skipped so a rename can ask "does any OTHER entity claim this
 // identity?" without self-colliding.
 //
-// Derived from the index on each call rather than kept as a second map: the
-// entity index is mutated at several sites here, and a parallel index would
-// silently drift at whichever one a future change forgets to update. Runs
-// only on create and rename, never on a read path.
+// Scans the existing index on each call rather than maintaining a second
+// case-folded map: the entity index is mutated at several sites, and a
+// parallel index would silently drift at whichever one a future change
+// forgets to update. Runs only on create and rename, never on a read path.
 //
+// A free function rather than a method — FSStore is at its plimsoll
+// max-methods line, and this needs no receiver state beyond the index.
 // Callers must hold s.mu.
-func (s *FSStore) idTaken(id, except string) bool {
+func idTaken(index map[string]entityMeta, id, except string) bool {
 	folded := storeutil.FoldID(id)
-	for existing := range s.entities {
+	for existing := range index {
 		if existing == except {
 			continue
 		}
@@ -233,7 +235,7 @@ func (s *FSStore) createEntity(_ context.Context, e *entity.Entity) error {
 	// Case-folded: on a case-insensitive filesystem (macOS, Windows) "ABC"
 	// and "abc" are the same file, so a byte-exact check here would let the
 	// write silently overwrite the existing entity (BUG-3RCWNS).
-	if s.idTaken(e.ID, "") {
+	if idTaken(s.entities, e.ID, "") {
 		return store.ErrConflict
 	}
 
@@ -403,7 +405,7 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 		return nil, store.ErrNotFound
 	}
 	// except=oldID: an entity may change its own casing (abc -> ABC).
-	if s.idTaken(newID, oldID) {
+	if idTaken(s.entities, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 
