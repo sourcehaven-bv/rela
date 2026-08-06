@@ -239,9 +239,14 @@ Load-bearing details:
   for *every* request, so every principal would look unmatched and be
   rejected). Setting `reject` without them is a **load error**, not a
   runtime foot-gun.
-- **The 403 leaks nothing.** It does not distinguish "no IdP account"
-  from "no graph entity" — an unknown identity learns only that it was
-  refused.
+- **The 403 discloses only that the identity is unmatched.** Like every
+  ACL denial on the data-entry write path, the body carries a
+  `rule_kind`/`reason` (here, `unmatched-principal` — "verified principal
+  resolves to no user entity") so the SPA's affordance contract stays
+  uniform. It does **not** reveal anything the caller doesn't already
+  know: an unmatched principal knows it has no entity. It does not
+  distinguish "no IdP account" from "no graph entity," and it exposes no
+  policy detail beyond the rule that fired.
 
 ## Roles from a verified assertion (`asserted_role_assignments`)
 

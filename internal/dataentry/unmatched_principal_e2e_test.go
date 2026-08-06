@@ -136,6 +136,14 @@ func TestReject_DeniesEveryWritePath(t *testing.T) {
 	// (App.luaWriteDeps.EntityManager, app.go), so AuthorizeWrite — and thus
 	// reject — covers it by construction; TestReject_ActionSharesWriteAuthz pins
 	// that shared-manager invariant so the coverage-by-construction can't rot.
+	//
+	// Attachment, rename, clone, relation, and conflict-resolve writes are
+	// likewise not listed: all reach Declarative.AuthorizeWrite (most via
+	// entitymanager, conflict-resolve via h.acl().AuthorizeWrite directly), the
+	// single point the reject branch lives — pinned at the unit level by
+	// TestUnmatchedPrincipal_RejectDeniesFlaggedWrite. The two rows below are
+	// the DISTINCT-handler paths whose end-to-end wiring a shared-choke-point
+	// argument alone doesn't guarantee.
 	for _, tc := range []struct {
 		name, method, path, body string
 	}{

@@ -143,6 +143,12 @@ func (a *App) NewRouter() http.Handler {
 		// `unmatched_principal: reject` gate keys on. Wiring state, not a
 		// per-principal marker (a JWT and a header principal are identical on
 		// the Principal).
+		//
+		// This snapshots a.jwtGate at NewRouter time. SetJWTGate MUST run before
+		// NewRouter (it does in production wiring and in every test) — otherwise
+		// this captures nil and `unmatched_principal: reject` silently never
+		// fires. If a future refactor reorders these, that invariant breaks
+		// quietly; keep SetJWTGate ahead of NewRouter.
 		handler = attachACLRequest(handler, d, a.jwtGate != nil)
 	}
 	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
