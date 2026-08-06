@@ -364,16 +364,35 @@ func (c *sidebarCounts) countWithFilters(
 //
 //   - No `permission:` → show. The overwhelmingly common case, short-circuited
 //     before any ACL work so an unconfigured menu costs nothing.
-//   - [acl.ReadOnlyACL] → hide. Checked FIRST and independently of the read
-//     gate, because readGateFromContext hands back nopReadGate under read-only
-//     exactly as it does under NopACL, and nopReadGate.HoldsPermission returns
-//     true — so a guard written against the read gate alone fails OPEN here.
-//     That is the RR-CWWJGW shape; here it would only show an unusable entry,
-//     but the predicate gets copied and the next copy may not be cosmetic.
-//   - [acl.NopACL] → show. No policy configured ⇒ no restrictions, matching
-//     the read gate's allow-all posture. The only arm that grants by default.
+//   - [acl.NopACL] and [acl.ReadOnlyACL] → show. NEITHER carries a policy, so
+//     there is no permission model to consult and no principal who could be
+//     shown to hold anything: "no policy configured ⇒ no restrictions", the
+//     same posture the read gate takes. See the read-only note below.
 //   - [*acl.Declarative] → the principal must hold the permission.
 //   - anything else → hide.
+//
+// Read-only deserves its own paragraph, because the obvious arm is wrong in
+// two different ways and this predicate is a copy target.
+//
+// It is tempting to mirror authorizeCommand, which denies everything under
+// ReadOnlyACL. That is right for commands — they SHELL OUT, a write-shaped act
+// — but [acl.ReadOnlyACL] only implements AuthorizeWrite; it restricts no
+// reads whatsoever. Nav entries are overwhelmingly read surfaces (list, kanban,
+// dashboard, search), and hiding them would remove entries an observe-only
+// principal can use perfectly well. It would also hide them from EVERYONE,
+// since ReadOnlyACL has no identity to check — so `permission:` would silently
+// change meaning from "hide from non-holders" to "hide from all" based on a
+// process-wide flag about writes. An operator in post-incident forensic mode
+// (a documented ReadOnlyACL use case) would lose exactly the audit-log entry
+// they came for.
+//
+// The hazard the deny arm was reaching for is real but belongs elsewhere: under
+// ReadOnlyACL no middleware attaches a read gate, so readGateFromContext hands
+// back nopReadGate, whose HoldsPermission returns true unconditionally
+// (RR-CWWJGW). Falling THROUGH to the gate would therefore show gated entries
+// while looking like it had checked something. The explicit arm above is what
+// prevents that: the answer is the same, but it is reached deliberately rather
+// than by an accident that would keep working if the gate's behavior changed.
 //
 // The switch is closed by construction: an ACL implementation nobody taught
 // this function about hides gated entries rather than showing them. Both value
@@ -391,11 +410,11 @@ func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig
 	}
 
 	switch a := aclImpl.(type) {
-	case acl.NopACL, *acl.NopACL:
+	// Grouped deliberately: both mean "no policy is configured", so neither
+	// can answer whether a principal holds a permission. See the read-only
+	// paragraph above before splitting these apart.
+	case acl.NopACL, *acl.NopACL, acl.ReadOnlyACL, *acl.ReadOnlyACL:
 		return true
-
-	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
 
 	case *acl.Declarative:
 		if a == nil {

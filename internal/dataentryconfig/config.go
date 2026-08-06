@@ -454,8 +454,11 @@ type NavigationEntry struct {
 	// secret; the data is" in the root CLAUDE.md).
 	//
 	// Behavior with no `acl.yaml`: shown. No policy configured means no
-	// restrictions, matching the read gate's allow-all posture. Under
-	// `--read-only`: hidden, since the principal cannot act on anything.
+	// restrictions, matching the read gate's allow-all posture. Same under
+	// `--read-only`, which restricts writes only and so has no permission
+	// model to consult — hiding there would remove read surfaces an
+	// observe-only principal can use, and would hide them from everyone
+	// rather than from non-holders.
 	//
 	// Not valid on a group entry — a group is a container, not a destination;
 	// groups disappear on their own when every child is filtered out.

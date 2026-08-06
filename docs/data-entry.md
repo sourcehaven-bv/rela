@@ -1463,7 +1463,7 @@ kanbans:
 ## Navigation
 
 The navigation section defines the sidebar menu. Each entry is either a direct item (linking to a
-list, dashboard, or graph) or a **group** containing multiple items:
+list, kanban, dashboard, search or settings page) or a **group** containing multiple items:
 
 ```yaml
 navigation:
@@ -1480,8 +1480,8 @@ navigation:
     items:
       - label: "Categories"
         list: categories
-  - label: "Graph Explorer"
-    graph: true
+  - label: "Search"
+    search: true
 ```
 
 ### Direct Items
@@ -1492,7 +1492,8 @@ navigation:
 | `list`      | string | List name to navigate to (mutually exclusive with other types) |
 | `kanban`    | string | Kanban board name to navigate to                               |
 | `dashboard` | bool   | Link to the dashboard page                                     |
-| `graph`     | bool   | Link to the graph explorer                                     |
+| `search`    | bool   | Link to the search page                                        |
+| `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
 | `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
 
@@ -1515,8 +1516,8 @@ will reject it with a clear error message.
 The first navigable entry is the default landing page — the first direct item, or the first item
 inside the first group. Order matters; items appear in the sidebar in the order listed.
 
-List entries show an entity count badge next to the label (based on the list's filters). Dashboard
-and graph entries do not show a count.
+List and kanban entries show an entity count badge next to the label (based on their filters).
+Dashboard, search and settings entries do not show a count.
 
 ### Hiding entries a user cannot act on (`permission:`)
 
@@ -1543,9 +1544,11 @@ A group whose every item is hidden disappears with them, so you never get a
 heading with nothing under it. `permission:` is not valid **on** a group —
 gate the items instead.
 
-Behaviour without a policy: with no `acl.yaml`, every entry is shown. Nothing
-is denied when nothing is configured. Under `--read-only`, entries carrying a
-`permission:` are hidden, since the principal cannot act on anything.
+Behaviour without a policy: with no `acl.yaml`, every entry is shown — nothing
+is denied when nothing is configured. The same applies under `--read-only`,
+which restricts *writes* and leaves reads untouched, so there is no permission
+model to consult and no reason to hide read surfaces from an observe-only
+operator.
 
 **This is a convenience, not a security control.** It keeps menu entries a user
 cannot act on out of their way; it does not protect anything. The target of a
@@ -1557,6 +1560,12 @@ read none of them is simply an empty list. Nor is anything concealed:
 So do not use `permission:` here *instead of* real access control. What
 protects your data is the read ACL on the entities themselves; this only
 decides what appears in a menu.
+
+One caveat worth knowing: the permission name is **not** checked against
+`acl.yaml` at config load (the same is true of `commands:` and `documents:`).
+A typo like `admin:raed` produces an entry nobody can see, with no error. If a
+menu item has vanished, check the spelling against the `permissions:` list on
+your roles first.
 
 Direct items and groups can be freely mixed in any order.
 

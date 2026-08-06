@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // sidebarShape performs a sidebar request and returns the groups as
@@ -178,45 +179,72 @@ func TestNavPermission_NonHolderFiltered(t *testing.T) {
 	}
 }
 
-// TestNavPermission_ReadOnlyHides covers AC5, and is the canary for the
-// RR-CWWJGW hazard.
+// TestNavPermission_ReadOnlyShowsEverything pins the read-only case, which is
+// the one place the obvious answer is wrong in two directions at once.
 //
-// readGateFromContext returns nopReadGate under ReadOnlyACL exactly as it does
-// under NopACL, and nopReadGate.HoldsPermission returns true unconditionally.
-// A predicate written against the read gate alone therefore SHOWS every gated
-// entry under --read-only. permitsNavEntry has an explicit ReadOnlyACL arm
-// ahead of the gate; this test fails if someone removes it.
-func TestNavPermission_ReadOnlyHides(t *testing.T) {
+// acl.ReadOnlyACL denies WRITES; it restricts no reads at all. Nav entries are
+// overwhelmingly read surfaces, so hiding them would remove entries an
+// observe-only principal can use — and, since ReadOnlyACL carries no identity,
+// would hide them from EVERYONE rather than from non-holders. A `permission:`
+// would then mean something different depending on a process-wide flag about
+// writes. Losing the audit-log entry in post-incident forensic mode (a
+// documented ReadOnlyACL use case) is the concrete cost.
+//
+// So read-only behaves like NopACL: no policy, no permission model, nothing
+// hidden. Copying authorizeCommand's deny arm here would be wrong — commands
+// shell out, which is write-shaped; a menu link is not.
+func TestNavPermission_ReadOnlyShowsEverything(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		impl acl.ACL
+	}{
+		// Both forms: AuthorizeWrite has a value receiver, so &ReadOnlyACL{}
+		// also satisfies acl.ACL, and matching only the value form has
+		// previously let a pointer slip into a default arm in this package.
+		{"value form", acl.ReadOnlyACL{}},
+		{"pointer form", &acl.ReadOnlyACL{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestAppV1(t)
+			installGatedNavConfig(app)
+			app.acl = tc.impl
+
+			labels := sidebarLabels(t.Context(), t, app)
+			for _, want := range []string{"Open", "Audit", "Secrets", "Keys", "Public", "Private"} {
+				if !slices.Contains(labels, want) {
+					t.Errorf("--read-only restricts writes, not reads; %q must stay visible, got %v",
+						want, labels)
+				}
+			}
+		})
+	}
+}
+
+// TestNavPermission_ReadOnlyArmIsExplicit is the RR-CWWJGW canary.
+//
+// Under ReadOnlyACL no middleware attaches a read gate, so readGateFromContext
+// returns nopReadGate, whose HoldsPermission returns true unconditionally. A
+// predicate that fell THROUGH to the read gate would therefore also show every
+// gated entry — the same answer this feature wants, reached by accident.
+//
+// This test pins that the answer comes from the explicit arm instead: with a
+// gate on the context that denies everything, read-only must STILL show the
+// entries. If someone deletes the ReadOnlyACL arm, the *Declarative path is
+// not taken (ReadOnlyACL is not *Declarative) and the default arm hides them —
+// this fails. It is the difference between "correct" and "accidentally
+// correct", which matters because this predicate is a copy target.
+func TestNavPermission_ReadOnlyArmIsExplicit(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
 	app.acl = acl.ReadOnlyACL{}
 
-	labels := sidebarLabels(t.Context(), t, app)
-	for _, unwanted := range []string{"Audit", "Secrets", "Keys", "Private"} {
-		if slices.Contains(labels, unwanted) {
-			t.Errorf("under --read-only a permission-gated entry must be hidden; %q present in %v",
-				unwanted, labels)
-		}
-	}
-	for _, want := range []string{"Open", "Public"} {
-		if !slices.Contains(labels, want) {
-			t.Errorf("ungated entry %q must stay visible under --read-only, got %v", want, labels)
-		}
-	}
-}
+	// A gate that denies every permission. If the arm were removed and the
+	// predicate consulted the gate, this would hide the entries.
+	ctx := withReadGate(t.Context(), permGate{perms: map[string]bool{}})
 
-// TestNavPermission_ReadOnlyHides_PointerForm pins the &-reachable variant of
-// the same arm. acl.ReadOnlyACL's AuthorizeWrite has a value receiver, so
-// &acl.ReadOnlyACL{} also satisfies acl.ACL; matching only the value form once
-// let a pointer fall through to the default arm elsewhere in this package.
-func TestNavPermission_ReadOnlyHides_PointerForm(t *testing.T) {
-	app := newTestAppV1(t)
-	installGatedNavConfig(app)
-	app.acl = &acl.ReadOnlyACL{}
-
-	labels := sidebarLabels(t.Context(), t, app)
-	if slices.Contains(labels, "Audit") {
-		t.Errorf("&acl.ReadOnlyACL{} must hide gated entries too, got %v", labels)
+	labels := sidebarLabels(ctx, t, app)
+	if !slices.Contains(labels, "Audit") {
+		t.Errorf("the ReadOnlyACL arm must decide before any read-gate call, got %v", labels)
 	}
 }
 
@@ -236,35 +264,76 @@ func TestNavPermission_NilACLHides(t *testing.T) {
 	}
 }
 
-// TestNavPermission_FilterIsPresentationOnly covers AC8: hiding an entry
-// changes NO enforcement. The list behind a hidden entry answers a direct
-// request exactly as it did before — for this principal, with its normal
-// ACL-scoped rows.
+// TestNavPermission_FilterIsPresentationOnly covers AC8, and is the assertion
+// the whole "UX, not security" claim rests on. It has to fail if anyone ever
+// wires the nav filter into enforcement, so it tests the two cases where the
+// menu and the data could diverge — in BOTH directions:
 //
-// This is the assertion that keeps the feature honest. If someone ever makes
-// the sidebar filter load-bearing, this test is what should stop them.
+//   - bob is denied the *permission* but permitted the *data*: the entry is
+//     hidden and the list still returns its rows. Hiding gates nothing.
+//   - carol holds the *permission* but is denied the *data*: the entry is
+//     shown and the list comes back empty. Data-gating gates no menu.
+//
+// The rows assertion is the load-bearing half. Asserting only a 200 would pass
+// vacuously — handleV1ListEntities has no knowledge of navigation config, so
+// "the status is unchanged" is true by construction and survives any mutation
+// of permitsNavEntry.
 func TestNavPermission_FilterIsPresentationOnly(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
-	d := mustNewACL(t, gatedNavPolicy(), app.store)
+	seedEntity(app, &entity.Entity{
+		ID: "TKT-501", Type: "ticket", Properties: map[string]any{"title": "visible"},
+	})
+
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			// bob: may read tickets, holds no permission.
+			"viewer": {Read: []string{"ticket"}},
+			// carol: holds the permission, may read NOTHING.
+			"auditor": {Permissions: []string{"admin:read"}},
+		},
+		Assignments: map[string]string{"bob": "viewer", "carol": "auditor"},
+	}, app.store)
 	app.acl = d
 
-	ctx := gateCtxFor(principalCtx("bob"), t, d)
-
-	// The entry is hidden…
-	if slices.Contains(sidebarLabels(ctx, t, app), "Audit") {
-		t.Fatalf("precondition: the Audit entry should be hidden for bob")
+	rowsFor := func(t *testing.T, ctx context.Context) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		app.handleV1ListEntities(rec, req, "ticket", "tickets")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: got %d, want 200; body=%s", rec.Code, rec.Body)
+		}
+		var resp struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode list: %v\nbody: %s", err, rec.Body)
+		}
+		return len(resp.Data)
 	}
 
-	// …and its target is untouched: same status as the ungated list that
-	// points at the identical config, because the filter enforces nothing.
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	app.handleV1ListEntities(rec, req, "ticket", "tickets")
-	if rec.Code != http.StatusOK {
-		t.Errorf("hiding a nav entry must not change its target's behavior: got %d, want 200; body=%s",
-			rec.Code, rec.Body)
-	}
+	t.Run("entry hidden, data still readable", func(t *testing.T) {
+		ctx := gateCtxFor(principalCtx("bob"), t, d)
+		if slices.Contains(sidebarLabels(ctx, t, app), "Audit") {
+			t.Fatalf("precondition: the Audit entry should be hidden for bob")
+		}
+		if n := rowsFor(t, ctx); n == 0 {
+			t.Errorf("hiding a nav entry must not gate its target's data; got %d rows, want >0", n)
+		}
+	})
+
+	t.Run("entry shown, data still gated", func(t *testing.T) {
+		ctx := gateCtxFor(principalCtx("carol"), t, d)
+		if !slices.Contains(sidebarLabels(ctx, t, app), "Audit") {
+			t.Fatalf("precondition: carol holds admin:read, so the Audit entry should be shown")
+		}
+		if n := rowsFor(t, ctx); n != 0 {
+			t.Errorf("showing a nav entry must not grant its target's data; got %d rows, want 0", n)
+		}
+	})
 }
 
 // TestNavPermission_ConfigUnfiltered covers AC9: /_config keeps serving the
