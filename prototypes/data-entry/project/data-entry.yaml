@@ -32,6 +32,12 @@ documents:
     entity_type: category
     script: docs/category_report.lua
     timeout: 10
+  # Standalone: no entity_type, so it renders at /document/status_review and
+  # is reachable from the navigation entry below rather than an entity page.
+  status_review:
+    title: "Status Review"
+    script: docs/status_review.lua
+    timeout: 10
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
@@ -586,6 +592,8 @@ kanbans:
 navigation:
   - label: "Dashboard"
     dashboard: true
+  - label: "Status Review"
+    document: status_review
   - group: "Tickets"
     items:
       - label: "My Tickets"

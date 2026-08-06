@@ -197,12 +197,24 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 				Items:     make([]v1.SidebarItem, 0),
 			}
 			for _, item := range entry.Items {
+				if h.hidesNavEntry(r.Context(), item) {
+					continue
+				}
 				sidebarItem := h.navEntryToSidebarItem(r.Context(), item, counts)
 				group.Items = append(group.Items, sidebarItem)
+			}
+			// A group whose every item was hidden is dropped: an empty
+			// labeled group is a visible outline of what the principal
+			// cannot see, and reads as a rendering bug.
+			if len(group.Items) == 0 {
+				continue
 			}
 			navigation = append(navigation, group)
 		} else {
 			// Top-level item without group
+			if h.hidesNavEntry(r.Context(), entry) {
+				continue
+			}
 			item := h.navEntryToSidebarItem(r.Context(), entry, counts)
 			navigation = append(navigation, v1.SidebarGroup{
 				Items: []v1.SidebarItem{item},
@@ -347,12 +359,42 @@ func (h *viewsHandler) navEntryToSidebarItem(
 	case entry.Settings:
 		item.Href = "/settings"
 		item.Icon = "settings"
+	case entry.Document != "":
+		// Standalone documents only — validateNavEntry rejects an
+		// entity-anchored document here, since this href has no entity id
+		// segment to fill.
+		item.Href = "/document/" + entry.Document
+		item.Icon = "document"
 	case entry.Action != "":
 		item.Action = entry.Action
 		// Href stays empty — frontend renders this as a button
 	}
 
 	return item
+}
+
+// hidesNavEntry reports whether a navigation entry must be omitted from the
+// sidebar for the requesting principal.
+//
+// Only `document:` entries can be hidden today, and only when the referenced
+// document declares a `permission:` the principal lacks. This is a UX
+// affordance, NOT an authorization boundary: handleV1StandaloneDocument
+// re-checks the same permission, so a hidden entry is unreachable by direct
+// URL regardless. Same rule as `_actions` (see this package's CLAUDE.md) —
+// the server never trusts what it told the client to render.
+//
+// Entries are omitted rather than rendered-and-disabled: a link that always
+// 404s is worse than no link, and the whole point is to keep reports a user
+// cannot use out of their menu.
+func (h *viewsHandler) hidesNavEntry(ctx context.Context, entry dataentryconfig.NavigationEntry) bool {
+	if entry.Document == "" {
+		return false
+	}
+	docCfg, ok := h.schema().Cfg.Documents[entry.Document]
+	if !ok || docCfg.Permission == "" {
+		return false
+	}
+	return !readGateFromContext(ctx).HoldsPermission(ctx, docCfg.Permission)
 }
 
 // handleV1Views handles GET /api/v1/_views/{entityType}/{entityId}.

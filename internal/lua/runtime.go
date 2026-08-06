@@ -226,6 +226,28 @@ func WithDocumentMode(documentID, entryID string) Option {
 	}
 }
 
+// WithStandaloneDocumentMode marks the runtime as rendering a STANDALONE
+// document — one declared without an `entity_type:` in data-entry.yaml, whose
+// content is company-wide rather than about a single entity (TKT-M1AX6P). It
+// sets document mode, so stdout capture and the rela.output warning behave
+// exactly as for an entity render.
+//
+// Like [WithListDocumentMode] this is a SEPARATE constructor from
+// [WithDocumentMode] rather than the latter called with an empty entryID:
+// rela.document.entry_id must be Lua nil, and passing "" to express that is
+// exactly the footgun registerContextBindings documents (empty string is
+// truthy in Lua). Making the absence structural means no caller can get it
+// wrong.
+//
+// Unlike [WithListDocumentMode] there are no row/query bindings — a standalone
+// document has no driving list either. rela.document carries `id` alone.
+func WithStandaloneDocumentMode(documentID string) Option {
+	return func(r *Runtime) {
+		r.isDocument = true
+		r.documentID = documentID
+	}
+}
+
 // WithListDocumentMode marks the runtime as rendering a LIST export (the
 // `lists.<id>.export_render` override). It sets document mode, so stdout
 // capture and the rela.output warning behave exactly as for an entity
@@ -854,10 +876,10 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 	r.registerURLModule(rela)
 
 	// Document-mode context: rela.mode + rela.document.*.
-	// Only populated when WithDocumentMode or WithListDocumentMode was
-	// applied. In every other context rela.mode and rela.document are
-	// absent (Lua nil), so a script that branches on them sees nil outside
-	// document renders.
+	// Only populated when WithDocumentMode, WithStandaloneDocumentMode or
+	// WithListDocumentMode was applied. In every other context rela.mode and
+	// rela.document are absent (Lua nil), so a script that branches on them
+	// sees nil outside document renders.
 	if r.isDocument {
 		r.L.SetField(rela, "mode", lua.LString("document"))
 		docTable := r.L.NewTable()
@@ -866,7 +888,8 @@ func (r *Runtime) registerContextBindings(rela *lua.LTable) {
 		// entry_id is set ONLY when there is a real entry entity. An entity
 		// render always has one (the caller path-validates it before we get
 		// here), so this is byte-identical to the previous unconditional
-		// set; a LIST render has none and must see Lua nil, never "".
+		// set; a LIST render and a STANDALONE document render have none and
+		// must see Lua nil, never "".
 		// Empty-string would be the worse lie: it is truthy in Lua, so the
 		// idiomatic `if rela.document.entry_id then rela.get_entity(...)`
 		// guard would pass and then raise ("entity ID cannot be empty"),

@@ -87,6 +87,17 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    // Standalone documents — those configured without an `entity_type:`,
+    // whose content is company-wide rather than about one entity. Reached
+    // from a `document:` navigation entry. A separate route rather than an
+    // optional `:entityId?` param so the two document kinds stay distinct
+    // in the router as they are in the config and the API.
+    path: '/document/:name',
+    name: 'standalone-document',
+    component: () => import('@/views/DocumentView.vue'),
+    props: true,
+  },
+  {
     path: '/app/:id',
     name: 'app',
     component: () => import('@/views/AppHostView.vue'),

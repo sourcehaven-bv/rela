@@ -74,6 +74,28 @@ func (f *fakeScriptEngine) ExecuteDocument(_ context.Context, path string, _ lua
 	return nil
 }
 
+// ExecuteStandaloneDocument records a standalone render (TKT-M1AX6P). entryID
+// stays zero on the recorded call — that absence is the contract under test:
+// a document with no entity_type has no entry entity.
+func (f *fakeScriptEngine) ExecuteStandaloneDocument(_ context.Context, path string, _ lua.WriteDeps,
+	stdout io.Writer, documentID string, timeout time.Duration) error {
+	call := fakeScriptCall{path: path, documentID: documentID, timeout: timeout}
+	f.mu.Lock()
+	f.calls = append(f.calls, call)
+	f.mu.Unlock()
+
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	if f.err != nil {
+		return f.err
+	}
+	if f.stdout != nil {
+		_, _ = io.WriteString(stdout, f.stdout(call))
+	}
+	return nil
+}
+
 // ExecuteListDocument records a list render. It DRAINS the row provider
 // (twice) rather than ignoring it, so tests can assert which rows reached the
 // script — and that a second walk restarts — without standing up a real Lua

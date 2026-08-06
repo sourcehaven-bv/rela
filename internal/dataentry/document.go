@@ -56,6 +56,8 @@ type documentScriptEngine interface {
 		documentID, entryID string, timeout time.Duration) error
 	ExecuteListDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
 		documentID string, lrc lua.ListRenderContext, timeout time.Duration) error
+	ExecuteStandaloneDocument(ctx context.Context, path string, deps lua.WriteDeps, stdout io.Writer,
+		documentID string, timeout time.Duration) error
 }
 
 // documentDeps yields the lua.WriteDeps the script engine needs. The App
@@ -254,6 +256,68 @@ func (s *documentService) RenderListMarkdown(
 		return "", fmt.Errorf("list script render: %w", err)
 	}
 	return buf.String(), nil
+}
+
+// RenderStandalone renders a STANDALONE document — one declared without an
+// `entity_type:`, whose content is company-wide rather than about one entity
+// (TKT-M1AX6P). Returns HTML, like Render, so the HTTP layer treats both
+// document kinds identically from here on.
+//
+// Script-only, for the same reason RenderListMarkdown is: a `command:`
+// renderer's placeholders are {id}/{id_lower} of an entry entity, and a
+// standalone document has none. Rejecting is fail-closed — the alternative is
+// substituting an empty id into a shell command, which is how a renderer
+// silently produces a document about the wrong thing (or nothing).
+//
+// Like RenderListMarkdown it deliberately does NOT hash, cache, or
+// singleflight, and none of those are oversights:
+//   - computeDocumentHash loads ONE entity by id; there is no entry entity to
+//     hash, so there is no content hash to key a cache on.
+//   - A correct singleflight key would need the caller's full ACL scope,
+//     because two principals' aggregates legitimately differ. Getting that key
+//     wrong collapses two callers onto one render — the RR-2QSGLU
+//     cross-principal hazard. Not deduping is the safe default.
+//
+// Callers MUST apply the document's `permission:` gate before invoking this —
+// RenderStandalone makes no ACL decision of its own. (Its Lua reads are still
+// ACL-bound via lua.ReadDeps.VisibleReader, so content is gated regardless;
+// the caller's gate is what keeps a denied principal from triggering the
+// render at all.)
+func (s *documentService) RenderStandalone(
+	ctx context.Context, cfg documentRenderConfig,
+) (*DocumentResult, error) {
+	if cfg.Command != "" {
+		return nil, errors.New("a document without an entity_type must use a script renderer, not a command")
+	}
+	if s.scriptEngine == nil || s.luaDeps == nil {
+		return nil, errors.New("script rendering not available (engine or deps not wired)")
+	}
+
+	var buf bytes.Buffer
+	if err := s.scriptEngine.ExecuteStandaloneDocument(ctx, cfg.Script, s.luaDeps(), &buf,
+		cfg.ConfigID, cfg.Timeout); err != nil {
+		// Same shaping as renderScript/RenderListMarkdown: attach the output
+		// captured before the script threw, then bubble up unchanged so the
+		// HTTP layer can branch via errors.As.
+		var se *lua.ScriptError
+		if errors.As(err, &se) {
+			return nil, se.AttachCapturedOutput(buf.Bytes())
+		}
+		return nil, fmt.Errorf("standalone script render: %w", err)
+	}
+
+	htmlContent, err := markdownToHTML(buf.String())
+	if err != nil {
+		return nil, fmt.Errorf("markdown conversion: %w", err)
+	}
+
+	// No ContentHash and no Entities: both describe an entry entity's
+	// dependency footprint, which a standalone document does not have. The
+	// SSE live-reload path keys off Entities, so a standalone document
+	// refreshes on demand rather than on entity change — the same limitation
+	// TKT-E1FO1 (rela.document.depends_on) exists to lift, and inventing a
+	// bogus entity list here would make it worse, not better.
+	return &DocumentResult{HTML: htmlContent}, nil
 }
 
 // doRender performs the actual rendering work. Dispatches on Script vs.

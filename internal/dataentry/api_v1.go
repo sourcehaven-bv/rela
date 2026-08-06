@@ -2045,18 +2045,29 @@ func conflictAuditSubject(e *entityPkg.Entity, rel *entityPkg.Relation) *audit.S
 
 // --- Documents API ---
 
-// handleV1Documents handles GET /api/v1/_documents/{docName}/{entityId}.
-// Returns JSON with rendered HTML content for Vue SPA consumption.
+// handleV1Documents handles GET /api/v1/_documents/{docName}/{entityId} and
+// GET /api/v1/_documents/{docName}. Returns JSON with rendered HTML content
+// for Vue SPA consumption.
+//
+// The two path shapes serve the two document kinds
+// (dataentryconfig.DocumentConfig): the two-segment form renders an
+// entity-anchored document, the one-segment form a standalone one. Each shape
+// REJECTS the other kind rather than inventing or ignoring an entry id — see
+// handleV1StandaloneDocument.
 func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 
-	// Parse path: /api/v1/_documents/{docName}/{entityId}
+	// Parse path: /api/v1/_documents/{docName}[/{entityId}]
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/_documents/")
 	parts := strings.SplitN(path, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) == 1 || parts[1] == "" {
+		handleV1StandaloneDocument(a, w, r, parts[0])
+		return
+	}
+	if parts[0] == "" {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path must be /_documents/{docName}/{entityId}", "")
 		return
 	}
@@ -2075,6 +2086,16 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	docCfg, ok := a.State().Cfg.Documents[docName]
 	if !ok {
 		writeV1Error(w, r, http.StatusNotFound, "document_not_found", "Document config not found", "")
+		return
+	}
+
+	// A standalone document has no entry entity, so an entity-anchored
+	// request for one is a category error, not a document to render against
+	// the supplied id. Reject rather than silently ignoring the id.
+	if docCfg.IsStandalone() {
+		writeV1Error(w, r, http.StatusBadRequest, "document_kind_mismatch",
+			fmt.Sprintf("document %q has no entity_type; request it at /_documents/%s without an entity id",
+				docName, docName), "")
 		return
 	}
 
@@ -2097,6 +2118,13 @@ func (a *App) handleV1Documents(w http.ResponseWriter, r *http.Request) {
 	// BEFORE any rendering runs — a denied caller must never trigger the
 	// (possibly Lua) renderer.
 	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, entityID) {
+		return
+	}
+
+	// A doc-level `permission:` applies IN ADDITION to the per-entity gate
+	// above — it narrows, never widens (a holder still needs to pass the
+	// entity read gate). Same uniform-404 treatment for the same reason.
+	if !gateDocumentPermission(w, r, docCfg) {
 		return
 	}
 

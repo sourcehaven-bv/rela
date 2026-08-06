@@ -1315,8 +1315,14 @@ func TestValidateConfig_ViewSectionUsesPreviousCollectAs(t *testing.T) {
 
 // TestValidateConfig_Documents is a table-driven sweep of DocumentConfig
 // validation. Covers the {command, script} mutual-exclusion rule and the
-// still-required entity_type invariant (addresses RR-1FA8W, the risk that
-// relaxing command's required-ness would silently drop entity_type).
+// two document kinds (entity-anchored vs standalone).
+//
+// entity_type used to be unconditionally required; TKT-M1AX6P made an empty
+// entity_type mean "standalone document" instead. RR-1FA8W's underlying risk —
+// that relaxing one field's required-ness silently drops a sibling rule — still
+// applies, so the renderer cases below assert that a standalone document is
+// still held to the {command, script} rule rather than skipping validation
+// wholesale.
 func TestValidateConfig_Documents(t *testing.T) {
 	meta := testMetamodel()
 
@@ -1349,14 +1355,43 @@ func TestValidateConfig_Documents(t *testing.T) {
 			wantErr: "one of command or script must be set",
 		},
 		{
-			name:    "missing entity_type with command",
+			// Omitting entity_type is no longer an error — it declares a
+			// standalone document (TKT-M1AX6P).
+			name:    "standalone with command is valid",
 			doc:     DocumentConfig{Command: "render.sh"},
-			wantErr: "entity_type is required",
+			wantErr: "",
 		},
 		{
-			name:    "missing entity_type with script",
+			name:    "standalone with script is valid",
 			doc:     DocumentConfig{Script: "docs/render.lua"},
-			wantErr: "entity_type is required",
+			wantErr: "",
+		},
+		{
+			// RR-1FA8W guard: relaxing entity_type must not disable the
+			// sibling {command, script} rules for standalone documents.
+			name:    "standalone with neither command nor script is an error",
+			doc:     DocumentConfig{},
+			wantErr: "one of command or script must be set",
+		},
+		{
+			name:    "standalone with both command and script is an error",
+			doc:     DocumentConfig{Command: "render.sh", Script: "docs/render.lua"},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "standalone with a permission is valid",
+			doc:     DocumentConfig{Script: "docs/render.lua", Permission: "report:sales"},
+			wantErr: "",
+		},
+		{
+			// An edit button navigates to a form for the document's entity;
+			// a standalone document has none.
+			name: "standalone with an edit block is an error",
+			doc: DocumentConfig{
+				Script: "docs/render.lua",
+				Edit:   &DocumentEdit{Form: "edit_req", Label: "Edit"},
+			},
+			wantErr: "edit is not supported without entity_type",
 		},
 		{
 			name: "edit block with valid form and label",
@@ -1882,6 +1917,79 @@ func TestValidateNavigation_KnownAction(t *testing.T) {
 	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestValidateNavigation_Document covers the `document:` navigation entry
+// (TKT-M1AX6P). Only a standalone document can be a navigation target: an
+// entity-anchored one needs an entry id the sidebar cannot supply.
+func TestValidateNavigation_Document(t *testing.T) {
+	meta := testMetamodel()
+
+	cases := []struct {
+		name    string
+		docs    map[string]DocumentConfig
+		wantErr string // substring; "" means expect success
+	}{
+		{
+			name:    "standalone document is a valid nav target",
+			docs:    map[string]DocumentConfig{"sales_review": {Script: "docs/sales.lua"}},
+			wantErr: "",
+		},
+		{
+			name:    "unknown document is an error",
+			docs:    map[string]DocumentConfig{"other": {Script: "docs/other.lua"}},
+			wantErr: `unknown document "sales_review"`,
+		},
+		{
+			name: "entity-anchored document is not a valid nav target",
+			docs: map[string]DocumentConfig{
+				"sales_review": {Script: "docs/sales.lua", EntityType: "ticket"},
+			},
+			wantErr: `document "sales_review" has entity_type "ticket"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Documents: tc.docs,
+				Navigation: []NavigationEntry{
+					{Label: "Verkooprapportage", Document: "sales_review"},
+				},
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+// TestValidateNavigation_DocumentInGroup pins that the document check recurses
+// into groups like the list/kanban/action checks do.
+func TestValidateNavigation_DocumentInGroup(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{"spec": {Script: "docs/spec.lua", EntityType: "ticket"}},
+		Navigation: []NavigationEntry{
+			{Group: "Reports", Items: []NavigationEntry{
+				{Label: "Spec", Document: "spec"},
+			}},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil || !strings.Contains(err.Error(), `document "spec" has entity_type "ticket"`) {
+		t.Errorf("expected entity-anchored rejection inside a group, got: %v", err)
 	}
 }
 

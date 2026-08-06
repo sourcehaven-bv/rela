@@ -65,6 +65,33 @@ Rules for new write affordances in the Vue SPA (`frontend/`):
   plus a `perItemVerbs`/`perCollectionVerbs` update, and (b) the inline
   `v-if` on the component. No ESLint enforcement; code review catches drift.
 
+## Documents (`documents:` + `/_documents/...`)
+
+Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
+`entity_type:`). Rules for new code:
+
+- **Never let one URL shape serve the other kind.** `/_documents/{name}/{id}`
+  is entity-anchored, `/_documents/{name}` is standalone; each 400s on the
+  other. Do not "helpfully" fall back to rendering with an empty or guessed
+  entry id — that produces a document about the wrong thing, silently.
+- **`permission:` is an intent/UX gate, NOT the confidentiality boundary.**
+  Document content is bounded by `lua.ReadDeps.VisibleReader` like every other
+  read path, so a principal who cannot read the underlying entities renders an
+  empty report regardless. That is why standalone documents are ungated by
+  default (`TestStandaloneDocument_UngatedByDefault` pins it) — don't
+  "harden" it into a required field. `permission:` exists for aggregates whose
+  *composition* is sensitive, and to keep unusable entries out of a sidebar.
+- **Gate before the renderer anyway.** Content would be safe either way, but a
+  denied caller must not be able to trigger an expensive Lua aggregation. Deny
+  responses reuse the unknown-document 404 verbatim so names stay
+  non-enumerable.
+- **Sidebar filtering is an affordance, not authorization** — the endpoint
+  re-checks, exactly as with `_actions` above.
+- **A standalone render has no entry entity, so it has no `ContentHash`,
+  `Entities`, or disk cache**, and it is script-only. Don't reintroduce those
+  by keying a cache on something else; there is nothing to invalidate against
+  (TKT-E1FO1 is the real fix).
+
 ## Custom apps (`apps/<id>/` + `_apps/{id}/...` + the bridge)
 
 User-authored apps served in a sandboxed iframe. An app is a **folder**

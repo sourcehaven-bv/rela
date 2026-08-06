@@ -348,7 +348,11 @@ export interface NavigationEntry {
   list?: string
   dashboard?: boolean
   kanban?: string
+  search?: boolean
+  settings?: boolean
   action?: string
+  /** Names a standalone document (one configured without an entity_type). */
+  document?: string
   icon?: string
   // Group fields
   group?: string
@@ -379,16 +383,23 @@ export interface SidebarData {
   logoUrl?: string | null
 }
 
-// Document config for external rendering via shell commands
+// Document config for external rendering via a shell command or Lua script.
+// Exactly one of `command` / `script` is set (enforced server-side).
 export interface DocumentConfig {
   title?: string
-  entity_type?: string // Entity type this document applies to (for frontend filtering)
-  command: string
+  /** Entity type this document applies to (for frontend filtering).
+   *  ABSENT means a standalone document: it renders at /document/:name with
+   *  no entry entity, rather than being attached to one. */
+  entity_type?: string
+  command?: string
+  script?: string
   timeout?: number
+  /** Global named permission gating this document, if any. */
+  permission?: string
   edit?: DocumentEdit
 }
 
-// DocumentEdit configures the Edit button on the standalone document view.
+// DocumentEdit configures the Edit button on the full-page document view.
 // Both fields are required when the parent block is present (validated server-side).
 export interface DocumentEdit {
   form: string
