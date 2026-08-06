@@ -39,16 +39,42 @@ Eight findings, all recorded as review-response entities:
 
 | ID | Severity | Status |
 |----|----------|--------|
-| RR-E8Z1MR | critical | addressed — `_config` leaked gated document names + permission/script/command |
+| RR-E8Z1MR | critical | **wont-fix (reversed)** — premise false: config is not a secret |
 | RR-THBQQK | critical | addressed — anchored permission gate untested; gate ordering unpinned |
 | RR-DYNFSM | significant | addressed — `RenderStandalone` returned a struct it can't populate |
 | RR-ZXGPCU | significant | addressed — documents fail open where commands fail closed (documented) |
-| RR-R9O8BB | significant | addressed — `hidesNavEntry` re-read the schema mid-request |
+| RR-R9O8BB | significant | wont-fix (moot) — `hidesNavEntry` deleted with the sidebar filtering |
 | RR-P4E9GL | significant | **deferred** → TKT-OGR566 (no concurrency cap on Lua renders) |
 | RR-R6SJB8 | minor | addressed — extracted `handleV1AnchoredDocument` (134 → 22 line dispatcher) |
 | RR-WINN6Z | nit | addressed — duplicated docs paragraph |
 
 No open critical or significant responses remain.
+
+### Post-review correction (user)
+
+RR-E8Z1MR was **reversed**. The reviewer found `/_config` contradicting my
+documented "document names are not enumerable" claim and I fixed the endpoint.
+The user pointed out the premise is wrong: `data-entry.yaml` is an
+operator-authored file in the repo — routinely public — so its keys, script
+paths and permission values are already disclosed. The claim was the defect,
+not the endpoint.
+
+Reverted: the `v1.Document` wire type, `visibleDocuments`/`visibleNavigation`
+filtering, sidebar filtering, and the two tests asserting concealment. The
+`permission:` deny is now a **403 naming the document and permission** instead
+of a disguised 404 — actionable for the operator.
+
+**The sidebar filtering contradicted an existing recorded decision** —
+`docs/acl-security.md` § "Sidebar menu structure is principal-independent"
+already stated the menu is served identically to every principal and named
+per-principal hiding as a tightening deliberately not done. Neither planning
+nor this review found it; I found it only while verifying a doc reference.
+Now guarded by `TestSidebarAndConfig_PrincipalIndependent` and by a new root
+CLAUDE.md rule, "The configuration is not a secret; the data is", which
+generalizes past this ticket.
+
+The actual confidentiality boundary — the ACL-gated reader bounding what a
+document's Lua can read — was never touched by any of this.
 
 **On the deferral (RR-P4E9GL):** the uncapped Lua render path predates this
 ticket — an entity-anchored `script:` document with a wide traversal has the
