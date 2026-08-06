@@ -25,11 +25,26 @@ export interface Entity {
   _actions?: Record<string, boolean>
   // Per-field write affordances on per-entity GET responses.
   // Sparse: only fields whose verdict deviates from default appear.
-  // Hidden fields are omitted from `properties` AND from `_fields`.
+  // Hidden fields are omitted from `properties` AND from `_fields` —
+  // to learn WHICH fields are hidden, read `_redacted`, never absence.
   // Absent on list / mutation responses; present (possibly empty) on
   // per-entity GET (closed-world signal — empty means "evaluated, no
   // deviations"). See docs/data-entry/api-reference.md.
   _fields?: Record<string, FieldAffordance>
+  // Property names withheld from `properties` by field-level ACL
+  // (`visible:`) on this response — the field-level sibling of
+  // `inaccessible` (DEC-T0XIWQ).
+  //
+  // This exists because absence from `properties` is ambiguous: a key can
+  // be missing because it was redacted OR because it was never set. Read
+  // surfaces may conflate those; a write form must not, or it either hides
+  // a field the user can legitimately fill (BUG-MLT9DE) or offers a
+  // redacted one as an apparently-empty input and clobbers the stored
+  // value on save. NEVER infer redaction from absence — consult this list.
+  //
+  // Names only; values stay withheld. Present (possibly empty) on
+  // per-entity responses, absent on list rows.
+  _redacted?: string[]
   // Per-relation-type affordances on per-entity GET responses. Same
   // sparse / closed-world semantics as _fields. Per-relation-type
   // uniform — per-link verdicts are predicate territory (deferred).

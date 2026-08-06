@@ -2,8 +2,6 @@ package migration
 
 import (
 	"slices"
-	"strings"
-	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,15 +13,21 @@ func init() {
 // DataEntryCleanupMigration removes redundant properties from data-entry.yaml
 // that can be auto-resolved at runtime. When provided with a metamodel (via
 // SetMetamodel), it can detect and remove:
-//   - label matching titleCase(property)
 //   - widget matching the type→widget mapping
 //   - required matching metamodel property
 //   - default matching metamodel/type default
 //   - direction when unambiguous from metamodel
 //   - target_type when single target in metamodel
-//   - relation label matching metamodel relation label or titleCase
+//   - relation label matching the metamodel relation label
 //
-// Without a metamodel, it only removes labels matching titleCase and widget: select.
+// Without a metamodel, it only removes widget: select.
+//
+// Every removal above is metamodel-grounded: the server re-derives the value
+// from schema it owns, so the contract is verifiable. It deliberately does NOT
+// remove a field or column label matching titleCase(property) — that was a
+// convention-grounded removal depending on a client re-implementing an English
+// title-casing transform, which silently downgraded labels to raw identifiers.
+// See DEC-6C1NAA: a label is authored, never derived.
 type DataEntryCleanupMigration struct {
 	meta MetamodelProvider
 }
@@ -41,7 +45,7 @@ func (m *DataEntryCleanupMigration) Description() string {
 	if m.meta != nil {
 		return "Remove redundant properties from data-entry.yaml (using metamodel)"
 	}
-	return "Remove redundant labels and default widgets from data-entry.yaml"
+	return "Remove default widgets from data-entry.yaml"
 }
 
 func (m *DataEntryCleanupMigration) FileTypes() []FileType {
@@ -62,14 +66,8 @@ func (m *DataEntryCleanupMigration) Detect(doc *yaml.Node) bool {
 		}
 	}
 
-	// Check lists section
-	lists := GetMapValue(root, "lists")
-	if lists != nil && lists.Kind == yaml.MappingNode {
-		if m.detectInLists(lists) {
-			return true
-		}
-	}
-
+	// Lists are deliberately not inspected: a list column carries only a
+	// label, and labels are never stripped (DEC-6C1NAA).
 	return false
 }
 
@@ -114,29 +112,14 @@ func (m *DataEntryCleanupMigration) detectInFormRelations(formDef *yaml.Node, en
 	return false
 }
 
-func (m *DataEntryCleanupMigration) detectInLists(lists *yaml.Node) bool {
-	for i := 1; i < len(lists.Content); i += 2 {
-		listDef := lists.Content[i]
-		if listDef.Kind != yaml.MappingNode {
-			continue
-		}
-
-		columns := GetMapValue(listDef, "columns")
-		if columns != nil && columns.Kind == yaml.SequenceNode {
-			for _, col := range columns.Content {
-				if col.Kind == yaml.MappingNode && m.isRedundantLabel(col) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // isRedundantField checks if any property in this field is redundant.
+//
+// Note there is deliberately no label check here: a label is authored, never
+// derived (DEC-6C1NAA). Stripping a label the consumer cannot reproduce
+// silently downgrades it to a raw identifier, and because the server refuses
+// to start on unmigrated config the user cannot decline the downgrade.
 func (m *DataEntryCleanupMigration) isRedundantField(node *yaml.Node, entityType string) bool {
-	return m.isRedundantLabel(node) ||
-		m.isRedundantWidget(node, entityType) ||
+	return m.isRedundantWidget(node, entityType) ||
 		m.isRedundantRequired(node, entityType) ||
 		m.isRedundantDefault(node, entityType)
 }
@@ -147,16 +130,6 @@ func (m *DataEntryCleanupMigration) isRedundantRelation(node *yaml.Node, entityT
 		m.isRedundantRelationLabel(node) ||
 		m.isRedundantDirection(node, entityType) ||
 		m.isRedundantTargetType(node, entityType)
-}
-
-// isRedundantLabel checks if label matches titleCase(property).
-func (m *DataEntryCleanupMigration) isRedundantLabel(node *yaml.Node) bool {
-	prop := getScalarValue(node, "property")
-	label := getScalarValue(node, "label")
-	if prop == "" || label == "" {
-		return false
-	}
-	return label == titleCase(prop)
 }
 
 // isRedundantWidget checks if widget matches the type→widget mapping.
@@ -234,24 +207,24 @@ func (m *DataEntryCleanupMigration) isRedundantRelationWidget(node *yaml.Node) b
 	return widget == "select"
 }
 
-// isRedundantRelationLabel checks if relation label matches metamodel or titleCase.
+// isRedundantRelationLabel checks if a relation label duplicates the
+// metamodel's own label for that relation type.
+//
+// This is the one label the migration may remove, because it is genuinely
+// re-derivable: the metamodel label is server-authored, already served to the
+// SPA via the schema API, and language-neutral — the SPA recovers it from
+// `relationType.label`. That is a derivation from an AUTHORED label, not from
+// an identifier, which is what DEC-6C1NAA forbids. The former titleCase(rel)
+// arm was exactly such a forbidden derivation and has been removed.
 func (m *DataEntryCleanupMigration) isRedundantRelationLabel(node *yaml.Node) bool {
 	rel := getScalarValue(node, "relation")
 	label := getScalarValue(node, "label")
-	if rel == "" || label == "" {
+	if rel == "" || label == "" || m.meta == nil {
 		return false
 	}
 
-	// Check if matches metamodel label
-	if m.meta != nil {
-		relLabel := m.meta.GetRelationLabel(rel)
-		if relLabel != "" && label == relLabel {
-			return true
-		}
-	}
-
-	// Check if matches titleCase
-	return label == titleCase(rel)
+	relLabel := m.meta.GetRelationLabel(rel)
+	return relLabel != "" && label == relLabel
 }
 
 // isRedundantDirection checks if direction can be inferred from metamodel.
@@ -338,11 +311,8 @@ func (m *DataEntryCleanupMigration) Apply(doc *yaml.Node) error {
 		m.cleanupForms(forms)
 	}
 
-	lists := GetMapValue(root, "lists")
-	if lists != nil && lists.Kind == yaml.MappingNode {
-		m.cleanupLists(lists)
-	}
-
+	// Lists are left untouched: a list column carries only a label, and
+	// labels are never stripped (DEC-6C1NAA).
 	return nil
 }
 
@@ -367,9 +337,7 @@ func (m *DataEntryCleanupMigration) cleanupFormFields(formDef *yaml.Node, entity
 		if field.Kind != yaml.MappingNode {
 			continue
 		}
-		if m.isRedundantLabel(field) {
-			DeleteMapKey(field, "label")
-		}
+		// No label removal here — see isRedundantField (DEC-6C1NAA).
 		if m.isRedundantWidget(field, entityType) {
 			DeleteMapKey(field, "widget")
 		}
@@ -406,25 +374,6 @@ func (m *DataEntryCleanupMigration) cleanupFormRelations(formDef *yaml.Node, ent
 	}
 }
 
-func (m *DataEntryCleanupMigration) cleanupLists(lists *yaml.Node) {
-	for i := 1; i < len(lists.Content); i += 2 {
-		listDef := lists.Content[i]
-		if listDef.Kind != yaml.MappingNode {
-			continue
-		}
-
-		columns := GetMapValue(listDef, "columns")
-		if columns == nil || columns.Kind != yaml.SequenceNode {
-			continue
-		}
-		for _, col := range columns.Content {
-			if col.Kind == yaml.MappingNode && m.isRedundantLabel(col) {
-				DeleteMapKey(col, "label")
-			}
-		}
-	}
-}
-
 // Helper functions
 
 func getScalarValue(node *yaml.Node, key string) string {
@@ -437,21 +386,4 @@ func getScalarValue(node *yaml.Node, key string) string {
 
 func containsStr(slice []string, s string) bool {
 	return slices.Contains(slice, s)
-}
-
-// titleCase converts snake_case or kebab-case to Title Case.
-func titleCase(s string) string {
-	s = strings.ReplaceAll(s, "_", " ")
-	s = strings.ReplaceAll(s, "-", " ")
-
-	words := strings.Fields(s)
-	for i, word := range words {
-		if word != "" {
-			runes := []rune(word)
-			runes[0] = unicode.ToUpper(runes[0])
-			words[i] = string(runes)
-		}
-	}
-
-	return strings.Join(words, " ")
 }

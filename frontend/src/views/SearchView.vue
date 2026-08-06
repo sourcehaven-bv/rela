@@ -55,16 +55,13 @@ const entityTypes = computed(() => {
   return types
 })
 
-function titleCase(str: string): string {
-  return str.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-}
-
 function buildFilterLabel(property: string, value: string): string {
   if (property === 'type') {
     const t = entityTypes.value.find((t) => t.value === value)
     return `Entity Type: ${t?.label || value}`
   }
-  return `${titleCase(property)}: ${value}`
+  // DEC-6C1NAA: the property name is shown raw, not title-cased.
+  return `${property}: ${value}`
 }
 
 function handleAdHocApply(property: string, value: string) {

@@ -4355,6 +4355,104 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 // resolver populates the expected sparse fixture verdicts. Uses a
 // hand-rolled fixture resolver to keep the test independent of the
 // project's real metamodel (which doesn't have all the demo fields).
+// TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields is the wire half of
+// BUG-MLT9DE / DEC-T0XIWQ. Before `_redacted`, a hidden property and a
+// never-set one were byte-identical on the wire — both simply absent from
+// `properties`, both absent from the sparse `_fields`. A write surface could
+// only guess which it was looking at, and guessing "hidden" made every unset
+// property permanently unfillable in the edit form.
+//
+// This pins the disambiguation end-to-end: hidden VALUES stay withheld, hidden
+// NAMES are stated, and an unset property is named nowhere — so the client can
+// tell the three cases apart without inferring anything from absence.
+func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = fakeResolver{
+		fv: FieldVerdicts{Visible: map[string]bool{"title": false}},
+	}
+	// `status` is stored; `title` is stored but hidden; the ticket type's other
+	// declared properties are simply unset — the BUG-MLT9DE case.
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "secret", "status": "open"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.String()
+
+	var got v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// The value stays secret — that part of the contract is unchanged.
+	if strings.Contains(raw, "secret") {
+		t.Errorf("hidden VALUE must never reach the wire; got: %s", raw)
+	}
+	if _, present := got.Properties["title"]; present {
+		t.Errorf("hidden field must be absent from properties; got: %s", raw)
+	}
+
+	// The name is now stated, so the client never has to infer.
+	if got.Redacted == nil {
+		t.Fatalf("_redacted must be present on a per-entity GET; got: %s", raw)
+	}
+	if len(*got.Redacted) != 1 || (*got.Redacted)[0] != "title" {
+		t.Errorf("_redacted: got %v, want exactly [title]", *got.Redacted)
+	}
+
+	// And an UNSET property is named nowhere — not in properties, not in
+	// _fields, not in _redacted. That absence-without-redaction is exactly
+	// what the edit form must render rather than hide.
+	if _, present := got.Properties["effort"]; present {
+		t.Fatalf("precondition: 'effort' should be unset on this fixture")
+	}
+	for _, name := range *got.Redacted {
+		if name == "effort" {
+			t.Errorf("an unset property must NOT be reported as redacted")
+		}
+	}
+}
+
+// TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden pins the
+// closed-world half: under the permissive default `_redacted` is present and
+// EMPTY ("evaluated, nothing hidden"), not absent. An absent list would be
+// indistinguishable from "this server does not report redaction", which is the
+// ambiguity the field exists to remove.
+func TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden(t *testing.T) {
+	app := newTestAppV1(t)
+	app.fieldResolver = NopFieldVerdictResolver{}
+	seedEntity(app, &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.handleV1GetEntity(rec, req, "ticket", "tickets", "TKT-001")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var got v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Redacted == nil {
+		t.Fatal("_redacted pointer should be non-nil (closed-world signal)")
+	}
+	if len(*got.Redacted) != 0 {
+		t.Errorf("_redacted: got %v, want empty under the permissive default", *got.Redacted)
+	}
+}
+
 func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	app := newTestAppV1(t)
 	falseVal := false
@@ -4483,9 +4581,29 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
+	// The invariant is about the VALUE: a stale client must not be able to
+	// read a hidden property out of its own write response. The NAME is a
+	// different matter — since DEC-T0XIWQ the response deliberately lists
+	// hidden names in `_redacted` so a write surface can tell "hidden" from
+	// "never set" (property names are already public via the metamodel; only
+	// values are secret). So assert on the value and on `properties`, not on
+	// a whole-body substring match for the name.
 	body := rec.Body.String()
-	if strings.Contains(body, `"title"`) || strings.Contains(body, "secret") {
-		t.Errorf("PATCH echo must NOT contain hidden field; got: %s", body)
+	if strings.Contains(body, "secret") {
+		t.Errorf("PATCH echo must NOT contain the hidden VALUE; got: %s", body)
+	}
+	var echoed v1.Entity
+	if err := json.Unmarshal(rec.Body.Bytes(), &echoed); err != nil {
+		t.Fatalf("decode echo: %v", err)
+	}
+	if _, present := echoed.Properties["title"]; present {
+		t.Errorf("hidden field must be absent from properties; got: %s", body)
+	}
+	if echoed.Redacted == nil {
+		t.Fatalf("_redacted must be present on a per-entity response; got: %s", body)
+	}
+	if len(*echoed.Redacted) != 1 || (*echoed.Redacted)[0] != "title" {
+		t.Errorf("_redacted must name the hidden field; got %v", *echoed.Redacted)
 	}
 }
 
@@ -5403,6 +5521,11 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	}
 	if strings.Contains(body, `"_relations"`) {
 		t.Errorf("collection response must NOT contain _relations; got: %s", body)
+	}
+	// `_redacted` rides the same per-entity boundary (DEC-T0XIWQ): list rows
+	// carry no write affordances, so they carry no redaction list either.
+	if strings.Contains(body, `"_redacted"`) {
+		t.Errorf("collection response must NOT contain _redacted; got: %s", body)
 	}
 }
 

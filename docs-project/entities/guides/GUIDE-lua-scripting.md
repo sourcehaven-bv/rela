@@ -157,7 +157,7 @@ rela.create_entity("ticket", {
 |----------|------|-------------|
 | `name` | string | Field identifier (required, except for markdown) |
 | `type` | string | Field type (required) |
-| `label` | string | Display label (defaults to title-cased name) |
+| `label` | string | Display label (defaults to the raw field name) |
 | `content` | string | Markdown content (required for markdown fields) |
 | `required` | boolean | Whether field is required |
 | `default` | varies | Default value |

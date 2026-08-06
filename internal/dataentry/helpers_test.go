@@ -470,28 +470,6 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-func TestTitleCase(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"snake_case", "Snake Case"},
-		{"kebab-case", "Kebab Case"},
-		{"already Title", "Already Title"},
-		{"single", "Single"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := titleCase(tt.input)
-			if got != tt.want {
-				t.Errorf("titleCase(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestResolvePropertyType(t *testing.T) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{

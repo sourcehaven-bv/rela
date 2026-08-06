@@ -80,6 +80,34 @@ func ValidateProperty(prop string) error {
 	return nil
 }
 
+// FoldID returns the case-folded form of an entity ID, for use as an
+// identity key rather than as a display or storage value.
+//
+// Two IDs that fold to the same value are ONE entity (BUG-3RCWNS). This is
+// not a stylistic rule — it is forced by fsstore, which writes "<id>.md" and
+// so inherits the host filesystem's case behavior: on macOS and Windows
+// "abc" and "ABC" are the same file. memstore and pgstore
+// (id TEXT COLLATE "C") are byte-exact and would otherwise keep them as two
+// separate entities.
+//
+// The backends must agree, because entities move between them: migrating a
+// project that holds both "abc" and "ABC" into fsstore would silently drop
+// one, and `rela sync` between a byte-exact and a case-folding store has no
+// defined convergence. Enforcing identity in the shared layer is what keeps
+// the backends substitutable (FEAT-CO4YP); the conformance suite pins it via
+// CreateRejectsCaseVariantID.
+//
+// Uses strings.ToLower rather than strings.EqualFold's full Unicode folding
+// because entity IDs are ASCII by construction (see entity.ValidateID), so
+// the simple mapping is total over the legal input set and, unlike Unicode
+// folding, cannot map two distinct ASCII IDs together.
+//
+// Callers must keep storing the ORIGINAL id — this value is only ever a
+// lookup key. Casing is preserved in the entity and on disk.
+func FoldID(id string) string {
+	return strings.ToLower(id)
+}
+
 // SortedInsert adds key to a sorted slice, maintaining sort order.
 func SortedInsert(s []string, key string) []string {
 	i, _ := slices.BinarySearch(s, key)

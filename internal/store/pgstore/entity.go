@@ -245,6 +245,14 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
+	// ON CONFLICT (id) only swallows a clash on the byte-exact primary key. A
+	// clash on the case-folded identity index (entities_id_lower_key, e.g.
+	// creating "ABC" when "abc" exists) surfaces as a unique violation instead
+	// — it is the same "already exists" outcome, so it maps to ErrConflict
+	// rather than leaking a driver error (BUG-3RCWNS).
+	if isUniqueViolation(err) {
+		return store.ErrConflict
+	}
 	if err != nil {
 		return err
 	}
@@ -396,7 +404,13 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 	if err != nil {
 		return nil, err
 	}
-	err = tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, newID).Scan(&exists)
+	// lower(...) so a rename onto an existing entity's case-variant conflicts
+	// (BUG-3RCWNS); `id <> $2` lets an entity change its OWN casing
+	// (abc -> ABC), which is a legitimate rename and not a self-collision.
+	// Matches the entities_id_lower_key index, so this uses it.
+	err = tx.QueryRow(ctx,
+		`SELECT true FROM entities WHERE lower(id) = lower($1) AND id <> $2`,
+		newID, oldID).Scan(&exists)
 	if err == nil {
 		return nil, store.ErrConflict
 	}

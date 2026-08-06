@@ -69,7 +69,7 @@ func TestPrincipalProperty_MiddlewareReStampsCtx(t *testing.T) {
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = principal.From(r.Context())
 	})
-	handler := attachACLRequest(next, d)
+	handler := attachACLRequest(next, d, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),
@@ -97,7 +97,7 @@ func TestPrincipalProperty_MiddlewareKeepsRawOnNoMatch(t *testing.T) {
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = principal.From(r.Context())
 	})
-	handler := attachACLRequest(next, d)
+	handler := attachACLRequest(next, d, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),

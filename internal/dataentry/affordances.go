@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -834,6 +835,25 @@ func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.
 	return out
 }
 
+// redactedPropertyNames returns the sorted names of properties withheld by
+// field-level ACL, for the `_redacted` wire field (DEC-T0XIWQ). Always
+// non-nil — an empty slice is the closed-world "evaluated, nothing redacted"
+// signal, distinct from `_redacted` being absent entirely (a shape that
+// carries no write affordances, e.g. a list row).
+//
+// Takes already-resolved verdicts rather than re-resolving so a caller that
+// has them (attachEntityAffordances) pays for one FieldVerdicts call, not two.
+func redactedPropertyNames(v FieldVerdicts) []string {
+	out := make([]string, 0, len(v.Visible))
+	for name, visible := range v.Visible {
+		if !visible {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out) // deterministic wire
+	return out
+}
+
 // computeRelationAffordances returns the sparse `_relations` wire map
 // for entity e. Only relation types with at least one deviation
 // (creatable=false, removable=false, or any meta-field writable=false)
@@ -1138,6 +1158,11 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	relations := svc.computeRelationAffordances(ctx, e)
 	result.FieldAffordances = &fields
 	result.RelationAffordances = &relations
+	// `_redacted` names what stripHiddenProperties removed, so a write surface
+	// can tell "hidden" from "never set" instead of guessing from absence
+	// (DEC-T0XIWQ). Rides the per-entity shapes only, like `_fields`.
+	redacted := redactedPropertyNames(verdicts)
+	result.Redacted = &redacted
 	if transitions := svc.computeTransitions(ctx, e, verdicts); transitions != nil {
 		result.Transitions = &transitions
 	}
