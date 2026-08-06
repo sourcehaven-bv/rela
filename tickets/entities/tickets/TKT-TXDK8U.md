@@ -5,7 +5,7 @@ title: 'Permission-based navigation filtering (UX: hide menu entries a user cann
 kind: enhancement
 priority: medium
 effort: m
-status: review
+status: done
 ---
 
 ## Goal

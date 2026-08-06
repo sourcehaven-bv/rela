@@ -62,6 +62,17 @@ the entry is absent from every group.
 hidden.** This is the arm that the read gate alone gets wrong (see Security).
 *Test:* asserts hidden, and is the canary for the RR-CWWJGW hazard.
 
+   **REVISED DURING REVIEW (RR-XYO03L): read-only now SHOWS gated entries.**
+   The rationale above was wrong and I had not checked it against
+   `acl.ReadOnlyACL`'s contract: it implements only `AuthorizeWrite` and
+   restricts no reads, while nav entries are overwhelmingly read surfaces. It
+   also carries no identity, so hiding removed entries from *everyone* rather
+   than from non-holders. Read-only is structurally the same case as NopACL —
+   no policy, so no permission model — and is grouped with it. The explicit arm
+   remains, because falling through to the read gate would reach the same
+   answer by accident (RR-CWWJGW); `TestNavPermission_ReadOnlyArmIsExplicit`
+   pins the difference.
+
 6. **A group whose every item is hidden is dropped**, not rendered as a bare
 heading. *Test:* two-item group, both gated, both denied ⇒ group absent.
 
@@ -154,7 +165,9 @@ closed switch:
   - `entry.Permission == ""` → **true** (the common case, short-circuited first);
   - `aclImpl == nil` → false (wiring bug fails closed);
   - `acl.NopACL` / `*acl.NopACL` → **true** (no policy ⇒ no restrictions, AC2);
-  - `acl.ReadOnlyACL` / `*acl.ReadOnlyACL` → **hide** (AC5). Read-only means the
+  - `acl.ReadOnlyACL` / `*acl.ReadOnlyACL` → **show**, grouped with NopACL
+(revised during review — see AC5). Originally specified as **hide**, on the
+reasoning below, which was wrong: read-only means the
 principal can't act; a permission-gated entry is exactly the thing to hide.
 *This arm must be explicit and precede any read-gate use* — see Security;
   - `*acl.Declarative` → `readGateFromContext(ctx).HoldsPermission(...)`;
@@ -304,8 +317,8 @@ independently, and the NopACL/read-only behaviour
 principal-independent" with the new behaviour
 - [x] `internal/dataentry/CLAUDE.md` — nav filtering is an affordance; the
 ReadOnlyACL arm is load-bearing; do not filter `/_config`
-- [ ] Root `CLAUDE.md` — N/A (the config-is-not-secret rule already covers the
-framing)
+- [x] ~~Root `CLAUDE.md`~~ (N/A: the config-is-not-secret rule added in
+TKT-M1AX6P already covers the framing)
 
 ## Design Review
 
