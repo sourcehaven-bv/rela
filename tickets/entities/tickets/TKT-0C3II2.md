@@ -5,7 +5,7 @@ title: Reject an unmatched verified principal's writes (unmatched_principal poli
 kind: enhancement
 priority: medium
 effort: s
-status: in-progress
+status: done
 ---
 
 A cryptographically verified principal whose subject resolves to no
