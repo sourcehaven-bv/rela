@@ -43,6 +43,11 @@
    * long unbroken value (an ID, a URL) would push the track wider than its
    * share and knock the whole row out of alignment. */
   gap: var(--space-lg) var(--space-xl);
+  /* Top-align, don't stretch. Grid items default to `stretch`, so one tall
+   * field in a row (a state-machine control with a transitions panel, a
+   * multi-line value) would make every neighbour equally tall and leave a
+   * void under their controls. */
+  align-items: start;
   margin: 0;
 }
 

@@ -72,8 +72,11 @@ forms:
         widget: textarea
         help: "Detailed description of the issue"
       # Title and description stay full width — a summary line and a textarea
-      # both want the room. The short fields below pair up on the 12-column
-      # grid: who reported / who owns it, then when / how long.
+      # both want the room. The short fields pair up on the 12-column grid.
+      #
+      # The same grouping is authored on edit_ticket and the ticket view, so
+      # the three ticket surfaces line up with each other. Keep them in step:
+      # a field that moves here should move there too.
       - property: priority
         span: 4
       - property: reporter
@@ -85,9 +88,9 @@ forms:
         placeholder: "assignee.name"
         span: 4
       - property: due_date
-        span: 6
+        span: 4
       - property: estimated_hours
-        span: 6
+        span: 4
       - property: status
         hidden: true
     relations:
@@ -105,22 +108,32 @@ forms:
     mode: edit
     body: true
     fields:
+      # Same grouping as create_ticket and the ticket view: title and
+      # description full width, the three classification fields across one
+      # row, then the two numbers. Editing a ticket should feel like the
+      # screen you were just reading.
       - property: title
       - property: description
         widget: textarea
-      - property: priority
       - property: status
+        span: 4
         transitions:
           open: [in-progress, closed]
           in-progress: [open, resolved]
           resolved: [closed, in-progress]
           closed: [open]
+      - property: priority
+        span: 4
       - property: assignee
         label: "Assign to"
+        span: 4
       - property: reporter
         label: "Reported by"
+        span: 4
       - property: due_date
+        span: 4
       - property: estimated_hours
+        span: 4
       - property: is_blocked
     relations:
       - relation: belongs-to
@@ -442,21 +455,22 @@ views:
           # width (the default). Grouping is DECLARED here, not left to
           # whatever the viewport happens to fit.
           #
-          # Workflow state, then the two people, then the two numbers —
-          # three rows of related fields rather than six fields wrapping
-          # wherever they land.
+          # Deliberately the SAME grouping as the create and edit forms, so a
+          # ticket looks like a ticket wherever you meet it: the three
+          # classification fields across one row, then the two numbers.
+          # Reading a ticket and editing one shouldn't feel like two screens.
           - property: status
-            span: 6
+            span: 4
           - property: priority
-            span: 6
+            span: 4
           - property: assignee
-            span: 6
+            span: 4
           - property: reporter
-            span: 6
+            span: 4
           - property: due_date
-            span: 6
+            span: 4
           - property: estimated_hours
-            span: 6
+            span: 4
       # Ticket body (markdown content)
       - source: entry
         display: content

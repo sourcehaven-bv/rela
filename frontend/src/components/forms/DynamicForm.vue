@@ -1726,6 +1726,12 @@ onBeforeRouteLeave(async () => {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 20px var(--space-xl);
+  /* Top-align, don't stretch. Grid items default to `stretch`, which makes
+     every field in a row as tall as the tallest — so one field with a
+     transitions panel or a long help text under it leaves its neighbours
+     with a void beneath their input. Aligning to the start keeps each
+     control tight to its own label. */
+  align-items: start;
 }
 
 /* EVERY direct child spans the full 12 by default, not just `.form-field`.
