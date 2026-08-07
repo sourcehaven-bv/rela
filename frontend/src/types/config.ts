@@ -141,7 +141,15 @@ export interface FormFieldOrRelation {
   // Common props
   label?: string
   widget?: string
-  /** Width on the 12-column form grid; absent = full width. See FormField. */
+  /**
+   * Width on the 12-column form grid; absent = full width. See FormField.
+   *
+   * Only meaningful on the FIELD half of this union. A relation entry renders
+   * via RelationCards / RelationPicker, which do not read it — those widgets
+   * (a card list, a searchable multi-select) have a natural minimum width that
+   * a narrow column would break. The config validator rejects a span on a
+   * relation so an author is told rather than left wondering.
+   */
   span?: number
   // Wizard conditions (see FormField / FormRelation)
   visible_when?: string

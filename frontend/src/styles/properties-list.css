@@ -64,6 +64,15 @@
   min-width: 0;
 }
 
+/* Labels are sentence-case, NOT uppercase — a deliberate change, not an
+ * oversight from consolidating the three forked copies.
+ *
+ * All three carried `text-transform: uppercase` on dt, so the detail page and
+ * side panel SHOUTED their labels while the forms one line away used sentence
+ * case. That inconsistency was one of the things this arc set out to fix, and
+ * uppercase also mangles non-English labels (rela's metamodel is deliberately
+ * language-neutral, and casing rules are not universal). Pinned by
+ * propertiesListGrid.test.ts. */
 .property-item dt,
 .property-item .property-label {
   font-size: var(--font-size-sm);

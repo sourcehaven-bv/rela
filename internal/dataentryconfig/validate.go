@@ -251,6 +251,26 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	return errs
 }
 
+// validateSidePanelSpans checks `span` on a form's side-panel section fields.
+//
+// Side panels reuse ViewSection/ViewSectionField and render through the same
+// buildSections path as a view, so a span authored there reaches the wire — but
+// no other validator descends into form.SidePanel, so it would otherwise go
+// unchecked. Nil panel is the common case and yields nothing.
+func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
+	if panel == nil {
+		return nil
+	}
+	var errs []string
+	for i, sec := range panel.Sections {
+		for j, f := range sec.Fields {
+			errs = append(errs, validateSpan(f.Span,
+				fmt.Sprintf("form %q: side_panel section[%d] field[%d]", formID, i, j))...)
+		}
+	}
+	return errs
+}
+
 // validateForms validates form definitions.
 func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
@@ -291,6 +311,19 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 				errs = append(errs, validateFormRelation(cfg, formID, ctx, i, r, form.EntityType, meta)...)
 			}
 		}
+
+		// Side-panel sections carry ViewSectionField, the same struct used by
+		// views — so they carry `span` too, and executeSidePanel renders them
+		// through the same buildSections path. Nothing else in this file
+		// descends into form.SidePanel, so without this a bad span there is
+		// accepted in silence: exactly the failure validateSpan exists to
+		// prevent, on a real config path.
+		//
+		// Scoped to span deliberately. Side-panel property names have never
+		// been validated either, and fixing that is a wider behavior change
+		// (it could start rejecting configs that load today) that belongs in
+		// its own ticket rather than riding along with a layout PR.
+		errs = append(errs, validateSidePanelSpans(formID, form.SidePanel)...)
 	}
 
 	return errs
@@ -324,6 +357,16 @@ func validateFormRelation(
 	cfg *Config, formID, ctx string, i int, r FormRelation, entityType string, meta *metamodel.Metamodel,
 ) []string {
 	var errs []string
+
+	// A span on a relation is a config mistake, not a layout instruction:
+	// RelationCards / RelationPicker never read it, so it would be silently
+	// discarded. Saying so beats leaving the author to conclude the feature
+	// is broken. See FormRelation.Span.
+	if r.Span != 0 {
+		errs = append(errs, fmt.Sprintf(
+			"form %q: %srelation[%d] cannot have a span (relation widgets always take the full row)",
+			formID, ctx, i))
+	}
 
 	relDef, ok := meta.GetRelationDef(r.Relation)
 	switch {

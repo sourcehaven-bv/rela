@@ -93,7 +93,11 @@ func buildSectionFieldData(
 		Values:       propertyToStrings(e.Properties[f.Property]),
 		PropType:     propType,
 		Inaccessible: e.IsInaccessible(f.Property),
-		Span:         f.Span,
+		// int, not dataentryconfig.Span: the named type exists to enforce
+		// strict YAML decoding at config load. Past that boundary the value is
+		// just a number, and the wire DTO shouldn't drag a config type onto
+		// the API surface.
+		Span: int(f.Span),
 	}
 }
 
