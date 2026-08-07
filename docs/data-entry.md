@@ -401,6 +401,9 @@ offending field's position — rela will not silently round it or ignore it:
 form "create_ticket": field[3]: span 13 is out of range (must be 1-12, or omitted for full width)
 ```
 
+A `span` on a **relation** is also an error: relation widgets (card lists,
+searchable pickers) always take the full row, so a narrow one would break them.
+
 ### Widget Types
 
 | Widget     | Description                                      | Use For                        |
