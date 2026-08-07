@@ -458,22 +458,28 @@ views:
           # width (the default). Grouping is DECLARED here, not left to
           # whatever the viewport happens to fit.
           #
-          # Deliberately the SAME grouping as the create and edit forms, so a
-          # ticket looks like a ticket wherever you meet it: the three
-          # classification fields across one row, then the two numbers.
-          # Reading a ticket and editing one shouldn't feel like two screens.
+          # Widths follow what each field actually holds, which is the point
+          # of authoring them per surface rather than taking a uniform grid.
+          #
+          # Row 1 — the two enums that answer "where is this and how urgent":
+          # short values, so a third each, with the wider assignee alongside.
+          # Row 2 — two names side by side, equal weight.
+          # Row 3 — a date and a number, both narrow; the row deliberately
+          # stops at 8/12 rather than stretching to fill. An empty remainder
+          # is better than a date input the width of a paragraph.
           - property: status
-            span: 4
+            span: 3
           - property: priority
-            span: 4
+            span: 3
           - property: assignee
-            span: 4
+            span: 6
           - property: reporter
-            span: 4
+            span: 6
           - property: due_date
-            span: 4
+            span: 6
           - property: estimated_hours
             span: 4
+
       # Ticket body (markdown content)
       - source: entry
         display: content
