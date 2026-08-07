@@ -234,6 +234,15 @@ func validateNavEntry(nav NavigationEntry, cfg *Config) []string {
 	}
 
 	if nav.IsGroup() {
+		// A group is a container, not a destination — there is nothing for a
+		// permission to gate, and a gated group would be ambiguous with the
+		// empty-group rule (a group disappears on its own once every child is
+		// filtered out). Rejecting is clearer than silently ignoring it.
+		if nav.Permission != "" {
+			errs = append(errs, fmt.Sprintf(
+				"navigation: group %q cannot have a permission (set it on the items instead; "+
+					"a group is hidden automatically when all its items are)", nav.Group))
+		}
 		for _, child := range nav.Items {
 			errs = append(errs, validateNavEntry(child, cfg)...)
 		}

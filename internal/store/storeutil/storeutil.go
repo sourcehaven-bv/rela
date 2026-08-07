@@ -16,30 +16,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// ValidateID rejects IDs that would cause key collisions or bucket-key
-// corruption across store backends.
+// ValidateID is the store-boundary gate for entity IDs. It delegates to
+// [entity.ValidateID], which owns the single ID grammar and documents why
+// each rule exists.
 //
-// In addition to the `--` separator rule (which collides with the
-// from--type--to relation key format), IDs cannot contain path
-// separators, NUL, or ASCII control characters. Those would break
-// nested-bucket range scans in backends that key on bucket hierarchy
-// (see internal/store/boltstore) and have always been latent hazards
-// in fsstore (NUL crashes file creation on POSIX; `/` silently creates
-// nested directories).
+// This function used to carry its own, looser rule (rejecting only empty,
+// "--", path separators, and control characters). That was the validator
+// actually enforced on every write path, while the stricter
+// [entity.ValidateID] ran only on the manual-ID and rename paths — so
+// generated IDs, the importer, and direct store writes could persist IDs
+// containing spaces, shell metacharacters, or Unicode homoglyphs. The two
+// have been collapsed into one rule (TKT-IZGF7T); do not reintroduce a
+// store-local variant.
+//
+// It stays a named function rather than an alias for two reasons: it is the
+// validity oracle for the storetest fuzz harness, and it prefixes errors with
+// "store: " so a rejection surfaced from a backend names the layer that
+// refused the write.
 func ValidateID(id string) error {
-	if id == "" {
-		return errors.New("store: empty ID")
-	}
-	if strings.Contains(id, "--") {
-		return fmt.Errorf("store: ID %q contains consecutive dashes", id)
-	}
-	if strings.ContainsAny(id, "/\\") {
-		return fmt.Errorf("store: ID %q contains path separator", id)
-	}
-	for i := range len(id) {
-		if id[i] < 0x20 || id[i] == 0x7f {
-			return fmt.Errorf("store: ID %q contains control character", id)
-		}
+	if err := entity.ValidateID(id); err != nil {
+		return fmt.Errorf("store: %w", err)
 	}
 	return nil
 }

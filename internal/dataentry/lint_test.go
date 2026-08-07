@@ -64,3 +64,59 @@ func TestNoStrayWriteRequestConstruction(t *testing.T) {
 		t.Fatalf("walk: %v", err)
 	}
 }
+
+// TestNavFilterStaysPresentational is the structural guard for the sidebar
+// navigation filter (TKT-TXDK8U).
+//
+// `permitsNavEntry` decides which nav entries appear in /_sidebar. That is a
+// UX affordance: it enforces nothing, and every target re-checks independently.
+// Calling it from anywhere else — a read path, a write path, a second endpoint
+// — would quietly turn a menu-tidying helper into an authorization decision,
+// and the endpoint it "protected" would be gated by a predicate designed for
+// presentation.
+//
+// This is a live risk, not a hypothetical: an earlier attempt at menu filtering
+// was reverted (TKT-M1AX6P) precisely because it drifted toward being treated
+// as concealment. A prose rule in CLAUDE.md failed to prevent that; a grep test
+// does not decay.
+//
+// Genuinely need the predicate elsewhere? That is the moment to stop and ask
+// whether you want an authorization check instead — and if so, to build one
+// (see authorizeCommand), not to reuse this.
+func TestNavFilterStaysPresentational(t *testing.T) {
+	const allowedFile = "views_handler.go"
+	const needle = "permitsNavEntry("
+
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
+			return nil
+		}
+		if filepath.Dir(path) != root || base == allowedFile {
+			return nil
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(body), needle) {
+			t.Errorf("file %s calls %q — the sidebar filter is presentation only and must stay in %s; "+
+				"if you need an authorization check, build one (see authorizeCommand)", path, needle, allowedFile)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+}

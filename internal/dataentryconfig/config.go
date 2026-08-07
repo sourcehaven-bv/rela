@@ -453,6 +453,30 @@ type NavigationEntry struct {
 	// validateNavEntry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
 
+	// Permission optionally hides this entry from the sidebar for principals
+	// who do not hold the named global ACL permission (TKT-TXDK8U). Empty —
+	// the overwhelmingly common case — means the entry is always shown.
+	//
+	// This is a UX filter, NOT an access control. The entry's target enforces
+	// (or does not enforce) exactly what it did before: a hidden list is still
+	// reachable by typing its URL, and still returns its normal ACL-scoped
+	// rows, which for a principal who may read none of them is an empty list.
+	// The point is to keep menu entries a user cannot act on out of their way,
+	// not to conceal that they are configured — `/api/v1/_config` still serves
+	// the whole navigation tree to everyone (see "The configuration is not a
+	// secret; the data is" in the root CLAUDE.md).
+	//
+	// Behavior with no `acl.yaml`: shown. No policy configured means no
+	// restrictions, matching the read gate's allow-all posture. Same under
+	// `--read-only`, which restricts writes only and so has no permission
+	// model to consult — hiding there would remove read surfaces an
+	// observe-only principal can use, and would hide them from everyone
+	// rather than from non-holders.
+	//
+	// Not valid on a group entry — a group is a container, not a destination;
+	// groups disappear on their own when every child is filtered out.
+	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
+
 	// Group fields
 	Group     string            `yaml:"group,omitempty" json:"group,omitempty"`
 	Collapsed bool              `yaml:"collapsed,omitempty" json:"collapsed,omitempty"`

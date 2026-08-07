@@ -88,16 +88,39 @@ Two kinds, discriminated by `DocumentConfig.IsStandalone()` (empty
   are `data-entry.yaml` keys — see "The configuration is not a secret; the data
   is" in the root CLAUDE.md), and an opaque denial is unsupportable at scale.
   The uniform 404 is for **entity ids**, where existence genuinely is secret.
-- **Do NOT filter the sidebar or `/_config` per principal.** Menu structure is
-  principal-independent by an already-recorded decision
-  (`docs/acl-security.md` § "Sidebar menu structure is principal-independent");
-  a gated document is listed for everyone and 403s on render.
-  `TestSidebarAndConfig_PrincipalIndependent` pins it. An earlier draft of
-  TKT-M1AX6P filtered both and it was reverted — don't reintroduce it.
+- **Do NOT filter `/_config` per principal.** It serves the navigation tree
+  verbatim ("The configuration is not a secret; the data is"); an earlier draft
+  of TKT-M1AX6P filtered it and that was reverted — don't reintroduce it. The
+  *sidebar* is a different matter: TKT-TXDK8U added an opt-in `permission:`
+  filter on nav entries (see the section below). A document with no
+  `permission:` is still listed for everyone and 403s on render.
 - **A standalone render has no entry entity, so it has no `ContentHash`,
   `Entities`, or disk cache**, and it is script-only. Don't reintroduce those
   by keying a cache on something else; there is nothing to invalidate against
   (TKT-E1FO1 is the real fix).
+
+## Sidebar navigation filtering (`permission:` on a nav entry)
+
+`permitsNavEntry` (`views_handler.go`) omits entries the principal cannot use
+from `/_sidebar`. Rules for new code:
+
+- **It is a UX filter, not a boundary.** Nothing downstream may rely on an
+  entry being hidden. The target enforces what it always did, and
+  `TestNavPermission_FilterIsPresentationOnly` asserts precisely that. Same
+  rule as `_actions` above.
+- **Do NOT filter `/_config`.** It serves the navigation tree verbatim, on
+  purpose (root CLAUDE.md, "The configuration is not a secret; the data is").
+  Filtering it would be concealment-shaped, and an earlier attempt at exactly
+  that was reverted in TKT-M1AX6P. `TestNavPermission_ConfigUnfiltered` pins it.
+- **The ReadOnlyACL arm is load-bearing.** `readGateFromContext` returns
+  `nopReadGate` under ReadOnlyACL *and* NopACL, and its `HoldsPermission`
+  returns true — so a predicate written against the read gate alone fails OPEN
+  under `--read-only`. That is the RR-CWWJGW shape. Keep the explicit arm ahead
+  of the gate; `TestNavPermission_ReadOnlyHides` is the canary. Match value
+  **and** pointer forms — `AuthorizeWrite` has a value receiver.
+- **The switch stays closed.** A new `acl.ACL` implementation hides gated
+  entries until someone adds an arm; the failure mode of forgetting should be a
+  missing menu item, not an unintended one.
 
 ## Custom apps (`apps/<id>/` + `_apps/{id}/...` + the bridge)
 

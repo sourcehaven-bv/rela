@@ -577,12 +577,25 @@ caches from leaking one principal's view to another:
 ### Sidebar menu structure is principal-independent
 
 The sidebar's *structure* (groups, labels, links) reveals metamodel
-shape, not data shape, and is served identically to every principal —
-only the *counts* are gated. Hiding whole menu entries per principal
-is a possible future tightening, deliberately not done here: the
-metamodel is not a secret (it's served by `/api/v1/_schema`), and a
-divergent menu per principal complicates SPA caching for no
-confidentiality gain today.
+shape, not data shape. It is served identically to every principal
+**except** for entries an operator explicitly marks with a
+`permission:` (see GUIDE-data-entry, "Hiding entries a user cannot act
+on"); the *counts* are gated per principal as always.
+
+That exception is a **UX convenience and is not a confidentiality
+control** — the distinction matters, because the reasoning that once
+argued against per-principal menus still holds:
+
+- The metamodel is not a secret; it is served by `/api/v1/_schema`.
+- Neither is the navigation config: `/api/v1/_config` serves the whole
+  tree, `permission:` values included, to every principal.
+- A hidden entry's target enforces exactly what it enforced before. Type
+  the URL and you reach it; a list still returns its ACL-scoped rows,
+  which for a principal permitted to read none of them is an empty list.
+
+So `permission:` on a nav entry buys tidiness, not protection. Never
+reach for it in place of a read grant, and never assume an entry's
+absence means a principal cannot get at what it points to.
 
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and

@@ -1975,6 +1975,73 @@ func TestValidateNavigation_Document(t *testing.T) {
 	}
 }
 
+// TestValidateNavigation_Permission covers `permission:` on a navigation entry
+// (TKT-TXDK8U). It is valid on any direct item and rejected on a group: a group
+// is a container with no destination, and it already disappears on its own once
+// every child is filtered out.
+func TestValidateNavigation_Permission(t *testing.T) {
+	meta := testMetamodel()
+
+	cases := []struct {
+		name    string
+		nav     []NavigationEntry
+		wantErr string // substring; "" means expect success
+	}{
+		{
+			name:    "permission on a list entry is valid",
+			nav:     []NavigationEntry{{Label: "Audit", List: "tickets", Permission: "admin:read"}},
+			wantErr: "",
+		},
+		{
+			// Kinds with no config object behind them can be gated too — that
+			// is the main reason the field lives on the entry.
+			name:    "permission on a settings entry is valid",
+			nav:     []NavigationEntry{{Label: "Settings", Settings: true, Permission: "admin:settings"}},
+			wantErr: "",
+		},
+		{
+			name: "permission on a group is an error",
+			nav: []NavigationEntry{
+				{Group: "Admin", Permission: "admin:read", Items: []NavigationEntry{
+					{Label: "Audit", List: "tickets"},
+				}},
+			},
+			wantErr: `group "Admin" cannot have a permission`,
+		},
+		{
+			name: "permission on an item inside a group is valid",
+			nav: []NavigationEntry{
+				{Group: "Admin", Items: []NavigationEntry{
+					{Label: "Audit", List: "tickets", Permission: "admin:read"},
+				}},
+			},
+			wantErr: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Lists:      map[string]List{"tickets": {EntityType: "ticket"}},
+				Navigation: tc.nav,
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
 // TestValidateNavigation_DocumentInGroup pins that the document check recurses
 // into groups like the list/kanban/action checks do.
 func TestValidateNavigation_DocumentInGroup(t *testing.T) {
