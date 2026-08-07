@@ -129,26 +129,81 @@ func (id EntityID) MatchesPattern(pattern string) bool {
 	return strings.EqualFold(prefix, pattern)
 }
 
-// ValidateID checks if a string is a valid entity ID
-// It rejects IDs with path traversal attempts or invalid characters
+// idPattern is the one grammar every entity ID must satisfy:
+// ASCII letters, digits, underscore, and hyphen.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ValidateID reports whether s is a valid entity ID. It is the SINGLE
+// validity rule for entity IDs across the whole codebase — storeutil.ValidateID
+// delegates here so no write path can reach a laxer check (TKT-IZGF7T).
+//
+// An ID is not just a label. It is simultaneously a filename
+// (fsstore writes "<plural>/<id>.md"), a component of the relation key
+// ("FROM--TYPE--TO.md"), a URL path segment, and a value that can reach an
+// external command. The grammar below is the intersection of what is safe in
+// all four roles, which is why it is deliberately narrower than "any string a
+// filesystem would accept".
+//
+// Each rule earns its place:
+//
+//   - ASCII-only. An ID is used verbatim as a filename, and macOS stores
+//     NFD while Linux stores NFC, so "café" created on one platform is a
+//     *different* filename on the other — the same logical entity forks into
+//     two files and git reports phantom renames. ASCII also removes homoglyph
+//     ambiguity: Cyrillic "аdmin" and ASCII "admin" render identically but are
+//     distinct entities. Non-English projects lose nothing: every entity type
+//     has an unrestricted `title` property, which is where a human-language
+//     name belongs. Identifiers stay ASCII the same way DNS labels, Kubernetes
+//     resource names, and package names do.
+//
+//   - No leading hyphen. A leading "-" makes the ID look like an option flag
+//     to any command it is passed to ("-rf"), which is argument injection
+//     rather than a filesystem concern. This is defense in depth, not the
+//     primary control: TKT-QGHNVA removes user-controlled data from command
+//     lines entirely. Keep this check even after that lands.
+//
+//   - No consecutive hyphens. "--" is the relation-key separator in
+//     "FROM--TYPE--TO.md", so an ID containing it makes the relation filename
+//     ambiguous to parse. This one is load-bearing for the storage format —
+//     do not relax it without changing the relation key encoding.
+//
+//   - No path separators or "..". Path traversal, given the ID becomes a
+//     filename.
+//
+// The character class already excludes spaces, shell metacharacters, control
+// characters, NUL, and zero-width/bidi marks, so those need no separate check.
 func ValidateID(s string) error {
 	if s == "" {
-		return errors.New("empty entity ID")
+		return errors.New("empty ID")
 	}
 
-	// Reject path traversal
-	if strings.Contains(s, "..") || strings.Contains(s, "/") || strings.Contains(s, "\\") {
-		return fmt.Errorf("invalid characters in entity ID: %s", s)
+	// The specific checks run before the character-class check so a rejection
+	// names its reason ("path separator", "control character") rather than
+	// falling through to a generic "invalid characters". Callers and the
+	// storetest conformance suite assert on these phrases.
+	if strings.ContainsAny(s, "/\\") {
+		return fmt.Errorf("path separator not allowed in entity ID: %s", s)
 	}
 
-	// Reject consecutive dashes — "--" is used as the relation key separator
+	if strings.Contains(s, "..") {
+		return fmt.Errorf("path traversal not allowed in entity ID: %s", s)
+	}
+
+	for i := range len(s) {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return fmt.Errorf("control character not allowed in entity ID: %q", s)
+		}
+	}
+
 	if strings.Contains(s, "--") {
 		return fmt.Errorf("consecutive dashes not allowed in entity ID: %s", s)
 	}
 
-	// Allow alphanumeric, dash, underscore
-	valid := regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	if !valid.MatchString(s) {
+	if strings.HasPrefix(s, "-") {
+		return fmt.Errorf("entity ID may not start with a dash (reads as a command-line flag): %s", s)
+	}
+
+	if !idPattern.MatchString(s) {
 		return fmt.Errorf("invalid characters in entity ID: %s", s)
 	}
 
