@@ -115,8 +115,11 @@ forms:
       - property: title
       - property: description
         widget: textarea
+      # status keeps a full row of its own: the transitions panel below it is
+      # ~180px tall, and a grid row is as tall as its tallest item — so pairing
+      # it with short fields leaves them floating above a large void. A field
+      # that carries a blurb wants its own row.
       - property: status
-        span: 4
         transitions:
           open: [in-progress, closed]
           in-progress: [open, resolved]
@@ -131,9 +134,9 @@ forms:
         label: "Reported by"
         span: 4
       - property: due_date
-        span: 4
+        span: 6
       - property: estimated_hours
-        span: 4
+        span: 6
       - property: is_blocked
     relations:
       - relation: belongs-to
