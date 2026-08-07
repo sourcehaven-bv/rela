@@ -5,7 +5,7 @@ title: 'Replace emoji with an SVG icon set; add icon: to kanban columns and swim
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description
