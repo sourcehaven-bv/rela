@@ -2356,7 +2356,7 @@ documents:
   ticket_summary:
     title: "Ticket Summary"
     entity_type: ticket
-    command: "my-renderer {id}"    # {id} / {id_lower} are substituted
+    command: ["my-renderer", "{in}"] # argv array; {in} = entity markdown file
     timeout: 30
   sales_review:                    # standalone — no entity_type
     title: "Verkooprapportage"
@@ -2409,9 +2409,9 @@ navigation:
 
 Rules:
 
-- **Script-only.** A `command:` renderer's `{id}` / `{id_lower}` placeholders
-  refer to an entry entity, which a standalone document does not have, so
-  `command:` is rejected rather than substituted with an empty id.
+- **Script-only.** A `command:` renderer is handed the entry entity as its
+  `{in}` file, and a standalone document has no entry entity, so `command:` is
+  rejected rather than run against an empty or guessed one.
 - **`rela.document.entry_id` is `nil`** (not `""`). Scripts should already
   tolerate this — list-render mode has behaved the same way since it shipped.
 - **Only standalone documents can be navigation entries.** Pointing
@@ -2476,16 +2476,42 @@ would be ceremony.
 On an entity-anchored document `permission:` applies *in addition to* the
 per-entity read gate — it narrows access, and can never widen it.
 
-### Shell command renderer (`command:`)
+### External command renderer (`command:`)
 
-The command runs in a POSIX shell (`sh -c`) with the project root as the
-working directory. The script must write the rendered markdown to stdout.
-Placeholders inside the command string are substituted before execution:
+`command:` is an **argument array**, executed directly. There is no shell, so
+pipes, redirection, globbing, and variable expansion are not available — and no
+quoting or escaping is needed. The program must write the rendered markdown to
+stdout.
+
+```yaml
+command: ["my-renderer", "{in}"]
+```
 
 | Placeholder | Expands to |
 |-------------|------------|
-| `{id}`      | The entry entity ID |
-| `{id_lower}`| The ID lowercased |
+| `{in}`      | Path to a temp file holding the entry entity's markdown, frontmatter included |
+
+The entity id is the `id:` key of that file's frontmatter, so a renderer that
+needs it reads it from the file.
+
+> **Migrating from `{id}` / `{id_lower}`**
+>
+> Those placeholders were removed. They spliced a request-derived value into a
+> shell string, which made the entity id the one piece of user-controlled data
+> reaching `sh -c` — an id beginning with `-` arrived as an option flag rather
+> than an operand. A config still using them is **rejected at load** with an
+> error naming `{in}`.
+>
+> Two other things changed with the shell:
+>
+> - **A string `command:` is no longer valid**; use an array.
+>   `command: "my-renderer"` → `command: ["my-renderer"]`.
+> - **The working directory is no longer the project root.** Name the program
+>   on `PATH` or by absolute path rather than relying on a relative path such
+>   as `render.sh`.
+>
+> Shell features (pipes, redirection) are unavailable by design. If you need
+> them, put them in a script file and invoke that script as the program.
 
 Command renderer output is cached to disk at
 `.rela/documents/<entry>-<hash>.html` keyed by an FNV hash of the entry

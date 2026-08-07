@@ -1429,7 +1429,7 @@ func validateDocuments(cfg *Config) []string {
 				docID))
 		}
 
-		hasCmd := doc.Command != ""
+		hasCmd := len(doc.Command) > 0
 		hasScript := doc.Script != ""
 		switch {
 		case hasCmd && hasScript:
@@ -1438,6 +1438,22 @@ func validateDocuments(cfg *Config) []string {
 		case !hasCmd && !hasScript:
 			errs = append(errs, fmt.Sprintf(
 				"document %q: one of command or script must be set", docID))
+		}
+
+		// {id} / {id_lower} were removed in TKT-QGHNVA: they spliced a
+		// request-derived value into a shell string. Fail at config load with
+		// the replacement named, rather than silently passing the literal
+		// "{id}" through to the renderer — a silent pass would look like a
+		// working config that produces a document about the wrong thing.
+		for _, arg := range doc.Command {
+			if strings.Contains(arg, "{id}") || strings.Contains(arg, "{id_lower}") {
+				errs = append(errs, fmt.Sprintf(
+					"document %q: {id}/{id_lower} are no longer supported; "+
+						"use {in}, the entry entity's markdown file whose frontmatter carries `id:` "+
+						"(commands now run without a shell, so the id never reaches the command line)",
+					docID))
+				break
+			}
 		}
 
 		if doc.Edit != nil { //nolint:nestif // nested branches validate distinct doc.Edit sub-fields.

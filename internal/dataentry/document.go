@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"slices"
 	"sort"
@@ -23,6 +22,9 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 	"golang.org/x/sync/singleflight"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/htmlutil"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -77,11 +79,12 @@ type documentRenderConfig struct {
 	// participates in the singleflight/cache key so concurrent renders
 	// of different documents against the same entry don't collapse.
 	ConfigID string
-	// Command is the external render command. Placeholders:
-	//   {id}       - entry ID
-	//   {id_lower} - lowercase entry ID
+	// Command is the external render command as an argument array, run
+	// directly with no shell. The single placeholder is {in}: a temp file
+	// holding the entry entity's markdown (frontmatter included, so the id
+	// travels in the file rather than on the command line — TKT-QGHNVA).
 	// Mutually exclusive with Script.
-	Command string
+	Command []string
 	// Script is a relative path under scripts/ to a Lua file. When set,
 	// the renderer runs the Lua script via script.Engine.ExecuteDocument
 	// and captures its stdout as markdown. Mutually exclusive with Command.
@@ -112,8 +115,14 @@ type DocumentResult struct {
 // rela.cache.memoize is the caching story for scripts, and reading an old
 // command:-era cache file for a script: request would serve stale HTML.
 type documentService struct {
-	store        store.Store
-	state        state.KV
+	store store.Store
+	state state.KV
+	// projectRoot is retained for script rendering and diagnostics. It is NOT
+	// the working directory of a `command:` renderer any more: cmdexec runs
+	// commands without setting cwd (and sandboxes them), so a relative program
+	// path such as ["render.sh"] no longer resolves against the project root.
+	// Operator configs must name the program on PATH or by absolute path — see
+	// the migration note in docs/data-entry.md.
 	projectRoot  string
 	scriptEngine documentScriptEngine
 	luaDeps      documentDepsFunc
@@ -215,7 +224,7 @@ func (s *documentService) RenderMarkdown(
 // view export feeds the markdown to a format transform rather than converting
 // it to HTML.
 //
-// Script-only: a `command:` renderer's placeholders are {id}/{id_lower} of an
+// Script-only: a `command:` renderer is handed the entry entity as {in}, of an
 // entry entity and a list has none. No caller sets Command today; the guard
 // below is a fail-closed assertion so a future one gets an error instead of a
 // silently entry-less substitution.
@@ -237,7 +246,7 @@ func (s *documentService) RenderMarkdown(
 func (s *documentService) RenderListMarkdown(
 	ctx context.Context, cfg documentRenderConfig, lrc lua.ListRenderContext,
 ) (string, error) {
-	if cfg.Command != "" {
+	if len(cfg.Command) > 0 {
 		return "", errors.New("list export render must be a script, not a command")
 	}
 	if s.scriptEngine == nil || s.luaDeps == nil {
@@ -274,7 +283,7 @@ func (s *documentService) RenderListMarkdown(
 // the reliable path until TKT-E1FO1 lets scripts declare dependencies.)
 //
 // Script-only, for the same reason RenderListMarkdown is: a `command:`
-// renderer's placeholders are {id}/{id_lower} of an entry entity, and a
+// renderer is handed an entry entity as {in}, and a
 // standalone document has none. Rejecting is fail-closed — the alternative is
 // substituting an empty id into a shell command, which is how a renderer
 // silently produces a document about the wrong thing (or nothing).
@@ -296,7 +305,7 @@ func (s *documentService) RenderListMarkdown(
 func (s *documentService) RenderStandalone(
 	ctx context.Context, cfg documentRenderConfig,
 ) (string, error) {
-	if cfg.Command != "" {
+	if len(cfg.Command) > 0 {
 		return "", errors.New("a document without an entity_type must use a script renderer, not a command")
 	}
 	if s.scriptEngine == nil || s.luaDeps == nil {
@@ -364,13 +373,95 @@ func (s *documentService) doRender(
 	}, nil
 }
 
-// renderCommand invokes the external render command and returns its stdout
-// as markdown. Placeholder substitution happens on the command string.
+// renderCommand invokes the external render command and returns its stdout as
+// markdown.
+//
+// The entry entity is serialized to markdown and handed to the command as the
+// {in} temp file. NOTHING request-derived reaches the argument vector: the
+// command array is operator-authored config, and the only substitution is {in}
+// → a runner-owned temp path. That is the structural fix for TKT-QGHNVA —
+// previously the entry id was spliced into a string run through `sh -c`, so an
+// id such as "-rf" arrived as an option flag rather than an operand, and the
+// only thing standing between a stored id and that shell was input filtering.
+//
+// A renderer that needs the id reads it from the file: the serialized
+// frontmatter always carries `id:` (see renderEntityMarkdown).
 func (s *documentService) renderCommand(ctx context.Context, entryID string, cfg documentRenderConfig) (string, error) {
-	command := cfg.Command
-	command = strings.ReplaceAll(command, "{id}", entryID)
-	command = strings.ReplaceAll(command, "{id_lower}", strings.ToLower(entryID))
-	return s.executeCommand(ctx, command, cfg.Timeout)
+	e, err := s.store.GetEntity(ctx, entryID)
+	if err != nil {
+		return "", fmt.Errorf("load entity %q for command render: %w", entryID, err)
+	}
+
+	in, err := renderEntityMarkdown(e)
+	if err != nil {
+		return "", fmt.Errorf("serialize entity %q for command render: %w", entryID, err)
+	}
+
+	return s.executeCommand(ctx, cfg.Command, []byte(in), cfg.Timeout)
+}
+
+// renderEntityMarkdown serializes an entity to the markdown shape the store
+// persists: YAML frontmatter followed by the body.
+//
+// The `id` key is what makes a command-line placeholder unnecessary, so it is
+// written unconditionally and asserted by TestRenderEntityMarkdown_CarriesID.
+// `id` and `type` lead, then the remaining properties in a stable order so a
+// renderer sees deterministic input.
+//
+// This builds the frontmatter with yaml directly rather than reusing
+// internal/markdown: dataentry must not depend on that package (arch-lint), and
+// what a renderer needs is the frontmatter contract, not the store's exact
+// byte-for-byte formatting.
+func renderEntityMarkdown(e *entity.Entity) (string, error) {
+	// yaml.v3 has no MapSlice, so build a mapping Node to control key order.
+	mapping := &yaml.Node{Kind: yaml.MappingNode}
+	appendPair := func(k string, v any) error {
+		key := &yaml.Node{Kind: yaml.ScalarNode, Value: k}
+		val := &yaml.Node{}
+		if err := val.Encode(v); err != nil {
+			return fmt.Errorf("encode %q: %w", k, err)
+		}
+		mapping.Content = append(mapping.Content, key, val)
+		return nil
+	}
+
+	if err := appendPair("id", e.ID); err != nil {
+		return "", err
+	}
+	if err := appendPair("type", e.Type); err != nil {
+		return "", err
+	}
+
+	rest := make([]string, 0, len(e.Properties))
+	for k := range e.Properties {
+		if k != "id" && k != "type" {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		if err := appendPair(k, e.Properties[k]); err != nil {
+			return "", err
+		}
+	}
+
+	fm, err := yaml.Marshal(mapping)
+	if err != nil {
+		return "", fmt.Errorf("marshal frontmatter: %w", err)
+	}
+
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.Write(fm)
+	b.WriteString("---\n")
+	if e.Content != "" {
+		b.WriteString("\n")
+		b.WriteString(e.Content)
+		if !strings.HasSuffix(e.Content, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
 }
 
 // renderScript executes a Lua document script and returns its captured
@@ -446,26 +537,42 @@ func hashEntities(entities []*entity.Entity) string {
 // value from producing an already-expired context.
 const commandDefaultTimeout = 30 * time.Second
 
-// executeCommand runs an external command and returns its stdout.
-func (s *documentService) executeCommand(ctx context.Context, command string, timeout time.Duration) (string, error) {
+// maxCommandOutputBytes caps a document renderer's stdout. The rendered
+// markdown is held in memory and then converted to HTML, so an unbounded
+// converter could exhaust the host; cmdexec enforces the cap as it reads.
+const maxCommandOutputBytes = 32 << 20 // 32 MiB
+
+// executeCommand runs an external render command over `in` and returns its
+// stdout.
+//
+// It delegates to internal/cmdexec, the reviewed "bytes in → bytes out" core
+// already used by attachment processing and view export: argv array (never a
+// shell string), {in}/{out} templated to runner-owned temp paths, a timeout, an
+// output cap, a no-network sandbox, and rlimits. There is deliberately no
+// `sh -c` here any more — see renderCommand.
+func (s *documentService) executeCommand(
+	ctx context.Context, command []string, in []byte, timeout time.Duration,
+) (string, error) {
+	if len(command) == 0 {
+		return "", errors.New("document command is empty")
+	}
 	if timeout <= 0 {
 		timeout = commandDefaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = s.projectRoot
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("command failed: %w\nstderr: %s", err, stderr.String())
+	// Temp files land in the OS temp dir, not the project root: the {in} file
+	// is runner-owned scratch, and a project checkout may legitimately be
+	// read-only.
+	runner, err := cmdexec.New(timeout, maxCommandOutputBytes)
+	if err != nil {
+		return "", fmt.Errorf("build document command runner: %w", err)
 	}
 
-	return stdout.String(), nil
+	out, _, err := runner.Run(ctx, command, in, true)
+	if err != nil {
+		return "", fmt.Errorf("command failed: %w", err)
+	}
+	return string(out), nil
 }
 
 // markdownToHTML converts markdown to HTML using goldmark.
